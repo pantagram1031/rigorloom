@@ -56,7 +56,18 @@ ops 예시 (위에서 아래로 순차 실행):
 ### Step 3 — 검증 루프 (필수, 매 편집 후)
 1. `edit` 출력의 `post_inspect`로 표/수식 개수가 의도대로 늘었는지 확인.
 2. `verify.pdf`를 **직접 열어 시각 확인** (레이아웃 깨짐, 수식 렌더링, 표 정렬).
-3. 문제 발견 시: 원본은 그대로이므로 ops를 수정해 재실행 (Ratchet — 통과 전까지 저장본 교체 금지).
+3. **글자색 상속 확인** — 파란/색 안내문 자리에 삽입한 본문은 그 색을 상속한다.
+   PDF에서 의도치 않은 색 글자가 있으면 `set_char_color`(기본 all=true)로 일괄 검정 처리.
+   `set_font(TextColor=...)` 경유라 크기·굵기 등 다른 속성은 불변.
+4. 문제 발견 시: 원본은 그대로이므로 ops를 수정해 재실행 (Ratchet — 통과 전까지 저장본 교체 금지).
+
+### 표·그림·문구 삭제 / 색
+- 표는 항상 **순수 2차원 리스트**로 `insert_table`(plain 기본). pandas DataFrame을 넘기면
+  숫자 헤더 행 + 인덱스 열(0,1,2…)이 셀에 박힌다. 인덱스 열 절대 금지.
+- 그림은 `width_mm`만 줘도 원본 종횡비로 높이 자동(PIL→PNG 헤더 폴백).
+- 콤마가 든 문구 삭제는 `find_delete`(find 기반, 분리 없음). `replace_all`은 FindString을
+  콤마로 분리하므로 콤마 든 문구엔 쓰지 말 것.
+- 표/그림만 지우고 캡션은 남기려면 `delete_ctrls`(types: tbl/gso) 후 캡션 앵커로 재삽입.
 
 ### 수식 (한글 수식 편집기 형식)
 - `insert_equation`에 `latex`를 주면 내장 변환기(`scripts/eqn.py`)가 HwpEqn 스크립트로
@@ -97,6 +108,10 @@ ops 예시 (위에서 아래로 순차 실행):
 |---|---|
 | 보안 승인 팝업에서 멈춤 | pyhwpx가 자동 등록하지만, 구버전 한글이면 한컴 보안모듈(FilePathCheckerModule) 수동 등록 필요 |
 | `insert_picture` TypeError | pyhwpx 버전 차이 — 백엔드가 자동 폴백함. `pip install -U pyhwpx` 권장 |
+| `insert_picture` ValueError (sizeoption=1 width/height) | 폭만 주면 pyhwpx가 둘 다 요구. v0.1.1부터 `width_mm`만 줘도 종횡비로 높이 자동 계산 |
+| 삽입 본문이 파란색(또는 안내문 색) | 색 안내문 위치 상속. `set_char_color`로 일괄 검정. PDF에서 색 글자 0 확인 |
+| 표에 숫자 헤더·인덱스 열 오염 | DataFrame 경유 삽입. 순수 2D 리스트로 `insert_table`(plain). 기존 표는 `delete_ctrls`(tbl) 후 재삽입 |
+| 콤마 든 문구가 일부만 지워짐(콤마 잔존) | `replace_all`이 콤마로 분리. `find_delete` 사용 |
 | 수식이 깨져 보임 | HwpEqn 문법 오류. eqn.py 단독 실행으로 warnings 확인 후 hwpeqn 직접 작성 |
 | 저장 후 한글에서 "복구" 경고 | XML 백엔드에서 DOM 재직렬화를 했을 가능성 — 바이트 보존 경로만 사용 |
 | COM이 응답 없음 | 작업관리자에서 Hwp.exe 잔존 프로세스 종료 후 재시도 |

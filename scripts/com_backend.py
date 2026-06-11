@@ -20,13 +20,16 @@ ops.json 형식 (순서대로 실행):
   {"op": "replace_all", "find": "기존문구", "replace": "새문구"},
   {"op": "put_field",   "name": "성명", "value": "홍길동"},
   {"op": "goto_text",   "text": "삽입 위치 앵커 문구"},
+  {"op": "find_delete", "text": "지울 문구"},        // 콤마 포함 문구도 안전(분리 안 함)
   {"op": "move",        "to": "doc_end"},            // doc_start|doc_end|line_end
   {"op": "insert_text", "text": "추가 문단\\r\\n"},
   {"op": "insert_equation", "latex": "\\\\frac{1}{2}mv^2"},   // 또는 "hwpeqn": "..."
   {"op": "insert_table", "data": [["헤더1","헤더2"],["a","b"]], "treat_as_char": true},
-  {"op": "insert_picture", "path": "C:/img/그래프.png", "width_mm": 80},
+  {"op": "insert_picture", "path": "C:/img/그래프.png", "width_mm": 80}, // 높이 자동
   {"op": "edit_equation", "index": 0, "latex": "E=mc^2"},     // n번째 기존 수식 교체
-  {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값"}
+  {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값"},
+  {"op": "set_char_color", "color": "#000000"},     // 문서 전체 글자색(기본 all)
+  {"op": "delete_ctrls", "types": ["tbl", "gso"]}   // 표/그림 삭제(캡션 텍스트는 유지)
 ]
 """
 
@@ -143,6 +146,26 @@ def op_goto_text(hwp, o):
     return {"found": True}
 
 
+def op_find_delete(hwp, o):
+    """find()로 문구를 선택(콤마 분리 없음)한 뒤 선택분을 삭제.
+
+    find_replace_all은 FindString을 콤마 기준 다중 검색어로 분리하므로 콤마가
+    든 안내문/문구 삭제에 부적합하다. find()는 단일 문자열로 매칭하므로 안전.
+    """
+    n = 0
+    while o.get("all", False) or n == 0:
+        hwp.MoveDocBegin()
+        if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
+            break
+        hwp.Delete()
+        n += 1
+        if not o.get("all", False):
+            break
+    if n == 0 and o.get("required", True):
+        raise RuntimeError(f"삭제할 문구를 찾지 못함: {o['text']!r}")
+    return {"deleted": n}
+
+
 def op_move(hwp, o):
     to = o.get("to", "doc_end")
     {"doc_end": hwp.MoveDocEnd, "doc_start": hwp.MoveDocBegin,
@@ -200,26 +223,61 @@ def op_edit_equation(hwp, o):
 
 
 def op_insert_table(hwp, o):
+    """순수 2차원 리스트만 받아 표를 그린다.
+
+    data는 항상 [[헤더...], [행...], ...] 형태의 2D 리스트여야 한다. pandas
+    DataFrame을 넘기지 말 것 — DataFrame을 table_from_data로 그리면 숫자 헤더
+    행과 인덱스 열(0,1,2,...)이 셀에 박혀 오염된다. 기본 경로는 create_table +
+    셀별 직접 입력(plain)으로, 인덱스/자동 헤더가 절대 생기지 않는다.
+    (옛 동작이 필요하면 use_dataframe: true — 권장하지 않음.)
+    """
     data = o["data"]
-    if hasattr(hwp, "table_from_data") and not o.get("plain"):
+    if o.get("use_dataframe") and hasattr(hwp, "table_from_data"):
         hwp.table_from_data(data, treat_as_char=o.get("treat_as_char", True))
-    else:
-        rows, cols = len(data), len(data[0])
-        hwp.create_table(rows, cols,
-                         treat_as_char=o.get("treat_as_char", True))
-        for r in range(rows):
-            for c in range(cols):
-                hwp.insert_text(str(data[r][c]))
-                if not (r == rows - 1 and c == cols - 1):
-                    hwp.TableRightCell()
-        hwp.MoveDocEnd()
-    return {"rows": len(data), "cols": len(data[0])}
+        return {"rows": len(data), "cols": len(data[0]), "mode": "dataframe"}
+    rows, cols = len(data), len(data[0])
+    hwp.create_table(rows, cols, treat_as_char=o.get("treat_as_char", True))
+    for r in range(rows):
+        for c in range(cols):
+            hwp.insert_text(str(data[r][c]))
+            if not (r == rows - 1 and c == cols - 1):
+                hwp.TableRightCell()
+    hwp.MoveDocEnd()
+    return {"rows": rows, "cols": cols, "mode": "plain"}
+
+
+def _png_aspect(path):
+    """이미지의 height/width 비율을 구한다. PIL 우선, 실패 시 PNG 헤더 직독."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+        return h / w if w else None
+    except Exception:
+        try:
+            import struct
+            with open(path, "rb") as f:
+                head = f.read(24)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w, h = struct.unpack(">II", head[16:24])
+                return h / w if w else None
+        except Exception:
+            return None
+    return None
 
 
 def op_insert_picture(hwp, o):
     path = str(Path(o["path"]).resolve())
     kwargs = {"treat_as_char": o.get("treat_as_char", True), "embedded": True}
     w, h = o.get("width_mm"), o.get("height_mm")
+    auto_h = False
+    # 폭만 주어지면 원본 종횡비로 높이를 자동 계산 (pyhwpx는 sizeoption=1에서
+    # width/height 둘 다 요구하므로 한쪽만 주면 ValueError가 난다).
+    if w and not h:
+        ar = _png_aspect(path)
+        if ar:
+            h = round(w * ar, 2)
+            auto_h = True
     if w or h:
         kwargs.update(sizeoption=1,
                       width=hwp.MiliToHwpUnit(w) if w else 0,
@@ -228,7 +286,66 @@ def op_insert_picture(hwp, o):
         hwp.insert_picture(path, **kwargs)
     except TypeError:  # pyhwpx 버전별 시그니처 차이 흡수
         hwp.insert_picture(path)
-    return {"picture": path}
+    return {"picture": path, "width_mm": w, "height_mm": h, "auto_height": auto_h}
+
+
+def _parse_color(c):
+    """색을 hwp TextColor 정수로. int 그대로, '#RRGGBB'/'RRGGBB' 파싱."""
+    if c is None:
+        return 0  # black
+    if isinstance(c, int):
+        return c
+    s = str(c).lstrip("#")
+    r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+    return r | (g << 8) | (b << 16)  # hwp TextColor = 0x00BBGGRR
+
+
+def op_set_char_color(hwp, o):
+    """글자색만 변경. 기본은 문서 전체(SelectAll), 굵기·크기 등은 불변.
+
+    GetDefault로 받은 CharShape 파라미터에서 TextColor만 set하므로 다른 글자
+    속성은 건드리지 않는다. all=false면 현재 선택 영역에만 적용.
+    """
+    color = _parse_color(o.get("color", 0))
+    if o.get("all", True):
+        hwp.MoveDocBegin()
+        hwp.SelectAll()
+    # set_font은 빈 값 인자를 건너뛰므로 TextColor만 적용된다(크기·굵기 불변).
+    if hasattr(hwp, "set_font"):
+        hwp.set_font(TextColor=color)
+    else:
+        pset = hwp.HParameterSet.HCharShape
+        hwp.HAction.GetDefault("CharShape", pset.HSet)
+        pset.TextColor = color
+        hwp.HAction.Execute("CharShape", pset.HSet)
+    try:
+        hwp.Cancel()
+    except Exception:
+        pass
+    return {"text_color": color}
+
+
+def op_delete_ctrls(hwp, o):
+    """지정한 CtrlID의 컨트롤을 모두(또는 index 하나) 삭제.
+
+    types: ["tbl"], ["gso"], ["eqed"] 등. 표/그림을 지우고 캡션(본문 텍스트)은
+    그대로 두는 용도. Next 순회가 삭제로 깨지지 않게 먼저 수집 후 삭제한다.
+    """
+    types = o.get("types") or [o.get("type")]
+    types = [t for t in types if t]
+    targets, c = [], hwp.HeadCtrl
+    while c:
+        if getattr(c, "CtrlID", "") in types:
+            targets.append(c)
+        c = c.Next
+    if "index" in o:
+        targets = [targets[o["index"]]] if o["index"] < len(targets) else []
+    deleter = getattr(hwp, "DeleteCtrl", None) or getattr(hwp, "delete_ctrl", None)
+    n = 0
+    for ctrl in targets:
+        deleter(ctrl)
+        n += 1
+    return {"deleted": n, "types": types}
 
 
 def op_set_cell(hwp, o):
@@ -248,6 +365,7 @@ OPS = {
     "replace_all": op_replace_all,
     "put_field": op_put_field,
     "goto_text": op_goto_text,
+    "find_delete": op_find_delete,
     "move": op_move,
     "insert_text": op_insert_text,
     "insert_equation": op_insert_equation,
@@ -255,6 +373,8 @@ OPS = {
     "insert_table": op_insert_table,
     "insert_picture": op_insert_picture,
     "set_cell": op_set_cell,
+    "set_char_color": op_set_char_color,
+    "delete_ctrls": op_delete_ctrls,
 }
 
 
