@@ -102,6 +102,24 @@ ops 예시 (위에서 아래로 순차 실행):
 - 복잡한 수식은 `hwpeqn` 키로 스크립트를 직접 줄 것 (문법: references/hwpeqn_cheatsheet.md).
 - 기존 수식 수정은 `edit_equation` + `index` (inspect 출력의 equations 배열 인덱스).
 
+### report bundle 조립 (build_report.py)
+- report-pipeline의 Stage 4 출력(`bundle/content.md`)을 받아 ops JSON을 **결정론적으로**
+  만든다. 형식 명세는 `report-pipeline/references/bundle_spec.md`를 **엄수**(SECTION 앵커,
+  `[[EQ]]`/`[[FIG]]`/`[[TABLE]]` 태그, YAML 메타).
+- 사용:
+  ```bash
+  python scripts/build_report.py --content bundle/content.md --form 양식.hwp > ops.json
+  python scripts/com_backend.py edit --file 양식.hwp --ops ops.json \
+      --save-as 최종.hwpx --export-pdf verify.pdf
+  ```
+  `--dry-run`은 한글 미실행, ops만 출력(단위 테스트). `--form`은 inspect로 SECTION 앵커를
+  양식 항목 제목과 대조하고 **하나라도 불일치하면 중단**(우회 금지 — content.md를 고친다).
+- 생성 규칙: 수식=`insert_equation`(display 기본, latex는 eqn.py+sanity), 그림=
+  `insert_picture`(own_paragraph+width_mm), 표=`insert_table`(plain). 인라인 객체 원칙과
+  동일. 조립 후 검증은 위의 레이아웃 QA + 시각 이중 게이트 그대로 적용.
+- 회귀 픽스처: `tests/fixtures/regen-brake/`(회생제동 보고서를 bundle로 역변환). dry-run
+  ops 개수(섹션·EQ·FIG·TABLE)와 앵커가 기준과 일치해야 한다.
+
 ### 양식 보존 원칙 (COM)
 - 텍스트는 가능하면 **필드(누름틀) 채우기(`put_field`)** > `replace_all` > 커서 삽입 순으로 선호.
 - 새 문단 삽입 시 커서를 같은 스타일의 문단 끝에 두고 `insert_text` — 직전 문단 모양을 상속한다.
