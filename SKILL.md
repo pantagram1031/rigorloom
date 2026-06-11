@@ -59,7 +59,19 @@ ops 예시 (위에서 아래로 순차 실행):
 3. **글자색 상속 확인** — 파란/색 안내문 자리에 삽입한 본문은 그 색을 상속한다.
    PDF에서 의도치 않은 색 글자가 있으면 `set_char_color`(기본 all=true)로 일괄 검정 처리.
    `set_font(TextColor=...)` 경유라 크기·굵기 등 다른 속성은 불변.
-4. 문제 발견 시: 원본은 그대로이므로 ops를 수정해 재실행 (Ratchet — 통과 전까지 저장본 교체 금지).
+4. **레이아웃 QA (수치 게이트 → 시각 이중 게이트)** — 빈 문단(엔터) 잔재로 인한
+   과다 공백을 미적 판단이 아니라 수치로 가린다.
+   - 수치 게이트: `python scripts/layout_qa.py --file verify.pdf` → 페이지별 하단 공백
+     비율·블록 간 최대 간격(본문 줄높이 배수)을 JSON으로. 기본 임계 하단 ≤25%(마지막
+     쪽 제외)·간격 ≤3줄. 간격은 '빈 문단 구멍'만 잡도록 그림이 점유한 세로 구간은
+     제외(그림은 PNG 여백·도형으로 본질적 공간 차지). 임계는 인자로만 바꾼다.
+   - 보정: 연속 빈 문단은 `collapse_empty_paragraphs`(^n^n^n→^n^n, 1빈줄은 보존).
+     그림 캡션↔이미지 밀착은 `delete_blank_after`(캡션 앵커), 객체 앞 빈 문단은
+     `delete_blank_before`(뒤 캡션 앵커). **과압축 금지** — 표·그림 앞뒤 1빈줄과 항목
+     사이 구분 공백은 정상.
+   - 시각 게이트: 수치 통과 후 `fitz`로 전 페이지 PNG 렌더해 직접 확인(헤딩 아래 간격,
+     그림-캡션 밀착, 고아줄/반쪽 빈 페이지). 수치 통과인데 어색하면 근거와 함께 보고.
+5. 문제 발견 시: 원본은 그대로이므로 ops를 수정해 재실행 (Ratchet — 통과 전까지 저장본 교체 금지).
 
 ### 표·그림·문구 삭제 / 색
 - 표는 항상 **순수 2차원 리스트**로 `insert_table`(plain 기본). pandas DataFrame을 넘기면
@@ -109,6 +121,9 @@ ops 예시 (위에서 아래로 순차 실행):
 | 보안 승인 팝업에서 멈춤 | pyhwpx가 자동 등록하지만, 구버전 한글이면 한컴 보안모듈(FilePathCheckerModule) 수동 등록 필요 |
 | `insert_picture` TypeError | pyhwpx 버전 차이 — 백엔드가 자동 폴백함. `pip install -U pyhwpx` 권장 |
 | `insert_picture` ValueError (sizeoption=1 width/height) | 폭만 주면 pyhwpx가 둘 다 요구. v0.1.1부터 `width_mm`만 줘도 종횡비로 높이 자동 계산 |
+| 그림이 지정 크기 무시·거대(native)로 삽입 | pyhwpx `insert_picture`의 width/height 단위는 **mm**(HwpUnit 아님). v0.1.2에서 mm 직접 전달로 수정. 구버전은 MiliToHwpUnit 변환 탓에 무시됐음 |
+| 헤딩 아래·그림 주변 과다 공백 | 빈 문단(엔터) 잔재. `layout_qa.py`로 수치 측정 → `collapse_empty_paragraphs`+`delete_blank_after/before`로 보정. 1빈줄은 보존(과압축 금지) |
+| layout_qa가 그림 페이지를 오탐 | 간격 지표는 그림이 점유한 세로 구간을 제외(v0.1.2). 그래도 뜨면 진짜 빈 문단 구멍 |
 | 삽입 본문이 파란색(또는 안내문 색) | 색 안내문 위치 상속. `set_char_color`로 일괄 검정. PDF에서 색 글자 0 확인 |
 | 표에 숫자 헤더·인덱스 열 오염 | DataFrame 경유 삽입. 순수 2D 리스트로 `insert_table`(plain). 기존 표는 `delete_ctrls`(tbl) 후 재삽입 |
 | 콤마 든 문구가 일부만 지워짐(콤마 잔존) | `replace_all`이 콤마로 분리. `find_delete` 사용 |

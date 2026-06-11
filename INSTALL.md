@@ -4,10 +4,16 @@
 ```powershell
 # Python 3.12 권장 (한글 2022 기준 검증 환경)
 pip install pyhwpx pywin32
+# 레이아웃 QA(공백/간격 수치 측정·PDF 렌더)용
+pip install pymupdf
+# (선택) 이미지 종횡비 자동 높이 — 없으면 PNG 헤더 직독으로 폴백
+pip install pillow
 # 확인
 python -c "from pyhwpx import Hwp; h=Hwp(); print('OK'); h.quit()"
+python -c "import fitz; print('pymupdf', fitz.__version__)"
 ```
 첫 실행 시 pyhwpx가 보안모듈을 자동 등록한다. 한글 프로세스가 떠 있으면 모두 종료 후 실행.
+`scripts/layout_qa.py`(레이아웃 수치 게이트)는 pymupdf(fitz)가 필요하다.
 
 ## 1. Claude Code (Windows) — 권장 메인 환경
 ```powershell

@@ -29,12 +29,16 @@ ops.json 형식 (순서대로 실행):
   {"op": "edit_equation", "index": 0, "latex": "E=mc^2"},     // n번째 기존 수식 교체
   {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값"},
   {"op": "set_char_color", "color": "#000000"},     // 문서 전체 글자색(기본 all)
-  {"op": "delete_ctrls", "types": ["tbl", "gso"]}   // 표/그림 삭제(캡션 텍스트는 유지)
+  {"op": "delete_ctrls", "types": ["tbl", "gso"]},  // 표/그림 삭제(캡션 텍스트는 유지)
+  {"op": "collapse_empty_paragraphs"},              // 연속 빈 문단 -> 1빈줄(^n^n^n->^n^n)
+  {"op": "delete_blank_after",  "text": "캡션"},    // 캡션 뒤 빈 문단 제거(이미지 밀착)
+  {"op": "delete_blank_before", "text": "다음캡션"} // 객체 앞 빈 문단 제거(뒤 캡션 앵커)
 ]
 """
 
 import argparse
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -166,6 +170,81 @@ def op_find_delete(hwp, o):
     return {"deleted": n}
 
 
+def _count_blank_runs(hwp):
+    """본문에서 '빈 문단 2개 이상 연속'(개행 3개 이상)의 개수를 센다."""
+    try:
+        full = hwp.get_text_file("TEXT", "") if hasattr(hwp, "get_text_file") \
+            else hwp.GetTextFile("TEXT", "")
+    except Exception:
+        return 0
+    t = full.replace("\r\n", "\n").replace("\r", "\n")
+    return len(re.findall(r"\n{3,}", t))
+
+
+def op_collapse_empty_paragraphs(hwp, o):
+    """연속 빈 문단을 1개로 줄인다 (^n^n^n -> ^n^n 반복, 0건까지).
+
+    의도적 1빈줄(빈 문단 1개)은 보존된다 — 헤딩/표/그림 앞뒤 구분 공백 유지.
+
+    HWP 문단 끝은 찾기/바꾸기에서 caret 코드 `^n`으로 표현되며 regex=False(리터럴)
+    에서만 매칭된다. pyhwpx의 regex=True는 HWP 정규식이 아니라 python re를 본문
+    텍스트(\\r\\n)에 적용하는 경로라 `^n`/`\\n` 모두 어긋난다 — 반드시 리터럴 사용.
+    find_replace_all 반환값이 불안정하므로 종료는 본문의 '개행 3개 이상' 런 개수로
+    판정하고, 한 회차에 줄지 않으면 멈추고 보고한다.
+    """
+    find = o.get("find", "^n^n^n")
+    repl = o.get("replace", "^n^n")
+    start = prev = _count_blank_runs(hwp)
+    rounds = 0
+    while prev > 0 and rounds < 200:
+        hwp.find_replace_all(find, repl, regex=False)
+        rounds += 1
+        cur = _count_blank_runs(hwp)
+        if cur >= prev:  # 진전 없음 → 중단
+            break
+        prev = cur
+    return {"rounds": rounds, "blank_runs_before": start,
+            "blank_runs_after": prev, "progress": start > prev}
+
+
+def op_delete_blank_after(hwp, o):
+    """앵커 문구가 있는 문단 끝에서 전방 삭제로 바로 뒤 빈 문단(들)을 제거.
+
+    그림 캡션↔이미지처럼 '한 단위'를 밀착시킬 때 사용. count만큼만 문단 끝 마크를
+    지우므로(기본 1) 과도 삭제 금지. 캡션 바로 뒤가 이미 본문/이미지면 호출하지 말 것
+    (밀착 대상인 단일 빈 문단이 있을 때만 사용).
+    """
+    hwp.MoveDocBegin()
+    if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
+        raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+    # find가 문구를 선택한 상태. Cancel로 선택을 풀면 커서가 문구 '끝'(문단 끝)에
+    # 놓인다. MoveLineEnd는 줄바꿈된 문단에서 첫 시각줄 끝으로 가 문단 중간을
+    # 잘라먹으므로 쓰지 않는다.
+    hwp.Cancel()
+    n = int(o.get("count", 1))
+    for _ in range(n):
+        hwp.Delete()           # 다음 문단 끝 마크 제거(빈 문단 흡수)
+    return {"deleted_breaks": n}
+
+
+def op_delete_blank_before(hwp, o):
+    """앵커 문구가 있는 문단의 '앞' 빈 문단(들)을 제거.
+
+    delete_blank_after의 대칭. 표/객체 바로 앞은 텍스트로 앵커할 수 없으므로,
+    뒤따르는 캡션 등을 앵커로 잡아 그 앞의 빈 문단을 줄일 때 쓴다.
+    """
+    hwp.MoveDocBegin()
+    if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
+        raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+    hwp.Cancel()
+    run = getattr(hwp, "Run", None) or (lambda a: hwp.HAction.Run(a))
+    run("MoveParaBegin")       # 앵커 문단 맨 앞으로
+    n = int(o.get("count", 1))
+    for _ in range(n):
+        run("DeleteBack")      # 앞 문단 끝 마크 제거(앞의 빈 문단 흡수)
+    return {"deleted_breaks": n}
+
+
 def op_move(hwp, o):
     to = o.get("to", "doc_end")
     {"doc_end": hwp.MoveDocEnd, "doc_start": hwp.MoveDocBegin,
@@ -279,9 +358,9 @@ def op_insert_picture(hwp, o):
             h = round(w * ar, 2)
             auto_h = True
     if w or h:
-        kwargs.update(sizeoption=1,
-                      width=hwp.MiliToHwpUnit(w) if w else 0,
-                      height=hwp.MiliToHwpUnit(h) if h else 0)
+        # pyhwpx insert_picture의 width/height 단위는 mm (HwpUnit 아님!).
+        # 과거 MiliToHwpUnit 변환은 거대값을 넘겨 사이즈가 무시됐다(native 삽입).
+        kwargs.update(sizeoption=1, width=w or 0, height=h or 0)
     try:
         hwp.insert_picture(path, **kwargs)
     except TypeError:  # pyhwpx 버전별 시그니처 차이 흡수
@@ -375,6 +454,9 @@ OPS = {
     "set_cell": op_set_cell,
     "set_char_color": op_set_char_color,
     "delete_ctrls": op_delete_ctrls,
+    "collapse_empty_paragraphs": op_collapse_empty_paragraphs,
+    "delete_blank_after": op_delete_blank_after,
+    "delete_blank_before": op_delete_blank_before,
 }
 
 
