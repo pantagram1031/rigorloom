@@ -32,7 +32,11 @@ ops.json 형식 (순서대로 실행):
   {"op": "delete_ctrls", "types": ["tbl", "gso"]},  // 표/그림 삭제(캡션 텍스트는 유지)
   {"op": "collapse_empty_paragraphs"},              // 연속 빈 문단 -> 1빈줄(^n^n^n->^n^n)
   {"op": "delete_blank_after",  "text": "캡션"},    // 캡션 뒤 빈 문단 제거(이미지 밀착)
-  {"op": "delete_blank_before", "text": "다음캡션"} // 객체 앞 빈 문단 제거(뒤 캡션 앵커)
+  {"op": "delete_blank_before", "text": "다음캡션"},// 객체 앞 빈 문단 제거(뒤 캡션 앵커)
+  {"op": "insert_picture", "path": "g.png", "width_mm": 125, "own_paragraph": true}, // 자기문단+가운데
+  {"op": "insert_equation", "hwpeqn": "E=mc^2", "display": true},  // 자기문단+가운데(display)
+  {"op": "set_para_align", "align": "justify", "all": true},       // 본문 양쪽정렬
+  {"op": "set_para_align", "align": "center", "anchor": "제목"}    // 특정 문단만
 ]
 """
 
@@ -257,6 +261,48 @@ def op_insert_text(hwp, o):
     return {"inserted_chars": len(o["text"])}
 
 
+_ALIGN_ACTIONS = {
+    "justify": "ParagraphShapeAlignJustify",
+    "center": "ParagraphShapeAlignCenter",
+    "left": "ParagraphShapeAlignLeft",
+    "right": "ParagraphShapeAlignRight",
+    "distribute": "ParagraphShapeAlignDistribute",
+}
+
+
+def _run(hwp, action):
+    runner = getattr(hwp, "Run", None)
+    if callable(runner):
+        return runner(action)
+    return hwp.HAction.Run(action)
+
+
+def op_set_para_align(hwp, o):
+    """문단 정렬 변경. all=true면 문서 전체, anchor=문구면 그 문단만.
+
+    align: justify(양쪽)|center(가운데)|left|right|distribute(배분).
+    그림·수식 문단은 center, 본문은 justify, URL/참고문헌은 left 권장.
+    """
+    align = o.get("align", "justify")
+    act = _ALIGN_ACTIONS.get(align)
+    if not act:
+        raise RuntimeError(f"알 수 없는 align: {align}")
+    if o.get("all"):
+        hwp.MoveDocBegin()
+        hwp.SelectAll()
+    elif o.get("anchor"):
+        hwp.MoveDocBegin()
+        if not (hwp.find(o["anchor"]) if hasattr(hwp, "find") else False):
+            raise RuntimeError(f"앵커 문구를 찾지 못함: {o['anchor']!r}")
+        hwp.Cancel()  # 선택 풀고 그 문단에 커서
+    _run(hwp, act)
+    try:
+        hwp.Cancel()
+    except Exception:
+        pass
+    return {"align": align}
+
+
 def op_insert_equation(hwp, o):
     if "hwpeqn" in o:
         script, warns = o["hwpeqn"], []
@@ -265,6 +311,12 @@ def op_insert_equation(hwp, o):
     ok, msg = hwpeqn_sanity_check(script)
     if not ok:
         raise RuntimeError(f"수식 스크립트 검증 실패({msg}): {script}")
+    # display=true: 큰 수식은 본문 문단에 끼지 않고 자기 문단(가운데)에 둔다.
+    # (줄 걸림·자간 벌어짐은 대부분 인라인 수식 위반에서 나온다.) 호출 전 커서를
+    # lead-in 문장 끝에 두면, \r\n으로 새 문단을 만들고 그 문단에 수식만 남긴다.
+    display = o.get("display", False)
+    if display:
+        hwp.insert_text("\r\n")
     pset = hwp.HParameterSet.HEqEdit
     hwp.HAction.GetDefault("EquationCreate", pset.HSet)
     pset.string = script
@@ -277,7 +329,9 @@ def op_insert_equation(hwp, o):
         hwp.Cancel()
     except Exception:
         pass
-    return {"hwpeqn": script, "warnings": warns}
+    if display:
+        _run(hwp, "ParagraphShapeAlignCenter")
+    return {"hwpeqn": script, "warnings": warns, "display": display}
 
 
 def op_edit_equation(hwp, o):
@@ -361,11 +415,20 @@ def op_insert_picture(hwp, o):
         # pyhwpx insert_picture의 width/height 단위는 mm (HwpUnit 아님!).
         # 과거 MiliToHwpUnit 변환은 거대값을 넘겨 사이즈가 무시됐다(native 삽입).
         kwargs.update(sizeoption=1, width=w or 0, height=h or 0)
+    # own_paragraph(기본 true): 큰 그림은 본문 문단에 끼지 않고 자기 문단에 단독으로
+    # 들어가야 한다. 인라인 그림은 캡션 줄이 그림 옆에 끼거나 줄이 벌어지는 원인.
+    # 호출 전 커서를 캡션 문단 끝에 두면 \r\n으로 새 문단을 만들고 거기에 그림만 둔다.
+    own_para = o.get("own_paragraph", True)
+    if own_para:
+        hwp.insert_text("\r\n")
     try:
         hwp.insert_picture(path, **kwargs)
     except TypeError:  # pyhwpx 버전별 시그니처 차이 흡수
         hwp.insert_picture(path)
-    return {"picture": path, "width_mm": w, "height_mm": h, "auto_height": auto_h}
+    if own_para:
+        _run(hwp, "ParagraphShapeAlignCenter")
+    return {"picture": path, "width_mm": w, "height_mm": h,
+            "auto_height": auto_h, "own_paragraph": own_para}
 
 
 def _parse_color(c):
@@ -457,6 +520,7 @@ OPS = {
     "collapse_empty_paragraphs": op_collapse_empty_paragraphs,
     "delete_blank_after": op_delete_blank_after,
     "delete_blank_before": op_delete_blank_before,
+    "set_para_align": op_set_para_align,
 }
 
 
