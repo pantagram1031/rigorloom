@@ -158,6 +158,7 @@ def _is_true(v, default=True):
 
 def build_ops(meta, sections, bundle_dir):
     base_pt = int(meta.get("base_pt", 10))               # 본문 기본 10pt
+    caption_pt = int(meta.get("caption_pt", 9))          # 캡션 9pt (홍길동 관습)
     binding = (meta.get("binding") or "book").strip().lower()
     abstract = _is_true(meta.get("abstract"), default=True)
     ops = []
@@ -212,14 +213,17 @@ def build_ops(meta, sections, bundle_dir):
             elif b["kind"] == "fig":
                 if not b["file"]:
                     die("FIG 태그에 file 없음")
-                ops.append({"op": "insert_text",
-                            "text": b["caption"] + "\r\n", "pt": base_pt})
+                width = b["width"] or 110.0  # P4: 미지정 시 110mm (본문 150mm의 ~73%)
                 ops.append({"op": "insert_picture",
                             "path": str((figs_dir / b["file"]).resolve()),
-                            "width_mm": b["width"], "own_paragraph": True})
+                            "width_mm": width, "own_paragraph": True})
+                if b["caption"]:  # P2: 캡션은 그림 아래, 빈 캡션 생략
+                    ops.append({"op": "insert_text",
+                                "text": b["caption"] + "\r\n", "pt": caption_pt})
             elif b["kind"] == "table":
-                ops.append({"op": "insert_text",
-                            "text": b["caption"] + "\r\n", "pt": base_pt})
+                if b["caption"]:  # P3: 빈 캡션 생략
+                    ops.append({"op": "insert_text",
+                                "text": b["caption"] + "\r\n", "pt": caption_pt})
                 ops.append({"op": "insert_table", "data": b["data"],
                             "treat_as_char": True})
     # BUG4: insert_blank_before가 멱등(앞에 빈 문단 있으면 건너뜀)이라 연속 빈 문단을
