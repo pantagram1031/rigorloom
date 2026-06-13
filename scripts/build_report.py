@@ -21,7 +21,8 @@ sys.path.insert(0, str(HERE))
 from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
 
 TAG_LINE = re.compile(r"^\[\[(/?[A-Za-z]+)(.*?)\]\]\s*$")
-KNOWN_TAGS = {"EQ", "FIG", "TABLE", "/TABLE"}
+KNOWN_TAGS = {"EQ", "FIG", "TABLE", "/TABLE", "URL"}
+URL_RE = re.compile(r"^https?://\S+$")
 
 
 def die(msg, code=2):
@@ -91,12 +92,19 @@ def parse_content(text):
             flush_para()
             name = tag.group(1)
             base = name.lstrip("/")
-            if base not in {"EQ", "FIG", "TABLE"}:
+            if base not in {"EQ", "FIG", "TABLE", "URL"}:
                 die(f"미지 태그: [[{name}]] (line {i + 1})")
             if cur is None:
                 die(f"SECTION 밖의 태그: [[{name}]] (line {i + 1})")
             attrs, flags = parse_attrs(tag.group(2))
-            if name == "EQ":
+            if name == "URL":
+                href = attrs.get("href") or attrs.get("url")
+                if not href:
+                    die(f"[[URL]] 태그에 href 없음 (line {i + 1})")
+                cur["blocks"].append({
+                    "kind": "url", "url": href, "text": attrs.get("text", ""),
+                })
+            elif name == "EQ":
                 cur["blocks"].append({
                     "kind": "eq",
                     "display": "inline" not in flags,
@@ -126,6 +134,13 @@ def parse_content(text):
                 })
             i += 1
             continue
+        if URL_RE.match(line.strip()):   # BUG5: URL 단독 줄 → 링크 블록(빈 줄 불필요)
+            flush_para()
+            if cur is not None:
+                cur["blocks"].append({"kind": "url", "url": line.strip(),
+                                      "text": ""})
+            i += 1
+            continue
         if line.strip() == "":
             flush_para()
         else:
@@ -135,21 +150,51 @@ def parse_content(text):
     return meta, sections
 
 
+def _is_true(v, default=True):
+    if v is None:
+        return default
+    return str(v).strip().lower() not in ("false", "0", "no", "off")
+
+
 def build_ops(meta, sections, bundle_dir):
-    base_pt = int(meta.get("base_pt", 11))
+    base_pt = int(meta.get("base_pt", 10))               # 본문 기본 10pt
+    binding = (meta.get("binding") or "book").strip().lower()
+    abstract = _is_true(meta.get("abstract"), default=True)
     ops = []
+    # BUG3: 제출용이면 좌우 대칭 여백으로 먼저 전환.
+    if binding == "submit":
+        ops.append({"op": "page_binding", "mode": "submit"})
     title, t_anchor = meta.get("title"), meta.get("title_anchor")
     if title and t_anchor:
         ops.append({"op": "replace_all", "find": t_anchor, "replace": title})
+    # BUG6: 초록 off면 양식의 초록 표(캡션 포함)를 통째로 제거.
+    if not abstract:
+        ai = meta.get("abstract_table_index", 1)
+        ops.append({"op": "delete_ctrls", "types": ["tbl"], "index": int(ai)})
     figs_dir = Path(bundle_dir) / "figures"
-    for sec in sections:
-        ops.append({"op": "goto_text", "text": sec["anchor"]})
-        # 제목 끝에서 새 문단을 열어 본문이 제목에 붙지 않게 한다
-        # ("VI.  참고문헌David Nash..."처럼 제목+본문이 한 문단에 붙는 것을 막는다).
-        ops.append({"op": "insert_text", "text": "\r\n"})
+    for si, sec in enumerate(sections):
+        # BUG4: 제목 앞 빈 문단 1개 보장(이전 본문과 제목 분리). 단 첫 섹션은 앞에 분리할
+        # 본문이 없고(머리말/초록 영역만 있음), 그 영역에 빈 문단을 넣으면 HWP가 인접
+        # 글자크기를 첫 제목에 번지게 하므로 건너뛴다(첫 제목 원본 크기 보존).
+        if si > 0:
+            ops.append({"op": "insert_blank_before", "text": sec["anchor"]})
+        # 제목 문단을 쪼개지 않고 다음 문단 맨 앞으로 가서 본문을 넣는다(제목 글자크기
+        # 보존). 제목 끝에서 \r\n 분리하면 pending 크기가 제목에 번져 제목이 오염된다.
+        ops.append({"op": "goto_text", "text": sec["anchor"], "next_para": True})
         for b in sec["blocks"]:
             if b["kind"] == "para":
-                ops.append({"op": "insert_text", "text": b["text"] + "\r\n"})
+                # BUG1+2: 본문은 앵커(제목) 서식 상속 금지 — base_pt 강제.
+                if URL_RE.match(b["text"]):  # BUG5: URL 단독 문단 → 링크 필드.
+                    ops.append({"op": "insert_hyperlink", "url": b["text"],
+                                "pt": base_pt})
+                    ops.append({"op": "insert_text", "text": "\r\n", "pt": base_pt})
+                else:
+                    ops.append({"op": "insert_text",
+                                "text": b["text"] + "\r\n", "pt": base_pt})
+            elif b["kind"] == "url":      # BUG5: 명시 [[URL]] 태그.
+                ops.append({"op": "insert_hyperlink", "url": b["url"],
+                            "text": b.get("text") or b["url"], "pt": base_pt})
+                ops.append({"op": "insert_text", "text": "\r\n", "pt": base_pt})
             elif b["kind"] == "eq":
                 op = {"op": "insert_equation", "base_pt": base_pt,
                       "display": b["display"]}
@@ -167,14 +212,19 @@ def build_ops(meta, sections, bundle_dir):
             elif b["kind"] == "fig":
                 if not b["file"]:
                     die("FIG 태그에 file 없음")
-                ops.append({"op": "insert_text", "text": b["caption"] + "\r\n"})
+                ops.append({"op": "insert_text",
+                            "text": b["caption"] + "\r\n", "pt": base_pt})
                 ops.append({"op": "insert_picture",
                             "path": str((figs_dir / b["file"]).resolve()),
                             "width_mm": b["width"], "own_paragraph": True})
             elif b["kind"] == "table":
-                ops.append({"op": "insert_text", "text": b["caption"] + "\r\n"})
+                ops.append({"op": "insert_text",
+                            "text": b["caption"] + "\r\n", "pt": base_pt})
                 ops.append({"op": "insert_table", "data": b["data"],
                             "treat_as_char": True})
+    # BUG4: insert_blank_before가 멱등(앞에 빈 문단 있으면 건너뜀)이라 연속 빈 문단을
+    # 만들지 않는다. collapse_empty_paragraphs는 제목 글자크기를 오염시키므로 자동
+    # 추가하지 않는다(필요 시 수동 QA op로만 사용).
     return ops
 
 

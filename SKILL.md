@@ -117,6 +117,13 @@ ops 예시 (위에서 아래로 순차 실행):
 - 생성 규칙: 수식=`insert_equation`(display 기본, latex는 eqn.py+sanity), 그림=
   `insert_picture`(own_paragraph+width_mm), 표=`insert_table`(plain). 인라인 객체 원칙과
   동일. 조립 후 검증은 위의 레이아웃 QA + 시각 이중 게이트 그대로 적용.
+- **v0.3.0 메타/동작**(bundle_spec 참고): `base_pt`(기본 10, 본문·수식·캡션·URL에 글자크기
+  강제+검정 — 제목 서식 상속 안 함), `binding: book|submit`(submit=좌우대칭 여백),
+  `abstract: true|false`(false=초록 표 제거). URL 단독 줄/`[[URL]]`은 링크 필드(파랑·밑줄).
+  제목 앞 빈 문단 1개 자동 보장(`insert_blank_before`, 멱등). `com_backend edit --ops`는
+  build_report의 {ok,...,ops} 래퍼를 그대로 받는다.
+- 조립 후 **charPr 수치 검증**(.hwpx unzip → `<hh:charPr height/textColor>`): 본문·수식 =
+  base_pt·검정, URL = base_pt·#0000FF·밑줄, 제목 = 양식 원본 크기.
 - 회귀 픽스처: `tests/fixtures/regen-brake/`(회생제동 보고서를 bundle로 역변환). dry-run
   ops 개수(섹션·EQ·FIG·TABLE)와 앵커가 기준과 일치해야 한다.
 
@@ -166,6 +173,13 @@ ops 예시 (위에서 아래로 순차 실행):
 | 제목과 본문이 한 줄에 붙음("Ⅵ.참고문헌David…") | build_report가 goto 후 본문을 같은 문단에 삽입. v0.2.1에서 제목 뒤 새 문단 분리 |
 | 캡션이 그림과 떨어져 페이지가 갈림 | 객체 op의 leading `\r\n`이 캡션과 객체 사이 빈 문단을 만듦. v0.2.1에서 문단 맨 앞이면 생략(`_para_offset`) |
 | set_char_color로 검정 적용이 무효 | set_font(TextColor=0)이 falsy 0을 스킵. v0.2.1에서 HParameterSet 경로로 항상 적용. 단 표지 셀 내부는 SelectAll이 못 잡아 문단 표적 처리 필요 |
+| 삽입 본문이 제목 글자크기(15pt 등)를 상속 | v0.3.0: `insert_text`에 `pt` 주면 insert-then-select로 글자크기 강제(+검정). pending CharShape는 한 입력 밀려 불가. build_report가 base_pt(기본10)를 자동 부여 |
+| 삽입 본문이 빨간색(안내문 자리 상속) | next_para 삽입이 빨간 안내문 문단 색을 상속. v0.3.0: pt 스탬프가 글자색도 검정으로 못박음 |
+| 제목 글자크기가 본문값으로 바뀜 | `collapse_empty_paragraphs`(find_replace_all)·`insert_text("\r\n")`가 인접 제목 charPr를 갈아끼움. v0.3.0: 제목 분리는 `goto_text next_para`(제목 문단 안 쪼갬)+`insert_blank_before`(BreakPara, pending 미사용)로. collapse 자동삽입 중단 |
+| 첫 섹션(I) 제목만 크기 축소(15→12 등) | 양식 첫 제목이 12pt 영역(초록표/머리말)과 인접. delete_ctrls·빈문단 삽입 시 HWP가 인접 12pt를 제목에 번지게 함. 이 pyhwpx는 기존 런 글자크기 재설정이 불가(get/set 모두 1500 반환)해 복원 불가 — 알려진 한계(제목 여전히 본문보다 큼) |
+| 제출본인데 홀짝 여백이 미러링(제본용) | bundle `binding: submit` → `page_binding` op. 좌우=(좌+우+제본)/2, 제본=0. 인쇄폭 유지하며 좌우대칭 |
+| 참고문헌 URL이 일반 텍스트(링크 아님) | 한글 '스페이스→자동링크'는 COM 미동작. v0.3.0 `insert_hyperlink`(텍스트 타이핑→선택→필드+파랑·밑줄). description="" 주면 글자 안 보이니 표시문구 필수 |
+| 초록을 빼고 싶다 | bundle `abstract: false` → `delete_ctrls`(tbl, abstract_table_index 기본1=초록표). content.md에서 초록 섹션 제거 |
 
 ## 5. 참고 문서
 - `references/hwpeqn_cheatsheet.md` — 한글 수식 스크립트 문법 전체

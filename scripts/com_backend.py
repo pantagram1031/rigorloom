@@ -36,7 +36,11 @@ ops.json 형식 (순서대로 실행):
   {"op": "insert_picture", "path": "g.png", "width_mm": 125, "own_paragraph": true}, // 자기문단+가운데
   {"op": "insert_equation", "hwpeqn": "E=mc^2", "display": true},  // 자기문단+가운데(display)
   {"op": "set_para_align", "align": "justify", "all": true},       // 본문 양쪽정렬
-  {"op": "set_para_align", "align": "center", "anchor": "제목"}    // 특정 문단만
+  {"op": "set_para_align", "align": "center", "anchor": "제목"},   // 특정 문단만
+  {"op": "insert_text", "text": "본문\\r\\n", "pt": 10},           // 글자크기 강제(앵커 상속 안 함)
+  {"op": "insert_blank_before", "text": "I.  서론"},               // 제목 앞 빈 문단 1개 보장
+  {"op": "insert_hyperlink", "url": "https://doi.org/..."},        // 진짜 링크 필드(밑줄·색)
+  {"op": "page_binding", "mode": "submit"}                         // 제출용 좌우대칭 여백
 ]
 """
 
@@ -151,6 +155,11 @@ def op_goto_text(hwp, o):
         raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
     if o.get("after", True):
         hwp.MoveLineEnd() if o.get("line_end") else hwp.Cancel()
+    if o.get("next_para"):
+        # 제목 문단을 쪼개지 않고 다음 문단(양식 안내문) 맨 앞으로 이동한다.
+        # 제목 끝에서 \r\n을 넣어 쪼개면 pending 글자크기가 제목에 번져 제목 크기가
+        # 바뀐다(15pt 제목이 10pt로). 다음 문단 시작에 본문을 넣으면 제목은 불변.
+        _run(hwp, "MoveNextParaBegin")
     return {"found": True}
 
 
@@ -256,9 +265,44 @@ def op_move(hwp, o):
     return {"moved": to}
 
 
+def _set_char_height(hwp, pt, color=0):
+    """선택 글자크기를 pt로, 글자색을 color로 설정 (다른 속성은 GetDefault로 보존).
+
+    color 기본 0=검정. 조립 본문은 앵커(빨간 안내문) 자리에 들어가 색을 상속하므로
+    (본문이 빨강으로 박힘), 크기 강제와 함께 검정으로 못박는다.
+    """
+    pset = hwp.HParameterSet.HCharShape
+    hwp.HAction.GetDefault("CharShape", pset.HSet)
+    pset.Height = int(round(float(pt) * 100))  # 1pt = 100 HwpUnit
+    pset.TextColor = color
+    hwp.HAction.Execute("CharShape", pset.HSet)
+
+
 def op_insert_text(hwp, o):
-    hwp.insert_text(o["text"])
-    return {"inserted_chars": len(o["text"])}
+    """본문 텍스트 삽입. pt가 주어지면 앵커 서식 상속 대신 그 크기를 강제 적용한다.
+
+    빈 영역에 CharShape를 거는 'pending font'는 한 번 밀려(다음 입력에 적용) 신뢰할
+    수 없다 — 그래서 먼저 삽입하고, 삽입 구간을 선택해 CharShape.Height를 거는
+    insert-then-select 경로를 쓴다(결정론적). 제목(15pt) 등 앵커 서식을 상속하지 않는다.
+    """
+    text = o["text"]
+    pt = o.get("pt")
+    if not pt:
+        hwp.insert_text(text)
+        return {"inserted_chars": len(text)}
+    start = hwp.get_pos()           # (list, para, pos)
+    hwp.insert_text(text)
+    end = hwp.get_pos()
+    try:
+        if hwp.select_text(start[1], start[2], end[1], end[2], start[0]):
+            _set_char_height(hwp, pt)
+        try:
+            hwp.Cancel()
+        except Exception:
+            pass
+    finally:
+        hwp.set_pos(*end)           # 후속 op를 위해 커서를 삽입 끝으로 복귀
+    return {"inserted_chars": len(text), "pt": pt}
 
 
 _ALIGN_ACTIONS = {
@@ -541,6 +585,88 @@ def op_set_cell(hwp, o):
     return {"cell": [o["table"], o["row"], o["col"]]}
 
 
+def op_insert_blank_before(hwp, o):
+    """앵커(제목) 문단 '앞'에 빈 문단 1개를 보장한다.
+
+    이전 본문 끝과 다음 제목/소제목이 붙는("I. 서론밤하늘") 현상을 막는다. 제목 문단
+    맨 앞에서 \\r\\n을 넣어 위에 빈 문단을 만든다. 연속 2개 이상이 생기면 후속
+    collapse_empty_paragraphs가 1개로 정규화한다(공백 과잉 방지).
+    """
+    hwp.MoveDocBegin()
+    if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
+        raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+    hwp.Cancel()
+    pos = hwp.get_pos()              # (list, para, pos) — 제목 문단
+    hwp.set_pos(pos[0], pos[1], 0)   # 제목 문단 맨 앞
+    _run(hwp, "MoveLeft")           # 이전 문단 끝으로 이동
+    # 빈 문단 삽입. insert_text("\r\n")은 pending 글자크기를 제목 런에 번지게 하므로
+    # (제목 11pt→10pt 오염), BreakPara(엔터 동작)로 넣는다 — 주변 문단 서식을 상속하고
+    # pending을 쓰지 않아 제목이 보존된다. 항상 삽입한다(건너뛰면 첫 섹션 제목이 후속
+    # 본문 삽입에 오염되는 사례가 있음).
+    _run(hwp, "BreakPara")
+    return {"blank_before": o["text"]}
+
+
+def op_insert_hyperlink(hwp, o):
+    """URL을 실제 하이퍼링크 필드로 삽입한다.
+
+    한글 GUI의 '스페이스→자동 링크화'는 COM(InsertText) 경로에선 트리거되지 않는다.
+    pyhwpx의 insert_hyperlink(hypertext, description)로 진짜 HYPERLINK 필드를 넣는다
+    (밑줄·색 링크 서식). text가 url과 다르면 표시문구로 쓴다.
+    """
+    url = o["url"]
+    text = o.get("text") or url
+    # insert_hyperlink(url, desc)는 필드만 만들고 표시 글자를 넣지 않아 화면에 아무것도
+    # 안 보인다. 표준 패턴: 표시 텍스트를 먼저 타이핑 → 선택 → 그 선택을 하이퍼링크로
+    # 감싼다. 그리고 링크 서식(밑줄+파랑)을 직접 입힌다(COM은 자동 서식을 안 넣음).
+    start = hwp.get_pos()
+    hwp.insert_text(text)
+    end = hwp.get_pos()
+    hwp.select_text(start[1], start[2], end[1], end[2], start[0])
+    ok = hwp.insert_hyperlink(url, text)
+    # 링크 서식: 밑줄 + 파랑(#0000FF → hwp TextColor 0xFF0000). 본문 크기(10pt)는 유지.
+    hwp.select_text(start[1], start[2], end[1], end[2], start[0])
+    pset = hwp.HParameterSet.HCharShape
+    hwp.HAction.GetDefault("CharShape", pset.HSet)
+    pset.TextColor = 0xFF0000
+    if o.get("pt"):                 # URL도 본문 크기로 강제(앵커 자리 크기 상속 방지)
+        pset.Height = int(round(float(o["pt"]) * 100))
+    try:
+        pset.UnderlineType = hwp.UnderlineType("Bottom")
+    except Exception:
+        pset.UnderlineType = 1
+    hwp.HAction.Execute("CharShape", pset.HSet)
+    try:
+        hwp.Cancel()
+    except Exception:
+        pass
+    hwp.set_pos(*end)
+    return {"hyperlink": url, "text": text, "ok": bool(ok)}
+
+
+def op_page_binding(hwp, o):
+    """제본용(book)↔제출용(submit) 쪽 여백 전환.
+
+    book(기본): 원본 그대로(안쪽/바깥쪽 미러링 + 제본 여백 유지).
+    submit: 좌우 여백을 (좌+우+제본)/2로 대칭화하고 제본 여백을 0으로 — 인쇄폭은
+    동일하게 두면서 홀짝 페이지 좌우가 같아진다(일반 제출 파일).
+    """
+    mode = (o.get("mode") or "submit").lower()
+    hwp.MoveDocBegin()
+    pset = hwp.HParameterSet.HSecDef
+    hwp.HAction.GetDefault("PageSetup", pset.HSet)
+    pd = pset.PageDef
+    if mode == "submit":
+        total = int(pd.LeftMargin) + int(pd.RightMargin) + int(pd.GutterLen)
+        half = total // 2
+        pd.LeftMargin = half
+        pd.RightMargin = total - half
+        pd.GutterLen = 0
+        hwp.HAction.Execute("PageSetup", pset.HSet)
+    return {"binding": mode, "left": int(pd.LeftMargin),
+            "right": int(pd.RightMargin), "gutter": int(pd.GutterLen)}
+
+
 OPS = {
     "replace_all": op_replace_all,
     "put_field": op_put_field,
@@ -559,6 +685,9 @@ OPS = {
     "delete_blank_after": op_delete_blank_after,
     "delete_blank_before": op_delete_blank_before,
     "set_para_align": op_set_para_align,
+    "insert_blank_before": op_insert_blank_before,
+    "insert_hyperlink": op_insert_hyperlink,
+    "page_binding": op_page_binding,
 }
 
 
@@ -595,6 +724,10 @@ def main():
 
         elif args.cmd == "edit":
             ops = json.loads(Path(args.ops).read_text(encoding="utf-8"))
+            # build_report.py는 {ok,counts,anchors,ops} 래퍼를 출력한다. 순수 리스트와
+            # 래퍼 객체를 모두 받아준다(문서화된 `build_report > ops.json` 파이프 호환).
+            if isinstance(ops, dict) and "ops" in ops:
+                ops = ops["ops"]
             hwp = open_hwp(args.file, visible=args.visible)
             results = []
             for i, o in enumerate(ops):
