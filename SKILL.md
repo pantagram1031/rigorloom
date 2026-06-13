@@ -161,6 +161,11 @@ ops 예시 (위에서 아래로 순차 실행):
 | 수식이 깨져 보임 | HwpEqn 문법 오류. eqn.py 단독 실행으로 warnings 확인 후 hwpeqn 직접 작성 |
 | 저장 후 한글에서 "복구" 경고 | XML 백엔드에서 DOM 재직렬화를 했을 가능성 — 바이트 보존 경로만 사용 |
 | COM이 응답 없음 | 작업관리자에서 Hwp.exe 잔존 프로세스 종료 후 재시도 |
+| 수식이 `\frac`·`≤ ft`처럼 raw로 렌더 | bundle latex 속성이 이중 백슬래시(`\\frac`). eqn.py가 v0.2.1부터 정규화하지만 content.md는 단일 백슬래시 권장 |
+| 섹션 본문이 마지막 섹션(Ⅵ 참고문헌) 뒤로 밀림 | 옛 insert_table이 MoveDocEnd로 커서를 문서 끝으로 보냄. v0.2.1에서 표 바로 뒤로 복귀하도록 수정 |
+| 제목과 본문이 한 줄에 붙음("Ⅵ.참고문헌David…") | build_report가 goto 후 본문을 같은 문단에 삽입. v0.2.1에서 제목 뒤 새 문단 분리 |
+| 캡션이 그림과 떨어져 페이지가 갈림 | 객체 op의 leading `\r\n`이 캡션과 객체 사이 빈 문단을 만듦. v0.2.1에서 문단 맨 앞이면 생략(`_para_offset`) |
+| set_char_color로 검정 적용이 무효 | set_font(TextColor=0)이 falsy 0을 스킵. v0.2.1에서 HParameterSet 경로로 항상 적용. 단 표지 셀 내부는 SelectAll이 못 잡아 문단 표적 처리 필요 |
 
 ## 5. 참고 문서
 - `references/hwpeqn_cheatsheet.md` — 한글 수식 스크립트 문법 전체

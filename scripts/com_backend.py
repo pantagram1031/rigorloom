@@ -277,6 +277,17 @@ def _run(hwp, action):
     return hwp.HAction.Run(action)
 
 
+def _para_offset(hwp):
+    """현재 커서의 문단 내 글자 위치. 0이면 문단 맨 앞.
+
+    실패하면 -1을 돌려준다(호출부는 0이 아니라고 보고 새 문단을 연다 = 보수적).
+    """
+    try:
+        return hwp.get_pos()[2]
+    except Exception:
+        return -1
+
+
 def op_set_para_align(hwp, o):
     """문단 정렬 변경. all=true면 문서 전체, anchor=문구면 그 문단만.
 
@@ -312,10 +323,10 @@ def op_insert_equation(hwp, o):
     if not ok:
         raise RuntimeError(f"수식 스크립트 검증 실패({msg}): {script}")
     # display=true: 큰 수식은 본문 문단에 끼지 않고 자기 문단(가운데)에 둔다.
-    # (줄 걸림·자간 벌어짐은 대부분 인라인 수식 위반에서 나온다.) 호출 전 커서를
-    # lead-in 문장 끝에 두면, \r\n으로 새 문단을 만들고 그 문단에 수식만 남긴다.
+    # 커서가 문단 중간이면 새 문단을 열고, 이미 문단 맨 앞(앞 문단이 \r\n로 끝남)이면
+    # 새로 열지 않는다 — 안 그러면 lead-in과 수식 사이에 빈 문단이 끼어 빈 줄이 쌓인다.
     display = o.get("display", False)
-    if display:
+    if display and _para_offset(hwp) != 0:
         hwp.insert_text("\r\n")
     pset = hwp.HParameterSet.HEqEdit
     hwp.HAction.GetDefault("EquationCreate", pset.HSet)
@@ -331,6 +342,10 @@ def op_insert_equation(hwp, o):
         pass
     if display:
         _run(hwp, "ParagraphShapeAlignCenter")
+        # 수식 문단 뒤에 새 문단을 열어 후속 본문이 수식 문단에 붙지 않게 한다
+        # (붙으면 본문이 수식 옆에 끼고 가운데정렬을 상속한다). 새 문단은 본문 정렬.
+        hwp.insert_text("\r\n")
+        _run(hwp, "ParagraphShapeAlignJustify")
     return {"hwpeqn": script, "warnings": warns, "display": display}
 
 
@@ -369,14 +384,32 @@ def op_insert_table(hwp, o):
         hwp.table_from_data(data, treat_as_char=o.get("treat_as_char", True))
         return {"rows": len(data), "cols": len(data[0]), "mode": "dataframe"}
     rows, cols = len(data), len(data[0])
+    # 표 삽입 위치를 기억해 두었다가 표 바로 뒤로 커서를 되돌린다.
+    # (예전엔 MoveDocEnd로 셀을 빠져나왔는데, 그러면 커서가 문서 끝으로 튀어
+    #  이후 본문이 마지막 섹션 뒤에 붙는 순서 붕괴를 일으켰다.)
+    try:
+        before = hwp.get_pos()  # (list, para, pos)
+    except Exception:
+        before = None
     hwp.create_table(rows, cols, treat_as_char=o.get("treat_as_char", True))
     for r in range(rows):
         for c in range(cols):
             hwp.insert_text(str(data[r][c]))
             if not (r == rows - 1 and c == cols - 1):
                 hwp.TableRightCell()
-    hwp.MoveDocEnd()
-    return {"rows": rows, "cols": cols, "mode": "plain"}
+    moved = False
+    if before is not None:
+        try:
+            hwp.set_pos(before[0], before[1], before[2] + 1)  # 표(문자 1개) 바로 뒤
+            moved = True
+        except Exception:
+            moved = False
+    if not moved:
+        hwp.MoveDocEnd()  # 최후 폴백
+    # 표 뒤에 새 문단을 열어 후속 본문이 표(셀)에 끼지 않게 한다.
+    hwp.insert_text("\r\n")
+    _run(hwp, "ParagraphShapeAlignJustify")
+    return {"rows": rows, "cols": cols, "mode": "plain", "cursor_after_table": moved}
 
 
 def _png_aspect(path):
@@ -419,7 +452,9 @@ def op_insert_picture(hwp, o):
     # 들어가야 한다. 인라인 그림은 캡션 줄이 그림 옆에 끼거나 줄이 벌어지는 원인.
     # 호출 전 커서를 캡션 문단 끝에 두면 \r\n으로 새 문단을 만들고 거기에 그림만 둔다.
     own_para = o.get("own_paragraph", True)
-    if own_para:
+    # 캡션이 바로 위 문단(…\r\n)이면 빈 문단을 끼우지 않는다 — 캡션과 그림이 떨어지면
+    # 페이지 경계에서 캡션만 앞 쪽에 고립된다. 문단 중간일 때만 새 문단을 연다.
+    if own_para and _para_offset(hwp) != 0:
         hwp.insert_text("\r\n")
     try:
         hwp.insert_picture(path, **kwargs)
@@ -427,6 +462,10 @@ def op_insert_picture(hwp, o):
         hwp.insert_picture(path)
     if own_para:
         _run(hwp, "ParagraphShapeAlignCenter")
+        # 그림 문단 뒤에 새 문단을 열어 후속 본문이 그림 옆에 끼지 않게 한다
+        # (붙으면 "거리에 오차를"처럼 그림 우측에 본문 일부가 고립된다). 새 문단은 본문 정렬.
+        hwp.insert_text("\r\n")
+        _run(hwp, "ParagraphShapeAlignJustify")
     return {"picture": path, "width_mm": w, "height_mm": h,
             "auto_height": auto_h, "own_paragraph": own_para}
 
@@ -452,14 +491,13 @@ def op_set_char_color(hwp, o):
     if o.get("all", True):
         hwp.MoveDocBegin()
         hwp.SelectAll()
-    # set_font은 빈 값 인자를 건너뛰므로 TextColor만 적용된다(크기·굵기 불변).
-    if hasattr(hwp, "set_font"):
-        hwp.set_font(TextColor=color)
-    else:
-        pset = hwp.HParameterSet.HCharShape
-        hwp.HAction.GetDefault("CharShape", pset.HSet)
-        pset.TextColor = color
-        hwp.HAction.Execute("CharShape", pset.HSet)
+    # CharShape 파라미터로 TextColor만 직접 set한다. set_font(TextColor=...)는
+    # 빈 값 인자를 건너뛰는데 검정(0)도 falsy라 스킵돼 검정 적용이 무효가 된다.
+    # 따라서 항상 HParameterSet 경로를 쓴다(크기·굵기 등 다른 속성은 GetDefault로 보존).
+    pset = hwp.HParameterSet.HCharShape
+    hwp.HAction.GetDefault("CharShape", pset.HSet)
+    pset.TextColor = color
+    hwp.HAction.Execute("CharShape", pset.HSet)
     try:
         hwp.Cancel()
     except Exception:

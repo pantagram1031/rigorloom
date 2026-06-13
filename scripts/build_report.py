@@ -144,6 +144,9 @@ def build_ops(meta, sections, bundle_dir):
     figs_dir = Path(bundle_dir) / "figures"
     for sec in sections:
         ops.append({"op": "goto_text", "text": sec["anchor"]})
+        # 제목 끝에서 새 문단을 열어 본문이 제목에 붙지 않게 한다
+        # ("VI.  참고문헌David Nash..."처럼 제목+본문이 한 문단에 붙는 것을 막는다).
+        ops.append({"op": "insert_text", "text": "\r\n"})
         for b in sec["blocks"]:
             if b["kind"] == "para":
                 ops.append({"op": "insert_text", "text": b["text"] + "\r\n"})

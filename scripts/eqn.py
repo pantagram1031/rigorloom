@@ -97,6 +97,8 @@ SIMPLE_MAP = {
     r"\csc": "csc", r"\sec": "sec", r"\cot": "cot",
     r"\sinh": "sinh", r"\cosh": "cosh", r"\tanh": "tanh",
     r"\arcsin": "arcsin", r"\arccos": "arccos", r"\arctan": "arctan",
+    # 천문/기타 기호
+    r"\odot": "⊙", r"\oplus": "⊕", r"\otimes": "⊗",
     # 공백
     r"\,": "`", r"\;": "``", r"\quad": "~", r"\qquad": "~~",
     r"\!": "",
@@ -255,6 +257,11 @@ def latex_to_hwpeqn(latex):
     warnings = []
     s = latex.strip()
     s = s.strip("$")  # $...$ 허용
+
+    # 0) 이중 백슬래시 정규화: LLM이 만든 번들은 latex 속성을 흔히 이중 escape한다
+    #    (예: "\\frac", "\\left", "\\!"). 명령/공백 토큰 앞의 여분 백슬래시를 하나로
+    #    접는다. 행렬 행구분 "\\"(뒤가 letter/스페이싱이 아님)는 건드리지 않는다.
+    s = re.sub(r"\\{2,}(?=[A-Za-z!,;:])", "\\\\", s)
 
     # 1) 구조(인자 있는 명령) 변환
     s = _convert_structures(s, warnings)
