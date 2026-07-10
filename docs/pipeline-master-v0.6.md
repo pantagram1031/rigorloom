@@ -35,6 +35,13 @@ Precedence for conflicting instructions:
 operator request > form instructions > pipeline defaults
 ```
 
+Private personalization refines this without changing the pipeline contract:
+`request explicit > form user override > form extracted conditions > subject
+profile > global profile > public defaults`. Initialize it with
+`python pipeline/scripts/personalization_ctl.py --profile-root <PRIVATE_ROOT> init`.
+The profile root is ignored local state; generated report prose is never style
+evidence. See `pipeline/references/personalization_contract.md`.
+
 ## 2. Repository and workspace layout
 
 Reusable operating history is documented separately in

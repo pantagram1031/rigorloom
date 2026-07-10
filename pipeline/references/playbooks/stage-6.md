@@ -2,6 +2,10 @@
 
 PURPOSE: Deliver the canonical file and preserve reusable, non-personal lessons.
 
+If a private profile root is configured, collect run feedback into its local
+candidate queue after delivery. Candidates require human review and generated
+report prose is never imported as style evidence.
+
 ENTRY: `pipeline_ctl resume` returns Stage 6 and Stage 5.7 is complete.
 
 EXACT actions:

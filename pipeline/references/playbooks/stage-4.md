@@ -4,7 +4,9 @@ PURPOSE: Write the report to the approved section budgets while preserving
 evidence, level, and provenance.
 
 ENTRY: `pipeline_ctl resume` returns Stage 4; Stage 3 is done and
-`bundle/layout_plan.json` exists.
+`bundle/layout_plan.json` exists. If present, read the resolved local
+`.pipeline/personalization.lock.json`; apply only its resolved rules and never
+use generated report prose as style evidence.
 
 EXACT actions:
 

@@ -38,6 +38,7 @@
         {"pattern": "form_profile.json", "required": true},
         {"pattern": "form_baseline.json", "required": false},
         {"pattern": "heading_anchors.json", "required": false}
+        ,{"pattern": ".pipeline/personalization.lock.json", "required": false}
       ]
     },
     "1": {

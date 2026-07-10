@@ -29,7 +29,8 @@ Requirements: Python 3.10+; `pytest` for tests; Studio dependencies are optional
 git clone https://github.com/pantagram1031/report-pipeline.git
 cd report-pipeline
 python scripts/new_report.py --slug demo --subject math \
-  --topic "A testable question" --form /absolute/path/to/form.hwpx
+  --topic "A testable question" --form /absolute/path/to/form.hwpx \
+  --profile-root /private/report-profile
 python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
@@ -39,6 +40,9 @@ recommended). The generated `.local/` directory is ignored by Git:
 ```sh
 python scripts/setup_profile.py
 ```
+
+For form-specific preferences and feedback candidates, see the
+[personalization contract](pipeline/references/personalization_contract.md).
 
 ### HWP/HWPX output requirements
 

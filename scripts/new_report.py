@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIPELINE_CTL = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
+PERSONALIZATION_CTL = REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py"
 SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
@@ -27,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pages", nargs=2, type=int, metavar=("MIN", "MAX"), default=[5, 12])
     parser.add_argument("--min-figures", type=int, default=4)
     parser.add_argument("--workspace-root", default=str(REPO_ROOT / "workspaces"))
+    parser.add_argument("--profile-root", help="Private personalization store (defaults to .local/personalization)")
     return parser.parse_args()
 
 
@@ -136,6 +138,15 @@ def main() -> int:
         if result.returncode != 0:
             print(result.stderr or result.stdout, file=sys.stderr)
             return result.returncode
+        profile_root = args.profile_root or str(REPO_ROOT / ".local" / "personalization")
+        personal = subprocess.run([
+                sys.executable, str(PERSONALIZATION_CTL), "--profile-root", profile_root, "resolve",
+                "--workspace", str(staging), "--form", str(form), "--subject", args.subject,
+                "--request", str(staging / "request.yaml"),
+            ], capture_output=True, text=True, encoding="utf-8")
+        if personal.returncode != 0:
+            print(personal.stderr or personal.stdout, file=sys.stderr)
+            return personal.returncode
         staging.replace(final)
     finally:
         if staging.exists():

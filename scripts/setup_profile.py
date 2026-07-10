@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -18,6 +20,7 @@ def _ask(label: str, default: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / ".local" / "user-profile" / "writing_preferences.json")
+    parser.add_argument("--profile-root", type=Path, default=ROOT / ".local" / "personalization")
     parser.add_argument("--non-interactive", action="store_true")
     parser.add_argument("--language", default="ko")
     parser.add_argument("--level", default="high-school")
@@ -48,7 +51,15 @@ def main() -> int:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"ok": True, "profile": str(args.output.resolve())}, ensure_ascii=False))
+    result = subprocess.run([sys.executable, str(ROOT / "pipeline" / "scripts" / "personalization_ctl.py"),
+                             "--profile-root", str(args.profile_root), "init"], capture_output=True, text=True, encoding="utf-8")
+    if result.returncode != 0:
+        print(result.stderr or result.stdout, file=sys.stderr)
+        return result.returncode
+    writing = args.profile_root / "writing" / "profile.json"
+    writing.parent.mkdir(parents=True, exist_ok=True)
+    writing.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"ok": True, "profile": str(args.output.resolve()), "personalization": str(writing.resolve())}, ensure_ascii=False))
     return 0
 
 

@@ -268,6 +268,7 @@ def organize_workspace(
         "inventory": ".pipeline/artifacts.json",
         "resume_command": f'python pipeline/scripts/pipeline_ctl.py resume "{ws}"',
         "archived": archived,
+        "personalization_lock": ".pipeline/personalization.lock.json" if (ws / ".pipeline" / "personalization.lock.json").is_file() else None,
         "generated_at": _now(),
     }
     _atomic_json(ws / ".pipeline" / "handoff.json", handoff)
