@@ -3,15 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Report Studio v0.6</title>
+<title>Rigorloom — Local Report Studio</title>
 <style>
 :root{
-  --bg:#FAFAF8; --surface:#FFFFFF; --panel:#F6F5F0;
-  --ink:#1A1A18; --ink-2:#55524C; --ink-3:#8A867D;
-  --line:#E7E4DB; --line-2:#EFEDE6;
-  --accent:#0F6E63; --accent-soft:#E7F0EE;
+  --bg:#F4F1E8; --surface:#FFFEFA; --panel:#ECE8DD;
+  --ink:#16212B; --ink-2:#4C5964; --ink-3:#7A858D;
+  --line:#DAD4C7; --line-2:#E9E4D9;
+  --accent:#087E72; --accent-soft:#DDF2EC;
+  --signal:#E1A42B; --signal-soft:#FFF2D2;
   --warn:#A8530B; --warn-bg:#FBF1E1; --warn-line:#E4B776;
-  --ok:#2E7D52; --blocked:#B0322A; --blocked-bg:#FBE9E7;
+  --ok:#26734D; --blocked:#B0322A; --blocked-bg:#FBE9E7;
+  --nav:#14242D; --nav-2:#1C303A; --nav-ink:#E9F3F1; --nav-muted:#91AAA9;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -24,9 +26,12 @@ body{
   word-break:keep-all;overflow-wrap:break-word;
 }
 .panel{border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
-#pw{width:260px;min-width:260px;background:var(--panel)}
-#pp{flex:1;border-right:1px solid var(--line);background:var(--bg);min-width:0}
-#pr{width:300px;min-width:300px;background:var(--panel);border-right:none}
+#pw{width:286px;min-width:286px;background:var(--nav);color:var(--nav-ink);border-right:none}
+#pp{flex:1;border-right:1px solid var(--line);min-width:0;
+  background-color:var(--bg);
+  background-image:linear-gradient(rgba(20,36,45,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(20,36,45,.025) 1px,transparent 1px);
+  background-size:24px 24px}
+#pr{width:320px;min-width:320px;background:#EDE9DE;border-right:none}
 .ptitle{
   display:flex;align-items:center;gap:7px;
   padding:14px 18px;font-weight:600;font-size:11px;
@@ -34,6 +39,20 @@ body{
   border-bottom:1px solid var(--line);flex-shrink:0;
 }
 .pbody{flex:1;overflow-y:auto;padding:16px 18px}
+.brand{
+  display:flex;align-items:center;gap:11px;padding:18px 18px 16px;border-bottom:1px solid rgba(255,255,255,.1)
+}
+.brand-mark{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;
+  background:linear-gradient(135deg,var(--signal),#F2C968);color:var(--nav);font-weight:900;
+  letter-spacing:-1px;box-shadow:0 7px 22px rgba(0,0,0,.22)}
+.brand-name{font-size:17px;font-weight:750;letter-spacing:.2px;line-height:1.1}
+.brand-sub{display:block;color:var(--nav-muted);font-size:10px;text-transform:uppercase;letter-spacing:1.25px;margin-top:4px}
+.brandbar{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;
+  background:rgba(255,254,250,.86);border-bottom:1px solid var(--line);backdrop-filter:blur(12px);flex-shrink:0}
+.brandbar-title{font-weight:720;font-size:14px;letter-spacing:.1px}
+.brandbar-kicker{color:var(--accent);font-size:10px;text-transform:uppercase;letter-spacing:1.2px;font-weight:800}
+.local-pill{font-size:10px;padding:4px 8px;border-radius:99px;background:var(--accent-soft);color:var(--accent);
+  font-weight:750;text-transform:uppercase;letter-spacing:.7px}
 
 /* heartbeat staleness banner */
 #stale-banner{display:none;background:var(--blocked-bg);color:var(--blocked);
@@ -46,9 +65,22 @@ body{
   padding:9px 12px;border-radius:6px;cursor:pointer;margin-bottom:3px;
   font-size:13.5px;color:var(--ink-2);transition:background .12s,color .12s;
 }
-.ws-item:hover{background:#EDEBE3}
-.ws-item.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.ws-item:hover{background:rgba(255,255,255,.07)}
+#pw .ws-item{color:#B8C9C7}
+#pw .ws-item.active{background:rgba(39,190,166,.15);color:#69DFC9;font-weight:650;border-left:2px solid #69DFC9}
 .ws-empty{color:var(--ink-3);font-size:12.5px;padding:6px 2px;line-height:1.5}
+#pw .ws-empty,#pw .stages-head,#pw label,#pw .start-note,#pw .prog-label{color:var(--nav-muted)}
+#pw hr{border-top-color:rgba(255,255,255,.1)}
+#pw .prog-bar{background:rgba(255,255,255,.12)}
+#pw .prog-fill{background:linear-gradient(90deg,#22BCA5,#75E0CB)}
+#pw .stage:hover{background:rgba(255,255,255,.05)}
+#pw .slabel,#pw .stage.done .slabel{color:#B8C9C7}
+#pw .stage.active .slabel{color:#F3CA70}
+#pw .dot{background:var(--nav);border-color:#587077}
+#pw .dot.done{background:#36BCA5;border-color:#36BCA5}
+#pw input,#pw textarea,#pw select{background:var(--nav-2);border-color:#344B55;color:var(--nav-ink)}
+#pw input::placeholder,#pw textarea::placeholder{color:#668087}
+#pw .pbox{background:var(--nav-2);border-color:#344B55;color:#C9D8D6}
 
 /* meta line (mode/subject/topic) */
 .ws-meta{margin:10px 0 4px;font-size:12px;color:var(--ink-2);line-height:1.6}
@@ -57,6 +89,8 @@ body{
 .ws-meta .badge.legacy{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-line)}
 .ws-meta .badge.night{background:#2C2C46;color:#D8D6F5}
 .ws-meta .topic{color:var(--ink);font-weight:500;display:block;margin-top:4px}
+#pw .ws-meta>span:not(.topic){margin-right:6px}
+#pw .ws-meta .topic{color:#E2ECEA;margin-top:7px;line-height:1.55}
 
 /* stage progress */
 .stages-head{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-3);margin:6px 0 10px}
@@ -361,6 +395,12 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 
 /* mini scorecard (right rail) */
 .mini-sc-row{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.personal-card{border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:11px 12px}
+.personal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:12px;font-weight:700}
+.personal-state{font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:99px}
+.personal-row{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--ink-3);padding:3px 0}
+.personal-row b{color:var(--ink-2);font-weight:650;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+.personal-hash{font-family:ui-monospace,"Cascadia Code",monospace;font-size:10px;color:var(--ink-3);margin-top:8px;padding-top:7px;border-top:1px solid var(--line-2)}
 
 .rail-sec{margin-bottom:18px}
 .rail-h{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);margin-bottom:8px}
@@ -404,13 +444,19 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
   #pr{order:1}
   #pp{order:0}
 }
+@media (max-width:720px){
+  .brandbar{position:sticky;top:0;z-index:5}
+  .tabs{scroll-snap-type:x proximity}.tab{scroll-snap-align:start}
+  .draft-wrap{flex-direction:column}.prov-panel{width:100%;border-left:none;border-top:1px solid var(--line)}
+}
 </style>
 </head>
 <body>
 
 <div class="panel" id="pw">
-  <div class="ptitle"><span class="status-dot" id="sdot"></span>워크스페이스</div>
+  <div class="brand"><div class="brand-mark">RL</div><div><div class="brand-name">Rigorloom</div><span class="brand-sub">local report studio</span></div></div>
   <div class="pbody">
+    <div class="stages-head"><span class="status-dot" id="sdot"></span> &nbsp;워크스페이스</div>
     <div id="ws-list"><div class="ws-empty">검색 중…</div></div>
 
     <div id="ws-meta" style="display:none"></div>
@@ -428,10 +474,11 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
     <div id="start-block">
       <hr>
       <div class="stages-head">새 보고서 시작</div>
-      <div class="start-note">아래 정보를 채우면 request.yaml 텍스트와 원하는 에이전트에 붙여넣을 시작 프롬프트를 생성합니다. 뷰어는 아무것도 저장·전송하지 않습니다.</div>
+      <div class="start-note">v0.6 워크스페이스 생성 명령과 원하는 에이전트에 붙여넣을 시작 프롬프트를 만듭니다. Studio는 아무것도 저장·전송하지 않습니다.</div>
       <div class="fg"><label>주제 *</label><input id="f-topic" placeholder="예: 별의 HR도 분류와 거리 오차"></div>
-      <div class="fg"><label>과목</label><input id="f-sub" placeholder="예: 지구과학"></div>
-      <div class="fg"><label>양식 경로</label><input id="f-form" placeholder="예: templates/소논문_기본양식.hwpx"></div>
+      <div class="fg"><label>워크스페이스 ID *</label><input id="f-slug" placeholder="예: hr-distance"></div>
+      <div class="fg"><label>과목 *</label><input id="f-sub" placeholder="예: 지구과학"></div>
+      <div class="fg"><label>양식 절대경로 *</label><input id="f-form" placeholder="예: C:\forms\science.hwpx"></div>
       <div class="fg"><label>분량</label>
         <select id="f-length">
           <option value="short">짧게 (2–3쪽)</option>
@@ -449,6 +496,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
       <div class="fg"><label>조건</label><textarea id="f-cond" placeholder="예: A4, 6쪽 이내, 그림 4장 이상"></textarea></div>
       <button class="btn btn-p" onclick="genPrompt()">생성</button>
       <div id="prompt-area" style="display:none;margin-top:10px">
+        <label style="margin-top:4px">워크스페이스 생성 명령</label>
+        <div class="pbox" id="commandtext"></div>
+        <button class="btn btn-c btn-sm" id="bcopycommand" onclick="copyText('commandtext','bcopycommand')">복사</button>
         <label style="margin-top:4px">request.yaml</label>
         <div class="pbox" id="yamltext"></div>
         <button class="btn btn-c btn-sm" id="bcopyyaml" onclick="copyText('yamltext','bcopyyaml')">복사</button>
@@ -461,6 +511,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 </div>
 
 <div class="panel" id="pp">
+  <div class="brandbar"><div><div class="brandbar-kicker">Evidence-to-delivery</div><div class="brandbar-title" id="brand-workspace">워크스페이스를 선택하세요</div></div><span class="local-pill">Local only</span></div>
   <div id="stale-banner"><span>⚠</span><span id="stale-text"></span></div>
 
   <div class="gate-strip" id="gate-strip" style="display:none"></div>
@@ -530,10 +581,14 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 </div>
 
 <div class="panel" id="pr">
-  <div class="ptitle">지금 할 일</div>
+  <div class="ptitle">Rigorloom · Action rail</div>
   <div class="pbody">
     <div class="rail-sec">
       <div id="ym-body"><div class="ws-empty">워크스페이스를 선택하세요</div></div>
+    </div>
+    <div class="rail-sec">
+      <div class="rail-h">적용된 개인화</div>
+      <div id="personalization-body"><div class="ws-empty" style="font-size:12px">개인화 잠금 없음</div></div>
     </div>
     <div class="rail-sec">
       <div class="rail-h">이상 감지 피드</div>
@@ -550,7 +605,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 
 <div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeHelp()">
   <div class="modal">
-    <div class="modal-head"><h3>Report Studio v0.6 도움말</h3>
+    <div class="modal-head"><h3>Rigorloom Studio 도움말</h3>
       <button class="modal-x" onclick="closeHelp()">×</button></div>
     <div class="modal-body">
       <h5>레이아웃</h5>
@@ -581,9 +636,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 </div>
 
 <script>
-let slug=null, state=null, genYaml="", genText="", prevPageUrls=null, ledgerSig=null, researchSig=null;
+let slug=null, state=null, genYaml="", genText="", genCommand="", prevPageUrls=null, ledgerSig=null, researchSig=null;
 let eventsAfter=0, eventsList=[], fillIters=[], curIter=null, draftContent=null;
-let lastHeartbeatTs=null, isFresh=true, provenanceData=null;
+let lastHeartbeatTs=null, isFresh=true, provenanceData=null, personalizationData=null;
 const openAcc=new Set();
 
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":s;return d.innerHTML;}
@@ -625,11 +680,11 @@ async function loadWs(){
 
 async function selWs(s){
   slug=s; prevPageUrls=null; ledgerSig=null; researchSig=null; openAcc.clear();
-  eventsAfter=0; eventsList=[]; fillIters=[]; curIter=null; draftContent=null; lastHeartbeatTs=null;
+  eventsAfter=0; eventsList=[]; fillIters=[]; curIter=null; draftContent=null; lastHeartbeatTs=null; personalizationData=null;
   document.querySelectorAll(".ws-item").forEach(el=>
     el.classList.toggle("active",el.textContent===s.replace("report-","")));
   await doPoll(); await loadLedger(); await loadResearch(); await loadEvents();
-  await loadFill(); await loadYourMove(); await loadScorecard(); await checkHeartbeat();
+  await loadFill(); await loadYourMove(); await loadScorecard(); await loadPersonalization(); await checkHeartbeat();
 }
 
 async function doPoll(){
@@ -660,6 +715,8 @@ function renderMeta(){
     h+=`<span class="ws-empty">PIPELINE.md 없음</span>`;
   }
   el.innerHTML=h;
+  const brand=document.getElementById("brand-workspace");
+  if(brand) brand.textContent=state.topic||slug.replace("report-","");
 }
 
 function renderStages(){
@@ -867,7 +924,9 @@ async function loadFill(){
   if(!slug) return;
   try{
     const d=await(await fetch(`/workspace/${slug}/fill`)).json();
-    fillIters=d.iterations||[];
+    fillIters=(d.iterations||[]).map((item,index)=>typeof item==="string"
+      ? {name:item,iteration:Number((item.match(/iter_(\d+)/)||[])[1]||index+1),page_count:0}
+      : item);
     if(fillIters.length && curIter===null) curIter=fillIters.length-1;
     renderReportTab();
   }catch(e){}
@@ -888,7 +947,7 @@ function renderReportTab(){
     pagesEl.style.flexDirection="column";
     iterStrip.style.display="flex";
     iterStrip.innerHTML=fillIters.map((f,i)=>{
-      const m=f.match(/iter_(\d+)/); const n=m?m[1]:String(i+1);
+      const n=f.iteration||i+1;
       return `<div class="iter-chip${i===curIter?" active":""}" onclick="selIter(${i})">v${n}<span class="v">${i===fillIters.length-1?"최신":""}</span></div>`;
     }).join("");
     renderIterPages();
@@ -908,21 +967,14 @@ function renderReportTab(){
 function selIter(i){curIter=i; renderIterPages();
   document.querySelectorAll(".iter-chip").forEach((el,idx)=>el.classList.toggle("active",idx===i));}
 
-async function renderIterPages(){
+function renderIterPages(){
   if(curIter==null||!fillIters[curIter]) return;
-  const m=fillIters[curIter].match(/iter_(\d+)/); if(!m) return;
-  const iterNum=m[1];
+  const current=fillIters[curIter];
+  const iterNum=current.iteration;
   const container=document.getElementById("tc-pages");
-  // probe page count by trying sequential pages until 404 (bounded to 40)
   const ts=Date.now();
   let html=`<div style="font-size:12px;color:var(--ink-3);text-align:center;margin-bottom:8px">FILL 반복 v${iterNum}</div>`;
-  const urls=[];
-  for(let p=0;p<40;p++){
-    const u=`/workspace/${slug}/preview-pdf/${iterNum}/${p}`;
-    const ok=await fetch(u,{method:"GET"}).then(r=>r.ok).catch(()=>false);
-    if(!ok) break;
-    urls.push(u);
-  }
+  const urls=Array.from({length:Number(current.page_count)||0},(_,p)=>`/workspace/${slug}/preview-pdf/${iterNum}/${p}`);
   if(!urls.length){container.innerHTML=`<div class="ph"><div class="ph-ico">▭</div>이 반복의 PDF 페이지를 렌더할 수 없습니다</div>`;return;}
   html+=urls.map((u,i)=>`<img class="pimg" src="${u}?t=${ts}" alt="p${i+1}" loading="lazy" onclick="openLb('${u}?t=${ts}')">
      <div class="pnum">${i+1} 쪽</div>`).join("");
@@ -1080,15 +1132,21 @@ function renderYourMove(d){
     <div class="ym-reason">${esc(d.reason||"")}</div>`;
   if(d.approval_line){
     h+=`<div class="ym-line">${esc(d.approval_line)}</div>
-    <button class="btn btn-c btn-sm" onclick="copyPlain(${JSON.stringify(d.approval_line)},this)">APPROVALS.md에 붙여넣을 줄 복사</button>`;
+    <button class="btn btn-c btn-sm" id="copy-approval">APPROVALS.md 승인문 복사</button>`;
   }
-  if(kind==="blocked"){
-    const resumeCmd=`python pipeline_ctl.py resume --slug ${slug}`;
-    h+=`<div class="ym-line">${esc(resumeCmd)}</div>
-    <button class="btn btn-c btn-sm" onclick="copyPlain(${JSON.stringify(resumeCmd)},this)">재개 명령 복사</button>`;
+  if(d.resume_command && kind!=="done"){
+    h+=`<div class="ym-line">${esc(d.resume_command)}</div>
+    <button class="btn btn-c btn-sm" id="copy-resume">재개 명령 복사</button>`;
   }
   h+=`</div>`;
   el.innerHTML=h;
+  const approvalButton=document.getElementById("copy-approval");
+  if(approvalButton) approvalButton.onclick=()=>copyPlain(d.approval_line,approvalButton);
+  const resumeButton=document.getElementById("copy-resume");
+  if(resumeButton){
+    const command=d.resume_command||`python pipeline/scripts/pipeline_ctl.py resume "${slug}"`;
+    resumeButton.onclick=()=>copyPlain(command,resumeButton);
+  }
 }
 
 function copyPlain(text,btn){
@@ -1121,6 +1179,13 @@ async function loadScorecard(){
   }catch(e){renderScorecard(null);renderMiniScorecard(null);}
 }
 
+function scoreInfo(value){
+  const raw=Number(value);
+  if(!Number.isFinite(raw)) return {ratio:0,pct:0,label:"—"};
+  const ratio=Math.max(0,Math.min(1,raw>1?raw/10:raw));
+  return {ratio,pct:Math.round(ratio*100),label:raw>1?`${raw}/10`:`${Math.round(ratio*100)}%`};
+}
+
 function scoreClass(v){
   if(v>=0.8) return ""; if(v>=0.5) return "mid"; return "low";
 }
@@ -1131,10 +1196,10 @@ function renderScorecard(d){
   ph.style.display="none";
   const dims=d.dimensions;
   body.innerHTML=Object.keys(dims).map(k=>{
-    const v=dims[k]; const pct=Math.round(v*100);
+    const score=scoreInfo(dims[k]);
     return `<div class="sc-dim"><div class="sc-dim-head"><span class="sc-dim-name">${esc(k)}</span>
-      <span class="sc-dim-val">${pct}%</span></div>
-      <div class="sc-bar-bg"><div class="sc-bar-fill ${scoreClass(v)}" style="width:${pct}%"></div></div></div>`;
+      <span class="sc-dim-val">${score.label}</span></div>
+      <div class="sc-bar-bg"><div class="sc-bar-fill ${scoreClass(score.ratio)}" style="width:${score.pct}%"></div></div></div>`;
   }).join("");
 }
 
@@ -1143,8 +1208,28 @@ function renderMiniScorecard(d){
   if(!d || !d.dimensions){el.innerHTML=`<div class="ws-empty" style="font-size:12px">평가 데이터 없음</div>`;return;}
   const dims=d.dimensions;
   el.innerHTML=Object.keys(dims).slice(0,4).map(k=>
-    `<div class="mini-sc-row"><span>${esc(k)}</span><b>${Math.round(dims[k]*100)}%</b></div>`
+    `<div class="mini-sc-row"><span>${esc(k)}</span><b>${scoreInfo(dims[k]).label}</b></div>`
   ).join("");
+}
+
+async function loadPersonalization(){
+  const el=document.getElementById("personalization-body");
+  if(!slug||!el) return;
+  try{
+    personalizationData=await(await fetch(`/workspace/${slug}/personalization`)).json();
+  }catch(e){personalizationData={available:false};}
+  const d=personalizationData;
+  if(!d.available){el.innerHTML=`<div class="ws-empty" style="font-size:12px">이 실행에는 개인화 잠금이 없습니다</div>`;return;}
+  const w=d.writing||{};
+  el.innerHTML=`<div class="personal-card">
+    <div class="personal-head"><span>Resolved profile</span><span class="personal-state">locked</span></div>
+    <div class="personal-row"><span>과목</span><b>${esc(d.subject||"기본")}</b></div>
+    <div class="personal-row"><span>학업 수준</span><b>${esc(w.academic_level||"기본값")}</b></div>
+    <div class="personal-row"><span>문체</span><b>${esc(w.register||"기본값")}</b></div>
+    <div class="personal-row"><span>폼 조건</span><b>${d.form_conditions?"적용됨":"없음"}</b></div>
+    <div class="personal-row"><span>신원 필드</span><b>${d.identity_enabled?"로컬 활성":"비활성"}</b></div>
+    <div class="personal-hash">lock · ${esc((d.lock_hash||"unknown").slice(0,12))}</div>
+  </div>`;
 }
 
 /* ── heartbeat staleness (C7/C8) ── */
@@ -1166,7 +1251,7 @@ async function checkHeartbeat(){
     if(d.ts!==lastHeartbeatTs){
       lastHeartbeatTs=d.ts;
       // heartbeat changed -> refetch all panels (C7)
-      await Promise.all([doPoll(),loadLedger(),loadResearch(),loadFill(),loadYourMove(),loadScorecard(),loadDraft()]);
+      await Promise.all([doPoll(),loadLedger(),loadResearch(),loadFill(),loadYourMove(),loadScorecard(),loadDraft(),loadPersonalization()]);
     }
   }catch(e){}
 }
@@ -1182,17 +1267,27 @@ function buildYaml(topic,subject,form,length,mode,conditions){
   return lines.join("\n");
 }
 
+function buildWorkspaceCommand(workspaceId,topic,subject,form,mode){
+  const quote=value=>JSON.stringify(String(value));
+  return `python scripts/new_report.py --slug ${quote(workspaceId)} --subject ${quote(subject)} --topic ${quote(topic)} --form ${quote(form)} --mode ${quote(mode)}`;
+}
+
 async function genPrompt(){
   const topic=document.getElementById("f-topic").value.trim();
   if(!topic){alert("주제를 입력하세요");return;}
+  const workspaceId=document.getElementById("f-slug").value.trim();
+  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(workspaceId)){alert("워크스페이스 ID는 영문·숫자로 시작하고 영문·숫자·밑줄·하이픈만 사용할 수 있습니다");return;}
   const subject=document.getElementById("f-sub").value.trim();
   const form=document.getElementById("f-form").value.trim();
+  if(!subject||!form){alert("과목과 양식 절대경로를 입력하세요");return;}
   const length=document.getElementById("f-length").value;
   const mode=document.getElementById("f-mode").value;
   const conditions=document.getElementById("f-cond").value.trim();
 
   genYaml=buildYaml(topic,subject,form,length,mode,conditions);
   document.getElementById("yamltext").textContent=genYaml;
+  genCommand=buildWorkspaceCommand(workspaceId,topic,subject,form,mode);
+  document.getElementById("commandtext").textContent=genCommand;
 
   const q=new URLSearchParams({topic,subject,form,conditions});
   genText=(await(await fetch("/startprompt?"+q)).json()).prompt + ` 분량: ${length}. 모드: ${mode}.`;

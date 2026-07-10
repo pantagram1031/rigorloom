@@ -321,7 +321,7 @@ in place; completed-stage scratch work is preserved under `archive/stages/`.
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Organize a report-pipeline workspace")
+    parser = argparse.ArgumentParser(description="Organize a Rigorloom workspace")
     parser.add_argument("workspace")
     parser.add_argument("--completed-stage")
     parser.add_argument("--no-archive", action="store_true")

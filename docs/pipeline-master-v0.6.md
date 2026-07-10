@@ -1,4 +1,4 @@
-# Report Pipeline v0.6 — Master Workflow
+# Rigorloom v0.6 — Master Workflow
 
 This is the single starting document for human operators and AI agents. It is
 provider-neutral: Claude, Codex, Gemini, local models, CLI workers, API workers,

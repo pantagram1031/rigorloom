@@ -1,4 +1,4 @@
-# Report Pipeline Contract v0.6
+# Rigorloom Pipeline Contract v0.6
 
 This contract defines the enforceable behavior of the portable report pipeline.
 The kernel is provider-independent and uses only Python's standard library.

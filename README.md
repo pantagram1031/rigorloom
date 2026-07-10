@@ -1,7 +1,7 @@
-# Report Pipeline
+# Rigorloom
 
-An agent-neutral, resumable workflow for producing evidence-backed reports from
-research through document assembly, review, and handoff.
+Rigorloom is an agent-neutral, resumable workflow for weaving evidence,
+personalization, document forms, verification, and delivery into one report run.
 
 The state machine is deterministic and provider-independent. Claude, Codex,
 Gemini, local models, human operators, or any other capable agent can act as the
@@ -13,7 +13,8 @@ requirements.
 - A config-driven v0.6 pipeline kernel with hard and human gates.
 - Stage playbooks and a single master workflow document.
 - Automatic handoff generation and safe archival after stage transitions.
-- A read-only local Studio for inspecting workspaces.
+- A privacy-first local Studio for inspecting workspaces, resolved profiles,
+  gates, evidence, document previews, and evaluation results.
 - A robust workspace scaffolder.
 - An optional adapter for the separate
   [hwp-master](https://github.com/pantagram1031/hwp-master) project.
@@ -26,8 +27,8 @@ model-account configuration are intentionally excluded.
 Requirements: Python 3.10+; `pytest` for tests; Studio dependencies are optional.
 
 ```sh
-git clone https://github.com/pantagram1031/report-pipeline.git
-cd report-pipeline
+git clone https://github.com/pantagram1031/rigorloom.git
+cd rigorloom
 python scripts/new_report.py --slug demo --subject math \
   --topic "A testable question" --form /absolute/path/to/form.hwpx \
   --profile-root /private/report-profile
@@ -60,7 +61,7 @@ Verify the machine before starting an HWP report:
 ```powershell
 cd ..\hwp-master
 python scripts/doctor.py --require-com --require-proof `
-  --report-pipeline ..\report-pipeline
+  --report-pipeline ..\rigorloom
 ```
 
 Installing these repositories does not install Hancom Office. Web Hancom Docs,
@@ -96,6 +97,17 @@ examples/    generic, non-personal examples
 archive/     superseded public contracts kept for history
 docs/        current architecture and operating documentation
 workspaces/  local run data; ignored by Git
+```
+
+## Local Studio
+
+The Studio never uploads report data or calls a model. It reads ignored local
+workspaces and shows the live stage graph, next action, personalization lock,
+evidence ledger, drafts, PDF iterations, provenance, and scorecards.
+
+```sh
+python -m pip install -r studio/requirements.txt
+python studio/main.py
 ```
 
 ## Safety model

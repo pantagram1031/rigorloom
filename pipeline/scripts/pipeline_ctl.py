@@ -935,7 +935,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     p = JsonArgumentParser(
         prog="pipeline_ctl.py",
-        description="State-machine enforcement CLI for report-pipeline PIPELINE.md (CONTRACT v0.4).",
+        description="State-machine enforcement CLI for Rigorloom PIPELINE.md (CONTRACT v0.4).",
     )
     sub = p.add_subparsers(dest="command", parser_class=JsonArgumentParser)
 
