@@ -251,6 +251,24 @@ script scope, missing glyphs, and token leakage before acceptance.
 Repair only through bounded content rewrites or declared table resizing.
 Exhausting the proof budget blocks the stage and escalates to a human.
 
+### Ad-hoc HWP edits still require proof
+
+The assembly loop is the normal path. If a one-off HWP/HWPX edit is necessary
+outside a report workspace, preserve the source and still perform these minimum
+checks before delivery:
+
+1. Save to a new output file, then apply heading/caption continuity and
+   widow-orphan defaults with the adapter's supported typeset operation.
+2. Run layout QA on the exported PDF. Treat an apparent gap as a defect only
+   after checking whether it is a cover margin, display-equation spacing, or
+   intentional figure spacing.
+3. Render and inspect every page for isolated headings, separated captions,
+   blank bands, and equation damage. Pages with new inline equations need a
+   high-resolution check, not just a contact sheet.
+
+Do not use ad-hoc formatting knobs as a substitute for a bounded content or
+layout correction. Rebuild from the untouched source if the output is damaged.
+
 ### Stage 5.5 — understanding
 
 Generate five open questions without model answers. A supervised human answers
