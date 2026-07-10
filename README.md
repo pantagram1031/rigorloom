@@ -63,6 +63,12 @@ contract. Every successful transition refreshes `NEXT_TASK.md` and
 `WORKSPACE_INDEX.md`, `.pipeline/artifacts.json`, stage receipts, and a clean
 stage-owned work area.
 
+Operational knowledge distilled from previous runs is kept in
+[lessons learned](docs/lessons-learned.md),
+[design decisions](docs/design-decisions.md), and
+[troubleshooting](docs/troubleshooting.md). These documents contain generalized
+failure patterns only; personal reports and private templates are not included.
+
 ## Repository map
 
 ```text

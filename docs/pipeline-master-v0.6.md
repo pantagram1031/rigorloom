@@ -37,6 +37,11 @@ operator request > form instructions > pipeline defaults
 
 ## 2. Repository and workspace layout
 
+Reusable operating history is documented separately in
+`docs/lessons-learned.md`, `docs/design-decisions.md`, and
+`docs/troubleshooting.md`. Consult these before inventing a new gate exemption,
+layout repair knob, backup convention, or recovery procedure.
+
 Run commands from the repository root.
 
 ```text
