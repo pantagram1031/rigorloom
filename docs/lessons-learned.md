@@ -80,3 +80,11 @@ schema, and expected columns before a downloaded dataset becomes evidence.
 Every expensive HWP or pipeline repair should end as a synthetic fixture,
 deterministic test, troubleshooting signature, or explicit design decision.
 Otherwise the same probe cycle will recur during the next refactor.
+
+## Small mathematical typography needs targeted proof
+
+Page-level thumbnails catch composition defects but can hide equation-token
+errors. One real run showed an unbraced HwpEqn superscript consuming punctuation
+and following terms. Normalize LaTeX single-atom script scope in the adapter,
+add a regression test, and inspect pages containing newly generated inline
+equations at high resolution.

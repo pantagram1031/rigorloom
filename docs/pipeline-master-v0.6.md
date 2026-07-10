@@ -232,6 +232,10 @@ python <HWP_MASTER_ROOT>/scripts/fill_report.py --loop \
 First converge deterministic page/figure/spacing metrics. Then inspect a
 contact sheet using four binary composition checks:
 
+Contact sheets are insufficient for small equation details. Any page containing
+new inline equations must also receive a high-resolution equation check for
+script scope, missing glyphs, and token leakage before acceptance.
+
 1. no unexplained middle/bottom void;
 2. reasonably uniform body-page density;
 3. usable table proportions;
