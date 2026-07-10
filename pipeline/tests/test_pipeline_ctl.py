@@ -153,12 +153,13 @@ class TestGate(PipelineCtlTestCase):
         self.assertFalse(payload["ok"])
 
         (self.ws / "APPROVALS.md").write_text(
-            "design: approved by operator at 2026-07-06T09:10\n", encoding="utf-8"
+            "design: approved by=<name> at=2026-07-06T09:10:00+09:00\n", encoding="utf-8"
         )
         payload, code = run("gate", str(self.ws), "design", "--mode", "supervised")
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["state"], "approved")
         self.assertEqual(payload["by"], "operator")
+        self.assertEqual(payload["at"], "2026-07-06T09:10:00+09:00")
 
         # verify persisted in header
         text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
