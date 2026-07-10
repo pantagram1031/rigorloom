@@ -6,14 +6,14 @@ import json
 import os
 import re
 
-app = FastAPI()
+app = FastAPI(title="Rigorloom Studio", version="0.7")
 
 _env_root = os.environ.get("STUDIO_WORKSPACE_ROOT")
 if _env_root:
     WORKSPACE_ROOT = Path(_env_root)
 else:
     _base = Path(__file__).parent.parent / "workspaces"
-    WORKSPACE_ROOT = _base if _base.exists() else Path.home() / "report-pipeline-workspaces"
+    WORKSPACE_ROOT = _base if _base.exists() else Path.home() / "rigorloom-workspaces"
 
 _SLUG_RE = re.compile(r"report-[A-Za-z0-9_-]+")
 
@@ -42,10 +42,10 @@ def _slugs():
 # ── PIPELINE.md v0.4 YAML-header parser (contract §2, stdlib only) ────
 
 _STAGE_LABELS = {
-    "0": "Form Intake", "1": "Research", "2": "Design",
-    "2.5": "Layout Plan", "3": "Data/Sim", "4": "Write",
-    "5": "Assemble+Proof", "5.5": "Understanding",
-    "5.7": "Evaluation Panel", "6": "Return",
+    "0": "양식 분석", "1": "근거 조사", "2": "탐구 설계",
+    "2.5": "레이아웃 계획", "3": "데이터·검증", "4": "집필",
+    "5": "조립·검수", "5.5": "이해 확인",
+    "5.7": "평가 패널", "6": "반환·축적",
 }
 _STATUS_ENUM = {"pending", "in_progress", "awaiting_gate", "done", "blocked"}
 _GATE_ENUM = {"pending", "approved", "auto_approved", "rejected"}
@@ -818,8 +818,57 @@ def workspace_fill(slug: str):
     iters = []
     if preview_dir.exists():
         for p in sorted(preview_dir.glob("iter_*.pdf")):
-            iters.append(p.name)
+            match = re.fullmatch(r"iter_(\d+)\.pdf", p.name)
+            if not match:
+                continue
+            page_count = 0
+            try:
+                import fitz
+                with fitz.open(str(p)) as doc:
+                    page_count = len(doc)
+            except Exception:
+                page_count = 0
+            iters.append({
+                "name": p.name,
+                "iteration": int(match.group(1)),
+                "page_count": page_count,
+                "mtime": p.stat().st_mtime,
+            })
     return {"events": events, "next": nxt, "iterations": iters}
+
+
+@app.get("/workspace/{slug}/personalization")
+def workspace_personalization(slug: str):
+    """Return the redacted per-run personalization lock, never identity data."""
+    base = safe_workspace(slug)
+    path = base / ".pipeline" / "personalization.lock.json"
+    if not path.exists():
+        return {"available": False}
+    try:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"available": False, "invalid": True}
+    effective = lock.get("effective") or {}
+    writing = effective.get("writing") or {}
+    academic = effective.get("academic") or {}
+    form = effective.get("form_conditions") or {}
+    return {
+        "available": True,
+        "lock_hash": lock.get("lock_hash"),
+        "subject": lock.get("subject"),
+        "form_sha256": lock.get("form_sha256"),
+        "identity_enabled": bool(lock.get("identity_enabled")),
+        "writing": {
+            "language": writing.get("language"),
+            "academic_level": writing.get("academic_level"),
+            "register": writing.get("register"),
+            "advanced_terms": writing.get("advanced_terms"),
+            "avoid_count": len(writing.get("avoid_patterns") or []),
+        },
+        "academic_profile": bool(academic),
+        "form_conditions": bool(form),
+        "precedence": effective.get("precedence") or [],
+    }
 
 
 @app.get("/workspace/{slug}/preview-pdf/{iter}/{page}")
@@ -892,6 +941,18 @@ def _approvals_has_line(base: Path, line: str) -> bool:
     return line.strip() in f.read_text(encoding="utf-8")
 
 
+def _resume_command(base: Path) -> str:
+    handoff = base / ".pipeline" / "handoff.json"
+    if handoff.exists():
+        try:
+            command = json.loads(handoff.read_text(encoding="utf-8")).get("resume_command")
+            if command:
+                return command
+        except Exception:
+            pass
+    return f'python pipeline/scripts/pipeline_ctl.py resume "{base.resolve()}"'
+
+
 @app.get("/workspace/{slug}/yourmove")
 def workspace_yourmove(slug: str):
     base = safe_workspace(slug)
@@ -899,11 +960,13 @@ def workspace_yourmove(slug: str):
 
     if pipeline["format"] == "none":
         return {"kind": "blocked", "gate": None, "approval_line": None,
-                "reason": "PIPELINE.md 없음 — 아직 시작되지 않았습니다."}
+                "reason": "PIPELINE.md 없음 — 아직 시작되지 않았습니다.",
+                "resume_command": _resume_command(base)}
 
     if pipeline["format"] == "legacy":
         return {"kind": "stale", "gate": None, "approval_line": None,
-                "reason": "구형 포맷(legacy) 워크스페이스 — YAML 헤더가 없어 자동 판정할 수 없습니다."}
+                "reason": "구형 포맷(legacy) 워크스페이스 — YAML 헤더가 없어 자동 판정할 수 없습니다.",
+                "resume_command": _resume_command(base)}
 
     # v0.4/v0.5 YAML format
     stages = pipeline["stages"]
@@ -911,21 +974,23 @@ def workspace_yourmove(slug: str):
     if blocked_stage:
         return {"kind": "blocked", "gate": None, "approval_line": None,
                 "reason": f"Stage {blocked_stage['num']} ({blocked_stage['label']}) 차단됨 — "
-                          f"PIPELINE.md와 TROUBLES.md를 확인하세요."}
+                          f"PIPELINE.md와 TROUBLES.md를 확인하세요.",
+                "resume_command": _resume_command(base)}
 
     gate_stage = next((s for s in stages if s["raw_status"] == "awaiting_gate"), None)
     if gate_stage and pipeline["mode"] == "supervised":
         gate_name = gate_stage.get("gate_name") or gate_stage["label"]
         approval_line = f"approve: {gate_name} by=<이름> at={_now_iso()}"
         return {"kind": "gate_wait", "gate": gate_name, "approval_line": approval_line,
-                "reason": f"Stage {gate_stage['num']} ({gate_stage['label']}) 게이트 승인 대기 중."}
+                "reason": f"Stage {gate_stage['num']} ({gate_stage['label']}) 게이트 승인 대기 중.",
+                "resume_command": _resume_command(base)}
 
     if pipeline["resume"] is None and pipeline["stage"] == pipeline["total"] and pipeline["total"] > 0:
         return {"kind": "done", "gate": None, "approval_line": None,
-                "reason": "모든 단계 완료."}
+                "reason": "모든 단계 완료.", "resume_command": _resume_command(base)}
 
     return {"kind": "running", "gate": None, "approval_line": None,
-            "reason": "자율 실행 진행 중."}
+            "reason": "자율 실행 진행 중.", "resume_command": _resume_command(base)}
 
 
 def _now_iso():
@@ -935,19 +1000,25 @@ def _now_iso():
 
 @app.get("/startprompt")
 def start_prompt(topic: str, subject: str = "", form: str = "", conditions: str = ""):
-    parts = [f"보고서 파이프라인 시작 (topic-only 자율 모드). 주제: {topic}"]
+    parts = [f"Rigorloom 보고서 워크플로우를 시작한다. 주제: {topic}"]
     if subject:
         parts.append(f"과목: {subject}")
     if form:
         parts.append(f"양식: {form}")
     if conditions:
         parts.append(f"조건: {conditions}")
+    parts.append("현재 워크스페이스의 NEXT_TASK.md와 단계 playbook을 기준으로 진행하고, 상태는 pipeline_ctl로만 변경한다")
     return {"prompt": ". ".join(parts) + "."}
 
 
 @app.get("/")
 def root():
     return FileResponse(Path(__file__).parent / "index.html")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":

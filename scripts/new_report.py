@@ -19,7 +19,7 @@ SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create a report-pipeline workspace")
+    parser = argparse.ArgumentParser(description="Create a Rigorloom report workspace")
     parser.add_argument("--slug", required=True)
     parser.add_argument("--subject", required=True)
     parser.add_argument("--topic", required=True)
