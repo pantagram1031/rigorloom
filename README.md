@@ -103,7 +103,10 @@ workspaces/  local run data; ignored by Git
 
 The Studio never uploads report data or calls a model. It reads ignored local
 workspaces and shows the live stage graph, next action, personalization lock,
-evidence ledger, drafts, PDF iterations, provenance, and scorecards.
+evidence ledger, drafts, PDF iterations, provenance, and scorecards. Its action
+rail reads the generated handoff contract to show the next playbook, work area,
+missing inputs and outputs, exact gate/resume commands, and the latest normalized
+FILL/proof issues. Older workspaces fall back to a read-only `PIPELINE.md` scan.
 
 ```sh
 python -m pip install -r studio/requirements.txt

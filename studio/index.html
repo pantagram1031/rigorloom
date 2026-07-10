@@ -65,6 +65,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;
 .mission-orbit strong{position:relative;font:650 16px var(--mono)}
 .brandbar-title{font-weight:680;font-size:21px;letter-spacing:-.5px;line-height:1.25;max-width:760px}
 .brandbar-kicker{color:var(--accent);font:9px var(--mono);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:7px}
+.mission-stats{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.mission-stats .chip{padding:3px 7px;background:rgba(255,255,255,.02);font:9px var(--mono);color:#718499}
+.mission-stats .chip b{color:#B8C7D1;font-weight:550}
 .local-pill{margin-left:auto;font:9px var(--mono);padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.018);color:#9DB0C1;text-transform:uppercase;letter-spacing:.7px;white-space:nowrap}
 
 /* heartbeat staleness banner */
@@ -503,6 +506,14 @@ input:focus,textarea:focus,select:focus{border-color:rgba(106,240,203,.55);box-s
 .ym-card.running{border-color:rgba(106,240,203,.22);background:linear-gradient(145deg,rgba(106,240,203,.06),rgba(12,23,39,.88))}
 .ym-kind{font-family:var(--mono)}.ym-reason{color:#CDD8DE}.ym-line{background:#081525;border-color:var(--line);color:#8294A7;font:9px/1.55 var(--mono)}
 .personal-state{background:var(--accent-soft);color:var(--accent);font-family:var(--mono)}.personal-row{color:#64778C}.personal-row b{color:#AAB9C5;font-family:var(--mono);font-size:9px}.personal-hash{border-top-color:var(--line);color:#53667A}
+.ready-card{padding:12px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(150deg,rgba(16,30,49,.86),rgba(9,18,31,.85))}
+.ready-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;color:#D0DCE2;font:10px var(--mono)}
+.ready-state{padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);font-size:8px;text-transform:uppercase}
+.ready-state.missing_inputs,.ready-state.blocked{background:var(--blocked-bg);color:var(--blocked)}
+.ready-state.waiting_gate{background:var(--signal-soft);color:var(--signal)}
+.ready-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;color:#66798D;font-size:10px}.ready-row b{color:#AAB9C5;font:9px var(--mono);text-align:right}
+.ready-list{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);color:#77899B;font-size:10px;line-height:1.55}
+.ready-list b{display:block;color:#99A9B6;font:8px var(--mono);text-transform:uppercase;letter-spacing:.7px;margin-bottom:3px}
 .mini-sc-row{color:#73869A}.mini-sc-row b{font-family:var(--mono);color:#C4D0D8}.rail-h{color:#52657A;font:9px var(--mono);letter-spacing:1px}.rail-sec{margin-bottom:16px}
 .modal-bg{background:rgba(1,4,8,.76)}.modal{background:#0D1929;border:1px solid var(--line);box-shadow:0 34px 100px rgba(0,0,0,.65)}.modal-head{border-bottom-color:var(--line)}.kbd{background:#081525;border-color:var(--line);color:#9AAABC}.modal-note{border-top-color:var(--line);color:#708297}
 .lightbox{background:rgba(1,4,8,.9)}
@@ -569,9 +580,6 @@ input:focus,textarea:focus,select:focus{border-color:rgba(106,240,203,.55);box-s
         <label style="margin-top:4px">워크스페이스 생성 명령</label>
         <div class="pbox" id="commandtext"></div>
         <button class="btn btn-c btn-sm" id="bcopycommand" onclick="copyText('commandtext','bcopycommand')">복사</button>
-        <label style="margin-top:4px">request.yaml</label>
-        <div class="pbox" id="yamltext"></div>
-        <button class="btn btn-c btn-sm" id="bcopyyaml" onclick="copyText('yamltext','bcopyyaml')">복사</button>
         <label style="margin-top:10px">에이전트 시작 프롬프트</label>
         <div class="pbox" id="ptext"></div>
         <button class="btn btn-c btn-sm" id="bcopy" onclick="copyText('ptext','bcopy')">복사</button>
@@ -582,7 +590,7 @@ input:focus,textarea:focus,select:focus{border-color:rgba(106,240,203,.55);box-s
 </div>
 
 <div class="panel" id="pp">
-  <div class="brandbar"><div class="mission-orbit"><strong id="mission-progress">—/—</strong></div><div><div class="brandbar-kicker">Evidence-to-delivery instrument</div><div class="brandbar-title" id="brand-workspace">워크스페이스를 선택하세요</div></div><span class="local-pill">● local · private</span></div>
+  <div class="brandbar"><div class="mission-orbit"><strong id="mission-progress">—/—</strong></div><div><div class="brandbar-kicker">Evidence-to-delivery instrument</div><div class="brandbar-title" id="brand-workspace">워크스페이스를 선택하세요</div><div class="mission-stats" id="mission-stats"></div></div><span class="local-pill">● local · private</span></div>
   <div id="stale-banner"><span>⚠</span><span id="stale-text"></span></div>
 
   <div class="gate-strip" id="gate-strip" style="display:none"></div>
@@ -658,6 +666,10 @@ input:focus,textarea:focus,select:focus{border-color:rgba(106,240,203,.55);box-s
       <div id="ym-body"><div class="ws-empty">워크스페이스를 선택하세요</div></div>
     </div>
     <div class="rail-sec">
+      <div class="rail-h">NEXT TASK · 준비도</div>
+      <div id="readiness-body"><div class="ws-empty" style="font-size:12px">handoff 데이터 없음</div></div>
+    </div>
+    <div class="rail-sec">
       <div class="rail-h">적용된 개인화</div>
       <div id="personalization-body"><div class="ws-empty" style="font-size:12px">개인화 잠금 없음</div></div>
     </div>
@@ -707,9 +719,9 @@ input:focus,textarea:focus,select:focus{border-color:rgba(106,240,203,.55);box-s
 </div>
 
 <script>
-let slug=null, state=null, genYaml="", genText="", genCommand="", prevPageUrls=null, ledgerSig=null, researchSig=null;
+let slug=null, state=null, genText="", genCommand="", prevPageUrls=null, ledgerSig=null, researchSig=null;
 let eventsAfter=0, eventsList=[], fillIters=[], curIter=null, draftContent=null;
-let lastHeartbeatTs=null, isFresh=true, provenanceData=null, personalizationData=null;
+let lastHeartbeatTs=null, isFresh=true, provenanceData=null, personalizationData=null, readinessData=null;
 const openAcc=new Set();
 
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":s;return d.innerHTML;}
@@ -751,11 +763,11 @@ async function loadWs(){
 
 async function selWs(s){
   slug=s; prevPageUrls=null; ledgerSig=null; researchSig=null; openAcc.clear();
-  eventsAfter=0; eventsList=[]; fillIters=[]; curIter=null; draftContent=null; lastHeartbeatTs=null; personalizationData=null;
+  eventsAfter=0; eventsList=[]; fillIters=[]; curIter=null; draftContent=null; lastHeartbeatTs=null; personalizationData=null; readinessData=null;
   document.querySelectorAll(".ws-item").forEach(el=>
     el.classList.toggle("active",el.textContent===s.replace("report-","")));
   await doPoll(); await loadLedger(); await loadResearch(); await loadEvents();
-  await loadFill(); await loadYourMove(); await loadScorecard(); await loadPersonalization(); await checkHeartbeat();
+  await loadFill(); await loadYourMove(); await loadReadiness(); await loadScorecard(); await loadPersonalization(); await checkHeartbeat();
 }
 
 async function doPoll(){
@@ -985,7 +997,7 @@ function progChip(label,count,target,unit){
 function renderStruct(){
   if(!state) return;
   const str=state.structure;
-  const stats=document.getElementById("s-stats");
+  const stats=document.getElementById("mission-stats");
   if(!stats) return;
   if(!str||!str.available){stats.innerHTML="";return;}
   stats.innerHTML=`<div class="chip">섹션 <b>${str.sections.length}</b></div>`+
@@ -1003,6 +1015,7 @@ async function loadFill(){
       ? {name:item,iteration:Number((item.match(/iter_(\d+)/)||[])[1]||index+1),page_count:0}
       : item);
     if(fillIters.length && curIter===null) curIter=fillIters.length-1;
+    renderAnomalies(d.anomalies||[]);
     renderReportTab();
   }catch(e){}
 }
@@ -1209,6 +1222,10 @@ function renderYourMove(d){
     h+=`<div class="ym-line">${esc(d.approval_line)}</div>
     <button class="btn btn-c btn-sm" id="copy-approval">APPROVALS.md 승인문 복사</button>`;
   }
+  if(d.gate_command){
+    h+=`<div class="ym-line">${esc(d.gate_command)}</div>
+    <button class="btn btn-c btn-sm" id="copy-gate">게이트 명령 복사</button>`;
+  }
   if(d.resume_command && kind!=="done"){
     h+=`<div class="ym-line">${esc(d.resume_command)}</div>
     <button class="btn btn-c btn-sm" id="copy-resume">재개 명령 복사</button>`;
@@ -1217,6 +1234,8 @@ function renderYourMove(d){
   el.innerHTML=h;
   const approvalButton=document.getElementById("copy-approval");
   if(approvalButton) approvalButton.onclick=()=>copyPlain(d.approval_line,approvalButton);
+  const gateButton=document.getElementById("copy-gate");
+  if(gateButton) gateButton.onclick=()=>copyPlain(d.gate_command,gateButton);
   const resumeButton=document.getElementById("copy-resume");
   if(resumeButton){
     const command=d.resume_command||`python pipeline/scripts/pipeline_ctl.py resume "${slug}"`;
@@ -1230,17 +1249,42 @@ function copyPlain(text,btn){
 }
 
 /* ── right rail: anomaly feed (from fill_events) ── */
-function renderAnomalies(fillEvents){
+function renderAnomalies(anomalies){
   const el=document.getElementById("anom-body");
-  const anomalies=(fillEvents||[]).filter(e=>e.symptom||e.anomaly);
   if(!anomalies.length){el.innerHTML=`<div class="ws-empty" style="font-size:12px">이상 없음 / 데이터 없음</div>`;return;}
   el.innerHTML=anomalies.map(a=>{
-    const fixed=!!a.fixed;
+    const fixed=a.status==="fixed";
     return `<div class="anom-item ${fixed?"fixed":"open"}">
-      <div class="anom-sym">${esc(a.symptom||a.anomaly||"")}</div>
-      <div class="anom-status ${fixed?"fixed":"open"}">${fixed?"수정됨":"미해결"}</div>
+      <div class="anom-sym">${esc(a.symptom||"")}${a.iteration?` · v${esc(a.iteration)}`:""}</div>
+      ${a.detail?`<div style="font-size:9px;color:var(--ink-3);margin-top:3px">${esc(a.detail)}</div>`:""}
+      <div class="anom-status ${fixed?"fixed":"open"}">${fixed?"해결됨":"확인 필요"}</div>
     </div>`;
   }).join("");
+}
+
+async function loadReadiness(){
+  const el=document.getElementById("readiness-body");
+  if(!slug||!el) return;
+  try{readinessData=await(await fetch(`/workspace/${slug}/readiness`)).json();}
+  catch(e){readinessData={available:false};}
+  renderReadiness(readinessData);
+}
+
+const READY_LABEL={ready:"ready",missing_inputs:"inputs missing",waiting_gate:"gate wait",blocked:"blocked",complete:"complete",legacy:"legacy"};
+function renderReadiness(d){
+  const el=document.getElementById("readiness-body");
+  if(!d||(!d.available&&!d.next_stage)){el.innerHTML=`<div class="ws-empty" style="font-size:12px">완료됐거나 단계 정보를 읽을 수 없습니다</div>`;return;}
+  const missingIn=d.missing_inputs||[], missingOut=d.missing_outputs||[];
+  let h=`<div class="ready-card"><div class="ready-head"><span>Stage ${esc(d.next_stage||"완료")}</span><span class="ready-state ${esc(d.readiness)}">${esc(READY_LABEL[d.readiness]||d.readiness)}</span></div>
+    <div class="ready-row"><span>상태</span><b>${esc(d.next_status||"done")}</b></div>
+    <div class="ready-row"><span>작업 폴더</span><b>${esc(d.work_dir||"—")}</b></div>
+    <div class="ready-row"><span>예상 산출물</span><b>${(d.expected_outputs||[]).length}</b></div>`;
+  if(missingIn.length) h+=`<div class="ready-list"><b>Missing inputs</b>${missingIn.map(x=>`<div>• ${esc(x)}</div>`).join("")}</div>`;
+  if(missingOut.length) h+=`<div class="ready-list"><b>Still to produce</b>${missingOut.slice(0,4).map(x=>`<div>• ${esc(x)}</div>`).join("")}${missingOut.length>4?`<div>+${missingOut.length-4}개</div>`:""}</div>`;
+  if(d.playbook) h+=`<div class="ready-list"><b>Playbook</b><div>${esc(d.playbook)}</div></div>`;
+  if(!d.available) h+=`<div class="ready-list"><b>Compatibility mode</b><div>handoff 파일이 없어 PIPELINE.md에서 추정한 상태입니다</div></div>`;
+  h+=`</div>`;
+  el.innerHTML=h;
 }
 
 /* ── scorecard (C15) + mini scorecard rail ── */
@@ -1326,25 +1370,17 @@ async function checkHeartbeat(){
     if(d.ts!==lastHeartbeatTs){
       lastHeartbeatTs=d.ts;
       // heartbeat changed -> refetch all panels (C7)
-      await Promise.all([doPoll(),loadLedger(),loadResearch(),loadFill(),loadYourMove(),loadScorecard(),loadDraft(),loadPersonalization()]);
+      await Promise.all([doPoll(),loadLedger(),loadResearch(),loadFill(),loadYourMove(),loadReadiness(),loadScorecard(),loadDraft(),loadPersonalization()]);
     }
   }catch(e){}
 }
 
-/* ── new report helper (request.yaml + prompt generator, no server write) ── */
-function buildYaml(topic,subject,form,length,mode,conditions){
-  const lines=["topic: "+JSON.stringify(topic)];
-  if(subject) lines.push("subject: "+JSON.stringify(subject));
-  if(form) lines.push("form: "+JSON.stringify(form));
-  lines.push("length: "+length);
-  lines.push("mode: "+mode);
-  if(conditions) lines.push("conditions: "+JSON.stringify(conditions));
-  return lines.join("\n");
-}
+/* ── new report helper (authoritative CLI + agent prompt, no server write) ── */
 
-function buildWorkspaceCommand(workspaceId,topic,subject,form,mode){
+function buildWorkspaceCommand(workspaceId,topic,subject,form,mode,length){
   const quote=value=>JSON.stringify(String(value));
-  return `python scripts/new_report.py --slug ${quote(workspaceId)} --subject ${quote(subject)} --topic ${quote(topic)} --form ${quote(form)} --mode ${quote(mode)}`;
+  const pages={short:[2,3],standard:[4,6],long:[8,12]}[length]||[4,6];
+  return `python scripts/new_report.py --slug ${quote(workspaceId)} --subject ${quote(subject)} --topic ${quote(topic)} --form ${quote(form)} --mode ${quote(mode)} --pages ${pages[0]} ${pages[1]}`;
 }
 
 async function genPrompt(){
@@ -1359,9 +1395,7 @@ async function genPrompt(){
   const mode=document.getElementById("f-mode").value;
   const conditions=document.getElementById("f-cond").value.trim();
 
-  genYaml=buildYaml(topic,subject,form,length,mode,conditions);
-  document.getElementById("yamltext").textContent=genYaml;
-  genCommand=buildWorkspaceCommand(workspaceId,topic,subject,form,mode);
+  genCommand=buildWorkspaceCommand(workspaceId,topic,subject,form,mode,length);
   document.getElementById("commandtext").textContent=genCommand;
 
   const q=new URLSearchParams({topic,subject,form,conditions});

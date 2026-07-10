@@ -97,6 +97,90 @@ def test_fill_returns_iteration_page_metadata(tmp_path: Path, monkeypatch):
     }]
 
 
+def test_fill_normalizes_nested_verdicts_without_leaking_anchor_text(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    output = root / "report-demo" / "output"
+    output.mkdir(parents=True)
+    events = [
+        {
+            "iter": 2,
+            "verdict": {
+                "state": "gappy",
+                "reason": "page gaps exceed threshold",
+                "needs": ["reduce_gap"],
+                "tidy_warnings": [{"anchor": "PRIVATE TEMPLATE TEXT", "reason": "not found"}],
+            },
+        },
+        {"iter": 3, "phase": "proof", "result": {"status": "escalate_human"}},
+    ]
+    (output / "fill_events.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in events), encoding="utf-8"
+    )
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    result = studio.workspace_fill("report-demo")
+
+    assert [item["kind"] for item in result["anomalies"]] == ["fill", "tidy", "proof"]
+    assert all(item["status"] == "open" for item in result["anomalies"])
+    assert "PRIVATE TEMPLATE TEXT" not in json.dumps(result["anomalies"])
+
+
+def test_readiness_and_yourmove_follow_handoff_contract(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    pipeline_dir = ws / ".pipeline"
+    pipeline_dir.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    handoff = {
+        "schema": "report-pipeline-handoff/v2",
+        "next_stage": "5.5",
+        "next_status": "awaiting_gate",
+        "next_gate": {"name": "understand", "state": "pending"},
+        "playbook": "pipeline/references/playbooks/stage-5.5.md",
+        "work_dir": "work/stage-5.5",
+        "required_inputs": ["output/out.pdf"],
+        "expected_outputs": ["UNDERSTANDING.md"],
+        "missing_inputs": ["output/out.pdf"],
+        "missing_outputs": ["UNDERSTANDING.md"],
+        "resume_command": 'python pipeline/scripts/pipeline_ctl.py resume "C:/safe/report-demo"',
+        "personalization_lock": ".pipeline/personalization.lock.json",
+        "generated_at": "2026-07-11T12:00:00+09:00",
+        "archived": ["archive/stages/stage-5/scratch.txt"],
+    }
+    (pipeline_dir / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    readiness = studio.workspace_readiness("report-demo")
+    move = studio.workspace_yourmove("report-demo")
+
+    assert readiness["available"] is True
+    assert readiness["readiness"] == "missing_inputs"
+    assert readiness["missing_inputs"] == ["output/out.pdf"]
+    assert readiness["archived_count"] == 1
+    assert move["approval_line"].startswith("understand: approved by=<name> at=")
+    assert " gate " in move["gate_command"]
+    assert "--mode supervised" in move["gate_command"]
+    assert move["resume_command"] == handoff["resume_command"]
+
+
+def test_readiness_falls_back_to_pipeline_without_writing_workspace(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    before = sorted(path.relative_to(ws) for path in ws.rglob("*"))
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    result = studio.workspace_readiness("report-demo")
+
+    assert result["available"] is False
+    assert result["readiness"] == "legacy"
+    assert result["next_stage"] == "5.5"
+    assert result["next_status"] == "awaiting_gate"
+    assert result["playbook"].endswith("stage-5.5.md")
+    assert sorted(path.relative_to(ws) for path in ws.rglob("*")) == before
+
+
 def test_personalization_endpoint_is_redacted(tmp_path: Path, monkeypatch):
     root = tmp_path / "workspaces"
     lock_dir = root / "report-demo" / ".pipeline"
@@ -128,3 +212,7 @@ def test_studio_shell_uses_rigorloom_and_safe_dom_bindings():
     assert "probe page count" not in html
     assert 'id="copy-approval"' in html
     assert 'onclick="copyPlain(${JSON.stringify' not in html
+    assert 'id="readiness-body"' in html
+    assert 'id="mission-stats"' in html
+    assert 'id="yamltext"' not in html
+    assert "function buildYaml(" not in html
