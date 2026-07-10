@@ -33,6 +33,29 @@ python scripts/new_report.py --slug demo --subject math \
 python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
+### HWP/HWPX output requirements
+
+The pipeline state machine itself has no model-provider or HWP dependency.
+However, the full `.hwp` document workflow requires all of the following on the
+machine that runs the document stages:
+
+- Windows with the desktop **Hancom Office HWP** application installed and licensed
+- the separate [`hwp-master`](https://github.com/pantagram1031/hwp-master) checkout
+- its optional COM packages: `python -m pip install ".[windows]"`
+- its optional PDF-proof packages when visual gates are used: `python -m pip install ".[proof]"`
+
+Verify the machine before starting an HWP report:
+
+```powershell
+cd ..\hwp-master
+python scripts/doctor.py --require-com --require-proof `
+  --report-pipeline ..\report-pipeline
+```
+
+Installing these repositories does not install Hancom Office. Web Hancom Docs,
+Linux, and macOS cannot run the local COM editing backend; they can still run the
+pipeline and non-COM HWPX/XML stages.
+
 Read [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) before running
 a stage. Open the returned playbook and follow its entry, role, exit, and gate
 contract. Every successful transition refreshes `NEXT_TASK.md` and
