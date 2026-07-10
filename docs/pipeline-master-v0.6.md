@@ -210,8 +210,12 @@ Numeric claims should receive two independent verification passes.
 Write `bundle/content.md` against the approved layout plan. Preserve source ids,
 distinguish facts from interpretation, and record paragraph provenance. Apply
 the general prose guidance in `docs/style-rules.md` only when it does not
-conflict with request or form instructions. The human draft gate concerns
-content, not typesetting.
+conflict with request or form instructions. Then follow
+`pipeline/references/humanization_contract.md`: freeze `content.raw.md`, create
+an AI-tell review, apply only paragraph-level changes, and require the local
+fidelity report to pass. Unsafe edits roll back automatically. Pantadex is an
+optional adapter; any capable agent may use the same prompt and schema. The
+human draft gate concerns content, not typesetting.
 
 ### Stage 5 — assemble and proof
 

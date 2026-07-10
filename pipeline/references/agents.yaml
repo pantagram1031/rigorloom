@@ -23,6 +23,10 @@ backends:
     capabilities: [approval, escalation, visual-judgment]
     invoke: "APPROVALS.md or direct operator response"
     status: available
+  - id: "mcp.pantadex"
+    capabilities: [writing, review, humanization]
+    invoke: "discover the configured Pantadex MCP tools at runtime"
+    status: optional
 
 roles:
   orchestrator: ["agent.interactive"]
@@ -37,6 +41,6 @@ roles:
   reviewer-logic: ["agent.worker/high", "agent.interactive"]
   reviewer-ai-tell: ["agent.worker/high", "agent.interactive"]
   judge-panelist: ["agent.worker/high", "agent.worker/medium", "human"]
-  humanizer-chain: ["agent.worker/high", "agent.interactive"]
+  humanizer-chain: ["mcp.pantadex", "agent.worker/high", "agent.interactive"]
   archive: ["agent.worker/low", "agent.interactive"]
   escalation: ["human"]

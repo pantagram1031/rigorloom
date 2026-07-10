@@ -33,6 +33,13 @@ python scripts/new_report.py --slug demo --subject math \
 python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
+Create a private local writing profile once per machine (optional but
+recommended). The generated `.local/` directory is ignored by Git:
+
+```sh
+python scripts/setup_profile.py
+```
+
 ### HWP/HWPX output requirements
 
 The pipeline state machine itself has no model-provider or HWP dependency.
@@ -68,6 +75,11 @@ Operational knowledge distilled from previous runs is kept in
 [design decisions](docs/design-decisions.md), and
 [troubleshooting](docs/troubleshooting.md). These documents contain generalized
 failure patterns only; personal reports and private templates are not included.
+
+Stage 4 includes provider-neutral, rollback-safe humanization. It freezes the
+verified draft, accepts paragraph-level edits from Pantadex or any capable agent,
+and automatically restores the draft if protected facts change. See
+[`humanization_contract.md`](pipeline/references/humanization_contract.md).
 
 ## Repository map
 

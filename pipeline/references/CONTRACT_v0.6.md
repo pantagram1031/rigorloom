@@ -87,6 +87,12 @@ Style editing may not alter numbers, citations, equations, uncertainty,
 qualifications, or logical direction. General style guidance is subordinate to
 the operator request and form.
 
+Stage 4 freezes `bundle/content.raw.md` before humanization. Rewriters return
+paragraph-level changes under `humanization_contract.md`; they never replace the
+whole document without review. `prose_fidelity.py` is the authoritative local
+check. A failed comparison restores the raw content and blocks acceptance of the
+candidate. External detector scores and service-side audits are advisory.
+
 ## L. Final evaluation
 
 The final panel covers visual composition, logic, evidence, numerical claims,

@@ -95,8 +95,12 @@
         {"pattern": "sim/gate_result.json", "required": true}
       ],
       "outputs": [
+        {"pattern": "bundle/content.raw.md", "required": true},
         {"pattern": "bundle/content.md", "required": true},
         {"pattern": "bundle/provenance.json", "required": true},
+        {"pattern": "bundle/ai_tell_review.json", "required": true},
+        {"pattern": "bundle/humanization_report.json", "required": true},
+        {"pattern": "bundle/prose_fidelity.json", "required": true},
         {"pattern": "bundle/figures/*", "required": false}
       ]
     },
