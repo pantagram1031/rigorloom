@@ -774,6 +774,74 @@ def _read_jsonl_tail(f: Path, after: int):
     return events, len(lines)
 
 
+def _read_json_dict(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _normalize_fill_anomalies(events: list[dict]) -> list[dict]:
+    """Expose actionable fill/proof state without copying document content."""
+    items = []
+    for event in events:
+        iteration = event.get("iter") or event.get("proof_iter")
+        verdict = event.get("verdict")
+        if isinstance(verdict, dict):
+            state = str(verdict.get("state") or "unknown")
+            converged = bool(verdict.get("converged")) or state == "converged"
+            needs = verdict.get("needs") if isinstance(verdict.get("needs"), list) else []
+            reason = verdict.get("reason") or state
+            items.append({
+                "kind": "fill", "status": "fixed" if converged else "open",
+                "iteration": iteration,
+                "symptom": "FILL 검증 수렴" if converged else f"FILL 검증: {state}",
+                "detail": str(reason), "count": len(needs),
+            })
+            style = verdict.get("style_anomalies")
+            if isinstance(style, list) and style:
+                items.append({
+                    "kind": "style", "status": "open", "iteration": iteration,
+                    "symptom": f"스타일 이상 {len(style)}건", "detail": "스타일 검토 필요",
+                    "count": len(style),
+                })
+            tidy = verdict.get("tidy_warnings")
+            if isinstance(tidy, list) and tidy:
+                items.append({
+                    "kind": "tidy", "status": "open", "iteration": iteration,
+                    "symptom": f"자동 정리 경고 {len(tidy)}건",
+                    "detail": "일부 정리 앵커를 안전하게 건너뜀", "count": len(tidy),
+                })
+
+        result = event.get("result")
+        if isinstance(result, dict) and event.get("phase") == "proof":
+            status = str(result.get("status") or "unknown")
+            resolved = status in {"pass", "passed", "approved", "converged"}
+            items.append({
+                "kind": "proof", "status": "fixed" if resolved else "open",
+                "iteration": iteration,
+                "symptom": "시각 검수 통과" if resolved else "시각 검수 확인 필요",
+                "detail": status, "count": 0,
+            })
+
+        symptom = event.get("symptom") or event.get("anomaly")
+        if symptom:
+            items.append({
+                "kind": "legacy", "status": "fixed" if event.get("fixed") else "open",
+                "iteration": iteration, "symptom": str(symptom),
+                "detail": "legacy fill event", "count": 1,
+            })
+    latest = {}
+    for item in items:
+        kind = item["kind"]
+        latest.pop(kind, None)
+        latest[kind] = item
+    return list(latest.values())[-6:]
+
+
 @app.get("/workspace/{slug}/events")
 def workspace_events(slug: str, after: int = 0):
     base = safe_workspace(slug)
@@ -834,7 +902,8 @@ def workspace_fill(slug: str):
                 "page_count": page_count,
                 "mtime": p.stat().st_mtime,
             })
-    return {"events": events, "next": nxt, "iterations": iters}
+    return {"events": events, "next": nxt, "iterations": iters,
+            "anomalies": _normalize_fill_anomalies(events)}
 
 
 @app.get("/workspace/{slug}/personalization")
@@ -934,29 +1003,74 @@ def workspace_draft(slug: str):
     return {"content": content, "profile": profile}
 
 
-def _approvals_has_line(base: Path, line: str) -> bool:
-    f = base / "APPROVALS.md"
-    if not f.exists() or not line:
-        return False
-    return line.strip() in f.read_text(encoding="utf-8")
-
-
 def _resume_command(base: Path) -> str:
-    handoff = base / ".pipeline" / "handoff.json"
-    if handoff.exists():
-        try:
-            command = json.loads(handoff.read_text(encoding="utf-8")).get("resume_command")
-            if command:
-                return command
-        except Exception:
-            pass
+    command = _read_json_dict(base / ".pipeline" / "handoff.json").get("resume_command")
+    if command:
+        return command
     return f'python pipeline/scripts/pipeline_ctl.py resume "{base.resolve()}"'
+
+
+@app.get("/workspace/{slug}/readiness")
+def workspace_readiness(slug: str):
+    base = safe_workspace(slug)
+    handoff = _read_json_dict(base / ".pipeline" / "handoff.json")
+    if not handoff:
+        pipeline = _parse_pipeline(base)
+        next_stage = pipeline.get("resume")
+        next_record = next(
+            (item for item in pipeline.get("stages", []) if item.get("num") == next_stage),
+            {},
+        )
+        return {
+            "available": False, "readiness": "legacy", "next_stage": next_stage,
+            "next_status": next_record.get("raw_status"),
+            "next_gate": ({"name": next_record.get("gate_name"),
+                           "state": next_record.get("gate_state")}
+                          if next_record.get("gate") else None),
+            "playbook": (f"pipeline/references/playbooks/stage-{next_stage}.md"
+                         if next_stage else None),
+            "work_dir": (f"work/stage-{next_stage}" if next_stage else None),
+            "missing_inputs": [], "missing_outputs": [],
+            "expected_outputs": [], "resume_command": _resume_command(base),
+            "personalization_lock": None, "generated_at": None, "archived_count": 0,
+        }
+
+    missing_inputs = handoff.get("missing_inputs") or []
+    next_status = handoff.get("next_status")
+    next_stage = handoff.get("next_stage")
+    if next_stage is None:
+        readiness = "complete"
+    elif missing_inputs:
+        readiness = "missing_inputs"
+    elif next_status == "awaiting_gate":
+        readiness = "waiting_gate"
+    elif next_status == "blocked":
+        readiness = "blocked"
+    else:
+        readiness = "ready"
+    return {
+        "available": True,
+        "readiness": readiness,
+        "next_stage": next_stage,
+        "next_status": next_status,
+        "next_gate": handoff.get("next_gate"),
+        "playbook": handoff.get("playbook"),
+        "work_dir": handoff.get("work_dir"),
+        "missing_inputs": missing_inputs,
+        "missing_outputs": handoff.get("missing_outputs") or [],
+        "expected_outputs": handoff.get("expected_outputs") or [],
+        "resume_command": handoff.get("resume_command") or _resume_command(base),
+        "personalization_lock": handoff.get("personalization_lock"),
+        "generated_at": handoff.get("generated_at"),
+        "archived_count": len(handoff.get("archived") or []),
+    }
 
 
 @app.get("/workspace/{slug}/yourmove")
 def workspace_yourmove(slug: str):
     base = safe_workspace(slug)
     pipeline = _parse_pipeline(base)
+    readiness = workspace_readiness(slug)
 
     if pipeline["format"] == "none":
         return {"kind": "blocked", "gate": None, "approval_line": None,
@@ -980,22 +1094,30 @@ def workspace_yourmove(slug: str):
     gate_stage = next((s for s in stages if s["raw_status"] == "awaiting_gate"), None)
     if gate_stage and pipeline["mode"] == "supervised":
         gate_name = gate_stage.get("gate_name") or gate_stage["label"]
-        approval_line = f"approve: {gate_name} by=<이름> at={_now_iso()}"
+        approval_line = f"{gate_name}: approved by=<name> at={_now_iso()}"
+        gate_command = (f'python pipeline/scripts/pipeline_ctl.py gate "{base.resolve()}" '
+                        f'"{gate_name}" --mode {pipeline["mode"]}')
         return {"kind": "gate_wait", "gate": gate_name, "approval_line": approval_line,
                 "reason": f"Stage {gate_stage['num']} ({gate_stage['label']}) 게이트 승인 대기 중.",
-                "resume_command": _resume_command(base)}
+                "gate_command": gate_command,
+                "resume_command": readiness["resume_command"]}
 
     if pipeline["resume"] is None and pipeline["stage"] == pipeline["total"] and pipeline["total"] > 0:
         return {"kind": "done", "gate": None, "approval_line": None,
                 "reason": "모든 단계 완료.", "resume_command": _resume_command(base)}
 
+    if readiness["available"] and readiness["next_stage"] is not None:
+        reason = (f"Stage {readiness['next_stage']} 준비됨 — "
+                  f"{readiness['playbook'] or 'playbook'} 기준으로 진행하세요.")
+    else:
+        reason = "자율 실행 진행 중."
     return {"kind": "running", "gate": None, "approval_line": None,
-            "reason": "자율 실행 진행 중.", "resume_command": _resume_command(base)}
+            "reason": reason, "resume_command": readiness["resume_command"]}
 
 
 def _now_iso():
     import datetime
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 @app.get("/startprompt")

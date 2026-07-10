@@ -667,8 +667,8 @@ def cmd_gate(args) -> None:
         return
 
     if approved_line:
-        # try to pull a timestamp like "approved by operator at 2026-07-06T09:10"
-        ts_m = re.search(r"\bat\s+(\S+)", approved_line)
+        # Accept both documented `at=<ISO>` and legacy `at <ISO>` records.
+        ts_m = re.search(r"\bat(?:=|\s+)(\S+)", approved_line)
         at_val = ts_m.group(1) if ts_m else now_iso()
         gate_obj["state"] = "approved"
         gate_obj["by"] = "operator"
