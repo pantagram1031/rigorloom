@@ -45,3 +45,12 @@ or writing any file.
 Run the `hwp-master` doctor. Full COM editing requires Windows, locally installed
 desktop Hancom Office HWP, and the optional Python COM packages. Continue only
 with provider-neutral or non-COM stages when that host is unavailable.
+
+## A one-off HWP edit looks acceptable but was not run through the pipeline
+
+Keep the original unchanged and save the edit as a new file. Export a PDF, run
+layout QA, and inspect all rendered pages for widow/orphan headings, detached
+captions, blank bands, and equation damage. A contact sheet is not sufficient
+for new inline equations: inspect those pages at high resolution. If any check
+fails, rebuild from the pristine source instead of stacking manual formatting
+changes on the damaged derivative.
