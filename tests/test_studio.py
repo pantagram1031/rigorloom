@@ -76,3 +76,55 @@ def test_workspace_traversal_rejected(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(studio, "WORKSPACE_ROOT", tmp_path)
     with pytest.raises(HTTPException):
         studio.safe_workspace("report-x/../../outside")
+
+
+def test_fill_returns_iteration_page_metadata(tmp_path: Path, monkeypatch):
+    fitz = pytest.importorskip("fitz")
+    root = tmp_path / "workspaces"
+    preview = root / "report-demo" / "output" / "preview"
+    preview.mkdir(parents=True)
+    document = fitz.open()
+    document.new_page(); document.new_page()
+    document.save(preview / "iter_3.pdf")
+    document.close()
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    result = studio.workspace_fill("report-demo")
+    assert result["iterations"] == [{
+        "name": "iter_3.pdf",
+        "iteration": 3,
+        "page_count": 2,
+        "mtime": (preview / "iter_3.pdf").stat().st_mtime,
+    }]
+
+
+def test_personalization_endpoint_is_redacted(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    lock_dir = root / "report-demo" / ".pipeline"
+    lock_dir.mkdir(parents=True)
+    lock = {
+        "lock_hash": "abc", "subject": "math", "form_sha256": "def",
+        "identity_enabled": True,
+        "effective": {
+            "writing": {"language": "ko", "academic_level": "high-school",
+                        "register": "formal", "avoid_patterns": ["x"]},
+            "academic": {"subject": "math"}, "form_conditions": {"constraints": {}},
+            "precedence": ["request explicit", "global profile"],
+        },
+        "identity": {"name": "PRIVATE NAME"},
+    }
+    (lock_dir / "personalization.lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    result = studio.workspace_personalization("report-demo")
+    assert result["available"] is True
+    assert result["identity_enabled"] is True
+    assert result["writing"]["avoid_count"] == 1
+    assert "PRIVATE NAME" not in json.dumps(result)
+
+
+def test_studio_shell_uses_rigorloom_and_safe_dom_bindings():
+    html = (MODULE_PATH.parent / "index.html").read_text(encoding="utf-8")
+    assert "Rigorloom" in html
+    assert "Math.round(v*100)" not in html
+    assert "probe page count" not in html
+    assert 'id="copy-approval"' in html
+    assert 'onclick="copyPlain(${JSON.stringify' not in html
