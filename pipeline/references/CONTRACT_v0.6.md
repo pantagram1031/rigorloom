@@ -87,6 +87,12 @@ Style editing may not alter numbers, citations, equations, uncertainty,
 qualifications, or logical direction. General style guidance is subordinate to
 the operator request and form.
 
+Stage 4 freezes `bundle/content.raw.md` before humanization. Rewriters return
+paragraph-level changes under `humanization_contract.md`; they never replace the
+whole document without review. `prose_fidelity.py` is the authoritative local
+check. A failed comparison restores the raw content and blocks acceptance of the
+candidate. External detector scores and service-side audits are advisory.
+
 ## L. Final evaluation
 
 The final panel covers visual composition, logic, evidence, numerical claims,
@@ -163,7 +169,13 @@ After initialization and state transitions, regenerate:
 
 - `.pipeline/handoff.json` for machines;
 - `NEXT_TASK.md` for humans and agents.
+- `.pipeline/artifacts.json` and `WORKSPACE_INDEX.md` for artifact readiness.
+
+Temporary work belongs to `work/stage-<id>/`. Canonical outputs are defined by
+`workspace_layout.json`; agents must not invent alternate sibling paths.
 
 On completion or blocking, safe transient files may move to
 `archive/stages/<stage>/<timestamp>/`. Canonical artifacts are never moved or
-deleted. The derived handoff never overrides `PIPELINE.md`.
+deleted. Completed-stage work areas are archived intact, and a receipt is saved
+under `.pipeline/receipts/`. Derived organization files never override
+`PIPELINE.md`.

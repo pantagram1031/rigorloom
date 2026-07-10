@@ -16,6 +16,13 @@ override them through its request or form instructions.
    merely to make the prose sound easier.
 7. After stylistic rewriting, verify that numbers, citations, equations, and
    logical qualifications remain unchanged.
+8. Replace impressive-sounding abstractions with a concrete functional
+   explanation when the heavier term adds no precision. Apply this to titles
+   and opening summaries as well as body prose.
+9. Keep introductions in ordinary language. Introduce notation and specialist
+   compression in the background section where each item can be explained.
+10. Treat AI-style or formality scores as advisory. A formal, accurate student
+    report must not be rewritten merely to satisfy a detector threshold.
 
 These rules are examples, not a personal voice profile, and contain no private
 corpus material.

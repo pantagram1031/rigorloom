@@ -13,3 +13,8 @@ The project separates orchestration from document production.
 Workspace state lives in `PIPELINE.md`; machine handoff state lives in
 `.pipeline/handoff.json`. The former is authoritative for stage and gate state.
 The latter is regenerated after changes and is safe to discard and rebuild.
+
+`pipeline/references/workspace_layout.json` is the artifact-routing source of
+truth. It maps each stage to required inputs and canonical outputs. The
+organizer turns it into a live inventory, a human workspace index, an isolated
+stage work area, and completion receipts without changing kernel state.

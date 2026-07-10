@@ -8,6 +8,7 @@ venv/
 workspaces/
 reports/
 private/
+.local/
 *.log
 studio/studio.log
 .DS_Store

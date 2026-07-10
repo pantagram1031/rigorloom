@@ -5,6 +5,9 @@ PURPOSE: Assemble on a form COPY with typeset-first defaults, converge
 (phase 1 = metrics), prove (phase 2 = composition rubric). Goal = no
 voids, many figures, in target_pages, uniform density.
 
+When `.pipeline/personalization.lock.json` exists, use its form conditions and
+layout conventions as input constraints. Do not edit the lock during assembly.
+
 ENTRY: `pipeline_ctl resume` → stage 5. Stage 4 done (gate draft ok).
 Always start from an UNTOUCHED `<WS>/output/form_copy.hwpx`
 (§8/§T non-destructive).

@@ -1,0 +1,152 @@
+{
+  "schema": "report-pipeline-workspace/v1",
+  "canonical_dirs": [
+    "research",
+    "research/assets",
+    "bundle",
+    "bundle/figures",
+    "sim",
+    "figures",
+    "output",
+    "output/preview",
+    "output/proof",
+    "refs",
+    "work",
+    "archive",
+    "archive/knowledge",
+    ".pipeline",
+    ".pipeline/receipts"
+  ],
+  "stages": {
+    "-1": {
+      "name": "setup",
+      "inputs": [],
+      "outputs": [
+        {"pattern": "request.yaml", "required": true},
+        {"pattern": "build.yaml", "required": true},
+        {"pattern": "PIPELINE.md", "required": true},
+        {"pattern": "APPROVALS.md", "required": true}
+      ]
+    },
+    "0": {
+      "name": "form-intake",
+      "inputs": [
+        {"pattern": "request.yaml", "required": true},
+        {"pattern": "build.yaml", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "form_profile.json", "required": true},
+        {"pattern": "form_baseline.json", "required": false},
+        {"pattern": "heading_anchors.json", "required": false}
+        ,{"pattern": ".pipeline/personalization.lock.json", "required": false}
+      ]
+    },
+    "1": {
+      "name": "research",
+      "inputs": [
+        {"pattern": "request.yaml", "required": true},
+        {"pattern": "form_profile.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "research/evidence.md", "required": true},
+        {"pattern": "research/sources.json", "required": true},
+        {"pattern": "research/curriculum.md", "required": false},
+        {"pattern": "research/assets/*", "required": false}
+      ]
+    },
+    "2": {
+      "name": "design",
+      "inputs": [
+        {"pattern": "research/evidence.md", "required": true},
+        {"pattern": "research/sources.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "01_design.md", "required": true}
+      ]
+    },
+    "2.5": {
+      "name": "layout-plan",
+      "inputs": [
+        {"pattern": "01_design.md", "required": true},
+        {"pattern": "form_profile.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "bundle/layout_plan.json", "required": true}
+      ]
+    },
+    "3": {
+      "name": "simulation",
+      "inputs": [
+        {"pattern": "01_design.md", "required": true},
+        {"pattern": "bundle/layout_plan.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "sim/gate_result.json", "required": true},
+        {"pattern": "sim/VERIFY.md", "required": true},
+        {"pattern": "figures/*", "required": false}
+      ]
+    },
+    "4": {
+      "name": "write",
+      "inputs": [
+        {"pattern": "research/evidence.md", "required": true},
+        {"pattern": "research/sources.json", "required": true},
+        {"pattern": "01_design.md", "required": true},
+        {"pattern": "bundle/layout_plan.json", "required": true},
+        {"pattern": "sim/gate_result.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "bundle/content.raw.md", "required": true},
+        {"pattern": "bundle/content.md", "required": true},
+        {"pattern": "bundle/provenance.json", "required": true},
+        {"pattern": "bundle/ai_tell_review.json", "required": true},
+        {"pattern": "bundle/humanization_report.json", "required": true},
+        {"pattern": "bundle/prose_fidelity.json", "required": true},
+        {"pattern": "bundle/figures/*", "required": false}
+      ]
+    },
+    "5": {
+      "name": "assemble-proof",
+      "inputs": [
+        {"pattern": "bundle/content.md", "required": true},
+        {"pattern": "bundle/layout_plan.json", "required": true},
+        {"pattern": "build.yaml", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "output/out.*", "required": true},
+        {"pattern": "output/verdict*.json", "required": true},
+        {"pattern": "output/proof/contact_*.png", "required": false}
+      ]
+    },
+    "5.5": {
+      "name": "understanding",
+      "inputs": [
+        {"pattern": "output/out.*", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "output/QUESTIONS.md", "required": true}
+      ]
+    },
+    "5.7": {
+      "name": "evaluation-panel",
+      "inputs": [
+        {"pattern": "output/out.*", "required": true},
+        {"pattern": "output/verdict*.json", "required": true},
+        {"pattern": "bundle/provenance.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "output/scorecard.json", "required": true}
+      ]
+    },
+    "6": {
+      "name": "return-knowledge",
+      "inputs": [
+        {"pattern": "output/out.*", "required": true},
+        {"pattern": "output/scorecard.json", "required": true}
+      ],
+      "outputs": [
+        {"pattern": "archive/knowledge/*.md", "required": true}
+      ]
+    }
+  }
+}

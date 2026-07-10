@@ -29,14 +29,61 @@ Requirements: Python 3.10+; `pytest` for tests; Studio dependencies are optional
 git clone https://github.com/pantagram1031/report-pipeline.git
 cd report-pipeline
 python scripts/new_report.py --slug demo --subject math \
-  --topic "A testable question" --form /absolute/path/to/form.hwpx
+  --topic "A testable question" --form /absolute/path/to/form.hwpx \
+  --profile-root /private/report-profile
 python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
+
+Create a private local writing profile once per machine (optional but
+recommended). The generated `.local/` directory is ignored by Git:
+
+```sh
+python scripts/setup_profile.py
+```
+
+For form-specific preferences and feedback candidates, see the
+[personalization contract](pipeline/references/personalization_contract.md).
+
+### HWP/HWPX output requirements
+
+The pipeline state machine itself has no model-provider or HWP dependency.
+However, the full `.hwp` document workflow requires all of the following on the
+machine that runs the document stages:
+
+- Windows with the desktop **Hancom Office HWP** application installed and licensed
+- the separate [`hwp-master`](https://github.com/pantagram1031/hwp-master) checkout
+- its optional COM packages: `python -m pip install ".[windows]"`
+- its optional PDF-proof packages when visual gates are used: `python -m pip install ".[proof]"`
+
+Verify the machine before starting an HWP report:
+
+```powershell
+cd ..\hwp-master
+python scripts/doctor.py --require-com --require-proof `
+  --report-pipeline ..\report-pipeline
+```
+
+Installing these repositories does not install Hancom Office. Web Hancom Docs,
+Linux, and macOS cannot run the local COM editing backend; they can still run the
+pipeline and non-COM HWPX/XML stages.
 
 Read [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) before running
 a stage. Open the returned playbook and follow its entry, role, exit, and gate
 contract. Every successful transition refreshes `NEXT_TASK.md` and
-`.pipeline/handoff.json` inside the workspace.
+`.pipeline/handoff.json` inside the workspace. It also maintains
+`WORKSPACE_INDEX.md`, `.pipeline/artifacts.json`, stage receipts, and a clean
+stage-owned work area.
+
+Operational knowledge distilled from previous runs is kept in
+[lessons learned](docs/lessons-learned.md),
+[design decisions](docs/design-decisions.md), and
+[troubleshooting](docs/troubleshooting.md). These documents contain generalized
+failure patterns only; personal reports and private templates are not included.
+
+Stage 4 includes provider-neutral, rollback-safe humanization. It freezes the
+verified draft, accepts paragraph-level edits from Pantadex or any capable agent,
+and automatically restores the draft if protected facts change. See
+[`humanization_contract.md`](pipeline/references/humanization_contract.md).
 
 ## Repository map
 
@@ -58,6 +105,8 @@ workspaces/  local run data; ignored by Git
 - Canonical artifacts are never moved by automatic housekeeping.
 - Only known scratch files and run logs are archived.
 - Workspace paths and slugs are validated before writes.
+- Temporary agent work is isolated by stage and archived at transition.
+- Artifact hashes and missing required files are visible before the next task.
 
 ## Validation
 

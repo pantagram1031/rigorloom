@@ -26,6 +26,8 @@ Non-negotiable invariants:
 7. Canonical artifacts stay in their declared directories.
 8. Every state transition refreshes `NEXT_TASK.md` and
    `.pipeline/handoff.json` for the next agent.
+9. Temporary work belongs in the active stage's `work/stage-<id>/scratch/`
+   directory; canonical outputs go only to declared artifact paths.
 
 Precedence for conflicting instructions:
 
@@ -33,7 +35,19 @@ Precedence for conflicting instructions:
 operator request > form instructions > pipeline defaults
 ```
 
+Private personalization refines this without changing the pipeline contract:
+`request explicit > form user override > form extracted conditions > subject
+profile > global profile > public defaults`. Initialize it with
+`python pipeline/scripts/personalization_ctl.py --profile-root <PRIVATE_ROOT> init`.
+The profile root is ignored local state; generated report prose is never style
+evidence. See `pipeline/references/personalization_contract.md`.
+
 ## 2. Repository and workspace layout
+
+Reusable operating history is documented separately in
+`docs/lessons-learned.md`, `docs/design-decisions.md`, and
+`docs/troubleshooting.md`. Consult these before inventing a new gate exemption,
+layout repair knob, backup convention, or recovery procedure.
 
 Run commands from the repository root.
 
@@ -55,9 +69,13 @@ request.yaml               topic, scope, constraints, form, output request
 build.yaml                 one declaration source for document construction
 APPROVALS.md               human-only supervised approvals
 NEXT_TASK.md               regenerated human-readable handoff
+WORKSPACE_INDEX.md         regenerated artifact and readiness table
 .pipeline/handoff.json     regenerated machine-readable handoff
+.pipeline/artifacts.json   hashes, sizes, presence, and missing artifacts
+.pipeline/receipts/        completion snapshots by stage
 events.jsonl               append-only event stream
 TROUBLES.md                run-specific failures and decisions
+work/stage-<id>/scratch/   temporary files owned by the active stage
 research/                  evidence lanes, source records, source assets
 01_design.md               approved research and validation design
 bundle/                    layout plan, content, figures, provenance
@@ -78,10 +96,12 @@ Then:
 1. Read the returned stage playbook in
    `pipeline/references/playbooks/stage-<n>.md`.
 2. Satisfy its entry conditions.
-3. Produce only its declared artifacts.
-4. Resolve its gate, if any.
-5. Advance with `pipeline_ctl.py`.
-6. Read the regenerated `NEXT_TASK.md` before doing more work.
+3. Use the work area named in `NEXT_TASK.md` for drafts and temporary files.
+4. Publish only outputs declared in
+   `pipeline/references/workspace_layout.json` to canonical paths.
+5. Resolve its gate, if any.
+6. Advance with `pipeline_ctl.py`.
+7. Read the regenerated `NEXT_TASK.md` before doing more work.
 
 If a worker cannot complete a role, record the failure and select another
 backend with equivalent capability. The stage contract does not change.
@@ -147,6 +167,19 @@ python studio/main.py
 
 The document adapter inspects the original without modifying it. For HWP:
 
+The full HWP path must run on Windows with the desktop Hancom Office HWP
+application installed locally. The pipeline does not bundle Hancom Office.
+Before Stage 0, verify the separate adapter checkout with:
+
+```powershell
+python <HWP_MASTER_ROOT>/scripts/doctor.py --require-com --require-proof `
+  --report-pipeline <REPORT_PIPELINE_ROOT>
+```
+
+If this check fails, do not enter the COM assembly path. Use only provider-neutral
+pipeline stages or supported non-COM HWPX/XML operations until a Windows HWP host
+is available.
+
 ```sh
 python <HWP_MASTER_ROOT>/scripts/form_inspect.py <form> \
   --out <WS>/form_profile.json --base-pt 10 --line-spacing 180 \
@@ -184,8 +217,12 @@ Numeric claims should receive two independent verification passes.
 Write `bundle/content.md` against the approved layout plan. Preserve source ids,
 distinguish facts from interpretation, and record paragraph provenance. Apply
 the general prose guidance in `docs/style-rules.md` only when it does not
-conflict with request or form instructions. The human draft gate concerns
-content, not typesetting.
+conflict with request or form instructions. Then follow
+`pipeline/references/humanization_contract.md`: freeze `content.raw.md`, create
+an AI-tell review, apply only paragraph-level changes, and require the local
+fidelity report to pass. Unsafe edits roll back automatically. Pantadex is an
+optional adapter; any capable agent may use the same prompt and schema. The
+human draft gate concerns content, not typesetting.
 
 ### Stage 5 — assemble and proof
 
@@ -201,6 +238,10 @@ python <HWP_MASTER_ROOT>/scripts/fill_report.py --loop \
 
 First converge deterministic page/figure/spacing metrics. Then inspect a
 contact sheet using four binary composition checks:
+
+Contact sheets are insufficient for small equation details. Any page containing
+new inline equations must also receive a high-resolution equation check for
+script scope, missing glyphs, and token leakage before acceptance.
 
 1. no unexplained middle/bottom void;
 2. reasonably uniform body-page density;
@@ -252,6 +293,11 @@ required, and no provider may bypass a gate.
 invalidation, trouble reports, and stage advances. On completed or blocked
 stages it also archives safe transient files.
 
+The declarative layout is `pipeline/references/workspace_layout.json`. For each
+stage it lists required inputs and expected outputs. The organizer uses that
+single map to create directories, inventory artifacts, report missing files,
+and prepare the next stage's work area.
+
 The organizer never moves canonical research, bundles, simulation verdicts,
 approvals, proofs, or final outputs. It archives only documented scratch paths
 and run-log patterns. Run it manually when needed:
@@ -261,7 +307,13 @@ python pipeline/scripts/workspace_organizer.py <WS> --completed-stage <stage>
 ```
 
 The next agent should trust `PIPELINE.md`, then use `NEXT_TASK.md` as a concise
-entry point. `.pipeline/handoff.json` is derived and can be regenerated.
+entry point. `WORKSPACE_INDEX.md` shows the complete run at a glance, while
+`.pipeline/artifacts.json` records hashes and missing artifacts.
+
+When a stage becomes done or blocked, its `work/stage-<id>/` directory is moved
+intact to `archive/stages/stage-<id>/<timestamp>/work/`. A receipt under
+`.pipeline/receipts/` records the declared outputs, hashes, missing outputs, and
+archived paths at that transition. Canonical artifacts never move.
 
 ## 8. Troubleshooting and completion
 
