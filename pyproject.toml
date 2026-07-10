@@ -1,0 +1,14 @@
+[project]
+name = "agent-report-pipeline"
+version = "0.6.0"
+description = "Agent-neutral, resumable report workflow"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+studio = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pymupdf>=1.23"]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["pipeline/tests", "tests"]
+addopts = "-ra"

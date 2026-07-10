@@ -1,0 +1,42 @@
+version: "0.6"
+
+# Capability roles are authoritative. Provider commands are local examples and
+# may be replaced without changing the stage graph.
+backends:
+  - id: "agent.interactive"
+    capabilities: [reasoning, writing, research, files]
+    invoke: "use the current interactive agent session"
+    status: available
+  - id: "agent.worker/high"
+    capabilities: [reasoning, writing, review]
+    invoke: "spawn or invoke any high-reasoning worker"
+    status: configurable
+  - id: "agent.worker/medium"
+    capabilities: [research, mechanical, simulation, vision]
+    invoke: "spawn or invoke any balanced worker"
+    status: configurable
+  - id: "agent.worker/low"
+    capabilities: [mechanical, archive]
+    invoke: "spawn or invoke any low-cost worker"
+    status: configurable
+  - id: "human"
+    capabilities: [approval, escalation, visual-judgment]
+    invoke: "APPROVALS.md or direct operator response"
+    status: available
+
+roles:
+  orchestrator: ["agent.interactive"]
+  writer: ["agent.worker/high", "agent.interactive"]
+  writer-designer: ["agent.worker/high", "agent.interactive"]
+  designer: ["agent.worker/high", "agent.interactive"]
+  researcher: ["agent.worker/medium", "agent.interactive"]
+  cross-examiner: ["agent.worker/high", "agent.interactive"]
+  sim-executor: ["agent.worker/medium", "agent.interactive"]
+  mech-worker: ["agent.worker/medium", "agent.interactive"]
+  vision-judge: ["agent.worker/medium", "human"]
+  reviewer-logic: ["agent.worker/high", "agent.interactive"]
+  reviewer-ai-tell: ["agent.worker/high", "agent.interactive"]
+  judge-panelist: ["agent.worker/high", "agent.worker/medium", "human"]
+  humanizer-chain: ["agent.worker/high", "agent.interactive"]
+  archive: ["agent.worker/low", "agent.interactive"]
+  escalation: ["human"]

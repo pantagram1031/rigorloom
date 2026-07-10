@@ -1,0 +1,12 @@
+version: "0.6"
+stages:
+  - {id: "0",   name: "form_intake",  gate: null,                                playbook: "playbooks/stage-0.md"}
+  - {id: "1",   name: "research",     gate: null,                                playbook: "playbooks/stage-1.md"}
+  - {id: "2",   name: "design",       gate: {name: "design", type: "human"},     playbook: "playbooks/stage-2.md"}
+  - {id: "2.5", name: "layout_plan",  gate: {name: "layout", type: "script"},    playbook: "playbooks/stage-2.5.md"}
+  - {id: "3",   name: "sim",          gate: {name: "sane",   type: "script"},    playbook: "playbooks/stage-3.md"}
+  - {id: "4",   name: "write",        gate: {name: "draft",  type: "human"},     playbook: "playbooks/stage-4.md"}
+  - {id: "5",   name: "assemble",     gate: null,                                playbook: "playbooks/stage-5.md"}
+  - {id: "5.5", name: "understand",   gate: {name: "understand", type: "human"}, playbook: "playbooks/stage-5.5.md"}
+  - {id: "5.7", name: "final_panel",  gate: null,                                playbook: "playbooks/stage-5.7.md"}
+  - {id: "6",   name: "return",       gate: null,                                playbook: "playbooks/stage-6.md"}

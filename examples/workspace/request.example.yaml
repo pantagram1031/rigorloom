@@ -1,0 +1,14 @@
+topic: "A testable research question"
+subject: "example domain"
+form: "/absolute/path/to/private/form.hwpx"
+mode: supervised
+output_filename: "report.hwpx"
+length: standard
+constraints:
+  pages: [5, 10]
+  min_figures: 3
+  scope: "Define the included concepts and explicit exclusions."
+  must_include: []
+  avoid: []
+  style: "Clear evidence-backed report prose"
+notes: "Record assumptions and operator-specific requirements here."
