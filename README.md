@@ -36,7 +36,9 @@ python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 Read [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) before running
 a stage. Open the returned playbook and follow its entry, role, exit, and gate
 contract. Every successful transition refreshes `NEXT_TASK.md` and
-`.pipeline/handoff.json` inside the workspace.
+`.pipeline/handoff.json` inside the workspace. It also maintains
+`WORKSPACE_INDEX.md`, `.pipeline/artifacts.json`, stage receipts, and a clean
+stage-owned work area.
 
 ## Repository map
 
@@ -58,6 +60,8 @@ workspaces/  local run data; ignored by Git
 - Canonical artifacts are never moved by automatic housekeeping.
 - Only known scratch files and run logs are archived.
 - Workspace paths and slugs are validated before writes.
+- Temporary agent work is isolated by stage and archived at transition.
+- Artifact hashes and missing required files are visible before the next task.
 
 ## Validation
 

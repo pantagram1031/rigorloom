@@ -48,6 +48,9 @@ def test_scaffolder_initializes_atomically(tmp_path: Path):
     assert workspace == root / "report-demo"
     assert (workspace / "PIPELINE.md").exists()
     assert (workspace / "NEXT_TASK.md").exists()
+    assert (workspace / "WORKSPACE_INDEX.md").exists()
+    assert (workspace / ".pipeline" / "artifacts.json").exists()
+    assert (workspace / "work" / "stage-0" / "scratch").is_dir()
     handoff = json.loads((workspace / ".pipeline" / "handoff.json").read_text(encoding="utf-8"))
     assert handoff["workspace"] == str(workspace.resolve())
     assert not list(root.glob(".creating-*"))

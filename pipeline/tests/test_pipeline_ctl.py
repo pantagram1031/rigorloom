@@ -54,6 +54,9 @@ class TestInitAndResume(PipelineCtlTestCase):
         self.init_ws()
         self.assertTrue((self.ws / "NEXT_TASK.md").exists())
         self.assertTrue((self.ws / ".pipeline" / "handoff.json").exists())
+        self.assertTrue((self.ws / ".pipeline" / "artifacts.json").exists())
+        self.assertTrue((self.ws / "WORKSPACE_INDEX.md").exists())
+        self.assertTrue((self.ws / "work" / "stage-0" / "scratch").is_dir())
         payload, code = run("resume", str(self.ws))
         self.assertEqual(code, 0)
         self.assertTrue(payload["ok"])
@@ -89,6 +92,8 @@ class TestInitAndResume(PipelineCtlTestCase):
         self.assertEqual(len(archived), 1)
         handoff = json.loads((self.ws / ".pipeline" / "handoff.json").read_text(encoding="utf-8"))
         self.assertEqual(handoff["next_stage"], "1")
+        self.assertEqual(handoff["work_dir"], "work/stage-1")
+        self.assertTrue(list((self.ws / ".pipeline" / "receipts").glob("stage-0-*.json")))
 
 
 class TestAdvance(PipelineCtlTestCase):

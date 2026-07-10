@@ -163,7 +163,13 @@ After initialization and state transitions, regenerate:
 
 - `.pipeline/handoff.json` for machines;
 - `NEXT_TASK.md` for humans and agents.
+- `.pipeline/artifacts.json` and `WORKSPACE_INDEX.md` for artifact readiness.
+
+Temporary work belongs to `work/stage-<id>/`. Canonical outputs are defined by
+`workspace_layout.json`; agents must not invent alternate sibling paths.
 
 On completion or blocking, safe transient files may move to
 `archive/stages/<stage>/<timestamp>/`. Canonical artifacts are never moved or
-deleted. The derived handoff never overrides `PIPELINE.md`.
+deleted. Completed-stage work areas are archived intact, and a receipt is saved
+under `.pipeline/receipts/`. Derived organization files never override
+`PIPELINE.md`.
