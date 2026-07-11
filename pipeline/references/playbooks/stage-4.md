@@ -19,19 +19,27 @@ EXACT actions:
    unexplained terminology and budget violations.
 5. Follow `humanization_contract.md` in its fixed order:
    - run `humanization_ctl.py prepare <WS>`;
-   - run the AI-tell prompt and save `bundle/ai_tell_review.json`;
-   - ask the selected humanizer for paragraph-level changes only;
-   - save changes under `work/stage-4/scratch/` and run
-     `humanization_ctl.py apply <WS> --changes <changes.json>`.
-6. Require `bundle/prose_fidelity.json` to pass. A failed apply automatically
-   restores `bundle/content.raw.md`; repair the proposal, never the report facts.
+   - spawn an independent local prose-pattern reviewer and save
+     `bundle/ai_tell_review.json`; scores are advisory and never select targets;
+   - PASS means an empty v2 proposal with `gate.skipped=true`;
+   - REWORK means spawn a separate local `humanizer-rewriter`, give it every
+     prose paragraph, and request paragraph-level changes only;
+   - run an independent fidelity/naturalness review, then save the annotated
+     proposal under `work/stage-4/scratch/`;
+   - run `humanization_ctl.py apply <WS> --changes <changes.json>`.
+6. Require `bundle/prose_fidelity.json` to pass. The controller keeps safe
+   edits, restores unsafe paragraphs, and returns `retry_paragraph_ids`. Retry
+   only those ids with a fresh worker, for at most three rounds. Never repair
+   facts to make a style proposal pass.
 7. Present the accepted content and humanization reports—not document styling—
    for the human draft gate.
 
 ROLE BINDINGS: writer = agent.worker/high or orchestrator; level/logic reviewer
-= an independent high-reasoning pass. humanizer-chain = optional Pantadex MCP,
-another high-reasoning worker, or the interactive agent, all using the same JSON
-contract. Optional services are never required and cannot bypass local fidelity.
+= an independent high-reasoning pass; reviewer-ai-tell = a local high-reasoning
+worker; humanizer-rewriter = a different local high-reasoning worker;
+reviewer-fidelity/reviewer-naturalness = workers independent from the rewriter.
+Pantadex is an optional adapter or comparison judge. Optional services are never
+required and cannot bypass local fidelity.
 
 EXIT + gate:
 
@@ -49,3 +57,5 @@ FAILURE table:
 | prose tool unavailable | optional adapter missing | continue with an independent manual/agent review |
 | rewrite changed a number, tag, or qualifier | fidelity violation | controller rolls back; correct the change proposal |
 | stale paragraph text | draft changed after prepare | rerun prepare and review against the new baseline |
+| scorer marks formal prose REWORK | register false positive | treat score as advisory; use independent review |
+| retry ids remain after round 3 | no safe convergence | keep protected originals and hold/report |
