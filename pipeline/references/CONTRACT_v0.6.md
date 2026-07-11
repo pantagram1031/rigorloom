@@ -87,11 +87,17 @@ Style editing may not alter numbers, citations, equations, uncertainty,
 qualifications, or logical direction. General style guidance is subordinate to
 the operator request and form.
 
-Stage 4 freezes `bundle/content.raw.md` before humanization. Rewriters return
-paragraph-level changes under `humanization_contract.md`; they never replace the
-whole document without review. `prose_fidelity.py` is the authoritative local
-check. A failed comparison restores the raw content and blocks acceptance of the
-candidate. External detector scores and service-side audits are advisory.
+Stage 4 freezes `bundle/content.raw.md` before humanization. Detector and scorer
+outputs are advisory; formal-register scores cannot select paragraphs or force a
+rewrite. PASS preserves the draft. On REWORK an independent local rewriter
+inspects every prose paragraph and returns only actual paragraph-level changes
+under `humanization_contract.md` v2.
+
+`prose_fidelity.py` is the authoritative local check. The controller restores
+unsafe paragraphs individually, emits retry ids, and runs a whole-document
+audit; a global invariant failure restores the raw content. Rewriter, semantic
+fidelity reviewer, and naturalness reviewer are independent roles. External
+service audits can add evidence but cannot override a deterministic failure.
 
 ## L. Final evaluation
 

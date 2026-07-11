@@ -27,6 +27,9 @@ Every adapter must:
 | vision judge | image/PDF inspection | independent from writer |
 | logic reviewer | critical reasoning | independent from writer |
 | numeric reviewer | quantitative verification | two independent passes |
+| prose-pattern reviewer | observable style review | independent from rewriter |
+| humanizer rewriter | bounded Korean prose editing | local worker by default |
+| fidelity/naturalness reviewer | semantic preservation and over-polish | independent from rewriter |
 | human gate | operator authority | human only |
 
 ## Provider examples
@@ -38,6 +41,9 @@ Every adapter must:
 - A single interactive agent may perform multiple roles sequentially when
   parallel workers are unavailable, but it must record that reduced
   independence in `events.jsonl` or `TROUBLES.md`.
+- For Stage 4, prefer spawned local workers for reviewer, rewriter, and judge.
+  Do not let one worker both rewrite and approve its own proposal. Pantadex is
+  an optional adapter, not an availability requirement.
 
 Backend availability is environment-specific. Do not commit account status,
 tokens, benchmark logs, or personal model preferences to the repository.

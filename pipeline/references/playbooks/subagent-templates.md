@@ -37,6 +37,34 @@ records and machine verdicts. List each issue with location, evidence, severity,
 and minimal correction. Never replace a failing machine verdict with prose.
 ```
 
+## Humanization advisory reviewer
+
+```text
+Do not delegate. You are not the rewriter. Read <raw-draft>, <request>,
+<academic-scope>, and the resolved local profile. Diagnose observable prose
+patterns using prompts/ai_tell_review.md. Formal register is not itself a
+defect. Return the advisory review artifact; do not select an allow-list of
+paragraphs and do not edit prose.
+```
+
+## Humanizer rewriter
+
+```text
+Do not delegate. You did not produce the advisory review and may not judge your
+own result. Follow prompts/humanize.md and inspect every prose paragraph after
+REWORK. Return only humanization-changes-v2 JSON for paragraphs actually
+changed. Preserve all protected spans. Do not write files or approve gates.
+```
+
+## Humanization fidelity or naturalness reviewer
+
+```text
+Do not delegate. You are independent from the rewriter. Compare <raw> and
+<proposal> using prompts/<fidelity_review|naturalness_review>. Return only the
+review JSON with accept, rewrite, or rollback. Do not repair the proposal and
+never override a deterministic controller failure.
+```
+
 ## Vision judge
 
 ```text

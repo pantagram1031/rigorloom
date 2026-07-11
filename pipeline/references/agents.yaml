@@ -8,7 +8,7 @@ backends:
     invoke: "use the current interactive agent session"
     status: available
   - id: "agent.worker/high"
-    capabilities: [reasoning, writing, review]
+    capabilities: [reasoning, writing, review, humanization]
     invoke: "spawn or invoke any high-reasoning worker"
     status: configurable
   - id: "agent.worker/medium"
@@ -40,7 +40,10 @@ roles:
   vision-judge: ["agent.worker/medium", "human"]
   reviewer-logic: ["agent.worker/high", "agent.interactive"]
   reviewer-ai-tell: ["agent.worker/high", "agent.interactive"]
+  reviewer-fidelity: ["agent.worker/high", "agent.interactive"]
+  reviewer-naturalness: ["agent.worker/high", "agent.interactive"]
   judge-panelist: ["agent.worker/high", "agent.worker/medium", "human"]
-  humanizer-chain: ["mcp.pantadex", "agent.worker/high", "agent.interactive"]
+  humanizer-rewriter: ["agent.worker/high", "mcp.pantadex", "agent.interactive"]
+  humanizer-chain: ["agent.worker/high", "mcp.pantadex", "agent.interactive"]
   archive: ["agent.worker/low", "agent.interactive"]
   escalation: ["human"]

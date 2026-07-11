@@ -82,8 +82,9 @@ Operational knowledge distilled from previous runs is kept in
 failure patterns only; personal reports and private templates are not included.
 
 Stage 4 includes provider-neutral, rollback-safe humanization. It freezes the
-verified draft, accepts paragraph-level edits from Pantadex or any capable agent,
-and automatically restores the draft if protected facts change. See
+verified draft, uses independent local reviewer/rewriter workers by default,
+and restores only paragraphs whose protected facts change. Pantadex remains an
+optional adapter; detector scores are advisory. See
 [`humanization_contract.md`](pipeline/references/humanization_contract.md).
 
 ## Repository map
