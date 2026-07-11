@@ -13,8 +13,12 @@ from pathlib import Path
 
 PATTERNS = {
     "numbers": re.compile(r"(?<![\w.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s?(?:%|‰|℃|°[CF]?|[a-zA-ZμµΩ]+(?:/[a-zA-Z0-9²³μµ]+)?))?"),
+    "dates": re.compile(r"(?<!\d)(?:\d{4}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}일?)(?!\d)"),
     "source_ids": re.compile(r"(?<![\w-])(?:SRC|SOURCE|REF|S|R)[-_]?\d+(?![\w-])", re.I),
+    "citations": re.compile(r"(?:\[\d+(?:\s*[-,]\s*\d+)*\]|\([A-Z][A-Za-z-]+(?:\s+et\s+al\.)?,\s*\d{4}\))"),
     "tags": re.compile(r"\[\[(?:EQ|FIG|TABLE|URL)\b[^\]]*\]\]", re.I),
+    "inline_math": re.compile(r"(?<!\\)\$(?:\\.|[^$])+\$"),
+    "direct_quotes": re.compile(r"(?:\"[^\"\n]+\"|“[^”\n]+”|‘[^’\n]+’)"),
     "urls": re.compile(r"https?://[^\s)>\]]+"),
     "markdown_links": re.compile(r"\[[^\]]+\]\(https?://[^)]+\)"),
 }
@@ -23,6 +27,16 @@ QUALIFIERS = (
     "약", "대략", "가능", "추정", "최소", "최대", "이상", "이하", "미만", "초과",
     "않", "아니", "없", "못", "may", "might", "approximately", "at least", "at most",
     "not", "never", "no ",
+)
+
+QUANTIFIERS = (
+    "모든", "대부분", "일부", "각각", "오직", "항상", "반드시", "전혀",
+    "all", "most", "some", "each", "only", "always", "must",
+)
+
+CAUSAL_MARKERS = (
+    "때문", "따라서", "그러므로", "그 결과", "원인", "결과",
+    "because", "therefore", "thus", "causes", "results in",
 )
 
 
@@ -39,6 +53,11 @@ def _qualifiers(text: str) -> Counter[str]:
     return Counter({token: lowered.count(token.lower()) for token in QUALIFIERS if token.lower() in lowered})
 
 
+def _token_counts(text: str, tokens: tuple[str, ...]) -> Counter[str]:
+    lowered = text.lower()
+    return Counter({token: lowered.count(token.lower()) for token in tokens if token.lower() in lowered})
+
+
 def extract_protected(text: str) -> dict[str, object]:
     result: dict[str, object] = {}
     for name, pattern in PATTERNS.items():
@@ -46,6 +65,8 @@ def extract_protected(text: str) -> dict[str, object]:
         result[name] = values if name in {"tags", "markdown_links"} else dict(Counter(values))
     result["headings"] = _headings(text)
     result["qualifiers"] = dict(_qualifiers(text))
+    result["quantifiers"] = dict(_token_counts(text, QUANTIFIERS))
+    result["causal_markers"] = dict(_token_counts(text, CAUSAL_MARKERS))
     return result
 
 
