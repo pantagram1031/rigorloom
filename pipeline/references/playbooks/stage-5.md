@@ -8,9 +8,10 @@ voids, many figures, in target_pages, uniform density.
 When `.pipeline/personalization.lock.json` exists, use its form conditions and
 layout conventions as input constraints. Do not edit the lock during assembly.
 
-ENTRY: `pipeline_ctl resume` → stage 5. Stage 4 done (gate draft ok).
-Always start from an UNTOUCHED `<WS>/output/form_copy.hwpx`
-(§8/§T non-destructive).
+ENTRY: `pipeline_ctl resume` → stage 5. Stage 4 done (gate draft ok) and
+Stage 4.5 `content_audit` approved via
+`python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Always start
+from an UNTOUCHED `<WS>/output/form_copy.hwpx` (§8/§T non-destructive).
 
 SINGLE ASSEMBLY PATH: no manual assemble+tidy steps. The ONLY path is
 `fill_report.py --loop`, chaining build_report → COM edit → blank tidy →
@@ -61,6 +62,12 @@ ROLE BINDINGS (§R): mech-worker=agent.worker/medium (runs the loop
 command). vision-judge=agent.worker/medium fresh (high-capability worker=fallback).
 writer=agent.worker/high (applies needs deltas). escalation fires on
 proof-exhaust (candidates: human).
+
+POST-ASSEMBLY FORMAT CHECK: after the loop converges, run
+`python pipeline/scripts/verify_format.py <WS>` (report-only v1). It unzips
+`output/out.hwpx` and recomputes charPr/paraPr against build.yaml/form_profile
+expectations (body pt, line spacing, margins, stray formatting). Advisory for
+now — investigate any flag before delivery.
 
 EXIT + gate: verdict `converged:true` AND rubric all four keys `true`.
 Stage 5 has NO pipeline_ctl gate (gate:null) — verdict is internal.

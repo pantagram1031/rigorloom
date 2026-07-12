@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/prose_rules-v1",
+  "title": "Prose rules preference pack",
+  "description": "Banned patterns, signature-phrase caps, and endings policy for report prose. Content is taste; the engine is code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "banned_patterns"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["prose_rules"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "banned_patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "regex", "severity"],
+        "properties": {
+          "id": {"type": "string"},
+          "regex": {"type": "string"},
+          "severity": {"type": "string", "enum": ["hard", "warn"]},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "signature_phrases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["regex", "max_count"],
+        "properties": {
+          "regex": {"type": "string"},
+          "max_count": {"type": "integer"}
+        }
+      }
+    },
+    "endings_policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "default_style": {"type": "string"},
+        "per_doc_type": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "advisory_notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

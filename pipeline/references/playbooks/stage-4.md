@@ -48,6 +48,14 @@ python pipeline/scripts/pipeline_ctl.py gate <WS> draft --mode <mode>
 python pipeline/scripts/pipeline_ctl.py advance <WS> 4 --status done
 ```
 
+Next is **Stage 4.5 `content_audit`** (script gate), not assembly. Freeze the
+draft before Stage 5: assembly through the document adapter is slow and
+single-instance, so every text or number change after assembly forces a full
+re-normalize and re-assemble. `content_audit` recomputes content-level checks on
+`bundle/content.md` while edits are still cheap
+(`pipeline_ctl check <WS> content_audit`), so Stage 5 starts from frozen, audited
+content.
+
 FAILURE table:
 
 | Symptom | Cause | Action |

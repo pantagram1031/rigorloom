@@ -1,0 +1,15 @@
+{
+  "schema": "report-pipeline/preference-pack/policy_floors-v1",
+  "pack_type": "policy_floors",
+  "name": "neutral-default",
+  "version": 1,
+  "no_fabrication": true,
+  "nondestructive_forms": true,
+  "citation_floor": {"sources": "papers_books_only"},
+  "privacy": {"no_identity_in_artifacts": true},
+  "floors": [
+    {"pack": "report_structure", "key": "citation_style.sources", "value": "papers_books_only", "severity": "hard"},
+    {"pack": "saeteuk", "key": "forbid_numeric_overclaim", "value": true, "severity": "hard"},
+    {"pack": "figure_style", "key": "caption_source_policy", "value": "endnote", "severity": "warn"}
+  ]
+}

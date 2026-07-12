@@ -1,0 +1,11 @@
+{
+  "schema": "report-pipeline/preference-pack/saeteuk-v1",
+  "pack_type": "saeteuk",
+  "name": "neutral-default",
+  "version": 1,
+  "char_target": 500,
+  "max_bytes": 1500,
+  "forbid_special_chars": true,
+  "style": "concise-record",
+  "forbid_numeric_overclaim": true
+}

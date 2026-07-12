@@ -112,8 +112,8 @@ Authoritative order:
 
 ```text
 -1 setup → 0 form intake → 1 research → 2 design → 2.5 layout plan
-→ 3 simulation → 4 write → 5 assemble/proof → 5.5 understanding
-→ 5.7 evaluation panel → 6 return/knowledge
+→ 3 simulation → 4 write → 4.5 content audit → 5 assemble/proof
+→ 5.5 understanding → 5.7 evaluation panel → 6 return/knowledge
 ```
 
 | Stage | Purpose | Main output | Gate |
@@ -125,6 +125,7 @@ Authoritative order:
 | 2.5 | Cast off pages before writing | layout_plan.json | script `layout` |
 | 3 | Execute reproducible validation | gate_result.json | script `sane` |
 | 4 | Write to the approved budget | content.md, provenance | human `draft` |
+| 4.5 | Audit content before assembly | content_audit report | script `content_audit` |
 | 5 | Assemble, measure, and prove | out document/PDF, verdict | internal verdict |
 | 5.5 | Check operator understanding | QUESTIONS.md | human `understand` |
 | 5.7 | Independent final evaluation | scorecard.json | internal verdict |
@@ -137,14 +138,25 @@ Human gates:
   approval.
 - Approval records use `APPROVALS.md` and the gate command.
 
-Script gates:
+Script gates run the registered checker themselves:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py gate <WS> layout --script-exit 0
-python pipeline/scripts/pipeline_ctl.py gate <WS> sane --script-exit 0
+python pipeline/scripts/pipeline_ctl.py check <WS> layout
+python pipeline/scripts/pipeline_ctl.py check <WS> sane
+python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
 ```
 
-A non-zero checker exit rejects the gate. Never edit that result to pass.
+`check` invokes the checker bound to the gate in
+`pipeline/references/stages.yaml`, then records provenance (checker argv, exit
+code, stdout sha256, checked-at) to the event stream and
+`.pipeline/gate_checks.jsonl`. The `PIPELINE.md` header gate scalar keeps its
+studio-compatible name/state/by/at shape. A non-zero checker exit rejects the
+gate; never edit that result to pass — change the inputs and rerun `check`. The
+retired `gate ... --script-exit` form is now a hard usage error.
+
+A pending script gate blocks resume and advance in **all** modes, night
+included. Human gates are unchanged: supervised stops for approval;
+autonomous/night records `auto_approved`.
 
 ## 5. Stage responsibilities
 
@@ -225,6 +237,16 @@ actual changes. Independent fidelity/naturalness review follows; the local
 controller keeps safe edits, restores unsafe paragraphs, and retries only those
 ids for at most three rounds. Pantadex is an optional adapter or comparison
 judge. The human draft gate concerns content, not typesetting.
+
+### Stage 4.5 — content audit
+
+Freeze the draft before assembly. Assembly through the document adapter is slow
+and single-instance, so every text or number change after Stage 5 forces a full
+re-normalize and re-assemble. The `content_audit` script gate recomputes
+content-level checks on `bundle/content.md` (composite checker: verify_content
+plus, where configured, check_style, pack-driven) while edits are still cheap.
+Resolve it with `pipeline_ctl check <WS> content_audit`; Stage 5 begins only from
+frozen, audited content.
 
 ### Stage 5 — assemble and proof
 
@@ -357,3 +379,32 @@ Completion requires:
 
 Historical internal notes and superseded contracts are under `archive/` and are
 not part of the active workflow.
+
+## 9. Preference packs
+
+Operator taste (prose rules, figure look, report structure, summary-field shape,
+gloss allowlist, backend seating) is data, not code. The public repo ships
+JSON-Schema definitions and neutral defaults in
+`pipeline/references/preference_packs/`; private operator instances live in a
+profile root and resolve — by the `request > form > subject > global > public
+defaults` order — into a hash-only lock. Policy floors (privacy, fidelity,
+safety) are a non-overridable layer that request- or form-level preferences
+cannot weaken. See `pipeline/references/personalization_contract.md`.
+
+## 10. Local install (base + overlay)
+
+A generated skills directory is assembled by `scripts/sync_local.py` from a
+public **base** (this checkout) plus a private **overlay** (concrete backend
+bindings and templates). The installer writes a per-file receipt and refuses to
+run if the skills copy was hand-edited since the last sync — edit upstream or the
+overlay, never the generated copy. The Claude Code adapter files live in
+`adapters/claude-code/`. See `docs/skills-install.md`.
+
+## 11. v0.7 gate-integrity wave
+
+This wave hardens gate *integrity*: `check` runs the registered checker and
+records provenance, forged `--script-exit` passes are gone, pending script gates
+block in all modes, and Stage 4.5 `content_audit` freezes content before
+assembly. It is **not** full fail-closed — a caller can still invoke document
+assembly directly, and the acceptance-side release attestation (single build
+entrypoint, claim-token lifecycle, hash-bound manifests) remains deferred.
