@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/report_structure-v1",
+  "title": "Report structure preference pack",
+  "description": "Title template, section policies, abstract mode, citation style, curriculum anchoring, and hedge cap.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "title_format", "citation_style"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["report_structure"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "title_format": {"type": "string"},
+    "section_policies": {"type": "object", "additionalProperties": true},
+    "abstract_mode": {"type": "string"},
+    "citation_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "in_text"],
+      "properties": {
+        "sources": {"type": "string", "enum": ["papers_books_only", "any"]},
+        "in_text": {"type": "string", "enum": ["narrative", "parenthetical"]}
+      }
+    },
+    "curriculum_anchor_first": {"type": "boolean"},
+    "max_hedge_caveats": {"type": "integer"},
+    "preferred_sections": {"type": "array", "items": {"type": "string"}}
+  }
+}

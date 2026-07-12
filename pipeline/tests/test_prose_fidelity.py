@@ -46,7 +46,7 @@ def test_humanization_apply_accepts_safe_change(tmp_path: Path):
     bundle.mkdir(parents=True)
     content = bundle / "content.md"
     content.write_text("## 결과\n\n측정값은 18.6%였다.\n", encoding="utf-8")
-    prep = subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], capture_output=True, text=True)
+    prep = subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], capture_output=True, text=True, encoding="utf-8")
     assert prep.returncode == 0, prep.stderr
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({"changes": [{
@@ -55,7 +55,7 @@ def test_humanization_apply_accepts_safe_change(tmp_path: Path):
     }]}, ensure_ascii=False), encoding="utf-8")
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert applied.returncode == 0, applied.stderr
     assert "측정한 값은 18.6%" in content.read_text(encoding="utf-8")
@@ -69,14 +69,14 @@ def test_humanization_apply_rolls_back_unsafe_change(tmp_path: Path):
     original = "## 결과\n\n측정값은 18.6%였다.\n"
     content = bundle / "content.md"
     content.write_text(original, encoding="utf-8")
-    subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True, capture_output=True, text=True)
+    subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True, capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({"changes": [{
         "paragraph_id": "p0002", "before": "측정값은 18.6%였다.", "after": "측정값은 약 20%였다."
     }]}, ensure_ascii=False), encoding="utf-8")
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert applied.returncode == 1
     assert content.read_text(encoding="utf-8") == original
@@ -93,7 +93,7 @@ def test_humanization_v2_pass_gate_skips_rewrite(tmp_path: Path):
     content = bundle / "content.md"
     content.write_text(original, encoding="utf-8")
     subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({
         "schema": "report-pipeline/humanization-changes-v2",
@@ -103,7 +103,7 @@ def test_humanization_v2_pass_gate_skips_rewrite(tmp_path: Path):
 
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
     assert applied.returncode == 0, applied.stderr
@@ -123,7 +123,7 @@ def test_humanization_v2_rolls_back_only_unsafe_paragraph(tmp_path: Path):
         encoding="utf-8",
     )
     subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({
         "schema": "report-pipeline/humanization-changes-v2",
@@ -139,7 +139,7 @@ def test_humanization_v2_rolls_back_only_unsafe_paragraph(tmp_path: Path):
 
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
     assert applied.returncode == 1
@@ -160,7 +160,7 @@ def test_humanization_v2_warns_on_overcorrection_and_extreme_hedge(tmp_path: Pat
     before = "## 결과\n\n측정 결과는 경향을 보였다. 짧은 문장이다.\n"
     content.write_text(before, encoding="utf-8")
     subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({
         "schema": "report-pipeline/humanization-changes-v2",
@@ -176,7 +176,7 @@ def test_humanization_v2_warns_on_overcorrection_and_extreme_hedge(tmp_path: Pat
 
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
     assert applied.returncode == 0, applied.stderr
@@ -197,7 +197,7 @@ def test_prepare_v2_labels_sections_and_protected_spans(tmp_path: Path):
 
     prepared = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     payload = json.loads(prepared.stdout)
 
@@ -216,7 +216,7 @@ def test_round_three_unresolved_review_holds_original(tmp_path: Path):
     content = bundle / "content.md"
     content.write_text(original, encoding="utf-8")
     subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({
         "schema": "report-pipeline/humanization-changes-v2",
@@ -230,7 +230,7 @@ def test_round_three_unresolved_review_holds_original(tmp_path: Path):
 
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
     assert applied.returncode == 1
@@ -247,7 +247,7 @@ def test_v2_rejects_unreviewed_rewriter_output(tmp_path: Path):
     content = bundle / "content.md"
     content.write_text("## 결과\n\n원문이다.\n", encoding="utf-8")
     subprocess.run([sys.executable, str(HUMANIZE_PATH), "prepare", str(ws)], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8")
     changes = bundle / "changes.json"
     changes.write_text(json.dumps({
         "schema": "report-pipeline/humanization-changes-v2",
@@ -259,7 +259,7 @@ def test_v2_rejects_unreviewed_rewriter_output(tmp_path: Path):
 
     applied = subprocess.run(
         [sys.executable, str(HUMANIZE_PATH), "apply", str(ws), "--changes", str(changes)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
     assert applied.returncode == 2

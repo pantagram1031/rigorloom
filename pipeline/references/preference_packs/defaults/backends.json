@@ -1,0 +1,24 @@
+{
+  "schema": "report-pipeline/preference-pack/backends-v1",
+  "pack_type": "backends",
+  "name": "neutral-default",
+  "version": 1,
+  "seats": [
+    {
+      "role": "critic",
+      "cli": "example-cli",
+      "model": "example-model",
+      "args_argv": ["review", "--effort", "high"],
+      "min_cli_version": "0.0.0",
+      "timeout_s": 300
+    },
+    {
+      "role": "second-opinion",
+      "cli": "example-cli",
+      "model": "example-model-2",
+      "args_argv": ["review", "--independent"],
+      "min_cli_version": "0.0.0",
+      "timeout_s": 300
+    }
+  ]
+}

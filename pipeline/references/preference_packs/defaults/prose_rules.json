@@ -1,0 +1,31 @@
+{
+  "schema": "report-pipeline/preference-pack/prose_rules-v1",
+  "pack_type": "prose_rules",
+  "name": "neutral-default",
+  "version": 1,
+  "banned_patterns": [
+    {
+      "id": "numbered-label-run",
+      "regex": "\\([0-9]+\\)[^\\n]{0,40}\\([0-9]+\\)",
+      "severity": "warn",
+      "description": "Enumerated (1)...(2)... label runs read as machine-generated; prefer connective prose."
+    },
+    {
+      "id": "parallel-noun-label",
+      "regex": "^[^\\n.]{1,24}\\.\\s+[^\\n.]{1,24}\\.\\s+[^\\n.]{1,24}\\.",
+      "severity": "warn",
+      "description": "Short parallel noun-label fragments stacked with periods."
+    }
+  ],
+  "signature_phrases": [
+    {"regex": "\\bnot merely [^\\n]{1,40} but\\b", "max_count": 2}
+  ],
+  "endings_policy": {
+    "default_style": "declarative",
+    "per_doc_type": {}
+  },
+  "advisory_notes": [
+    "Prefer connective prose over stacked parallel-subject sentences.",
+    "Define a term where it first appears rather than forward-referencing it in the introduction."
+  ]
+}

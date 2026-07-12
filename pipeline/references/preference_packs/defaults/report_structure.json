@@ -1,0 +1,18 @@
+{
+  "schema": "report-pipeline/preference-pack/report_structure-v1",
+  "pack_type": "report_structure",
+  "name": "neutral-default",
+  "version": 1,
+  "title_format": "An Inquiry into {topic}",
+  "section_policies": {
+    "conclusion": "reflection_and_motivation"
+  },
+  "abstract_mode": "summary",
+  "citation_style": {
+    "sources": "papers_books_only",
+    "in_text": "narrative"
+  },
+  "curriculum_anchor_first": true,
+  "max_hedge_caveats": 1,
+  "preferred_sections": ["introduction", "background", "related_work", "method", "results", "discussion", "conclusion", "references"]
+}

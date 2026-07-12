@@ -1,0 +1,697 @@
+#!/usr/bin/env python3
+"""sync_local.py -- base+overlay installer for the report-pipeline skill.
+
+The public git checkout (this repo) is *upstream*. The generated install lives
+under a Claude skills directory. That install contains DELIBERATE local
+operational files (concrete backend commands, personal prompt templates) that
+must survive every sync. The solution is base + overlay:
+
+    staged tree = (files copied from the checkout, per source_map)
+                  then OVERLAID by every file under overlay_root
+
+Overlay files REPLACE or ADD on top of base files. A per-file receipt records
+each file's origin (base|overlay) and sha256 so subsequent syncs can:
+
+  * detect drift  -- an install file hand-edited since the last sync is refused
+                     ("edit upstream or move to overlay") unless --force;
+  * delete stale  -- a file that was base/overlay-managed last time but is no
+                     longer produced is removed;
+  * keep unmanaged -- a file that was never synced (unknown origin) is preserved
+                     and reported (e.g. a local-only verify_content.py).
+
+The install itself is swapped in atomically: the current install is archived to
+<install_root>.bak-<timestamp> via a single rename, then the staged tree is
+renamed into place (with a copytree fallback for cross-volume moves, and a
+tested rollback that restores the backup on any failure).
+
+Stdlib only. Windows-friendly (set PYTHONIOENCODING=utf-8).
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+RECEIPT_NAME = ".sync_receipt.json"
+LOCK_NAME = ".sync.lock"
+STALE_LOCK_SECONDS = 30 * 60
+# Control files live at the install root and are never treated as managed
+# content, never compared, never deleted by the sync itself.
+CONTROL_PREFIXES = (".sync",)
+
+
+# --------------------------------------------------------------------------- #
+# Errors
+# --------------------------------------------------------------------------- #
+class SyncError(Exception):
+    """Base class for controlled, user-facing sync failures."""
+
+
+class DriftRefused(SyncError):
+    def __init__(self, drifted: List[str]):
+        self.drifted = drifted
+        listing = "\n".join(f"  - {p}" for p in drifted)
+        super().__init__(
+            "Refusing to sync: the following install files were hand-edited "
+            "since the last sync.\n"
+            "Edit them upstream (in the checkout) or move them to the overlay, "
+            "then re-run. Use --force to overwrite local edits.\n" + listing
+        )
+
+
+class PathEscape(SyncError):
+    pass
+
+
+class LockHeld(SyncError):
+    pass
+
+
+# --------------------------------------------------------------------------- #
+# Minimal YAML subset parser (stdlib only)
+# --------------------------------------------------------------------------- #
+# Supports exactly what the manifest needs: block mappings, block sequences,
+# sequences of mappings (``- key: value`` with aligned continuation lines),
+# inline flow lists (``[a, b]``), scalars, quoted scalars, and ``#`` comments.
+# Scalar values are taken literally (no escape processing) so Windows paths
+# like ``C:\Users\me`` survive intact.
+def parse_yaml(text: str) -> Any:
+    raw_lines = text.splitlines()
+    lines: List[Tuple[int, str]] = []
+    for raw in raw_lines:
+        content = _strip_comment(raw)
+        if content.strip() == "":
+            continue
+        indent = len(content) - len(content.lstrip(" "))
+        lines.append((indent, content.strip()))
+    if not lines:
+        return {}
+    value, idx = _parse_block(lines, 0, lines[0][0])
+    if idx != len(lines):
+        raise SyncError(f"manifest parse error near: {lines[idx][1]!r}")
+    return value
+
+
+def _strip_comment(line: str) -> str:
+    out = []
+    quote: Optional[str] = None
+    prev = ""
+    for ch in line:
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+        elif ch == "#" and (prev == "" or prev == " "):
+            break
+        else:
+            out.append(ch)
+        prev = ch
+    return "".join(out)
+
+
+def _parse_block(lines: List[Tuple[int, str]], i: int, indent: int) -> Tuple[Any, int]:
+    if lines[i][1].startswith("- "):
+        return _parse_seq(lines, i, indent)
+    return _parse_map(lines, i, indent)
+
+
+def _parse_seq(lines: List[Tuple[int, str]], i: int, indent: int) -> Tuple[List[Any], int]:
+    items: List[Any] = []
+    while i < len(lines):
+        ind, content = lines[i]
+        if ind < indent or not content.startswith("- "):
+            break
+        if ind > indent:
+            raise SyncError(f"manifest bad indentation near: {content!r}")
+        rest = content[2:].strip()
+        key_col = indent + 2
+        if ":" in rest and not rest.startswith("["):
+            # sequence item that is itself a mapping; splice its first line in
+            sub: List[Tuple[int, str]] = [(key_col, rest)]
+            j = i + 1
+            while j < len(lines) and lines[j][0] >= key_col:
+                sub.append(lines[j])
+                j += 1
+            value, consumed = _parse_map(sub, 0, key_col)
+            if consumed != len(sub):
+                raise SyncError(f"manifest bad list item near: {rest!r}")
+            items.append(value)
+            i = j
+        else:
+            items.append(_scalar(rest))
+            i += 1
+    return items, i
+
+
+def _parse_map(lines: List[Tuple[int, str]], i: int, indent: int) -> Tuple[Dict[str, Any], int]:
+    result: Dict[str, Any] = {}
+    while i < len(lines):
+        ind, content = lines[i]
+        if ind < indent or content.startswith("- "):
+            break
+        if ind > indent:
+            raise SyncError(f"manifest bad indentation near: {content!r}")
+        if ":" not in content:
+            raise SyncError(f"manifest expected 'key: value' near: {content!r}")
+        key, _, val = content.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if val == "":
+            if i + 1 < len(lines) and lines[i + 1][0] > indent:
+                child, i = _parse_block(lines, i + 1, lines[i + 1][0])
+                result[key] = child
+            else:
+                result[key] = {}
+                i += 1
+        else:
+            result[key] = _scalar(val)
+            i += 1
+    return result, i
+
+
+def _scalar(token: str) -> Any:
+    token = token.strip()
+    if token.startswith("[") and token.endswith("]"):
+        inner = token[1:-1].strip()
+        if inner == "":
+            return []
+        return [_scalar(p) for p in _split_flow(inner)]
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _split_flow(inner: str) -> List[str]:
+    parts: List[str] = []
+    buf = []
+    quote: Optional[str] = None
+    for ch in inner:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    if "".join(buf).strip():
+        parts.append("".join(buf).strip())
+    return parts
+
+
+# --------------------------------------------------------------------------- #
+# Config model
+# --------------------------------------------------------------------------- #
+@dataclass
+class Target:
+    name: str
+    install_root: str
+    overlay_root: Optional[str]
+    source_map: List[Dict[str, str]]
+    exclude: List[str] = field(default_factory=list)
+
+
+def load_manifest(path: str, checkout_root: str) -> List[Target]:
+    with open(path, "r", encoding="utf-8") as fh:
+        cfg = parse_yaml(fh.read())
+    if not isinstance(cfg, dict):
+        raise SyncError("manifest root must be a mapping")
+
+    targets: List[Target] = []
+    if cfg.get("source_map") or cfg.get("install_root"):
+        targets.append(_target_from_section("primary", cfg))
+
+    repo_targets = cfg.get("repo_targets") or []
+    if isinstance(repo_targets, list):
+        for idx, section in enumerate(repo_targets):
+            if not isinstance(section, dict):
+                continue
+            name = section.get("name") or f"repo_target[{idx}]"
+            targets.append(_target_from_section(name, section))
+
+    if not targets:
+        raise SyncError("manifest defines no targets (need source_map/install_root)")
+    return targets
+
+
+def _target_from_section(name: str, section: Dict[str, Any]) -> Target:
+    install_root = section.get("install_root")
+    if not install_root:
+        raise SyncError(f"target {name!r}: install_root is required")
+    source_map = section.get("source_map") or []
+    norm_map: List[Dict[str, str]] = []
+    for entry in source_map:
+        if not isinstance(entry, dict) or "from" not in entry or "to" not in entry:
+            raise SyncError(f"target {name!r}: source_map entries need 'from' and 'to'")
+        norm_map.append({"from": str(entry["from"]), "to": str(entry["to"])})
+    exclude = section.get("exclude") or []
+    if not isinstance(exclude, list):
+        raise SyncError(f"target {name!r}: exclude must be a list")
+    overlay = section.get("overlay_root")
+    return Target(
+        name=name,
+        install_root=os.path.abspath(str(install_root)),
+        overlay_root=os.path.abspath(str(overlay)) if overlay else None,
+        source_map=norm_map,
+        exclude=[str(x) for x in exclude],
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Path helpers
+# --------------------------------------------------------------------------- #
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _norm_rel(rel: str) -> str:
+    """Normalise an install-relative path to posix and reject escapes."""
+    rel = rel.replace("\\", "/")
+    normed = os.path.normpath(rel).replace("\\", "/")
+    if normed.startswith("..") or normed.startswith("/") or os.path.isabs(normed):
+        raise PathEscape(f"path escapes install root: {rel!r}")
+    if normed == ".":
+        raise PathEscape(f"empty install-relative path: {rel!r}")
+    return normed
+
+
+def _is_control(rel: str) -> bool:
+    top = rel.split("/", 1)[0]
+    return any(top.startswith(p) for p in CONTROL_PREFIXES)
+
+
+def _excluded(rel: str, patterns: List[str]) -> bool:
+    parts = rel.split("/")
+    base = parts[-1]
+    for pat in patterns:
+        if fnmatch.fnmatch(base, pat):
+            return True
+        if fnmatch.fnmatch(rel, pat):
+            return True
+        if any(fnmatch.fnmatch(p, pat) for p in parts):
+            return True
+    return False
+
+
+def _iter_files(root: str, exclude: List[str]) -> List[Tuple[str, str]]:
+    """Yield (abs_path, rel_posix) for every non-excluded file under root."""
+    out: List[Tuple[str, str]] = []
+    root = os.path.abspath(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames
+            if not _excluded(os.path.relpath(os.path.join(dirpath, d), root)
+                             .replace("\\", "/"), exclude)
+        ]
+        for fn in filenames:
+            ap = os.path.join(dirpath, fn)
+            rel = os.path.relpath(ap, root).replace("\\", "/")
+            if _excluded(rel, exclude):
+                continue
+            out.append((ap, rel))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Receipt
+# --------------------------------------------------------------------------- #
+def load_receipt(install_root: str) -> Dict[str, Dict[str, str]]:
+    path = os.path.join(install_root, RECEIPT_NAME)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data.get("files", {}) or {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_receipt(dest_root: str, files: Dict[str, Dict[str, str]]) -> None:
+    payload = {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "files": files,
+    }
+    with open(os.path.join(dest_root, RECEIPT_NAME), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+
+
+# --------------------------------------------------------------------------- #
+# Staging + planning
+# --------------------------------------------------------------------------- #
+@dataclass
+class Plan:
+    target: Target
+    staging_dir: str
+    origins: Dict[str, str]            # rel -> base|overlay
+    staged_hashes: Dict[str, str]
+    install_hashes: Dict[str, str]
+    actions: Dict[str, str]           # rel -> add|update|overlay|unchanged
+    deletes: List[str]                # stale (was managed, now gone)
+    unmanaged: List[str]              # never synced, present in install, keep
+    drift: List[str]                  # hand-edited since last receipt
+
+    def counts(self) -> Dict[str, int]:
+        c: Dict[str, int] = {"add": 0, "update": 0, "overlay": 0, "unchanged": 0}
+        for act in self.actions.values():
+            c[act] = c.get(act, 0) + 1
+        c["delete"] = len(self.deletes)
+        c["unmanaged"] = len(self.unmanaged)
+        c["drift"] = len(self.drift)
+        return c
+
+
+def _copy_into(src: str, staging: str, rel: str) -> None:
+    dst = os.path.join(staging, rel.replace("/", os.sep))
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def build_staged_tree(target: Target, checkout_root: str, staging: str) -> Dict[str, str]:
+    origins: Dict[str, str] = {}
+    checkout_root = os.path.abspath(checkout_root)
+
+    # 1. base -- copy mapped files/dirs from the checkout
+    for m in target.source_map:
+        src = os.path.abspath(os.path.join(checkout_root, m["from"]))
+        to = _norm_rel(m["to"])
+        if _is_control(to):
+            raise PathEscape(f"source_map 'to' targets a control path: {m['to']!r}")
+        if not os.path.exists(src):
+            raise SyncError(f"source_map 'from' does not exist: {m['from']!r}")
+        if os.path.isfile(src):
+            origins[to] = "base"
+            _copy_into(src, staging, to)
+        else:
+            for ap, rel in _iter_files(src, target.exclude):
+                dest_rel = _norm_rel(f"{to}/{rel}")
+                if _is_control(dest_rel):
+                    continue
+                origins[dest_rel] = "base"
+                _copy_into(ap, staging, dest_rel)
+
+    # 2. overlay -- every overlay file REPLACES or ADDS on top of base
+    if target.overlay_root and os.path.isdir(target.overlay_root):
+        for ap, rel in _iter_files(target.overlay_root, target.exclude):
+            dest_rel = _norm_rel(rel)
+            if _is_control(dest_rel):
+                continue
+            origins[dest_rel] = "overlay"
+            _copy_into(ap, staging, dest_rel)
+
+    return origins
+
+
+def _install_hashes(install_root: str, exclude: List[str]) -> Dict[str, str]:
+    if not os.path.isdir(install_root):
+        return {}
+    result: Dict[str, str] = {}
+    for ap, rel in _iter_files(install_root, exclude):
+        if _is_control(rel):
+            continue
+        result[rel] = _sha256(ap)
+    return result
+
+
+def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
+    origins = build_staged_tree(target, checkout_root, staging)
+    staged_hashes = {
+        rel: _sha256(os.path.join(staging, rel.replace("/", os.sep)))
+        for rel in origins
+    }
+    install_hashes = _install_hashes(target.install_root, target.exclude)
+    receipt = load_receipt(target.install_root)
+
+    # drift: install file whose current hash differs from the last receipt
+    drift = sorted(
+        rel for rel, info in receipt.items()
+        if rel in install_hashes and install_hashes[rel] != info.get("sha256")
+    )
+
+    actions: Dict[str, str] = {}
+    for rel, origin in origins.items():
+        if origin == "overlay":
+            actions[rel] = "overlay"
+        elif rel not in install_hashes:
+            actions[rel] = "add"
+        elif install_hashes[rel] != staged_hashes[rel]:
+            actions[rel] = "update"
+        else:
+            actions[rel] = "unchanged"
+
+    deletes: List[str] = []
+    unmanaged: List[str] = []
+    for rel in install_hashes:
+        if rel in origins:
+            continue
+        if rel in receipt:
+            deletes.append(rel)          # was managed, no longer produced
+        else:
+            unmanaged.append(rel)        # never synced -> keep
+    deletes.sort()
+    unmanaged.sort()
+
+    return Plan(
+        target=target,
+        staging_dir=staging,
+        origins=origins,
+        staged_hashes=staged_hashes,
+        install_hashes=install_hashes,
+        actions=actions,
+        deletes=deletes,
+        unmanaged=unmanaged,
+        drift=drift,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Locking
+# --------------------------------------------------------------------------- #
+class InstallLock:
+    def __init__(self, install_root: str, force: bool):
+        self.install_root = install_root
+        self.force = force
+        self.path = os.path.join(install_root, LOCK_NAME)
+        self.acquired = False
+
+    def acquire(self) -> None:
+        os.makedirs(self.install_root, exist_ok=True)
+        if os.path.exists(self.path):
+            age = time.time() - os.path.getmtime(self.path)
+            if age <= STALE_LOCK_SECONDS and not self.force:
+                raise LockHeld(
+                    f"another sync holds {self.path} (age {int(age)}s). "
+                    f"Use --force to override a stale lock."
+                )
+            # stale or forced -> take it over
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write(f"pid={os.getpid()} at={datetime.now(timezone.utc).isoformat()}\n")
+        self.acquired = True
+
+    def release(self) -> None:
+        if not self.acquired:
+            return
+        try:
+            if os.path.exists(self.path):
+                os.remove(self.path)
+        except OSError:
+            pass
+        self.acquired = False
+
+    def __enter__(self) -> "InstallLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.release()
+
+
+# --------------------------------------------------------------------------- #
+# Atomic install
+# --------------------------------------------------------------------------- #
+def _place_staged(staging: str, install_root: str) -> None:
+    """Move the staged tree into place; copytree fallback for cross-volume."""
+    try:
+        os.rename(staging, install_root)
+    except OSError:
+        shutil.copytree(staging, install_root)
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _atomic_install(staging: str, install_root: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = f"{install_root}.bak-{ts}"
+    n = 0
+    while os.path.exists(bak):
+        n += 1
+        bak = f"{install_root}.bak-{ts}-{n}"
+    backed = False
+    try:
+        if os.path.exists(install_root):
+            os.rename(install_root, bak)
+            backed = True
+        _place_staged(staging, install_root)
+        return bak
+    except Exception:
+        # rollback: discard any partial install, restore the backup verbatim
+        if backed:
+            if os.path.exists(install_root):
+                shutil.rmtree(install_root, ignore_errors=True)
+            if os.path.exists(bak):
+                os.rename(bak, install_root)
+        raise
+
+
+def apply_plan(plan: Plan) -> str:
+    target = plan.target
+    staging = plan.staging_dir
+
+    # carry unmanaged (never-synced, unknown-origin) files into the new tree
+    for rel in plan.unmanaged:
+        src = os.path.join(target.install_root, rel.replace("/", os.sep))
+        if os.path.exists(src):
+            _copy_into(src, staging, rel)
+
+    # fresh receipt records only managed (base/overlay) files
+    receipt_files = {
+        rel: {"sha256": plan.staged_hashes[rel], "origin": plan.origins[rel]}
+        for rel in plan.origins
+    }
+    write_receipt(staging, receipt_files)
+
+    return _atomic_install(staging, target.install_root)
+
+
+# --------------------------------------------------------------------------- #
+# Reporting
+# --------------------------------------------------------------------------- #
+def _print_plan(plan: Plan, dry_run: bool) -> None:
+    tag = "DRY-RUN" if dry_run else "SYNC"
+    print(f"[{tag}] target={plan.target.name} install_root={plan.target.install_root}")
+    if plan.target.overlay_root:
+        print(f"        overlay_root={plan.target.overlay_root}")
+
+    ordered = [
+        ("overlay", "overlay"),
+        ("add", "add"),
+        ("update", "update"),
+    ]
+    for act, label in ordered:
+        for rel in sorted(r for r, a in plan.actions.items() if a == act):
+            print(f"  {label:9s} {rel}")
+    for rel in plan.deletes:
+        print(f"  {'delete':9s} {rel}")
+    for rel in plan.unmanaged:
+        print(f"  {'unmanaged':9s} {rel}  (kept; never synced)")
+    for rel in plan.drift:
+        print(f"  {'drift':9s} {rel}  (hand-edited since last sync)")
+
+    c = plan.counts()
+    summary = ", ".join(f"{k}={c[k]}" for k in
+                        ("add", "update", "overlay", "unchanged", "delete",
+                         "unmanaged", "drift"))
+    print(f"  -> {summary}")
+
+
+# --------------------------------------------------------------------------- #
+# Driver
+# --------------------------------------------------------------------------- #
+def run_target(target: Target, checkout_root: str, dry_run: bool, force: bool) -> Plan:
+    parent = os.path.dirname(os.path.abspath(target.install_root)) or "."
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(
+        prefix=f"{os.path.basename(target.install_root)}.staging-", dir=parent
+    )
+    lock = InstallLock(target.install_root, force=force)
+    try:
+        lock.acquire()
+        plan = make_plan(target, checkout_root, staging)
+        if plan.drift and not force:
+            _print_plan(plan, dry_run=True)
+            raise DriftRefused(plan.drift)
+        _print_plan(plan, dry_run=dry_run)
+        if not dry_run:
+            # release the in-tree lock before the directory is swapped out
+            lock.release()
+            bak = apply_plan(plan)
+            print(f"  installed. previous tree archived to: {bak}")
+        return plan
+    finally:
+        lock.release()
+        if os.path.isdir(staging):
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def default_checkout_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def default_manifest(checkout_root: str) -> str:
+    return os.path.join(checkout_root, "scripts", "sync_manifest.example.yaml")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="base+overlay installer for the report-pipeline skill"
+    )
+    parser.add_argument("--manifest", default=None,
+                        help="manifest YAML (default: scripts/sync_manifest.example.yaml)")
+    parser.add_argument("--checkout-root", default=None,
+                        help="checkout root for source_map 'from' paths (default: repo root)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print per-file actions and exit without changes")
+    parser.add_argument("--force", action="store_true",
+                        help="overwrite drifted files and steal a stale lock")
+    parser.add_argument("--only", default=None,
+                        help="process only the named target")
+    args = parser.parse_args(argv)
+
+    checkout_root = os.path.abspath(args.checkout_root or default_checkout_root())
+    manifest = args.manifest or default_manifest(checkout_root)
+    if not os.path.exists(manifest):
+        print(f"manifest not found: {manifest}", file=sys.stderr)
+        return 2
+
+    try:
+        targets = load_manifest(manifest, checkout_root)
+        if args.only:
+            targets = [t for t in targets if t.name == args.only]
+            if not targets:
+                print(f"no target named {args.only!r}", file=sys.stderr)
+                return 2
+        for target in targets:
+            run_target(target, checkout_root, dry_run=args.dry_run, force=args.force)
+    except SyncError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

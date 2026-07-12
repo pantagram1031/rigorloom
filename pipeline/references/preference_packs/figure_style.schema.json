@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/figure_style-v1",
+  "title": "Figure style preference pack",
+  "description": "Deterministic plotting look (rcparams-ish), colormap whitelist, banned aesthetics, and caption-source policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "preset", "background", "spines", "color_cycle", "caption_source_policy"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["figure_style"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "preset": {"type": "string"},
+    "background": {"type": "string"},
+    "spines": {"type": "string", "enum": ["box", "open"]},
+    "grid_color": {"type": "string"},
+    "tick_direction": {"type": "string", "enum": ["in", "out", "inout"]},
+    "color_cycle": {"type": "array", "items": {"type": "string"}},
+    "font_family": {"type": "string"},
+    "dpi": {"type": "integer"},
+    "legend": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "frame": {"type": "boolean"},
+        "placement": {"type": "string"}
+      }
+    },
+    "colormap_whitelist": {"type": "array", "items": {"type": "string"}},
+    "banned_aesthetics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description"],
+        "properties": {
+          "id": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "caption_source_policy": {"type": "string", "enum": ["inline", "endnote"]}
+  }
+}

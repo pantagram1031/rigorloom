@@ -1,0 +1,30 @@
+# backend_precheck.py config — GENERIC placeholders only.
+# Copy this to a private config (e.g. pipeline/references/backends.local.yaml,
+# git-ignored) and fill in your real reviewer CLIs/models. Do NOT commit real
+# backend names, models, or CLI-version requirements here.
+#
+# Per-backend keys:
+#   name          human label recorded in run_capabilities.json
+#   which         executable to locate on PATH (PATH check skipped if omitted)
+#   version_cmd   argv that prints a version string (optional)
+#   min_version   minimum "x.y.z" required (optional; compared numerically)
+#   live_cmd      argv issued under --live to ping the backend
+#   live_stdin    optional stdin piped to live_cmd
+#   live_timeout  seconds allowed for the live ping (default 130)
+#   expect        substring that must appear in live stdout to count as live
+#
+# Inline arrays are JSON (also valid YAML), so this parses with or without pyyaml.
+backends:
+  - name: example-reviewer-a
+    which: example-cli-a
+    version_cmd: ["example-cli-a", "--version"]
+    min_version: "0.0.0"
+    live_cmd: ["example-cli-a", "exec", "-m", "example-model", "-"]
+    live_stdin: "Reply with exactly: PING_OK"
+    live_timeout: 130
+    expect: "PING_OK"
+  - name: example-reviewer-b
+    which: example-cli-b
+    version_cmd: ["example-cli-b", "--version"]
+    live_cmd: ["example-cli-b", "-p", "Reply with exactly: PING_OK", "--json"]
+    expect: "PING_OK"

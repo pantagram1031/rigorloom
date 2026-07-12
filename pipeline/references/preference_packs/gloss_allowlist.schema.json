@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/gloss_allowlist-v1",
+  "title": "Gloss allowlist preference pack",
+  "description": "Terms allowed to appear as a parenthetical gloss (proper nouns, units, symbols) despite a general gloss ban.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "terms"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["gloss_allowlist"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "terms": {"type": "array", "items": {"type": "string"}}
+  }
+}

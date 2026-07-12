@@ -12,9 +12,11 @@ Exit codes: 0 = ok, 1 = refusal / contract violation, 2 = usage error.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -45,31 +47,15 @@ def _reexec_utf8_if_needed() -> None:
 
 PIPELINE_VERSION = "0.6"
 
-# Embedded fallback — identical to references/stages.yaml — used when the
-# config file is missing or fails to parse, so the CLI never hard-depends on
-# an external file being present/well-formed.
-FALLBACK_STAGES_CONFIG = [
-    {"id": "0",   "name": "form_intake", "gate": None,
-     "playbook": "playbooks/stage-0.md"},
-    {"id": "1",   "name": "research",    "gate": None,
-     "playbook": "playbooks/stage-1.md"},
-    {"id": "2",   "name": "design",      "gate": {"name": "design", "type": "human"},
-     "playbook": "playbooks/stage-2.md"},
-    {"id": "2.5", "name": "layout_plan", "gate": {"name": "layout", "type": "script"},
-     "playbook": "playbooks/stage-2.5.md"},
-    {"id": "3",   "name": "sim",         "gate": {"name": "sane", "type": "script"},
-     "playbook": "playbooks/stage-3.md"},
-    {"id": "4",   "name": "write",       "gate": {"name": "draft", "type": "human"},
-     "playbook": "playbooks/stage-4.md"},
-    {"id": "5",   "name": "assemble",    "gate": None,
-     "playbook": "playbooks/stage-5.md"},
-    {"id": "5.5", "name": "understand",  "gate": {"name": "understand", "type": "human"},
-     "playbook": "playbooks/stage-5.5.md"},
-    {"id": "5.7", "name": "final_panel", "gate": None,
-     "playbook": "playbooks/stage-5.7.md"},
-    {"id": "6",   "name": "return",      "gate": None,
-     "playbook": "playbooks/stage-6.md"},
-]
+
+class StagesConfigError(Exception):
+    """Raised when references/stages.yaml is missing or unparsable.
+
+    The stage graph has NO embedded fallback: a broken or absent config is a
+    hard error, never a silent default. A wrong stage graph could quietly drop
+    a gate (e.g. a script gate) and let a run sail past it, so the CLI refuses
+    to operate on a graph it cannot trust."""
+
 
 STATUS_ENUM = {"pending", "in_progress", "awaiting_gate", "done", "blocked"}
 GATE_ENUM = {"pending", "approved", "auto_approved", "rejected"}
@@ -79,50 +65,45 @@ MODE_ENUM = {"autonomous", "supervised", "night"}
 # ── stages.yaml config loader ───────────────────────────────────────
 #
 # stages.yaml is a flat YAML list of inline-map records:
-#   - {id: "2.5", name: "layout_plan", gate: {name: "layout", type: "script"}, playbook: "..."}
-# Parsed by hand (stdlib only, no pyyaml), reusing the same inline-map
-# helpers as the PIPELINE.md header parser below. Missing or corrupt file
-# silently falls back to FALLBACK_STAGES_CONFIG so the CLI never hard-depends
-# on the file being present.
+#   - {id: "2.5", name: "layout_plan", gate: {name: "layout", type: "script", checker: null}, playbook: "..."}
+#   - {id: "3",   name: "sim",         gate: {name: "sane",  type: "script",
+#        checker: ["python", "{WS}/sim/gates.py"]}, playbook: "..."}
+# Parsed by hand (stdlib only, no pyyaml), reusing the same inline-map helpers
+# as the PIPELINE.md header parser below. Gate `checker` is an argv ARRAY (never
+# a shell string). A missing or unparsable file is a HARD ERROR — there is no
+# embedded fallback stage graph (a silently-wrong graph could drop a gate).
 
 _STAGE_ROW_RE = re.compile(r"^\s*-\s*\{(.*)\}\s*$")
 
 
-def _parse_stages_yaml_text(text: str) -> list:
-    """Parse the flat `stages:` list in stages.yaml. Raises on malformed
-    input (caller decides fallback behavior)."""
-    rows = []
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line.strip() or line.strip().startswith("#"):
-            continue
-        if re.match(r"^version:\s*", line) or re.match(r"^stages:\s*$", line):
-            continue
-        m = _STAGE_ROW_RE.match(line)
-        if not m:
-            continue
-        inner = m.group(1)
-        rec = _parse_inline_map_nested(inner)
-        if "id" not in rec:
-            raise ValueError(f"stages.yaml row missing 'id': {line!r}")
-        rows.append(rec)
-    if not rows:
-        raise ValueError("stages.yaml has no stage rows")
-    return rows
-
-
-def _parse_inline_map_nested(s: str) -> dict:
-    """Like _parse_inline_map, but tolerates one level of nested {..} as a
-    value (e.g. gate: {name: design, type: human}). Splits top-level commas
-    only (commas inside a nested {} do not split)."""
+def _split_top_commas(s: str) -> list:
+    """Split `s` on top-level commas only: commas inside {..}, [..], or quotes
+    do not split. Quote-aware so a `{`/`}` or `[`/`]` inside a quoted scalar
+    (e.g. the placeholder "{WS}") never perturbs nesting depth."""
     parts = []
-    depth = 0
     buf = []
+    depth = 0
+    quote = None
+    esc = False
     for ch in s:
-        if ch == "{":
+        if esc:
+            buf.append(ch)
+            esc = False
+            continue
+        if quote is not None:
+            buf.append(ch)
+            if ch == "\\" and quote == '"':
+                esc = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch in "{[":
             depth += 1
             buf.append(ch)
-        elif ch == "}":
+        elif ch in "}]":
             depth -= 1
             buf.append(ch)
         elif ch == "," and depth == 0:
@@ -132,55 +113,166 @@ def _parse_inline_map_nested(s: str) -> dict:
             buf.append(ch)
     if buf:
         parts.append("".join(buf))
+    return parts
 
+
+def _parse_scalar_or_container(v: str):
+    """Parse a single YAML inline value: nested map {..}, array [..], null, or
+    quoted/plain scalar."""
+    v = v.strip()
+    if v.startswith("{") and v.endswith("}"):
+        inner = v[1:-1]
+        if inner.strip() in ("", "null", "~"):
+            return None
+        return _parse_inline_map_nested(inner)
+    if v.startswith("[") and v.endswith("]"):
+        inner = v[1:-1]
+        return [_strip_q(it.strip()) for it in _split_top_commas(inner) if it.strip() != ""]
+    if v in ("null", "~", ""):
+        return None
+    return _strip_q(v)
+
+
+def _parse_inline_map_nested(s: str) -> dict:
+    """Parse an inline map, tolerating nested {..} maps and [..] arrays as
+    values (e.g. gate: {name: sane, type: script, checker: ["python", "..."]}).
+    Splits top-level commas only.
+
+    STRICT (stage-graph path): a top-level part without a ':' key/value
+    separator is a HARD ERROR, never a silent skip. Silently dropping a
+    colon-less part (e.g. a row where 'gate {name: ...}' is missing the colon
+    after 'gate') would let malformed content parse into a bogus key and the
+    stage silently lose its gate. This helper feeds both the stage list and
+    nested gate values, so raising here protects both. The tolerant PIPELINE.md
+    header parser uses the SEPARATE `_parse_inline_map` (workspace state, not the
+    stage graph)."""
     out_map = {}
-    for part in parts:
-        if ":" not in part:
+    for part in _split_top_commas(s):
+        if part.strip() == "":
             continue
+        if ":" not in part:
+            raise StagesConfigError(
+                f"inline map part has no ':' key/value separator: {part.strip()!r}")
         k, v = part.split(":", 1)
-        k = k.strip()
-        v = v.strip()
-        if v.startswith("{") and v.endswith("}"):
-            inner = v[1:-1]
-            if inner.strip() in ("", "null", "~"):
-                out_map[k] = None
-            else:
-                out_map[k] = _parse_inline_map_nested(inner)
-        elif v in ("null", "~", ""):
-            out_map[k] = None
-        else:
-            out_map[k] = _strip_q(v)
+        out_map[k.strip()] = _parse_scalar_or_container(v)
     return out_map
+
+
+_ALLOWED_STAGE_KEYS = {"id", "name", "gate", "playbook"}
+
+
+def _validate_stage_row(rec: dict, line: str, seen_ids: set, seen_gate_names: set) -> None:
+    """STRICT per-row validation. Raises StagesConfigError on any violation:
+    unexpected top-level key, missing 'gate' key, missing required field
+    (id/name/playbook), duplicate id, malformed gate (must be null or
+    {name, type[, checker]}), gate type not in {script,human}, unexpected gate
+    key, or duplicate gate name."""
+    for key in rec:
+        if key not in _ALLOWED_STAGE_KEYS:
+            raise StagesConfigError(
+                f"stages.yaml row has unexpected top-level key {key!r} "
+                f"(allowed: id, name, gate, playbook): {line!r}")
+    # 'gate' MUST be present explicitly (gate: null is allowed for a gate-less
+    # stage). A row with NO gate key is a hard error, not an implicit gate:null —
+    # otherwise a malformed row that lost its 'gate' key (see the missing-colon
+    # probe) would silently become gate-less.
+    if "gate" not in rec:
+        raise StagesConfigError(
+            f"stages.yaml row missing required 'gate' key "
+            f"(use 'gate: null' for a gate-less stage): {line!r}")
+    for req in ("id", "name", "playbook"):
+        if req not in rec or rec.get(req) in (None, ""):
+            raise StagesConfigError(
+                f"stages.yaml row missing required field {req!r}: {line!r}")
+    sid = str(rec["id"])
+    if sid in seen_ids:
+        raise StagesConfigError(f"stages.yaml duplicate stage id {sid!r}: {line!r}")
+    seen_ids.add(sid)
+    gate = rec.get("gate")
+    if gate is None:
+        return
+    if not isinstance(gate, dict):
+        raise StagesConfigError(f"stages.yaml gate must be null or a map: {line!r}")
+    for key in gate:
+        if key not in ("name", "type", "checker"):
+            raise StagesConfigError(
+                f"stages.yaml gate has unexpected key {key!r} "
+                f"(allowed: name, type, checker): {line!r}")
+    gname = gate.get("name")
+    if not gname:
+        raise StagesConfigError(f"stages.yaml gate missing 'name': {line!r}")
+    gtype = gate.get("type")
+    if gtype not in ("script", "human"):
+        raise StagesConfigError(
+            f"stages.yaml gate 'type' must be 'script' or 'human' "
+            f"(got {gtype!r}): {line!r}")
+    if gname in seen_gate_names:
+        raise StagesConfigError(f"stages.yaml duplicate gate name {gname!r}: {line!r}")
+    seen_gate_names.add(gname)
+
+
+def _parse_stages_yaml_text(text: str) -> list:
+    """Parse the flat `stages:` list in stages.yaml with STRICT validation.
+
+    Every non-comment, non-blank line INSIDE the stages list must parse as a
+    `- {...}` inline-map stage row — a line that fails to match is a hard error,
+    never a silent skip (a dropped row could silently drop a gate). Each row is
+    validated for required fields, gate shape, and id/gate-name uniqueness.
+    Raises StagesConfigError on any malformed / empty input (no fallback)."""
+    rows = []
+    seen_ids: set = set()
+    seen_gate_names: set = set()
+    in_stages = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(r"^stages:\s*$", line):
+            in_stages = True
+            continue
+        if not in_stages:
+            # Tolerate flat top-level scalar keys (e.g. `version: "0.6"`) that
+            # precede the stages list; anything else up here is malformed.
+            if re.match(r'^[A-Za-z_][\w-]*:\s', line) or re.match(r'^[A-Za-z_][\w-]*:$', line):
+                continue
+            raise StagesConfigError(
+                f"stages.yaml: unexpected line before 'stages:': {line!r}")
+        m = _STAGE_ROW_RE.match(line)
+        if not m:
+            raise StagesConfigError(
+                f"stages.yaml: malformed stage row "
+                f"(expected '- {{...}}' inline map): {line!r}")
+        inner = m.group(1)
+        rec = _parse_inline_map_nested(inner)
+        _validate_stage_row(rec, line, seen_ids, seen_gate_names)
+        rows.append(rec)
+    if not rows:
+        raise StagesConfigError("stages.yaml has no stage rows")
+    return rows
 
 
 def load_stages_config(script_path: Path = None) -> list:
     """Return the stage list (each: {id, name, gate, playbook}) loaded from
-    references/stages.yaml relative to this script, or the embedded fallback
-    if the file is missing or fails to parse. Never raises."""
+    references/stages.yaml relative to this script.
+
+    HARD ERROR: if the file is missing or unparsable, raise StagesConfigError.
+    There is no embedded fallback — the CLI must never operate on a silently
+    substituted stage graph."""
     base = Path(script_path) if script_path else Path(__file__).resolve()
     cfg_path = base.parent.parent / "references" / "stages.yaml"
+    if not cfg_path.exists():
+        raise StagesConfigError(f"stages.yaml not found at {cfg_path}")
     try:
         text = cfg_path.read_text(encoding="utf-8")
-        rows = _parse_stages_yaml_text(text)
-        return rows
-    except Exception:
-        return [dict(r) for r in FALLBACK_STAGES_CONFIG]
-
-
-_STAGES_CONFIG = load_stages_config()
-
-# STAGE_ORDER: ids in config file order (drives resume/advance/invalidate
-# iteration). STAGE_GATE_NAMES: id -> gate name (only for stages with a
-# gate). STAGE_GATE_TYPES: id -> gate type ("human" | "script").
-STAGE_ORDER = [str(r["id"]) for r in _STAGES_CONFIG]
-STAGE_GATE_NAMES = {
-    str(r["id"]): r["gate"]["name"]
-    for r in _STAGES_CONFIG if r.get("gate")
-}
-STAGE_GATE_TYPES = {
-    str(r["id"]): r["gate"].get("type", "human")
-    for r in _STAGES_CONFIG if r.get("gate")
-}
+    except Exception as exc:
+        raise StagesConfigError(f"stages.yaml unreadable ({cfg_path}): {exc}")
+    try:
+        return _parse_stages_yaml_text(text)
+    except StagesConfigError:
+        raise
+    except Exception as exc:
+        raise StagesConfigError(f"stages.yaml unparsable ({cfg_path}): {exc}")
 
 
 def now_iso() -> str:
@@ -295,6 +387,44 @@ def _parse_inline_map(s: str) -> dict:
         k, v = part.split(":", 1)
         out_map[k.strip()] = _strip_q(v)
     return out_map
+
+
+# ── module-level stage-graph derivation ─────────────────────────────
+#
+# Loaded once at import. A broken/absent stages.yaml is a HARD ERROR, but the
+# error is captured here (not raised at import) so `import pipeline_ctl` stays
+# side-effect-free; main() surfaces it as a clean JSON hard error + nonzero
+# exit before dispatching any subcommand.
+try:
+    _STAGES_CONFIG = load_stages_config()
+    _STAGES_CONFIG_ERROR = None
+except StagesConfigError as _cfg_exc:
+    _STAGES_CONFIG = None
+    _STAGES_CONFIG_ERROR = str(_cfg_exc)
+
+if _STAGES_CONFIG is not None:
+    # STAGE_ORDER: ids in config file order (drives resume/advance/invalidate
+    # iteration). STAGE_GATE_NAMES: id -> gate name. STAGE_GATE_TYPES: id ->
+    # gate type. STAGE_GATE_TYPES_BY_NAME: gate name -> type (used when only a
+    # gate name is available, e.g. from a header record without a type field).
+    STAGE_ORDER = [str(r["id"]) for r in _STAGES_CONFIG]
+    STAGE_GATE_NAMES = {
+        str(r["id"]): r["gate"]["name"]
+        for r in _STAGES_CONFIG if r.get("gate")
+    }
+    STAGE_GATE_TYPES = {
+        str(r["id"]): r["gate"].get("type", "human")
+        for r in _STAGES_CONFIG if r.get("gate")
+    }
+    STAGE_GATE_TYPES_BY_NAME = {
+        r["gate"]["name"]: r["gate"].get("type", "human")
+        for r in _STAGES_CONFIG if r.get("gate")
+    }
+else:
+    STAGE_ORDER = []
+    STAGE_GATE_NAMES = {}
+    STAGE_GATE_TYPES = {}
+    STAGE_GATE_TYPES_BY_NAME = {}
 
 
 def find_yaml_fence(text: str):
@@ -464,9 +594,27 @@ def refresh_handoff(
         append_event(ws, "organize_warning", completed_stage, str(exc))
 
 
+def _gate_type_for(stage_id: str, gate_name: str) -> str:
+    """Resolve a gate's declared type ("script" | "human") from the stage
+    graph. Prefer the stage-id binding; fall back to name lookup; default to
+    "human" for an unknown gate (the conservative choice — human gates only
+    block supervised, so an unknown gate never over-blocks night/autonomous)."""
+    return (
+        STAGE_GATE_TYPES.get(stage_id)
+        or STAGE_GATE_TYPES_BY_NAME.get(gate_name)
+        or "human"
+    )
+
+
 def stage_gate_blocks(hdr: dict, stage: str, mode: str):
     """Check whether an EARLIER-ordered stage's gate blocks starting `stage`.
-    Returns (blocked: bool, reason: str|None)."""
+    Returns (blocked: bool, reason: str|None).
+
+    - A `rejected` predecessor gate blocks in ALL modes.
+    - A `pending` predecessor SCRIPT gate blocks in ALL modes (night/autonomous
+      must not sail past an unresolved deterministic checker).
+    - A `pending` predecessor HUMAN gate blocks only in supervised mode
+      (night/autonomous record auto_approved via the `gate` subcommand)."""
     stages = hdr.get("stages", {})
     try:
         idx = STAGE_ORDER.index(stage)
@@ -479,11 +627,17 @@ def stage_gate_blocks(hdr: dict, stage: str, mode: str):
         gate = st.get("gate")
         if not gate:
             continue
+        gname = gate.get("name")
         gstate = gate.get("state")
         if gstate == "rejected":
-            return True, f"predecessor stage {earlier} gate '{gate.get('name')}' is rejected"
-        if gstate == "pending" and mode == "supervised":
-            return True, f"predecessor stage {earlier} gate '{gate.get('name')}' is pending (supervised)"
+            return True, f"predecessor stage {earlier} gate '{gname}' is rejected"
+        if gstate == "pending":
+            gtype = _gate_type_for(earlier, gname)
+            if gtype == "script":
+                return True, (f"predecessor stage {earlier} script gate '{gname}' "
+                              f"is pending (blocks all modes — run: check)")
+            if mode == "supervised":
+                return True, f"predecessor stage {earlier} gate '{gname}' is pending (supervised)"
     return False, None
 
 
@@ -545,6 +699,17 @@ def cmd_resume(args) -> None:
             return
         # autonomous / night
         if gstate == "pending":
+            gtype = _gate_type_for(resume_stage, gate.get("name"))
+            if gtype == "script":
+                # A pending SCRIPT gate must be resolved by RUNNING its checker
+                # (`check`), never auto_approved — so night/autonomous is blocked
+                # until the deterministic verdict is produced.
+                out({"ok": True, "next_stage": resume_stage,
+                     "reason": (f"gate '{gate.get('name')}' is a pending script gate; "
+                                f"run: check <workspace> {gate.get('name')}"),
+                     "mode": mode, "blocked": True, "gate": gate,
+                     "action_needed": "check"})
+                return
             out({"ok": True, "next_stage": resume_stage,
                  "reason": f"gate '{gate.get('name')}' needs auto_approved recording",
                  "mode": mode, "blocked": False, "gate": gate,
@@ -563,8 +728,26 @@ def cmd_gate(args) -> None:
     ws = Path(args.workspace)
     gate_name = args.gate_name
     mode = args.mode
-    if args.script_exit is None and mode is None:
-        usage_error("gate requires --mode (or --script-exit for script-type gates)")
+    # --script-exit is RETIRED: a caller-supplied exit code let a gate be
+    # auto_approved/rejected with no checker ever run (defect). Script gates are
+    # now resolved only by the `check` subcommand, which RUNS the bound checker
+    # itself and records provenance. The flag stays registered so old callers
+    # get a clear redirect instead of an argparse "unrecognized argument".
+    if args.script_exit is not None:
+        usage_error("gate --script-exit is retired — use: "
+                    "pipeline_ctl.py check <workspace> <gate_name>")
+        return
+    if mode is None:
+        usage_error("gate requires --mode (autonomous|supervised|night)")
+        return
+    # A SCRIPT gate must NEVER be resolved by `gate` (which would auto_approve
+    # it in night/autonomous with no checker ever run). Look up the declared
+    # type from the stage graph and refuse — script gates resolve only via
+    # `check`, which RUNS the bound checker and records provenance.
+    found_cfg, cfg_gate_type, _cfg_checker = _resolve_gate_checker(gate_name)
+    if found_cfg and cfg_gate_type == "script":
+        usage_error(f"gate '{gate_name}' is a script gate — resolve via: "
+                    f"check <workspace> {gate_name}")
         return
     loaded = load_header(ws)
     if loaded is None:
@@ -581,59 +764,6 @@ def cmd_gate(args) -> None:
             break
     if target_num is None:
         fail(f"no stage has a gate named '{gate_name}'")
-        return
-
-    # Script gates (e.g. stage 2.5 'layout', stage 3 'sane') are resolved by
-    # a caller-supplied exit code from a deterministic checker script, never
-    # by APPROVALS.md/human text. 0 -> auto_approved (detail "script");
-    # nonzero -> rejected + reason. This formalizes the pre-existing stage-3
-    # hard-gate behavior (code emits sim/gate_result.json; the CLI never
-    # fabricates or edits the verdict) under the same `gate` subcommand used
-    # for human gates, instead of leaving it entirely outside pipeline_ctl.
-    script_exit = args.script_exit
-    if script_exit is not None:
-        # Refuse script-exit on a human gate (design/draft/understand) — a
-        # script call must never be able to auto_approve/reject a gate that's
-        # supposed to require a human's APPROVALS.md line. Look up the gate's
-        # declared type from the loaded stages config (module-level cache,
-        # same source cmd_resume/etc. use — resolved relative to this script,
-        # not the workspace).
-        gate_type = None
-        for st_cfg in _STAGES_CONFIG:
-            cfg_gate = st_cfg.get("gate")
-            if cfg_gate and cfg_gate.get("name") == gate_name:
-                gate_type = cfg_gate.get("type")
-                break
-        if gate_type != "script":
-            usage_error(f"gate '{gate_name}' is a human gate — script-exit 금지")
-            return
-
-        stages_ref = hdr["stages"]
-        gate_obj = stages_ref[target_num]["gate"]
-        if script_exit == 0:
-            gate_obj["state"] = "auto_approved"
-            gate_obj["by"] = "script"
-            gate_obj["at"] = now_iso()
-            save_header(ws, text, start, end, hdr)
-            append_event(ws, "gate", target_num,
-                         f"gate '{gate_name}' auto_approved (script, exit 0)")
-            write_heartbeat(ws)
-            refresh_handoff(ws, hdr)
-            out({"ok": True, "gate": gate_name, "state": "auto_approved",
-                 "stage": target_num, "by": "script", "detail": "script",
-                 "at": gate_obj["at"]})
-            return
-        reason = f"script exited {script_exit}"
-        gate_obj["state"] = "rejected"
-        gate_obj["by"] = "script"
-        gate_obj["at"] = now_iso()
-        save_header(ws, text, start, end, hdr)
-        append_event(ws, "gate", target_num,
-                     f"gate '{gate_name}' rejected: {reason}")
-        write_heartbeat(ws)
-        refresh_handoff(ws, hdr)
-        out({"ok": True, "gate": gate_name, "state": "rejected",
-             "stage": target_num, "reason": reason, "by": "script"})
         return
 
     approvals_path = ws / "APPROVALS.md"
@@ -697,6 +827,148 @@ def cmd_gate(args) -> None:
     refresh_handoff(ws, hdr)
     out({"ok": True, "gate": gate_name, "state": "auto_approved",
          "stage": target_num, "by": mode, "at": gate_obj["at"]})
+
+
+def _resolve_gate_checker(gate_name: str):
+    """Look up a gate's declared type + checker argv template from the stage
+    graph. Returns (found, gate_type, checker) where checker is the argv list
+    or None. `found` is False when no gate by that name exists."""
+    for st_cfg in _STAGES_CONFIG or []:
+        cfg_gate = st_cfg.get("gate")
+        if cfg_gate and cfg_gate.get("name") == gate_name:
+            return True, cfg_gate.get("type"), cfg_gate.get("checker")
+    return False, None, None
+
+
+def _substitute_checker_argv(checker: list, ws: Path) -> list:
+    """Substitute {WS} and {PIPELINE_SCRIPTS} placeholders in each argv token.
+    {WS} = workspace absolute path; {PIPELINE_SCRIPTS} = this script's dir."""
+    ws_abs = str(ws.resolve())
+    scripts_dir = str(Path(__file__).resolve().parent)
+    argv = []
+    for tok in checker:
+        s = str(tok).replace("{WS}", ws_abs).replace("{PIPELINE_SCRIPTS}", scripts_dir)
+        argv.append(s)
+    return argv
+
+
+def _append_gate_check_receipt(ws: Path, gate_name: str, stage: str,
+                               provenance: dict, exit_code: int) -> None:
+    """Append the check provenance to <ws>/.pipeline/gate_checks.jsonl. The
+    PIPELINE.md header gate scalar stays name/state/by/at (a compat contract
+    read verbatim by studio/main.py), so full provenance lives in this audit
+    trail + the emitted JSON + events.jsonl."""
+    try:
+        d = ws / ".pipeline"
+        d.mkdir(parents=True, exist_ok=True)
+        rec = {"ts": provenance.get("checked_at"), "gate": gate_name,
+               "stage": stage, "exit": exit_code, **provenance}
+        with (d / "gate_checks.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def cmd_check(args) -> None:
+    """Resolve a SCRIPT gate by RUNNING its bound checker (from stages.yaml).
+
+    exit 0  -> auto_approved (detail "checker")
+    nonzero -> rejected (reason includes the exit code)
+    Records provenance {checker_argv, exit, stdout_sha256, checked_at} into the
+    emitted JSON, events.jsonl, and .pipeline/gate_checks.jsonl. A null/missing
+    checker, a non-script gate, or an unknown gate is a usage error — never a
+    pass (a gate with no runnable checker must NOT silently auto_approve)."""
+    ws = Path(args.workspace)
+    gate_name = args.gate_name
+
+    found, gate_type, checker = _resolve_gate_checker(gate_name)
+    if not found:
+        usage_error(f"check: no gate named '{gate_name}' in stages.yaml")
+        return
+    if gate_type != "script":
+        usage_error(f"check: gate '{gate_name}' is a {gate_type} gate, not a script "
+                    f"gate — checkers only run on script gates")
+        return
+    if not checker:
+        usage_error(f"check: gate '{gate_name}' has no checker bound (null) — "
+                    f"register a checker argv in stages.yaml before running check")
+        return
+    if not isinstance(checker, list) or not all(isinstance(t, str) for t in checker):
+        usage_error(f"check: gate '{gate_name}' checker must be an argv array of strings")
+        return
+
+    loaded = load_header(ws)
+    if loaded is None:
+        fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
+        return
+    text, start, end, hdr = loaded
+    stages = hdr.get("stages", {})
+
+    target_num = None
+    for num, st in stages.items():
+        gate = st.get("gate")
+        if gate and gate.get("name") == gate_name:
+            target_num = num
+            break
+    if target_num is None:
+        fail(f"gate '{gate_name}' not present in this PIPELINE.md header")
+        return
+
+    argv = _substitute_checker_argv(checker, ws)
+    # Never trust an ambient "python" on PATH — bind the checker's interpreter
+    # to the exact interpreter running this CLI (sys.executable) at spawn time.
+    if argv and argv[0] == "python":
+        argv[0] = sys.executable
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              timeout=600, env=env)
+    except FileNotFoundError as exc:
+        fail(f"check: checker not runnable: {exc}", gate=gate_name, checker_argv=argv)
+        return
+    except subprocess.TimeoutExpired:
+        fail("check: checker timed out after 600s", gate=gate_name, checker_argv=argv)
+        return
+
+    exit_code = proc.returncode
+    stdout_text = proc.stdout or ""
+    checked_at = now_iso()
+    provenance = {
+        "checker_argv": argv,
+        "exit": exit_code,
+        "stdout_sha256": hashlib.sha256(stdout_text.encode("utf-8", "replace")).hexdigest(),
+        "checked_at": checked_at,
+    }
+
+    gate_obj = hdr["stages"][target_num]["gate"]
+    if exit_code == 0:
+        gate_obj["state"] = "auto_approved"
+        gate_obj["by"] = "script"
+        gate_obj["at"] = checked_at
+        save_header(ws, text, start, end, hdr)
+        _append_gate_check_receipt(ws, gate_name, target_num, provenance, exit_code)
+        append_event(ws, "gate_check", target_num,
+                     f"gate '{gate_name}' auto_approved (checker exit 0)")
+        write_heartbeat(ws)
+        refresh_handoff(ws, hdr)
+        out({"ok": True, "gate": gate_name, "state": "auto_approved",
+             "stage": target_num, "by": "script", "detail": "checker",
+             "at": checked_at, **provenance})
+        return
+
+    reason = f"checker exited {exit_code}"
+    gate_obj["state"] = "rejected"
+    gate_obj["by"] = "script"
+    gate_obj["at"] = checked_at
+    save_header(ws, text, start, end, hdr)
+    _append_gate_check_receipt(ws, gate_name, target_num, provenance, exit_code)
+    append_event(ws, "gate_check", target_num,
+                 f"gate '{gate_name}' rejected: {reason}")
+    write_heartbeat(ws)
+    refresh_handoff(ws, hdr)
+    out({"ok": True, "gate": gate_name, "state": "rejected",
+         "stage": target_num, "reason": reason, "by": "script", **provenance})
 
 
 # Legal status transitions per CONTRACT §2. `blocked` is reachable from any
@@ -943,13 +1215,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("workspace")
     p_resume.set_defaults(func=cmd_resume)
 
-    p_gate = sub.add_parser("gate", help="Resolve a gate by reading APPROVALS.md (never fabricates human approval), or by a script's exit code for script-type gates.")
+    p_gate = sub.add_parser("gate", help="Resolve a HUMAN gate by reading APPROVALS.md (never fabricates human approval). Script gates use `check`, not `gate`.")
     p_gate.add_argument("workspace")
     p_gate.add_argument("gate_name")
     p_gate.add_argument("--mode", required=False, default=None, choices=sorted(MODE_ENUM))
     p_gate.add_argument("--script-exit", dest="script_exit", type=int, default=None,
-                         help="Resolve a script-type gate from a checker script's exit code (0=auto_approved, nonzero=rejected). Bypasses APPROVALS.md/--mode.")
+                         help="RETIRED — use `check <ws> <gate>` instead. Kept only to emit a clear redirect for old callers; any value is a usage error.")
     p_gate.set_defaults(func=cmd_gate)
+
+    p_check = sub.add_parser("check", help="Resolve a SCRIPT gate by running its bound checker (from stages.yaml): exit 0 -> auto_approved, nonzero -> rejected. Records provenance.")
+    p_check.add_argument("workspace")
+    p_check.add_argument("gate_name")
+    p_check.set_defaults(func=cmd_check)
 
     p_advance = sub.add_parser("advance", help="Advance a stage's status, refusing illegal transitions.")
     p_advance.add_argument("workspace")
@@ -997,6 +1274,12 @@ def main(argv=None) -> None:
             sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
+    # Hard error (not a silent fallback) if the stage graph failed to load.
+    # Surfaced here as a clean JSON + nonzero exit rather than an import-time
+    # traceback, so callers still get a single parseable object.
+    if _STAGES_CONFIG_ERROR is not None:
+        usage_error(f"stages.yaml load failed (hard error, no fallback): {_STAGES_CONFIG_ERROR}")
+        return
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
