@@ -155,9 +155,13 @@ def _parse_yaml_header(body: str) -> dict:
 
 
 def _load_stage_order() -> list[str]:
-    """Read stage ids from the kernel config, with a safe embedded fallback."""
-    fallback = ["0", "1", "2", "2.5", "3", "4", "5", "5.5", "5.7", "6"]
-    config = Path(__file__).parent.parent / "pipeline" / "references" / "stages.yaml"
+    """Read stage ids from the kernel config, with a safe embedded fallback.
+    STUDIO_STAGES_YAML overrides the config path for installs where the
+    kernel references live outside this repo layout (e.g. a skills dir)."""
+    fallback = ["0", "1", "2", "2.5", "3", "4", "4.5", "5", "5.5", "5.7", "6"]
+    env_path = os.environ.get("STUDIO_STAGES_YAML")
+    config = (Path(env_path) if env_path
+              else Path(__file__).parent.parent / "pipeline" / "references" / "stages.yaml")
     try:
         ids = []
         for line in config.read_text(encoding="utf-8").splitlines():
