@@ -164,9 +164,13 @@ def test_apply_installs_and_writes_receipt(world, tmp_path):
     receipt = json.loads(read(os.path.join(inst, sl.RECEIPT_NAME)))
     assert receipt["files"]["SKILL.md"]["origin"] == "overlay"
     assert receipt["files"]["scripts/ctl.py"]["origin"] == "base"
-    # a backup was produced only if install pre-existed; fresh install -> empty bak
+    # The lock is now a SIBLING of the install root, so a truly fresh install
+    # (dir did not pre-exist) makes no backup; a subsequent re-sync does.
     baks = [d for d in os.listdir(world["tmp"]) if d.startswith("install.bak-")]
-    assert baks  # backup of the lock-only dir
+    assert not baks
+    sl.run_target(target, world["checkout"], dry_run=False, force=False)
+    baks = [d for d in os.listdir(world["tmp"]) if d.startswith("install.bak-")]
+    assert baks  # the re-sync backed up the now-existing install
 
 
 # --------------------------------------------------------------------------- #
@@ -307,9 +311,133 @@ def test_lock_blocks_second_holder(world, tmp_path):
         other = sl.InstallLock(world["install"], force=False)
         with pytest.raises(sl.LockHeld):
             other.acquire()
-        # --force steals it
+        # --force CANNOT steal from a LIVE holder: the holder keeps an open
+        # fd on the lock file, so Windows sharing semantics block the remove.
         forced = sl.InstallLock(world["install"], force=True)
-        forced.acquire()
-        forced.release()
+        with pytest.raises(sl.LockHeld):
+            forced.acquire()
     finally:
         lock.release()
+    # After the holder releases (fd closed, file gone), a fresh acquire works.
+    again = sl.InstallLock(world["install"], force=False)
+    again.acquire()
+    again.release()
+
+
+def test_force_steals_only_dead_lock(world, tmp_path):
+    # A dead lock = file left behind by a crashed process (no open fd).
+    os.makedirs(world["install"], exist_ok=True)
+    dead_path = world["install"] + sl.LOCK_SUFFIX
+    with open(dead_path, "w", encoding="utf-8") as fh:
+        fh.write("pid=99999 uuid=deadbeef at=sometime\n")
+    plain = sl.InstallLock(world["install"], force=False)
+    with pytest.raises(sl.LockHeld):
+        plain.acquire()
+    forced = sl.InstallLock(world["install"], force=True)
+    forced.acquire()
+    forced.release()
+    assert not os.path.exists(dead_path)
+
+
+def test_two_sequential_acquires_without_release_refused(world, tmp_path):
+    # Two acquires with no release between them: the second must be refused
+    # (the O_CREAT|O_EXCL create is atomic, so no exists()-then-open race lets
+    # both proceed).
+    os.makedirs(world["install"], exist_ok=True)
+    a = sl.InstallLock(world["install"], force=False)
+    a.acquire()
+    try:
+        b = sl.InstallLock(world["install"], force=False)
+        with pytest.raises(sl.LockHeld):
+            b.acquire()
+        assert not b.acquired
+    finally:
+        a.release()
+
+
+def test_release_after_foreign_overwrite_does_not_unlink(world, tmp_path):
+    # If a foreign holder overwrites the lock file (different token), our
+    # release() must NOT unlink it — we no longer own it.
+    os.makedirs(world["install"], exist_ok=True)
+    a = sl.InstallLock(world["install"], force=False)
+    a.acquire()
+    # simulate a foreign holder replacing the lock file contents in place
+    with open(a.path, "w", encoding="utf-8") as fh:
+        fh.write("pid=99999 uuid=deadbeefdeadbeefdeadbeefdeadbeef at=foreign\n")
+    a.release()
+    # the foreign lock file is left intact — not deleted by our release
+    assert os.path.exists(a.path)
+    assert "deadbeef" in read(a.path)
+    os.remove(a.path)
+
+
+def test_normal_acquire_release_cycle_clean(world, tmp_path):
+    os.makedirs(world["install"], exist_ok=True)
+    a = sl.InstallLock(world["install"], force=False)
+    a.acquire()
+    assert os.path.exists(a.path)
+    assert a.token in read(a.path)
+    a.release()
+    assert not a.acquired
+    assert not os.path.exists(a.path)
+    # a fresh acquire after a clean release succeeds
+    b = sl.InstallLock(world["install"], force=False)
+    b.acquire()
+    assert os.path.exists(b.path)
+    b.release()
+    assert not os.path.exists(b.path)
+
+
+def test_lock_is_sibling_outside_install_tree(world, tmp_path):
+    lock = sl.InstallLock(world["install"], force=False)
+    inst = os.path.abspath(world["install"])
+    # the lock file must live NEXT TO the install root, never inside it, so it
+    # survives the atomic rename swap.
+    assert os.path.dirname(os.path.abspath(lock.path)) == os.path.dirname(inst)
+    assert not os.path.abspath(lock.path).startswith(inst + os.sep)
+
+
+# --------------------------------------------------------------------------- #
+# BLOCKER 5a: excluded install files must survive the atomic swap
+# --------------------------------------------------------------------------- #
+def test_excluded_install_files_preserved_across_apply(world, tmp_path):
+    target = make_target(world)
+    sl.run_target(target, world["checkout"], dry_run=False, force=False)
+
+    # plant a file the exclude patterns keep out of the managed set (matches
+    # "__pycache__" and "*.pyc"); it was never synced and is not managed.
+    excluded = os.path.join(world["install"], "scripts", "__pycache__", "local.pyc")
+    write(excluded, "cached-bytes\n")
+
+    plan, _ = plan_for(world, tmp_path)
+    assert "scripts/__pycache__/local.pyc" in plan.excluded_preserved
+    # it must NOT be miscategorised as a delete or a managed action
+    assert "scripts/__pycache__/local.pyc" not in plan.deletes
+    assert "scripts/__pycache__/local.pyc" not in plan.actions
+
+    sl.run_target(target, world["checkout"], dry_run=False, force=False)
+    # the excluded file survived the tree swap untouched
+    assert os.path.exists(excluded)
+    assert read(excluded) == "cached-bytes\n"
+    # and it stays out of the receipt (unmanaged, like never-synced files)
+    receipt = json.loads(read(os.path.join(world["install"], sl.RECEIPT_NAME)))
+    assert "scripts/__pycache__/local.pyc" not in receipt["files"]
+
+
+# --------------------------------------------------------------------------- #
+# BLOCKER 5b: the sibling lock blocks a concurrent second run through completion
+# --------------------------------------------------------------------------- #
+def test_sync_sibling_lock_blocks_concurrent_run(world, tmp_path):
+    target = make_target(world)
+    sl.run_target(target, world["checkout"], dry_run=False, force=False)
+
+    # a concurrent holder grabs the sibling lock and keeps it
+    holder = sl.InstallLock(world["install"], force=False)
+    holder.acquire()
+    try:
+        with pytest.raises(sl.LockHeld):
+            sl.run_target(target, world["checkout"], dry_run=False, force=False)
+        # the holder's lock was not stolen or removed by the blocked run
+        assert os.path.exists(holder.path)
+    finally:
+        holder.release()
