@@ -21,42 +21,71 @@ personalization resolution order in
 
 ## Running the installer
 
-Install with a manifest that lists the base files and the overlay root:
+Install with a manifest. The manifest itself carries the absolute roots
+(`install_root`, `overlay_root`); the CLI only points at the manifest and,
+optionally, the checkout the base is copied from:
 
 ```sh
-python scripts/sync_local.py --manifest <PROFILE_ROOT>/skill-overlay/manifest.yaml \
-  --base <CHECKOUT> --overlay <PROFILE_ROOT>/skill-overlay \
-  --skills-root <SKILLS_ROOT>
+python scripts/sync_local.py --manifest <PROFILE_ROOT>/skill-overlay/manifest.yaml
+# optional flags:
+#   --checkout-root <CHECKOUT>   base 'from' paths resolve here (default: this repo root)
+#   --dry-run                    print per-file actions and exit without changes
+#   --force                      overwrite drifted files / steal a stale lock
+#   --only <target-name>         process a single target
 ```
 
-The manifest declares, per skill, which base files to copy and which overlay
-files to layer on top. A minimal shape:
+If `--manifest` is omitted it defaults to `scripts/sync_manifest.example.yaml`.
+
+The manifest describes a **target**: an absolute `install_root`, an optional
+absolute `overlay_root`, a `source_map` (checkout-relative `from` → install-relative
+`to`, for a directory or a single file), and an `exclude` glob list. Overlay files
+are not enumerated per-file — every file found under `overlay_root` is layered onto
+the staged base by its install-relative path (replace or add). A minimal shape:
 
 ```yaml
-skills:
-  report-pipeline:
-    base:
-      - adapters/claude-code/SKILL.report-pipeline.md
-    overlay:
-      - backend-bindings.md        # concrete provider commands (private)
-  hwp-master:
-    base:
-      - adapters/claude-code/SKILL.hwp-master.pointer.md
-agents:
-  humanizer:
-    base:
-      - adapters/claude-code/agent.humanizer.template.md
-    overlay:
-      - voice-pack.md              # persona/voice rules (private, never in base)
+# install_root / overlay_root are ABSOLUTE. source_map 'from' is checkout-relative,
+# 'to' is install-relative. Scalars are literal, so Windows backslash paths survive.
+install_root: "<SKILLS_ROOT>/report-pipeline"
+overlay_root: "<PROFILE_ROOT>/skill-overlay"
+
+source_map:
+  - from: "pipeline/scripts"                                # kernel CLIs
+    to: "scripts"
+  - from: "pipeline/references"                             # playbooks, prompts, packs, contracts
+    to: "references"
+  - from: "adapters/claude-code/SKILL.report-pipeline.md"   # router skill entry
+    to: "SKILL.md"
+  - from: "adapters/claude-code/SKILL.hwp-master.pointer.md"
+    to: "references/hwp-master-pointer.md"
+
+exclude:
+  - "__pycache__"
+  - "*.pyc"
+  - ".sync*"
 ```
+
+A single `install_root` is one skill directory. To install files whose home is a
+different root (for example the harness `agents/` directory for
+`agent.humanizer.template.md`), add a `repo_targets:` list — each entry takes the
+same `install_root` / `overlay_root` / `source_map` / `exclude` fields with its own
+root. The overlay wins on conflict, so a private voice pack layered into the
+humanizer target supplies persona content the public base never carries.
+
+Each sync writes a per-file receipt (`.sync_receipt.json`, origin + sha256) and
+swaps the install in atomically, archiving the previous tree to
+`<install_root>.bak-<timestamp>`. A file hand-edited in the install since the last
+sync is **refused** (`--force` to override) — edit upstream or the overlay instead.
 
 ## How the adapter files map into a skills directory
 
-| Repo file | Installed location |
-|---|---|
-| `adapters/claude-code/SKILL.report-pipeline.md` | `<SKILLS_ROOT>/report-pipeline/SKILL.md` |
-| `adapters/claude-code/SKILL.hwp-master.pointer.md` | `<SKILLS_ROOT>/report-pipeline/references/hwp-master-pointer.md` |
-| `adapters/claude-code/agent.humanizer.template.md` | `<agents-dir>/humanizer.md` (with the overlay voice pack merged) |
+Those installed locations are just `source_map` `to` paths under each target's
+`install_root`:
+
+| Repo file (`from`) | Target `install_root` | `to` |
+|---|---|---|
+| `adapters/claude-code/SKILL.report-pipeline.md` | `<SKILLS_ROOT>/report-pipeline` | `SKILL.md` |
+| `adapters/claude-code/SKILL.hwp-master.pointer.md` | `<SKILLS_ROOT>/report-pipeline` | `references/hwp-master-pointer.md` |
+| `adapters/claude-code/agent.humanizer.template.md` | `<agents-dir>` (a `repo_targets` entry) | `humanizer.md` (overlay voice pack layered on top) |
 
 After install, the router skill's `pipeline_ctl.py` commands still run from
 `<CHECKOUT>` root, and every `<WS>` argument is an absolute workspace path.
