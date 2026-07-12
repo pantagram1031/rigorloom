@@ -38,12 +38,17 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 RECEIPT_NAME = ".sync_receipt.json"
-LOCK_NAME = ".sync.lock"
+# The lock is a SIBLING of the install root (``<install_root>.sync.lock``), not a
+# file inside it — so it survives the atomic rename swap and can be held through
+# the unmanaged/excluded copy + swap + receipt write, closing the concurrent-sync
+# race that existed when the in-tree lock had to be released before the swap.
+LOCK_SUFFIX = ".sync.lock"
 STALE_LOCK_SECONDS = 30 * 60
 # Control files live at the install root and are never treated as managed
 # content, never compared, never deleted by the sync itself.
@@ -84,7 +89,7 @@ class LockHeld(SyncError):
 # sequences of mappings (``- key: value`` with aligned continuation lines),
 # inline flow lists (``[a, b]``), scalars, quoted scalars, and ``#`` comments.
 # Scalar values are taken literally (no escape processing) so Windows paths
-# like ``C:\Users\me`` survive intact.
+# with backslashes survive intact.
 def parse_yaml(text: str) -> Any:
     raw_lines = text.splitlines()
     lines: List[Tuple[int, str]] = []
@@ -226,6 +231,11 @@ class Target:
     overlay_root: Optional[str]
     source_map: List[Dict[str, str]]
     exclude: List[str] = field(default_factory=list)
+    # Where the pre-install tree is archived. Default (None) = sibling of
+    # install_root. Set this when siblings are harmful — e.g. a Claude skills
+    # dir, where a backed-up copy containing SKILL.md registers as a duplicate
+    # skill.
+    backup_root: Optional[str] = None
 
 
 def load_manifest(path: str, checkout_root: str) -> List[Target]:
@@ -265,12 +275,14 @@ def _target_from_section(name: str, section: Dict[str, Any]) -> Target:
     if not isinstance(exclude, list):
         raise SyncError(f"target {name!r}: exclude must be a list")
     overlay = section.get("overlay_root")
+    backup_root = section.get("backup_root")
     return Target(
         name=name,
         install_root=os.path.abspath(str(install_root)),
         overlay_root=os.path.abspath(str(overlay)) if overlay else None,
         source_map=norm_map,
         exclude=[str(x) for x in exclude],
+        backup_root=os.path.abspath(str(backup_root)) if backup_root else None,
     )
 
 
@@ -372,6 +384,9 @@ class Plan:
     deletes: List[str]                # stale (was managed, now gone)
     unmanaged: List[str]              # never synced, present in install, keep
     drift: List[str]                  # hand-edited since last receipt
+    excluded_preserved: List[str] = field(default_factory=list)
+    # install files skipped by an exclude pattern; carried across the swap
+    # untouched so the tree swap never silently deletes them
 
     def counts(self) -> Dict[str, int]:
         c: Dict[str, int] = {"add": 0, "update": 0, "overlay": 0, "unchanged": 0}
@@ -380,6 +395,7 @@ class Plan:
         c["delete"] = len(self.deletes)
         c["unmanaged"] = len(self.unmanaged)
         c["drift"] = len(self.drift)
+        c["excluded_preserved"] = len(self.excluded_preserved)
         return c
 
 
@@ -435,6 +451,28 @@ def _install_hashes(install_root: str, exclude: List[str]) -> Dict[str, str]:
     return result
 
 
+def _iter_excluded_install_files(install_root: str, exclude: List[str]) -> List[Tuple[str, str]]:
+    """Yield (abs, rel) for install files the MANAGED scan skips because they
+    match an exclude pattern (or live under an excluded dir). Unlike
+    ``_iter_files`` this does NOT prune the walk, so excluded-dir contents are
+    seen. Control files (``.sync*``) are still skipped — the sync manages those
+    itself. These files must be carried across the atomic swap untouched, else
+    the swap silently deletes them."""
+    if not os.path.isdir(install_root):
+        return []
+    out: List[Tuple[str, str]] = []
+    install_root = os.path.abspath(install_root)
+    for dirpath, _dirnames, filenames in os.walk(install_root):
+        for fn in filenames:
+            ap = os.path.join(dirpath, fn)
+            rel = os.path.relpath(ap, install_root).replace("\\", "/")
+            if _is_control(rel):
+                continue
+            if _excluded(rel, exclude):
+                out.append((ap, rel))
+    return out
+
+
 def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
     origins = build_staged_tree(target, checkout_root, staging)
     staged_hashes = {
@@ -473,6 +511,15 @@ def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
     deletes.sort()
     unmanaged.sort()
 
+    # excluded install files: never in origins/install_hashes, so they'd vanish
+    # in the swap unless explicitly carried. A managed staged file (e.g. a
+    # directly-mapped file that also matches an exclude pattern) wins over the
+    # excluded install copy, so drop any that collide with an origin.
+    excluded_preserved = sorted({
+        rel for _ap, rel in _iter_excluded_install_files(target.install_root, target.exclude)
+        if rel not in origins
+    })
+
     return Plan(
         target=target,
         staging_dir=staging,
@@ -483,6 +530,7 @@ def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
         deletes=deletes,
         unmanaged=unmanaged,
         drift=drift,
+        excluded_preserved=excluded_preserved,
     )
 
 
@@ -491,38 +539,116 @@ def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
 # --------------------------------------------------------------------------- #
 class InstallLock:
     def __init__(self, install_root: str, force: bool):
-        self.install_root = install_root
+        self.install_root = os.path.abspath(install_root)
         self.force = force
-        self.path = os.path.join(install_root, LOCK_NAME)
+        # sibling of the install root, in its PARENT dir — never inside the tree
+        self.path = self.install_root + LOCK_SUFFIX
         self.acquired = False
+        # Per-instance ownership token (pid + uuid) written into the lock file.
+        # release() only unlinks a file that still carries OUR token, so a lock
+        # stolen/overwritten by another holder is never deleted out from under it.
+        self.token = f"pid={os.getpid()} uuid={uuid.uuid4().hex}"
+
+    def _payload(self) -> str:
+        return f"{self.token} at={datetime.now(timezone.utc).isoformat()}\n"
+
+    def _create_exclusive(self) -> None:
+        """Atomically create the lock file carrying our token. O_CREAT|O_EXCL
+        makes creation-if-absent a single atomic syscall, closing the
+        exists()-then-open TOCTOU race where two acquirers could both see
+        'missing' and both proceed. Raises FileExistsError if it already
+        exists.
+
+        The fd is kept OPEN for the lock's lifetime: on Windows an open handle
+        (default sharing mode) blocks os.remove from any other process, so a
+        forced steal cannot delete the lock out from under a live holder —
+        which closes the read-token-then-unlink race in release()."""
+        self._fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(self._fd, self._payload().encode("utf-8"))
+        self.acquired = True
 
     def acquire(self) -> None:
-        os.makedirs(self.install_root, exist_ok=True)
-        if os.path.exists(self.path):
-            age = time.time() - os.path.getmtime(self.path)
-            if age <= STALE_LOCK_SECONDS and not self.force:
-                raise LockHeld(
-                    f"another sync holds {self.path} (age {int(age)}s). "
-                    f"Use --force to override a stale lock."
-                )
-            # stale or forced -> take it over
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
-        with open(self.path, "w", encoding="utf-8") as fh:
-            fh.write(f"pid={os.getpid()} at={datetime.now(timezone.utc).isoformat()}\n")
-        self.acquired = True
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        try:
+            self._create_exclusive()
+            return
+        except FileExistsError:
+            pass
+        # Lock already present -> held by someone else. A plain acquire NEVER
+        # steals it (that was the old race). Only --force may take it over, and
+        # only after reading + reporting the existing holder's token.
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                existing = fh.read().strip()
+        except OSError:
+            existing = "<unreadable>"
+        try:
+            age = int(time.time() - os.path.getmtime(self.path))
+        except OSError:
+            age = -1
+        stale = age >= 0 and age > STALE_LOCK_SECONDS
+        if not self.force:
+            raise LockHeld(
+                f"another sync holds {self.path} "
+                f"(age {age}s{', stale' if stale else ''}, held by {existing!r}). "
+                f"Use --force to override."
+            )
+        # forced steal: old token already reported above; replace the file.
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+        try:
+            self._create_exclusive()
+        except FileExistsError:
+            # re-created between remove and create -> a live holder raced back
+            # in; refuse rather than clobber a lock we could not exclusively take.
+            raise LockHeld(
+                f"lock {self.path} was re-acquired during a forced steal; aborting."
+            )
 
     def release(self) -> None:
         if not self.acquired:
             return
-        try:
-            if os.path.exists(self.path):
-                os.remove(self.path)
-        except OSError:
-            pass
         self.acquired = False
+        # Only unlink if the file still carries OUR token. If a foreign holder
+        # overwrote or re-created it (forced steal, manual edit), leave it in
+        # place and warn — deleting it would release a lock we no longer own.
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                current = fh.read()
+        except FileNotFoundError:
+            self._close_fd()
+            return
+        except OSError:
+            current = ""
+        if self.token in current:
+            # Close our held fd only now: while it was open, Windows sharing
+            # semantics blocked any foreign os.remove, so the token we just
+            # verified cannot have been swapped by a forced steal. The residual
+            # close-to-unlink window requires a manual --force steal landing in
+            # those microseconds on the operator's own machine — accepted.
+            self._close_fd()
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+        else:
+            self._close_fd()
+            print(
+                f"WARNING: not removing {self.path}: it no longer carries our "
+                f"lock token (foreign holder).",
+                file=sys.stderr,
+            )
+
+    def _close_fd(self) -> None:
+        fd = getattr(self, "_fd", None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            self._fd = None
 
     def __enter__(self) -> "InstallLock":
         self.acquire()
@@ -544,17 +670,27 @@ def _place_staged(staging: str, install_root: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _atomic_install(staging: str, install_root: str) -> str:
+def _atomic_install(staging: str, install_root: str, backup_root: Optional[str] = None) -> str:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    bak = f"{install_root}.bak-{ts}"
+    if backup_root:
+        os.makedirs(backup_root, exist_ok=True)
+        base = os.path.join(backup_root, f"{os.path.basename(install_root)}.bak-{ts}")
+    else:
+        base = f"{install_root}.bak-{ts}"
+    bak = base
     n = 0
     while os.path.exists(bak):
         n += 1
-        bak = f"{install_root}.bak-{ts}-{n}"
+        bak = f"{base}-{n}"
     backed = False
     try:
         if os.path.exists(install_root):
-            os.rename(install_root, bak)
+            try:
+                os.rename(install_root, bak)
+            except OSError:
+                # cross-volume backup_root: copy then remove
+                shutil.copytree(install_root, bak)
+                shutil.rmtree(install_root)
             backed = True
         _place_staged(staging, install_root)
         return bak
@@ -564,7 +700,10 @@ def _atomic_install(staging: str, install_root: str) -> str:
             if os.path.exists(install_root):
                 shutil.rmtree(install_root, ignore_errors=True)
             if os.path.exists(bak):
-                os.rename(bak, install_root)
+                try:
+                    os.rename(bak, install_root)
+                except OSError:
+                    shutil.copytree(bak, install_root)
         raise
 
 
@@ -578,6 +717,13 @@ def apply_plan(plan: Plan) -> str:
         if os.path.exists(src):
             _copy_into(src, staging, rel)
 
+    # carry excluded install files untouched (same as unmanaged) so the swap
+    # never deletes a file the exclude patterns kept out of the managed set
+    for rel in plan.excluded_preserved:
+        src = os.path.join(target.install_root, rel.replace("/", os.sep))
+        if os.path.exists(src):
+            _copy_into(src, staging, rel)
+
     # fresh receipt records only managed (base/overlay) files
     receipt_files = {
         rel: {"sha256": plan.staged_hashes[rel], "origin": plan.origins[rel]}
@@ -585,7 +731,7 @@ def apply_plan(plan: Plan) -> str:
     }
     write_receipt(staging, receipt_files)
 
-    return _atomic_install(staging, target.install_root)
+    return _atomic_install(staging, target.install_root, target.backup_root)
 
 
 # --------------------------------------------------------------------------- #
@@ -609,13 +755,15 @@ def _print_plan(plan: Plan, dry_run: bool) -> None:
         print(f"  {'delete':9s} {rel}")
     for rel in plan.unmanaged:
         print(f"  {'unmanaged':9s} {rel}  (kept; never synced)")
+    for rel in plan.excluded_preserved:
+        print(f"  {'excluded':9s} {rel}  (kept; matches exclude pattern)")
     for rel in plan.drift:
         print(f"  {'drift':9s} {rel}  (hand-edited since last sync)")
 
     c = plan.counts()
     summary = ", ".join(f"{k}={c[k]}" for k in
                         ("add", "update", "overlay", "unchanged", "delete",
-                         "unmanaged", "drift"))
+                         "unmanaged", "excluded_preserved", "drift"))
     print(f"  -> {summary}")
 
 
@@ -637,8 +785,9 @@ def run_target(target: Target, checkout_root: str, dry_run: bool, force: bool) -
             raise DriftRefused(plan.drift)
         _print_plan(plan, dry_run=dry_run)
         if not dry_run:
-            # release the in-tree lock before the directory is swapped out
-            lock.release()
+            # The sibling lock lives OUTSIDE the install tree, so it survives the
+            # rename swap — hold it through the unmanaged/excluded copy + swap +
+            # receipt (released only in finally), closing the concurrent-sync race.
             bak = apply_plan(plan)
             print(f"  installed. previous tree archived to: {bak}")
         return plan
