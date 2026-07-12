@@ -1,0 +1,54 @@
+# sync_manifest.example.yaml
+#
+# Manifest for scripts/sync_local.py -- the base+overlay installer that syncs
+# this checkout into a generated Claude skill install.
+#
+# Layout:
+#   * Top-level fields describe the PRIMARY target (the report-pipeline skill).
+#   * Optional `repo_targets:` is a list of additional targets with the SAME
+#     field semantics but a different install_root (e.g. mirroring studio/ into
+#     another repo).
+#
+# Path rules:
+#   * source_map `from` is CHECKOUT-relative; `to` is INSTALL-relative.
+#   * overlay_root / install_root are ABSOLUTE.
+#   * Scalars are taken literally, so Windows backslash paths are fine.
+#   * Copy this file to a private location, edit the roots, and pass it with
+#     --manifest. Do NOT commit real machine paths.
+
+# --- PRIMARY target: report-pipeline skill --------------------------------- #
+install_root: "C:\\Users\\me\\.claude\\skills\\report-pipeline"
+overlay_root: "C:\\Users\\me\\.report-profile\\skill-overlay"
+
+source_map:
+  # upstream checkout dir/file        ->  install-relative destination
+  - from: "pipeline/scripts"
+    to: "scripts"
+  - from: "pipeline/references"
+    to: "references"          # includes playbooks/ and prompts/
+  # Tests are optional in the install; uncomment to ship them too.
+  # - from: "pipeline/tests"
+  #   to: "tests"
+
+exclude:
+  - "__pycache__"
+  - "*.pyc"
+  - ".pytest_cache"
+  - ".sync*"
+
+# --- SECOND section: repo_targets (same semantics, other install root) ----- #
+# Example: sync the local studio/ viewer into a sibling repo's checkout.
+# Each entry accepts install_root, overlay_root, source_map, exclude.
+#
+# repo_targets:
+#   - name: "studio-mirror"
+#     install_root: "C:\\Users\\me\\dev\\other-repo\\studio"
+#     overlay_root: "C:\\Users\\me\\.report-profile\\studio-overlay"
+#     source_map:
+#       - from: "studio"
+#         to: "."
+#     exclude:
+#       - "__pycache__"
+#       - "*.pyc"
+#       - "studio.log"
+#       - ".sync*"

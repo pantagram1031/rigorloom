@@ -131,15 +131,18 @@ class TestAdvance(PipelineCtlTestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("gate", payload["error"].lower())
 
-    def test_advance_allowed_autonomous_despite_pending_gate(self):
-        # In autonomous mode a pending gate on an earlier stage does not by
-        # itself block (only 'rejected' blocks universally); pending only
-        # blocks in supervised mode per contract §2 rule 4.
+    def test_advance_allowed_autonomous_despite_pending_human_gate(self):
+        # In autonomous mode a pending HUMAN gate on an earlier stage does not
+        # by itself block (only 'rejected' blocks universally; pending human
+        # gates block only in supervised mode). Stage 2's design gate is human,
+        # so advancing into 2.5 must be allowed while it is still pending.
+        # (A pending SCRIPT gate, by contrast, blocks all modes — covered by
+        # TestScriptGateBlocksAllModes.)
         self.init_ws(mode="autonomous")
         run("advance", str(self.ws), "0", "--status", "done")
         run("advance", str(self.ws), "1", "--status", "done")
         run("advance", str(self.ws), "2", "--status", "done")
-        payload, code = run("advance", str(self.ws), "3", "--status", "in_progress")
+        payload, code = run("advance", str(self.ws), "2.5", "--status", "in_progress")
         self.assertEqual(code, 0, payload)
         self.assertTrue(payload["ok"])
 
@@ -218,7 +221,7 @@ class TestInvalidate(PipelineCtlTestCase):
 
         payload, code = run("invalidate", str(self.ws), "--from", "3", "--reason", "bad sim data")
         self.assertEqual(code, 0, payload)
-        self.assertEqual(sorted(payload["reset_stages"]), sorted(["3", "4", "5", "5.5", "5.7", "6"]))
+        self.assertEqual(sorted(payload["reset_stages"]), sorted(["3", "4", "4.5", "5", "5.5", "5.7", "6"]))
 
         text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
         header_part = text.split("```")[1]
@@ -228,7 +231,7 @@ class TestInvalidate(PipelineCtlTestCase):
             line = [l for l in header_part.splitlines() if f'"{s}":' in l][0]
             self.assertIn("status: done", line)
         # stage 3 and later should be pending
-        for s in ["3", "4", "5", "5.5", "5.7", "6"]:
+        for s in ["3", "4", "4.5", "5", "5.5", "5.7", "6"]:
             line = [l for l in header_part.splitlines() if f'"{s}":' in l][0]
             self.assertIn("status: pending", line)
         # stage 4's draft gate should be reset to pending/null
@@ -506,73 +509,78 @@ class TestTroubleSingleHeader(PipelineCtlTestCase):
 
 
 class TestStagesConfigLoader(unittest.TestCase):
-    """Config loader: present / missing / corrupt stages.yaml."""
+    """Config loader: present config parses; missing / corrupt / empty
+    stages.yaml is a HARD ERROR (StagesConfigError), never a silent fallback."""
 
-    def _reload_with_config_at(self, tmp_root: Path, script_dir: Path):
-        """Import pipeline_ctl fresh (subprocess, to dodge the module-level
-        Windows UTF-8 re-exec guard) with the script living at script_dir, so
-        load_stages_config() looks for <script_dir>/../references/stages.yaml."""
-        script = (
-            "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
-            "print(pc.load_stages_config(r'%s'))"
-        ) % (str(SCRIPT.parent), str(script_dir / "pipeline_ctl.py"))
-        proc = subprocess.run(
-            [sys.executable, "-c", script],
+    LOADER_PROBE = '''
+import sys
+sys.path.insert(0, r"{scriptdir}")
+import pipeline_ctl as pc
+try:
+    rows = pc.load_stages_config(r"{cfgscript}")
+    print("OK", len(rows), [r["id"] for r in rows])
+except pc.StagesConfigError as e:
+    print("HARDERR", e)
+'''
+
+    def _load_at(self, script_dir: Path):
+        """Run load_stages_config in a fresh subprocess (dodging the module-level
+        Windows UTF-8 re-exec guard) with the script living at script_dir, so it
+        looks for <script_dir>/../references/stages.yaml."""
+        code = self.LOADER_PROBE.format(
+            scriptdir=str(SCRIPT.parent),
+            cfgscript=str(script_dir / "pipeline_ctl.py"),
+        )
+        return subprocess.run(
+            [sys.executable, "-c", code],
             capture_output=True, text=True, encoding="utf-8",
             env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
         )
-        return proc
 
     def test_present_config_parses_all_rows(self):
         real_cfg = SCRIPT.parent.parent / "references" / "stages.yaml"
         self.assertTrue(real_cfg.exists(), "references/stages.yaml must exist")
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("pipeline_ctl_probe", SCRIPT)
-        # Avoid triggering the module-level re-exec guard during import by
-        # asserting the env flag first (subprocess already sets it for the
-        # rest of this test class; for this in-process probe we only touch
-        # pure functions that don't run at import-time re-exec branches).
-        with tempfile.TemporaryDirectory() as td:
-            proc = subprocess.run(
-                [sys.executable, "-c",
-                 "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
-                 "rows = pc.load_stages_config(); "
-                 "ids = [r['id'] for r in rows]; "
-                 "assert ids == ['0','1','2','2.5','3','4','5','5.5','5.7','6'], ids; "
-                 "print('OK', len(rows))" % str(SCRIPT.parent)],
-                capture_output=True, text=True, encoding="utf-8",
-                env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
-            )
-            self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
-            self.assertIn("OK 10", proc.stdout)
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
+             "rows = pc.load_stages_config(); "
+             "ids = [r['id'] for r in rows]; "
+             "assert ids == ['0','1','2','2.5','3','4','4.5','5','5.5','5.7','6'], ids; "
+             "print('OK', len(rows))" % str(SCRIPT.parent)],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("OK 11", proc.stdout)
 
-    def test_missing_config_falls_back(self):
+    def test_missing_config_hard_errors(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             fake_scripts = root / "scripts"
             fake_scripts.mkdir()
             # no references/ dir at all next to fake_scripts's parent
-            proc = self._reload_with_config_at(root, fake_scripts)
+            proc = self._load_at(fake_scripts)
             self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
-            self.assertIn("'id': '2.5'", proc.stdout)
-            self.assertIn("'id': '5.7'", proc.stdout)
+            self.assertIn("HARDERR", proc.stdout)
+            self.assertNotIn("OK", proc.stdout)
 
-    def test_corrupt_config_falls_back(self):
+    def test_corrupt_config_hard_errors(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             fake_scripts = root / "scripts"
             fake_scripts.mkdir()
             fake_refs = root / "references"
             fake_refs.mkdir()
+            # a row that is a malformed inline map missing 'id'
             (fake_refs / "stages.yaml").write_text(
-                "this is not: [valid, {yaml stages\n???", encoding="utf-8"
+                "version: \"0.6\"\nstages:\n  - {name: nope, gate: null}\n",
+                encoding="utf-8",
             )
-            proc = self._reload_with_config_at(root, fake_scripts)
+            proc = self._load_at(fake_scripts)
             self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
-            self.assertIn("'id': '2.5'", proc.stdout)
-            self.assertIn("'id': '5.7'", proc.stdout)
+            self.assertIn("HARDERR", proc.stdout)
 
-    def test_empty_stages_list_falls_back(self):
+    def test_empty_stages_list_hard_errors(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             fake_scripts = root / "scripts"
@@ -580,9 +588,86 @@ class TestStagesConfigLoader(unittest.TestCase):
             fake_refs = root / "references"
             fake_refs.mkdir()
             (fake_refs / "stages.yaml").write_text("version: \"0.6\"\nstages:\n", encoding="utf-8")
-            proc = self._reload_with_config_at(root, fake_scripts)
+            proc = self._load_at(fake_scripts)
             self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
-            self.assertIn("'id': '0'", proc.stdout)
+            self.assertIn("HARDERR", proc.stdout)
+
+    def _load_text(self, yaml_text: str):
+        """Write yaml_text as <root>/references/stages.yaml and load it via a
+        fresh subprocess, returning the CompletedProcess. Loader prints
+        'OK ...' on success or 'HARDERR ...' on StagesConfigError."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_scripts = root / "scripts"
+            fake_scripts.mkdir()
+            fake_refs = root / "references"
+            fake_refs.mkdir()
+            (fake_refs / "stages.yaml").write_text(yaml_text, encoding="utf-8")
+            return self._load_at(fake_scripts)
+
+    def test_missing_colon_gate_row_hard_errors(self):
+        # The exact adversarial probe: 'gate {name: ...}' is missing the colon
+        # after 'gate', so 'gate' never becomes a key and the stage would be
+        # silently gate-less. Must be a HARD ERROR, not a silent drop.
+        proc = self._load_text(
+            'version: "0.6"\nstages:\n'
+            '  - {id: "2.5", name: x, gate {name: layout, type: script}, playbook: p}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertNotIn("OK", proc.stdout)
+
+    def test_unexpected_top_level_key_hard_errors(self):
+        proc = self._load_text(
+            'version: "0.6"\nstages:\n'
+            '  - {id: "1", name: research, gate: null, playbook: p, bogus: x}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertNotIn("OK", proc.stdout)
+
+    def test_row_without_gate_key_hard_errors(self):
+        # A row with NO 'gate' key must NOT be treated as an implicit gate:null.
+        proc = self._load_text(
+            'version: "0.6"\nstages:\n'
+            '  - {id: "1", name: research, playbook: p}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertNotIn("OK", proc.stdout)
+
+    def test_explicit_gate_null_row_still_parses(self):
+        # Guard the happy path: gate: null (explicit) is a valid gate-less stage.
+        proc = self._load_text(
+            'version: "0.6"\nstages:\n'
+            '  - {id: "1", name: research, gate: null, playbook: p}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("OK", proc.stdout)
+
+    def test_cli_hard_errors_when_config_broken(self):
+        # End-to-end: a CLI invocation whose stages.yaml fails to load must emit
+        # a clean JSON hard error + nonzero exit, not a traceback or a pass.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_scripts = root / "scripts"
+            fake_scripts.mkdir()
+            fake_refs = root / "references"
+            fake_refs.mkdir()
+            (fake_refs / "stages.yaml").write_text("version: \"0.6\"\nstages:\n", encoding="utf-8")
+            # copy the real script next to the broken config
+            (fake_scripts / "pipeline_ctl.py").write_text(
+                SCRIPT.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            proc = subprocess.run(
+                [sys.executable, str(fake_scripts / "pipeline_ctl.py"), "resume", str(root)],
+                capture_output=True, text=True, encoding="utf-8",
+                env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            payload = json.loads(proc.stdout.strip())
+            self.assertFalse(payload["ok"])
+            self.assertIn("stages.yaml", payload["error"])
 
 
 class TestStage25Ordering(PipelineCtlTestCase):
@@ -595,6 +680,22 @@ class TestStage25Ordering(PipelineCtlTestCase):
             "i2 = pc.STAGE_ORDER.index('2'); i25 = pc.STAGE_ORDER.index('2.5'); "
             "i3 = pc.STAGE_ORDER.index('3'); "
             "assert i2 < i25 < i3, (i2, i25, i3); print('OK')"
+        ) % str(SCRIPT.parent)
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("OK", proc.stdout)
+
+    def test_stage_order_includes_4_5_between_4_and_5(self):
+        script = (
+            "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
+            "o = pc.STAGE_ORDER; "
+            "assert '4.5' in o, o; "
+            "assert o.index('4') < o.index('4.5') < o.index('5'), o; "
+            "print('OK')"
         ) % str(SCRIPT.parent)
         proc = subprocess.run(
             [sys.executable, "-c", script],
@@ -636,54 +737,30 @@ class TestStage25Ordering(PipelineCtlTestCase):
         self.assertIn("status: done", line)
 
 
-class TestScriptGate(PipelineCtlTestCase):
-    """gate <ws> <name> --script-exit <code>: 0 -> auto_approved (script),
-    nonzero -> rejected + reason. Never touches APPROVALS.md."""
+class TestScriptExitRetired(PipelineCtlTestCase):
+    """--script-exit recorded a caller-supplied verdict with no checker ever
+    run (the defect). It is now a hard usage error for BOTH script and human
+    gate names — script gates resolve only via `check`."""
 
-    def test_script_exit_zero_auto_approves(self):
-        self.init_ws(mode="autonomous")
-        run("advance", str(self.ws), "0", "--status", "done")
-        run("advance", str(self.ws), "1", "--status", "done")
-        run("advance", str(self.ws), "2", "--status", "done")
-        run("gate", str(self.ws), "design", "--mode", "autonomous")
-        payload, code = run("gate", str(self.ws), "layout", "--script-exit", "0")
-        self.assertEqual(code, 0, payload)
-        self.assertEqual(payload["state"], "auto_approved")
-        self.assertEqual(payload["by"], "script")
-        self.assertEqual(payload.get("detail"), "script")
-
-    def test_script_exit_nonzero_rejects_with_reason(self):
-        self.init_ws(mode="autonomous")
-        payload, code = run("gate", str(self.ws), "sane", "--script-exit", "1")
-        self.assertEqual(code, 0, payload)
-        self.assertEqual(payload["state"], "rejected")
-        self.assertIn("1", payload["reason"])
-        self.assertEqual(payload["by"], "script")
-
-    def test_script_gate_never_writes_approved(self):
+    def test_script_exit_on_script_gate_is_usage_error(self):
         self.init_ws(mode="autonomous")
         payload, code = run("gate", str(self.ws), "sane", "--script-exit", "0")
-        self.assertEqual(code, 0, payload)
-        self.assertNotEqual(payload["state"], "approved")
-        self.assertEqual(payload["state"], "auto_approved")
-
-    def test_script_gate_ignores_approvals_md(self):
-        # even if APPROVALS.md has a rejection line, --script-exit 0 wins —
-        # script gates are resolved purely by exit code, never by human text.
-        self.init_ws(mode="autonomous")
-        (self.ws / "APPROVALS.md").write_text("sane: rejected — do not trust\n", encoding="utf-8")
-        payload, code = run("gate", str(self.ws), "sane", "--script-exit", "0")
-        self.assertEqual(code, 0, payload)
-        self.assertEqual(payload["state"], "auto_approved")
-
-    def test_script_gate_persisted_in_header(self):
-        self.init_ws(mode="autonomous")
-        run("gate", str(self.ws), "sane", "--script-exit", "7")
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertIn("retired", payload["error"].lower())
+        self.assertIn("check", payload["error"].lower())
+        # must not have mutated the sane gate at all
         text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
-        header_part = text.split("```")[1]
-        line = [l for l in header_part.splitlines() if '"3":' in l][0]
-        self.assertIn("state: rejected", line)
-        self.assertIn("by: script", line)
+        line = [l for l in text.split("```")[1].splitlines() if '"3":' in l][0]
+        self.assertNotIn("auto_approved", line)
+        self.assertIn("state: pending", line)
+
+    def test_script_exit_on_human_gate_is_usage_error(self):
+        self.init_ws(mode="autonomous")
+        payload, code = run("gate", str(self.ws), "design", "--script-exit", "1")
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertIn("retired", payload["error"].lower())
 
     def test_gate_missing_mode_and_script_exit_is_usage_error(self):
         self.init_ws(mode="autonomous")
@@ -691,41 +768,128 @@ class TestScriptGate(PipelineCtlTestCase):
         self.assertEqual(code, 2)
         self.assertFalse(payload["ok"])
 
-    def test_script_exit_refused_on_human_gate_design(self):
-        # BLOCK: --script-exit must never bypass a human gate (design/draft/
-        # understand are type "human" per stages.yaml/FALLBACK_STAGES_CONFIG).
-        # Without the guard, a script call could silently auto_approve a gate
-        # meant to require an APPROVALS.md line from a person.
-        self.init_ws(mode="autonomous")
-        payload, code = run("gate", str(self.ws), "design", "--script-exit", "0")
-        self.assertEqual(code, 2)
-        self.assertFalse(payload["ok"])
-        self.assertIn("human gate", payload["error"])
-        self.assertIn("script-exit", payload["error"])
 
-        # must not have mutated the gate state at all
+class TestCheckSubcommand(PipelineCtlTestCase):
+    """`check <ws> <gate>` RUNS the bound checker: exit 0 -> auto_approved,
+    nonzero -> rejected. Records provenance. Null/unknown/human -> usage error,
+    never a pass."""
+
+    def _write_sim_gate(self, exit_code, stdout='{"ok": true}'):
+        sim = self.ws / "sim"
+        sim.mkdir(parents=True, exist_ok=True)
+        (sim / "gates.py").write_text(
+            "import sys\n"
+            "print(%r)\n"
+            "sys.exit(%d)\n" % (stdout, exit_code),
+            encoding="utf-8",
+        )
+
+    def test_check_happy_path_auto_approves_with_provenance(self):
+        self.init_ws(mode="autonomous")
+        self._write_sim_gate(0)
+        payload, code = run("check", str(self.ws), "sane")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+        self.assertEqual(payload["by"], "script")
+        self.assertEqual(payload.get("detail"), "checker")
+        for k in ("checker_argv", "exit", "stdout_sha256", "checked_at"):
+            self.assertIn(k, payload)
+        self.assertEqual(payload["exit"], 0)
+        self.assertIsInstance(payload["checker_argv"], list)
+        self.assertEqual(len(payload["stdout_sha256"]), 64)
+        # persisted in header (scalar stays name/state/by/at)
         text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
-        header_part = text.split("```")[1]
-        line = [l for l in header_part.splitlines() if '"2":' in l][0]
-        self.assertNotIn("auto_approved", line)
+        line = [l for l in text.split("```")[1].splitlines() if '"3":' in l][0]
+        self.assertIn("state: auto_approved", line)
+        self.assertIn("by: script", line)
+        # provenance audit trail written
+        self.assertTrue((self.ws / ".pipeline" / "gate_checks.jsonl").exists())
 
-    def test_script_exit_refused_on_human_gate_draft(self):
+    def test_check_reject_on_nonzero_exit(self):
         self.init_ws(mode="autonomous")
-        payload, code = run("gate", str(self.ws), "draft", "--script-exit", "1")
+        self._write_sim_gate(3)
+        payload, code = run("check", str(self.ws), "sane")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "rejected")
+        self.assertEqual(payload["by"], "script")
+        self.assertIn("3", payload["reason"])
+        self.assertEqual(payload["exit"], 3)
+        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+        line = [l for l in text.split("```")[1].splitlines() if '"3":' in l][0]
+        self.assertIn("state: rejected", line)
+
+    def test_check_never_writes_approved(self):
+        self.init_ws(mode="autonomous")
+        self._write_sim_gate(0)
+        payload, code = run("check", str(self.ws), "sane")
+        self.assertNotEqual(payload["state"], "approved")
+        self.assertEqual(payload["state"], "auto_approved")
+
+    def test_check_null_checker_is_usage_error(self):
+        # 'layout' has checker: null (external) — check must error, never pass.
+        self.init_ws(mode="autonomous")
+        payload, code = run("check", str(self.ws), "layout")
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertIn("layout", payload["error"])
+        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+        line = [l for l in text.split("```")[1].splitlines() if '"2.5":' in l][0]
+        self.assertIn("state: pending", line)
+
+    def test_check_unknown_gate_is_usage_error(self):
+        self.init_ws(mode="autonomous")
+        payload, code = run("check", str(self.ws), "does-not-exist")
         self.assertEqual(code, 2)
         self.assertFalse(payload["ok"])
 
-    def test_script_exit_still_works_on_script_gates_layout_and_sane(self):
-        # Regression guard: the human-gate refusal must not collaterally
-        # break the legitimate script-gate path (layout/sane are type "script").
+    def test_check_human_gate_is_usage_error(self):
         self.init_ws(mode="autonomous")
-        payload, code = run("gate", str(self.ws), "sane", "--script-exit", "0")
-        self.assertEqual(code, 0, payload)
-        self.assertEqual(payload["state"], "auto_approved")
+        payload, code = run("check", str(self.ws), "design")
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertIn("human", payload["error"].lower())
 
-        payload, code = run("gate", str(self.ws), "layout", "--script-exit", "0")
+    def test_check_content_audit_gate_present_and_bound(self):
+        # Stage 4.5 content_audit binds content_audit.py; running it against a
+        # workspace with no bundle/content.md yields the composite checker's
+        # usage exit (2) -> rejected (nonzero), never a silent pass.
+        self.init_ws(mode="autonomous")
+        payload, code = run("check", str(self.ws), "content_audit")
         self.assertEqual(code, 0, payload)
-        self.assertEqual(payload["state"], "auto_approved")
+        self.assertEqual(payload["state"], "rejected")
+        self.assertIn("content_audit.py", " ".join(payload["checker_argv"]))
+
+
+class TestScriptGateBlocksAllModes(PipelineCtlTestCase):
+    """BLOCKER: a PENDING predecessor SCRIPT gate must block advancement in
+    night/autonomous (not just supervised). Only human gates get the
+    pending-blocks-supervised-only treatment."""
+
+    def test_night_advance_past_pending_script_gate_refused(self):
+        self.init_ws(mode="night")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "done")
+        run("gate", str(self.ws), "design", "--mode", "night")  # human gate → auto
+        run("advance", str(self.ws), "2.5", "--status", "done")
+        # stage 2.5's 'layout' script gate is still pending (check never run);
+        # advancing stage 3 in night must be refused.
+        payload, code = run("advance", str(self.ws), "3", "--status", "in_progress")
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertIn("script gate", payload["error"].lower())
+
+    def test_autonomous_advance_past_pending_script_gate_refused(self):
+        self.init_ws(mode="autonomous")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "done")
+        run("gate", str(self.ws), "design", "--mode", "autonomous")
+        run("advance", str(self.ws), "2.5", "--status", "done")
+        payload, code = run("advance", str(self.ws), "3", "--status", "done")
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertIn("gate", payload["error"].lower())
 
 
 class TestImportHasNoSideEffects(unittest.TestCase):
@@ -854,6 +1018,193 @@ stages:
         payload, code = run("gate", str(self.ws), "draft", "--mode", "autonomous")
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["state"], "auto_approved")
+
+
+class TestGateRefusesScriptType(PipelineCtlTestCase):
+    """BLOCKER 1: `gate <ws> <script_gate>` must be refused (usage error),
+    never auto_approved — a script gate is only resolvable via `check`, which
+    runs the bound checker. Applies in EVERY mode, including night."""
+
+    def _assert_refused(self, gate_name, mode):
+        payload, code = run("gate", str(self.ws), gate_name, "--mode", mode)
+        self.assertEqual(code, 2, payload)
+        self.assertFalse(payload["ok"])
+        self.assertIn("script gate", payload["error"].lower())
+        self.assertIn("check", payload["error"].lower())
+        # the gate must remain pending — nothing auto_approved
+        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+        header = text.split("```")[1]
+        for line in header.splitlines():
+            if f"name: {gate_name}" in line:
+                self.assertIn("state: pending", line)
+
+    def test_gate_script_type_refused_night(self):
+        self.init_ws(mode="night")
+        self._assert_refused("sane", "night")
+
+    def test_gate_script_type_refused_supervised(self):
+        self.init_ws(mode="supervised")
+        self._assert_refused("layout", "supervised")
+
+    def test_gate_script_type_refused_autonomous(self):
+        self.init_ws(mode="autonomous")
+        self._assert_refused("content_audit", "autonomous")
+
+    def test_gate_human_type_still_auto_approves_night(self):
+        # regression guard: the script-gate refusal must not affect human gates.
+        self.init_ws(mode="night")
+        payload, code = run("gate", str(self.ws), "design", "--mode", "night")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+
+
+class TestResumePendingScriptGateNight(PipelineCtlTestCase):
+    """BLOCKER 2: resume on a stage sitting at awaiting_gate with a PENDING
+    SCRIPT gate must return blocked:true + action_needed:'check' in
+    night/autonomous (not blocked:false + action_needed:'gate')."""
+
+    def _advance_to_2_5_awaiting(self, mode):
+        self.init_ws(mode=mode)
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "done")
+        # 2.5 has the 'layout' SCRIPT gate; move it to awaiting_gate
+        run("advance", str(self.ws), "2.5", "--status", "awaiting_gate")
+
+    def test_resume_night_pending_script_gate_blocked_needs_check(self):
+        self._advance_to_2_5_awaiting("night")
+        payload, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["next_stage"], "2.5")
+        self.assertTrue(payload["blocked"])
+        self.assertEqual(payload.get("action_needed"), "check")
+
+    def test_resume_autonomous_pending_script_gate_blocked_needs_check(self):
+        self._advance_to_2_5_awaiting("autonomous")
+        payload, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["next_stage"], "2.5")
+        self.assertTrue(payload["blocked"])
+        self.assertEqual(payload.get("action_needed"), "check")
+
+    def test_resume_night_pending_human_gate_still_needs_gate(self):
+        # regression guard: a pending HUMAN gate keeps blocked:false + gate.
+        self.init_ws(mode="night")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "awaiting_gate")
+        payload, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["next_stage"], "2")
+        self.assertFalse(payload["blocked"])
+        self.assertEqual(payload.get("action_needed"), "gate")
+
+
+class TestStagesConfigStrict(unittest.TestCase):
+    """BLOCKER 3: STRICT stages.yaml parsing — a malformed row anywhere inside
+    the stages list, or a duplicate id / gate name, is a HARD ERROR, never a
+    silent skip that could drop a gate."""
+
+    def _load_broken(self, yaml_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_scripts = root / "scripts"
+            fake_scripts.mkdir()
+            fake_refs = root / "references"
+            fake_refs.mkdir()
+            (fake_refs / "stages.yaml").write_text(yaml_text, encoding="utf-8")
+            code = (
+                "import sys\n"
+                f"sys.path.insert(0, r'{SCRIPT.parent}')\n"
+                "import pipeline_ctl as pc\n"
+                "try:\n"
+                f"    rows = pc.load_stages_config(r'{fake_scripts / 'pipeline_ctl.py'}')\n"
+                "    print('OK', [r['id'] for r in rows])\n"
+                "except pc.StagesConfigError as e:\n"
+                "    print('HARDERR', e)\n"
+            )
+            return subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True, text=True, encoding="utf-8",
+                env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+            )
+
+    def test_mixed_valid_and_corrupt_rows_rejected(self):
+        # A valid row followed by a line that is NOT an inline-map row must be
+        # rejected (the old loader silently dropped the corrupt line, losing
+        # every gate declared after it).
+        proc = self._load_broken(
+            'version: "0.6"\n'
+            "stages:\n"
+            '  - {id: "0", name: form_intake, gate: null, playbook: "playbooks/stage-0.md"}\n'
+            "  this line is not a valid stage row\n"
+            '  - {id: "1", name: research, gate: null, playbook: "playbooks/stage-1.md"}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertNotIn("OK", proc.stdout)
+
+    def test_duplicate_stage_ids_rejected(self):
+        proc = self._load_broken(
+            'version: "0.6"\n'
+            "stages:\n"
+            '  - {id: "0", name: a, gate: null, playbook: "p"}\n'
+            '  - {id: "0", name: b, gate: null, playbook: "p"}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertIn("duplicate", proc.stdout.lower())
+
+    def test_duplicate_gate_names_rejected(self):
+        proc = self._load_broken(
+            'version: "0.6"\n'
+            "stages:\n"
+            '  - {id: "0", name: a, gate: {name: g, type: human}, playbook: "p"}\n'
+            '  - {id: "1", name: b, gate: {name: g, type: human}, playbook: "p"}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+
+    def test_bad_gate_type_rejected(self):
+        proc = self._load_broken(
+            'version: "0.6"\n'
+            "stages:\n"
+            '  - {id: "0", name: a, gate: {name: g, type: bogus}, playbook: "p"}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+
+    def test_missing_playbook_rejected(self):
+        proc = self._load_broken(
+            'version: "0.6"\n'
+            "stages:\n"
+            '  - {id: "0", name: a, gate: null}\n'
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("HARDERR", proc.stdout)
+
+
+class TestCheckWorkspaceWithSpaces(PipelineCtlTestCase):
+    """`check` must run the bound checker correctly when {WS} contains spaces
+    (argv is passed as a list, not a shell string)."""
+
+    def test_check_runs_with_spaces_in_workspace_path(self):
+        spaced = self.root / "dir with spaces" / "report-spaced-slug"
+        payload, code = run(
+            "init", str(spaced),
+            "--slug", "spaced-slug", "--mode", "autonomous",
+            "--subject", "s", "--topic", "t", "--form", "f",
+        )
+        self.assertEqual(code, 0, payload)
+        sim = spaced / "sim"
+        sim.mkdir(parents=True, exist_ok=True)
+        (sim / "gates.py").write_text(
+            'print("{\\"ok\\": true}")\n', encoding="utf-8"
+        )
+        payload, code = run("check", str(spaced), "sane")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+        self.assertIn("dir with spaces", " ".join(payload["checker_argv"]))
 
 
 if __name__ == "__main__":

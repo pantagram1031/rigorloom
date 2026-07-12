@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/backends-v1",
+  "title": "Backends preference pack",
+  "description": "Backend seating for the review/orchestration council. Every command is an argv array, never a shell string.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "seats"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["backends"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "seats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "cli", "args_argv"],
+        "properties": {
+          "role": {"type": "string"},
+          "cli": {"type": "string"},
+          "model": {"type": "string"},
+          "args_argv": {"type": "array", "items": {"type": "string"}},
+          "min_cli_version": {"type": "string"},
+          "timeout_s": {"type": "integer"}
+        }
+      }
+    }
+  }
+}

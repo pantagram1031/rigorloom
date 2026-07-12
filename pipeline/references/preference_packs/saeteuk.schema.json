@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/saeteuk-v1",
+  "title": "Saeteuk (short record) preference pack",
+  "description": "Length and character constraints for a short school-record summary blurb.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "char_target", "max_bytes"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["saeteuk"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "char_target": {"type": "integer"},
+    "max_bytes": {"type": "integer"},
+    "forbid_special_chars": {"type": "boolean"},
+    "style": {"type": "string"},
+    "forbid_numeric_overclaim": {"type": "boolean"}
+  }
+}

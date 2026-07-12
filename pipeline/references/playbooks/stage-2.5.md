@@ -49,21 +49,23 @@ role `writer-designer` — this is a design decision, max effort).
 mech-worker = agent.worker/medium may run layout_plan_check.
 
 EXIT + gate: `layout_plan_check.py` exit 0. **Script gate `layout`, not
-human.** Resolve the gate with the script's exit code, THEN advance:
+human.** The gate is resolved by the `check` subcommand, which RUNS the bound
+checker itself (never a hand-supplied exit code). `layout`'s checker lives in
+hwp-master (`layout_plan_check.py`), so it is bound `checker: null` in
+`stages.yaml` by default — register it locally (point the gate's `checker` argv
+at your `layout_plan_check.py` with `--form-profile`) before running `check`,
+THEN advance:
 ```
-python pipeline/scripts/pipeline_ctl.py gate <WS> layout --script-exit 0
+python pipeline/scripts/pipeline_ctl.py check <WS> layout
 python pipeline/scripts/pipeline_ctl.py advance <WS> 2.5 --status done
 ```
-(`--script-exit` lives on the `gate` subcommand — 0 → approved, nonzero →
-rejected/blocked. `advance` takes only `--status`/`--reason`.)
+(`check` exit 0 → auto_approved; nonzero → rejected, records provenance. Until a
+checker is bound, `check <WS> layout` is a usage error — it never silently
+passes. `advance` takes only `--status`/`--reason`.)
 
-FAILURE-side gate (symmetric to success): a `layout_plan_check.py` exit 1
-records rejection via the SAME `gate` call with the nonzero code — do NOT
-advance:
-```
-python pipeline/scripts/pipeline_ctl.py gate <WS> layout --script-exit 1
-```
-Fix `layout_plan.json`, re-run the checker, re-gate with the new exit code.
+FAILURE-side gate (symmetric to success): a checker nonzero exit records
+rejection through the SAME `check` call — do NOT advance. Fix
+`layout_plan.json`, re-run `check <WS> layout`.
 
 FAILURE table:
 | Symptom | Cause | Fix |

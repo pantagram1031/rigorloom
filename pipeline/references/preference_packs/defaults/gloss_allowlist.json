@@ -1,0 +1,7 @@
+{
+  "schema": "report-pipeline/preference-pack/gloss_allowlist-v1",
+  "pack_type": "gloss_allowlist",
+  "name": "neutral-default",
+  "version": 1,
+  "terms": ["Hz", "dB", "DOI", "mm", "kg", "RK4"]
+}

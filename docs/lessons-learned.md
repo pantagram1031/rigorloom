@@ -88,3 +88,48 @@ errors. One real run showed an unbraced HwpEqn superscript consuming punctuation
 and following terms. Normalize LaTeX single-atom script scope in the adapter,
 add a regression test, and inspect pages containing newly generated inline
 equations at high resolution.
+
+## Night-run orchestration lessons
+
+These come from unattended, multi-report runs and are distilled here so the same
+mistakes do not recur. They complement `autonomous-orchestration.md`, which holds
+the full playbook.
+
+### Freeze content before the first assembly
+
+COM assembly is slow and single-instance, so every content change after assembly
+forces a full re-normalize and re-assemble. The durable ordering is: freeze the sim
+method and numbers, write, then run the AI-tell and framing review on the content —
+and only then assemble. A run that reviewed after assembly did roughly four
+assemblies per report; freezing first brings that to one assembly plus at most one
+blocking-fix re-assembly. The content-level review therefore belongs to a gate that
+runs *before* assembly, not the historical post-assembly eval panel.
+
+### Precheck every backend before spawning a fleet
+
+A reviewer model that silently required a newer CLI than was installed took down a
+council seat and two review agents without any error surfacing. Trivial-call every
+backend during orientation and let council seating read the resulting
+run-capabilities file, not a static status field. When a backend is down, run
+multiple strong-model critics with distinct lenses and require unanimity — never a
+one-voice "council".
+
+### Prove a risky primitive before delegating it
+
+An assembly subagent stalled for 15 minutes with zero output because a from-scratch
+base-document primitive was never proven to work. Prove the risky COM primitive
+inline first, then hand off only the mechanical iteration — or do the serial
+assembly inline. A non-killable, opaque subagent must never be the only thing
+holding a gate open.
+
+### Anti-patterns to avoid
+
+- Assemble, then review, then re-assemble (repeatedly) — freeze content first.
+- Delegate COM before proving the base-document primitive — a silent stall.
+- Rely on a backend without a precheck — a dead model fails silently.
+- Decide the topic or approach solo — hold a council on any real judgment call.
+- Change sim methodology after writing — freeze the sim during its review.
+- Skip style rules on figure titles and captions — a gloss slips to final review.
+- Let hung reviewer processes accumulate — kill the owned process tree early, and
+  never blanket-kill the host word-processor process, which an interactive session
+  may have open.

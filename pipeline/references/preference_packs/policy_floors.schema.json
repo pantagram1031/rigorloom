@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/policy_floors-v1",
+  "title": "Policy floors preference pack",
+  "description": "Privacy/fidelity/safety rules that request- and form-level preferences CANNOT weaken. Merged LAST during resolution; floor keys win unconditionally.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "no_fabrication", "nondestructive_forms", "privacy", "floors"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["policy_floors"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "no_fabrication": {"type": "boolean"},
+    "nondestructive_forms": {"type": "boolean"},
+    "citation_floor": {"type": "object", "additionalProperties": true},
+    "privacy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["no_identity_in_artifacts"],
+      "properties": {
+        "no_identity_in_artifacts": {"type": "boolean"}
+      }
+    },
+    "floors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pack", "key", "value"],
+        "properties": {
+          "pack": {"type": "string"},
+          "key": {"type": "string"},
+          "value": {},
+          "severity": {"type": "string", "enum": ["hard", "warn"]}
+        }
+      }
+    }
+  }
+}

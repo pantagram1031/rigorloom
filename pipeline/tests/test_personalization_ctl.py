@@ -2,12 +2,20 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "personalization_ctl.py"
 SPEC = importlib.util.spec_from_file_location("personalization_ctl", MODULE_PATH)
 personalization = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(personalization)
+
+
+def _write(path: Path, value: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 def test_init_and_resolve_are_private_and_reproducible(tmp_path: Path) -> None:
@@ -20,14 +28,16 @@ def test_init_and_resolve_are_private_and_reproducible(tmp_path: Path) -> None:
     (root / "identity.json").parent.mkdir(parents=True, exist_ok=True)
     personalization.init(root)
     identity = personalization.read_json(root / "identity.json", {})
-    identity.update({"enabled": True, "fields": {"name": "PRIVATE NAME", "student_id": "1234"}})
+    # student_id sentinel deliberately contains a non-hex char ('Z') so it can
+    # never coincidentally match a substring of a SHA-256 digest in the lock.
+    identity.update({"enabled": True, "fields": {"name": "PRIVATE NAME", "student_id": "SID-1234Z"}})
     personalization.write_json(root / "identity.json", identity)
 
     result = personalization.resolve(root, workspace, form, "math", workspace / "request.yaml", None)
     lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
     assert lock["identity_enabled"] is True
     assert "PRIVATE NAME" not in json.dumps(lock, ensure_ascii=False)
-    assert "1234" not in json.dumps(lock, ensure_ascii=False)
+    assert "SID-1234Z" not in json.dumps(lock, ensure_ascii=False)
     assert lock["form_sha256"] == personalization.sha256(form)
     assert lock["sources"]["writing"] == "global-writing-profile"
 
@@ -57,3 +67,128 @@ def test_feedback_creates_review_only_candidates(tmp_path: Path) -> None:
     assert result["candidates_added"] == 1
     assert items[0]["status"] == "candidate"
     assert items[0]["requires_human_review"] is True
+
+
+DISTINCTIVE_REGEX = "ZZbannedZZ[0-9]+ pattern"
+
+
+def _valid_prose_pack(name: str = "test-prose") -> dict:
+    return {
+        "schema": "report-pipeline/preference-pack/prose_rules-v1",
+        "pack_type": "prose_rules",
+        "name": name,
+        "version": 1,
+        "banned_patterns": [
+            {"id": "distinctive", "regex": DISTINCTIVE_REGEX, "severity": "hard",
+             "description": "distinctive marker for leak tests"}
+        ],
+    }
+
+
+def test_register_pack_validates_and_stores(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    pack_file = _write(tmp_path / "prose.json", _valid_prose_pack())
+    result = personalization.register_pack(root, "prose_rules", pack_file)
+    assert result["ok"] is True
+    assert result["name"] == "test-prose"
+    stored = personalization.stored_pack(root, "prose_rules")
+    assert stored["banned_patterns"][0]["regex"] == DISTINCTIVE_REGEX
+    assert result["sha256"] == personalization.sha256_bytes(personalization.canonical_bytes(stored))
+
+
+def test_invalid_pack_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    # missing required 'terms', and a bad enum value for good measure
+    bad = {"schema": "x", "pack_type": "gloss_allowlist", "name": "bad", "version": "not-an-int"}
+    pack_file = _write(tmp_path / "gloss.json", bad)
+    with pytest.raises(ValueError) as exc:
+        personalization.register_pack(root, "gloss_allowlist", pack_file)
+    message = str(exc.value)
+    assert "terms" in message and "version" in message
+
+
+def test_pack_type_mismatch_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    pack_file = _write(tmp_path / "prose.json", _valid_prose_pack())
+    with pytest.raises(ValueError):
+        personalization.register_pack(root, "figure_style", pack_file)
+
+
+def test_resolve_lock_is_hash_only(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    personalization.init(root)
+    personalization.register_pack(root, "prose_rules", _write(tmp_path / "prose.json", _valid_prose_pack()))
+    result = personalization.resolve(root, workspace, None, None, None, None)
+    lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
+    blob = json.dumps(lock, ensure_ascii=False)
+    # rule content must never appear in the lock; only name/version/sha256 do.
+    assert DISTINCTIVE_REGEX not in blob
+    assert "banned_patterns" not in blob
+    prose_record = next(row for row in lock["packs"] if row["pack_type"] == "prose_rules")
+    assert prose_record["source"] == "global"
+    assert prose_record["name"] == "test-prose"
+    assert len(prose_record["sha256"]) == 64
+    assert set(prose_record) == {"pack_type", "source", "name", "version", "sha256"}
+
+
+def test_floor_override_is_refused_and_warned(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    personalization.init(root)
+    # A report_structure pack that tries to weaken the citation-source floor.
+    weakening = {
+        "schema": "report-pipeline/preference-pack/report_structure-v1",
+        "pack_type": "report_structure", "name": "weak", "version": 1,
+        "title_format": "{topic}", "citation_style": {"sources": "any", "in_text": "parenthetical"},
+    }
+    personalization.register_pack(root, "report_structure", _write(tmp_path / "rs.json", weakening))
+    resolution = personalization.resolve_packs(root, None, None)
+    warnings = resolution["floor_warnings"]
+    assert any(w["key"] == "citation_style.sources" for w in warnings)
+    # the floor value wins unconditionally over the weakened request
+    warn = next(w for w in warnings if w["key"] == "citation_style.sources")
+    assert warn["attempted_value"] == "any"
+    assert warn["floor_value"] == "papers_books_only"
+    # resolve() records the same warning into the lock and the feedback log
+    result = personalization.resolve(root, workspace, None, None, None, None)
+    lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
+    assert any(w["key"] == "citation_style.sources" for w in lock["floor_warnings"])
+    events = (root / "feedback" / "events.jsonl").read_text(encoding="utf-8")
+    assert "floor-override-warning" in events
+
+
+def test_pack_precedence_default_then_global(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    before = personalization.resolve_packs(root, None, None)
+    prose_before = next(r for r in before["packs"] if r["pack_type"] == "prose_rules")
+    assert prose_before["source"] == "public-default"
+    assert prose_before["name"] == "neutral-default"
+    personalization.register_pack(root, "prose_rules", _write(tmp_path / "prose.json", _valid_prose_pack("global-prose")))
+    after = personalization.resolve_packs(root, None, None)
+    prose_after = next(r for r in after["packs"] if r["pack_type"] == "prose_rules")
+    assert prose_after["source"] == "global"
+    assert prose_after["name"] == "global-prose"
+    assert prose_after["sha256"] != prose_before["sha256"]
+
+
+def test_yaml_subset_reader_roundtrip(tmp_path: Path) -> None:
+    pack = _valid_prose_pack("yaml-prose")
+    yaml_text = (
+        "schema: report-pipeline/preference-pack/prose_rules-v1\n"
+        "pack_type: prose_rules\n"
+        "name: yaml-prose\n"
+        "version: 1\n"
+        "banned_patterns:\n"
+        '  - {"id": "distinctive", "regex": "ZZbannedZZ[0-9]+ pattern", "severity": "hard", "description": "distinctive marker for leak tests"}\n'
+    )
+    path = tmp_path / "prose.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    loaded = personalization.load_pack_file(path)
+    assert loaded == pack

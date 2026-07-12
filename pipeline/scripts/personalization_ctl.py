@@ -21,6 +21,11 @@ from typing import Any
 SCHEMA = "report-pipeline/personalization-v1"
 DEFAULT_ROOT = Path(__file__).resolve().parents[2] / ".local" / "personalization"
 
+PACK_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "references" / "preference_packs"
+PACK_DEFAULTS_DIR = PACK_SCHEMA_DIR / "defaults"
+PACK_TYPES = ["prose_rules", "figure_style", "report_structure", "saeteuk",
+              "gloss_allowlist", "backends", "policy_floors"]
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -51,6 +56,282 @@ def append_jsonl(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+
+# --- Minimal YAML reader (documented subset) --------------------------------
+# Supported subset: full-line comments (`#`) and blank lines are skipped; block
+# mappings (`key: value`) with 2-or-more-space indentation for nesting; block
+# sequences (`- item`) indented under their key; scalar values are parsed as
+# JSON when possible (so `["a","b"]`, `{"k":1}`, numbers, booleans, null, and
+# double-quoted strings are exact), otherwise treated as a bare string. Author
+# any value containing YAML-special characters (`:`, `#`, `[`, `{`, regex meta)
+# as a double-quoted JSON string or an inline JSON flow value. This is not a
+# general YAML parser; it exists so packs can be authored in .yaml without a
+# third-party dependency.
+def _yaml_scalar(token: str) -> Any:
+    token = token.strip()
+    if token == "":
+        return None
+    try:
+        return json.loads(token)
+    except Exception:
+        return token
+
+
+def parse_yaml(text: str) -> Any:
+    rows: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        stripped = raw.lstrip(" ")
+        if not stripped or stripped.startswith("#"):
+            continue
+        rows.append((len(raw) - len(stripped), stripped))
+    pos = 0
+
+    def block(min_indent: int) -> Any:
+        nonlocal pos
+        if pos >= len(rows):
+            return None
+        indent, content = rows[pos]
+        if content.startswith("- "):
+            seq: list[Any] = []
+            while pos < len(rows):
+                indent2, content2 = rows[pos]
+                if indent2 != indent or not content2.startswith("- "):
+                    break
+                pos += 1
+                seq.append(_yaml_scalar(content2[2:]))
+            return seq
+        mapping: dict[str, Any] = {}
+        while pos < len(rows):
+            indent2, content2 = rows[pos]
+            if indent2 != indent or content2.startswith("- "):
+                break
+            key, _sep, val = content2.partition(":")
+            key = key.strip()
+            val = val.strip()
+            pos += 1
+            if val == "":
+                if pos < len(rows) and rows[pos][0] > indent:
+                    mapping[key] = block(rows[pos][0])
+                else:
+                    mapping[key] = None
+            else:
+                mapping[key] = _yaml_scalar(val)
+        return mapping
+
+    return block(0)
+
+
+def load_pack_file(path: Path) -> Any:
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        return json.loads(text)
+    if path.suffix.lower() in (".yaml", ".yml"):
+        try:
+            return json.loads(text)
+        except Exception:
+            return parse_yaml(text)
+    try:
+        return json.loads(text)
+    except Exception:
+        return parse_yaml(text)
+
+
+# --- Minimal JSON Schema subset validator -----------------------------------
+# Supported keywords: type, required, properties, items, enum,
+# additionalProperties (boolean). `type` accepts object/array/string/number/
+# integer/boolean/null. A schema node without `type` accepts any value. All
+# other JSON Schema keywords are ignored. Draft 2020-12 meta keywords
+# ($schema/$id/title/description) are ignored.
+_TYPE_CHECKS = {
+    "object": lambda v: isinstance(v, dict),
+    "array": lambda v: isinstance(v, list),
+    "string": lambda v: isinstance(v, str),
+    "boolean": lambda v: isinstance(v, bool),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "null": lambda v: v is None,
+}
+
+
+def validate_instance(instance: Any, schema: dict[str, Any], where: str = "$") -> list[str]:
+    errors: list[str] = []
+    expected = schema.get("type")
+    if expected is not None:
+        check = _TYPE_CHECKS.get(expected)
+        if check and not check(instance):
+            errors.append(f"{where}: expected type {expected}, got {type(instance).__name__}")
+            return errors
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{where}: value {instance!r} not in enum {schema['enum']}")
+    if isinstance(instance, dict):
+        for key in schema.get("required", []):
+            if key not in instance:
+                errors.append(f"{where}: missing required property '{key}'")
+        props = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            for key in instance:
+                if key not in props:
+                    errors.append(f"{where}: additional property '{key}' not allowed")
+        for key, sub in props.items():
+            if key in instance:
+                errors.extend(validate_instance(instance[key], sub, f"{where}.{key}"))
+    if isinstance(instance, list) and "items" in schema:
+        for idx, item in enumerate(instance):
+            errors.extend(validate_instance(item, schema["items"], f"{where}[{idx}]"))
+    return errors
+
+
+def pack_schema(pack_type: str) -> dict[str, Any]:
+    return json.loads((PACK_SCHEMA_DIR / f"{pack_type}.schema.json").read_text(encoding="utf-8"))
+
+
+def pack_default(pack_type: str) -> Any:
+    return json.loads((PACK_DEFAULTS_DIR / f"{pack_type}.json").read_text(encoding="utf-8"))
+
+
+def deep_merge(base: Any, over: Any) -> Any:
+    if isinstance(base, dict) and isinstance(over, dict):
+        merged = dict(base)
+        for key, value in over.items():
+            merged[key] = deep_merge(base.get(key), value) if key in base else value
+        return merged
+    return over
+
+
+def _get_dotted(obj: Any, dotted: str) -> tuple[bool, Any]:
+    cur = obj
+    for part in dotted.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return False, None
+    return True, cur
+
+
+def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
+    parts = dotted.split(".")
+    cur = obj
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+
+
+def register_pack(root: Path, pack_type: str, file: Path) -> dict[str, Any]:
+    if pack_type not in PACK_TYPES:
+        raise ValueError(f"unknown pack type: {pack_type} (known: {', '.join(PACK_TYPES)})")
+    content = load_pack_file(file)
+    if not isinstance(content, dict):
+        raise ValueError(f"pack file did not parse to a mapping: {file}")
+    declared = content.get("pack_type")
+    if declared is not None and declared != pack_type:
+        raise ValueError(f"pack_type mismatch: file declares {declared!r}, --type is {pack_type!r}")
+    errors = validate_instance(content, pack_schema(pack_type))
+    if errors:
+        raise ValueError("pack failed schema validation:\n  - " + "\n  - ".join(errors))
+    store = root / "packs" / f"{pack_type}.json"
+    write_json(store, content)
+    digest = sha256_bytes(canonical_bytes(content))
+    return {"ok": True, "pack_type": pack_type, "name": content.get("name"),
+            "version": content.get("version"), "sha256": digest, "stored": str(store.resolve())}
+
+
+def stored_pack(root: Path, pack_type: str) -> Any | None:
+    path = root / "packs" / f"{pack_type}.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return None
+
+
+def show_pack(root: Path, pack_type: str) -> dict[str, Any]:
+    if pack_type not in PACK_TYPES:
+        raise ValueError(f"unknown pack type: {pack_type}")
+    content = stored_pack(root, pack_type)
+    source = "profile"
+    if content is None:
+        content = pack_default(pack_type)
+        source = "public-default"
+    return {"ok": True, "pack_type": pack_type, "source": source,
+            "sha256": sha256_bytes(canonical_bytes(content)), "content": content}
+
+
+def list_packs(root: Path) -> dict[str, Any]:
+    rows = []
+    for pack_type in PACK_TYPES:
+        content = stored_pack(root, pack_type)
+        if content is None:
+            content = pack_default(pack_type)
+            source = "public-default"
+        else:
+            source = "profile"
+        rows.append({"pack_type": pack_type, "source": source, "name": content.get("name"),
+                     "version": content.get("version"),
+                     "sha256": sha256_bytes(canonical_bytes(content))})
+    return {"ok": True, "packs": rows}
+
+
+def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> dict[str, Any]:
+    """Merge packs by precedence (defaults < global < subject < form), then apply
+    policy_floors LAST. Floor keys win unconditionally; a differing higher-precedence
+    value is refused and recorded as a warning. Returns hash-only records plus the
+    floor-warning list. Resolved rule CONTENT is never returned to the lock."""
+    resolved: dict[str, Any] = {}
+    source: dict[str, str] = {}
+    for pack_type in PACK_TYPES:
+        merged = pack_default(pack_type)
+        src = "public-default"
+        glob = stored_pack(root, pack_type)
+        if glob is not None:
+            merged = deep_merge(merged, glob)
+            src = "global"
+        if subject:
+            sub = root / "academics" / "subjects" / subject / "packs" / f"{pack_type}.json"
+            if sub.exists():
+                merged = deep_merge(merged, json.loads(sub.read_text(encoding="utf-8")))
+                src = "subject"
+        if form_digest:
+            frm = root / "forms" / form_digest / "packs" / f"{pack_type}.json"
+            if frm.exists():
+                merged = deep_merge(merged, json.loads(frm.read_text(encoding="utf-8")))
+                src = "form"
+        resolved[pack_type] = merged
+        source[pack_type] = src
+
+    floor_warnings: list[dict[str, Any]] = []
+    floors_pack = resolved.get("policy_floors", {})
+    for entry in floors_pack.get("floors", []):
+        target_type = entry.get("pack")
+        key = entry.get("key")
+        floor_value = entry.get("value")
+        target = resolved.get(target_type)
+        if not isinstance(target, dict) or key is None:
+            continue
+        present, current = _get_dotted(target, key)
+        if present and current != floor_value:
+            floor_warnings.append({"pack": target_type, "key": key,
+                                   "attempted_value": current, "floor_value": floor_value,
+                                   "severity": entry.get("severity", "hard")})
+        _set_dotted(target, key, floor_value)
+
+    records = []
+    for pack_type in PACK_TYPES:
+        content = resolved[pack_type]
+        records.append({"pack_type": pack_type, "source": source[pack_type],
+                        "name": content.get("name"), "version": content.get("version"),
+                        "sha256": sha256_bytes(canonical_bytes(content))})
+    return {"packs": records, "floor_warnings": floor_warnings}
 
 
 def profile_paths(root: Path) -> dict[str, Path]:
@@ -152,10 +433,16 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
     }
     if overrides:
         effective["form_overrides"] = overrides
-    lock = {"schema": "report-pipeline/personalization-lock-v1", "generated_at": now(),
+    pack_resolution = resolve_packs(root, subject, str(form_digest) if form_digest else None)
+    for warning in pack_resolution["floor_warnings"]:
+        append_jsonl(paths["events"], {"schema": "report-pipeline/floor-override-warning-v1",
+                                       "at": now(), "workspace": workspace.name, **warning})
+    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 2, "generated_at": now(),
             "profile_schema": SCHEMA, "profile_root_hint": root.name, "form_sha256": form_digest,
             "subject": subject, "identity_enabled": bool(read_json(paths["identity"], {}).get("enabled")),
             "effective": effective,
+            "packs": pack_resolution["packs"],
+            "floor_warnings": pack_resolution["floor_warnings"],
             "sources": {"writing": "global-writing-profile", "subject": f"subject:{subject}" if subject else None,
                         "form": f"sha256:{form_digest}" if form_digest else None},
             "lock_hash": ""}
@@ -250,6 +537,9 @@ def main() -> int:
     sub.add_parser("init")
     p = sub.add_parser("register-form"); p.add_argument("--form", required=True, type=Path); p.add_argument("--form-profile", type=Path); p.add_argument("--subject")
     p = sub.add_parser("resolve"); p.add_argument("--workspace", required=True, type=Path); p.add_argument("--form", type=Path); p.add_argument("--subject"); p.add_argument("--request", type=Path); p.add_argument("--form-profile", type=Path)
+    p = sub.add_parser("register-pack"); p.add_argument("--type", required=True, choices=PACK_TYPES); p.add_argument("--file", required=True, type=Path)
+    p = sub.add_parser("show-pack"); p.add_argument("--type", required=True, choices=PACK_TYPES)
+    sub.add_parser("list-packs")
     p = sub.add_parser("import-legacy"); p.add_argument("--legacy-root", required=True, type=Path)
     p = sub.add_parser("collect-feedback"); p.add_argument("--workspace", required=True, type=Path)
     p = sub.add_parser("candidates"); p.add_argument("--status")
@@ -262,6 +552,9 @@ def main() -> int:
     if args.command == "init": result = init(root)
     elif args.command == "register-form": result = form_record(root, args.form, args.form_profile, args.subject)
     elif args.command == "resolve": result = resolve(root, args.workspace, args.form, args.subject, args.request, args.form_profile)
+    elif args.command == "register-pack": init(root); result = register_pack(root, args.type, args.file)
+    elif args.command == "show-pack": result = show_pack(root, args.type)
+    elif args.command == "list-packs": result = list_packs(root)
     elif args.command == "import-legacy": result = import_legacy(root, args.legacy_root.resolve())
     elif args.command == "collect-feedback": result = collect_feedback(root, args.workspace.resolve())
     elif args.command == "candidates": result = {"ok": True, "candidates": candidates(root, args.status)}

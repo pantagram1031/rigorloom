@@ -27,10 +27,13 @@ numeric reviewer; pair with a second independent high-reasoning pass for numbers
 
 EXIT + gate: `sim/gate_result.json` emitted + `sim/VERIFY.md` (raw+adjusted).
 This is the **script gate `sane`** — the code's verdict is truth, not a
-human gate. Resolve with the exit code, THEN advance → stage 4:
+human gate. The `check` subcommand RUNS the bound checker (`{WS}/sim/gates.py`)
+and records its exit code + provenance; it never accepts a hand-supplied
+verdict. `sim/gates.py` must exit 0 on pass, nonzero on fail. Run `check`,
+THEN advance → stage 4:
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python pipeline/scripts/pipeline_ctl.py gate <WS> sane --script-exit 0
+python pipeline/scripts/pipeline_ctl.py check <WS> sane
 python pipeline/scripts/pipeline_ctl.py advance <WS> 3 --status done
 ```
 
