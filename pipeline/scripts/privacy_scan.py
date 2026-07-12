@@ -17,6 +17,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import re
@@ -28,10 +29,31 @@ BINARY_EXTS = {
     ".hwp", ".hwpx", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 }
 EXCLUDED_DIRS = {".git", "__pycache__", "node_modules"}
-USER_PATH_EXCEPTIONS = {"<user>", "username", "%userprofile%", "example"}
+# "me" is a generic placeholder profile name that shows up in doc examples.
+USER_PATH_EXCEPTIONS = {"<user>", "username", "%userprofile%", "example", "me"}
 LARGE_FILE_BYTES = 1024 * 1024
 SNIPPET_LIMIT = 60
 PROXIMITY_WINDOW = 12
+# Bounded regex WINDOWING (replaces the old blunt per-line truncation). A single
+# logical line is scanned as overlapping [window] segments so RE_EMAIL /
+# RE_USER_PATH never run on an unbounded string (they have `+` runs that
+# backtrack quadratically on a pathological megabyte-long line), yet a secret
+# past the first window is still caught. Overlap must exceed the longest
+# realistic path/email so a match straddling a window edge appears whole in one
+# segment. Findings are deduped by (rule, snippet) since the overlap is scanned
+# twice.
+LINE_REGEX_WINDOW = 10_000
+LINE_REGEX_OVERLAP = 256
+# Kept only for the digit/hangul proximity heuristic (a WARN), which stays on a
+# length-capped line — it is not a hard secret detector.
+LINE_REGEX_CAP = 10_000
+# Streaming scan of files above LARGE_FILE_BYTES: read this much per read().
+STREAM_CHUNK_BYTES = 1024 * 1024
+# Minimum TEXT-domain carry (in characters) re-prepended between decoded chunks
+# so a denylist term / path / email straddling a chunk boundary is still caught.
+# The actual carry is max(this, 4 * longest denylist term) so even a very long
+# denylist term crossing the boundary appears whole (see _scan_large_file).
+STREAM_CARRY_MIN_CHARS = 4096
 
 RE_USER_PATH = re.compile(r'C:\\Users\\([^\\/\s"\']+)')
 RE_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -112,6 +134,49 @@ def _email_is_exempt(local: str, domain: str) -> bool:
     return False
 
 
+def _windows(line: str, window: int = LINE_REGEX_WINDOW, overlap: int = LINE_REGEX_OVERLAP):
+    """Yield overlapping segments of `line` so a bounded regex covers the whole
+    line without ever running on an unbounded string. Lines <= window yield once.
+    Consecutive windows overlap by `overlap` chars so a match spanning a window
+    edge is still fully inside one segment."""
+    n = len(line)
+    if n <= window:
+        yield line
+        return
+    step = window - overlap
+    start = 0
+    while start < n:
+        yield line[start:start + window]
+        if start + window >= n:
+            break
+        start += step
+
+
+def _regex_line_findings(line: str) -> list[tuple[str, str]]:
+    """Run the bounded user-path + email regexes over overlapping windows of one
+    logical line, returning deduped (rule, matched_text) pairs (dedup absorbs the
+    double scan of the overlap region). Applies the same exemptions as callers."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for seg in _windows(line):
+        for m in RE_USER_PATH.finditer(seg):
+            if m.group(1).lower() in USER_PATH_EXCEPTIONS:
+                continue
+            key = ("user_profile_path", m.group(0))
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+        for m in RE_EMAIL.finditer(seg):
+            local, _, domain = m.group(0).partition("@")
+            if _email_is_exempt(local, domain):
+                continue
+            key = ("email_address", m.group(0))
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
 def _scan_dir_name(root: Path, dirpath: Path, denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
     if not denylist_terms:
         return []
@@ -121,6 +186,90 @@ def _scan_dir_name(root: Path, dirpath: Path, denylist_terms: list[tuple[str, st
     for _term, term_lower in denylist_terms:
         if term_lower in name_lower:
             return [_finding(rel, None, "denylist_name", "HARD", name)]
+    return []
+
+
+def _scan_text_segment(text: str, denylist_terms: list[tuple[str, str]] | None,
+                       add) -> None:
+    """Run the denylist substring check + the windowed user-path/email regexes
+    over one decoded text segment, routing matches through `add(rule, snippet)`."""
+    if denylist_terms:
+        text_lower = _ascii_lower(text)
+        for term, term_lower in denylist_terms:
+            if term_lower in text_lower:
+                add("denylist_content", term)
+    for line in text.splitlines():
+        for rule, matched in _regex_line_findings(line):
+            add(rule, matched)
+
+
+def _scan_large_file_pass(rel: str, path: Path,
+                          denylist_terms: list[tuple[str, str]] | None,
+                          decoder_factory, carry_chars: int) -> list[dict]:
+    """One streaming decode+scan pass over `path` using `decoder_factory`. A
+    strict incremental decoder raises UnicodeDecodeError on the first byte that
+    is invalid in its codec; the caller catches that and retries with the next
+    codec. Carry is TEXT-domain so a term/path/email spanning a decoded-chunk
+    boundary is re-prepended whole into the next segment."""
+    findings: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(rule: str, snippet: str) -> None:
+        key = (rule, _snippet(snippet))
+        if key in seen:
+            return
+        seen.add(key)
+        findings.append(_finding(rel, None, rule, "HARD", snippet))
+
+    dec = decoder_factory()
+    carry = ""
+    with path.open("rb") as fh:
+        while True:
+            block = fh.read(STREAM_CHUNK_BYTES)
+            final = not block
+            # strict decoders raise UnicodeDecodeError here on invalid bytes
+            chunk_text = dec.decode(block, final)
+            if chunk_text:
+                text = unicodedata.normalize("NFC", carry + chunk_text)
+                _scan_text_segment(text, denylist_terms, _add)
+                carry = text[-carry_chars:] if carry_chars else ""
+            if final:
+                break
+    return findings
+
+
+def _scan_large_file(rel: str, path: Path, denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
+    """STREAMING content scan for files above LARGE_FILE_BYTES. Streams the file
+    in bounded chunks (never a whole-file regex) with per-line WINDOWING so no
+    regex runs on an unbounded string and no secret past the first window is
+    missed.
+
+    Decoding is per-file incremental with a real codec ladder (unlike the old
+    utf-8 errors='ignore', which always 'succeeded' and silently mangled cp949):
+    try a full strict utf-8 pass; on UnicodeDecodeError restart the file strict
+    as cp949; if both fail, a final utf-8 errors='ignore' pass. Only the winning
+    pass's findings count. Findings are deduped by (rule, snippet); line numbers
+    are not tracked for streamed matches (reported as None)."""
+    # Text-domain carry: >= 4 * longest denylist term so even a long term
+    # straddling a chunk boundary appears whole in one segment (a byte-domain
+    # overlap of 4096 could be shorter than the term and miss it).
+    carry_chars = STREAM_CARRY_MIN_CHARS
+    if denylist_terms:
+        longest = max((len(term) for term, _ in denylist_terms), default=0)
+        carry_chars = max(STREAM_CARRY_MIN_CHARS, 4 * longest)
+
+    attempts = (
+        lambda: codecs.getincrementaldecoder("utf-8")(errors="strict"),
+        lambda: codecs.getincrementaldecoder("cp949")(errors="strict"),
+        lambda: codecs.getincrementaldecoder("utf-8")(errors="ignore"),
+    )
+    for factory in attempts:
+        try:
+            return _scan_large_file_pass(rel, path, denylist_terms, factory, carry_chars)
+        except UnicodeDecodeError:
+            continue
+        except OSError:
+            return []
     return []
 
 
@@ -145,9 +294,11 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
     except OSError:
         size = 0
     if size > LARGE_FILE_BYTES:
-        # Flagged for manual review; regex content scanning on huge single-line
-        # blobs is quadratic, so only the name/extension checks apply here.
+        # Flagged for manual review AND streamed for content: a naive full-file
+        # regex on a huge single-line blob is quadratic, so we scan in bounded
+        # chunks with per-line truncation instead of skipping content entirely.
         findings.append(_finding(rel, None, "large_file", "WARN", f"{size} bytes"))
+        findings.extend(_scan_large_file(rel, path, denylist_terms))
         return findings
 
     text = _read_text(path)
@@ -155,25 +306,24 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         return findings  # undecodable binary blob: only name/extension/size checks apply
 
     text = unicodedata.normalize("NFC", text)
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    for lineno, full_line in enumerate(text.splitlines(), start=1):
+        # denylist is a linear substring check: safe on the full (untruncated)
+        # line so a term past the regex cap is still caught.
         if denylist_terms:
-            line_lower = _ascii_lower(line)
+            line_lower = _ascii_lower(full_line)
             for _term, term_lower in denylist_terms:
                 if term_lower in line_lower:
-                    findings.append(_finding(rel, lineno, "denylist_content", "HARD", line))
+                    findings.append(_finding(rel, lineno, "denylist_content", "HARD", full_line))
 
-        for m in RE_USER_PATH.finditer(line):
-            seg = m.group(1)
-            if seg.lower() in USER_PATH_EXCEPTIONS:
-                continue
-            findings.append(_finding(rel, lineno, "user_profile_path", "HARD", m.group(0)))
+        # user-path + email regexes run over overlapping WINDOWS of the full
+        # line, so a secret past the first window (e.g. char 20k) is still caught
+        # while no regex ever runs on an unbounded string.
+        for rule, matched in _regex_line_findings(full_line):
+            findings.append(_finding(rel, lineno, rule, "HARD", matched))
 
-        for m in RE_EMAIL.finditer(line):
-            local, _, domain = m.group(0).partition("@")
-            if _email_is_exempt(local, domain):
-                continue
-            findings.append(_finding(rel, lineno, "email_address", "HARD", m.group(0)))
-
+        # the digit/hangul proximity heuristic (a WARN, not a hard secret) stays
+        # on a length-capped line.
+        line = full_line[:LINE_REGEX_CAP]
         digit_spans = [m.span() for m in RE_DIGIT5.finditer(line)]
         hangul_spans = [m.span() for m in RE_HANGUL.finditer(line)]
         if digit_spans and hangul_spans:

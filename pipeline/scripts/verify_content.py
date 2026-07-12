@@ -60,6 +60,18 @@ def read(p):
     return open(p, encoding="utf-8", errors="ignore").read() if os.path.exists(p) else None
 
 
+def _within(base, target):
+    """True iff realpath(target) is base itself or nested under base. Robust to
+    ../ traversal and to absolute paths on a different drive (Windows)."""
+    base = os.path.realpath(base)
+    target = os.path.realpath(target)
+    try:
+        return os.path.commonpath([base, target]) == base
+    except ValueError:
+        # different drives / mixed abs+rel -> cannot be contained
+        return False
+
+
 def find_body(md):
     """content.md minus the [[...]] build tags (so tag internals don't false-positive)."""
     return re.sub(r"\[\[.*?\]\]", " ", md, flags=re.S)
@@ -81,11 +93,20 @@ def check(ws, allow_gloss=None):
     # H2 no polite endings
     for m in re.finditer(r"[가-힣](습니다|ㅂ니다|습니까)", body):
         hard.append({"code": "H2", "msg": "polite ending '~습니다' in body", "at": m.group(0)})
-    # H3 figure files exist
+    # H3 figure files exist AND stay inside bundle/figures (no traversal/absolute)
     figdir = os.path.join(ws, "bundle", "figures")
+    figdir_real = os.path.realpath(figdir)
     for m in re.finditer(r'\[\[FIG\s+file="([^"]+)"', md):
         fn = m.group(1)
-        if not os.path.exists(os.path.join(figdir, fn)):
+        candidate = os.path.join(figdir, fn)
+        # Reject absolute paths, drive-qualified paths, and any ../ traversal that
+        # escapes bundle/figures — these are HARD (a FIG must reference a bundled
+        # figure, never an arbitrary filesystem location).
+        if os.path.isabs(fn) or os.path.splitdrive(fn)[0] or not _within(figdir_real, candidate):
+            hard.append({"code": "H3", "msg": "FIG path escapes bundle/figures (traversal/absolute)",
+                         "at": fn[:60]})
+            continue
+        if not os.path.exists(candidate):
             hard.append({"code": "H3", "msg": "FIG file missing in bundle/figures", "at": fn})
     # H4 세특 byte cap
     for cand in [os.path.join(ws, "_saeteuk"),
@@ -106,7 +127,11 @@ def check(ws, allow_gloss=None):
                 if bad in txt:
                     hard.append({"code": "H5", "msg": f"LaTeX/tag leak in PDF: {bad!r}", "at": f"x{txt.count(bad)}"})
         except Exception as e:
-            warn.append({"code": "H5?", "msg": f"pdf read failed: {e}"})
+            # Fail CLOSED: an assembled PDF that exists but cannot be
+            # text-extracted (corrupt file, or fitz/PyMuPDF unavailable) is a
+            # HARD finding — we must never pass a gate on a PDF we could not
+            # inspect for LaTeX/tag leaks.
+            hard.append({"code": "H5", "msg": f"pdf_uninspectable: {e}", "at": "out.pdf"})
 
     # W1 gloss
     for m in re.finditer(r"[가-힣]\s*\(([A-Za-z][A-Za-z ,.&'\-]*)\)", md):

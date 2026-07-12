@@ -20,6 +20,12 @@ DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               os.pardir, "references", "backends.example.yaml")
 
 
+class BackendConfigError(Exception):
+    """Raised for any config parse or schema failure. The CLI maps this to a
+    usage error (exit 2) — a malformed, empty, or partial config must NEVER
+    fall through to a permissive parse and a misleading exit 0."""
+
+
 def run(cmd, timeout, stdin=None):
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
@@ -53,21 +59,19 @@ def _kv(d, s):
     d[k] = v
 
 
-def load_backends(path):
-    """Load the `backends:` list from a config file. Uses pyyaml if available,
-    else a minimal block-YAML parser for the constrained schema (a list of maps
-    whose values are scalars or JSON inline arrays). JSON files also accepted."""
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    if path.endswith(".json"):
-        return json.loads(text).get("backends", [])
-    try:
-        import yaml  # optional dependency
-        data = yaml.safe_load(text)
-        if isinstance(data, dict) and "backends" in data:
-            return data["backends"]
-    except Exception:
-        pass
+def _block_parse_backends(text):
+    """Minimal block-YAML parser for the constrained schema (a list of maps
+    whose values are scalars or JSON inline arrays), used only when pyyaml is
+    unavailable. Requires an explicit top-level `backends:` key.
+
+    STRICT: every non-blank, non-comment line MUST be interpretable as one of
+    {the `backends:` key, a `- key: value` list item, an indented `key: value`
+    mapping line}. Any line that cannot be interpreted (no colon, mapping line
+    before any item, or an unrecognized shape) is a hard BackendConfigError —
+    the old parser silently dropped such lines, so a mixed valid/corrupt config
+    parsed 'clean' and exited 0."""
+    if not re.search(r"(?m)^backends:\s*$", text):
+        raise BackendConfigError("config missing top-level 'backends:' key")
     backends, cur = [], None
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -79,13 +83,77 @@ def load_backends(path):
         if m_item:
             cur = {}
             backends.append(cur)
-            rest = m_item.group(2)
+            rest = m_item.group(2).strip()
             if rest:
+                if ":" not in rest:
+                    raise BackendConfigError(
+                        f"config malformed list item (expected 'key: value'): {line!r}")
                 _kv(cur, rest)
             continue
-        m_kv = re.match(r"^\s+(\S.*)$", line)
-        if m_kv and cur is not None:
-            _kv(cur, m_kv.group(1))
+        m_kv = re.match(r"^(\s+)(\S.*)$", line)
+        if m_kv:
+            if cur is None:
+                raise BackendConfigError(
+                    f"config mapping line before any '- ' backend item: {line!r}")
+            body = m_kv.group(2)
+            if ":" not in body:
+                raise BackendConfigError(
+                    f"config malformed mapping line (expected 'key: value'): {line!r}")
+            _kv(cur, body)
+            continue
+        raise BackendConfigError(f"config uninterpretable line: {line!r}")
+    return backends
+
+
+def load_backends(path):
+    """Load the `backends:` list from a config file. Uses pyyaml if available,
+    else a minimal block-YAML parser for the constrained schema. JSON files also
+    accepted. A parse failure or a config missing the top-level `backends:` key
+    is a hard BackendConfigError (never a silent permissive fallback)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if path.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise BackendConfigError(f"config JSON parse error: {exc}")
+        if not isinstance(data, dict) or "backends" not in data:
+            raise BackendConfigError("config missing top-level 'backends' key")
+        return data["backends"]
+    try:
+        import yaml  # optional dependency
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            # A genuinely malformed YAML doc is a HARD error — do NOT fall
+            # through to the permissive block parser and mask it.
+            raise BackendConfigError(f"config YAML parse error: {exc}")
+        if not isinstance(data, dict) or "backends" not in data:
+            raise BackendConfigError("config missing top-level 'backends' key")
+        return data["backends"]
+    return _block_parse_backends(text)
+
+
+def validate_backends(backends):
+    """Schema-check the parsed backends list. Empty list, non-mapping entry, a
+    missing/blank name, or a live_cmd that is not a non-empty argv list of
+    strings is a hard BackendConfigError (→ usage exit 2)."""
+    if not isinstance(backends, list) or not backends:
+        raise BackendConfigError("config defines no backends (empty list)")
+    for idx, be in enumerate(backends):
+        if not isinstance(be, dict):
+            raise BackendConfigError(f"backend[{idx}] is not a mapping")
+        name = be.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise BackendConfigError(f"backend[{idx}] missing required 'name'")
+        live_cmd = be.get("live_cmd")
+        if (not isinstance(live_cmd, list) or not live_cmd
+                or not all(isinstance(tok, str) for tok in live_cmd)):
+            raise BackendConfigError(
+                f"backend {name!r}: 'live_cmd' must be a non-empty argv list of strings")
     return backends
 
 
@@ -135,8 +203,12 @@ def main():
     a = ap.parse_args()
     try:
         backends_cfg = load_backends(a.config)
+        validate_backends(backends_cfg)
     except OSError as e:
         print(json.dumps({"ok": False, "error": f"config unreadable: {e}"}, ensure_ascii=False))
+        sys.exit(2)
+    except BackendConfigError as e:
+        print(json.dumps({"ok": False, "error": f"config invalid: {e}"}, ensure_ascii=False))
         sys.exit(2)
     results = [check_backend(be, a.live) for be in backends_cfg]
     live_ok = [b for b in results if b.get("live") is True]

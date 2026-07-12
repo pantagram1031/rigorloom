@@ -129,5 +129,78 @@ class TestAllowlistMerge(VerifyContentTestCase):
         self.assertEqual(verify_content.load_allowlist(str(p_yaml)), {"Gamma", "Delta"})
 
 
+class TestFigPathTraversal(VerifyContentTestCase):
+    """A [[FIG file=...]] must reference a figure INSIDE bundle/figures. A
+    ../ traversal or an absolute path is a HARD finding (H3), never a pass."""
+
+    def test_parent_traversal_is_hard_H3(self):
+        # plant a real file outside bundle/figures that a traversal would hit
+        (self.ws / "secret.png").write_bytes(b"\x89PNG\r\n")
+        self.write_content(
+            "그림을 참조한다.\n"
+            '[[FIG file="../../secret.png"]]\n'
+        )
+        verdict, code = self.check()
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(h["code"] == "H3" and "escape" in h["msg"] for h in verdict["hard"]))
+
+    def test_absolute_path_is_hard_H3(self):
+        self.write_content(
+            "그림을 참조한다.\n"
+            '[[FIG file="C:\\\\Windows\\\\evil.png"]]\n'
+        )
+        verdict, code = self.check()
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(h["code"] == "H3" and "escape" in h["msg"] for h in verdict["hard"]))
+
+    def test_nested_figure_inside_figures_is_allowed(self):
+        (self.ws / "bundle" / "figures" / "sub").mkdir(parents=True, exist_ok=True)
+        (self.ws / "bundle" / "figures" / "sub" / "plot.png").write_bytes(b"\x89PNG\r\n")
+        self.write_content(
+            "정상 그림 참조 기록이다.\n"
+            '[[FIG file="sub/plot.png"]]\n'
+        )
+        verdict, code = self.check()
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(h["code"] == "H3" for h in verdict["hard"]))
+
+
+class TestPdfUninspectable(VerifyContentTestCase):
+    """An out.pdf that exists but cannot be text-extracted must fail CLOSED
+    (HARD 'pdf_uninspectable'), never downgrade to a WARN + exit 0."""
+
+    def test_unreadable_pdf_is_hard(self):
+        import sys as _sys
+        import types as _types
+        self.add_figure("p.png")
+        self.write_content(
+            "정상 본문 기록이다.\n"
+            '[[FIG file="p.png"]]\n'
+        )
+        (self.ws / "output").mkdir(parents=True, exist_ok=True)
+        (self.ws / "output" / "out.pdf").write_bytes(b"%PDF-1.4 not really a pdf")
+
+        # monkeypatch the `fitz` import to raise on open() so the outcome is
+        # deterministic regardless of whether PyMuPDF is installed.
+        fake = _types.ModuleType("fitz")
+
+        def _boom(*a, **k):
+            raise RuntimeError("fitz cannot open")
+        fake.open = _boom
+        saved = _sys.modules.get("fitz")
+        _sys.modules["fitz"] = fake
+        try:
+            verdict, code = self.check()
+        finally:
+            if saved is not None:
+                _sys.modules["fitz"] = saved
+            else:
+                _sys.modules.pop("fitz", None)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(h["code"] == "H5" and "pdf_uninspectable" in h["msg"]
+                            for h in verdict["hard"]))
+
+
 if __name__ == "__main__":
     unittest.main()
