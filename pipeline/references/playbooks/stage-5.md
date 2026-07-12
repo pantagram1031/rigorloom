@@ -1,5 +1,27 @@
-# Stage 5 — Assemble + two-phase fill/proof loop
+# Stage 5 — Assemble (backend-conditional) + two-phase fill/proof loop
 <!-- <WS> = <REPO_ROOT>/workspaces/report-<slug> (절대경로 — CWD는 <REPO_ROOT>라 상대경로 report-<slug>는 실패) -->
+
+PURPOSE: turn the approved bundle into a deliverable. The document backend is
+chosen in `build.yaml` (`doc_backend:`) and dispatched by
+`python pipeline/scripts/doc_backend.py <WS> [--backend ...]`. Three tiers:
+
+| backend | dependency | deliverable | this playbook |
+|---|---|---|---|
+| `bundle` (default) | none (stdlib) | frozen bundle + `preview.html` | §BUNDLE |
+| `docx` | `pip install python-docx` | `output/out.docx` | §DOCX |
+| `hwp` | Windows + Hancom + hwp-master | `out.hwpx`/PDF | §HWP (full loop) |
+
+Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
+`bundle`. ENTRY REQUIREMENT IS THE SAME FOR ALL BACKENDS: Stage 4 done (gate
+draft ok) and Stage 4.5 `content_audit` approved via
+`python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
+NO pipeline_ctl gate for any backend (gate:null) — the verdict is internal.
+
+---
+
+## §HWP — assemble on a form copy (Windows + Hancom + hwp-master)
+
+Selected when `doc_backend: hwp`. Semantics unchanged from prior versions.
 
 PURPOSE: Assemble on a form COPY with typeset-first defaults, converge
 (phase 1 = metrics), prove (phase 2 = composition rubric). Goal = no
@@ -89,3 +111,48 @@ FAILURE table:
 | phase-1 `converged:false` after ≤4 iters | content/layout mismatch | `advance --status blocked --reason "phase-1 not converged: <detail>"`; resolve phase-1 needs, re-run |
 | `proof_skipped_reason: "phase-1 not converged"` | `--proof` set but phase-1 never converged | proof never ran; resolve phase-1 needs first, re-run |
 | proof_iter > 3 exhausted | genuine layout conflict | status=blocked, escalate_human with reason |
+
+---
+
+## §BUNDLE — package + render preview (zero-dependency, the any-machine floor)
+
+Selected when `doc_backend:` is absent or `bundle`. No HWP, no Hancom, no
+network — this is the tier that runs from a plain clone on any OS. The
+deliverable IS the frozen bundle plus an honest stdlib HTML preview; there is no
+form copy, no proof loop, and `verify_format` is SKIPPED (there is no `out.hwpx`
+to inspect). The 4.5 content_audit gate is unchanged and still required.
+
+COMMAND (CWD = `<REPO_ROOT>`):
+```
+python pipeline/scripts/doc_backend.py <WS> --backend bundle
+```
+Writes to `<WS>/output/deliverable/`: `content.md` (verbatim), `figures/`,
+`provenance.json` (if present), `preview.html` (SECTION→h2, paragraphs,
+`[[FIG]]`→`<img>`+caption, `[[EQ]]`→literal source in `<code class=eq>` — NOT
+typeset, an honest preview, `[[TABLE]]`→`<table>`), and `manifest.json`
+(file list + sha256 + `generated_at`; preview/copies carry no timestamp so they
+are byte-stable).
+
+EXIT + gate: exit 0 = deliverable written. There is NO proof rubric and NO
+`pipeline_ctl` gate. Advance:
+```
+python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
+```
+Exit 2 = `bundle/content.md` missing (Stage 4 not really complete) — do not
+advance; return to Stage 4.
+
+## §DOCX — optional styled DOCX (pure-python, `pip install python-docx`)
+
+Selected when `doc_backend: docx`. Same entry gate (4.5 approved). Optional
+extra; PDF conversion is left to the user (LibreOffice:
+`soffice --headless --convert-to pdf out.docx`).
+
+COMMAND (CWD = `<REPO_ROOT>`):
+```
+python pipeline/scripts/doc_backend.py <WS> --backend docx
+```
+Writes `<WS>/output/out.docx` (title from `build.yaml` `title:`, SECTION→
+Heading 1, figures embedded at `[[FIG width=NNmm]]` or 110mm, tables). DOCUMENTED
+v1 LIMITATION: equations render as inline italic text (the literal source), not
+OMML. Exit 5 = python-docx not installed (`pip install python-docx`); exit 2 =
+`bundle/content.md` missing. Advance the same way as §BUNDLE once written.

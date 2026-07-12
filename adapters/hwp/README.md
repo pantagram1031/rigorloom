@@ -1,5 +1,12 @@
 # HWP document adapter
 
+HWP is now one of **three** Stage 5 document backends, selected in `build.yaml`
+(`doc_backend:`) and dispatched by `pipeline/scripts/doc_backend.py`: `bundle`
+(zero-dependency floor, always available), `docx` (optional `python-docx`), and
+`hwp` (this adapter — Windows + Hancom, the only one needing an external repo).
+The pipeline runs end-to-end WITHOUT this adapter via the `bundle` backend; use
+`hwp` only when a native HWP deliverable is required.
+
 HWP/HWPX assembly is intentionally maintained in the separate public
 [hwp-master](https://github.com/pantagram1031/hwp-master) repository.
 
