@@ -128,7 +128,12 @@ Concretely:
    the first assembly** — they change text and numbers, so doing them post-assembly
    forces a re-assembly.
 4. **Visual QA.** A contact sheet of all pages plus a high-resolution zoom of every
-   equation and figure page.
+   equation and figure page. Inspect each figure image at full resolution (not a
+   thumbnail): confirm there are no missing-glyph boxes ("tofu") anywhere text was
+   rendered into a figure, and that minus signs render as a proper minus rather
+   than a missing glyph (a common failure when a CJK font is combined with a
+   plotting library's default numeric formatting — set the library's
+   unicode-minus option to off before rendering with a CJK font).
 5. **Deterministic content gate BEFORE assembly (hard, exit-coded).** A content
    verifier must exit 0. It recompute-checks rather than trusts: no web citation,
    no prohibited endings, every figure reference resolves to a real file, the
@@ -197,6 +202,23 @@ enforced preset is what makes a figure read as hand-made. Pick one preset via th
 pack and enforce it — do not let each figure drift to whatever the model would draw
 by default.
 
+**Real diagrams.** For structural or conceptual figures (a process diagram, a
+circuit, an anatomical drawing), prefer a real published diagram over a
+self-drawn box-and-arrow schematic — a hand-built schematic reads as
+machine-generated far more often than a genuine sourced figure does. Sourcing
+procedure: search for a public-domain or Creative-Commons figure, and verify
+the credit and license ON THE SPECIFIC IMAGE, not just on the page or site it
+came from (a site-wide public-domain notice does not guarantee every embedded
+image is unencumbered). National-agency and government archives are generally
+reliable sources for this. If no cleanly licensed figure can be found, omit
+the figure and describe the structure in prose instead — never fabricate a
+diagram and never use an unlicensed one. Collect the credits for every figure
+sourced this way into an endnote, not into the caption itself. Separately,
+for function plots and small data figures, an interactive math tool (e.g. a
+graphing calculator or geometry tool) produces an authentic, non-generated
+curve — export it via the tool's own screenshot or export capability at high
+resolution rather than re-drawing the curve by hand.
+
 ---
 
 ## 5. Subject routing (generalize)
@@ -219,6 +241,11 @@ in the private profile, not here.)
 These are provider CLI details verified in real runs; they are safe to state
 publicly and change slowly.
 
+- **Text-only reviewer CLIs have no vision.** A text-only model CLI cannot see an
+  image; visual and figure judgment (palette, collisions, tofu/glyph checks,
+  layout) must be routed to a vision-capable agent instead. Never let a
+  text-only reviewer fill a visual-QA rubric — its "verdict" there is not
+  grounded in anything it actually looked at.
 - **External reviewer CLI (codex family):** a given reviewer model can require a
   minimum CLI version (an older CLI reports "requires a newer version"). Invoke via
   `codex exec -m <model> -c model_reasoning_effort=high --skip-git-repo-check - < prompt.txt`.

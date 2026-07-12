@@ -47,5 +47,10 @@ tool would draw by default. The shipped default preset is an engineering/boxed-a
 look; a soft "editorial" default palette is a recognizable generation tell and
 should not be used.
 
+17. Verify domain terminology against real papers or textbooks in the target
+    language before using it. A literal translation of a technical term is
+    often not the term the field actually uses — check a primary source in
+    the target language rather than translating word-for-word.
+
 These rules are examples, not a personal voice profile, and contain no private
 corpus material.
