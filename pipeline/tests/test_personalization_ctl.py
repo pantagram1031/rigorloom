@@ -163,6 +163,62 @@ def test_floor_override_is_refused_and_warned(tmp_path: Path) -> None:
     assert "floor-override-warning" in events
 
 
+def test_lock_carries_no_effective_content_and_redacts_floor_values(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    workspace = tmp_path / "ws-redact"
+    workspace.mkdir()
+    personalization.init(root)
+
+    # Plant a distinctive Hangul marker deep in the resolved (effective) config
+    # via the writing profile — it must appear in the PRIVATE resolved file but
+    # never in the workspace lock.
+    HANGUL_MARKER = "금지문구ZZ표식"
+    writing = personalization.read_json(root / "writing" / "profile.json", {})
+    writing["avoid_patterns"] = [HANGUL_MARKER]
+    personalization.write_json(root / "writing" / "profile.json", writing)
+
+    # A distinctive request style marker also flows into `effective`.
+    (workspace / "request.yaml").write_text(
+        'constraints:\n  style: "REQSTYLEZZ"\n', encoding="utf-8")
+
+    # Force a floor override so floor_warnings is non-empty.
+    weakening = {
+        "schema": "report-pipeline/preference-pack/report_structure-v1",
+        "pack_type": "report_structure", "name": "weak", "version": 1,
+        "title_format": "{topic}", "citation_style": {"sources": "any", "in_text": "parenthetical"},
+    }
+    personalization.register_pack(root, "report_structure", _write(tmp_path / "rs.json", weakening))
+
+    result = personalization.resolve(root, workspace, None, None, workspace / "request.yaml", None)
+    lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
+    blob = json.dumps(lock, ensure_ascii=False)
+
+    # No resolved content of any kind in the lock.
+    assert "effective" not in lock
+    assert "effective_sha256" in lock and len(lock["effective_sha256"]) == 64
+    assert HANGUL_MARKER not in blob
+    assert "REQSTYLEZZ" not in blob
+
+    # floor_warnings carry key paths but NO raw values (redacted to sha256).
+    assert lock["floor_warnings"], "expected a floor override warning"
+    for w in lock["floor_warnings"]:
+        assert "attempted_value" not in w
+        assert "floor_value" not in w
+        assert w["attempted_sha256"].startswith("sha256:")
+        assert w["floor_sha256"].startswith("sha256:")
+    # the raw floor value string must not appear anywhere in the lock
+    assert "papers_books_only" not in blob
+    assert any(w["key"] == "citation_style.sources" for w in lock["floor_warnings"])
+
+    # The full resolved config IS written to the private profile side and DOES
+    # contain the marker (so consumers can still fetch it).
+    resolved_path = root / "resolved" / f"{workspace.name}.json"
+    assert resolved_path.exists()
+    resolved_blob = resolved_path.read_text(encoding="utf-8")
+    assert HANGUL_MARKER in resolved_blob
+    assert "REQSTYLEZZ" in resolved_blob
+
+
 def test_pack_precedence_default_then_global(tmp_path: Path) -> None:
     root = tmp_path / "profile"
     personalization.init(root)

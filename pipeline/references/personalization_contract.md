@@ -89,7 +89,12 @@ preferences therefore cannot weaken a privacy/fidelity/safety floor.
 
 `.pipeline/personalization.lock.json` records, for each pack type, only
 `{pack_type, source, name, version, sha256}` — **never rule content**. The
-sha256 is taken over the resolved-and-floored pack. Consumers re-resolve the
+sha256 is taken over the resolved-and-floored pack. The resolved ("effective")
+configuration itself is written to the **private** profile side only, at
+`<profile_root>/resolved/<workspace-name>.json`; the lock carries just its
+`effective_sha256` plus a `resolved_path_hint`, never the resolved text.
+`floor_warnings` in the lock keep only the key path and severity — the attempted
+and floor values are reduced to `sha256:` prefixes. Consumers re-resolve the
 actual rule content from the profile root at runtime and verify it against the
-recorded hash; the lock stays safe to keep inside a workspace because it leaks
+recorded hashes; the lock stays safe to keep inside a workspace because it leaks
 no taste text and no identity.

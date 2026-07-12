@@ -434,15 +434,39 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
     if overrides:
         effective["form_overrides"] = overrides
     pack_resolution = resolve_packs(root, subject, str(form_digest) if form_digest else None)
+    # The private feedback log keeps full floor-override values (it never leaves
+    # the profile root); the workspace lock, by contrast, must carry NO values.
     for warning in pack_resolution["floor_warnings"]:
         append_jsonl(paths["events"], {"schema": "report-pipeline/floor-override-warning-v1",
                                        "at": now(), "workspace": workspace.name, **warning})
-    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 2, "generated_at": now(),
+
+    # The full resolved ("effective") configuration is written to the PRIVATE
+    # profile side only — never embedded in the workspace lock, which stays safe
+    # to keep inside a (public) workspace because it leaks no taste text.
+    resolved_rel = f"resolved/{workspace.name}.json"
+    write_json(root / "resolved" / f"{workspace.name}.json", effective)
+    effective_sha256 = sha256_bytes(canonical_bytes(effective))
+
+    def _redact(value: Any) -> str:
+        return "sha256:" + sha256_bytes(canonical_bytes(value))[:16]
+
+    # floor_warnings in the lock keep only key paths + severity; the attempted
+    # and floor VALUES are replaced by sha256 prefixes (never the raw content).
+    redacted_warnings = [
+        {"pack": w.get("pack"), "key": w.get("key"),
+         "severity": w.get("severity", "hard"),
+         "attempted_sha256": _redact(w.get("attempted_value")),
+         "floor_sha256": _redact(w.get("floor_value"))}
+        for w in pack_resolution["floor_warnings"]
+    ]
+
+    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 3, "generated_at": now(),
             "profile_schema": SCHEMA, "profile_root_hint": root.name, "form_sha256": form_digest,
             "subject": subject, "identity_enabled": bool(read_json(paths["identity"], {}).get("enabled")),
-            "effective": effective,
+            "effective_sha256": effective_sha256,
+            "resolved_path_hint": resolved_rel,
             "packs": pack_resolution["packs"],
-            "floor_warnings": pack_resolution["floor_warnings"],
+            "floor_warnings": redacted_warnings,
             "sources": {"writing": "global-writing-profile", "subject": f"subject:{subject}" if subject else None,
                         "form": f"sha256:{form_digest}" if form_digest else None},
             "lock_hash": ""}
@@ -451,7 +475,8 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
     lock["lock_hash"] = hashlib.sha256(canonical).hexdigest()
     write_json(workspace / ".pipeline" / "personalization.lock.json", lock)
     return {"ok": True, "lock": str((workspace / ".pipeline" / "personalization.lock.json").resolve()),
-            "form_sha256": form_digest, "lock_hash": lock["lock_hash"]}
+            "form_sha256": form_digest, "lock_hash": lock["lock_hash"],
+            "resolved": str((root / "resolved" / f"{workspace.name}.json").resolve())}
 
 
 def import_legacy(root: Path, legacy: Path) -> dict[str, Any]:
