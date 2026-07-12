@@ -25,6 +25,7 @@ ops.json 형식 (순서대로 실행):
   {"op": "insert_text", "text": "추가 문단\\r\\n"},
   {"op": "insert_equation", "latex": "\\\\frac{1}{2}mv^2"},   // 또는 "hwpeqn": "..."
   {"op": "insert_table", "data": [["헤더1","헤더2"],["a","b"]], "treat_as_char": true},
+  {"op": "insert_table", "data": [["a","b","c"]], "col_ratios": [0.2,0.3,0.5], "font_pt": 9},
   {"op": "insert_picture", "path": "C:/img/그래프.png", "width_mm": 80}, // 높이 자동
   {"op": "edit_equation", "index": 0, "latex": "E=mc^2"},     // n번째 기존 수식 교체
   {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값"},
@@ -38,9 +39,13 @@ ops.json 형식 (순서대로 실행):
   {"op": "set_para_align", "align": "justify", "all": true},       // 본문 양쪽정렬
   {"op": "set_para_align", "align": "center", "anchor": "제목"},   // 특정 문단만
   {"op": "insert_text", "text": "본문\\r\\n", "pt": 10},           // 글자크기 강제(앵커 상속 안 함)
+  {"op": "insert_text", "text": "일반 굵게 일반\\r\\n", "pt": 10,   // segments: **굵게** 마크다운 지원
+   "segments": [{"text": "일반 ", "bold": false}, {"text": "굵게", "bold": true},
+                {"text": " 일반\\r\\n", "bold": false}]},           // (build_report.py가 자동 생성)
   {"op": "insert_blank_before", "text": "I.  서론"},               // 제목 앞 빈 문단 1개 보장
   {"op": "insert_hyperlink", "url": "https://doi.org/..."},        // 진짜 링크 필드(밑줄·색)
-  {"op": "page_binding", "mode": "submit"}                         // 제출용 좌우대칭 여백
+  {"op": "page_binding", "mode": "submit"},                        // 제출용 좌우대칭 여백
+  {"op": "page_break_before", "text": "I.  서론", "required": false} // 앵커 문단이 새 페이지 시작
 ]
 """
 
@@ -60,12 +65,35 @@ from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
 # Hwp 세션
 # ---------------------------------------------------------------------------
 
-def open_hwp(filepath, visible=False):
+def _kill_stale_hwp():
+    """잔존 Hwp.exe/HwpApi.exe 프로세스를 강제 종료. opt-in(--kill-stale)에서만 호출.
+
+    이전 세션이 비정상 종료하면 좀비 한글 프로세스가 COM 자동화를 무기한 블록한다
+    (문서화된 실패 모드). 파괴적이므로 기본값 아님 — 명시 플래그일 때만 실행한다.
+    """
+    import subprocess
+    for exe in ("Hwp.exe", "HwpApi.exe"):
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", exe],
+                           capture_output=True, check=False)
+        except Exception:
+            pass
+
+
+def open_hwp(filepath, visible=False, kill_stale=False):
     try:
         from pyhwpx import Hwp
     except ImportError:
         _die("pyhwpx 미설치. 실행: pip install pyhwpx pywin32")
+    if kill_stale:
+        _kill_stale_hwp()
     hwp = Hwp(visible=visible)  # 보안모듈 자동 등록
+    # 모달 다이얼로그(문서 복구/읽기전용 등)가 뜨면 COM 호출이 무한 대기한다.
+    # SetMessageBoxMode로 자동 응답시켜 행(hang)을 막는다. API가 다르면 무시.
+    try:
+        hwp.SetMessageBoxMode(0x00020000)  # 기본 버튼 자동 선택
+    except Exception:
+        pass
     if filepath:
         hwp.open(str(Path(filepath).resolve()))
     return hwp
@@ -148,6 +176,28 @@ def op_put_field(hwp, o):
     return {"field": o["name"]}
 
 
+def _cursor_para_text(hwp):
+    """커서가 있는 문단의 텍스트를 읽는다(커서 위치 보존, 실패 시 None).
+
+    문단 선택(MoveParaBegin→MoveSelParaEnd) 후 get_selected_text로 읽고
+    선택 해제·원위치 복원. 읽기 실패는 None을 반환해 호출부가 가드를
+    끄도록(구동작 유지) 한다 — 가드 오탐으로 배치를 죽이지 않는다.
+    """
+    try:
+        pos = hwp.get_pos()
+        _run(hwp, "MoveParaBegin")
+        _run(hwp, "MoveSelParaEnd")
+        text = hwp.get_selected_text() if hasattr(hwp, "get_selected_text") else None
+        try:
+            hwp.Cancel()
+        except Exception:
+            pass
+        hwp.set_pos(*pos)
+        return text
+    except Exception:
+        return None
+
+
 def op_goto_text(hwp, o):
     hwp.MoveDocBegin()
     found = hwp.find(o["text"]) if hasattr(hwp, "find") else False
@@ -155,11 +205,43 @@ def op_goto_text(hwp, o):
         raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
     if o.get("after", True):
         hwp.MoveLineEnd() if o.get("line_end") else hwp.Cancel()
+    if o.get("cell_below"):
+        # cell_below(T12, kb trouble-table): 앵커가 1열 표의 라벨 셀 전체 텍스트인
+        # 경우(예: "요약문" — form_profile table_map에서 classification=static인
+        # 라벨 셀), MoveNextParaBegin은 같은 셀 안 유일한 문단이라 no-op되고 T8
+        # 가드의 BreakPara도 "같은 셀 안"에서 문단만 쪼갠다 — 라벨 셀 자체가
+        # 늘어나며 본문이 라벨 셀에 남는다(음영 배경까지 함께 늘어남). 진짜 목적지는
+        # 표의 "다음 행" 셀(같은 열, 별도의 fill_target 셀)이므로 문단 이동이 아니라
+        # 표 셀 이동(TableLowerCell)을 써야 한다. next_para의 T8 분기와는 배타적—
+        # 이 분기가 성립하면 아래 next_para 처리는 건너뛴다(다른 문제를 겨냥한 가드).
+        lower = getattr(hwp, "TableLowerCell", None)
+        if not callable(lower):
+            raise RuntimeError("cell_below: hwp.TableLowerCell 사용 불가")
+        lower()
+        _run(hwp, "MoveParaBegin")
+        return {"found": True, "cell_below": True}
     if o.get("next_para"):
         # 제목 문단을 쪼개지 않고 다음 문단(양식 안내문) 맨 앞으로 이동한다.
         # 제목 끝에서 \r\n을 넣어 쪼개면 pending 글자크기가 제목에 번져 제목 크기가
         # 바뀐다(15pt 제목이 10pt로). 다음 문단 시작에 본문을 넣으면 제목은 불변.
         _run(hwp, "MoveNextParaBegin")
+        # T8 가드(kb trouble-table): 앵커가 표 셀 안 단일 문단(예: '요약문' 라벨)이면
+        # MoveNextParaBegin이 no-op되어 커서가 라벨 문단에 남고, 본문이 라벨에
+        # 그대로 이어붙는다("요약문영상 속에서…"). 이동 후 현재 문단에 앵커 문구가
+        # 아직 있으면 문단 끝에서 BreakPara로 새 문단을 만들어 본문이 새 문단에
+        # 들어가게 한다. BreakPara(Run)는 insert_text("\r\n")와 달리 pending
+        # 글자크기를 인접 문단에 번지게 하지 않는다(charshape quirk). 문단 텍스트를
+        # 읽지 못하면(None) 가드를 끄고 기존 동작을 유지한다.
+        cur = _cursor_para_text(hwp)
+        if cur is not None and o["text"] in cur:
+            _run(hwp, "MoveParaEnd")
+            _run(hwp, "BreakPara")
+            # T10(kb trouble-table): 새로 쪼갠 문단은 라벨 문단의 가운데정렬
+            # paraPr을 상속해(요약문 라벨=CENTER) 삽입될 본문까지 가운데정렬로
+            # 렌더된다. 본문은 항상 justify여야 하므로, 쪼갠 직후 새 문단에서
+            # 바로 정렬을 교정한다(op_set_para_align과 동일한 _run 메커니즘 재사용).
+            _run(hwp, "ParagraphShapeAlignJustify")
+            return {"found": True, "t8_break": True}
     return {"found": True}
 
 
@@ -194,6 +276,54 @@ def _count_blank_runs(hwp):
     return len(re.findall(r"\n{3,}", t))
 
 
+def _count_newlines(hwp):
+    """문서 전체 개행(\\n) 총개수 — '런 개수'가 아니라 단조 감소 지표.
+
+    _count_blank_runs는 '연속 빈 문단 런'의 개수를 세므로, 런 하나의 길이가
+    (예: 빈 문단 6개 -> 개행 7개) 삭제로 1만 줄어도 런 자체는 여전히 1개라서
+    "진전 없음"으로 오판해 반복이 1라운드 만에 멈춘다(실측: delete_blank_before
+    all:true가 빈 문단 6개 중 1개만 지우고 중단). 성공적인 빈 문단 삭제는 항상
+    개행을 정확히 하나 줄이므로, 개행 총개수는 라운드마다 반드시 감소하는
+    단조 지표다 — _repeat_delete_while_progress의 progress 판정에 이 함수를 쓴다.
+    """
+    try:
+        full = hwp.get_text_file("TEXT", "") if hasattr(hwp, "get_text_file") \
+            else hwp.GetTextFile("TEXT", "")
+    except Exception:
+        return 0
+    t = full.replace("\r\n", "\n").replace("\r", "\n")
+    return t.count("\n")
+
+
+def _repeat_delete_while_progress(delete_once, count_metric, max_rounds=50):
+    """'앵커에 인접한 빈 문단이 없어질 때까지' 반복 삭제하는 순수 루프.
+
+    각 라운드: count_metric()로 전(before) 스냅샷 → delete_once() 1회 실행 →
+    count_metric()로 후(after) 스냅샷. after >= before(진전 없음)면 중단.
+    max_rounds 도달 시에도 중단(무한루프 가드, all-mode 공통 계약).
+
+    count_metric은 반드시 단조 감소 지표여야 한다 — 호출부는 _count_newlines를
+    쓴다(빈 문단 삭제 1회 = 개행 1개 감소, 항상 성립). 이전엔 _count_blank_runs
+    ('연속 빈 문단 런' 개수)를 썼는데, 런 하나의 길이가 줄어도(예: 빈 문단 6개
+    -> 5개) 런 개수 자체는 그대로 1이라 "진전 없음"으로 오판해 1라운드 만에
+    멈췄다(실측: delete_blank_before all:true가 빈 문단 6개 중 1개만 삭제).
+
+    delete_once/count_metric을 주입받아 COM 호출 없이 순수 로직만 테스트 가능
+    (op_delete_blank_after/op_delete_blank_before가 COM 클로저를 넘겨 재사용).
+    반환: (rounds:int, progressed:bool) — rounds는 실제 delete_once 호출 횟수.
+    """
+    rounds = 0
+    before = count_metric()
+    while rounds < max_rounds:
+        delete_once()
+        rounds += 1
+        after = count_metric()
+        if after >= before:
+            break
+        before = after
+    return rounds, rounds > 0
+
+
 def op_collapse_empty_paragraphs(hwp, o):
     """연속 빈 문단을 1개로 줄인다 (^n^n^n -> ^n^n 반복, 0건까지).
 
@@ -226,18 +356,29 @@ def op_delete_blank_after(hwp, o):
     그림 캡션↔이미지처럼 '한 단위'를 밀착시킬 때 사용. count만큼만 문단 끝 마크를
     지우므로(기본 1) 과도 삭제 금지. 캡션 바로 뒤가 이미 본문/이미지면 호출하지 말 것
     (밀착 대상인 단일 빈 문단이 있을 때만 사용).
+
+    "all": true — 앵커 뒤에 인접한 빈 문단이 없어질 때까지 반복 삭제한다(가드:
+    최대 50회, 진전 없으면 중단). "required": false면 앵커를 못 찾아도 배치를
+    abort하지 않고 {"deleted":0,"found":false}를 반환한다(op_delete_blank_before와
+    동일 계약 — m1 감사에서 delete_blank_after만 이 계약을 어기고 있었음, 수정).
     """
     hwp.MoveDocBegin()
     if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
-        raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+        if o.get("required", True):
+            raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+        return {"deleted": 0, "found": False}
     # find가 문구를 선택한 상태. Cancel로 선택을 풀면 커서가 문구 '끝'(문단 끝)에
     # 놓인다. MoveLineEnd는 줄바꿈된 문단에서 첫 시각줄 끝으로 가 문단 중간을
     # 잘라먹으므로 쓰지 않는다.
     hwp.Cancel()
+    if o.get("all", False):
+        rounds, _ = _repeat_delete_while_progress(
+            lambda: hwp.Delete(), lambda: _count_newlines(hwp))
+        return {"deleted": rounds, "found": True, "rounds": rounds}
     n = int(o.get("count", 1))
     for _ in range(n):
         hwp.Delete()           # 다음 문단 끝 마크 제거(빈 문단 흡수)
-    return {"deleted_breaks": n}
+    return {"deleted": n, "found": True, "deleted_breaks": n}
 
 
 def op_delete_blank_before(hwp, o):
@@ -245,17 +386,28 @@ def op_delete_blank_before(hwp, o):
 
     delete_blank_after의 대칭. 표/객체 바로 앞은 텍스트로 앵커할 수 없으므로,
     뒤따르는 캡션 등을 앵커로 잡아 그 앞의 빈 문단을 줄일 때 쓴다.
+
+    "all": true — 앵커 앞에 인접한 빈 문단이 없어질 때까지 반복 삭제한다(가드:
+    최대 50회, 진전 없으면 중단). "required": false 계약은 기존과 동일(변경 없음).
     """
     hwp.MoveDocBegin()
     if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
-        raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+        # op_find_delete와 동일하게 required 플래그를 존중한다. 선택(required:false)
+        # 앵커가 없어도 배치 전체를 abort하지 않고 건너뛴다(부분 편집 잔존 방지).
+        if o.get("required", True):
+            raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+        return {"deleted": 0, "found": False, "deleted_breaks": 0, "skipped": True}
     hwp.Cancel()
     run = getattr(hwp, "Run", None) or (lambda a: hwp.HAction.Run(a))
     run("MoveParaBegin")       # 앵커 문단 맨 앞으로
+    if o.get("all", False):
+        rounds, _ = _repeat_delete_while_progress(
+            lambda: run("DeleteBack"), lambda: _count_newlines(hwp))
+        return {"deleted": rounds, "found": True, "rounds": rounds}
     n = int(o.get("count", 1))
     for _ in range(n):
         run("DeleteBack")      # 앞 문단 끝 마크 제거(앞의 빈 문단 흡수)
-    return {"deleted_breaks": n}
+    return {"deleted": n, "found": True, "deleted_breaks": n}
 
 
 def op_move(hwp, o):
@@ -265,17 +417,59 @@ def op_move(hwp, o):
     return {"moved": to}
 
 
-def _set_char_height(hwp, pt, color=0):
-    """선택 글자크기를 pt로, 글자색을 color로 설정 (다른 속성은 GetDefault로 보존).
+def _set_char_height(hwp, pt, color=0, bold=None):
+    """선택 글자크기를 pt로, 글자색을 color로, (지정 시) 굵기를 bold로 설정.
 
-    color 기본 0=검정. 조립 본문은 앵커(빨간 안내문) 자리에 들어가 색을 상속하므로
-    (본문이 빨강으로 박힘), 크기 강제와 함께 검정으로 못박는다.
+    다른 속성은 GetDefault로 보존. color 기본 0=검정. 조립 본문은 앵커(빨간
+    안내문) 자리에 들어가 색을 상속하므로(본문이 빨강으로 박힘), 크기 강제와
+    함께 검정으로 못박는다. bold=None이면 Bold 속성은 건드리지 않는다(기존
+    호출부 — pt만 강제하는 경로 — 는 굵기를 앵커/기본값 그대로 상속).
     """
     pset = hwp.HParameterSet.HCharShape
     hwp.HAction.GetDefault("CharShape", pset.HSet)
     pset.Height = int(round(float(pt) * 100))  # 1pt = 100 HwpUnit
     pset.TextColor = color
+    if bold is not None:
+        pset.Bold = 1 if bold else 0
     hwp.HAction.Execute("CharShape", pset.HSet)
+
+
+def _set_bold(hwp, bold):
+    """굵기만 변경(크기·색 등 다른 CharShape 속성은 GetDefault로 보존)."""
+    pset = hwp.HParameterSet.HCharShape
+    hwp.HAction.GetDefault("CharShape", pset.HSet)
+    pset.Bold = 1 if bold else 0
+    hwp.HAction.Execute("CharShape", pset.HSet)
+
+
+def _insert_run_with_shape(hwp, text, pt=None, bold=None):
+    """텍스트 한 런을 삽입하고, pt/bold가 주어지면 insert-then-select로 CharShape를 건다.
+
+    pending CharShape는 한 번 밀려(다음 입력에 적용) 신뢰할 수 없다 — 먼저
+    삽입하고 삽입 구간을 선택해 CharShape를 거는 결정론적 경로(op_insert_text의
+    기존 pt 전용 경로와 동일 메커니즘, bold까지 확장). pt/bold 둘 다 없으면
+    아무 CharShape도 걸지 않고 그대로 삽입(앵커 서식 상속, 구동작).
+    반환: 삽입 후 커서 위치(end, get_pos() 튜플).
+    """
+    if pt is None and bold is None:
+        hwp.insert_text(text)
+        return hwp.get_pos()
+    start = hwp.get_pos()           # (list, para, pos)
+    hwp.insert_text(text)
+    end = hwp.get_pos()
+    try:
+        if hwp.select_text(start[1], start[2], end[1], end[2], start[0]):
+            if pt is not None:
+                _set_char_height(hwp, pt, bold=bold)
+            else:
+                _set_bold(hwp, bold)
+        try:
+            hwp.Cancel()
+        except Exception:
+            pass
+    finally:
+        hwp.set_pos(*end)
+    return end
 
 
 def op_insert_text(hwp, o):
@@ -284,12 +478,47 @@ def op_insert_text(hwp, o):
     빈 영역에 CharShape를 거는 'pending font'는 한 번 밀려(다음 입력에 적용) 신뢰할
     수 없다 — 그래서 먼저 삽입하고, 삽입 구간을 선택해 CharShape.Height를 거는
     insert-then-select 경로를 쓴다(결정론적). 제목(15pt) 등 앵커 서식을 상속하지 않는다.
+
+    "segments": [{"text":.., "bold":bool}, ...] — 주어지면 "text"(플레인 폴백)
+    대신 세그먼트별로 순서대로 삽입하며, 매 런마다 CharShape.Bold를 명시적으로
+    1 또는 0으로 못박는다(insert-then-select 패턴, pt는 모든 런에 공통 적용).
+    bold=False 런에서도 Bold를 굳이 0으로 명시하는 이유: GetDefault는 방금
+    삽입한 셀렉션의 "pending" 굵기를 그대로 반영할 수 있어(hwp-com-charshape-
+    quirks 메모 — pending CharShape가 한 런 밀려 적용됨), 직전 굵게 런 바로
+    뒤의 일반 런이 Bold를 건드리지 않으면 굵기가 새어 들어올 위험이 있다.
+    segments 없으면 기존 단일-런 경로 그대로(하위호환) — build_report.py가
+    `**` 없는 문단에는 segments 키 자체를 생략한다.
+
+    "break_after": true — 삽입한 텍스트 뒤에 문단 구분을 BreakPara(Run)로
+    만든다. text 안에 리터럴 "\\r\\n"을 넣어 pyhwpx insert_text에 개행까지
+    함께 태우는 구동작과 달리, BreakPara는 인접 문단의 서식(charShape)을
+    오염시키지 않는다(hwp-com-charshape-quirks 메모: "\\r\\n"은 pending
+    글자크기를 인접 문단에 번지게 함 — 제목 옆 문단 분리에 실측 확인됨).
+    이 플래그가 없으면 기존 동작 그대로(text에 개행이 있으면 그대로 삽입) —
+    하위호환 유지. break_after는 CharShape 적용(pt/bold) *이후*, 커서가
+    삽입 끝에 있는 상태에서 실행해 새 문단이 방금 삽입한 런의 서식을
+    그대로 이어받게 한다(끊긴 서식으로 새 문단이 시작되는 것 방지).
     """
-    text = o["text"]
+    segments = o.get("segments")
     pt = o.get("pt")
+    break_after = bool(o.get("break_after"))
+    if segments:
+        total_chars = 0
+        for seg in segments:
+            seg_text = seg["text"]
+            bold = bool(seg.get("bold"))
+            _insert_run_with_shape(hwp, seg_text, pt=pt, bold=bold)
+            total_chars += len(seg_text)
+        if break_after:
+            _run(hwp, "BreakPara")
+        return {"inserted_chars": total_chars, "pt": pt, "segments": len(segments),
+                "break_after": break_after}
+    text = o["text"]
     if not pt:
         hwp.insert_text(text)
-        return {"inserted_chars": len(text)}
+        if break_after:
+            _run(hwp, "BreakPara")
+        return {"inserted_chars": len(text), "break_after": break_after}
     start = hwp.get_pos()           # (list, para, pos)
     hwp.insert_text(text)
     end = hwp.get_pos()
@@ -302,7 +531,9 @@ def op_insert_text(hwp, o):
             pass
     finally:
         hwp.set_pos(*end)           # 후속 op를 위해 커서를 삽입 끝으로 복귀
-    return {"inserted_chars": len(text), "pt": pt}
+    if break_after:
+        _run(hwp, "BreakPara")
+    return {"inserted_chars": len(text), "pt": pt, "break_after": break_after}
 
 
 _ALIGN_ACTIONS = {
@@ -414,6 +645,82 @@ def op_edit_equation(hwp, o):
     raise RuntimeError(f"수식 index {idx} 없음 (총 {cur}개)")
 
 
+def _table_total_width(hwp):
+    """본문 폭(용지-여백-제본-표 바깥여백 2mm)을 HwpUnit으로 계산.
+
+    pyhwpx create_table과 동일 공식(총 폭 = 용지폭 - 좌우여백 - 제본 - 2mm).
+    """
+    sec_def = hwp.HParameterSet.HSecDef
+    hwp.HAction.GetDefault("PageSetup", sec_def.HSet)
+    pd = sec_def.PageDef
+    return (int(pd.PaperWidth) - int(pd.LeftMargin) - int(pd.RightMargin)
+            - int(pd.GutterLen) - hwp.MiliToHwpUnit(2))
+
+
+# 셀 안쪽여백(좌우 각 1.8mm = 도합 3.6mm) HwpUnit 상수 — pyhwpx.create_table과
+# 동일값. 실측(스모크 테스트, colwidth_spike2.py — s1_base.hwpx 사본에 6열 표
+# 삽입 → save-as hwpx → unzip → section0.xml의 <hp:cellSz width="..."> 파싱)
+# 재확인: SetItem(i, w)로 준 ColWidth 값은 "내용 폭"이고, 저장된 hwpx의
+# cellSz width는 여기에 이 상수가 더해진 "바깥 폭"이다 — 6열 모두 저장폭에서
+# 정확히 1020을 빼면 SetItem에 준 값과 완전히 일치(오차 0, 6/6열 재현).
+# table_too_wide 버그(HR run evidence): 이 오프셋을 보정 없이 방치하면 저장폭
+# 합계가 열 개수 x 1020만큼 텍스트 컬럼 폭을 넘어선다(6열 예시: 47624 대비
+# 6120 HwpUnit 초과 = 12.8%). 아래 _col_widths_for_target이 이를 역보정한다.
+CELL_INSET_HWU = 1020
+MIN_COL_CONTENT_HWU = 100  # 보정 후 최소 내용폭(0 이하로 내려가 표가 깨지는 것 방지)
+
+
+def _col_widths_for_target(target_total, col_ratios, inset=CELL_INSET_HWU,
+                            min_width=MIN_COL_CONTENT_HWU):
+    """저장된 hwpx cellSz(=SetItem 값 + inset)의 합이 target_total이 되도록
+    역산한 ColWidth.SetItem 값 리스트를 돌려준다(COM 미사용, 순수 함수).
+
+    각 열의 "내용 폭" = round(target_total * ratio) - inset. 열이 많거나
+    target_total이 작아 뺀 값이 min_width 밑으로 내려가면 min_width로
+    clamp한다(비율이 극단적으로 좁은 열이 있어도 표가 깨지지 않게).
+    클램프가 실제로 일어나면 caller가 로그/경고할 수 있게 clamped 플래그를
+    함께 돌려준다.
+    """
+    raw = [round(target_total * r) - inset for r in col_ratios]
+    clamped = [w < min_width for w in raw]
+    widths = [max(w, min_width) for w in raw]
+    return widths, any(clamped)
+
+
+def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char):
+    """HTableCreation을 직접 호출해 열별 폭을 col_ratios(정규화된 비율, 합=1.0)
+    비율대로 임의값(WidthType=2)으로 지정하며 표를 만든다.
+
+    _col_widths_for_target으로 셀 안쪽여백(inset) 역보정을 거친 값을
+    SetItem에 준다 — 그래야 실제 저장되는 cellSz width 합이 텍스트 컬럼
+    폭(total_width)과 일치한다(table_too_wide 버그 수정). 열 간 비율은
+    inset이 모든 열에 동일 상수라 여전히 근사 보존된다(작은 열일수록
+    상대오차가 커질 수 있으나, 절대폭이 계약이므로 이쪽이 우선).
+
+    반환: total_width(HwpUnit), col_widths(HwpUnit 리스트, inset 보정 후
+    SetItem에 실제로 준 "내용 폭") — 후속 헤더/치수 로깅용.
+    """
+    pset = hwp.HParameterSet.HTableCreation
+    hwp.HAction.GetDefault("TableCreate", pset.HSet)
+    pset.Rows = rows
+    pset.Cols = cols
+    pset.WidthType = 2   # 임의값(custom) — 균등폭(0/1)과 달리 열별 폭 지정 가능
+    pset.HeightType = 0
+
+    total_width = _table_total_width(hwp)
+    col_widths, _clamped = _col_widths_for_target(total_width, col_ratios)
+    pset.CreateItemArray("ColWidth", cols)
+    for i, w in enumerate(col_widths):
+        pset.ColWidth.SetItem(i, w)
+    pset.TableProperties.Width = total_width
+    try:
+        pset.TableProperties.TreatAsChar = treat_as_char
+    except Exception:
+        pass
+    hwp.HAction.Execute("TableCreate", pset.HSet)
+    return total_width, col_widths
+
+
 def op_insert_table(hwp, o):
     """순수 2차원 리스트만 받아 표를 그린다.
 
@@ -422,38 +729,82 @@ def op_insert_table(hwp, o):
     행과 인덱스 열(0,1,2,...)이 셀에 박혀 오염된다. 기본 경로는 create_table +
     셀별 직접 입력(plain)으로, 인덱스/자동 헤더가 절대 생기지 않는다.
     (옛 동작이 필요하면 use_dataframe: true — 권장하지 않음.)
+
+    col_ratios: 정규화된 열 너비 비율 리스트(합=1.0, len==cols). 주어지면
+    HTableCreation(WidthType=2) 직접 호출 경로(_create_table_with_ratios)로
+    표를 만든다 — pyhwpx.create_table()의 균등폭 경로 대신이다. 없으면(구
+    태그 하위호환) create_table() 균등폭 그대로.
+    font_pt: 주어지면 셀 삽입 텍스트마다 insert-then-select CharShape 패턴
+    (_set_char_height, op_insert_text와 동일 메커니즘)으로 크기를 강제한다.
+    없으면 앵커/기본 서식 상속(구동작).
     """
     data = o["data"]
     if o.get("use_dataframe") and hasattr(hwp, "table_from_data"):
         hwp.table_from_data(data, treat_as_char=o.get("treat_as_char", True))
         return {"rows": len(data), "cols": len(data[0]), "mode": "dataframe"}
     rows, cols = len(data), len(data[0])
-    # 표 삽입 위치를 기억해 두었다가 표 바로 뒤로 커서를 되돌린다.
+    col_ratios = o.get("col_ratios")
+    font_pt = o.get("font_pt")
+    if col_ratios is not None and len(col_ratios) != cols:
+        raise RuntimeError(
+            f"col_ratios 길이({len(col_ratios)})가 표 열 개수({cols})와 다름")
     # (예전엔 MoveDocEnd로 셀을 빠져나왔는데, 그러면 커서가 문서 끝으로 튀어
-    #  이후 본문이 마지막 섹션 뒤에 붙는 순서 붕괴를 일으켰다.)
-    try:
-        before = hwp.get_pos()  # (list, para, pos)
-    except Exception:
-        before = None
-    hwp.create_table(rows, cols, treat_as_char=o.get("treat_as_char", True))
+    #  이후 본문이 마지막 섹션 뒤에 붙는 순서 붕괴를 일으켰다. 현재는 표
+    #  뒤로 커서를 되돌리는 좌표 저장(before=get_pos()) 없이, 마지막 셀
+    #  텍스트 삽입 직후 자리에서 MoveRight 액션으로 표를 빠져나간다 — 아래
+    #  주석 참고.)
+    treat_as_char = o.get("treat_as_char", True)
+    if col_ratios is not None:
+        _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char)
+    else:
+        hwp.create_table(rows, cols, treat_as_char=treat_as_char)
     for r in range(rows):
         for c in range(cols):
-            hwp.insert_text(str(data[r][c]))
+            text = str(data[r][c])
+            if font_pt:
+                # insert_text(pt=) op와 동일한 insert-then-select 패턴(pending
+                # CharShape는 신뢰 불가 — op_insert_text 문서 주석 참고).
+                cell_start = hwp.get_pos()
+                hwp.insert_text(text)
+                cell_end = hwp.get_pos()
+                if hwp.select_text(cell_start[1], cell_start[2],
+                                    cell_end[1], cell_end[2], cell_start[0]):
+                    _set_char_height(hwp, font_pt)
+                try:
+                    hwp.Cancel()
+                except Exception:
+                    pass
+                hwp.set_pos(*cell_end)
+            else:
+                hwp.insert_text(text)
             if not (r == rows - 1 and c == cols - 1):
                 hwp.TableRightCell()
+    # BUG(Rule 2에서 발견): before[2]+1로 좌표를 직접 산술해 set_pos하면
+    # (구동작) 표(inline 문자 1개)를 건너뛰지 못하고 표 삽입 전 위치로 되돌아
+    # 간다(실측: 표 셀 편집으로 커서가 다른 internal list로 넘어갔다 오면
+    # set_pos(list, para, pos+1)이 조용히 pos+1이 아니라 pos 그대로에 멈춤 —
+    # before 저장 당시의 (list, para, pos) 좌표계가 표 삽입 후 더 이상
+    # 유효하지 않음). set_pos로 아무 데도 돌아가지 않고, 마지막 셀 텍스트를
+    # 넣은 직후(=아직 표 안, 커서가 자연스레 있는 그 자리)에서 곧바로
+    # MoveRight 액션(사람이 오른쪽 화살표를 눌러 표를 빠져나가는 것과 동일)
+    # 하나만 실행하면 표 바로 뒤(같은 문단, inline 표 문자 다음)로 정확히
+    # 이동한다(실측 확인 — set_pos를 개입시키면 오히려 깨짐). 이 버그는 표
+    # 뒤에 바로 캡션 텍스트를 넣는 Rule 2 순서(blank->표->캡션->blank)에서
+    # 처음 드러났다 — 캡션이 표보다 먼저 삽입되던 구동작에서는 이 좌표 오류가
+    # 있어도 후속 본문이 우연히 올바른 자리에 들어가 증상이 안 보였다.
     moved = False
-    if before is not None:
-        try:
-            hwp.set_pos(before[0], before[1], before[2] + 1)  # 표(문자 1개) 바로 뒤
-            moved = True
-        except Exception:
-            moved = False
+    try:
+        _run(hwp, "MoveRight")
+        moved = True
+    except Exception:
+        moved = False
     if not moved:
         hwp.MoveDocEnd()  # 최후 폴백
     # 표 뒤에 새 문단을 열어 후속 본문이 표(셀)에 끼지 않게 한다.
     hwp.insert_text("\r\n")
     _run(hwp, "ParagraphShapeAlignJustify")
-    return {"rows": rows, "cols": cols, "mode": "plain", "cursor_after_table": moved}
+    return {"rows": rows, "cols": cols, "mode": "plain", "cursor_after_table": moved,
+            "col_ratios": col_ratios, "font_pt": font_pt}
 
 
 def _png_aspect(path):
@@ -530,9 +881,14 @@ def op_set_char_color(hwp, o):
 
     GetDefault로 받은 CharShape 파라미터에서 TextColor만 set하므로 다른 글자
     속성은 건드리지 않는다. all=false면 현재 선택 영역에만 적용.
+
+    순서 주의: insert_hyperlink는 링크를 파랑으로 넣는다. 그 뒤에 all=true 전역
+    색 지정을 돌리면 SelectAll이 링크까지 덮어 파랑이 사라진다. 하이퍼링크가
+    있으면 전역 색 지정을 링크 삽입 '전에' 하거나 all=false로 범위를 좁혀라.
     """
     color = _parse_color(o.get("color", 0))
-    if o.get("all", True):
+    all_doc = o.get("all", True)
+    if all_doc:
         hwp.MoveDocBegin()
         hwp.SelectAll()
     # CharShape 파라미터로 TextColor만 직접 set한다. set_font(TextColor=...)는
@@ -546,7 +902,10 @@ def op_set_char_color(hwp, o):
         hwp.Cancel()
     except Exception:
         pass
-    return {"text_color": color}
+    res = {"text_color": color}
+    if all_doc:
+        res["warning"] = ("all=true는 하이퍼링크 색도 덮어씀 — 링크 삽입 후 실행 금지")
+    return res
 
 
 def op_delete_ctrls(hwp, o):
@@ -607,6 +966,52 @@ def op_insert_blank_before(hwp, o):
     return {"blank_before": o["text"]}
 
 
+def op_page_break_before(hwp, o):
+    """앵커 문단이 항상 새 페이지 맨 위에서 시작하도록 그 앞에 페이지 나누기를 넣는다.
+
+    T11(kb trouble-table): 양식은 원래 빈 문단 다수 + (지금은 삭제된) 유의사항
+    표로 제목을 3페이지까지 밀어냈다. 상위 콘텐츠(표/안내문) 삭제 후 그 빈
+    문단들만으로 페이지를 미는 방식은 빈 문단 개수에 취약하고(T7 가드 대상이라
+    COM으로 못 건드림) 근본적으로 구조가 아니라 우연에 기대는 방식이다. 대신
+    앵커 문단 자체에 페이지 나누기 문단 속성을 거는 게 구조적으로 안정적이다.
+
+    앵커 문단 '맨 앞'으로 이동(MoveParaBegin) 후 BreakPage. BreakPage(Run)는
+    새 페이지를 여는 빈 페이지-나누기 문단을 만들고 커서가 그 다음(앵커) 문단에
+    남는다 — insert_blank_before의 BreakPara와 달리 페이지 속성이 걸린다.
+
+    주의: 이 앵커 문단은 build.yaml의 tidy_blank_before 목록에 있으면 안 된다.
+    tidy_blank_before(오프라인 XML 정리, tidy_hwpx.py)가 앵커 앞 문단을 정리하며
+    페이지 나누기가 걸린 빈 문단을 함께 먹어버릴 수 있다 — page_break_before와
+    tidy_blank_before는 같은 앵커를 공유하지 말 것(build_report.py 주석에도 명시).
+    """
+    hwp.MoveDocBegin()
+    if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
+        if o.get("required", False):
+            raise RuntimeError(f"앵커 문구를 찾지 못함: {o['text']!r}")
+        return {"page_break_before": o["text"], "found": False}
+    hwp.Cancel()
+    _run(hwp, "MoveParaBegin")
+    _run(hwp, "BreakPage")
+    return {"page_break_before": o["text"], "found": True}
+
+
+def _resolve_post_field_pos(pre_field_pos, post_field_pos):
+    """필드/컨트롤 삽입 전후 position 재획득 불변식을 검사하는 순수 헬퍼.
+
+    COM 자체(hwp.GetPos() 호출 시점)는 유닛 테스트 불가 — 이 함수는 "어느 좌표를
+    신뢰해야 하는가"라는 순수 로직만 분리한 것이다: 필드 삽입 *후* 좌표
+    (post_field_pos)가 항상 유일하게 신뢰 가능한 값이다. pre_field_pos는 필드
+    마커가 끼어들기 전 스냅샷이라 그대로 set_pos에 쓰면 안 된다(BUG1의 근본 원인).
+
+    반환: 실제 set_pos에 사용해야 할 (list, para, pos) 튜플 = post_field_pos.
+    두 값이 같은 para인데 pos가 다르면(post < pre) 필드 삽입으로 오프셋이
+    당겨졌다는 신호이므로 caller가 로깅/검증에 쓸 수 있게 그대로 반환한다.
+    """
+    if pre_field_pos is None or post_field_pos is None:
+        raise ValueError("pre_field_pos/post_field_pos required")
+    return post_field_pos
+
+
 def op_insert_hyperlink(hwp, o):
     """URL을 실제 하이퍼링크 필드로 삽입한다.
 
@@ -621,11 +1026,16 @@ def op_insert_hyperlink(hwp, o):
     # 감싼다. 그리고 링크 서식(밑줄+파랑)을 직접 입힌다(COM은 자동 서식을 안 넣음).
     start = hwp.get_pos()
     hwp.insert_text(text)
-    end = hwp.get_pos()
-    hwp.select_text(start[1], start[2], end[1], end[2], start[0])
+    pre_field_end = hwp.get_pos()   # 필드 삽입 전 임시 끝(아래 재획득 전까지만 사용)
+    hwp.select_text(start[1], start[2], pre_field_end[1], pre_field_end[2], start[0])
     ok = hwp.insert_hyperlink(url, text)
-    # 링크 서식: 밑줄 + 파랑(#0000FF → hwp TextColor 0xFF0000). 본문 크기(10pt)는 유지.
+    # 불변식: InsertHyperlink 필드/문자 마커가 선택 구간을 감싸며 문서 내부 오프셋을
+    # 앞으로 밀어낸다(필드 시작/끝 마커는 보이지 않는 문자로 취급됨). pre_field_end는
+    # 필드 삽입 *이전* 좌표라 이후 set_pos에 그대로 쓰면 항상 짧게(관측: 8자) 어긋난다
+    # — 반드시 InsertHyperlink 실행 *후* get_pos()로 진짜 끝을 다시 얻어야 한다.
+    end = _resolve_post_field_pos(pre_field_end, hwp.get_pos())
     hwp.select_text(start[1], start[2], end[1], end[2], start[0])
+    # 링크 서식: 밑줄 + 파랑(#0000FF → hwp TextColor 0xFF0000). 본문 크기(10pt)는 유지.
     pset = hwp.HParameterSet.HCharShape
     hwp.HAction.GetDefault("CharShape", pset.HSet)
     pset.TextColor = 0xFF0000
@@ -640,6 +1050,8 @@ def op_insert_hyperlink(hwp, o):
         hwp.Cancel()
     except Exception:
         pass
+    # 커서 복귀도 재획득한 end를 써야 한다(pre_field_end 사용 시 다음 op가 필드 안/직전에
+    # 착지해 뒤따르는 개행이 필드 꼬리를 잘라먹는다 — 이 버그의 관측된 증상).
     hwp.set_pos(*end)
     return {"hyperlink": url, "text": text, "ok": bool(ok)}
 
@@ -667,6 +1079,32 @@ def op_page_binding(hwp, o):
             "right": int(pd.RightMargin), "gutter": int(pd.GutterLen)}
 
 
+def op_set_line_spacing(hwp, o):
+    """줄간격을 percent로 설정. 기본 문서 전체(SelectAll). 다른 문단 속성은 GetDefault로 보존.
+
+    삽입 본문이 양식 안내문 문단(180%)을 상속하는 문제를 교정한다. 제출 기본값 160%.
+    제목·캡션도 같은 줄간격이 되지만 위계는 글자크기로 유지되므로 시각상 문제 없다.
+    LineSpacingType=0(글자에 따라=percent), LineSpacing=percent.
+    """
+    percent = int(o.get("percent", 160))
+    if o.get("all", True):
+        hwp.MoveDocBegin()
+        hwp.SelectAll()
+    pset = hwp.HParameterSet.HParaShape
+    hwp.HAction.GetDefault("ParagraphShape", pset.HSet)
+    try:
+        pset.LineSpacingType = 0
+    except Exception:
+        pass
+    pset.LineSpacing = percent
+    hwp.HAction.Execute("ParagraphShape", pset.HSet)
+    try:
+        hwp.Cancel()
+    except Exception:
+        pass
+    return {"line_spacing_percent": percent}
+
+
 OPS = {
     "replace_all": op_replace_all,
     "put_field": op_put_field,
@@ -688,7 +1126,53 @@ OPS = {
     "insert_blank_before": op_insert_blank_before,
     "insert_hyperlink": op_insert_hyperlink,
     "page_binding": op_page_binding,
+    "set_line_spacing": op_set_line_spacing,
+    "page_break_before": op_page_break_before,
 }
+
+
+# op별 필수 키. 여기 없는 op는 op 이름 존재만 검사한다(선택 키만 있는 op).
+# 스키마 문서: references/ops_schema.md 와 동기 유지.
+OP_REQUIRED_KEYS = {
+    "replace_all": ("find", "replace"),
+    "put_field": ("name", "text"),
+    "goto_text": ("text",),
+    "find_delete": ("text",),
+    "insert_text": ("text",),
+    "insert_picture": ("path",),
+    "insert_hyperlink": ("url",),
+    "insert_table": ("data",),
+    "delete_blank_after": ("text",),
+    "delete_blank_before": ("text",),
+    "insert_blank_before": ("text",),
+    "page_break_before": ("text",),
+}
+
+
+def _validate_ops(payload):
+    """편집 op 배치를 한글 실행 '전에' 검증. 잘못된 op가 배치 중간에서 터져
+    문서를 절반만 변형시키는 것을 막는다(부분 편집 잔존 방지, 감사 BUG4).
+
+    리스트 또는 {"ops":[...]} 래퍼를 받는다. 선택 "schema" 필드는 무시한다.
+    op 이름이 OPS에 없거나 필수 키가 빠지면 첫 위반 지점(index)에서 _die.
+    반환: 정규화된 ops 리스트.
+    """
+    if isinstance(payload, dict) and "ops" in payload:
+        ops = payload["ops"]
+    else:
+        ops = payload
+    if not isinstance(ops, list):
+        _die("ops가 리스트가 아님(또는 {'ops':[...]} 래퍼 아님)")
+    for i, o in enumerate(ops):
+        if not isinstance(o, dict) or "op" not in o:
+            _die(f"ops[{i}]: 'op' 키 없는 항목")
+        name = o["op"]
+        if name not in OPS:
+            _die(f"ops[{i}]: 알 수 없는 op {name!r}")
+        for k in OP_REQUIRED_KEYS.get(name, ()):
+            if k not in o:
+                _die(f"ops[{i}] ({name}): 필수 키 {k!r} 없음")
+    return ops
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +1193,8 @@ def main():
     p_ed.add_argument("--save-as", help="저장 경로(.hwp/.hwpx). 생략 시 원본 덮어쓰기 안 함")
     p_ed.add_argument("--export-pdf", help="검증용 PDF 내보내기 경로")
     p_ed.add_argument("--visible", action="store_true", help="한글 창 표시")
+    p_ed.add_argument("--kill-stale", action="store_true",
+                      help="시작 전 잔존 Hwp.exe 강제 종료(파괴적, 명시할 때만)")
 
     p_cv = sub.add_parser("convert", help="형식 변환 (hwp<->hwpx, ->pdf)")
     p_cv.add_argument("--file", required=True)
@@ -723,12 +1209,15 @@ def main():
                              ensure_ascii=False, indent=2))
 
         elif args.cmd == "edit":
-            ops = json.loads(Path(args.ops).read_text(encoding="utf-8"))
-            # build_report.py는 {ok,counts,anchors,ops} 래퍼를 출력한다. 순수 리스트와
-            # 래퍼 객체를 모두 받아준다(문서화된 `build_report > ops.json` 파이프 호환).
-            if isinstance(ops, dict) and "ops" in ops:
-                ops = ops["ops"]
-            hwp = open_hwp(args.file, visible=args.visible)
+            # 원본 비파괴(감사 BUG2): --save-as가 입력과 같으면 원본을 덮어쓴다.
+            if args.save_as and Path(args.save_as).resolve() == Path(args.file).resolve():
+                _die("원본 덮어쓰기 금지: --save-as가 입력 --file과 같음")
+            payload = json.loads(Path(args.ops).read_text(encoding="utf-8"))
+            # 한글 실행 전에 검증(BUG4): 알 수 없는 op·필수 키 누락을 여기서 걸러
+            # 배치 중간 실패로 문서가 절반만 변형되는 것을 막는다. 래퍼/리스트 모두 허용.
+            ops = _validate_ops(payload)
+            hwp = open_hwp(args.file, visible=args.visible,
+                           kill_stale=args.kill_stale)
             results = []
             for i, o in enumerate(ops):
                 fn = OPS.get(o.get("op"))
@@ -753,6 +1242,9 @@ def main():
                              ensure_ascii=False, indent=2))
 
         elif args.cmd == "convert":
+            # 원본 비파괴(감사 BUG2): --to가 입력과 같으면 원본을 덮어쓴다.
+            if Path(args.to).resolve() == Path(args.file).resolve():
+                _die("원본 덮어쓰기 금지: --to가 입력 --file과 같음")
             hwp = open_hwp(args.file)
             dst = str(Path(args.to).resolve())
             fmt = {"pdf": "PDF", "hwpx": "HWPX", "hwp": "HWP"}.get(
