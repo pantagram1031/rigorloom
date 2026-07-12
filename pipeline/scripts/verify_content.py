@@ -98,11 +98,16 @@ def check(ws, allow_gloss=None):
     figdir_real = os.path.realpath(figdir)
     for m in re.finditer(r'\[\[FIG\s+file="([^"]+)"', md):
         fn = m.group(1)
-        candidate = os.path.join(figdir, fn)
+        # Interpret the FIG path platform-agnostically: content.md may carry
+        # Windows-style separators/drives even when the checker runs on POSIX
+        # (where isabs/splitdrive would not recognize them).
+        fn_norm = fn.replace("\\", "/")
+        candidate = os.path.join(figdir, fn_norm)
         # Reject absolute paths, drive-qualified paths, and any ../ traversal that
         # escapes bundle/figures — these are HARD (a FIG must reference a bundled
         # figure, never an arbitrary filesystem location).
-        if os.path.isabs(fn) or os.path.splitdrive(fn)[0] or not _within(figdir_real, candidate):
+        if (os.path.isabs(fn_norm) or re.match(r"^[A-Za-z]:[\\/]", fn)
+                or not _within(figdir_real, candidate)):
             hard.append({"code": "H3", "msg": "FIG path escapes bundle/figures (traversal/absolute)",
                          "at": fn[:60]})
             continue

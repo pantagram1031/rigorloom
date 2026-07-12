@@ -562,10 +562,35 @@ class InstallLock:
         The fd is kept OPEN for the lock's lifetime: on Windows an open handle
         (default sharing mode) blocks os.remove from any other process, so a
         forced steal cannot delete the lock out from under a live holder —
-        which closes the read-token-then-unlink race in release()."""
+        which closes the read-token-then-unlink race in release(). POSIX allows
+        unlinking open files, so there we additionally hold flock(LOCK_EX) on
+        the fd for the lock lifetime; liveness is probed via flock, not remove."""
         self._fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        if os.name != "nt":
+            import fcntl
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         os.write(self._fd, self._payload().encode("utf-8"))
         self.acquired = True
+
+    @staticmethod
+    def _foreign_lock_is_live(path: str) -> bool:
+        """POSIX liveness probe: a live holder keeps flock(LOCK_EX) on the file,
+        so a non-blocking flock attempt fails. Returns False (dead) if we could
+        take and release the flock. Windows never calls this (remove-probe)."""
+        import fcntl
+        try:
+            fd = os.open(path, os.O_RDWR)
+        except OSError:
+            return False  # vanished -> dead
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        finally:
+            os.close(fd)
 
     def acquire(self) -> None:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -594,6 +619,14 @@ class InstallLock:
                 f"Use --force to override."
             )
         # forced steal: old token already reported above; replace the file.
+        # Liveness guard differs by platform: Windows -> os.remove fails while
+        # the holder's handle is open; POSIX -> unlink always succeeds on open
+        # files, so probe the holder's flock instead.
+        if os.name != "nt" and self._foreign_lock_is_live(self.path):
+            raise LockHeld(
+                f"lock {self.path} is held by a LIVE process (flock); --force "
+                f"only recovers dead locks."
+            )
         try:
             os.remove(self.path)
         except OSError:
