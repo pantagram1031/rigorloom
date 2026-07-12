@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 
 [project.optional-dependencies]
+docx = ["python-docx>=1.1"]
 studio = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pymupdf>=1.23"]
 test = ["pytest>=8"]
 
