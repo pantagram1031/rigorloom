@@ -1147,7 +1147,21 @@ def favicon():
     return Response(status_code=204)
 
 
+
+def _utf8_stdio():
+    """Windows consoles/CI default to a legacy codepage; output may contain
+    non-ASCII. Reconfigure stdio so printing never dies with UnicodeEncodeError
+    (no-op where already UTF-8 or unsupported)."""
+    import sys as _sys
+    for stream in (_sys.stdout, _sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
+
 if __name__ == "__main__":
+    _utf8_stdio()
     import uvicorn, webbrowser, threading
     print(f"Workspace root: {WORKSPACE_ROOT}")
     threading.Timer(1.2, lambda: webbrowser.open("http://127.0.0.1:8000")).start()
