@@ -38,20 +38,24 @@ jobs:
       - name: Install H2Orestart
         shell: bash
         run: |
-          if sudo apt-get install -y --no-install-recommends libreoffice-h2orestart; then
-            exit 0
-          fi
+          # Do NOT use the distro package: Ubuntu 24.04 ships
+          # libreoffice-h2orestart 0.6.1, whose bundled build aborts the Java
+          # HWPX import filter under LibreOffice 24.2 (LO then reports a generic
+          # "Unspecified Application Error"). H2Orestart >= 0.7 fixes HWPX
+          # import, so install the newest build straight from the Debian pool.
+          # (The .deb keeps apt dependency resolution and the dpkg-based
+          # install guard in the render step working.)
           pool=https://deb.debian.org/debian/pool/main/h/h2orestart
           deb_name="$(curl -fsSL "$pool/" \
             | grep -oE 'libreoffice-h2orestart_[^"/]+_all\.deb' \
             | sort -Vu | tail -n 1 || true)"
-          if [[ -n "$deb_name" ]] \
-            && curl -fsSL "$pool/$deb_name" -o "$RUNNER_TEMP/h2orestart.deb" \
-            && sudo apt-get install -y "$RUNNER_TEMP/h2orestart.deb"; then
-            exit 0
+          if [[ -z "$deb_name" ]]; then
+            echo "::error::no libreoffice-h2orestart .deb found in the Debian pool" >&2
+            exit 1
           fi
-          echo "::error::h2orestart install failed via both apt and the Debian pool fallback" >&2
-          exit 1
+          echo "Installing $deb_name"
+          curl -fsSL "$pool/$deb_name" -o "$RUNNER_TEMP/h2orestart.deb"
+          sudo apt-get install -y "$RUNNER_TEMP/h2orestart.deb"
 
       - name: Warm up LibreOffice profile and extension registration
         shell: bash
@@ -67,8 +71,8 @@ jobs:
           soffice --version
           echo "::endgroup::"
           soffice --headless "-env:UserInstallation=file://$lo_profile" --terminate_after_init
-          echo "::group::unopkg list --shared"
-          unopkg list --shared || true
+          echo "::group::unopkg list --bundled"
+          unopkg list --bundled || true
           echo "::endgroup::"
 
       - name: Render synthetic HWPX
@@ -137,7 +141,20 @@ jobs:
           <hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"
                   xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">
             <hp:p id="1" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">
-              <hp:run charPrIDRef="0"><hp:t>render smoke 1234</hp:t></hp:run>
+              <hp:run charPrIDRef="0">
+                <!-- The section-definition control is mandatory: H2Orestart's
+                     importer does section.findAny(Ctrl_SectionDef).get() and
+                     throws NoSuchElementException (surfaced by LO as
+                     "Unspecified Application Error") when no secPr is present.
+                     pagePr/margin must exist too — the importer dereferences
+                     secd.page when building the page style. -->
+                <hp:secPr id="0" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" outlineShapeIDRef="1">
+                  <hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY">
+                    <hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5668" bottom="4252"/>
+                  </hp:pagePr>
+                </hp:secPr>
+                <hp:t>render smoke 1234</hp:t>
+              </hp:run>
               <hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000"
                 baseline="850" spacing="600" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray>
             </hp:p>
