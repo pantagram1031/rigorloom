@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libreoffice-writer default-jre-headless poppler-utils
+            libreoffice-writer libreoffice-java-common default-jre-headless poppler-utils
 
       - name: Install H2Orestart
         shell: bash
@@ -52,6 +52,24 @@ jobs:
           fi
           echo "::error::h2orestart install failed via both apt and the Debian pool fallback" >&2
           exit 1
+
+      - name: Warm up LibreOffice profile and extension registration
+        shell: bash
+        run: |
+          # H2Orestart is a Java UNO extension: its first activation after
+          # install runs extension deployment/registration through LO's Java
+          # bridge. Doing that here (isolated, verbose) keeps a JVM/extension
+          # registration failure from surfacing later as an opaque crash
+          # during the actual convert-to call.
+          lo_profile="$RUNNER_TEMP/lo-profile"
+          mkdir -p "$lo_profile"
+          echo "::group::soffice --version"
+          soffice --version
+          echo "::endgroup::"
+          soffice --headless "-env:UserInstallation=file://$lo_profile" --terminate_after_init
+          echo "::group::unopkg list --shared"
+          unopkg list --shared || true
+          echo "::endgroup::"
 
       - name: Render synthetic HWPX
         shell: bash
@@ -141,7 +159,9 @@ jobs:
               archive.writestr("Contents/header.xml", header)
               archive.writestr("Contents/section0.xml", section)
           PY
-          soffice --headless --convert-to pdf:writer_pdf_Export \
+          lo_profile="$RUNNER_TEMP/lo-profile"
+          soffice --headless "-env:UserInstallation=file://$lo_profile" \
+            --convert-to pdf:writer_pdf_Export \
             --outdir "$smoke_dir" "$smoke_dir/render-smoke.hwpx"
           test -s "$smoke_dir/render-smoke.pdf"
           pdftotext "$smoke_dir/render-smoke.pdf" - | grep -F "render smoke"
