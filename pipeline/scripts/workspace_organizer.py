@@ -229,6 +229,7 @@ def organize_workspace(
     completed_stage: str | None = None,
     archive_transients: bool = True,
     layout: dict | None = None,
+    stage_playbooks: dict[str, str] | None = None,
 ) -> dict:
     ws = ws.resolve()
     layout = layout or load_layout()
@@ -247,7 +248,11 @@ def organize_workspace(
         receipt = _write_receipt(ws, completed_stage, hdr, inventory, archived)
 
     next_gate = next_state.get("gate") if next_state else None
-    playbook = f"pipeline/references/playbooks/stage-{next_stage}.md" if next_stage else None
+    playbook = None
+    if next_stage:
+        playbook = (stage_playbooks or {}).get(
+            next_stage, f"playbooks/stage-{next_stage}.md")
+        playbook = f"pipeline/references/{playbook}"
     summary = _stage_summary(inventory, next_stage)
     handoff = {
         "schema": "report-pipeline-handoff/v2",
@@ -334,11 +339,13 @@ def main() -> int:
     loaded = pipeline_ctl.load_header(ws)
     if loaded is None:
         parser.error("PIPELINE.md missing or invalid")
+    graph_ctx = pipeline_ctl.graph_context_for_header(loaded[3])
     result = organize_workspace(
-        ws, loaded[3], pipeline_ctl.STAGE_ORDER,
+        ws, loaded[3], graph_ctx["order"],
         completed_stage=args.completed_stage,
         archive_transients=not args.no_archive,
         layout=load_layout(args.layout) if args.layout else None,
+        stage_playbooks=graph_ctx["playbooks"],
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
