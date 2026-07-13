@@ -11,6 +11,7 @@ monkeypatch로 대체해 순서만 검증한다.
 `python -m pytest tests/ -q`.
 """
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -24,12 +25,20 @@ sys.path.insert(0, HERE)
 
 import fill_report as fr  # noqa: E402
 import tidy_hwpx  # noqa: E402
+import test_tidy_hwpx as _tidy_test_helpers  # noqa: E402
 from test_tidy_hwpx import (  # noqa: E402
     _copy_fixture_with_synthetic_blanks, _copy_fixture_with_keep_with_next_reset,
 )
 
 _WS = os.environ.get("HWP_MASTER_WS", "")  # set to a local agenthwpx workspace to run fixture-backed tests
-FIXTURE = os.path.join(_WS, "reports", "report-aliasing-sampling", "output", "out.hwpx") if _WS else ""
+_FIXTURE_CANDIDATES = ([
+    os.path.join(_WS, "output", "out.hwpx"),
+    os.path.join(_WS, "reports", "report-aliasing-sampling", "output", "out.hwpx"),
+] if _WS else [])
+FIXTURE = next((path for path in _FIXTURE_CANDIDATES if os.path.exists(path)), "")
+if FIXTURE:
+    _tidy_test_helpers.FIXTURE = FIXTURE
+REAL_TIDY_ANCHOR = "I.  서론" if FIXTURE == (_FIXTURE_CANDIDATES[0] if _FIXTURE_CANDIDATES else "") else "Ⅰ. 서 론"
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(FIXTURE),
@@ -69,10 +78,10 @@ def test_read_tidy_anchors_no_build_yaml():
 
 
 def test_run_tidy_hwpx_uses_real_fixture(tmp_path):
-    dst = _copy_fixture_with_synthetic_blanks(tmp_path, "Ⅰ. 서 론", 18)
-    result = fr.run_tidy_hwpx(dst, ["Ⅰ. 서 론"], [])
+    dst = _copy_fixture_with_synthetic_blanks(tmp_path, REAL_TIDY_ANCHOR, 18)
+    result = fr.run_tidy_hwpx(dst, [REAL_TIDY_ANCHOR], [])
     assert result["ok"] is True
-    assert result["removed"]["Ⅰ. 서 론"] == 17
+    assert result["removed"][REAL_TIDY_ANCHOR] == 17
 
 
 def test_run_tidy_hwpx_missing_anchor_dies(tmp_path):
@@ -377,3 +386,121 @@ def test_mode_loop_uses_old_path_when_anchors_absent(tmp_path, monkeypatch):
     kinds = [c[0] for c in calls]
     assert kinds == ["com_edit"]
     assert calls[0][1] is not None  # out_pdf passed through (old one-shot path)
+
+
+def test_mode_loop_xml_without_renderer_stops_after_xml_verification(tmp_path, monkeypatch):
+    form = tmp_path / "form.hwpx"
+    form.write_text("dummy", encoding="utf-8")
+    content = tmp_path / "content.md"
+    content.write_text("## SECTION: Anchor\nbody\n", encoding="utf-8")
+    build_yaml = _write_build_yaml(tmp_path, ["base_pt: 10"])
+    out_dir = tmp_path / "out"
+    calls = []
+    emitted = []
+
+    def fake_build(content_, form_, build_yaml_, ops_out, form_profile=None):
+        calls.append("build_report")
+        from pathlib import Path
+        Path(ops_out).write_text("[]", encoding="utf-8")
+        return {"ok": True, "ops": []}
+
+    def fake_xml(form_, ops_path, out_hwpx):
+        calls.append("xml_edit")
+        from pathlib import Path
+        Path(out_hwpx).write_bytes(b"hwpx")
+        return {"ok": True, "applied": 0}
+
+    def fake_tidy(*args, **kwargs):
+        calls.append("tidy_hwpx")
+        return {"ok": True, "removed": {}}
+
+    def fake_para(out_hwpx, baseline_form):
+        calls.append("check_para_formats")
+        return {"ok": True, "anomalies": []}
+
+    monkeypatch.setattr(fr, "run_build_report", fake_build)
+    monkeypatch.setattr(fr, "run_xml_edit", fake_xml, raising=False)
+    monkeypatch.setattr(fr, "run_tidy_hwpx", fake_tidy)
+    monkeypatch.setattr(fr, "run_para_format_check", fake_para, raising=False)
+    monkeypatch.setattr(fr, "run_com_edit", lambda *a, **k: pytest.fail("COM path used"))
+    monkeypatch.setattr(fr.layout_qa, "analyze", lambda *a, **k: pytest.fail("PDF QA used"))
+    monkeypatch.setattr(fr, "_emit", lambda obj, out=None: emitted.append(obj))
+
+    args = argparse.Namespace(
+        form=str(form), content=str(content), out_dir=str(out_dir),
+        build_yaml=str(build_yaml), max_loops=4, baseline=None,
+        trouble_table=None, guide_file=None, spacing_skip_pages=None,
+        gap_skip_pages=None, bottom_skip_pages=None, fig_count=0,
+        kill_stale=False, out=None, engine="xml", pdf_cmd=None,
+        form_profile=None, proof=False,
+    )
+    fr.mode_loop(args)
+
+    assert calls == ["build_report", "xml_edit", "tidy_hwpx", "check_para_formats"]
+    assert emitted[0]["engine"] == "xml"
+    assert emitted[0]["status"] == "xml_verified_no_proof"
+    assert emitted[0]["proof_unavailable"] is True
+    assert emitted[0]["converged"] is True
+    assert emitted[0]["pdf"] is None
+
+
+def test_run_pdf_command_expands_argv_template(tmp_path, monkeypatch):
+    source = tmp_path / "out.hwpx"
+    destination = tmp_path / "out.pdf"
+    source.write_bytes(b"hwpx")
+    seen = []
+
+    class Result:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(argv, capture_output, env):
+        seen.append(argv)
+        destination.write_bytes(b"%PDF-1.4")
+        return Result()
+
+    monkeypatch.setattr(fr.subprocess, "run", fake_run)
+    fr.run_pdf_command(
+        'renderer --input "{input}" --output "{output}" --outdir "{out_dir}"',
+        source, destination)
+    assert seen == [["renderer", "--input", str(source), "--output", str(destination),
+                     "--outdir", str(tmp_path)]]
+
+
+def test_mode_loop_xml_runs_real_backend_tidy_and_para_check(tmp_path, monkeypatch):
+    real_form = os.path.join(_WS, "output", "form_copy.hwpx") if _WS else ""
+    if not os.path.isfile(real_form):
+        pytest.skip("finished workspace form_copy.hwpx not available")
+    content = tmp_path / "content.md"
+    content.write_text("## SECTION: I.  서론\nXML backend smoke text.\n", encoding="utf-8")
+    build_yaml = _write_build_yaml(tmp_path, ["base_pt: 10"])
+    out_dir = tmp_path / "xml-out"
+    emitted = []
+
+    def fake_build(content_, form_, build_yaml_, ops_out, form_profile=None):
+        ops = [
+            {"op": "goto_text", "text": "I.  서론"},
+            {"op": "insert_text", "text": "XML backend smoke text.",
+             "pt": 10, "break_after": True},
+        ]
+        from pathlib import Path
+        Path(ops_out).write_text(json.dumps(ops), encoding="utf-8")
+        return {"ok": True, "ops": ops}
+
+    monkeypatch.setattr(fr, "run_build_report", fake_build)
+    monkeypatch.setattr(fr, "_emit", lambda obj, out=None: emitted.append(obj))
+    args = argparse.Namespace(
+        form=real_form, content=str(content), out_dir=str(out_dir),
+        build_yaml=str(build_yaml), max_loops=1, baseline=None,
+        trouble_table=None, guide_file=None, spacing_skip_pages=None,
+        gap_skip_pages=None, bottom_skip_pages=None, fig_count=0,
+        kill_stale=False, out=None, engine="xml", pdf_cmd=None,
+        form_profile=None, proof=False,
+    )
+    fr.mode_loop(args)
+
+    assert emitted[0]["converged"] is True
+    assert emitted[0]["status"] == "xml_verified_no_proof"
+    assert emitted[0]["proof_unavailable"] is True
+    assert os.path.isfile(emitted[0]["hwpx"])

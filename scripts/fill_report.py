@@ -77,6 +77,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -318,6 +319,58 @@ def run_com_convert(src_hwpx, dst_pdf):
     if not payload.get("ok"):
         die(f"com_backend convert 실패: {payload.get('error')}")
     return payload
+
+
+def run_xml_edit(form, ops_path, out_hwpx):
+    """Run the stdlib-only HWPX editor without importing the COM backend."""
+    cmd = [sys.executable, str(HERE / "xml_backend.py"), "edit",
+           "--file", str(form), "--ops", str(ops_path),
+           "--save-as", str(out_hwpx), "--json"]
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    proc = subprocess.run(cmd, capture_output=True, env=env)
+    raw = proc.stdout.decode("utf-8", "replace")
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        die(f"xml_backend edit output parse failed: {raw[:300]}\nstderr: "
+            f"{proc.stderr.decode('utf-8', 'replace')[:300]}")
+    if proc.returncode != 0 or not payload.get("ok"):
+        die("xml_backend edit failed: "
+            f"unsupported={payload.get('unsupported', [])} "
+            f"anchors_missing={payload.get('anchors_missing', [])}")
+    return payload
+
+
+def run_pdf_command(argv_template, src_hwpx, dst_pdf):
+    """Render HWPX with a shell-free argv template.
+
+    Placeholders: {input}, {output}, {out_dir}, and {stem}.  A string is split
+    with shlex; callers may also pass an already-tokenized list/tuple.
+    """
+    if isinstance(argv_template, str):
+        argv = shlex.split(argv_template, posix=True)
+    elif isinstance(argv_template, (list, tuple)):
+        argv = list(argv_template)
+    else:
+        die("--pdf-cmd must be an argv template string or list")
+    if not argv:
+        die("--pdf-cmd must not be empty")
+    src_hwpx = Path(src_hwpx)
+    dst_pdf = Path(dst_pdf)
+    values = {"input": str(src_hwpx), "output": str(dst_pdf),
+              "out_dir": str(dst_pdf.parent), "stem": src_hwpx.stem}
+    try:
+        argv = [token.format(**values) for token in argv]
+    except (KeyError, ValueError) as exc:
+        die(f"invalid --pdf-cmd placeholder: {exc}")
+    if dst_pdf.exists():
+        dst_pdf.unlink()
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    proc = subprocess.run(argv, capture_output=True, env=env)
+    if proc.returncode != 0 or not dst_pdf.is_file():
+        die(f"--pdf-cmd failed (exit {proc.returncode}, output={dst_pdf}): "
+            f"{proc.stderr.decode('utf-8', 'replace')[:300]}")
+    return {"ok": True, "argv": argv, "pdf": str(dst_pdf)}
 
 
 def read_tidy_anchors(build_yaml, form_profile=None, content_path=None):
@@ -621,6 +674,50 @@ def run_style_diff(out_hwpx, baseline, build_yaml):
     return payload.get("anomalies", [])
 
 
+def run_para_format_check(out_hwpx, baseline_form):
+    """Run the strict form-vs-output paragraph-format verification."""
+    cmd = [sys.executable, str(HERE / "style_diff.py"), str(out_hwpx),
+           "--baseline-form", str(baseline_form), "--check-para-formats"]
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    proc = subprocess.run(cmd, capture_output=True, env=env)
+    raw = proc.stdout.decode("utf-8", "replace")
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        die(f"style_diff --check-para-formats output parse failed: {raw[:300]}\n"
+            f"stderr: {proc.stderr.decode('utf-8', 'replace')[:300]}")
+    if proc.returncode not in (0, 1) or "ok" not in payload or "anomalies" not in payload:
+        die(f"style_diff --check-para-formats failed (exit {proc.returncode})")
+    return payload
+
+
+def xml_only_verdict(out_hwpx, verification, iteration=1):
+    """Return the XML-only verdict JSON.
+
+    ``status=xml_verified_no_proof`` is intentionally explicit: ``converged``
+    means the available XML checks passed, while ``proof_unavailable`` means no
+    rendered PDF proof was produced.  Downstream consumers must not treat this
+    status as equivalent to a proof-backed convergence verdict.
+    """
+    anomalies = verification.get("anomalies", [])
+    return {
+        "status": "xml_verified_no_proof",
+        "converged": not anomalies,
+        "iterations": iteration,
+        "engine": "xml",
+        "phase": "xml",
+        "proof_unavailable": True,
+        "reason": ("XML-level verification complete; PDF proof unavailable"
+                   if not anomalies else "XML paragraph-format verification failed"),
+        "checks": {},
+        "style_anomalies": anomalies,
+        "needs": [],
+        "hwpx": str(Path(out_hwpx).resolve()),
+        "pdf": None,
+        "preview_pdf": None,
+    }
+
+
 def parse_trouble_table(path):
     """kb trouble-table 마크다운의 시그니처 키워드를 {code: [keywords]}로 파싱.
     표 형식이 다르거나 파일이 없으면 빈 dict(무음 스킵) — 미래 작업 훅이라
@@ -850,6 +947,8 @@ def mode_loop(args):
     out_hwpx = out_dir / "out.hwpx"
     out_pdf = out_dir / "out.pdf"
     events_path = out_dir / "fill_events.jsonl"
+    engine = getattr(args, "engine", "com") or "com"
+    pdf_cmd = getattr(args, "pdf_cmd", None)
 
     fill = read_fill(args.build_yaml)
     max_loops = max(1, int(args.max_loops or 4))
@@ -875,7 +974,32 @@ def mode_loop(args):
         run_build_report(content, form, args.build_yaml, ops_path,
                          form_profile=form_profile)
         tidy_warnings = []
-        if use_tidy:
+        xml_para_verification = None
+        if engine == "xml":
+            run_xml_edit(form, ops_path, out_hwpx)
+            tidy_result = run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                                        keep_map=tidy_keep_map)
+            tidy_warnings = (tidy_result or {}).get("warnings", [])
+            if use_restore:
+                run_restore_para_formats(out_hwpx, args.baseline)
+            if keep_with_next:
+                run_keep_with_next(out_hwpx, keep_with_next)
+            xml_para_verification = run_para_format_check(out_hwpx, form)
+            if not pdf_cmd:
+                verdict = xml_only_verdict(out_hwpx, xml_para_verification, i)
+                if derived_tidy_anchors:
+                    verdict["derived_tidy_anchors"] = derived_tidy_anchors
+                if tidy_keep_map:
+                    verdict["derived_keep_map"] = tidy_keep_map
+                if tidy_warnings:
+                    verdict["tidy_warnings"] = tidy_warnings
+                event = {"iter": i, "ts": time.time(), "verdict": verdict}
+                with open(events_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event, ensure_ascii=False) + "\n")
+                _emit(verdict, args.out)
+                return
+            run_pdf_command(pdf_cmd, out_hwpx, out_pdf)
+        elif use_tidy:
             # edit(save hwpx만, PDF 아직 아님) -> tidy_hwpx(오프라인) ->
             # restore_para_formats(오프라인) -> keep_with_next(오프라인) ->
             # convert(hwpx->pdf).
@@ -905,6 +1029,8 @@ def mode_loop(args):
         verdict["checks"] = qa.get("checks", {})
 
         style_anomalies = run_style_diff(out_hwpx, args.baseline, args.build_yaml)
+        if xml_para_verification is not None:
+            style_anomalies = style_anomalies + xml_para_verification.get("anomalies", [])
         verdict["style_anomalies"] = style_anomalies
         if derived_tidy_anchors:
             verdict["derived_tidy_anchors"] = derived_tidy_anchors
@@ -985,6 +1111,8 @@ def mode_loop(args):
         "needs": final.get("needs", []),
         "reason": final.get("reason"),
     }
+    if engine == "xml":
+        out_obj["engine"] = "xml"
     if "known_trouble" in final:
         out_obj["known_trouble"] = final["known_trouble"]
     out_obj["hwpx"] = final.get("hwpx")
@@ -1038,6 +1166,8 @@ def mode_assemble(args):
     ops_path = out_dir / "ops.json"
     out_hwpx = out_dir / "out.hwpx"   # 단일 정규 이름(버전 누적 금지, 항상 덮어씀).
     out_pdf = out_dir / "out.pdf"
+    engine = getattr(args, "engine", "com") or "com"
+    pdf_cmd = getattr(args, "pdf_cmd", None)
 
     fill = read_fill(args.build_yaml)
     iters = max(1, int(args.max_iters or 1))
@@ -1054,7 +1184,24 @@ def mode_assemble(args):
         # 매 반복 pristine FORM에서 시작(FORM 제자리 편집 금지; save-as≠file 가드).
         run_build_report(content, form, args.build_yaml, ops_path,
                          form_profile=form_profile)
-        if use_tidy:
+        xml_para_verification = None
+        if engine == "xml":
+            run_xml_edit(form, ops_path, out_hwpx)
+            run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                          keep_map=tidy_keep_map)
+            if use_restore:
+                run_restore_para_formats(out_hwpx, args.baseline)
+            if keep_with_next:
+                run_keep_with_next(out_hwpx, keep_with_next)
+            if form_profile:
+                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
+            xml_para_verification = run_para_format_check(out_hwpx, form)
+            if not pdf_cmd:
+                verdicts.append(xml_only_verdict(out_hwpx, xml_para_verification,
+                                                  len(verdicts) + 1))
+                continue
+            run_pdf_command(pdf_cmd, out_hwpx, out_pdf)
+        elif use_tidy:
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
             run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
                           keep_map=tidy_keep_map)
@@ -1069,6 +1216,10 @@ def mode_assemble(args):
         else:
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
         v = build_verdict(out_pdf, fill, args.fig_count)
+        if xml_para_verification is not None:
+            v["engine"] = "xml"
+            v["style_anomalies"] = xml_para_verification.get("anomalies", [])
+            v["converged"] = bool(v.get("converged") and not v["style_anomalies"])
         v["hwpx"] = str(out_hwpx.resolve())
         v["pdf"] = str(out_pdf.resolve())
         if derived_tidy_anchors:
@@ -1080,7 +1231,8 @@ def mode_assemble(args):
     result = verdicts[-1]
     if iters > 1:
         # 멱등성 증명: 동일 입력 재조립 시 verdict 핵심 필드 동일해야 함.
-        keys = ("converged", "page_count", "fig_count", "state")
+        keys = (("converged", "style_anomalies") if engine == "xml" and not pdf_cmd
+                else ("converged", "page_count", "fig_count", "state"))
         sigs = [tuple(v[k] for k in keys) for v in verdicts]
         result["idempotent"] = all(s == sigs[0] for s in sigs)
         result["iterations"] = iters
@@ -1099,6 +1251,12 @@ def main():
     ap.add_argument("--content", help="(assemble/loop) bundle/content.md")
     ap.add_argument("--out-dir", help="(assemble/loop) 산출물 디렉터리")
     ap.add_argument("--build-yaml", help="build.yaml(fill 목표) 경로")
+    ap.add_argument("--engine", choices=("com", "xml"), default="com",
+                    help="(assemble/loop) 편집 엔진. 기본 com; xml은 COM-free HWPX 전용")
+    ap.add_argument("--pdf-cmd",
+                    help="(xml) 선택적 PDF 렌더러 argv 템플릿. {input}, {output}, "
+                         "{out_dir}, {stem} 사용 가능; 예: 'soffice --headless "
+                         "--convert-to pdf --outdir {out_dir} {input}'")
     ap.add_argument("--guide-file",
                     help="(measure/loop) layout_qa로 전달할 안내문 원문 JSON 목록. "
                          "생략 시 기존 동작 그대로")

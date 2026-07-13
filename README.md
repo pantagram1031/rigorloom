@@ -75,6 +75,15 @@ python scripts/eqn.py "\frac{-b \pm \sqrt{b^2-4ac}}{2a}"
 - COM 백엔드: Windows + 한컴오피스(한글 2020+, 2022 권장) + Python 3.11/3.12 + pyhwpx
 - eqn.py: Python 3.8+ (의존성 없음)
 
+## Editing engines
+
+| Engine | Environment | Output / proof |
+|---|---|---|
+| `com` (default) | Windows + Hancom Office | Print-grade native editing and Hancom PDF proof. Existing behavior is unchanged. |
+| `xml` | Any OS with Python; input must be `.hwpx` | COM-free core text/equation/table editing. XML structure and paragraph formats are verified; PDF proof is advisory and available only when `--pdf-cmd` supplies a renderer such as LibreOffice with H2Orestart. Without one, the verdict records `proof_unavailable` without treating it as a failure. |
+
+Example renderer template: `--engine xml --pdf-cmd 'soffice --headless --convert-to pdf --outdir {out_dir} {input}'`.
+
 ## 알려진 한계
 - COM 백엔드는 한컴오피스 라이선스 필요, GUI 프로세스 기반이라 대량 배치엔 느릴 수 있음
 - 암호화된 문서 미지원
