@@ -79,6 +79,7 @@ These are non-negotiable regardless of which agent or provider is driving:
    a visual-QA or composition check as passed from reasoning alone — escalate
    to a vision-capable worker or a human instead. This applies equally to
    every provider; there is no text-only shortcut for a visual gate.
+7. **Lint before completion.** Run `workflow_lint.py <WS>` before declaring a workspace done; a HARD finding means the workflow was bypassed - stop and reconcile.
 
 See `docs/autonomous-orchestration.md` for the fuller unattended-run
 playbook (ordering rule, verification stack, anti-patterns) that sits on top

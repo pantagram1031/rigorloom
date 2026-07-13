@@ -11,13 +11,20 @@ ENTRY: `pipeline_ctl resume` returns Stage 6 and Stage 5.7 is complete.
 EXACT actions:
 
 1. Confirm `canonical_output`, proof verdict, scorecard, sources, and provenance.
-2. Fill `pipeline/references/wiki_entry_template.md` as a local knowledge record
+2. Run the conformance linter before creating or updating the archive; a HARD
+   finding stops delivery until the workspace state is reconciled:
+
+```sh
+python pipeline/scripts/workflow_lint.py <WS> --json
+```
+
+3. Fill `pipeline/references/wiki_entry_template.md` as a local knowledge record
    under `<WS>/archive/knowledge/`.
-3. Promote reusable troubleshooting patterns and public sources into that local
+4. Promote reusable troubleshooting patterns and public sources into that local
    record. Do not copy private report prose or identity data.
-4. Report the canonical output path, gate history, and any remaining manual work
+5. Report the canonical output path, gate history, and any remaining manual work
    to the operator.
-5. Close the workflow:
+6. Close the workflow:
 
 ```sh
 python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status done

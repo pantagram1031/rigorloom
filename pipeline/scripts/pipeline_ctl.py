@@ -206,6 +206,21 @@ def _validate_stage_row(rec: dict, line: str, seen_ids: set, seen_gate_names: se
         raise StagesConfigError(
             f"stages.yaml gate 'type' must be 'script' or 'human' "
             f"(got {gtype!r}): {line!r}")
+    checker = gate.get("checker")
+    if checker is not None:
+        if not isinstance(checker, list) or not checker or not all(
+                isinstance(token, str) and token for token in checker):
+            raise StagesConfigError(
+                f"stages.yaml gate checker must be null or a non-empty argv "
+                f"array of strings: {line!r}")
+        for token in checker:
+            placeholders = re.findall(r"\{[^{}]+\}", token)
+            unknown = [item for item in placeholders
+                       if item not in {"{WS}", "{PIPELINE_SCRIPTS}"}]
+            if unknown:
+                raise StagesConfigError(
+                    f"stages.yaml gate checker has unsupported placeholder "
+                    f"{unknown[0]!r}: {line!r}")
     if gname in seen_gate_names:
         raise StagesConfigError(f"stages.yaml duplicate gate name {gname!r}: {line!r}")
     seen_gate_names.add(gname)
@@ -252,27 +267,34 @@ def _parse_stages_yaml_text(text: str) -> list:
     return rows
 
 
-def load_stages_config(script_path: Path = None) -> list:
-    """Return the stage list (each: {id, name, gate, playbook}) loaded from
-    references/stages.yaml relative to this script.
+GRAPH_FILES = {"build": "stages.yaml", "edit": "stages-edit.yaml"}
+
+
+def load_stages_config(script_path: Path = None, graph: str = "build") -> list:
+    """Return the selected stage list (each: {id, name, gate, playbook}) loaded
+    from ``references/stages*.yaml`` relative to this script.
 
     HARD ERROR: if the file is missing or unparsable, raise StagesConfigError.
     There is no embedded fallback — the CLI must never operate on a silently
     substituted stage graph."""
+    if graph not in GRAPH_FILES:
+        raise StagesConfigError(
+            f"unknown stage graph {graph!r} (expected one of {sorted(GRAPH_FILES)})")
     base = Path(script_path) if script_path else Path(__file__).resolve()
-    cfg_path = base.parent.parent / "references" / "stages.yaml"
+    cfg_name = GRAPH_FILES[graph]
+    cfg_path = base.parent.parent / "references" / cfg_name
     if not cfg_path.exists():
-        raise StagesConfigError(f"stages.yaml not found at {cfg_path}")
+        raise StagesConfigError(f"{cfg_name} not found at {cfg_path}")
     try:
         text = cfg_path.read_text(encoding="utf-8")
     except Exception as exc:
-        raise StagesConfigError(f"stages.yaml unreadable ({cfg_path}): {exc}")
+        raise StagesConfigError(f"{cfg_name} unreadable ({cfg_path}): {exc}")
     try:
         return _parse_stages_yaml_text(text)
     except StagesConfigError:
         raise
     except Exception as exc:
-        raise StagesConfigError(f"stages.yaml unparsable ({cfg_path}): {exc}")
+        raise StagesConfigError(f"{cfg_name} unparsable ({cfg_path}): {exc}")
 
 
 def now_iso() -> str:
@@ -427,6 +449,59 @@ else:
     STAGE_GATE_TYPES_BY_NAME = {}
 
 
+def _make_graph_context(rows: list, name: str) -> dict:
+    """Derive all graph lookups from one strictly validated row list."""
+    return {
+        "name": name,
+        "rows": rows,
+        "order": [str(row["id"]) for row in rows],
+        "gate_names": {
+            str(row["id"]): row["gate"]["name"]
+            for row in rows if row.get("gate")
+        },
+        "gate_types": {
+            str(row["id"]): row["gate"].get("type", "human")
+            for row in rows if row.get("gate")
+        },
+        "gate_types_by_name": {
+            row["gate"]["name"]: row["gate"].get("type", "human")
+            for row in rows if row.get("gate")
+        },
+        "playbooks": {
+            str(row["id"]): row["playbook"] for row in rows
+        },
+    }
+
+
+_BUILD_GRAPH = _make_graph_context(_STAGES_CONFIG or [], "build")
+
+
+def graph_context_for_header(hdr: dict) -> dict:
+    """Load and derive the graph declared by a workspace header.
+
+    Headers created before graph selection existed have no ``graph`` field and
+    remain build workspaces. The selected file is loaded on every command so a
+    corrupt edit graph cannot silently fall back to the build graph.
+
+    HARD ERROR: a header ``graph`` value outside {build, edit} is rejected on
+    every load — never silently coerced to a default. A trusted-blindly graph
+    value is a graph-switch attack surface (an unknown/edit graph lacks the
+    build script gates), so the CLI refuses to operate on a graph it cannot
+    validate.
+    """
+    graph = hdr.get("graph") or "build"
+    if graph not in GRAPH_FILES:
+        raise StagesConfigError(
+            f"header declares unknown graph {graph!r} "
+            f"(expected one of {sorted(GRAPH_FILES)}) — refusing to fall back")
+    if graph == "build":
+        if _STAGES_CONFIG_ERROR is not None:
+            raise StagesConfigError(_STAGES_CONFIG_ERROR)
+        return _BUILD_GRAPH
+    rows = load_stages_config(graph=graph)
+    return _make_graph_context(rows, graph)
+
+
 def find_yaml_fence(text: str):
     """Return (start, end, body) span of the first ```yaml fence whose
     first non-empty line declares `# pipeline-state: v0.4`, else None.
@@ -501,7 +576,7 @@ def render_gate(gate) -> str:
     return "{name: %s, state: %s, by: %s, at: %s}" % (name, state, by_s, at_s)
 
 
-def render_yaml_body(hdr: dict) -> str:
+def render_yaml_body(hdr: dict, graph_ctx: dict | None = None) -> str:
     """Render the full header dict back into the fenced-block body text
     (without the ``` markers), matching CONTRACT §2 layout."""
     # NOTE: the `# pipeline-state: v0.4` fence marker is a compatibility
@@ -510,7 +585,7 @@ def render_yaml_body(hdr: dict) -> str:
     # `pipeline_version` is a separate top-level field carrying the actual
     # stages.yaml schema version (v0.6+), read by pipeline_ctl.py only.
     lines = ["# pipeline-state: v0.4"]
-    top_keys = ["pipeline_version", "slug", "mode", "subject", "topic", "form",
+    top_keys = ["pipeline_version", "graph", "slug", "mode", "subject", "topic", "form",
                 "updated", "canonical_output"]
     for k in top_keys:
         if k not in hdr:
@@ -525,7 +600,8 @@ def render_yaml_body(hdr: dict) -> str:
         lines.append(f"{k}: {json.dumps(str(v), ensure_ascii=False)}")
     lines.append("stages:")
     stages = hdr.get("stages", {})
-    for num in STAGE_ORDER:
+    graph_ctx = graph_ctx or graph_context_for_header(hdr)
+    for num in graph_ctx["order"]:
         if num not in stages:
             continue
         st = stages[num]
@@ -556,10 +632,11 @@ def load_header(ws: Path):
     return text, start, end, hdr
 
 
-def save_header(ws: Path, text: str, start: int, end: int, hdr: dict) -> None:
+def save_header(ws: Path, text: str, start: int, end: int, hdr: dict,
+                graph_ctx: dict | None = None) -> None:
     """Rewrite only the YAML fence span, preserving everything before and
     after (in particular the human-readable table after the closing fence)."""
-    new_body = render_yaml_body(hdr)
+    new_body = render_yaml_body(hdr, graph_ctx)
     new_fence = "```yaml\n" + new_body + "\n```"
     new_text = text[:start] + new_fence + text[end:]
     pipeline_path(ws).write_text(new_text, encoding="utf-8")
@@ -581,32 +658,45 @@ def refresh_handoff(
     hdr: dict,
     completed_stage: str | None = None,
     archive_transients: bool = False,
+    graph_ctx: dict | None = None,
 ) -> None:
     """Refresh derived handoff files without weakening state enforcement."""
     try:
         from workspace_organizer import organize_workspace
+        graph_ctx = graph_ctx or graph_context_for_header(hdr)
         organize_workspace(
-            ws, hdr, STAGE_ORDER,
+            ws, hdr, graph_ctx["order"],
             completed_stage=completed_stage,
             archive_transients=archive_transients,
+            stage_playbooks=graph_ctx["playbooks"],
         )
     except Exception as exc:
         append_event(ws, "organize_warning", completed_stage, str(exc))
 
 
-def _gate_type_for(stage_id: str, gate_name: str) -> str:
+def _gate_type_for(stage_id: str, gate_name: str, graph_ctx: dict) -> str:
     """Resolve a gate's declared type ("script" | "human") from the stage
-    graph. Prefer the stage-id binding; fall back to name lookup; default to
-    "human" for an unknown gate (the conservative choice — human gates only
-    block supervised, so an unknown gate never over-blocks night/autonomous)."""
-    return (
-        STAGE_GATE_TYPES.get(stage_id)
-        or STAGE_GATE_TYPES_BY_NAME.get(gate_name)
-        or "human"
+    graph. Prefer the stage-id binding, then the gate-name binding.
+
+    HARD ERROR (fail-closed): a gate name that is not registered in the
+    selected graph raises StagesConfigError — it is NEVER defaulted to "human".
+    Defaulting an unknown gate to "human" was a graph-switch bypass: a header
+    naming a build script gate under graph=edit (which lacks that gate) would
+    resolve to "human", and a pending human gate does not block night/autonomous
+    — letting an autonomous run sail past a deterministic script gate. The error
+    text names both the graph and the gate."""
+    gtype = (
+        graph_ctx["gate_types"].get(stage_id)
+        or graph_ctx["gate_types_by_name"].get(gate_name)
     )
+    if gtype is None:
+        raise StagesConfigError(
+            f"gate '{gate_name}' (stage {stage_id}) is not registered in graph "
+            f"'{graph_ctx['name']}' — refusing to guess its type (fail-closed)")
+    return gtype
 
 
-def stage_gate_blocks(hdr: dict, stage: str, mode: str):
+def stage_gate_blocks(hdr: dict, stage: str, mode: str, graph_ctx: dict | None = None):
     """Check whether an EARLIER-ordered stage's gate blocks starting `stage`.
     Returns (blocked: bool, reason: str|None).
 
@@ -615,12 +705,14 @@ def stage_gate_blocks(hdr: dict, stage: str, mode: str):
       must not sail past an unresolved deterministic checker).
     - A `pending` predecessor HUMAN gate blocks only in supervised mode
       (night/autonomous record auto_approved via the `gate` subcommand)."""
+    graph_ctx = graph_ctx or graph_context_for_header(hdr)
+    stage_order = graph_ctx["order"]
     stages = hdr.get("stages", {})
     try:
-        idx = STAGE_ORDER.index(stage)
+        idx = stage_order.index(stage)
     except ValueError:
         return False, None
-    for earlier in STAGE_ORDER[:idx]:
+    for earlier in stage_order[:idx]:
         st = stages.get(earlier)
         if not st:
             continue
@@ -632,7 +724,7 @@ def stage_gate_blocks(hdr: dict, stage: str, mode: str):
         if gstate == "rejected":
             return True, f"predecessor stage {earlier} gate '{gname}' is rejected"
         if gstate == "pending":
-            gtype = _gate_type_for(earlier, gname)
+            gtype = _gate_type_for(earlier, gname, graph_ctx)
             if gtype == "script":
                 return True, (f"predecessor stage {earlier} script gate '{gname}' "
                               f"is pending (blocks all modes — run: check)")
@@ -650,11 +742,12 @@ def cmd_resume(args) -> None:
         fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
         return
     text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
     mode = hdr.get("mode", "autonomous")
     stages = hdr.get("stages", {})
 
     resume_stage = None
-    for num in STAGE_ORDER:
+    for num in graph_ctx["order"]:
         st = stages.get(num)
         if not st:
             continue
@@ -672,7 +765,7 @@ def cmd_resume(args) -> None:
     gate = st.get("gate")
 
     # blocked by a rejected/pending predecessor gate
-    blocked, reason = stage_gate_blocks(hdr, resume_stage, mode)
+    blocked, reason = stage_gate_blocks(hdr, resume_stage, mode, graph_ctx)
     if blocked:
         out({"ok": True, "next_stage": resume_stage, "reason": reason,
              "mode": mode, "blocked": True})
@@ -699,7 +792,7 @@ def cmd_resume(args) -> None:
             return
         # autonomous / night
         if gstate == "pending":
-            gtype = _gate_type_for(resume_stage, gate.get("name"))
+            gtype = _gate_type_for(resume_stage, gate.get("name"), graph_ctx)
             if gtype == "script":
                 # A pending SCRIPT gate must be resolved by RUNNING its checker
                 # (`check`), never auto_approved — so night/autonomous is blocked
@@ -744,7 +837,11 @@ def cmd_gate(args) -> None:
     # it in night/autonomous with no checker ever run). Look up the declared
     # type from the stage graph and refuse — script gates resolve only via
     # `check`, which RUNS the bound checker and records provenance.
-    found_cfg, cfg_gate_type, _cfg_checker = _resolve_gate_checker(gate_name)
+    preloaded = load_header(ws)
+    preloaded_graph = (graph_context_for_header(preloaded[3])
+                       if preloaded is not None else _BUILD_GRAPH)
+    found_cfg, cfg_gate_type, _cfg_checker = _resolve_gate_checker(
+        gate_name, preloaded_graph)
     if found_cfg and cfg_gate_type == "script":
         usage_error(f"gate '{gate_name}' is a script gate — resolve via: "
                     f"check <workspace> {gate_name}")
@@ -754,6 +851,22 @@ def cmd_gate(args) -> None:
         fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
         return
     text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
+    found_cfg, cfg_gate_type, _cfg_checker = _resolve_gate_checker(
+        gate_name, graph_ctx)
+    # Fail-closed: a gate name absent from the SELECTED graph must never be
+    # resolved as a human gate. Otherwise switching the header to a graph that
+    # lacks the gate (e.g. build's 'sane'/'layout' under graph=edit) would let
+    # `gate` auto_approve it in night/autonomous, bypassing its script checker.
+    if not found_cfg:
+        usage_error(f"gate '{gate_name}' is not registered in graph "
+                    f"'{graph_ctx['name']}' — refusing to resolve a gate absent "
+                    f"from the selected graph (fail-closed)")
+        return
+    if cfg_gate_type == "script":
+        usage_error(f"gate '{gate_name}' is a script gate; resolve via: "
+                    f"check <workspace> {gate_name}")
+        return
     stages = hdr.get("stages", {})
 
     target_num = None
@@ -829,11 +942,12 @@ def cmd_gate(args) -> None:
          "stage": target_num, "by": mode, "at": gate_obj["at"]})
 
 
-def _resolve_gate_checker(gate_name: str):
+def _resolve_gate_checker(gate_name: str, graph_ctx: dict | None = None):
     """Look up a gate's declared type + checker argv template from the stage
     graph. Returns (found, gate_type, checker) where checker is the argv list
     or None. `found` is False when no gate by that name exists."""
-    for st_cfg in _STAGES_CONFIG or []:
+    rows = graph_ctx["rows"] if graph_ctx is not None else (_STAGES_CONFIG or [])
+    for st_cfg in rows:
         cfg_gate = st_cfg.get("gate")
         if cfg_gate and cfg_gate.get("name") == gate_name:
             return True, cfg_gate.get("type"), cfg_gate.get("checker")
@@ -881,9 +995,14 @@ def cmd_check(args) -> None:
     ws = Path(args.workspace)
     gate_name = args.gate_name
 
-    found, gate_type, checker = _resolve_gate_checker(gate_name)
+    loaded = load_header(ws)
+    if loaded is None:
+        fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
+        return
+    graph_ctx = graph_context_for_header(loaded[3])
+    found, gate_type, checker = _resolve_gate_checker(gate_name, graph_ctx)
     if not found:
-        usage_error(f"check: no gate named '{gate_name}' in stages.yaml")
+        usage_error(f"check: no gate named '{gate_name}' in {GRAPH_FILES[graph_ctx['name']]}")
         return
     if gate_type != "script":
         usage_error(f"check: gate '{gate_name}' is a {gate_type} gate, not a script "
@@ -891,7 +1010,7 @@ def cmd_check(args) -> None:
         return
     if not checker:
         usage_error(f"check: gate '{gate_name}' has no checker bound (null) — "
-                    f"register a checker argv in stages.yaml before running check")
+                    f"register a checker argv in the stage graph before running check")
         return
     if not isinstance(checker, list) or not all(isinstance(t, str) for t in checker):
         usage_error(f"check: gate '{gate_name}' checker must be an argv array of strings")
@@ -999,9 +1118,6 @@ def cmd_advance(args) -> None:
     status = args.status
     reason = args.reason or ""
 
-    if stage not in STAGE_ORDER:
-        fail(f"unknown stage '{stage}'; must be one of {STAGE_ORDER}")
-        return
     if status not in STATUS_ENUM:
         fail(f"unknown status '{status}'; must be one of {sorted(STATUS_ENUM)}")
         return
@@ -1011,6 +1127,11 @@ def cmd_advance(args) -> None:
         fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
         return
     text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
+    stage_order = graph_ctx["order"]
+    if stage not in stage_order:
+        fail(f"unknown stage '{stage}'; must be one of {stage_order}")
+        return
     mode = hdr.get("mode", "autonomous")
     stages = hdr.get("stages", {})
 
@@ -1028,7 +1149,7 @@ def cmd_advance(args) -> None:
             return
 
     if status in GATE_CHECKED_STATUSES:
-        blocked, block_reason = stage_gate_blocks(hdr, stage, mode)
+        blocked, block_reason = stage_gate_blocks(hdr, stage, mode, graph_ctx)
         if blocked:
             fail(f"refuse to move stage {stage} to {status}: {block_reason}",
                  stage=stage)
@@ -1053,19 +1174,21 @@ def cmd_advance(args) -> None:
 def cmd_invalidate(args) -> None:
     ws = Path(args.workspace)
     from_stage = args.from_stage
-    if from_stage not in STAGE_ORDER:
-        fail(f"unknown stage '{from_stage}'; must be one of {STAGE_ORDER}")
-        return
 
     loaded = load_header(ws)
     if loaded is None:
         fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
         return
     text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
+    stage_order = graph_ctx["order"]
+    if from_stage not in stage_order:
+        fail(f"unknown stage '{from_stage}'; must be one of {stage_order}")
+        return
     stages = hdr.get("stages", {})
 
-    idx = STAGE_ORDER.index(from_stage)
-    reset_stages = [n for n in STAGE_ORDER[idx:] if n in stages]
+    idx = stage_order.index(from_stage)
+    reset_stages = [n for n in stage_order[idx:] if n in stages]
     for num in reset_stages:
         st = stages[num]
         st["status"] = "pending"
@@ -1075,10 +1198,10 @@ def cmd_invalidate(args) -> None:
             gate["by"] = None
             gate["at"] = None
         try:
-            num_idx = STAGE_ORDER.index(num)
+            num_idx = stage_order.index(num)
         except ValueError:
             num_idx = 999
-        if num_idx <= STAGE_ORDER.index("5"):
+        if "5" in stage_order and num_idx <= stage_order.index("5"):
             hdr["canonical_output"] = None
 
     hdr["updated"] = now_iso()
@@ -1159,16 +1282,19 @@ def cmd_init(args) -> None:
         fail(f"PIPELINE.md already exists at {pf}")
         return
 
+    graph_ctx = _make_graph_context(
+        load_stages_config(graph=args.graph), args.graph)
     stages = {}
-    for num in STAGE_ORDER:
+    for num in graph_ctx["order"]:
         gate = None
-        if num in STAGE_GATE_NAMES:
-            gate = {"name": STAGE_GATE_NAMES[num], "state": "pending",
+        if num in graph_ctx["gate_names"]:
+            gate = {"name": graph_ctx["gate_names"][num], "state": "pending",
                     "by": None, "at": None}
         stages[num] = {"status": "pending", "gate": gate}
 
     hdr = {
         "pipeline_version": PIPELINE_VERSION,
+        "graph": args.graph,
         "slug": args.slug,
         "mode": args.mode,
         "subject": args.subject,
@@ -1179,7 +1305,7 @@ def cmd_init(args) -> None:
         "stages": stages,
     }
 
-    body = render_yaml_body(hdr)
+    body = render_yaml_body(hdr, graph_ctx)
     content = (
         "```yaml\n" + body + "\n```\n\n"
         f"# {args.slug}\n\n"
@@ -1189,8 +1315,9 @@ def cmd_init(args) -> None:
     pf.write_text(content, encoding="utf-8")
     append_event(ws, "init", "0", f"initialized slug={args.slug} mode={args.mode}")
     write_heartbeat(ws)
-    refresh_handoff(ws, hdr)
-    out({"ok": True, "pipeline_md": str(pf), "slug": args.slug, "mode": args.mode})
+    refresh_handoff(ws, hdr, graph_ctx=graph_ctx)
+    out({"ok": True, "pipeline_md": str(pf), "slug": args.slug,
+         "mode": args.mode, "graph": args.graph})
 
 
 # ── argument parsing ────────────────────────────────────────────────
@@ -1263,6 +1390,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--subject", required=True)
     p_init.add_argument("--topic", required=True)
     p_init.add_argument("--form", required=True)
+    p_init.add_argument("--graph", choices=sorted(GRAPH_FILES), default="build")
     p_init.set_defaults(func=cmd_init)
 
     return p

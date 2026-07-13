@@ -1,0 +1,10 @@
+version: "0.6"
+stages:
+  - {id: "0",   name: "intake",        gate: null,                                                                                                        playbook: "playbooks/edit-stage-0.md"}
+  - {id: "1",   name: "edit_spec",     gate: {name: "edit_spec", type: "human"},                                                                         playbook: "playbooks/edit-stage-1.md"}
+  - {id: "2",   name: "apply_edits",   gate: null,                                                                                                        playbook: "playbooks/edit-stage-2.md"}
+  - {id: "2.5", name: "content_audit", gate: {name: "content_audit", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/content_audit.py", "{WS}"]}, playbook: "playbooks/edit-stage-2.5.md"}
+  - {id: "3",   name: "reassemble",    gate: null,                                                                                                        playbook: "playbooks/edit-stage-3.md"}
+  - {id: "3.5", name: "verify_out",    gate: {name: "edit_verify", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/verify_format.py", "{WS}"]},  playbook: "playbooks/edit-stage-3.5.md"}
+  - {id: "4",   name: "accept",        gate: {name: "edit_accept", type: "human"},                                                                        playbook: "playbooks/edit-stage-4.md"}
+  - {id: "5",   name: "deliver",       gate: null,                                                                                                        playbook: "playbooks/edit-stage-5.md"}
