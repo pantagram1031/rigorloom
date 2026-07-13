@@ -1,12 +1,34 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, Response
 from pathlib import Path
 import html as _html
 import json
 import os
 import re
+import secrets
+import subprocess
+import sys
+import time
 
 app = FastAPI(title="Rigorloom Studio", version="0.7")
+
+REPO_ROOT = Path(__file__).parent.parent
+_LINT_CACHE: dict[str, tuple[float, dict]] = {}
+_ACTION_KINDS = {
+    "check-gate", "approve-human-gate", "run-content-audit", "build-bundle",
+}
+
+# CSRF guard for action-mode POSTs (contract §8b): a hostile web page browsed
+# on the operator's machine could otherwise POST to this localhost server
+# while STUDIO_ALLOW_ACTIONS=1 is set. Generated once per run and printed to
+# the console; STUDIO_ACTION_TOKEN overrides it (e.g. for a stable token
+# across restarts). None when actions are disabled.
+_ACTION_TOKEN = (
+    (os.environ.get("STUDIO_ACTION_TOKEN") or secrets.token_urlsafe(16))
+    if os.environ.get("STUDIO_ALLOW_ACTIONS") == "1" else None
+)
+if _ACTION_TOKEN:
+    print(f"[studio] action token (send as X-Studio-Token header): {_ACTION_TOKEN}")
 
 _env_root = os.environ.get("STUDIO_WORKSPACE_ROOT")
 if _env_root:
@@ -175,6 +197,33 @@ def _load_stage_order() -> list[str]:
 
 _STAGE_ORDER = _load_stage_order()
 
+# ── stage-graph gate names (contract §8c: action gate must be real) ──────
+
+_GRAPH_FILES = {"build": "stages.yaml", "edit": "stages-edit.yaml"}
+
+
+def _graph_stages_path(graph: str) -> Path:
+    """Resolve the stages config file for a named graph (mirrors
+    pipeline_ctl.GRAPH_FILES). STUDIO_STAGES_YAML overrides the 'build' graph
+    path only, matching _load_stage_order's override for the default order."""
+    filename = _GRAPH_FILES.get(graph, _GRAPH_FILES["build"])
+    if graph == "build":
+        env_path = os.environ.get("STUDIO_STAGES_YAML")
+        if env_path:
+            return Path(env_path)
+    return Path(__file__).parent.parent / "pipeline" / "references" / filename
+
+
+def _load_graph_gate_names(graph: str) -> set[str]:
+    """Gate names declared in the named stage graph's config file. Empty set
+    if the file is missing or unreadable — callers must treat that as 'no
+    valid gates', not skip the check."""
+    try:
+        text = _graph_stages_path(graph).read_text(encoding="utf-8")
+    except Exception:
+        return set()
+    return set(re.findall(r'gate:\s*\{name:\s*"([^"]+)"', text))
+
 
 def _pipeline_from_yaml(hdr: dict) -> dict:
     mode = hdr.get("mode", "autonomous")
@@ -219,7 +268,7 @@ def _pipeline_from_yaml(hdr: dict) -> dict:
         })
 
     return {
-        "format": "v0.4", "mode": mode,
+        "format": "v0.4", "mode": mode, "graph": hdr.get("graph") or "build",
         "subject": hdr.get("subject", ""), "topic": hdr.get("topic", ""),
         "canonical_output": "" if hdr.get("canonical_output") in (None, "null", "~") else hdr.get("canonical_output"),
         "stage": done_count, "total": len(stages), "stages": stages,
@@ -625,6 +674,276 @@ def workspace_state(slug: str):
     return {**pipeline, "structure": structure, "pdf_pages": pdf_pages,
             "pdf_stem": stem, "page_count": page_count,
             "fill": fill_status}
+
+
+def _actions_enabled() -> bool:
+    return os.environ.get("STUDIO_ALLOW_ACTIONS") == "1"
+
+
+def _gate_type(name: str) -> str:
+    if name in {"design", "draft", "understand"}:
+        return "human"
+    if name in {"layout", "sane", "content_audit"}:
+        return "script"
+    return "unknown"
+
+
+def _workspace_gate_names(base: Path) -> set[str]:
+    """Gate names an action may target: must appear both in the workspace's
+    parsed PIPELINE.md header AND in the stage graph it declares (`graph`
+    header field, default "build"). This closes the gap where a header alone
+    — the thing being validated — could self-declare an arbitrary gate."""
+    pipeline = _parse_pipeline(base)
+    header_names = {
+        item["gate_name"] for item in pipeline.get("stages", [])
+        if item.get("gate") and item.get("gate_name")
+    }
+    graph = pipeline.get("graph") or "build"
+    return header_names & _load_graph_gate_names(graph)
+
+
+def _require_action_auth(token_header, host_header) -> None:
+    """CSRF + DNS-rebinding guard for POST /action (contract §8b): actions
+    are same-origin-localhost only. Accepts the raw values FastAPI binds from
+    request headers, or plain str/None from a direct call (unit tests)."""
+    token = token_header if isinstance(token_header, str) else None
+    host = host_header if isinstance(host_header, str) else None
+    if not token or token != _ACTION_TOKEN:
+        raise HTTPException(status_code=403, detail="missing or invalid X-Studio-Token")
+    if not host or not (host.startswith("127.0.0.1") or host.startswith("localhost")):
+        raise HTTPException(status_code=403, detail="untrusted Host header")
+
+
+def _last_event_timestamp(base: Path):
+    path = base / "events.jsonl"
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            end = stream.tell()
+            stream.seek(max(0, end - 65536))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        for line in reversed(lines):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            return (event.get("ts") or event.get("at") or event.get("timestamp") or
+                    event.get("created_at"))
+    except OSError:
+        pass
+    return None
+
+
+def _lint_result(base: Path) -> dict:
+    key = str(base.resolve())
+    now = time.monotonic()
+    cached = _LINT_CACHE.get(key)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+
+    script = REPO_ROOT / "pipeline" / "scripts" / "workflow_lint.py"
+    unavailable = {"state": "na", "label": "lint n/a", "hard": []}
+    if not script.exists():
+        result = unavailable
+    else:
+        argv = [sys.executable, str(script), str(base.resolve()), "--json"]
+        try:
+            completed = subprocess.run(
+                argv, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30, check=False,
+            )
+            payload = json.loads(completed.stdout)
+            if not isinstance(payload, (dict, list)):
+                raise ValueError("lint JSON must be an object or list")
+            findings = (payload if isinstance(payload, list) else
+                        payload.get("findings", payload.get("hard_findings",
+                        payload.get("hard", []))))
+            if not isinstance(findings, list):
+                raise ValueError("lint findings must be a list")
+            hard = []
+            for finding in findings:
+                if isinstance(finding, str):
+                    hard.append(finding)
+                    continue
+                if not isinstance(finding, dict):
+                    continue
+                severity = str(finding.get("severity") or finding.get("level") or
+                               finding.get("kind") or "").upper()
+                if severity == "HARD" or finding.get("hard") is True:
+                    hard.append(str(finding.get("message") or finding.get("detail") or
+                                    finding.get("code") or "HARD finding"))
+            if completed.returncode == 3:
+                result = {"state": "off", "label": "OFF-WORKFLOW", "hard": hard}
+            elif completed.returncode == 0:
+                result = {"state": "ok", "label": "conformant", "hard": []}
+            else:
+                result = unavailable
+        except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+            result = unavailable
+    _LINT_CACHE[key] = (now, result)
+    return result
+
+
+def _workspace_summary(slug: str) -> dict:
+    base = safe_workspace(slug)
+    state = _parse_pipeline(base)
+    current = next(
+        (item for item in state.get("stages", [])
+         if item.get("raw_status") in {"in_progress", "awaiting_gate", "blocked"}),
+        next((item for item in state.get("stages", []) if not item.get("done")), None),
+    )
+    pending = next(
+        (item for item in state.get("stages", [])
+         if item.get("gate") and item.get("gate_state") == "pending"), None,
+    )
+    return {
+        "slug": slug,
+        "done": state.get("stage", 0),
+        "total": state.get("total", 0),
+        "current_stage": (current or {}).get("num"),
+        "current_label": (current or {}).get("label") or "complete",
+        "pending_gate": ({"name": pending.get("gate_name"),
+                          "type": _gate_type(pending.get("gate_name", ""))}
+                         if pending else None),
+        "auto_approved": sum(
+            1 for item in state.get("stages", []) if item.get("auto_approved")
+        ),
+        "last_event": _last_event_timestamp(base),
+        "lint": _lint_result(base),
+    }
+
+
+@app.get("/dashboard")
+def dashboard():
+    return {"workspaces": [_workspace_summary(slug) for slug in _slugs()],
+            "actions_enabled": _actions_enabled()}
+
+
+@app.get("/workspace/{slug}/gate-checks")
+def workspace_gate_checks(slug: str):
+    base = safe_workspace(slug)
+    path = base / ".pipeline" / "gate_checks.jsonl"
+    entries = []
+    if path.exists():
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                argv = raw.get("checker_argv") or raw.get("argv") or raw.get("checker") or []
+                if isinstance(argv, str):
+                    argv = [argv]
+                digest = str(raw.get("stdout_sha256") or raw.get("stdout_hash") or "")
+                entries.append({
+                    "gate": raw.get("gate") or raw.get("gate_name") or "unknown",
+                    "argv": [str(part) for part in argv],
+                    "argv_joined": " ".join(str(part) for part in argv),
+                    "exit_code": raw.get("exit_code", raw.get("exit", raw.get("returncode"))),
+                    "stdout_sha256": digest[:12],
+                    "checked_at": raw.get("checked_at") or raw.get("at") or raw.get("ts"),
+                })
+        except OSError:
+            entries = []
+    return {"entries": entries}
+
+
+@app.get("/workspace/{slug}/humanization")
+def workspace_humanization(slug: str):
+    base = safe_workspace(slug)
+    path = base / "bundle" / "humanization_rounds.json"
+    if not path.exists():
+        return {"available": False, "rounds": [], "hold_reason": None}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rounds = payload if isinstance(payload, list) else payload.get("rounds", [])
+        hold_reason = None if isinstance(payload, list) else payload.get("hold_reason")
+        normalized = []
+        for index, item in enumerate(rounds if isinstance(rounds, list) else []):
+            if not isinstance(item, dict):
+                continue
+            violations = item.get("violations", item.get("violation_count", 0))
+            if isinstance(violations, list):
+                violations = len(violations)
+            normalized.append({"round": item.get("round", index + 1),
+                               "violations": violations,
+                               "hold_reason": item.get("hold_reason")})
+        return {"available": True, "rounds": normalized, "hold_reason": hold_reason}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"available": False, "rounds": [], "hold_reason": None}
+
+
+@app.get("/workspace/{slug}/deliverable/preview.html")
+def deliverable_preview(slug: str):
+    base = safe_workspace(slug)
+    preview = (base / "output" / "deliverable" / "preview.html").resolve()
+    if base.resolve() not in preview.parents or not preview.is_file():
+        return Response(status_code=404)
+    return FileResponse(preview, media_type="text/html",
+                        headers={"Cache-Control": "no-cache"})
+
+
+def _output_tail(value, limit: int = 4000) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return str(value)[-limit:]
+
+
+@app.post("/action/{slug}/{kind}")
+def workspace_action(
+    slug: str, kind: str, gate: str | None = None,
+    x_studio_token: str | None = Header(default=None, alias="X-Studio-Token"),
+    host: str | None = Header(default=None),
+):
+    if not _actions_enabled():
+        raise HTTPException(status_code=403, detail="Studio action mode is disabled")
+    _require_action_auth(x_studio_token, host)
+    if kind not in _ACTION_KINDS:
+        raise HTTPException(status_code=404, detail="unknown action")
+    base = safe_workspace(slug)
+    gate_actions = {"check-gate", "approve-human-gate"}
+    if kind in gate_actions and (not gate or gate not in _workspace_gate_names(base)):
+        raise HTTPException(status_code=400, detail="gate does not belong to workspace")
+
+    pipeline_ctl = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
+    if kind == "check-gate":
+        argv = [sys.executable, str(pipeline_ctl), "check", str(base.resolve()), gate]
+    elif kind == "approve-human-gate":
+        if _gate_type(gate or "") != "human":
+            raise HTTPException(status_code=400, detail="gate is not a human gate")
+        line = f"approved {gate} by operator via studio at={_now_iso()}"
+        with (base / "APPROVALS.md").open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(line + "\n")
+        argv = [sys.executable, str(pipeline_ctl), "gate", str(base.resolve()), gate,
+                "--mode", "supervised"]
+    elif kind == "run-content-audit":
+        argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
+                                    "content_audit.py"), str(base.resolve())]
+    else:
+        argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
+                                    "doc_backend.py"), str(base.resolve()),
+                "--backend", "bundle"]
+
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=300, check=False,
+        )
+        output = "\n".join(part for part in (
+            _output_tail(completed.stdout), _output_tail(completed.stderr)
+        ) if part)
+        return {"argv": argv, "exit_code": completed.returncode,
+                "output_tail": output[-4000:]}
+    except subprocess.TimeoutExpired as exc:
+        return {"argv": argv, "exit_code": None,
+                "output_tail": _output_tail(exc.stdout) + _output_tail(exc.stderr),
+                "timed_out": True}
+    except OSError as exc:
+        return {"argv": argv, "exit_code": None, "output_tail": str(exc)}
 
 
 def _fill_status(build: dict, page_count: int, structure: dict):
@@ -1139,7 +1458,13 @@ def start_prompt(topic: str, subject: str = "", form: str = "", conditions: str 
 
 @app.get("/")
 def root():
-    return FileResponse(Path(__file__).parent / "index.html")
+    template = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
+    bootstrap = {"workspaces": [_workspace_summary(slug) for slug in _slugs()],
+                 "actions_enabled": _actions_enabled()}
+    page = template.replace("__STUDIO_BOOTSTRAP__", json.dumps(bootstrap))
+    page = page.replace("__STUDIO_ACTION_TOKEN__", _html.escape(_ACTION_TOKEN or ""))
+    return Response(page, media_type="text/html",
+                    headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/favicon.ico")
