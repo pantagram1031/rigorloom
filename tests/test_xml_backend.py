@@ -12,6 +12,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "xml_backend.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+import fill_report as fr  # noqa: E402
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HH = "http://www.hancom.co.kr/hwpml/2011/head"
 HC = "http://www.hancom.co.kr/hwpml/2011/core"
@@ -132,6 +134,147 @@ def test_open_save_preserves_untouched_members_byte_for_byte(tmp_path):
     assert json.loads(result.stdout)["applied"] == 0
     with zipfile.ZipFile(dst) as zf:
         assert all(zf.read(name) == data for name, data in original.items())
+
+
+def _write_fake_renderer(path, *, fail=False):
+    if fail:
+        source = "import sys\nsys.exit(7)\n"
+    else:
+        source = """\
+import fitz
+import sys
+
+doc = fitz.open()
+for text_y in (500, 700):
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, text_y), "rendered body")
+doc.save(sys.argv[2])
+"""
+    path.write_text(source, encoding="utf-8")
+    return [sys.executable, str(path), "{in}", "{out}"]
+
+
+def _run_xml_fill_loop(tmp_path, monkeypatch, pdf_cmd, *, calibration=None):
+    form = tmp_path / "form.hwpx"
+    form.write_bytes(b"form")
+    content = tmp_path / "content.md"
+    content.write_text("## SECTION: Generic anchor\nbody\n", encoding="utf-8")
+    build_yaml = tmp_path / "build.yaml"
+    build_yaml.write_text(
+        "fill:\n  target_pages: [1, 999]\n  bottom_white_max: 25\n"
+        "  max_gap_lines: 3\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "fill"
+    emitted = []
+
+    def fake_build(content_, form_, build_yaml_, ops_out, form_profile=None):
+        Path(ops_out).write_text("[]", encoding="utf-8")
+        return {"ok": True, "ops": []}
+
+    def fake_xml(form_, ops_path, out_hwpx):
+        Path(out_hwpx).write_bytes(b"hwpx")
+        return {"ok": True, "applied": 0}
+
+    monkeypatch.setattr(fr, "run_build_report", fake_build)
+    monkeypatch.setattr(fr, "run_xml_edit", fake_xml)
+    monkeypatch.setattr(fr, "run_tidy_hwpx", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(
+        fr, "run_para_format_check", lambda *a, **k: {"ok": True, "anomalies": []})
+    monkeypatch.setattr(fr, "run_style_diff", lambda *a, **k: [])
+    monkeypatch.setattr(fr, "_emit", lambda obj, out=None: emitted.append(obj))
+
+    args = type("Args", (), {
+        "form": str(form), "content": str(content), "out_dir": str(out_dir),
+        "build_yaml": str(build_yaml), "max_loops": 1, "baseline": None,
+        "trouble_table": None, "guide_file": None, "spacing_skip_pages": None,
+        "gap_skip_pages": None, "bottom_skip_pages": None, "fig_count": 0,
+        "kill_stale": False, "out": None, "engine": "xml", "pdf_cmd": pdf_cmd,
+        "pdf_timeout": 10.0, "calibration": calibration, "form_profile": None,
+        "proof": False,
+    })()
+    fr.mode_loop(args)
+    assert len(emitted) == 1
+    return emitted[0]
+
+
+def test_xml_fill_loop_external_renderer_emits_com_contract(tmp_path, monkeypatch):
+    pytest.importorskip("fitz")
+    renderer = _write_fake_renderer(tmp_path / "render.py")
+    verdict = _run_xml_fill_loop(tmp_path, monkeypatch, renderer)
+
+    assert verdict["proof_grade"] == "advisory"
+    assert verdict["engine"] == "xml"
+    assert {
+        "converged", "state", "gappy_pages", "bottom_white_worst",
+        "gaps_worst", "needs", "iterations", "escalate", "proof_grade",
+    } <= verdict.keys()
+    assert verdict["iterations"] == 1
+
+
+def test_xml_fill_loop_calibration_relaxes_advisory_threshold(tmp_path, monkeypatch):
+    pytest.importorskip("fitz")
+    renderer = _write_fake_renderer(tmp_path / "render.py")
+    calibration = tmp_path / "calibration.json"
+    calibration.write_text(json.dumps({
+        "bottom_white_tolerance_pt": 79.2,
+        "max_gap_scale": 2.0,
+    }), encoding="utf-8")
+
+    verdict = _run_xml_fill_loop(
+        tmp_path, monkeypatch, renderer, calibration=str(calibration))
+
+    assert verdict["proof_grade"] == "advisory"
+    assert verdict["thresholds"]["bottom_white_max"] == pytest.approx(35.0)
+    assert verdict["thresholds"]["max_gap_lines"] == 6.0
+    assert verdict["calibration"]["max_gap_scale"] == 2.0
+
+
+def test_xml_fill_loop_renderer_failure_is_never_a_pass(tmp_path, monkeypatch):
+    renderer = _write_fake_renderer(tmp_path / "fail_renderer.py", fail=True)
+    verdict = _run_xml_fill_loop(tmp_path, monkeypatch, renderer)
+
+    assert verdict["state"] == "renderer_failed"
+    assert verdict["status"] == "renderer_failed"
+    assert verdict["ok"] is False
+    assert verdict["converged"] is False
+    assert verdict["proof_grade"] == "advisory"
+
+
+def test_xml_no_renderer_verdict_keeps_contract_and_grade_none(tmp_path):
+    verdict = fr.xml_only_verdict(
+        tmp_path / "out.hwpx", {"ok": True, "anomalies": []})
+
+    assert set(verdict) == {
+        "status", "converged", "iterations", "engine", "phase",
+        "proof_grade", "proof_unavailable", "reason", "checks",
+        "style_anomalies", "needs", "hwpx", "pdf", "preview_pdf",
+    }
+    assert verdict["status"] == "xml_verified_no_proof"
+    assert verdict["proof_grade"] == "none"
+
+
+def test_hancom_measurement_ignores_advisory_calibration(tmp_path):
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "hancom.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 700), "Hancom proof")
+    doc.save(pdf)
+    doc.close()
+    fill = {
+        "min_figures": 0, "target_pages": [1, 999],
+        "bottom_white_max": 25.0, "max_gap_lines": 3.0,
+    }
+
+    verdict = fr.measure_rendered_pdf(
+        pdf, fill, "hancom", fig_count_override=0,
+        calibration={"bottom_white_tolerance_pt": 79.2, "max_gap_scale": 2.0})
+
+    assert verdict["proof_grade"] == "hancom"
+    assert verdict["thresholds"] == {
+        "bottom_white_max": 25.0, "max_gap_lines": 3.0}
+    assert "calibration" not in verdict
 
 
 def test_goto_text_finds_single_run_anchor(tmp_path):

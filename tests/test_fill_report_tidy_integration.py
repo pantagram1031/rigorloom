@@ -439,6 +439,7 @@ def test_mode_loop_xml_without_renderer_stops_after_xml_verification(tmp_path, m
     assert calls == ["build_report", "xml_edit", "tidy_hwpx", "check_para_formats"]
     assert emitted[0]["engine"] == "xml"
     assert emitted[0]["status"] == "xml_verified_no_proof"
+    assert emitted[0]["proof_grade"] == "none"
     assert emitted[0]["proof_unavailable"] is True
     assert emitted[0]["converged"] is True
     assert emitted[0]["pdf"] is None
@@ -455,7 +456,7 @@ def test_run_pdf_command_expands_argv_template(tmp_path, monkeypatch):
         stdout = b""
         stderr = b""
 
-    def fake_run(argv, capture_output, env):
+    def fake_run(argv, capture_output, env, timeout=None, shell=False):
         seen.append(argv)
         destination.write_bytes(b"%PDF-1.4")
         return Result()
@@ -502,5 +503,6 @@ def test_mode_loop_xml_runs_real_backend_tidy_and_para_check(tmp_path, monkeypat
 
     assert emitted[0]["converged"] is True
     assert emitted[0]["status"] == "xml_verified_no_proof"
+    assert emitted[0]["proof_grade"] == "none"
     assert emitted[0]["proof_unavailable"] is True
     assert os.path.isfile(emitted[0]["hwpx"])

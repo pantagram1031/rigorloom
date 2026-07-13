@@ -149,18 +149,19 @@ def count_figures(pdf_path):
 
 def build_verdict(pdf_path, fill, fig_count_override=None, guide_strings=None,
                    spacing_skip_pages=None, gap_skip_pages=None,
-                   bottom_skip_pages=None):
+                   bottom_skip_pages=None, qa_result=None):
     """PDF + fill 목표 → 결정론 verdict. 본문 생성 없음, 측정·지시만."""
     bwm = fill["bottom_white_max"]
     mgl = fill["max_gap_lines"]
     lo, hi = fill["target_pages"]
     min_fig = fill["min_figures"]
 
-    qa = layout_qa.analyze(pdf_path, bottom_thr=bwm, gap_thr=mgl,
-                            guide_strings=guide_strings,
-                            spacing_skip_pages=spacing_skip_pages,
-                            gap_skip_pages=gap_skip_pages,
-                            bottom_skip_pages=bottom_skip_pages)
+    qa = qa_result or layout_qa.analyze(
+        pdf_path, bottom_thr=bwm, gap_thr=mgl,
+        guide_strings=guide_strings,
+        spacing_skip_pages=spacing_skip_pages,
+        gap_skip_pages=gap_skip_pages,
+        bottom_skip_pages=bottom_skip_pages)
     page_count = qa["page_count"]
     pages = qa["pages"]
 
@@ -184,10 +185,13 @@ def build_verdict(pdf_path, fill, fig_count_override=None, guide_strings=None,
     # 계산과 동일하게 여기서도 제외한다 — 안 그러면 qa["pass"]는 통과인데
     # worst_gap/gaps_ok/needs(remove_gap)만 그 페이지를 잡아 phantom need가 생긴다.
     worst_gap = {"page": None, "lines": 0.0}
+    gappy_pages = []
     for p in pages:
         if gap_skip_pages and p["page"] in gap_skip_pages:
             continue
         g = p.get("max_gap_lines") or 0.0
+        if g > mgl:
+            gappy_pages.append(p["page"])
         if g > worst_gap["lines"]:
             worst_gap = {"page": p["page"], "lines": g}
 
@@ -249,11 +253,101 @@ def build_verdict(pdf_path, fill, fig_count_override=None, guide_strings=None,
         "min_figures": min_fig,
         "bottom_white_worst": worst_bw,
         "gaps_worst": worst_gap,
+        "gappy_pages": gappy_pages,
+        "flagged_pages": list(qa.get("flagged_pages", [])),
         "state": state,
         "needs": needs,
         "thresholds": {"bottom_white_max": bwm, "max_gap_lines": mgl},
         "pdf": str(pdf_path),
     }
+
+
+def load_calibration(path):
+    """Load advisory-renderer threshold relaxations from JSON."""
+    if not path:
+        return None
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"invalid --calibration JSON: {exc}")
+    if not isinstance(payload, dict):
+        die("--calibration must contain a JSON object")
+    allowed = {
+        "bottom_white_tolerance_pt", "bottom_white_tolerance_pct",
+        "max_gap_scale", "max_gap_tolerance_lines",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        die(f"unsupported --calibration keys: {unknown}")
+    result = {}
+    for key, value in payload.items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            die(f"--calibration {key} must be numeric")
+        minimum = 1.0 if key == "max_gap_scale" else 0.0
+        if number < minimum:
+            die(f"--calibration {key} must be >= {minimum:g} (relaxations only)")
+        result[key] = number
+    return result
+
+
+def _advisory_fill(fill, pdf_path, proof_grade, calibration):
+    """Return effective FILL thresholds and the applied calibration record."""
+    effective = dict(fill)
+    if proof_grade != "advisory" or not calibration:
+        return effective, None
+
+    applied = dict(calibration)
+    tolerance_pct = calibration.get("bottom_white_tolerance_pct", 0.0)
+    tolerance_pt = calibration.get("bottom_white_tolerance_pt", 0.0)
+    if tolerance_pt:
+        import fitz
+        doc = fitz.open(pdf_path)
+        heights = [page.rect.height for page in doc if page.rect.height > 0]
+        doc.close()
+        if not heights:
+            raise ValueError("renderer produced a PDF without measurable pages")
+        # One global layout_qa threshold must cover every page.  The smallest
+        # page converts the point allowance to the largest percentage allowance.
+        converted = tolerance_pt / min(heights) * 100.0
+        tolerance_pct += converted
+        applied["bottom_white_tolerance_pct_applied"] = round(tolerance_pct, 4)
+    effective["bottom_white_max"] += tolerance_pct
+    effective["max_gap_lines"] *= calibration.get("max_gap_scale", 1.0)
+    effective["max_gap_lines"] += calibration.get("max_gap_tolerance_lines", 0.0)
+    applied["effective_thresholds"] = {
+        "bottom_white_max": effective["bottom_white_max"],
+        "max_gap_lines": effective["max_gap_lines"],
+    }
+    return effective, applied
+
+
+def measure_rendered_pdf(pdf_path, fill, proof_grade, fig_count_override=None,
+                         guide_strings=None, spacing_skip_pages=None,
+                         gap_skip_pages=None, bottom_skip_pages=None,
+                         calibration=None):
+    """Run layout_qa once and build the shared COM/XML measured verdict."""
+    effective_fill, applied = _advisory_fill(
+        fill, pdf_path, proof_grade, calibration)
+    qa = layout_qa.analyze(
+        pdf_path, bottom_thr=effective_fill["bottom_white_max"],
+        gap_thr=effective_fill["max_gap_lines"],
+        guide_strings=guide_strings,
+        spacing_skip_pages=spacing_skip_pages,
+        gap_skip_pages=gap_skip_pages,
+        bottom_skip_pages=bottom_skip_pages)
+    verdict = build_verdict(
+        pdf_path, effective_fill, fig_count_override, guide_strings,
+        spacing_skip_pages=spacing_skip_pages,
+        gap_skip_pages=gap_skip_pages,
+        bottom_skip_pages=bottom_skip_pages,
+        qa_result=qa)
+    verdict["checks"] = qa.get("checks", {})
+    verdict["proof_grade"] = proof_grade
+    if applied:
+        verdict["calibration"] = applied
+    return verdict
 
 
 def run_build_report(content, form, build_yaml, ops_out, form_profile=None):
@@ -341,11 +435,13 @@ def run_xml_edit(form, ops_path, out_hwpx):
     return payload
 
 
-def run_pdf_command(argv_template, src_hwpx, dst_pdf):
+def run_pdf_command(argv_template, src_hwpx, dst_pdf, timeout=120.0):
     """Render HWPX with a shell-free argv template.
 
-    Placeholders: {input}, {output}, {out_dir}, and {stem}.  A string is split
-    with shlex; callers may also pass an already-tokenized list/tuple.
+    Placeholders: {in}/{input}, {out}/{output}, {out_dir}, and {stem}.  A string
+    is split with shlex; callers may also pass an already-tokenized list/tuple.
+    Runtime failures are returned to the caller so loop mode can emit an honest
+    ``renderer_failed`` verdict instead of exiting with a generic CLI error.
     """
     if isinstance(argv_template, str):
         argv = shlex.split(argv_template, posix=True)
@@ -357,7 +453,8 @@ def run_pdf_command(argv_template, src_hwpx, dst_pdf):
         die("--pdf-cmd must not be empty")
     src_hwpx = Path(src_hwpx)
     dst_pdf = Path(dst_pdf)
-    values = {"input": str(src_hwpx), "output": str(dst_pdf),
+    values = {"in": str(src_hwpx), "out": str(dst_pdf),
+              "input": str(src_hwpx), "output": str(dst_pdf),
               "out_dir": str(dst_pdf.parent), "stem": src_hwpx.stem}
     try:
         argv = [token.format(**values) for token in argv]
@@ -366,10 +463,26 @@ def run_pdf_command(argv_template, src_hwpx, dst_pdf):
     if dst_pdf.exists():
         dst_pdf.unlink()
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-    proc = subprocess.run(argv, capture_output=True, env=env)
+    try:
+        proc = subprocess.run(
+            argv, capture_output=True, env=env, timeout=float(timeout), shell=False)
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False, "state": "renderer_failed", "argv": argv,
+            "pdf": str(dst_pdf), "error": f"renderer timed out after {exc.timeout}s",
+        }
+    except OSError as exc:
+        return {
+            "ok": False, "state": "renderer_failed", "argv": argv,
+            "pdf": str(dst_pdf), "error": f"renderer could not start: {exc}",
+        }
     if proc.returncode != 0 or not dst_pdf.is_file():
-        die(f"--pdf-cmd failed (exit {proc.returncode}, output={dst_pdf}): "
-            f"{proc.stderr.decode('utf-8', 'replace')[:300]}")
+        return {
+            "ok": False, "state": "renderer_failed", "argv": argv,
+            "pdf": str(dst_pdf), "returncode": proc.returncode,
+            "error": (f"renderer failed (exit {proc.returncode}, output={dst_pdf}): "
+                      f"{proc.stderr.decode('utf-8', 'replace')[:300]}"),
+        }
     return {"ok": True, "argv": argv, "pdf": str(dst_pdf)}
 
 
@@ -706,6 +819,7 @@ def xml_only_verdict(out_hwpx, verification, iteration=1):
         "iterations": iteration,
         "engine": "xml",
         "phase": "xml",
+        "proof_grade": "none",
         "proof_unavailable": True,
         "reason": ("XML-level verification complete; PDF proof unavailable"
                    if not anomalies else "XML paragraph-format verification failed"),
@@ -716,6 +830,77 @@ def xml_only_verdict(out_hwpx, verification, iteration=1):
         "pdf": None,
         "preview_pdf": None,
     }
+
+
+def renderer_failed_verdict(out_hwpx, iteration, render_result):
+    """Return the measured-loop contract for an unusable external render."""
+    error = render_result.get("error") or "external renderer failed"
+    return {
+        "ok": False,
+        "status": "renderer_failed",
+        "state": "renderer_failed",
+        "converged": False,
+        "escalate": True,
+        "iterations": iteration,
+        "page_count": None,
+        "target_pages": None,
+        "fig_count": None,
+        "min_figures": None,
+        "bottom_white_worst": {"page": None, "pct": None},
+        "gaps_worst": {"page": None, "lines": None},
+        "gappy_pages": [],
+        "flagged_pages": [],
+        "thresholds": {},
+        "checks": {},
+        "style_anomalies": [],
+        "needs": [{"kind": "renderer_failed", "directive": error}],
+        "reason": error,
+        "proof_grade": "advisory",
+        "proof_unavailable": True,
+        "engine": "xml",
+        "hwpx": str(Path(out_hwpx).resolve()),
+        "pdf": None,
+        "preview_pdf": None,
+        "renderer": render_result,
+    }
+
+
+def finalize_loop_verdict(final, engine, max_loops):
+    """Build the shared final FILL-loop JSON shape for COM and XML."""
+    converged = bool(
+        final.get("converged")
+        and not any((final.get("checks") or {}).values())
+        and not final.get("style_anomalies"))
+    out_obj = {
+        "converged": converged,
+        "state": final.get("state"),
+        "escalate": bool(not converged and final.get("iterations", 0) >= max_loops),
+        "iterations": final["iterations"],
+        "page_count": final["page_count"],
+        "target_pages": final.get("target_pages"),
+        "fig_count": final["fig_count"],
+        "min_figures": final.get("min_figures"),
+        "bottom_white_worst": final["bottom_white_worst"],
+        "gaps_worst": final["gaps_worst"],
+        "gappy_pages": final.get("gappy_pages", []),
+        "flagged_pages": final.get("flagged_pages", []),
+        "thresholds": final.get("thresholds", {}),
+        "checks": final.get("checks", {}),
+        "style_anomalies": final.get("style_anomalies", []),
+        "needs": final.get("needs", []),
+        "reason": final.get("reason"),
+        "proof_grade": final.get("proof_grade", "hancom"),
+        "hwpx": final.get("hwpx"),
+        "pdf": final.get("pdf"),
+        "preview_pdf": final.get("preview_pdf"),
+    }
+    if engine == "xml":
+        out_obj["engine"] = "xml"
+    for key in ("known_trouble", "calibration", "derived_tidy_anchors",
+                "derived_keep_map", "tidy_warnings"):
+        if key in final:
+            out_obj[key] = final[key]
+    return out_obj
 
 
 def parse_trouble_table(path):
@@ -949,6 +1134,10 @@ def mode_loop(args):
     events_path = out_dir / "fill_events.jsonl"
     engine = getattr(args, "engine", "com") or "com"
     pdf_cmd = getattr(args, "pdf_cmd", None)
+    proof_grade = "advisory" if engine == "xml" else "hancom"
+    calibration = (load_calibration(getattr(args, "calibration", None))
+                   if proof_grade == "advisory" else None)
+    pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
 
     fill = read_fill(args.build_yaml)
     max_loops = max(1, int(args.max_loops or 4))
@@ -998,7 +1187,21 @@ def mode_loop(args):
                     f.write(json.dumps(event, ensure_ascii=False) + "\n")
                 _emit(verdict, args.out)
                 return
-            run_pdf_command(pdf_cmd, out_hwpx, out_pdf)
+            render_result = run_pdf_command(
+                pdf_cmd, out_hwpx, out_pdf, timeout=pdf_timeout)
+            if not render_result.get("ok"):
+                failed = renderer_failed_verdict(out_hwpx, i, render_result)
+                if derived_tidy_anchors:
+                    failed["derived_tidy_anchors"] = derived_tidy_anchors
+                if tidy_keep_map:
+                    failed["derived_keep_map"] = tidy_keep_map
+                if tidy_warnings:
+                    failed["tidy_warnings"] = tidy_warnings
+                event = {"iter": i, "ts": time.time(), "verdict": failed}
+                with open(events_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event, ensure_ascii=False) + "\n")
+                _emit(failed, args.out)
+                return
         elif use_tidy:
             # edit(save hwpx만, PDF 아직 아님) -> tidy_hwpx(오프라인) ->
             # restore_para_formats(오프라인) -> keep_with_next(오프라인) ->
@@ -1016,17 +1219,26 @@ def mode_loop(args):
             # 기존 경로: edit 한 방에 save-as + export-pdf.
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
 
-        qa = layout_qa.analyze(out_pdf, bottom_thr=fill["bottom_white_max"],
-                                gap_thr=fill["max_gap_lines"],
-                                guide_strings=guide_strings,
-                                spacing_skip_pages=spacing_skip_pages,
-                                gap_skip_pages=gap_skip_pages,
-                                bottom_skip_pages=bottom_skip_pages)
-        verdict = build_verdict(out_pdf, fill, args.fig_count, guide_strings,
-                                 spacing_skip_pages=spacing_skip_pages,
-                                 gap_skip_pages=gap_skip_pages,
-                                 bottom_skip_pages=bottom_skip_pages)
-        verdict["checks"] = qa.get("checks", {})
+        try:
+            verdict = measure_rendered_pdf(
+                out_pdf, fill, proof_grade, args.fig_count, guide_strings,
+                spacing_skip_pages=spacing_skip_pages,
+                gap_skip_pages=gap_skip_pages,
+                bottom_skip_pages=bottom_skip_pages,
+                calibration=calibration)
+        except Exception as exc:
+            if engine != "xml":
+                raise
+            render_result = {
+                "ok": False, "state": "renderer_failed", "pdf": str(out_pdf),
+                "error": f"renderer output could not be measured: {exc}",
+            }
+            failed = renderer_failed_verdict(out_hwpx, i, render_result)
+            event = {"iter": i, "ts": time.time(), "verdict": failed}
+            with open(events_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+            _emit(failed, args.out)
+            return
 
         style_anomalies = run_style_diff(out_hwpx, args.baseline, args.build_yaml)
         if xml_para_verification is not None:
@@ -1097,27 +1309,7 @@ def mode_loop(args):
 
     final = dict(result)
     final.setdefault("needs", result.get("needs", []))
-    out_obj = {
-        "converged": bool(final.get("converged") and
-                          not any((final.get("checks") or {}).values()) and
-                          not final.get("style_anomalies")),
-        "iterations": final["iterations"],
-        "page_count": final["page_count"],
-        "fig_count": final["fig_count"],
-        "bottom_white_worst": final["bottom_white_worst"],
-        "gaps_worst": final["gaps_worst"],
-        "checks": final.get("checks", {}),
-        "style_anomalies": final.get("style_anomalies", []),
-        "needs": final.get("needs", []),
-        "reason": final.get("reason"),
-    }
-    if engine == "xml":
-        out_obj["engine"] = "xml"
-    if "known_trouble" in final:
-        out_obj["known_trouble"] = final["known_trouble"]
-    out_obj["hwpx"] = final.get("hwpx")
-    out_obj["pdf"] = final.get("pdf")
-    out_obj["preview_pdf"] = final.get("preview_pdf")
+    out_obj = finalize_loop_verdict(final, engine, max_loops)
 
     # PROOF 단계: phase-1이 converged로 끝났고 --proof가 설정된 경우에만.
     # 미수렴 상태에서 컨택트시트를 만들어봐야 needs가 이미 phase-1에서
@@ -1140,12 +1332,22 @@ def mode_measure(args):
     if not Path(args.pdf).exists():
         die(f"PDF 없음: {args.pdf}")
     fill = read_fill(args.build_yaml)
+    proof_grade = ("advisory"
+                   if (getattr(args, "engine", "com") or "com") == "xml"
+                   else "hancom")
+    calibration = (load_calibration(getattr(args, "calibration", None))
+                   if proof_grade == "advisory" else None)
     guide_strings = load_guide_strings(args.guide_file)
     spacing_skip_pages = layout_qa.parse_skip_pages(args.spacing_skip_pages)
     gap_skip_pages = layout_qa.parse_skip_pages(args.gap_skip_pages)
-    verdict = build_verdict(args.pdf, fill, args.fig_count, guide_strings,
-                             spacing_skip_pages=spacing_skip_pages,
-                             gap_skip_pages=gap_skip_pages)
+    bottom_skip_pages = layout_qa.parse_skip_pages(
+        getattr(args, "bottom_skip_pages", None))
+    verdict = measure_rendered_pdf(
+        args.pdf, fill, proof_grade, args.fig_count, guide_strings,
+        spacing_skip_pages=spacing_skip_pages,
+        gap_skip_pages=gap_skip_pages,
+        bottom_skip_pages=bottom_skip_pages,
+        calibration=calibration)
     _emit(verdict, args.out)
 
 
@@ -1168,6 +1370,10 @@ def mode_assemble(args):
     out_pdf = out_dir / "out.pdf"
     engine = getattr(args, "engine", "com") or "com"
     pdf_cmd = getattr(args, "pdf_cmd", None)
+    proof_grade = "advisory" if engine == "xml" else "hancom"
+    calibration = (load_calibration(getattr(args, "calibration", None))
+                   if proof_grade == "advisory" else None)
+    pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
 
     fill = read_fill(args.build_yaml)
     iters = max(1, int(args.max_iters or 1))
@@ -1200,7 +1406,21 @@ def mode_assemble(args):
                 verdicts.append(xml_only_verdict(out_hwpx, xml_para_verification,
                                                   len(verdicts) + 1))
                 continue
-            run_pdf_command(pdf_cmd, out_hwpx, out_pdf)
+            render_result = run_pdf_command(
+                pdf_cmd, out_hwpx, out_pdf, timeout=pdf_timeout)
+            if not render_result.get("ok"):
+                # Assemble is the optional-measure path.  Only its first failed
+                # render may fall back to the explicit XML no-proof result.
+                if not verdicts:
+                    failed = xml_only_verdict(
+                        out_hwpx, xml_para_verification, len(verdicts) + 1)
+                    failed["renderer_error"] = render_result.get("error")
+                    failed["renderer_attempted"] = True
+                else:
+                    failed = renderer_failed_verdict(
+                        out_hwpx, len(verdicts) + 1, render_result)
+                verdicts.append(failed)
+                break
         elif use_tidy:
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
             run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
@@ -1215,7 +1435,27 @@ def mode_assemble(args):
             run_com_convert(out_hwpx, out_pdf)
         else:
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
-        v = build_verdict(out_pdf, fill, args.fig_count)
+        try:
+            v = measure_rendered_pdf(
+                out_pdf, fill, proof_grade, args.fig_count,
+                calibration=calibration)
+        except Exception as exc:
+            if engine != "xml":
+                raise
+            render_result = {
+                "ok": False, "state": "renderer_failed", "pdf": str(out_pdf),
+                "error": f"renderer output could not be measured: {exc}",
+            }
+            if not verdicts:
+                v = xml_only_verdict(
+                    out_hwpx, xml_para_verification, len(verdicts) + 1)
+                v["renderer_error"] = render_result["error"]
+                v["renderer_attempted"] = True
+            else:
+                v = renderer_failed_verdict(
+                    out_hwpx, len(verdicts) + 1, render_result)
+            verdicts.append(v)
+            break
         if xml_para_verification is not None:
             v["engine"] = "xml"
             v["style_anomalies"] = xml_para_verification.get("anomalies", [])
@@ -1257,6 +1497,11 @@ def main():
                     help="(xml) 선택적 PDF 렌더러 argv 템플릿. {input}, {output}, "
                          "{out_dir}, {stem} 사용 가능; 예: 'soffice --headless "
                          "--convert-to pdf --outdir {out_dir} {input}'")
+    ap.add_argument("--pdf-timeout", type=float, default=120.0,
+                    help="(xml --pdf-cmd) renderer timeout in seconds (default 120)")
+    ap.add_argument("--calibration",
+                    help="(xml advisory proof) JSON threshold relaxations, e.g. "
+                         "bottom_white_tolerance_pt and max_gap_scale")
     ap.add_argument("--guide-file",
                     help="(measure/loop) layout_qa로 전달할 안내문 원문 JSON 목록. "
                          "생략 시 기존 동작 그대로")
