@@ -4,6 +4,17 @@ You are the rewrite worker, not the detector or final judge. Do not delegate.
 Read `bundle/humanization_report.json`, the resolved local writing profile, the
 request, and `bundle/ai_tell_review.json`.
 
+If `humanization_report.json` carries a `voice` pointer, read the operator's
+voice directives from `voice.directives_path` (banned patterns with ids and
+descriptions, the endings policy for this doc type, and the plain-language
+advisory notes). Steer toward these actual rules instead of generic "natural
+Korean". Never copy that private directives file into `bundle/`.
+
+If it carries `hints`, those are deterministic pre-pass findings mapped to
+paragraphs (`paragraph_id`, `rule_id`, `matched`). Fix the listed rule
+violations first, and do not introduce new violations of any banned pattern.
+Hints are targets to repair, not a licence to rewrite unflagged paragraphs.
+
 If the advisory review says PASS, return the v2 schema with
 `gate.skipped=true` and no changes. If it says REWORK, inspect every prose
 paragraph. The findings are context, not a target list. Omit paragraphs that

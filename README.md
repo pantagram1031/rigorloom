@@ -24,26 +24,67 @@ model-account configuration are intentionally excluded.
 
 ## Quick start
 
-Requirements: Python 3.10+; `pytest` for tests; Studio dependencies are optional.
+Only a Python 3.10+ standard library is required to run the pipeline. No Hancom,
+no Windows, and no model account are needed for the zero-dependency `bundle`
+document backend (see the backend table below). Clone, then run `bootstrap.py`:
+
+Linux / macOS:
 
 ```sh
 git clone https://github.com/pantagram1031/rigorloom.git
 cd rigorloom
+python3 scripts/bootstrap.py
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/pantagram1031/rigorloom.git
+cd rigorloom
+python scripts\bootstrap.py
+```
+
+`bootstrap.py` uses only the standard library. It verifies the interpreter,
+creates a private neutral personalization profile under the Git-ignored
+`.local/`, registers the public default preference packs, and runs an end-to-end
+smoke (scaffold a demo workspace → `resume` → resolve a passing script gate) so a
+fresh clone is proven working. It is idempotent; re-run it any time. Pass
+`--skip-smoke` to only set up the profile, or `--profile-root` / `--workspace-root`
+to redirect where it writes. On success it prints what works and which optional
+extras (`docx`, `studio`, `hwp`) add, each with a one-line install hint.
+
+Then start a report and drive it:
+
+```sh
 python scripts/new_report.py --slug demo --subject math \
-  --topic "A testable question" --form /absolute/path/to/form.hwpx \
-  --profile-root /private/report-profile
+  --topic "A testable question" --form /absolute/path/to/form.hwpx
 python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
-Create a private local writing profile once per machine (optional but
-recommended). The generated `.local/` directory is ignored by Git:
-
-```sh
-python scripts/setup_profile.py
-```
-
-For form-specific preferences and feedback candidates, see the
+`setup_profile.py` (run by `bootstrap.py`) can also be run on its own to author a
+private writing profile interactively; the generated `.local/` directory is
+ignored by Git. For form-specific preferences and feedback candidates, see the
 [personalization contract](pipeline/references/personalization_contract.md).
+
+### Document backends
+
+Stage 5 delivery is pluggable; pick the tier in `build.yaml` (`doc_backend:`).
+Only `bundle` is required — the others are optional extras.
+
+| Backend  | Install | Needs Hancom / Windows | Deliverable |
+|----------|---------|------------------------|-------------|
+| `bundle` | none (stdlib) | no | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview |
+| `docx`   | `pip install .[docx]` | no | styled `.docx` (headings, figures, tables; PDF left to LibreOffice) |
+| `hwp`    | Windows + Hancom + [hwp-master](https://github.com/pantagram1031/hwp-master) | yes | native `.hwp` into the original form |
+
+The `bundle` backend is the any-machine floor: it runs anywhere Python runs.
+
+### Any coding-capable agent
+
+The state machine is provider-independent and drives entirely through CLIs, so
+any agent with coding ability can orchestrate it. Vendor-neutral bootstrap
+prompts and drop-in entrypoints live under [`adapters/`](adapters/); Claude Code
+skill files ship alongside them but are not required.
 
 ### HWP/HWPX output requirements
 

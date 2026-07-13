@@ -7,6 +7,11 @@ or a single interactive agent can operate it.
 The executable state machine and `pipeline/references/CONTRACT_v0.6.md` are
 authoritative when prose differs from code.
 
+**Running with any agent:** any coding-capable agent can drive this workflow —
+see `adapters/generic/ORCHESTRATOR.md` for the self-contained bootstrap loop
+and guardrails. Claude Code users see `adapters/claude-code/`; Codex-style
+harnesses that auto-read `AGENTS.md` see `adapters/codex/`.
+
 ## 1. Purpose and invariants
 
 The workflow turns a topic, constraints, sources, and an optional document form
@@ -249,6 +254,21 @@ Resolve it with `pipeline_ctl check <WS> content_audit`; Stage 5 begins only fro
 frozen, audited content.
 
 ### Stage 5 — assemble and proof
+
+The document backend is pluggable and chosen in `build.yaml` (`doc_backend:`),
+dispatched by `python pipeline/scripts/doc_backend.py <WS>`. Three shipped tiers:
+
+| backend | dependency | deliverable |
+|---|---|---|
+| `bundle` (default) | none — stdlib only | frozen bundle + single-file `preview.html` |
+| `docx` | `pip install python-docx` | styled `output/out.docx` |
+| `hwp` | Windows + Hancom + hwp-master | assembled `out.hwpx` + proof PDF |
+
+The `bundle` backend is the any-machine floor: it needs no HWP and no network,
+so the pipeline runs to a real deliverable from a plain clone on any OS; the
+proof loop and `verify_format` apply only to `hwp`, while the Stage 4.5
+`content_audit` entry gate is identical for all three. The rest of this section
+describes the `hwp` proof loop.
 
 For HWP, use the single assembly loop from the separate adapter:
 

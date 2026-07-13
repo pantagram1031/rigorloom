@@ -18,19 +18,32 @@ EXACT actions:
 4. Run an independent level-fit and logic review. Correct unsupported claims,
    unexplained terminology and budget violations.
 5. Follow `humanization_contract.md` in its fixed order:
-   - run `humanization_ctl.py prepare <WS>`;
+   - run `humanization_ctl.py prepare <WS>`. If a private profile root exists,
+     add `--profile-root <p>` (and `--backends <pack>` when the worker seats are
+     configured): `prepare` then resolves the `prose_rules`/`report_structure`
+     packs at runtime, writes the voice directives to a PRIVATE sidecar, and
+     puts only a `voice` pointer plus deterministic pre-pass `hints`
+     (`check_style` findings mapped to paragraphs) into the payload. Never copy
+     the sidecar or its taste text into `bundle/`;
    - spawn an independent local prose-pattern reviewer and save
      `bundle/ai_tell_review.json`; scores are advisory and never select targets;
    - PASS means an empty v2 proposal with `gate.skipped=true`;
    - REWORK means spawn a separate local `humanizer-rewriter`, give it every
-     prose paragraph, and request paragraph-level changes only;
+     prose paragraph, and request paragraph-level changes only. When present,
+     the rewriter reads the voice directives from the `voice.directives_path`
+     pointer and fixes the listed `hints` violations first without adding new
+     ones;
    - run an independent fidelity/naturalness review, then save the annotated
      proposal under `work/stage-4/scratch/`;
-   - run `humanization_ctl.py apply <WS> --changes <changes.json>`.
+   - run `humanization_ctl.py apply <WS> --changes <changes.json>`, passing
+     `--hints <file>` (per-round pre-pass hints) so the no-progress detector can
+     see whether violations are shrinking.
 6. Require `bundle/prose_fidelity.json` to pass. The controller keeps safe
    edits, restores unsafe paragraphs, and returns `retry_paragraph_ids`. Retry
-   only those ids with a fresh worker, for at most three rounds. Never repair
-   facts to make a style proposal pass.
+   only those ids with a fresh worker, for at most three rounds. If the pre-pass
+   violation set does not shrink across two REWORK rounds the controller returns
+   `hold_and_report` with `hold_reason: no_progress` early. Never repair facts to
+   make a style proposal pass.
 7. Present the accepted content and humanization reports—not document styling—
    for the human draft gate.
 
@@ -67,3 +80,4 @@ FAILURE table:
 | stale paragraph text | draft changed after prepare | rerun prepare and review against the new baseline |
 | scorer marks formal prose REWORK | register false positive | treat score as advisory; use independent review |
 | retry ids remain after round 3 | no safe convergence | keep protected originals and hold/report |
+| same violations two rounds running | rewrite not fixing the flagged patterns | controller returns hold_and_report (no_progress); re-scope the rewrite or accept the register |

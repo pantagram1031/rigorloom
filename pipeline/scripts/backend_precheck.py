@@ -227,5 +227,19 @@ def main():
     sys.exit(0)
 
 
+
+def _utf8_stdio():
+    """Windows consoles/CI default to a legacy codepage; JSON/finding output is
+    UTF-8. Reconfigure stdio so printing Korean text never dies with a
+    UnicodeEncodeError (no-op where already UTF-8 or unsupported)."""
+    import sys as _sys
+    for stream in (_sys.stdout, _sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
+
 if __name__ == "__main__":
+    _utf8_stdio()
     main()

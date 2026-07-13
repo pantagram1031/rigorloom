@@ -92,6 +92,7 @@ are fixed strings — never renumber.
 |---|---|
 | Contract (single truth) | `pipeline/references/CONTRACT_v0.6.md` |
 | Master workflow (orchestrator-neutral) | `docs/pipeline-master-v0.6.md` |
+| Agent-neutral bootstrap (any provider) | `adapters/generic/ORCHESTRATOR.md` |
 | Stage procedures | `pipeline/references/playbooks/stage-<n>.md` |
 | Backend routing | `pipeline/references/playbooks/adapters.md` |
 | Subagent prompts | `pipeline/references/playbooks/subagent-templates.md` |
