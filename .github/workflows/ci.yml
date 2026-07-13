@@ -24,3 +24,124 @@ jobs:
         shell: bash
       # Prove clone-and-go on both operating systems (COM-free by design).
       - run: python scripts/bootstrap.py --profile-root .ci-profile --workspace-root .ci-ws
+
+  render-smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - name: Install LibreOffice render dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer default-jre-headless poppler-utils
+
+      - name: Install H2Orestart
+        shell: bash
+        run: |
+          if sudo apt-get install -y --no-install-recommends libreoffice-h2orestart; then
+            exit 0
+          fi
+          pool=https://deb.debian.org/debian/pool/main/h/h2orestart
+          deb_name="$(curl -fsSL "$pool/" \
+            | grep -oE 'libreoffice-h2orestart_[^"/]+_all\.deb' \
+            | sort -Vu | tail -n 1 || true)"
+          if [[ -n "$deb_name" ]] \
+            && curl -fsSL "$pool/$deb_name" -o "$RUNNER_TEMP/h2orestart.deb" \
+            && sudo apt-get install -y "$RUNNER_TEMP/h2orestart.deb"; then
+            exit 0
+          fi
+          echo "::error::h2orestart install failed via both apt and the Debian pool fallback" >&2
+          exit 1
+
+      - name: Render synthetic HWPX
+        shell: bash
+        run: |
+          dpkg-query -W -f='${Status}\n' libreoffice-h2orestart \
+            | grep -Fx 'install ok installed'
+          smoke_dir="$RUNNER_TEMP/hwpx-render-smoke"
+          mkdir -p "$smoke_dir"
+          python3 - "$smoke_dir/render-smoke.hwpx" <<'PY'
+          import sys
+          import zipfile
+
+          target = sys.argv[1]
+          version = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <hv:HCFVersion xmlns:hv="urn:hancom:office:hwpml:version" targetApplication="WORDPROCESSOR" major="1" minor="4" micro="0" buildNumber="0" os="1" xmlVersion="1.4" application="HWP201X" appVersion="0.0.0.0"/>'''
+          content_hpf = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uuid">
+            <opf:metadata/>
+            <opf:manifest>
+              <opf:item id="header" href="header.xml" media-type="application/xml"/>
+              <opf:item id="section0" href="section0.xml" media-type="application/xml"/>
+            </opf:manifest>
+            <opf:spine><opf:itemref idref="section0"/></opf:spine>
+          </opf:package>'''
+          header = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"
+                   xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" version="1.4" secCnt="1">
+            <hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>
+            <hh:refList>
+              <hh:fontfaces itemCnt="1">
+                <hh:fontface lang="HANGUL" fontCnt="1">
+                  <hh:font id="0" face="Liberation Serif" type="TTF" isEmbedded="0"/>
+                </hh:fontface>
+              </hh:fontfaces>
+              <hh:borderFills itemCnt="1">
+                <hh:borderFill id="0" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0"/>
+              </hh:borderFills>
+              <hh:charProperties itemCnt="1">
+                <hh:charPr id="0" height="1000" textColor="#000000" shadeColor="none"
+                           useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="0">
+                  <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
+                  <hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>
+                  <hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
+                  <hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>
+                  <hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
+                </hh:charPr>
+              </hh:charProperties>
+              <hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>
+              <hh:paraProperties itemCnt="1">
+                <hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1">
+                  <hh:align horizontal="JUSTIFY" vertical="BASELINE"/>
+                  <hh:heading type="NONE" idRef="0" level="0"/>
+                  <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0"
+                                   keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>
+                  <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
+                </hh:paraPr>
+              </hh:paraProperties>
+              <hh:styles itemCnt="1">
+                <hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0"
+                          charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/>
+              </hh:styles>
+            </hh:refList>
+          </hh:head>'''
+          section = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"
+                  xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">
+            <hp:p id="1" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">
+              <hp:run charPrIDRef="0"><hp:t>render smoke 1234</hp:t></hp:run>
+              <hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000"
+                baseline="850" spacing="600" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray>
+            </hp:p>
+          </hs:sec>'''
+          manifest = '''<?xml version="1.0" encoding="UTF-8"?>
+          <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
+            <manifest:file-entry manifest:full-path="/" manifest:media-type="application/hwp+zip"/>
+            <manifest:file-entry manifest:full-path="version.xml" manifest:media-type="application/xml"/>
+            <manifest:file-entry manifest:full-path="Contents/content.hpf" manifest:media-type="application/xml"/>
+            <manifest:file-entry manifest:full-path="Contents/header.xml" manifest:media-type="application/xml"/>
+            <manifest:file-entry manifest:full-path="Contents/section0.xml" manifest:media-type="application/xml"/>
+          </manifest:manifest>'''
+
+          with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+              archive.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+              archive.writestr("version.xml", version)
+              archive.writestr("META-INF/manifest.xml", manifest)
+              archive.writestr("Contents/content.hpf", content_hpf)
+              archive.writestr("Contents/header.xml", header)
+              archive.writestr("Contents/section0.xml", section)
+          PY
+          soffice --headless --convert-to pdf:writer_pdf_Export \
+            --outdir "$smoke_dir" "$smoke_dir/render-smoke.hwpx"
+          test -s "$smoke_dir/render-smoke.pdf"
+          pdftotext "$smoke_dir/render-smoke.pdf" - | grep -F "render smoke"
