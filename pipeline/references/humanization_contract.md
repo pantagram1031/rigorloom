@@ -116,6 +116,47 @@ Two extreme patterns are warnings only:
 Context belongs to the independent reviewer. The controller never rewrites
 these expressions automatically.
 
+## v3 additions (pack-driven, backward-compatible)
+
+`prepare` accepts optional `--profile-root`, `--backends`, `--subject`, and
+`--doc-type`. Every v2 call (none of these flags) is unchanged: the payload
+carries no new keys and no sidecar is written.
+
+- **Pack-driven voice.** With `--profile-root`, `prepare` resolves the
+  `prose_rules` and `report_structure` packs AT RUNTIME (default < global <
+  subject) and writes the voice directives — banned patterns (id + regex +
+  description), the endings policy for the doc type, and the advisory
+  substitution notes — to a PRIVATE sidecar
+  `<profile_root>/resolved/<ws>.humanize.json`. The workspace payload
+  (`bundle/humanization_report.json`) gains a `voice` block that carries only a
+  pointer (`directives_path`, `directives_sha256`) — never the taste text
+  itself. This mirrors the hash-only personalization lock: operator prose-rule
+  content must never be committed or archived. `bundle/` is the shipped
+  deliverable (W1), so the sidecar path lives outside it, under the private
+  profile root (already `.gitignore`d when it is `.local/`). Do not add
+  `humanization_report.json`'s `voice`/`hints` to any public archive if the
+  profile root is placed elsewhere.
+- **Deterministic pre-pass.** `prepare` runs `check_style.py` as a subprocess
+  with the resolved packs (written to a temp dir, never the workspace) and maps
+  each finding's matched span to the paragraph containing it. The payload gains
+  `hints: [{paragraph_id, rule_id, matched}]` (content-derived, safe); the
+  matching `description` text is kept in the private sidecar only. The rewriter
+  fixes the listed violations first and introduces no new ones.
+- **Backend-configurable workers.** With `--backends <pack>`, `prepare` emits a
+  `workers` section resolving the `reviewer-ai-tell`, `humanizer-rewriter`,
+  `reviewer-fidelity`, and `reviewer-naturalness` roles to argv arrays from the
+  pack seats (matched by seat `role`). This is configuration surface for the
+  orchestrating agent — no subprocess LLM call is made here. Absent the flag,
+  harness-run mode is unchanged. A backends pack may name provider models; treat
+  it with the same keep-out-of-public-archive care as other packs.
+- **No-progress detector.** `apply` accepts optional `--hints <file>` (a JSON
+  list, or a prepare payload with a `hints` key). It records the per-round
+  violation set in `bundle/humanization_rounds.json`. If the same
+  (paragraph, rule) set repeats in two consecutive REWORK rounds, the status
+  becomes `hold_and_report` with `hold_reason: no_progress`. This extends the
+  three-round cap (which reports `hold_reason: round_cap`) and never overrides
+  the hard `rolled_back` fidelity invariant.
+
 ## Convergence states
 
 ```text
@@ -123,7 +164,9 @@ prepared
   -> skipped                     PASS, unchanged, fidelity pass
   -> accepted                    all proposed edits pass
   -> needs_retry                 unsafe/over-polished paragraphs rolled back
-  -> hold_and_report             retry ids remain after round 3
+  -> hold_and_report             retry ids remain after round 3 (round_cap),
+                                 or the pre-pass violation set is unchanged
+                                 across two REWORK rounds (no_progress)
   -> rolled_back                 whole-document invariant failed
 ```
 
