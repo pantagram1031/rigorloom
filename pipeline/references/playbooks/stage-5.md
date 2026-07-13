@@ -3,12 +3,13 @@
 
 PURPOSE: turn the approved bundle into a deliverable. The document backend is
 chosen in `build.yaml` (`doc_backend:`) and dispatched by
-`python pipeline/scripts/doc_backend.py <WS> [--backend ...]`. Three tiers:
+`python pipeline/scripts/doc_backend.py <WS> [--backend ...]`. Four tiers:
 
 | backend | dependency | deliverable | this playbook |
 |---|---|---|---|
 | `bundle` (default) | none (stdlib) | frozen bundle + `preview.html` | §BUNDLE |
 | `docx` | `pip install python-docx` | `output/out.docx` | §DOCX |
+| `hwpx` | hwp-master XML engine (any OS) | `output/out.hwpx` | §HWPX (advisory proof) |
 | `hwp` | Windows + Hancom + hwp-master | `out.hwpx`/PDF | §HWP (full loop) |
 
 Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
@@ -16,6 +17,24 @@ Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
 draft ok) and Stage 4.5 `content_audit` approved via
 `python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
 NO pipeline_ctl gate for any backend (gate:null) — the verdict is internal.
+
+---
+
+## §HWPX — COM-free form fill (any OS; advisory proof only)
+
+Selected when `doc_backend: hwpx`. Set `HWP_MASTER_SCRIPTS` to the external
+hwp-master `scripts/` directory, then run:
+
+```
+python pipeline/scripts/doc_backend.py <WS> --backend hwpx
+```
+
+The dispatcher invokes `fill_report.py --engine xml` with the workspace form,
+content bundle, and output directory. This tier fills `output/out.hwpx` without
+Hancom or COM on any OS. A PDF made on Linux with headless LibreOffice plus the
+H2Orestart extension is advisory render evidence only; it is not print-grade
+proof. Use the `hwp`/Hancom tier below for the full convergence and print-grade
+proof loop.
 
 ---
 
