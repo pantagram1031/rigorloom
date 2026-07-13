@@ -18,6 +18,9 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip pytest fastapi pymupdf
       - run: python -m pytest -q
+      # bash so the *.py globs expand on the Windows runner too (pwsh passes
+      # them through literally and py_compile fails on the literal pattern)
       - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py
+        shell: bash
       # Prove clone-and-go on both operating systems (COM-free by design).
       - run: python scripts/bootstrap.py --profile-root .ci-profile --workspace-root .ci-ws
