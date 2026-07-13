@@ -6,6 +6,7 @@ Synthetic fixtures ONLY (Korean-free fake content). Covers:
     manifest sha256 verify against re-hashed files)
   * backend resolution order (flag > build.yaml doc_backend: > default bundle)
   * hwp backend → exit 4 (external adapter)
+  * hwpx backend → external XML adapter resolution and argv/JSON propagation
   * docx backend → skipped when python-docx absent, else zipfile-inspects
     word/document.xml for a heading string
 """
@@ -14,12 +15,16 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
+import os
 import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 _PIPELINE_DIR = Path(__file__).parents[1]
 if str(_PIPELINE_DIR) not in sys.path:
@@ -150,6 +155,74 @@ class TestDispatcher(unittest.TestCase):
     def test_hwp_exits_4(self):
         code = doc_backend.main([str(self.ws), "--backend", "hwp"])
         self.assertEqual(code, 4)
+
+    def test_hwpx_without_external_adapter_exits_4_with_instructions(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+
+        self.assertEqual(code, 4)
+        self.assertIn("HWP_MASTER_SCRIPTS", stderr.getvalue())
+        self.assertIn("--engine xml", stderr.getvalue())
+        self.assertEqual(json.loads(stdout.getvalue())["backend"], "hwpx")
+
+    def test_hwpx_dispatches_xml_engine_and_propagates_json_and_exit(self):
+        scripts = Path(self._tmp.name) / "hwp-master-scripts"
+        scripts.mkdir()
+        fake = scripts / "fill_report.py"
+        fake.write_text(
+            "import json, sys\n"
+            "print(json.dumps({'ok': False, 'argv': sys.argv[1:]}))\n"
+            "raise SystemExit(7)\n",
+            encoding="utf-8",
+        )
+        (scripts / "eqn.py").write_text("", encoding="utf-8")
+        (scripts / "xml_backend.py").write_text("", encoding="utf-8")
+        out_dir = self.ws / "output" / "xml"
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"HWP_MASTER_SCRIPTS": str(scripts)}),
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend.main([
+                str(self.ws), "--backend", "hwpx", "--out-dir", str(out_dir),
+            ])
+
+        self.assertEqual(code, 7)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["argv"], [
+            "--engine", "xml",
+            "--form", str(self.ws / "output" / "form_copy.hwpx"),
+            "--content", str(self.ws / "bundle" / "content.md"),
+            "--out-dir", str(out_dir),
+        ])
+
+    def test_hwpx_with_missing_marker_siblings_exits_4(self):
+        # fill_report.py alone is not enough — eqn.py and xml_backend.py must
+        # also be present, or HWP_MASTER_SCRIPTS is treated as misconfigured.
+        scripts = Path(self._tmp.name) / "hwp-master-scripts-incomplete"
+        scripts.mkdir()
+        (scripts / "fill_report.py").write_text(
+            "raise SystemExit(0)\n", encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"HWP_MASTER_SCRIPTS": str(scripts)}),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+
+        self.assertEqual(code, 4)
+        self.assertIn("eqn.py", stderr.getvalue())
+        self.assertIn("xml_backend.py", stderr.getvalue())
+        self.assertEqual(json.loads(stdout.getvalue())["backend"], "hwpx")
 
     def test_bundle_via_cli(self):
         code = doc_backend.main([str(self.ws), "--backend", "bundle"])

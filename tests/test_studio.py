@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -217,3 +218,179 @@ def test_studio_shell_uses_rigorloom_and_safe_dom_bindings():
     assert 'id="mission-stats"' in html
     assert 'id="yamltext"' not in html
     assert "function buildYaml(" not in html
+
+
+def test_dashboard_lists_all_workspaces(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    for slug in ("report-alpha", "report-beta"):
+        ws = root / slug
+        ws.mkdir(parents=True)
+        (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_lint_result",
+                        lambda base: {"state": "na", "label": "lint n/a", "hard": []})
+
+    page = studio.root().body.decode("utf-8")
+
+    assert "report-alpha" in page
+    assert "report-beta" in page
+    assert 'class="card' in page
+
+
+def test_gate_check_provenance_is_renderable(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    checks = root / "report-demo" / ".pipeline"
+    checks.mkdir(parents=True)
+    record = {
+        "gate": "layout", "checker_argv": ["python", "checker.py", "a & b"],
+        "exit": 3, "stdout_sha256": "1234567890abcdef", "checked_at": "now",
+    }
+    (checks / "gate_checks.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    result = studio.workspace_gate_checks("report-demo")
+
+    assert result["entries"] == [{
+        "gate": "layout", "argv": ["python", "checker.py", "a & b"],
+        "argv_joined": "python checker.py a & b", "exit_code": 3,
+        "stdout_sha256": "1234567890ab", "checked_at": "now",
+    }]
+    shell = (MODULE_PATH.parent / "index.html").read_text(encoding="utf-8")
+    assert "esc(r.argv_joined)" in shell
+
+
+def test_action_post_is_forbidden_by_default(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("STUDIO_ALLOW_ACTIONS", raising=False)
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", tmp_path)
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action("report-demo", "check-gate", "layout")
+
+    assert exc.value.status_code == 403
+
+
+def test_check_gate_action_uses_argv_when_enabled(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="checked", stderr="")
+
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+
+    result = studio.workspace_action(
+        "report-demo", "check-gate", "layout",
+        x_studio_token="test-token", host="127.0.0.1",
+    )
+
+    assert result["argv"] == calls[0][0]
+    assert result["argv"][0] == studio.sys.executable
+    assert result["argv"][2:] == ["check", str(ws.resolve()), "layout"]
+    assert result["exit_code"] == 0
+    assert result["output_tail"] == "checked"
+    assert "shell" not in calls[0][1]
+
+
+def test_action_post_rejected_without_token(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action("report-demo", "check-gate", "layout", host="127.0.0.1")
+
+    assert exc.value.status_code == 403
+
+
+def test_action_post_rejected_with_wrong_host(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action(
+            "report-demo", "check-gate", "layout",
+            x_studio_token="test-token", host="evil.example.com",
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_action_rejects_gate_absent_from_workspace_header(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action(
+            "report-demo", "check-gate", "not-a-real-gate",
+            x_studio_token="test-token", host="127.0.0.1",
+        )
+
+    assert exc.value.status_code == 400
+
+
+def test_action_rejects_gate_absent_from_stage_graph(tmp_path: Path, monkeypatch):
+    # The header claims a "layout" gate exists (via _pipeline_text), but the
+    # stage graph the workspace declares (default "build") never registers
+    # it — this must be rejected even though the header alone would accept it.
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    fake_graph = tmp_path / "fake-stages.yaml"
+    fake_graph.write_text(
+        '- {id: "0", name: "form_intake", gate: null}\n'
+        '- {id: "2", name: "design", gate: {name: "design", type: "human"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setenv("STUDIO_STAGES_YAML", str(fake_graph))
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action(
+            "report-demo", "check-gate", "layout",
+            x_studio_token="test-token", host="127.0.0.1",
+        )
+
+    assert exc.value.status_code == 400
+
+
+def test_lint_badge_is_na_for_unparseable_output(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    script = repo / "pipeline" / "scripts" / "workflow_lint.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# feature detected", encoding="utf-8")
+    ws = tmp_path / "report-demo"
+    ws.mkdir()
+    monkeypatch.setattr(studio, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        studio.subprocess, "run",
+        lambda argv, **kwargs: SimpleNamespace(returncode=0, stdout="not json", stderr=""),
+    )
+    studio._LINT_CACHE.clear()
+
+    result = studio._lint_result(ws)
+
+    assert result == {"state": "na", "label": "lint n/a", "hard": []}

@@ -37,12 +37,12 @@ class PipelineCtlTestCase(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def init_ws(self, mode="autonomous"):
+    def init_ws(self, mode="autonomous", graph="build"):
         payload, code = run(
             "init", str(self.ws),
             "--slug", "test-slug", "--mode", mode,
             "--subject", "earth-science", "--topic", "테스트 주제",
-            "--form", "templates/form.hwpx",
+            "--form", "templates/form.hwpx", "--graph", graph,
         )
         self.assertEqual(code, 0, payload)
         self.assertTrue(payload["ok"])
@@ -62,6 +62,26 @@ class TestInitAndResume(PipelineCtlTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["next_stage"], "0")
         self.assertFalse(payload["blocked"])
+
+    def test_edit_graph_init_round_trips_and_resumes_at_intake(self):
+        payload = self.init_ws(graph="edit")
+        self.assertEqual(payload["graph"], "edit")
+        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+        self.assertIn('graph: "edit"', text)
+        self.assertIn('"3.5":', text)
+        handoff = json.loads(
+            (self.ws / ".pipeline" / "handoff.json").read_text(encoding="utf-8"))
+        self.assertEqual(handoff["playbook"],
+                         "pipeline/references/playbooks/edit-stage-0.md")
+        resumed, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, resumed)
+        self.assertEqual(resumed["next_stage"], "0")
+
+    def test_edit_graph_check_uses_content_audit_binding(self):
+        self.init_ws(graph="edit")
+        payload, code = run("check", str(self.ws), "content_audit")
+        self.assertEqual(code, 0, payload)
+        self.assertIn("content_audit.py", " ".join(payload["checker_argv"]))
 
     def test_init_refuses_if_pipeline_exists(self):
         self.init_ws()
@@ -592,6 +612,31 @@ except pc.StagesConfigError as e:
             self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
             self.assertIn("HARDERR", proc.stdout)
 
+    def test_corrupt_edit_config_hard_errors(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_scripts = root / "scripts"
+            fake_scripts.mkdir()
+            fake_refs = root / "references"
+            fake_refs.mkdir()
+            (fake_refs / "stages-edit.yaml").write_text(
+                'version: "0.6"\nstages:\n  - {id: "0", name: intake, gate: nope, playbook: p}\n',
+                encoding="utf-8",
+            )
+            code = self.LOADER_PROBE.replace(
+                'pc.load_stages_config(r"{cfgscript}")',
+                'pc.load_stages_config(r"{cfgscript}", graph="edit")',
+            ).format(scriptdir=str(SCRIPT.parent),
+                     cfgscript=str(fake_scripts / "pipeline_ctl.py"))
+            proc = subprocess.run(
+                [sys.executable, "-c", code], capture_output=True, text=True,
+                encoding="utf-8",
+                env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("HARDERR", proc.stdout)
+            self.assertIn("gate must be null or a map", proc.stdout)
+
     def _load_text(self, yaml_text: str):
         """Write yaml_text as <root>/references/stages.yaml and load it via a
         fresh subprocess, returning the CompletedProcess. Loader prints
@@ -644,6 +689,15 @@ except pc.StagesConfigError as e:
         )
         self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         self.assertIn("OK", proc.stdout)
+
+    def test_checker_must_be_argv_array(self):
+        proc = self._load_text(
+            'version: "0.6"\nstages:\n'
+            '  - {id: "1", name: audit, gate: {name: audit, type: script, checker: "python check.py"}, playbook: p}\n'
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("HARDERR", proc.stdout)
+        self.assertIn("argv array", proc.stdout)
 
     def test_cli_hard_errors_when_config_broken(self):
         # End-to-end: a CLI invocation whose stages.yaml fails to load must emit
@@ -1182,6 +1236,95 @@ class TestStagesConfigStrict(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         self.assertIn("HARDERR", proc.stdout)
+
+
+class TestUnknownGraphRejectedOnLoad(PipelineCtlTestCase):
+    """FINDING 1: a header `graph:` value outside {build, edit} is a HARD error
+    on every load — never silently coerced to a default graph."""
+
+    def _switch_graph(self, value):
+        pf = self.ws / "PIPELINE.md"
+        text = pf.read_text(encoding="utf-8")
+        self.assertIn('graph: "build"', text)
+        pf.write_text(text.replace('graph: "build"', f'graph: "{value}"'),
+                      encoding="utf-8")
+
+    def test_resume_hard_errors_on_unknown_graph(self):
+        self.init_ws(mode="autonomous")
+        self._switch_graph("chaos")
+        payload, code = run("resume", str(self.ws))
+        self.assertNotEqual(code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unknown graph", payload["error"].lower())
+        self.assertIn("chaos", payload["error"])
+
+    def test_advance_hard_errors_on_unknown_graph(self):
+        self.init_ws(mode="autonomous")
+        self._switch_graph("chaos")
+        payload, code = run("advance", str(self.ws), "0", "--status", "in_progress")
+        self.assertNotEqual(code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unknown graph", payload["error"].lower())
+
+
+class TestGateNotInGraphFailsClosed(PipelineCtlTestCase):
+    """FINDING 2: a gate name present in the header but ABSENT from the selected
+    graph must be refused (fail-closed) in gate/check/advance/resume — never
+    treated as a human gate (which would let an autonomous run auto_approve a
+    build script gate by switching the header to the edit graph)."""
+
+    def _init_build_then_switch_to_edit(self, mode="autonomous"):
+        self.init_ws(mode=mode)
+        pf = self.ws / "PIPELINE.md"
+        text = pf.read_text(encoding="utf-8")
+        self.assertIn('graph: "build"', text)
+        pf.write_text(text.replace('graph: "build"', 'graph: "edit"'),
+                      encoding="utf-8")
+
+    def test_gate_on_gate_absent_from_graph_refused(self):
+        # 'sane' is a build script gate; under graph=edit it does not exist.
+        self._init_build_then_switch_to_edit()
+        payload, code = run("gate", str(self.ws), "sane", "--mode", "autonomous")
+        self.assertEqual(code, 2, payload)
+        self.assertFalse(payload["ok"])
+        self.assertIn("not registered", payload["error"].lower())
+        self.assertIn("edit", payload["error"])
+        # gate must NOT have been auto_approved
+        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+        line = [l for l in text.split("```")[1].splitlines() if "name: sane" in l][0]
+        self.assertIn("state: pending", line)
+
+    def test_check_on_gate_absent_from_graph_refused(self):
+        self._init_build_then_switch_to_edit()
+        payload, code = run("check", str(self.ws), "sane")
+        self.assertEqual(code, 2, payload)
+        self.assertFalse(payload["ok"])
+
+    def test_advance_fails_closed_when_predecessor_gate_absent_from_graph(self):
+        # Header (build) stage 2 carries a pending 'design' gate; under graph=edit
+        # stage 2 has no gate and 'design' is not a registered edit gate, so
+        # resolving its type must fail-closed rather than default to human.
+        self._init_build_then_switch_to_edit()
+        payload, code = run("advance", str(self.ws), "2.5", "--status", "in_progress")
+        self.assertNotEqual(code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("not registered", payload["error"].lower())
+
+    def test_resume_fails_closed_when_awaiting_gate_absent_from_graph(self):
+        # Put stage 2 at awaiting_gate on the build graph, then switch to edit:
+        # resume reaches the pending 'design' gate whose type edit cannot resolve.
+        self.init_ws(mode="autonomous")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "awaiting_gate")
+        pf = self.ws / "PIPELINE.md"
+        text = pf.read_text(encoding="utf-8")
+        pf.write_text(text.replace('graph: "build"', 'graph: "edit"'),
+                      encoding="utf-8")
+        payload, code = run("resume", str(self.ws))
+        self.assertNotEqual(code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("not registered", payload["error"].lower())
 
 
 class TestCheckWorkspaceWithSpaces(PipelineCtlTestCase):
