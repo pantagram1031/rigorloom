@@ -13,6 +13,31 @@ EXACT actions → `output/scorecard.json`:
   (`mid_bottom_void` / `density_uniformity` / `table_proportion` /
   `heading_plus_void` — §P, all four must be true to pass). Consumes the
   **contact sheet** + hi-res only for flagged pages (§S vision economy).
+Visual-provenance requirement: for every visual-rubric claim asserted `true`,
+the scorecard author/vision-judge must record a rehashable contact-sheet
+attestation and judge identity. The canonical shared shape below covers each
+true claim in the enclosing `visual_rubric`:
+
+```json
+"visual_rubric": {
+  "mid_bottom_void": true,
+  "density_uniformity": true,
+  "table_proportion": true,
+  "heading_plus_void": true,
+  "contact_sheet": {
+    "contact_sheet_path": "output/contact-sheet.png",
+    "sha256": "<64-hex SHA-256 of that file>"
+  },
+  "judge_id": "<stable vision-judge identity>"
+}
+```
+
+`contact_sheet_path` is relative to `<WS>` (never absolute), `sha256` is the
+actual digest of that file, and `judge_id` identifies the judge that inspected
+it. If provenance is attached per claim instead, each `true` claim must carry
+those same path, hash, and judge-identity fields. A `true` claim without all
+three fails `check_scorecard.py` closed.
+
 - **reviewer-logic** (agent.worker/high): rigor, logic, numbers vs
   sim/gate_result.json, citation coverage via provenance sidecar. **Pair
   with a second independent high-reasoning pass for the numeric check**.

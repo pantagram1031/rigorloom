@@ -16,7 +16,8 @@ Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
 `bundle`. ENTRY REQUIREMENT IS THE SAME FOR ALL BACKENDS: Stage 4 done (gate
 draft ok) and Stage 4.5 `content_audit` approved via
 `python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
-NO pipeline_ctl gate for any backend (gate:null) — the verdict is internal.
+no gate of its own (`gate:null`); every backend exits through the Stage 5.3
+`format_check` script gate after assembly.
 
 POST-FREEZE CONTENT RULE (ALL BACKENDS): after Stage 4.5 passes, ANY delta to
 `bundle/content.md` invalidates that audit and every downstream artifact. This
@@ -29,6 +30,28 @@ python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
 python pipeline/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
 # Re-enter Stage 5 and rebuild every canonical output/proof from audited content.
 ```
+
+STAGE 5.3 FORMAT GATE (ALL BACKENDS): once the selected backend has produced
+its canonical deliverable, complete Stage 5 and run the registered checker:
+
+```
+python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
+python pipeline/scripts/pipeline_ctl.py check <WS> format_check
+python pipeline/scripts/pipeline_ctl.py advance <WS> 5.3 --status done
+```
+
+`format_check` runs `verify_format.py <WS> --require-output`. Because this is a
+post-assembly gate, missing `output/out.hwpx` is HARD
+(`output_missing`, exit 3); only standalone/advisory calls that omit
+`--require-output` retain the legacy skipped result. The gate hard-enforces
+declared body font, line spacing, red-marker leakage, margins, and PDF page
+bounds. When page bounds are declared but PyMuPDF is unavailable, it fails HARD
+with `page_count_unverifiable`; a declared bound may not pass unchecked. A
+graded build with no declared margin or page-bound expectation emits an
+explicit WARN naming exactly which expectation is unverifiable. Exit 2 means
+the checker could not parse its inputs; exit 3 means missing assembly output or
+a real format violation. Do not advance 5.3 after either nonzero exit. A
+successful 5.3 advance resumes at Stage 5.5.
 
 ---
 
@@ -118,18 +141,9 @@ command). vision-judge=agent.worker/medium fresh (high-capability worker=fallbac
 writer=agent.worker/high (applies needs deltas). escalation fires on
 proof-exhaust (candidates: human).
 
-POST-ASSEMBLY FORMAT CHECK: after the loop converges, run
-`python pipeline/scripts/verify_format.py <WS>` (report-only v1). It unzips
-`output/out.hwpx` and recomputes charPr/paraPr against build.yaml/form_profile
-expectations (body pt, line spacing, margins, stray formatting). Advisory for
-now — investigate any flag before delivery.
-
 EXIT + gate: verdict `converged:true` AND rubric all four keys `true`.
-Stage 5 has NO pipeline_ctl gate (gate:null) — verdict is internal.
-Advance → 5.5 (implemented order: 5 → 5.5 → 5.7 → 6):
-```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
-```
+Then run the common Stage 5.3 format-gate sequence above. Do not proceed to
+Stage 5.5 until `format_check` passes and Stage 5.3 is done.
 
 Any proof rewrite that changes `content.md` without the invalidate/re-check
 sequence is a freeze bypass; do not reuse its assembled outputs.
@@ -153,10 +167,11 @@ FAILURE table:
 ## §BUNDLE — package + render preview (zero-dependency, the any-machine floor)
 
 Selected when `doc_backend:` is absent or `bundle`. No HWP, no Hancom, no
-network — this is the tier that runs from a plain clone on any OS. The
-deliverable IS the frozen bundle plus an honest stdlib HTML preview; there is no
-form copy, no proof loop, and `verify_format` is SKIPPED (there is no `out.hwpx`
-to inspect). The 4.5 content_audit gate is unchanged and still required.
+network — this tier produces the frozen bundle plus an honest stdlib HTML
+preview. There is no form copy or proof loop. The 4.5 content_audit gate is
+unchanged and still required, but the registered Stage 5.3 gate now requires
+`output/out.hwpx`; therefore a bundle-only build is an advisory artifact and
+cannot complete the post-assembly format gate.
 
 COMMAND (CWD = `<REPO_ROOT>`):
 ```
@@ -169,11 +184,10 @@ typeset, an honest preview, `[[TABLE]]`→`<table>`), and `manifest.json`
 (file list + sha256 + `generated_at`; preview/copies carry no timestamp so they
 are byte-stable).
 
-EXIT + gate: exit 0 = deliverable written. There is NO proof rubric and NO
-`pipeline_ctl` gate. Advance:
-```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
-```
+EXIT + gate: exit 0 = deliverable written. There is no proof rubric. A direct
+standalone `verify_format.py <WS>` call may record a skipped advisory result,
+but the registered Stage 5.3 checker passes `--require-output` and fails HARD
+until an assembled `output/out.hwpx` exists.
 Exit 2 = `bundle/content.md` missing (Stage 4 not really complete) — do not
 advance; return to Stage 4.
 
@@ -191,4 +205,6 @@ Writes `<WS>/output/out.docx` (title from `build.yaml` `title:`, SECTION→
 Heading 1, figures embedded at `[[FIG width=NNmm]]` or 110mm, tables). DOCUMENTED
 v1 LIMITATION: equations render as inline italic text (the literal source), not
 OMML. Exit 5 = python-docx not installed (`pip install python-docx`); exit 2 =
-`bundle/content.md` missing. Advance the same way as §BUNDLE once written.
+`bundle/content.md` missing. Like §BUNDLE, DOCX-only output cannot satisfy the
+registered Stage 5.3 `--require-output` gate; assemble `output/out.hwpx` before
+advancing.

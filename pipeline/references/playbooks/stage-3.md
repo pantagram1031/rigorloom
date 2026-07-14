@@ -10,6 +10,8 @@ EXACT actions:
 ```
 # write + run sim in <WS>/sim/
 #   verification criteria from 01_design.md executed by code
+#   sim spec fixes one numeric RNG seed before execution (no implicit entropy)
+#   code records that seed in sim/results.json or sim/provenance.json
 #   gate code emits sim/gate_result.json  (immutable, authoritative)
 # figures → <WS>/figures/*.png  with:
 #   matplotlib.rcParams['font.family']='Malgun Gothic'
@@ -17,6 +19,12 @@ EXACT actions:
 ```
 - Verification FAIL → fix the MODEL, rerun. NEVER edit numbers or the JSON
   post-hoc (§7). scope narrowing (e.g. AFGKM만) = declared input, re-run.
+- Every fresh simulation fixes a numeric RNG `seed` in its spec and echoes the
+  same seed into `sim/results.json` or `sim/provenance.json`. An empty/string
+  seed is invalid. Before the sane gate, run
+  `python pipeline/scripts/check_numbers.py --require-seed <WS>`; a populated
+  results file without the seed is HARD. A missing/empty legacy results file is
+  only advisory until the simulation is rerun.
 - `sim/VERIFY.md`: show RAW + ADJUSTED verdict side by side. Never write
   only "all passed".
 
@@ -44,3 +52,4 @@ FAILURE table:
 | tempted to edit gate_result.json | — | contract violation (§7); forbidden |
 | figure 한글 깨짐 | font not set | set Malgun Gothic + unicode_minus=False, rerun |
 | one reviewer alone cleared numbers | single-reviewer risk | add an independent second pass |
+| check_numbers exit 3: missing/invalid seed | fresh sim omitted RNG provenance | fix the sim spec/code, rerun, and record the numeric seed |

@@ -28,6 +28,7 @@ def _pipeline_text() -> str:
         "4": "{status: done, gate: {name: draft, state: approved, by: operator, at: now}}",
         "4.5": "{status: done, gate: {name: content_audit, state: auto_approved, by: script, at: now}}",
         "5": "{status: done, gate: null}",
+        "5.3": "{status: done, gate: {name: format_check, state: auto_approved, by: script, at: now}}",
         "5.5": "{status: awaiting_gate, gate: {name: understand, state: pending, by: null, at: null}}",
         "5.7": "{status: pending, gate: null}",
         "6": "{status: pending, gate: null}",

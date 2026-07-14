@@ -8,7 +8,9 @@ object compatible with verify_content.py's hard/warn/counts/verdict shape.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +26,13 @@ BLOCKING_VERDICTS = {
     "rework",
 }
 ACCEPTING_DECISIONS = {"accept", "pass", "approved"}
+VISUAL_RUBRIC_KEYS = {
+    "mid_bottom_void",
+    "density_uniformity",
+    "table_proportion",
+    "heading_plus_void",
+}
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def _utf8_stdio() -> None:
@@ -48,6 +57,212 @@ def _nonempty(value) -> bool:
     if isinstance(value, (list, dict, str)):
         return bool(value)
     return value is True
+
+
+def _contact_sheet_entries(contexts):
+    """Collect declared contact-sheet path/hash pairs from rubric contexts."""
+    entries = []
+    found = False
+    seen_sources = set()
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        sources = [context]
+        if isinstance(context.get("provenance"), dict):
+            sources.append(context["provenance"])
+        for source in sources:
+            if id(source) in seen_sources:
+                continue
+            seen_sources.add(id(source))
+
+            if "contact_sheet_path" in source:
+                found = True
+                entries.append({
+                    "path": source.get("contact_sheet_path"),
+                    "sha256": (
+                        source.get("sha256")
+                        or source.get("contact_sheet_sha256")
+                        or source.get("contact_sheet_hash")
+                    ),
+                })
+            for key in (
+                "contact_sheet_sha256",
+                "contact_sheet_hash",
+                "contact_sheet_hashes",
+            ):
+                if key not in source:
+                    continue
+                found = True
+                value = source[key]
+                values = value if isinstance(value, list) else [value]
+                if "contact_sheet_path" not in source:
+                    entries.extend({"path": None, "sha256": item} for item in values)
+            contact_sheet = source.get("contact_sheet")
+            if isinstance(contact_sheet, dict):
+                found = True
+                entries.append({
+                    "path": contact_sheet.get("contact_sheet_path"),
+                    "sha256": contact_sheet.get("sha256"),
+                })
+            contact_sheets = source.get("contact_sheets")
+            if isinstance(contact_sheets, list):
+                found = True
+                for item in contact_sheets:
+                    entries.append({
+                        "path": item.get("contact_sheet_path") if isinstance(item, dict) else None,
+                        "sha256": item.get("sha256") if isinstance(item, dict) else item,
+                    })
+    unique = []
+    seen_entries = set()
+    for entry in entries:
+        marker = (entry.get("path"), entry.get("sha256"))
+        if marker not in seen_entries:
+            seen_entries.add(marker)
+            unique.append(entry)
+    return found, unique
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _contact_sheet_hash_errors(workspace: Path, contexts) -> tuple[bool, list[str]]:
+    found, entries = _contact_sheet_entries(contexts)
+    if not found:
+        return False, []
+    if not entries:
+        return True, ["contact-sheet attestation is empty"]
+
+    root = workspace.resolve()
+    errors = []
+    for entry in entries:
+        relative = entry.get("path")
+        expected = entry.get("sha256")
+        if not isinstance(relative, str) or not relative.strip():
+            errors.append("contact-sheet sha256 has no contact_sheet_path")
+            continue
+        if not isinstance(expected, str) or not _SHA256_RE.fullmatch(expected):
+            errors.append(f"contact-sheet sha256 is invalid: {relative}")
+            continue
+        declared = Path(relative)
+        if declared.is_absolute():
+            errors.append(f"contact_sheet_path must be workspace-relative: {relative}")
+            continue
+        candidate = (root / declared).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            errors.append(f"contact_sheet_path escapes workspace: {relative}")
+            continue
+        if not candidate.is_file():
+            errors.append(f"contact sheet missing: {relative}")
+            continue
+        try:
+            actual = _sha256_file(candidate)
+        except OSError as exc:
+            errors.append(f"contact sheet unreadable: {relative}: {exc}")
+            continue
+        if actual.casefold() != expected.casefold():
+            errors.append(f"contact sheet sha256 mismatch: {relative}")
+    return True, errors
+
+
+def _has_judge_identity(contexts) -> bool:
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        sources = [context]
+        if isinstance(context.get("provenance"), dict):
+            sources.append(context["provenance"])
+        for source in sources:
+            for key in ("judge_id", "judge_identity"):
+                value = source.get(key)
+                if isinstance(value, str) and value.strip():
+                    return True
+            judge = source.get("judge")
+            if isinstance(judge, str) and judge.strip():
+                return True
+            if isinstance(judge, dict):
+                for key in ("id", "judge_id", "identity", "name"):
+                    value = judge.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return True
+    return False
+
+
+def _visual_rubric_sections(payload):
+    """Yield visual claim mappings plus contexts that may attest them."""
+    sections = []
+    seen = set()
+
+    def add(path, section, parent):
+        if not isinstance(section, dict):
+            return
+        rubric = section
+        for key in ("rubric", "claims"):
+            candidate = section.get(key)
+            if (isinstance(candidate, dict)
+                    and VISUAL_RUBRIC_KEYS & set(candidate)):
+                rubric = candidate
+                break
+        if not VISUAL_RUBRIC_KEYS & set(rubric) or id(rubric) in seen:
+            return
+        seen.add(id(rubric))
+        sections.append((path, rubric, [rubric, section, parent]))
+
+    for obj_path, obj in _walk(payload):
+        for key in ("visual_rubric", "visual-rubric"):
+            if key in obj:
+                add(f"{obj_path}.{key}", obj.get(key), obj)
+        visual = obj.get("visual")
+        if isinstance(visual, dict):
+            add(f"{obj_path}.visual", visual, obj)
+        identity = " ".join(
+            str(obj.get(key, "")) for key in ("name", "role", "type")
+        ).lower()
+        if "vision" in identity:
+            add(f"{obj_path}.rubric", obj.get("rubric"), obj)
+    return sections
+
+
+def _visual_attestation_findings(payload, rel, workspace):
+    findings = []
+    for section_path, rubric, contexts in _visual_rubric_sections(payload):
+        for key in sorted(VISUAL_RUBRIC_KEYS & set(rubric)):
+            claim = rubric[key]
+            asserted = claim is True or (
+                isinstance(claim, dict)
+                and any(claim.get(field) is True
+                        for field in ("value", "pass", "passed"))
+            )
+            if not asserted:
+                continue
+            claim_contexts = ([claim] if isinstance(claim, dict) else []) + contexts
+            found_hashes, hash_errors = _contact_sheet_hash_errors(
+                workspace, claim_contexts
+            )
+            if found_hashes and hash_errors:
+                findings.append({
+                    "code": "visual_hash_mismatch",
+                    "msg": "; ".join(hash_errors),
+                    "at": f"{rel}:{section_path}.{key}",
+                })
+                continue
+            if found_hashes and _has_judge_identity(claim_contexts):
+                continue
+            findings.append({
+                "code": "visual_rubric_unattested",
+                "msg": (
+                    "true visual rubric claim requires a rehashable contact-sheet "
+                    f"path/hash pair and judge identity: {key}"
+                ),
+                "at": f"{rel}:{section_path}.{key}",
+            })
+    return findings
 
 
 def check(workspace: str | Path) -> tuple[dict, int]:
@@ -75,6 +290,8 @@ def check(workspace: str | Path) -> tuple[dict, int]:
         if not isinstance(payload, dict):
             hard.append({"code": "S0", "msg": "scorecard root must be a JSON object", "at": rel})
             continue
+
+        hard.extend(_visual_attestation_findings(payload, rel, ws))
 
         stop_lines = payload.get("stop_lines")
         if not isinstance(stop_lines, dict):

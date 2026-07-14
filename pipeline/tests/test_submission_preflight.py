@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -33,12 +34,14 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         (self.ws / "output" / "verdict_v06.json").write_text(
             json.dumps({"proof_grade": grade}), encoding="utf-8")
 
-    def write_hwpx(self, name="submission.hwpx", text="31415 Lee"):
+    def write_hwpx(self, name="submission.hwpx", text="31415 Lee", *, equations=False):
         target = self.ws / "output" / name
+        equation = "<hp:equation/>" if equations else ""
         with zipfile.ZipFile(target, "w") as archive:
             archive.writestr(
                 "Contents/section0.xml",
-                f'<?xml version="1.0" encoding="UTF-8"?><doc><p>{text}</p></doc>',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                f'<doc xmlns:hp="urn:hancom"><p>{text}</p>{equation}</doc>',
             )
         return target
 
@@ -52,7 +55,12 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         )
         self.write_hwpx()
         self.write_proof_grade()
-        verdict, code = submission_preflight.check(self.ws)
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": True}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
         self.assertEqual(code, 0, verdict)
         self.assertEqual(verdict["artifact"], "output/submission.hwpx")
         self.assertEqual(verdict["proof_grade"], "hancom")
@@ -130,6 +138,79 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         verdict, code = submission_preflight.check(self.ws, allow_unproven=True)
         self.assertEqual(code, 0, verdict)
         self.assertTrue(any("draft" in note for note in verdict["notes"]))
+
+    def test_hancom_grade_without_local_hancom_is_unverifiable_here(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx()
+        self.write_proof_grade("hancom")
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": False}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "proof_grade_unverifiable_here"
+            for item in verdict["hard"]
+        ), verdict)
+
+    def test_advisory_grade_with_equations_is_unverifiable(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx(equations=True)
+        self.write_proof_grade("advisory")
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": False}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "proof_grade_unverifiable_here"
+            for item in verdict["hard"]
+        ), verdict)
+
+    def test_advisory_no_equations_allows_explicit_draft_escape(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx()
+        self.write_proof_grade("advisory")
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": False}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(
+                self.ws,
+                allow_advisory=True,
+                reason="delivery host lacks the print-grade renderer",
+            )
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any("draft" in note for note in verdict["notes"]))
+        self.assertEqual(
+            verdict["advisory_reason"],
+            "delivery host lacks the print-grade renderer",
+        )
+
+    def test_allow_advisory_without_reason_is_usage_error(self):
+        verdict, code = submission_preflight.check(
+            self.ws, allow_advisory=True
+        )
+
+        self.assertEqual(code, 2, verdict)
+        self.assertIn("--reason", verdict["error"])
 
     def test_newer_scorecard_cannot_spoof_canonical_proof_grade(self):
         self.write_header("output/submission.hwpx")
