@@ -1,6 +1,7 @@
 """Tests for content_audit.py — the composite stage 4.5 gate.
 
-Runs the REAL sub-checker chain (verify_content.py + check_style.py) against a
+Runs the REAL sub-checker chain (verify_content.py + check_style.py +
+check_numbers.py) against a
 synthetic workspace. Synthetic fixtures ONLY (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -11,8 +12,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "content_audit.py"
@@ -24,15 +27,24 @@ _spec.loader.exec_module(content_audit)
 class ContentAuditTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self._env_patch = mock.patch.dict(os.environ, clear=False)
+        self._env_patch.start()
+        os.environ.pop("RIGORLOOM_PROFILE_ROOT", None)
         self.ws = Path(self._tmp.name) / "report-synthetic"
         (self.ws / "bundle" / "figures").mkdir(parents=True, exist_ok=True)
         (self.ws / "bundle" / "figures" / "plot.png").write_bytes(b"\x89PNG\r\n")
 
     def tearDown(self):
+        self._env_patch.stop()
         self._tmp.cleanup()
 
     def write_content(self, text: str):
         (self.ws / "bundle" / "content.md").write_text(text, encoding="utf-8")
+
+    def write_results(self, payload):
+        (self.ws / "sim").mkdir(exist_ok=True)
+        (self.ws / "sim" / "results.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     def make_profile_root_with_structure(self) -> Path:
         root = Path(self._tmp.name) / "profile"
@@ -43,6 +55,13 @@ class ContentAuditTestCase(unittest.TestCase):
                      "citation_style": {"sources": "papers_books_only", "in_text": "narrative"}}
         (packs / "report_structure.json").write_text(
             json.dumps(structure, ensure_ascii=False), encoding="utf-8")
+        return root
+
+    def make_profile_root_with_number_allowlist(self) -> Path:
+        root = Path(self._tmp.name) / "profile-numbers"
+        packs = root / "packs"
+        packs.mkdir(parents=True, exist_ok=True)
+        (packs / "numeral_allowlist.txt").write_text("12\n", encoding="utf-8")
         return root
 
     def _clean_body(self) -> str:
@@ -61,6 +80,146 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(code, 0, verdict)
         self.assertTrue(verdict["ok"])
         self.assertEqual(verdict["counts"]["hard"], 0)
+        self.assertEqual(
+            set(verdict["sub_exit"]),
+            {"verify_content", "check_style", "check_numbers"},
+        )
+
+    def test_number_checker_is_third_composed_gate(self):
+        self.write_content("# Result\nThe measured level was 7.654 dB.\n")
+        self.write_results({"seed": 21, "level_db": 1.234})
+
+        verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(
+            item.get("source") == "check_numbers"
+            and item.get("code") == "unbacked_numeral"
+            for item in verdict["warn"]
+        ))
+
+    def test_profile_number_allowlist_is_forwarded(self):
+        self.write_content("# Method\nIn 2024, 12 trials used 3.25 ms each.\n")
+        self.write_results({"seed": 21, "duration_ms": 3.25})
+        root = self.make_profile_root_with_number_allowlist()
+
+        verdict, code = content_audit.check(str(self.ws), profile_root=str(root))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            h.get("source") == "check_numbers" for h in verdict["hard"]
+        ))
+
+    def test_valid_operator_pack_passes_schema_validation(self):
+        self.write_content(self._clean_body())
+        root = self.make_profile_root_with_structure()
+
+        verdict, code = content_audit.check(
+            str(self.ws), profile_root=str(root))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(verdict["ok"])
+
+    def test_neutral_defaults_pass_without_profile_validation(self):
+        self.write_content(self._clean_body())
+
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop("RIGORLOOM_PROFILE_ROOT", None)
+            verdict, code = content_audit.check(str(self.ws), profile_root=None)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(verdict["ok"])
+
+    def test_environment_profile_is_validated_and_forwarded(self):
+        self.write_content(
+            "# Method\nIn 2024, 12 trials used 3.25 ms each.\n"
+            "선행 연구(김철수, 2020)는 이 현상을 다루었다.\n"
+        )
+        self.write_results({"seed": 21, "duration_ms": 3.25})
+        root = self.make_profile_root_with_structure()
+        (root / "packs" / "numeral_allowlist.txt").write_text(
+            "12\n", encoding="utf-8"
+        )
+
+        with mock.patch.dict(
+            os.environ, {"RIGORLOOM_PROFILE_ROOT": str(root)}, clear=False
+        ):
+            verdict, code = content_audit.check(str(self.ws), profile_root=None)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item.get("source") == "check_style" and item.get("code") == "CITE"
+            for item in verdict["hard"]
+        ), verdict)
+        self.assertFalse(any(
+            item.get("source") == "check_numbers"
+            and item.get("code") == "unbacked_numeral"
+            for item in verdict["hard"] + verdict["warn"]
+        ), verdict)
+
+    def test_explicit_profile_precedes_environment_profile(self):
+        self.write_content("# Method\nIn 2024, 12 trials used 3.25 ms each.\n")
+        self.write_results({"seed": 21, "duration_ms": 3.25})
+        environment_root = self.make_profile_root_with_structure()
+        explicit_root = self.make_profile_root_with_number_allowlist()
+
+        with mock.patch.dict(
+            os.environ,
+            {"RIGORLOOM_PROFILE_ROOT": str(environment_root)},
+            clear=False,
+        ):
+            verdict, code = content_audit.check(
+                str(self.ws), profile_root=str(explicit_root)
+            )
+
+        self.assertEqual(code, 0, verdict)
+
+
+class TestPackSchema(ContentAuditTestCase):
+    def test_invalid_operator_pack_fails_closed_before_forwarding(self):
+        self.write_content(self._clean_body())
+        root = self.make_profile_root_with_structure()
+        pack_path = root / "packs" / "report_structure.json"
+        payload = json.loads(pack_path.read_text(encoding="utf-8"))
+        payload["citations"] = payload.pop("citation_style")
+        pack_path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        verdict, code = content_audit.check(
+            str(self.ws), profile_root=str(root))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "pack_schema_invalid"
+            for item in verdict["hard"]
+        ), verdict)
+
+    def test_environment_figure_pack_is_schema_validated(self):
+        self.write_content(self._clean_body())
+        root = Path(self._tmp.name) / "profile-figures"
+        packs = root / "packs"
+        packs.mkdir(parents=True)
+        (packs / "figure_style.json").write_text(
+            json.dumps({
+                "schema": "x",
+                "pack_type": "figure_style",
+                "name": "incomplete",
+                "version": 1,
+            }),
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(
+            os.environ, {"RIGORLOOM_PROFILE_ROOT": str(root)}, clear=False
+        ):
+            verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "pack_schema_invalid"
+            and "figure_style" in item["msg"]
+            for item in verdict["hard"]
+        ), verdict)
 
 
 class TestPoliteEnding(ContentAuditTestCase):
@@ -90,7 +249,7 @@ class TestCitation(ContentAuditTestCase):
 
 class TestUsage(ContentAuditTestCase):
     def test_missing_content_md_is_nonzero(self):
-        # no bundle/content.md -> both sub-checkers usage-error -> nonzero.
+        # no bundle/content.md -> all three sub-checkers are nonzero.
         verdict, code = content_audit.check(str(self.ws))
         self.assertNotEqual(code, 0)
         self.assertFalse(verdict["ok"])

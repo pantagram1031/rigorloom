@@ -241,7 +241,7 @@ class TestInvalidate(PipelineCtlTestCase):
 
         payload, code = run("invalidate", str(self.ws), "--from", "3", "--reason", "bad sim data")
         self.assertEqual(code, 0, payload)
-        self.assertEqual(sorted(payload["reset_stages"]), sorted(["3", "4", "4.5", "5", "5.5", "5.7", "6"]))
+        self.assertEqual(sorted(payload["reset_stages"]), sorted(["3", "4", "4.5", "5", "5.3", "5.5", "5.7", "6"]))
 
         text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
         header_part = text.split("```")[1]
@@ -251,7 +251,7 @@ class TestInvalidate(PipelineCtlTestCase):
             line = [l for l in header_part.splitlines() if f'"{s}":' in l][0]
             self.assertIn("status: done", line)
         # stage 3 and later should be pending
-        for s in ["3", "4", "4.5", "5", "5.5", "5.7", "6"]:
+        for s in ["3", "4", "4.5", "5", "5.3", "5.5", "5.7", "6"]:
             line = [l for l in header_part.splitlines() if f'"{s}":' in l][0]
             self.assertIn("status: pending", line)
         # stage 4's draft gate should be reset to pending/null
@@ -565,13 +565,13 @@ except pc.StagesConfigError as e:
              "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
              "rows = pc.load_stages_config(); "
              "ids = [r['id'] for r in rows]; "
-             "assert ids == ['0','1','2','2.5','3','4','4.5','5','5.5','5.7','6'], ids; "
+             "assert ids == ['0','1','2','2.5','3','4','4.5','5','5.3','5.5','5.7','6'], ids; "
              "print('OK', len(rows))" % str(SCRIPT.parent)],
             capture_output=True, text=True, encoding="utf-8",
             env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
         )
         self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
-        self.assertIn("OK 11", proc.stdout)
+        self.assertIn("OK 12", proc.stdout)
 
     def test_missing_config_hard_errors(self):
         with tempfile.TemporaryDirectory() as td:
@@ -759,6 +759,22 @@ class TestStage25Ordering(PipelineCtlTestCase):
         self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         self.assertIn("OK", proc.stdout)
 
+    def test_stage_order_includes_5_3_between_5_and_5_5(self):
+        script = (
+            "import sys; sys.path.insert(0, r'%s'); import pipeline_ctl as pc; "
+            "o = pc.STAGE_ORDER; "
+            "assert '5.3' in o, o; "
+            "assert o.index('5') < o.index('5.3') < o.index('5.5'), o; "
+            "print('OK')"
+        ) % str(SCRIPT.parent)
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"},
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        self.assertIn("OK", proc.stdout)
+
     def test_resume_advances_through_2_5_before_3(self):
         self.init_ws(mode="autonomous")
         run("advance", str(self.ws), "0", "--status", "done")
@@ -927,6 +943,16 @@ class TestCheckSubcommand(PipelineCtlTestCase):
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["state"], "rejected")
         self.assertIn("content_audit.py", " ".join(payload["checker_argv"]))
+
+    def test_format_gate_requires_assembled_hwpx(self):
+        self.init_ws(mode="autonomous")
+
+        payload, code = run("check", str(self.ws), "format_check")
+
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "rejected")
+        self.assertEqual(payload["exit"], 3)
+        self.assertIn("--require-output", payload["checker_argv"])
 
     def test_check_understand_night_requires_questions_and_records_pending(self):
         self.init_ws(mode="night")
@@ -1142,6 +1168,24 @@ stages:
         payload, code = run("advance", str(self.ws), "6", "--status", "done")
         self.assertEqual(code, 0, payload)
 
+    def test_header_without_5_3_resumes_directly_to_5_5(self):
+        self._write_v05_ws()
+        pf = self.ws / "PIPELINE.md"
+        text = pf.read_text(encoding="utf-8")
+        text = text.replace('"3":   {status: in_progress, gate: null}',
+                            '"3":   {status: done, gate: null}')
+        text = text.replace(
+            '"4":   {status: pending, gate: {name: draft, state: pending, by: null, at: null}}',
+            '"4":   {status: done, gate: {name: draft, state: auto_approved, by: autonomous, at: 2026-07-01T09:02:00}}')
+        text = text.replace('"5":   {status: pending, gate: null}',
+                            '"5":   {status: done, gate: null}')
+        pf.write_text(text, encoding="utf-8")
+
+        payload, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["next_stage"], "5.5")
+        self.assertNotIn('"5.3":', pf.read_text(encoding="utf-8"))
+
 
 class TestGateRefusesScriptType(PipelineCtlTestCase):
     """BLOCKER 1: `gate <ws> <script_gate>` must be refused (usage error),
@@ -1311,6 +1355,16 @@ class TestStagesConfigStrict(unittest.TestCase):
         import pipeline_ctl
         rows = pipeline_ctl.load_stages_config()
         by_id = {str(row["id"]): row for row in rows}
+        self.assertEqual(by_id["5.3"]["gate"], {
+            "name": "format_check",
+            "type": "script",
+            "checker": [
+                "python",
+                "{PIPELINE_SCRIPTS}/verify_format.py",
+                "{WS}",
+                "--require-output",
+            ],
+        })
         self.assertEqual(by_id["5.5"]["gate"], {
             "name": "understand",
             "type": "script",

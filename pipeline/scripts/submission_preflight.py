@@ -5,6 +5,11 @@
 Exit 0 = pass, 3 = HARD finding, 2 = usage error. ``request.yaml`` is parsed
 with a deliberately small top-level line scanner; absent optional keys produce
 notes, while artifact extension/size/reopen and proof-grade checks always run.
+
+The current proof handshake compares the recorded grade with local renderer
+capabilities. Full artifact-bound proof receipts are deferred to later
+attestation work. Until then, ``--allow-advisory`` is an explicit draft escape
+that requires a non-empty reason and records it in the verdict JSON.
 """
 from __future__ import annotations
 
@@ -16,6 +21,8 @@ import sys
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
+
+import render_probe
 
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
@@ -261,8 +268,23 @@ def check(
     workspace: str | Path,
     *,
     allow_unproven: bool = False,
+    allow_advisory: bool = False,
+    reason: str | None = None,
 ) -> tuple[dict, int]:
     ws = Path(workspace)
+    advisory_reason = str(reason).strip() if reason is not None else ""
+    if allow_advisory and not advisory_reason:
+        return {
+            "ok": False,
+            "workspace": str(ws),
+            "checker": "submission_preflight",
+            "error": "--allow-advisory requires a non-empty --reason",
+            "advisory_reason": None,
+            "hard": [],
+            "warn": [],
+            "counts": {"hard": 0, "warn": 0},
+            "verdict": "usage_error",
+        }, 2
     hard: list[dict] = []
     warn: list[dict] = []
     notes: list[str] = []
@@ -281,6 +303,7 @@ def check(
 
     artifact, artifact_rel = _select_artifact(ws, pattern)
     extracted_text = ""
+    document_has_equations = False
     if artifact is None:
         hard.append({"code": "P1", "msg": "canonical submission artifact is missing or ambiguous",
                      "at": "output/out.*"})
@@ -305,6 +328,8 @@ def check(
         else:
             try:
                 extracted_text = _hwpx_text(artifact) if suffix == ".hwpx" else _pdf_text(artifact)
+                if suffix == ".hwpx":
+                    document_has_equations = render_probe.hwpx_has_equations(artifact)
             except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
                 hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
                              "at": artifact_rel})
@@ -319,6 +344,7 @@ def check(
                              "at": artifact_rel or "request.yaml"})
 
     grade, grade_source = _proof_grade(ws)
+    delivery_capabilities = None
     if grade == "none" and allow_unproven:
         notes.append("draft explicitly allows proof_grade none (--allow-unproven)")
     elif grade not in SUBMISSION_PROOF_GRADES:
@@ -327,6 +353,33 @@ def check(
             "msg": "graded submission proof_grade must be hancom or advisory",
             "at": ASSEMBLY_VERDICT_REL.as_posix(),
         })
+    else:
+        probe_result = render_probe.probe()
+        capabilities = probe_result.get("capabilities", {})
+        delivery_capabilities = {
+            "hancom_com": capabilities.get("hancom_com") is True,
+            "h2orestart": capabilities.get("h2orestart"),
+        }
+        reasons = []
+        if grade == "hancom" and not delivery_capabilities["hancom_com"]:
+            reasons.append(
+                "recorded Hancom proof cannot be reproduced on this delivery machine")
+        if grade == "advisory" and document_has_equations:
+            reasons.append(
+                "advisory proof is not meaningful for an equation-bearing document")
+        if reasons and not allow_advisory:
+            hard.append({
+                "code": "proof_grade_unverifiable_here",
+                "msg": "; ".join(reasons),
+                "at": artifact_rel or ASSEMBLY_VERDICT_REL.as_posix(),
+            })
+        elif reasons:
+            notes.append(
+                "draft explicitly accepts locally unverifiable/advisory proof "
+                "(--allow-advisory)")
+        elif grade == "advisory" and allow_advisory:
+            notes.append(
+                "draft explicitly accepts advisory proof (--allow-advisory)")
 
     verdict = {
         "ok": not hard,
@@ -335,6 +388,9 @@ def check(
         "proof_grade": grade,
         "proof_grade_source": (grade_source.relative_to(ws).as_posix()
                                if grade_source else None),
+        "delivery_capabilities": delivery_capabilities,
+        "document_has_equations": document_has_equations,
+        "advisory_reason": advisory_reason if allow_advisory else None,
         "notes": notes,
         "hard": hard,
         "warn": warn,
@@ -354,8 +410,23 @@ def main(argv=None) -> int:
         action="store_true",
         help="allow proof_grade none for an explicit draft run only",
     )
+    parser.add_argument(
+        "--allow-advisory",
+        action="store_true",
+        help="allow locally unverifiable/advisory proof for an explicit draft only",
+    )
+    parser.add_argument(
+        "--reason",
+        default=None,
+        help="non-empty audit reason required with --allow-advisory",
+    )
     args = parser.parse_args(argv)
-    verdict, code = check(args.workspace, allow_unproven=args.allow_unproven)
+    verdict, code = check(
+        args.workspace,
+        allow_unproven=args.allow_unproven,
+        allow_advisory=args.allow_advisory,
+        reason=args.reason,
+    )
     rendered = json.dumps(verdict, ensure_ascii=False, indent=2)
     if args.out:
         target = Path(args.out)
