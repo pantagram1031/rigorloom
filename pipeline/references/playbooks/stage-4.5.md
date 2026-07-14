@@ -24,7 +24,7 @@ EXACT actions:
    in Stage 4 (facts never change to make a style proposal pass).
 3. Resolve the script gate — this RUNS the bound composite checker
    (`content_audit.py`: `verify_content.py`, then `check_style.py`, then
-   `check_numbers.py --require-seed`); it does not accept a hand-supplied
+   `check_numbers.py --require-seed`, then `check_refs.py`); it does not accept a hand-supplied
    verdict:
    ```
    # cd <REPO_ROOT>/
@@ -41,6 +41,9 @@ EXACT actions:
    WARN rules (괄호-영어 gloss, numbered refs, unmatched in-text cites, and
    body numerals absent from recursively collected `sim/results.json` values)
    never fail the gate; suspect numerals remain visible for human review.
+   check_refs.py is fully advisory: caption-number gaps/duplicates, dangling
+   figure/table references, and unreferenced figures are WARN suspects for
+   human review and never fail the gate.
    Pass report-specific proper nouns via `--allowlist` if the checker is invoked
    directly for triage. Legitimate non-simulation numbers may be listed in
    `<PROFILE_ROOT>/packs/numeral_allowlist.txt` (one exact number per line).
