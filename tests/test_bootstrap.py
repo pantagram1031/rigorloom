@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
+
+from scripts import bootstrap
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "bootstrap.py"
@@ -69,3 +72,15 @@ def test_bootstrap_skip_smoke(tmp_path: Path):
     # Profile is still set up, but no smoke workspace is created.
     assert (tmp_path / "prof" / "packs").is_dir()
     assert not (tmp_path / "ws" / "report-bootstrap-smoke").exists()
+
+
+def test_render_probe_failure_is_informational(monkeypatch, capsys):
+    broken_probe = types.SimpleNamespace(
+        probe=lambda: (_ for _ in ()).throw(OSError("probe failed")),
+        format_table=lambda result: str(result),
+    )
+    monkeypatch.setitem(sys.modules, "render_probe", broken_probe)
+
+    bootstrap._print_render_capabilities()
+
+    assert "Render capability matrix: unavailable (probe failed)" in capsys.readouterr().out

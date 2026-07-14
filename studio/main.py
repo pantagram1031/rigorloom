@@ -8,14 +8,20 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 
 app = FastAPI(title="Rigorloom Studio", version="0.7")
 
 REPO_ROOT = Path(__file__).parent.parent
 _LINT_CACHE: dict[str, tuple[float, dict]] = {}
+_LINT_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_LINT_CACHE_LOCKS_GUARD = threading.Lock()
+_CAPABILITY_CACHE: dict | None = None
+_CAPABILITY_CACHE_LOCK = threading.Lock()
 _ACTION_KINDS = {
     "check-gate", "approve-human-gate", "run-content-audit", "build-bundle",
+    "build-hwpx",
 }
 
 # CSRF guard for action-mode POSTs (contract §8b): a hostile web page browsed
@@ -59,6 +65,76 @@ def _slugs():
         p.name for p in root.iterdir()
         if p.is_dir() and _SLUG_RE.fullmatch(p.name)
     )
+
+
+def _probe_capability_status() -> dict:
+    """Probe render capabilities once per Studio process.
+
+    The probe stays in a subprocess so an optional dependency import or a
+    platform-specific detector cannot destabilize the dashboard process.
+    """
+    unavailable = {
+        "available": False,
+        "chips": [{"key": "probe", "label": "probe n/a", "available": False}],
+        "renderers": [],
+        "hwpx_available": bool(os.environ.get("HWP_MASTER_SCRIPTS", "").strip()),
+    }
+    script = REPO_ROOT / "pipeline" / "scripts" / "render_probe.py"
+    if not script.is_file():
+        return unavailable
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(script), "--json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, check=False,
+        )
+        if completed.returncode != 0:
+            raise ValueError("render probe failed")
+        payload = json.loads(completed.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError("render probe JSON must be an object")
+        caps = payload.get("capabilities")
+        renderers = payload.get("renderers")
+        if not isinstance(caps, dict) or not isinstance(renderers, list):
+            raise ValueError("render probe schema mismatch")
+
+        h2o_value = caps.get("h2orestart")
+        h2o_available = (
+            h2o_value is True or
+            (isinstance(h2o_value, str) and h2o_value.lower() in {"yes", "true", "available"})
+        )
+        normalized_renderers = [item for item in renderers if isinstance(item, (dict, str))]
+        chips = [
+            {"key": "hancom_com", "label": "Hancom COM",
+             "available": bool(caps.get("hancom_com"))},
+            {"key": "soffice", "label": "soffice",
+             "available": bool(caps.get("soffice_path") or caps.get("soffice"))},
+            {"key": "soffice_wsl", "label": "soffice(WSL)",
+             "available": bool(caps.get("soffice_wsl"))},
+            {"key": "h2orestart", "label": "H2Orestart",
+             "available": h2o_available},
+        ]
+        return {
+            "available": True,
+            "chips": chips,
+            "renderers": normalized_renderers,
+            "hwpx_available": bool(normalized_renderers) or bool(
+                os.environ.get("HWP_MASTER_SCRIPTS", "").strip()
+            ),
+        }
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+        return unavailable
+
+
+def _capability_status() -> dict:
+    global _CAPABILITY_CACHE
+    if _CAPABILITY_CACHE is not None:
+        return _CAPABILITY_CACHE
+    with _CAPABILITY_CACHE_LOCK:
+        if _CAPABILITY_CACHE is None:
+            _CAPABILITY_CACHE = _probe_capability_status()
+        return _CAPABILITY_CACHE
 
 
 # ── PIPELINE.md v0.4 YAML-header parser (contract §2, stdlib only) ────
@@ -630,6 +706,88 @@ def _verify_pdf_stem(base: Path, canonical: str):
     return stems[-1]
 
 
+_PROOF_LABELS = {
+    "hancom": ("제출급 증명", "submission proof", "proof-hancom"),
+    "advisory": ("참고용 렌더 (LibreOffice)", "advisory render", "proof-advisory"),
+    "none": ("렌더 증명 없음", "no render proof", "proof-none"),
+}
+
+
+def _verdict_body(payload: dict) -> dict:
+    """Accept direct verdicts and the common wrapper shapes emitted by loops."""
+    current = payload
+    for key in ("verdict", "result"):
+        nested = current.get(key) if isinstance(current, dict) else None
+        if isinstance(nested, dict) and (
+            "proof_grade" in nested or "verdict" in nested
+        ):
+            current = nested
+    nested = current.get("verdict") if isinstance(current, dict) else None
+    return nested if isinstance(nested, dict) else current
+
+
+def _gappy_pages(verdict: dict) -> list:
+    raw = verdict.get("gappy_pages")
+    if raw is None:
+        raw = verdict.get("gappy_page_list")
+    if raw is None:
+        raw = verdict.get("gappy")
+    if isinstance(raw, dict):
+        raw = [key for key, value in raw.items() if value]
+    if not isinstance(raw, list):
+        return []
+    pages = []
+    for item in raw:
+        if isinstance(item, dict):
+            item = item.get("page", item.get("page_number", item.get("index")))
+        if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+            pages.append(item)
+    return pages
+
+
+# Bind to the assembler's ONE canonical verdict file — a UI that trusted the
+# newest *verdict*.json could be spoofed by dropping a newer advisory file.
+_CANONICAL_VERDICT_REL = "output/verdict_v06.json"
+
+
+def _workspace_verdict(base: Path) -> dict:
+    """Return the proof grade from the assembler's canonical verdict file only."""
+    empty_label = _PROOF_LABELS["none"]
+    empty = {
+        "available": False, "source": None, "proof_grade": "none",
+        "proof_label": empty_label[0], "proof_label_en": empty_label[1],
+        "proof_badge_class": empty_label[2], "gappy_pages": [],
+        "needs_count": 0, "renderer_failed": False,
+    }
+    path = base / "output" / "verdict_v06.json"
+    if not path.is_file():
+        return empty
+    for _ in (path,):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                break
+            verdict = _verdict_body(payload)
+            if not isinstance(verdict, dict):
+                break
+            grade = str(verdict.get("proof_grade") or "none").lower()
+            if grade not in _PROOF_LABELS:
+                grade = "none"
+            label = _PROOF_LABELS[grade]
+            needs = verdict.get("needs")
+            return {
+                "available": True, "source": path.name, "proof_grade": grade,
+                "proof_label": label[0], "proof_label_en": label[1],
+                "proof_badge_class": label[2],
+                "gappy_pages": _gappy_pages(verdict),
+                "needs_count": len(needs) if isinstance(needs, list) else 0,
+                "renderer_failed": verdict.get("renderer_failed", False),
+            }
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return empty
+
+
 # ── stage → artifact map for the ledger ──────────────────────────────
 
 _STAGE_FILES = {
@@ -673,7 +831,17 @@ def workspace_state(slug: str):
     fill_status = _fill_status(build, page_count, structure)
     return {**pipeline, "structure": structure, "pdf_pages": pdf_pages,
             "pdf_stem": stem, "page_count": page_count,
-            "fill": fill_status}
+            "fill": fill_status, "verdict": _workspace_verdict(base)}
+
+
+@app.get("/capabilities")
+def capabilities():
+    return _capability_status()
+
+
+@app.get("/workspace/{slug}/verdict")
+def workspace_verdict(slug: str):
+    return _workspace_verdict(safe_workspace(slug))
 
 
 def _actions_enabled() -> bool:
@@ -736,8 +904,18 @@ def _last_event_timestamp(base: Path):
     return None
 
 
+def _lint_cache_lock(key: str) -> threading.Lock:
+    with _LINT_CACHE_LOCKS_GUARD:
+        return _LINT_CACHE_LOCKS.setdefault(key, threading.Lock())
+
+
 def _lint_result(base: Path) -> dict:
     key = str(base.resolve())
+    with _lint_cache_lock(key):
+        return _lint_result_locked(base, key)
+
+
+def _lint_result_locked(base: Path, key: str) -> dict:
     now = time.monotonic()
     cached = _LINT_CACHE.get(key)
     if cached and now - cached[0] < 60:
@@ -817,8 +995,11 @@ def _workspace_summary(slug: str) -> dict:
 
 @app.get("/dashboard")
 def dashboard():
+    capability_status = _capability_status()
     return {"workspaces": [_workspace_summary(slug) for slug in _slugs()],
-            "actions_enabled": _actions_enabled()}
+            "actions_enabled": _actions_enabled(),
+            "capabilities": capability_status,
+            "hwpx_available": capability_status["hwpx_available"]}
 
 
 @app.get("/workspace/{slug}/gate-checks")
@@ -923,10 +1104,14 @@ def workspace_action(
     elif kind == "run-content-audit":
         argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
                                     "content_audit.py"), str(base.resolve())]
-    else:
+    elif kind == "build-bundle":
         argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
                                     "doc_backend.py"), str(base.resolve()),
                 "--backend", "bundle"]
+    else:  # build-hwpx (kind is enum-validated above)
+        argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
+                                    "doc_backend.py"), str(base.resolve()),
+                "--backend", "hwpx"]
 
     try:
         completed = subprocess.run(
@@ -1459,8 +1644,11 @@ def start_prompt(topic: str, subject: str = "", form: str = "", conditions: str 
 @app.get("/")
 def root():
     template = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
+    capability_status = _capability_status()
     bootstrap = {"workspaces": [_workspace_summary(slug) for slug in _slugs()],
-                 "actions_enabled": _actions_enabled()}
+                 "actions_enabled": _actions_enabled(),
+                 "capabilities": capability_status,
+                 "hwpx_available": capability_status["hwpx_available"]}
     page = template.replace("__STUDIO_BOOTSTRAP__", json.dumps(bootstrap))
     page = page.replace("__STUDIO_ACTION_TOKEN__", _html.escape(_ACTION_TOKEN or ""))
     return Response(page, media_type="text/html",

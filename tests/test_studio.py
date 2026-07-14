@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -394,3 +396,241 @@ def test_lint_badge_is_na_for_unparseable_output(tmp_path: Path, monkeypatch):
     result = studio._lint_result(ws)
 
     assert result == {"state": "na", "label": "lint n/a", "hard": []}
+
+
+def test_lint_probe_is_single_flight_per_workspace(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    script = repo / "pipeline" / "scripts" / "workflow_lint.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# feature detected", encoding="utf-8")
+    ws = tmp_path / "report-demo"
+    ws.mkdir()
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        entered.set()
+        assert release.wait(timeout=2)
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"findings": []}), stderr="",
+        )
+
+    monkeypatch.setattr(studio, "REPO_ROOT", repo)
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+    studio._LINT_CACHE.clear()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(studio._lint_result, ws)
+        assert entered.wait(timeout=2)
+        second_started = threading.Event()
+
+        def call_second():
+            second_started.set()
+            return studio._lint_result(ws)
+
+        second = pool.submit(call_second)
+        assert second_started.wait(timeout=2)
+        threading.Event().wait(0.05)
+        release.set()
+        assert first.result(timeout=2) == second.result(timeout=2)
+
+    assert len(calls) == 1
+
+
+def test_capability_strip_renders_probe_results_once(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    probe = repo / "pipeline" / "scripts" / "render_probe.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("def probe(): return {}", encoding="utf-8")
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "capabilities": {
+                    "hancom_com": True, "soffice": False,
+                    "soffice_wsl": True, "h2orestart": False,
+                },
+                "renderers": [{"name": "soffice-wsl"}],
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr(studio, "REPO_ROOT", repo)
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+    studio._CAPABILITY_CACHE = None
+
+    first = studio._capability_status()
+    second = studio._capability_status()
+    page = studio.root().body.decode("utf-8")
+
+    assert first == second
+    assert len(calls) == 1
+    assert calls[0][0][0] == studio.sys.executable
+    assert calls[0][1]["timeout"] == 20
+    assert [(chip["label"], chip["available"]) for chip in first["chips"]] == [
+        ("Hancom COM", True), ("soffice", False),
+        ("soffice(WSL)", True), ("H2Orestart", False),
+    ]
+    assert "Hancom COM" in page
+    assert 'id="dashboard-capabilities"' in page
+    assert 'id="detail-capabilities"' in page
+
+
+def test_capability_probe_is_single_flight(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    probe = repo / "pipeline" / "scripts" / "render_probe.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("def probe(): return {}", encoding="utf-8")
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        entered.set()
+        assert release.wait(timeout=2)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"capabilities": {}, "renderers": []}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(studio, "REPO_ROOT", repo)
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+    studio._CAPABILITY_CACHE = None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(studio._capability_status)
+        assert entered.wait(timeout=2)
+        second_started = threading.Event()
+
+        def call_second():
+            second_started.set()
+            return studio._capability_status()
+
+        second = pool.submit(call_second)
+        assert second_started.wait(timeout=2)
+        threading.Event().wait(0.05)
+        release.set()
+        assert first.result(timeout=2) == second.result(timeout=2)
+
+    assert len(calls) == 1
+
+
+def test_capability_strip_renders_probe_na_when_module_missing(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(studio, "REPO_ROOT", tmp_path)
+    studio._CAPABILITY_CACHE = None
+
+    status = studio._capability_status()
+    page = studio.root().body.decode("utf-8")
+
+    assert status["available"] is False
+    assert status["chips"] == [{"key": "probe", "label": "probe n/a", "available": False}]
+    assert "probe n/a" in page
+
+
+def test_build_hwpx_action_uses_guarded_argv(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="built", stderr="")
+
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+
+    result = studio.workspace_action(
+        "report-demo", "build-hwpx",
+        x_studio_token="test-token", host="localhost:8000",
+    )
+
+    assert result["argv"] == [
+        studio.sys.executable,
+        str(studio.REPO_ROOT / "pipeline" / "scripts" / "doc_backend.py"),
+        str(ws.resolve()), "--backend", "hwpx",
+    ]
+    assert result["exit_code"] == 0
+    assert "shell" not in calls[0][1]
+
+
+@pytest.mark.parametrize(
+    ("grade", "label", "badge_class"),
+    [
+        ("hancom", "submission proof", "proof-hancom"),
+        ("advisory", "advisory render", "proof-advisory"),
+        ("none", "no render proof", "proof-none"),
+    ],
+)
+def test_proof_grade_badges_from_verdict_files(
+    tmp_path: Path, monkeypatch, grade: str, label: str, badge_class: str,
+):
+    root = tmp_path / "workspaces"
+    output = root / "report-demo" / "output"
+    output.mkdir(parents=True)
+    (output / "verdict_v06.json").write_text(json.dumps({
+        "proof_grade": grade,
+        "gappy_pages": [2, 4],
+        "needs": ["tighten", "rerender"],
+        "renderer_failed": grade == "none",
+    }), encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    verdict = studio.workspace_verdict("report-demo")
+
+    assert verdict["available"] is True
+    assert verdict["proof_grade"] == grade
+    assert verdict["proof_label_en"] == label
+    assert verdict["proof_badge_class"] == badge_class
+    assert verdict["gappy_pages"] == [2, 4]
+    assert verdict["needs_count"] == 2
+    assert verdict["renderer_failed"] is (grade == "none")
+
+
+def test_verdict_bound_to_canonical_file_not_spoofable_by_newer_json(tmp_path: Path, monkeypatch):
+    # The badge must read ONLY the assembler's canonical verdict_v06.json; a newer
+    # arbitrarily-named *verdict*.json must NOT override the canonical proof grade.
+    root = tmp_path / "workspaces"
+    output = root / "report-demo" / "output"
+    output.mkdir(parents=True)
+    canonical = output / "verdict_v06.json"
+    spoof = output / "xml_loop_verdict_latest.json"
+    canonical.write_text(json.dumps({"verdict": {
+        "proof_grade": "none", "gappy": [], "needs": [],
+    }}), encoding="utf-8")
+    spoof.write_text(json.dumps({"verdict": {
+        "proof_grade": "advisory", "gappy": [3], "needs": [],
+        "renderer_failed": "timeout",
+    }}), encoding="utf-8")
+    import os
+    base_mtime = canonical.stat().st_mtime_ns
+    os.utime(spoof, ns=(base_mtime + 1_000_000, base_mtime + 1_000_000))
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    verdict = studio.workspace_verdict("report-demo")
+
+    assert verdict["source"] == canonical.name
+    assert verdict["proof_grade"] == "none"
+
+
+def test_verdict_absent_when_no_canonical_file(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    output = root / "report-demo" / "output"
+    output.mkdir(parents=True)
+    (output / "xml_loop_verdict_latest.json").write_text(
+        json.dumps({"proof_grade": "advisory"}), encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+
+    verdict = studio.workspace_verdict("report-demo")
+
+    assert verdict["available"] is False
+    assert verdict["proof_grade"] == "none"
