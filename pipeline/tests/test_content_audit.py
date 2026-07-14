@@ -1,7 +1,7 @@
 """Tests for content_audit.py — the composite stage 4.5 gate.
 
 Runs the REAL sub-checker chain (verify_content.py + check_style.py +
-check_numbers.py) against a
+check_numbers.py + check_refs.py) against a
 synthetic workspace. Synthetic fixtures ONLY (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -82,7 +82,7 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(verdict["counts"]["hard"], 0)
         self.assertEqual(
             set(verdict["sub_exit"]),
-            {"verify_content", "check_style", "check_numbers"},
+            {"verify_content", "check_style", "check_numbers", "check_refs"},
         )
 
     def test_number_checker_is_third_composed_gate(self):
@@ -97,6 +97,21 @@ class TestClean(ContentAuditTestCase):
             and item.get("code") == "unbacked_numeral"
             for item in verdict["warn"]
         ))
+
+    def test_ref_checker_is_fourth_composed_gate(self):
+        self.write_content(
+            "# Results\n표 2에서 합계를 확인한다.\n"
+            '[[TABLE cols=50,50 caption="표 1. Synthetic table"]]\n'
+            "| A | B |\n[[/TABLE]]\n"
+        )
+        verdict, code = content_audit.check(str(self.ws))
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["sub_exit"]["check_refs"], 0)
+        self.assertTrue(any(
+            item.get("source") == "check_refs"
+            and item.get("code") == "dangling_xref"
+            for item in verdict["warn"]
+        ), verdict)
 
     def test_profile_number_allowlist_is_forwarded(self):
         self.write_content("# Method\nIn 2024, 12 trials used 3.25 ms each.\n")
@@ -249,10 +264,34 @@ class TestCitation(ContentAuditTestCase):
 
 class TestUsage(ContentAuditTestCase):
     def test_missing_content_md_is_nonzero(self):
-        # no bundle/content.md -> all three sub-checkers are nonzero.
+        # no bundle/content.md -> all four sub-checkers are nonzero.
         verdict, code = content_audit.check(str(self.ws))
         self.assertNotEqual(code, 0)
         self.assertFalse(verdict["ok"])
+
+    def test_unexpected_exit_one_is_hard_and_preserves_stderr(self):
+        self.write_content(self._clean_body())
+        passed = json.dumps({"ok": True, "hard": [], "warn": []})
+        processes = [
+            mock.Mock(returncode=1, stdout="", stderr="checker exploded"),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+        ]
+
+        with mock.patch.object(
+            content_audit.subprocess, "run", side_effect=processes
+        ):
+            verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["sub_exit"]["verify_content"], 1)
+        finding = next(
+            item for item in verdict["hard"]
+            if item.get("source") == "verify_content"
+            and item.get("code") == "USAGE"
+        )
+        self.assertEqual(finding["stderr"], "checker exploded")
 
 
 if __name__ == "__main__":

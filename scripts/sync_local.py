@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -360,10 +361,48 @@ def load_receipt(install_root: str) -> Dict[str, Dict[str, str]]:
         return {}
 
 
-def write_receipt(dest_root: str, files: Dict[str, Dict[str, str]]) -> None:
+def _git_revision(checkout_root: str) -> str:
+    try:
+        proc = subprocess.run(
+            ['git', '-C', checkout_root, 'rev-parse', 'HEAD'],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 'unknown'
+    revision = (proc.stdout or '').strip()
+    if proc.returncode != 0 or not revision:
+        return 'unknown'
+    return revision
+
+
+def _safe_utc_timestamp() -> str:
+    """Return an ISO UTC timestamp, or blank when the system clock fails."""
+    try:
+        return datetime.now(timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _safe_backup_stamp() -> str:
+    """Return a filesystem-safe local timestamp without making sync clock-bound."""
+    try:
+        return datetime.now().strftime("%Y%m%d-%H%M%S")
+    except Exception:
+        return "unknown-time"
+
+
+def write_receipt(
+        dest_root: str, files: Dict[str, Dict[str, str]], checkout_root: str) -> None:
+    synced_at = _safe_utc_timestamp()
     payload = {
+        'kernel_rev': _git_revision(checkout_root),
+        'synced_at': synced_at,
         "version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": synced_at,
         "files": files,
     }
     with open(os.path.join(dest_root, RECEIPT_NAME), "w", encoding="utf-8") as fh:
@@ -550,7 +589,7 @@ class InstallLock:
         self.token = f"pid={os.getpid()} uuid={uuid.uuid4().hex}"
 
     def _payload(self) -> str:
-        return f"{self.token} at={datetime.now(timezone.utc).isoformat()}\n"
+        return f"{self.token} at={_safe_utc_timestamp()}\n"
 
     def _create_exclusive(self) -> None:
         """Atomically create the lock file carrying our token. O_CREAT|O_EXCL
@@ -704,7 +743,7 @@ def _place_staged(staging: str, install_root: str) -> None:
 
 
 def _atomic_install(staging: str, install_root: str, backup_root: Optional[str] = None) -> str:
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = _safe_backup_stamp()
     if backup_root:
         os.makedirs(backup_root, exist_ok=True)
         base = os.path.join(backup_root, f"{os.path.basename(install_root)}.bak-{ts}")
@@ -740,7 +779,7 @@ def _atomic_install(staging: str, install_root: str, backup_root: Optional[str] 
         raise
 
 
-def apply_plan(plan: Plan) -> str:
+def apply_plan(plan: Plan, checkout_root: str) -> str:
     target = plan.target
     staging = plan.staging_dir
 
@@ -762,7 +801,7 @@ def apply_plan(plan: Plan) -> str:
         rel: {"sha256": plan.staged_hashes[rel], "origin": plan.origins[rel]}
         for rel in plan.origins
     }
-    write_receipt(staging, receipt_files)
+    write_receipt(staging, receipt_files, checkout_root)
 
     return _atomic_install(staging, target.install_root, target.backup_root)
 
@@ -821,7 +860,7 @@ def run_target(target: Target, checkout_root: str, dry_run: bool, force: bool) -
             # The sibling lock lives OUTSIDE the install tree, so it survives the
             # rename swap — hold it through the unmanaged/excluded copy + swap +
             # receipt (released only in finally), closing the concurrent-sync race.
-            bak = apply_plan(plan)
+            bak = apply_plan(plan, checkout_root)
             print(f"  installed. previous tree archived to: {bak}")
         return plan
     finally:

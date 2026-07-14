@@ -10,6 +10,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from pipeline.scripts import pipeline_ctl as ctl
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "pipeline_ctl.py"
 
@@ -1502,3 +1507,81 @@ class TestCheckWorkspaceWithSpaces(PipelineCtlTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _init_staleness_test_workspace(ws: Path) -> None:
+    payload, code = run(
+        'init', str(ws),
+        '--slug', 'staleness-test', '--mode', 'autonomous',
+        '--subject', 'test', '--topic', 'test', '--form', 'test.hwpx',
+    )
+    assert code == 0, payload
+
+
+def _direct_resume_payload(monkeypatch, ws: Path) -> dict:
+    captured = {}
+
+    def capture_out(payload, code=0):
+        captured.update(payload)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(ctl, 'out', capture_out)
+    with pytest.raises(SystemExit) as exc_info:
+        ctl.cmd_resume(SimpleNamespace(workspace=str(ws)))
+    assert exc_info.value.code == 0
+    return captured
+
+
+def test_resume_warns_when_installed_skills_are_stale(tmp_path, monkeypatch):
+    ws = tmp_path / 'workspace'
+    kernel_root = tmp_path / 'kernel'
+    old_rev = '1111111111111111111111111111111111111111'
+    new_rev = '2222222222222222222222222222222222222222'
+    _init_staleness_test_workspace(ws)
+    monkeypatch.setenv('RIGORLOOM_KERNEL_ROOT', str(kernel_root))
+    monkeypatch.setattr(ctl, '_read_sync_receipt', lambda _root: {'kernel_rev': old_rev})
+    monkeypatch.setattr(ctl, '_git_revision', lambda root: new_rev)
+
+    payload = _direct_resume_payload(monkeypatch, ws)
+
+    assert payload['warnings'] == [
+        'WARN: skills copy synced from 1111111, kernel now at 2222222 '
+        '— run sync_local.py to update'
+    ]
+
+
+def test_resume_has_no_staleness_warning_when_revisions_match(tmp_path, monkeypatch):
+    ws = tmp_path / 'workspace'
+    rev = '3333333333333333333333333333333333333333'
+    _init_staleness_test_workspace(ws)
+    monkeypatch.setenv('RIGORLOOM_KERNEL_ROOT', str(tmp_path / 'kernel'))
+    monkeypatch.setattr(ctl, '_read_sync_receipt', lambda _root: {'kernel_rev': rev})
+    monkeypatch.setattr(ctl, '_git_revision', lambda root: rev)
+
+    payload = _direct_resume_payload(monkeypatch, ws)
+
+    assert 'warnings' not in payload
+
+
+@pytest.mark.parametrize('missing', ['receipt', 'kernel_root'])
+def test_resume_staleness_check_is_noop_when_inputs_absent(
+        tmp_path, monkeypatch, missing):
+    ws = tmp_path / 'workspace'
+    _init_staleness_test_workspace(ws)
+    monkeypatch.setattr(
+        ctl, '_read_sync_receipt',
+        lambda _root: {} if missing == 'receipt' else {'kernel_rev': '1111111'},
+    )
+    if missing == 'receipt':
+        monkeypatch.setenv('RIGORLOOM_KERNEL_ROOT', str(tmp_path / 'kernel'))
+    else:
+        monkeypatch.delenv('RIGORLOOM_KERNEL_ROOT', raising=False)
+
+    def unexpected_git_lookup(root):
+        raise AssertionError(f'unexpected git revision lookup: {root}')
+
+    monkeypatch.setattr(ctl, '_git_revision', unexpected_git_lookup)
+
+    payload = _direct_resume_payload(monkeypatch, ws)
+
+    assert 'warnings' not in payload

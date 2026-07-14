@@ -46,6 +46,8 @@ def _reexec_utf8_if_needed() -> None:
         sys.exit(_proc.returncode)
 
 PIPELINE_VERSION = "0.6"
+SYNC_RECEIPT_NAME = '.sync_receipt.json'
+KERNEL_ROOT_ENV = 'RIGORLOOM_KERNEL_ROOT'
 
 
 class StagesConfigError(Exception):
@@ -299,6 +301,82 @@ def load_stages_config(script_path: Path = None, graph: str = "build") -> list:
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _skills_install_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _read_sync_receipt(install_root: Path) -> dict:
+    try:
+        data = json.loads(
+            (install_root / SYNC_RECEIPT_NAME).read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _git_revision(checkout_root: Path):
+    try:
+        proc = subprocess.run(
+            ['git', '-C', str(checkout_root), 'rev-parse', 'HEAD'],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    revision = (proc.stdout or '').strip()
+    if proc.returncode != 0 or not revision:
+        return None
+    return revision
+
+
+def _discover_kernel_root(install_root: Path):
+    configured = os.environ.get(KERNEL_ROOT_ENV)
+    if configured:
+        return Path(configured).expanduser()
+
+    # A colocated development install may keep the generated skill and kernel
+    # checkout as sibling directories. Require both kernel entry points so an
+    # unrelated Git repository is never compared by accident.
+    try:
+        siblings = list(install_root.parent.iterdir())
+    except OSError:
+        return None
+    for candidate in siblings:
+        if candidate == install_root or not candidate.is_dir():
+            continue
+        if ((candidate / 'scripts' / 'sync_local.py').is_file()
+                and (candidate / 'pipeline' / 'scripts' / 'pipeline_ctl.py').is_file()):
+            return candidate
+    return None
+
+
+def _skills_staleness_warning():
+    # This diagnostic must never make resume fail. Standalone/public installs
+    # normally have neither a receipt nor a discoverable kernel checkout.
+    try:
+        install_root = _skills_install_root()
+        receipt = _read_sync_receipt(install_root)
+        receipt_rev = receipt.get('kernel_rev')
+        if not isinstance(receipt_rev, str) or not receipt_rev.strip():
+            return None
+        receipt_rev = receipt_rev.strip()
+        kernel_root = _discover_kernel_root(install_root)
+        if kernel_root is None:
+            return None
+        current_rev = _git_revision(kernel_root)
+        if not current_rev or current_rev == receipt_rev:
+            return None
+        return (
+            f'WARN: skills copy synced from {receipt_rev[:7]}, '
+            f'kernel now at {current_rev[:7]} — run sync_local.py to update'
+        )
+    except Exception:
+        return None
 
 
 def _print_json(obj: dict) -> None:
@@ -745,6 +823,12 @@ def cmd_resume(args) -> None:
     graph_ctx = graph_context_for_header(hdr)
     mode = hdr.get("mode", "autonomous")
     stages = hdr.get("stages", {})
+    staleness_warning = _skills_staleness_warning()
+
+    def resume_out(payload: dict) -> None:
+        if staleness_warning:
+            payload["warnings"] = [staleness_warning]
+        out(payload)
 
     resume_stage = None
     for num in graph_ctx["order"]:
@@ -756,8 +840,8 @@ def cmd_resume(args) -> None:
             break
 
     if resume_stage is None:
-        out({"ok": True, "next_stage": None, "reason": "all stages done",
-             "mode": mode, "blocked": False})
+        resume_out({"ok": True, "next_stage": None, "reason": "all stages done",
+                    "mode": mode, "blocked": False})
         return
 
     st = stages[resume_stage]
@@ -767,28 +851,28 @@ def cmd_resume(args) -> None:
     # blocked by a rejected/pending predecessor gate
     blocked, reason = stage_gate_blocks(hdr, resume_stage, mode, graph_ctx)
     if blocked:
-        out({"ok": True, "next_stage": resume_stage, "reason": reason,
-             "mode": mode, "blocked": True})
+        resume_out({"ok": True, "next_stage": resume_stage, "reason": reason,
+                    "mode": mode, "blocked": True})
         return
 
     if status == "awaiting_gate" and gate:
         gstate = gate.get("state")
         if gstate == "rejected":
-            out({"ok": True, "next_stage": resume_stage,
-                 "reason": f"gate '{gate.get('name')}' rejected",
-                 "mode": mode, "blocked": True,
-                 "gate": gate})
+            resume_out({"ok": True, "next_stage": resume_stage,
+                        "reason": f"gate '{gate.get('name')}' rejected",
+                        "mode": mode, "blocked": True,
+                        "gate": gate})
             return
         if mode == "supervised":
             if gstate == "pending":
-                out({"ok": True, "next_stage": resume_stage,
-                     "reason": f"awaiting_gate: '{gate.get('name')}' pending human approval",
-                     "mode": mode, "blocked": True, "gate": gate})
+                resume_out({"ok": True, "next_stage": resume_stage,
+                            "reason": f"awaiting_gate: '{gate.get('name')}' pending human approval",
+                            "mode": mode, "blocked": True, "gate": gate})
                 return
             # already approved/auto_approved but stage not advanced yet
-            out({"ok": True, "next_stage": resume_stage,
-                 "reason": f"gate '{gate.get('name')}' resolved ({gstate}); ready to advance",
-                 "mode": mode, "blocked": False, "gate": gate})
+            resume_out({"ok": True, "next_stage": resume_stage,
+                        "reason": f"gate '{gate.get('name')}' resolved ({gstate}); ready to advance",
+                        "mode": mode, "blocked": False, "gate": gate})
             return
         # autonomous / night
         if gstate == "pending":
@@ -797,24 +881,24 @@ def cmd_resume(args) -> None:
                 # A pending SCRIPT gate must be resolved by RUNNING its checker
                 # (`check`), never auto_approved — so night/autonomous is blocked
                 # until the deterministic verdict is produced.
-                out({"ok": True, "next_stage": resume_stage,
-                     "reason": (f"gate '{gate.get('name')}' is a pending script gate; "
-                                f"run: check <workspace> {gate.get('name')}"),
-                     "mode": mode, "blocked": True, "gate": gate,
-                     "action_needed": "check"})
+                resume_out({"ok": True, "next_stage": resume_stage,
+                            "reason": (f"gate '{gate.get('name')}' is a pending script gate; "
+                                       f"run: check <workspace> {gate.get('name')}"),
+                            "mode": mode, "blocked": True, "gate": gate,
+                            "action_needed": "check"})
                 return
-            out({"ok": True, "next_stage": resume_stage,
-                 "reason": f"gate '{gate.get('name')}' needs auto_approved recording",
-                 "mode": mode, "blocked": False, "gate": gate,
-                 "action_needed": "gate"})
+            resume_out({"ok": True, "next_stage": resume_stage,
+                        "reason": f"gate '{gate.get('name')}' needs auto_approved recording",
+                        "mode": mode, "blocked": False, "gate": gate,
+                        "action_needed": "gate"})
             return
-        out({"ok": True, "next_stage": resume_stage,
-             "reason": f"gate '{gate.get('name')}' resolved ({gstate}); ready to advance",
-             "mode": mode, "blocked": False, "gate": gate})
+        resume_out({"ok": True, "next_stage": resume_stage,
+                    "reason": f"gate '{gate.get('name')}' resolved ({gstate}); ready to advance",
+                    "mode": mode, "blocked": False, "gate": gate})
         return
 
-    out({"ok": True, "next_stage": resume_stage, "reason": "first pending",
-         "mode": mode, "blocked": False})
+    resume_out({"ok": True, "next_stage": resume_stage, "reason": "first pending",
+                "mode": mode, "blocked": False})
 
 
 def cmd_gate(args) -> None:

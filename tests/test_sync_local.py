@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -155,13 +156,22 @@ def test_overlay_wins_over_base(world, tmp_path):
 # --------------------------------------------------------------------------- #
 # Full apply + receipt
 # --------------------------------------------------------------------------- #
-def test_apply_installs_and_writes_receipt(world, tmp_path):
+def test_apply_installs_and_writes_receipt(world, tmp_path, monkeypatch):
+    kernel_rev = '0123456789abcdef0123456789abcdef01234567'
+
+    def fake_git_run(argv, **kwargs):
+        assert argv == ['git', '-C', world['checkout'], 'rev-parse', 'HEAD']
+        return SimpleNamespace(returncode=0, stdout=kernel_rev + '\n')
+
+    monkeypatch.setattr(sl.subprocess, 'run', fake_git_run)
     target = make_target(world)
     sl.run_target(target, world["checkout"], dry_run=False, force=False)
     inst = world["install"]
     assert read(os.path.join(inst, "SKILL.md")) == "# overlay skill\n"
     assert read(os.path.join(inst, "references", "agents.yaml")) == "agents: OVERLAY\n"
     receipt = json.loads(read(os.path.join(inst, sl.RECEIPT_NAME)))
+    assert receipt['kernel_rev'] == kernel_rev
+    assert receipt['synced_at']
     assert receipt["files"]["SKILL.md"]["origin"] == "overlay"
     assert receipt["files"]["scripts/ctl.py"]["origin"] == "base"
     # The lock is now a SIBLING of the install root, so a truly fresh install
@@ -171,6 +181,24 @@ def test_apply_installs_and_writes_receipt(world, tmp_path):
     sl.run_target(target, world["checkout"], dry_run=False, force=False)
     baks = [d for d in os.listdir(world["tmp"]) if d.startswith("install.bak-")]
     assert baks  # the re-sync backed up the now-existing install
+
+
+def test_clock_failure_does_not_abort_sync_and_leaves_blank_timestamp(
+    world, monkeypatch
+):
+    class BrokenDatetime:
+        @classmethod
+        def now(cls, *args, **kwargs):
+            raise RuntimeError("clock unavailable")
+
+    monkeypatch.setattr(sl, "datetime", BrokenDatetime)
+    target = make_target(world)
+
+    sl.run_target(target, world["checkout"], dry_run=False, force=False)
+
+    receipt = json.loads(read(os.path.join(world["install"], sl.RECEIPT_NAME)))
+    assert receipt["synced_at"] == ""
+    assert receipt["generated_at"] == ""
 
 
 # --------------------------------------------------------------------------- #
