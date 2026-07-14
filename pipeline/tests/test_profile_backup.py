@@ -185,7 +185,10 @@ def test_extract_refuses_preexisting_symlink_parent(tmp_path: Path):
         archive.writestr("linked/payload.txt", "must not follow the link")
 
     with zipfile.ZipFile(archive_path) as archive:
-        with pytest.raises(profile_backup.IntegrityError, match="symlink"):
+        # Refusal is the invariant; which guard fires first is platform-dependent
+        # (a pre-existing symlink parent trips either the symlink check or the
+        # containment/"escapes target root" check).
+        with pytest.raises(profile_backup.IntegrityError, match="symlink|escapes"):
             profile_backup._extract_members(archive, target)
 
     assert not (actual / "payload.txt").exists()
