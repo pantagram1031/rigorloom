@@ -838,6 +838,21 @@ class TestCheckSubcommand(PipelineCtlTestCase):
             encoding="utf-8",
         )
 
+    def _write_understanding_questions(self, with_answers=False):
+        output = self.ws / "output"
+        output.mkdir(parents=True, exist_ok=True)
+        blocks = []
+        for number in range(1, 6):
+            block = (
+                f"{number}. Why does report mechanism {number} matter to the "
+                "conclusion?"
+            )
+            if with_answers:
+                block += "\n   Answer: I can explain this mechanism from the report."
+            blocks.append(block)
+        (output / "QUESTIONS.md").write_text(
+            "\n\n".join(blocks) + "\n", encoding="utf-8")
+
     def test_check_happy_path_auto_approves_with_provenance(self):
         self.init_ws(mode="autonomous")
         self._write_sim_gate(0)
@@ -912,6 +927,36 @@ class TestCheckSubcommand(PipelineCtlTestCase):
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["state"], "rejected")
         self.assertIn("content_audit.py", " ".join(payload["checker_argv"]))
+
+    def test_check_understand_night_requires_questions_and_records_pending(self):
+        self.init_ws(mode="night")
+        self._write_understanding_questions(with_answers=False)
+        payload, code = run("check", str(self.ws), "understand")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+        self.assertIn("check_understanding.py", " ".join(payload["checker_argv"]))
+        provenance_path = self.ws / ".pipeline" / "understanding_check.json"
+        self.assertTrue(provenance_path.exists())
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        self.assertTrue(provenance["answers_pending"])
+        self.assertEqual(provenance["question_count"], 5)
+
+    def test_check_understand_supervised_requires_answers(self):
+        self.init_ws(mode="supervised")
+        self._write_understanding_questions(with_answers=False)
+        payload, code = run("check", str(self.ws), "understand")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "rejected")
+        self.assertEqual(payload["exit"], 3)
+
+        self._write_understanding_questions(with_answers=True)
+        payload, code = run("check", str(self.ws), "understand")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+        provenance = json.loads(
+            (self.ws / ".pipeline" / "understanding_check.json").read_text(
+                encoding="utf-8"))
+        self.assertFalse(provenance["answers_pending"])
 
 
 class TestScriptGateBlocksAllModes(PipelineCtlTestCase):
@@ -1072,6 +1117,30 @@ stages:
         payload, code = run("gate", str(self.ws), "draft", "--mode", "autonomous")
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["state"], "auto_approved")
+
+    def test_header_missing_new_graph_gate_remains_legacy_tolerant(self):
+        """A legacy Stage 6 gate:null is not awaiting the graph's new gate."""
+        self._write_v05_ws()
+        pf = self.ws / "PIPELINE.md"
+        text = pf.read_text(encoding="utf-8")
+        text = text.replace('"3":   {status: in_progress, gate: null}',
+                            '"3":   {status: done, gate: null}')
+        text = text.replace(
+            '"4":   {status: pending, gate: {name: draft, state: pending, by: null, at: null}}',
+            '"4":   {status: done, gate: {name: draft, state: auto_approved, by: autonomous, at: 2026-07-01T09:02:00}}')
+        text = text.replace('"5":   {status: pending, gate: null}',
+                            '"5":   {status: done, gate: null}')
+        text = text.replace(
+            '"5.5": {status: pending, gate: {name: understand, state: pending, by: null, at: null}}',
+            '"5.5": {status: done, gate: {name: understand, state: auto_approved, by: autonomous, at: 2026-07-01T09:03:00}}')
+        pf.write_text(text, encoding="utf-8")
+
+        payload, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["next_stage"], "6")
+        self.assertFalse(payload["blocked"])
+        payload, code = run("advance", str(self.ws), "6", "--status", "done")
+        self.assertEqual(code, 0, payload)
 
 
 class TestGateRefusesScriptType(PipelineCtlTestCase):
@@ -1236,6 +1305,33 @@ class TestStagesConfigStrict(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         self.assertIn("HARDERR", proc.stdout)
+
+    def test_build_graph_registers_z1_script_gate_argv(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import pipeline_ctl
+        rows = pipeline_ctl.load_stages_config()
+        by_id = {str(row["id"]): row for row in rows}
+        self.assertEqual(by_id["5.5"]["gate"], {
+            "name": "understand",
+            "type": "script",
+            "checker": [
+                "python",
+                "{PIPELINE_SCRIPTS}/check_understanding.py",
+                "{WS}",
+                "--out",
+                "{WS}/.pipeline/understanding_check.json",
+            ],
+        })
+        self.assertEqual(by_id["5.7"]["gate"], {
+            "name": "final_panel",
+            "type": "script",
+            "checker": ["python", "{PIPELINE_SCRIPTS}/check_scorecard.py", "{WS}"],
+        })
+        self.assertEqual(by_id["6"]["gate"], {
+            "name": "submission_preflight",
+            "type": "script",
+            "checker": ["python", "{PIPELINE_SCRIPTS}/submission_preflight.py", "{WS}"],
+        })
 
 
 class TestUnknownGraphRejectedOnLoad(PipelineCtlTestCase):

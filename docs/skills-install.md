@@ -102,3 +102,31 @@ these files; it covers each role inline by following
 (§3) and agent-routing section (§6). The stage contract, gates, and immutable
 verdicts are identical regardless of which orchestrator runs them; no provider is
 required and no provider may bypass a gate.
+
+## Protecting your private profile
+
+The `--profile-root` (packs, skill-overlay, denylist, manifests) is a single,
+irreplaceable copy of your taste and voice — back it up like any other data
+you can't regenerate. `pipeline/scripts/profile_backup.py` zips the whole
+root (excluding its own backup output and any `skills-backups/` / `*.bundle`
+noise) and writes a sha256 sidecar next to each archive:
+
+```sh
+python pipeline/scripts/profile_backup.py backup --profile-root <PROFILE_ROOT> --keep 5
+# writes <PROFILE_ROOT>/../.report-profile-backups/profile-backup-<UTCstamp>.zip (+ .sha256)
+# --dest <DIR> overrides the destination; --keep controls how many archives are retained
+```
+
+Restoring verifies the sidecar hash first and refuses to overwrite a
+non-empty profile root unless you pass `--force` — and even then the current
+root is moved aside to `<PROFILE_ROOT>.pre-restore-<stamp>` rather than
+deleted:
+
+```sh
+python pipeline/scripts/profile_backup.py list --dest <PROFILE_ROOT>/../.report-profile-backups
+python pipeline/scripts/profile_backup.py restore --archive <ZIP> --profile-root <PROFILE_ROOT> --force
+```
+
+Rotation only ever deletes archives matching this tool's own
+`profile-backup-<UTCstamp>.zip` naming — nothing else in the destination
+directory is touched.
