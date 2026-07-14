@@ -13,10 +13,21 @@ EXACT actions:
 #   sim spec fixes one numeric RNG seed before execution (no implicit entropy)
 #   code records that seed in sim/results.json or sim/provenance.json
 #   gate code emits sim/gate_result.json  (immutable, authoritative)
-# figures → <WS>/figures/*.png  with:
+# figures → <WS>/bundle/figures/*.png  with:
 #   matplotlib.rcParams['font.family']='Malgun Gothic'
 #   matplotlib.rcParams['axes.unicode_minus']=False
+#   write one checksum record for every referenced PNG (format below)
 ```
+- Every figure-generation step MUST write checksum metadata from the final PNG
+  bytes so Stage 4.5 can detect a hand-edited or stale image. Prefer a UTF-8
+  sibling sidecar named `bundle/figures/x.png.sha256` whose first token is the
+  64-hex SHA-256, conventionally `<sha256>  x.png`. A single
+  `bundle/figures/figures_manifest.json` is also valid; use either a direct
+  `{"x.png": "<sha256>"}` mapping (paths are relative to the figures
+  directory) or `{"figures": [{"file": "x.png", "sha256": "<sha256>"}]}`.
+  If both sources exist, both must match the PNG. Regenerate the checksum after
+  every legitimate figure regeneration; never update it to bless an unexplained
+  manual image edit.
 - Verification FAIL → fix the MODEL, rerun. NEVER edit numbers or the JSON
   post-hoc (§7). scope narrowing (e.g. AFGKM만) = declared input, re-run.
 - Every fresh simulation fixes a numeric RNG `seed` in its spec and echoes the
@@ -51,5 +62,7 @@ FAILURE table:
 | gate verdict FAIL | model wrong | fix model, rerun; never edit JSON |
 | tempted to edit gate_result.json | — | contract violation (§7); forbidden |
 | figure 한글 깨짐 | font not set | set Malgun Gothic + unicode_minus=False, rerun |
+| `figure_data_drift` at content audit | PNG differs from its recorded checksum | regenerate the figure from simulation and rewrite its checksum; do not hand-edit the verdict |
+| `figure_unverified` WARN | legacy PNG has no checksum metadata | regenerate or hash the final PNG and add the sidecar/manifest entry |
 | one reviewer alone cleared numbers | single-reviewer risk | add an independent second pass |
 | check_numbers exit 3: missing/invalid seed | fresh sim omitted RNG provenance | fix the sim spec/code, rerun, and record the numeric seed |

@@ -10,11 +10,16 @@ The current proof handshake compares the recorded grade with local renderer
 capabilities. Full artifact-bound proof receipts are deferred to later
 attestation work. Until then, ``--allow-advisory`` is an explicit draft escape
 that requires a non-empty reason and records it in the verdict JSON.
+
+Form baselines in ``form_baseline.json`` or ``build.yaml`` are trusted-on-record,
+not cryptographically proven: recording a baseline after a mutation cannot
+detect that mutation. A signed external baseline is deferred.
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import re
 import sys
@@ -29,6 +34,10 @@ SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
 SUBMISSION_PROOF_GRADES = {"hancom", "advisory"}
 MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 ASSEMBLY_VERDICT_REL = Path("output/verdict_v06.json")
+FORM_STRUCTURE_NAMES = frozenset({
+    "charPr", "paraPr", "secPr", "tbl", "tc", "ctrl",
+})
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def _utf8_stdio() -> None:
@@ -264,6 +273,111 @@ def _normalized(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _canonical_structure_element(element: ElementTree.Element) -> dict:
+    """Return a text-free, serialization-independent XML structure record."""
+    return {
+        "tag": element.tag,
+        "attributes": sorted(element.attrib.items()),
+        "children": [
+            _canonical_structure_element(child)
+            for child in list(element)
+            if isinstance(child.tag, str)
+        ],
+    }
+
+
+def _hwpx_form_structure_sha256(path: Path) -> str:
+    """Hash style, section, table/cell, and control skeletons without text/tails.
+
+    The supplied baseline is trusted-on-record; one recorded after mutation
+    cannot reveal that mutation. Signed external provenance is deferred.
+    """
+    records = []
+    with zipfile.ZipFile(path) as archive:
+        bad = archive.testzip()
+        if bad:
+            raise ValueError(f"ZIP CRC failure: {bad}")
+        xml_names = sorted(
+            name for name in archive.namelist()
+            if name.lower().endswith(".xml")
+        )
+        if not xml_names:
+            raise ValueError("HWPX ZIP contains no XML parts")
+        for name in xml_names:
+            root = ElementTree.fromstring(archive.read(name))
+            occurrence = 0
+            for element in root.iter():
+                if (isinstance(element.tag, str)
+                        and _local_name(element.tag) in FORM_STRUCTURE_NAMES):
+                    records.append({
+                        "part": name.replace("\\", "/"),
+                        "occurrence": occurrence,
+                        "element": _canonical_structure_element(element),
+                    })
+                    occurrence += 1
+    canonical = json.dumps(
+        records, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _json_structure_sha256(payload, parents=()) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    exact_keys = {
+        "structure_sha256",
+        "form_structure_sha256",
+        "form_baseline_structure_sha256",
+    }
+    for key, value in payload.items():
+        normalized_key = str(key).strip().lower().replace("-", "_")
+        if (normalized_key in exact_keys and isinstance(value, str)
+                and SHA256_RE.fullmatch(value.strip())):
+            return value.strip().lower()
+        if (normalized_key == "sha256" and isinstance(value, str)
+                and any("structure" in parent for parent in parents)
+                and SHA256_RE.fullmatch(value.strip())):
+            return value.strip().lower()
+    for key, value in payload.items():
+        normalized_key = str(key).strip().lower().replace("-", "_")
+        found = _json_structure_sha256(value, parents + (normalized_key,))
+        if found:
+            return found
+    return None
+
+
+def _form_baseline_sha256(ws: Path) -> tuple[str | None, str | None]:
+    baseline_path = ws / "form_baseline.json"
+    if baseline_path.is_file():
+        try:
+            payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            payload = None
+        digest = _json_structure_sha256(payload)
+        if digest:
+            return digest, baseline_path.relative_to(ws).as_posix()
+
+    build_path = ws / "build.yaml"
+    if build_path.is_file():
+        try:
+            build_text = build_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            build_text = ""
+        match = re.search(
+            r"(?im)^\s*(?:form_structure_sha256|structure_sha256|"
+            r"form_baseline_structure_sha256)\s*:\s*"
+            r"[\x22\x27]?([0-9a-f]{64})[\x22\x27]?\s*(?:#.*)?$",
+            build_text,
+        )
+        if match:
+            return match.group(1).lower(), build_path.relative_to(ws).as_posix()
+    return None, None
+
+
 def check(
     workspace: str | Path,
     *,
@@ -334,6 +448,56 @@ def check(
                 hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
                              "at": artifact_rel})
 
+    baseline_sha256, baseline_source = _form_baseline_sha256(ws)
+    form_structure_sha256 = None
+    form_structure_artifact = None
+    if baseline_sha256 is None:
+        warn.append({
+            "code": "form_baseline_absent",
+            "msg": (
+                "no trusted-on-record form-structure sha256 is recorded; form "
+                "equality is unverifiable, and a baseline recorded after mutation "
+                "would not detect it (signed external baseline deferred)"
+            ),
+            "at": "form_baseline.json or build.yaml",
+        })
+    else:
+        structure_target = None
+        if (artifact is not None and artifact.is_file()
+                and artifact.suffix.lower() == ".hwpx"
+                and _within(ws / "output", artifact)):
+            structure_target = artifact
+        else:
+            assembled_hwpx = ws / "output" / "out.hwpx"
+            if assembled_hwpx.is_file():
+                structure_target = assembled_hwpx
+        if structure_target is None:
+            hard.append({
+                "code": "form_structure_unverifiable",
+                "msg": "form baseline exists but no assembled HWPX is available",
+                "at": baseline_source,
+            })
+        else:
+            form_structure_artifact = structure_target.relative_to(ws).as_posix()
+            try:
+                form_structure_sha256 = _hwpx_form_structure_sha256(structure_target)
+            except (OSError, ValueError, zipfile.BadZipFile,
+                    ElementTree.ParseError) as exc:
+                hard.append({
+                    "code": "form_structure_unverifiable",
+                    "msg": f"assembled HWPX form structure could not be hashed: {exc}",
+                    "at": form_structure_artifact,
+                })
+            else:
+                if form_structure_sha256 != baseline_sha256:
+                    hard.append({
+                        "code": "form_mutated",
+                        "msg": "assembled HWPX form-owned structure differs from baseline",
+                        "at": form_structure_artifact,
+                        "expected": baseline_sha256,
+                        "actual": form_structure_sha256,
+                    })
+
     if required_fields is not None:
         rendered = _normalized(extracted_text)
         for field in required_fields:
@@ -390,6 +554,10 @@ def check(
                                if grade_source else None),
         "delivery_capabilities": delivery_capabilities,
         "document_has_equations": document_has_equations,
+        "form_structure_sha256": form_structure_sha256,
+        "form_structure_artifact": form_structure_artifact,
+        "form_baseline_sha256": baseline_sha256,
+        "form_baseline_source": baseline_source,
         "advisory_reason": advisory_reason if allow_advisory else None,
         "notes": notes,
         "hard": hard,

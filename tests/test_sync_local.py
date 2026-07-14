@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -423,6 +424,106 @@ def test_lock_is_sibling_outside_install_tree(world, tmp_path):
     # survives the atomic rename swap.
     assert os.path.dirname(os.path.abspath(lock.path)) == os.path.dirname(inst)
     assert not os.path.abspath(lock.path).startswith(inst + os.sep)
+
+
+# --------------------------------------------------------------------------- #
+# Orphan garbage collection
+# --------------------------------------------------------------------------- #
+def test_gc_cli_removes_only_owned_orphans(world, tmp_path, capsys):
+    install = world['install']
+    basename = os.path.basename(install)
+    orphan = tmp_path / f'{basename}.staging-XXXX'
+    markerless = tmp_path / f'{basename}.staging-foreign'
+    stale_lock = install + sl.LOCK_SUFFIX
+    foreign = tmp_path / 'something.staging-not-ours'
+    backup = tmp_path / f'{basename}.bak-20260714-120000'
+    write(os.path.join(install, 'keep.txt'), 'installed\n')
+    write(str(orphan / 'SKILL.md'), '# phantom\n')
+    write(str(orphan / sl.STAGING_OWNER_MARKER), 'rigorloom.sync_local pid=99999\n')
+    write(str(markerless / 'SKILL.md'), '# foreign staging\n')
+    write(stale_lock, 'pid=99999 uuid=stale at=old\n')
+    old = time.time() - sl.STALE_LOCK_SECONDS - 2
+    os.utime(stale_lock, (old, old))
+    write(str(foreign / 'SKILL.md'), '# foreign\n')
+    write(str(backup / 'SKILL.md'), '# backup\n')
+    manifest = tmp_path / 'manifest.yaml'
+    write(str(manifest), f'install_root: {install}\nsource_map: []\n')
+    argv = ['--gc', '--manifest', str(manifest),
+            '--checkout-root', world['checkout']]
+
+    assert sl.main(argv) == 0
+
+    output = capsys.readouterr().out
+    assert str(orphan) in output
+    assert stale_lock in output
+    assert not orphan.exists()
+    assert markerless.is_dir()
+    assert f'gc kept foreign staging {markerless}' in output
+    assert not os.path.exists(stale_lock)
+    assert read(os.path.join(install, 'keep.txt')) == 'installed\n'
+    assert foreign.is_dir()
+    assert backup.is_dir()
+    write(stale_lock, 'pid=99999 uuid=fresh at=now\n')
+    assert sl.main(argv) == 0
+    assert os.path.exists(stale_lock)
+
+
+def test_gc_keeps_staging_owned_by_a_live_process(world, tmp_path, capsys):
+    # A marked staging dir whose owner PID is still alive must NOT be removed —
+    # a concurrent live sync's staging tree must survive another run's auto-GC.
+    install = world['install']
+    basename = os.path.basename(install)
+    live = tmp_path / f'{basename}.staging-LIVE'
+    write(str(live / 'SKILL.md'), '# live staging\n')
+    write(str(live / sl.STAGING_OWNER_MARKER),
+          f'{sl.STAGING_OWNER_ID} pid={os.getpid()}\n')  # this test process is alive
+    write(os.path.join(install, 'keep.txt'), 'installed\n')
+    manifest = tmp_path / 'manifest.yaml'
+    write(str(manifest), f'install_root: {install}\nsource_map: []\n')
+
+    assert sl.main(['--gc', '--manifest', str(manifest),
+                    '--checkout-root', world['checkout']]) == 0
+
+    output = capsys.readouterr().out
+    assert live.is_dir()  # not deleted
+    assert f'gc kept staging {live}' in output
+
+
+def test_sync_auto_gc_clears_prior_orphans_then_installs(world, tmp_path, capsys):
+    target = make_target(world)
+    basename = os.path.basename(world['install'])
+    orphan = tmp_path / f'{basename}.staging-interrupted'
+    stale_lock = world['install'] + sl.LOCK_SUFFIX
+    write(str(orphan / 'SKILL.md'), '# phantom\n')
+    write(str(orphan / sl.STAGING_OWNER_MARKER), 'rigorloom.sync_local pid=99999\n')
+    write(stale_lock, 'pid=99999 uuid=stale at=old\n')
+    old = time.time() - sl.STALE_LOCK_SECONDS - 2
+    os.utime(stale_lock, (old, old))
+
+    sl.run_target(target, world['checkout'], dry_run=False, force=False)
+
+    output = capsys.readouterr().out
+    assert str(orphan) in output
+    assert stale_lock in output
+    assert not orphan.exists()
+    assert not os.path.exists(stale_lock)
+    assert read(os.path.join(world['install'], 'SKILL.md')) == '# overlay skill\n'
+
+
+def test_gc_keeps_live_flock_held_stale_lock(world, monkeypatch, capsys):
+    target = make_target(world)
+    stale_lock = world['install'] + sl.LOCK_SUFFIX
+    write(stale_lock, 'pid=99999 uuid=live at=old\n')
+    old = time.time() - sl.STALE_LOCK_SECONDS - 2
+    os.utime(stale_lock, (old, old))
+    monkeypatch.setattr(sl, '_foreign_lock_is_live', lambda path: True)
+
+    cleared = sl.gc_target_orphans(target)
+
+    output = capsys.readouterr().out
+    assert stale_lock not in cleared
+    assert os.path.exists(stale_lock)
+    assert f'gc kept live lock {stale_lock}' in output
 
 
 # --------------------------------------------------------------------------- #
