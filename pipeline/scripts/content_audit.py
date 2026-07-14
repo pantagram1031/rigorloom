@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """content_audit.py — composite content gate for stage 4.5.
 
-Runs the three deterministic content checkers as subprocesses and combines their
+Runs the four deterministic content checkers as subprocesses and combines their
 verdicts:
   1. verify_content.py <WS>   (web-citation / polite-ending / figure / leak)
   2. check_style.py <WS>      (prose banned-patterns / signature caps / citation)
   3. check_numbers.py --require-seed <WS> (body numerals / RNG provenance)
+  4. check_refs.py <WS>       (advisory figure/table numbering / xrefs)
 
 When --profile-root <p> is given, pack files are resolved from it and forwarded.
 When the option is absent, a valid directory named by
@@ -19,10 +20,11 @@ All recognized JSON packs, including figure_style, are schema-validated before
 the forwarded subset reaches the content checkers. A missing pack file simply
 falls back to that checker's own neutral default.
 
-Combined verdict: worst exit wins (3 hard > 2 usage > 0 pass). Findings from
-all three sub-checkers are merged (each tagged with its source checker) into one JSON
-verdict printed to stdout. This is the argv bound to the content_audit gate in
-stages.yaml.
+Combined verdict: worst exit wins (3 hard > 2 usage > 0 pass). Any unexpected
+nonzero sub-checker exit is normalized to hard failure so it cannot be silently
+ignored. Findings from all four sub-checkers are merged (each tagged with its
+source checker) into one JSON verdict printed to stdout. This is the argv bound
+to the content_audit gate in stages.yaml.
 
 Exit 0 = pass, 3 = HARD violation(s), 2 = a sub-checker usage error.
 """
@@ -51,7 +53,8 @@ def _resolve_profile_root(profile_root):
 def _worst(codes):
     """3 (hard) is the most severe, then 2 (usage), then 0 (pass)."""
     order = {3: 3, 2: 2, 0: 1}
-    ranked = sorted(codes, key=lambda c: order.get(c, 2), reverse=True)
+    normalized = [code if code in order else 3 for code in codes]
+    ranked = sorted(normalized, key=lambda c: order[c], reverse=True)
     return ranked[0] if ranked else 0
 
 
@@ -59,11 +62,22 @@ def _run(argv):
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", env=env)
+    stdout = proc.stdout or ""
+    stderr = (proc.stderr or "")[:400]
     try:
-        verdict = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        verdict = json.loads(stdout) if stdout.strip() else {}
     except json.JSONDecodeError:
         verdict = {"ok": False, "error": "sub-checker produced non-JSON stdout",
-                   "raw": (proc.stdout or "")[:400], "stderr": (proc.stderr or "")[:400]}
+                   "raw": stdout[:400], "stderr": stderr}
+    if not stdout.strip() and proc.returncode != 0:
+        verdict = {
+            "ok": False,
+            "error": (
+                f"sub-checker exited {proc.returncode} without JSON stdout"
+            ),
+        }
+        if stderr:
+            verdict["stderr"] = stderr
     return verdict, proc.returncode
 
 
@@ -137,7 +151,7 @@ def check(ws, profile_root=None):
             "workspace": ws,
             "checker": "content_audit",
             "sub_exit": {"verify_content": None, "check_style": None,
-                         "check_numbers": None},
+                         "check_numbers": None, "check_refs": None},
             "hard": pack_findings,
             "warn": [],
             "counts": {"hard": len(pack_findings), "warn": 0},
@@ -177,28 +191,37 @@ def check(ws, profile_root=None):
         if number_allow:
             cn_argv += ["--allow", str(number_allow)]
         cn_verdict, cn_code = _run(cn_argv)
+
+        # --- check_refs -----------------------------------------------------
+        cr_argv = [py, str(_SCRIPTS_DIR / "check_refs.py"), ws]
+        cr_verdict, cr_code = _run(cr_argv)
     finally:
         if gloss_tmp and os.path.exists(gloss_tmp):
             os.unlink(gloss_tmp)
 
     hard, warn = [], []
     for name, verdict in (("verify_content", vc_verdict), ("check_style", cs_verdict),
-                          ("check_numbers", cn_verdict)):
+                          ("check_numbers", cn_verdict), ("check_refs", cr_verdict)):
         for h in verdict.get("hard", []) or []:
             hard.append({"source": name, **h})
         for w in verdict.get("warn", []) or []:
             warn.append({"source": name, **w})
         err = verdict.get("error")
         if err:
-            hard.append({"source": name, "code": "USAGE", "msg": err})
+            finding = {"source": name, "code": "USAGE", "msg": err}
+            if verdict.get("stderr"):
+                finding["stderr"] = verdict["stderr"]
+            if verdict.get("raw"):
+                finding["raw"] = verdict["raw"]
+            hard.append(finding)
 
-    code = _worst([vc_code, cs_code, cn_code])
+    code = _worst([vc_code, cs_code, cn_code, cr_code])
     verdict = {
         "ok": code == 0,
         "workspace": ws,
         "checker": "content_audit",
         "sub_exit": {"verify_content": vc_code, "check_style": cs_code,
-                     "check_numbers": cn_code},
+                     "check_numbers": cn_code, "check_refs": cr_code},
         "hard": hard,
         "warn": warn,
         "counts": {"hard": len(hard), "warn": len(warn)},

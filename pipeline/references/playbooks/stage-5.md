@@ -19,6 +19,20 @@ draft ok) and Stage 4.5 `content_audit` approved via
 no gate of its own (`gate:null`); every backend exits through the Stage 5.3
 `format_check` script gate after assembly.
 
+STAGE 5 ENTRY SNAPSHOT (ALL BACKENDS): after the Stage 4.5 audit is approved
+and before the first assembly command, create the rotating restore point:
+
+```
+python pipeline/scripts/ws_snapshot.py snapshot <WS>
+```
+
+This captures `bundle/`, `output/`, `PIPELINE.md`, and `.pipeline/` (when
+present) under `<WS>/.snapshots/` before the risky assembly step. If assembly
+damages the workspace, recover the latest snapshot with
+`python pipeline/scripts/ws_snapshot.py restore <WS>` after emptying the
+current `bundle/` and `output/`, or add `--force` to preserve those current
+trees under `<WS>/.pre-restore-<UTCstamp>/` before recovery.
+
 POST-FREEZE CONTENT RULE (ALL BACKENDS): after Stage 4.5 passes, ANY delta to
 `bundle/content.md` invalidates that audit and every downstream artifact. This
 includes the small proof-loop rewrites below. Before reassembly, always run the
