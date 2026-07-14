@@ -34,7 +34,9 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -50,6 +52,9 @@ RECEIPT_NAME = ".sync_receipt.json"
 # the unmanaged/excluded copy + swap + receipt write, closing the concurrent-sync
 # race that existed when the in-tree lock had to be released before the swap.
 LOCK_SUFFIX = ".sync.lock"
+STAGING_SUFFIX = '.staging-'
+STAGING_OWNER_MARKER = '.sync_staging_owner'
+STAGING_OWNER_ID = 'rigorloom.sync_local'
 STALE_LOCK_SECONDS = 30 * 60
 # Control files live at the install root and are never treated as managed
 # content, never compared, never deleted by the sync itself.
@@ -574,6 +579,157 @@ def make_plan(target: Target, checkout_root: str, staging: str) -> Plan:
 
 
 # --------------------------------------------------------------------------- #
+# Orphan garbage collection
+# --------------------------------------------------------------------------- #
+def _staging_prefix(install_root: str) -> str:
+    return f'{os.path.basename(os.path.abspath(install_root))}{STAGING_SUFFIX}'
+
+
+def _write_staging_owner_marker(staging: str) -> None:
+    marker = os.path.join(staging, STAGING_OWNER_MARKER)
+    with open(marker, 'w', encoding='utf-8') as handle:
+        handle.write(f'{STAGING_OWNER_ID} pid={os.getpid()}\n')
+
+
+def _owned_staging_dir(path: str) -> bool:
+    marker = os.path.join(path, STAGING_OWNER_MARKER)
+    try:
+        marker_stat = os.stat(marker, follow_symlinks=False)
+        if not stat.S_ISREG(marker_stat.st_mode):
+            return False
+        with open(marker, 'r', encoding='utf-8') as handle:
+            return handle.read(256).startswith(STAGING_OWNER_ID + ' ')
+    except (FileNotFoundError, OSError, UnicodeError):
+        return False
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Best-effort liveness check for the marker's owner PID."""
+    if pid <= 0:
+        return False
+    if os.name == 'nt':
+        import subprocess as _sp
+        try:
+            out = _sp.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'],
+                          capture_output=True, text=True, timeout=10)
+        except (OSError, _sp.SubprocessError):
+            return True  # cannot determine -> assume alive (never delete a live tree)
+        return str(pid) in (out.stdout or '')
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return True
+    return True
+
+
+def _staging_owner_is_dead(path: str) -> bool:
+    """A marked staging dir is GC-eligible only if its owner PID is NOT alive.
+    Missing/unparseable PID -> treat as ALIVE (never delete) — a concurrent live
+    sync's staging tree must not be removed out from under it."""
+    marker = os.path.join(path, STAGING_OWNER_MARKER)
+    try:
+        with open(marker, 'r', encoding='utf-8') as handle:
+            text = handle.read(256)
+    except (FileNotFoundError, OSError, UnicodeError):
+        return False
+    m = re.search(r'\bpid=(\d+)', text)
+    if not m:
+        return False  # no PID recorded -> cannot prove dead -> keep
+    return not _pid_is_alive(int(m.group(1)))
+
+
+def _foreign_lock_is_live(path: str) -> bool:
+    """Return whether a POSIX lock file is held with flock; Windows probes by delete."""
+    if os.name == 'nt':
+        return False
+    import fcntl
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def gc_target_orphans(target: Target) -> List[str]:
+    install_root = os.path.abspath(target.install_root)
+    parent = os.path.dirname(install_root) or '.'
+    prefix = _staging_prefix(install_root)
+    cleared: List[str] = []
+
+    try:
+        entries = list(os.scandir(parent))
+    except FileNotFoundError:
+        entries = []
+    except OSError as exc:
+        raise SyncError(f'cannot scan for sync orphans in {parent}: {exc}') from exc
+
+    for entry in entries:
+        if not entry.name.startswith(prefix):
+            continue
+        try:
+            owned_staging_dir = entry.is_dir(follow_symlinks=False)
+        except OSError as exc:
+            raise SyncError(f'cannot inspect staging orphan {entry.path}: {exc}') from exc
+        if not owned_staging_dir:
+            continue
+        if not _owned_staging_dir(entry.path):
+            print(f'  gc kept foreign staging {entry.path} (ownership marker missing)')
+            continue
+        if not _staging_owner_is_dead(entry.path):
+            print(f'  gc kept staging {entry.path} (owner process still alive)')
+            continue
+        try:
+            shutil.rmtree(entry.path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise SyncError(f'cannot remove staging orphan {entry.path}: {exc}') from exc
+        cleared.append(entry.path)
+        print(f'  gc cleared {entry.path}')
+
+    lock_path = install_root + LOCK_SUFFIX
+    try:
+        lock_stat = os.stat(lock_path, follow_symlinks=False)
+    except FileNotFoundError:
+        return cleared
+    except OSError as exc:
+        raise SyncError(f'cannot inspect sync lock {lock_path}: {exc}') from exc
+
+    age = time.time() - lock_stat.st_mtime
+    if not stat.S_ISREG(lock_stat.st_mode) or age <= STALE_LOCK_SECONDS:
+        return cleared
+    if _foreign_lock_is_live(lock_path):
+        print(f'  gc kept live lock {lock_path} (flock held)')
+        return cleared
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        return cleared
+    except PermissionError:
+        if os.name == 'nt':
+            print(f'  gc kept live lock {lock_path} (open handle)')
+            return cleared
+        raise
+    except OSError as exc:
+        raise SyncError(f'cannot remove stale sync lock {lock_path}: {exc}') from exc
+    cleared.append(lock_path)
+    print(f'  gc cleared {lock_path}')
+    return cleared
+
+
+# --------------------------------------------------------------------------- #
 # Locking
 # --------------------------------------------------------------------------- #
 class InstallLock:
@@ -613,23 +769,8 @@ class InstallLock:
 
     @staticmethod
     def _foreign_lock_is_live(path: str) -> bool:
-        """POSIX liveness probe: a live holder keeps flock(LOCK_EX) on the file,
-        so a non-blocking flock attempt fails. Returns False (dead) if we could
-        take and release the flock. Windows never calls this (remove-probe)."""
-        import fcntl
-        try:
-            fd = os.open(path, os.O_RDWR)
-        except OSError:
-            return False  # vanished -> dead
-        try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                return True
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            return False
-        finally:
-            os.close(fd)
+        """Share the POSIX liveness probe used by orphan GC."""
+        return _foreign_lock_is_live(path)
 
     def acquire(self) -> None:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -803,7 +944,19 @@ def apply_plan(plan: Plan, checkout_root: str) -> str:
     }
     write_receipt(staging, receipt_files, checkout_root)
 
-    return _atomic_install(staging, target.install_root, target.backup_root)
+    backup = _atomic_install(staging, target.install_root, target.backup_root)
+    installed_marker = os.path.join(target.install_root, STAGING_OWNER_MARKER)
+    try:
+        os.remove(installed_marker)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(
+            f'WARNING: could not remove staging ownership marker '
+            f'{installed_marker}: {exc}',
+            file=sys.stderr,
+        )
+    return backup
 
 
 # --------------------------------------------------------------------------- #
@@ -845,11 +998,14 @@ def _print_plan(plan: Plan, dry_run: bool) -> None:
 def run_target(target: Target, checkout_root: str, dry_run: bool, force: bool) -> Plan:
     parent = os.path.dirname(os.path.abspath(target.install_root)) or "."
     os.makedirs(parent, exist_ok=True)
+    if not dry_run:
+        gc_target_orphans(target)
     staging = tempfile.mkdtemp(
-        prefix=f"{os.path.basename(target.install_root)}.staging-", dir=parent
+        prefix=_staging_prefix(target.install_root), dir=parent
     )
     lock = InstallLock(target.install_root, force=force)
     try:
+        _write_staging_owner_marker(staging)
         lock.acquire()
         plan = make_plan(target, checkout_root, staging)
         if plan.drift and not force:
@@ -889,6 +1045,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="print per-file actions and exit without changes")
     parser.add_argument("--force", action="store_true",
                         help="overwrite drifted files and steal a stale lock")
+    parser.add_argument("--gc", action="store_true",
+                        help="remove owned staging orphans and stale locks, then exit")
     parser.add_argument("--only", default=None,
                         help="process only the named target")
     args = parser.parse_args(argv)
@@ -907,7 +1065,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"no target named {args.only!r}", file=sys.stderr)
                 return 2
         for target in targets:
-            run_target(target, checkout_root, dry_run=args.dry_run, force=args.force)
+            if args.gc:
+                gc_target_orphans(target)
+            else:
+                run_target(
+                    target,
+                    checkout_root,
+                    dry_run=args.dry_run,
+                    force=args.force,
+                )
     except SyncError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

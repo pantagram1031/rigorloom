@@ -34,14 +34,18 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         (self.ws / "output" / "verdict_v06.json").write_text(
             json.dumps({"proof_grade": grade}), encoding="utf-8")
 
-    def write_hwpx(self, name="submission.hwpx", text="31415 Lee", *, equations=False):
+    def write_hwpx(
+        self, name="submission.hwpx", text="31415 Lee", *, equations=False,
+        structure="",
+    ):
         target = self.ws / "output" / name
         equation = "<hp:equation/>" if equations else ""
         with zipfile.ZipFile(target, "w") as archive:
             archive.writestr(
                 "Contents/section0.xml",
                 '<?xml version="1.0" encoding="UTF-8"?>'
-                f'<doc xmlns:hp="urn:hancom"><p>{text}</p>{equation}</doc>',
+                f'<doc xmlns:hp="urn:hancom">{structure}<p>{text}</p>'
+                f'{equation}</doc>',
             )
         return target
 
@@ -258,6 +262,123 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         codes = {item["code"] for item in verdict["hard"]}
         self.assertIn("P3", codes)
         self.assertIn("P5", codes)
+
+
+    def test_form_structure_baseline_match_passes(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        structure = '<hp:secPr landscape="false"/>'
+        artifact = self.write_hwpx(structure=structure)
+        self.write_proof_grade()
+        digest = submission_preflight._hwpx_form_structure_sha256(artifact)
+        self.write_hwpx(text="changed inserted body text", structure=structure)
+        (self.ws / "form_baseline.json").write_text(
+            json.dumps({"structure_sha256": digest}), encoding="utf-8"
+        )
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": True}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["form_structure_sha256"], digest)
+        self.assertFalse(any(
+            item["code"] == "form_baseline_absent" for item in verdict["warn"]
+        ))
+
+    def test_mutated_form_skeleton_is_hard_form_mutated(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        artifact = self.write_hwpx(
+            structure='<hp:secPr landscape="false"/>'
+        )
+        self.write_proof_grade()
+        baseline = submission_preflight._hwpx_form_structure_sha256(artifact)
+        (self.ws / "form_baseline.json").write_text(
+            json.dumps({"structure_sha256": baseline}), encoding="utf-8"
+        )
+        with zipfile.ZipFile(artifact, "w") as archive:
+            archive.writestr(
+                "Contents/section0.xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<doc xmlns:hp="urn:hancom"><hp:secPr landscape="true"/>'
+                '<p>different body text</p></doc>',
+            )
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": True}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "form_mutated" for item in verdict["hard"]
+        ), verdict)
+
+    def test_mutated_table_skeleton_is_hard_form_mutated(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        artifact = self.write_hwpx(
+            structure=(
+                '<hp:tbl rowCnt="1" colCnt="1">'
+                '<hp:tc colAddr="0" rowAddr="0"><hp:p/></hp:tc>'
+                '</hp:tbl>'
+            )
+        )
+        self.write_proof_grade()
+        baseline = submission_preflight._hwpx_form_structure_sha256(artifact)
+        (self.ws / "form_baseline.json").write_text(
+            json.dumps({"structure_sha256": baseline}), encoding="utf-8"
+        )
+        with zipfile.ZipFile(artifact, "w") as archive:
+            archive.writestr(
+                "Contents/section0.xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<doc xmlns:hp="urn:hancom">'
+                '<hp:tbl rowCnt="1" colCnt="2">'
+                '<hp:tc colAddr="0" rowAddr="0"><hp:p/></hp:tc>'
+                '<hp:tc colAddr="1" rowAddr="0"><hp:p/></hp:tc>'
+                '</hp:tbl><p>same body text</p></doc>',
+            )
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": True}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "form_mutated" for item in verdict["hard"]
+        ), verdict)
+
+    def test_no_form_baseline_is_warn(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx()
+        self.write_proof_grade()
+
+        with mock.patch.object(
+            submission_preflight.render_probe,
+            "probe",
+            return_value={"capabilities": {"hancom_com": True}, "renderers": []},
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(
+            item["code"] == "form_baseline_absent" for item in verdict["warn"]
+        ), verdict)
 
 
 if __name__ == "__main__":

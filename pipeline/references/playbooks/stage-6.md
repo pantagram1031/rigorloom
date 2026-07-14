@@ -18,8 +18,17 @@ EXACT actions:
    PDF PyMuPDF open + nonzero text). When `request.yaml` declares
    `output_filename` and inline `required_fields: [name, id, ...]`, it also
    checks the filename pattern and confirms each named request value appears in
-   post-render text. Either absent request key is skipped with a compatibility
-   note, but reopen/extension/proof-grade checks never skip.
+   post-render text. It also enforces the non-destructive-form rule when Stage 0
+   recorded a form-structure SHA-256 in `form_baseline.json` or
+   `build.yaml`: the assembled HWPX style/section plus `tbl`/`tc` table-cell and
+   `ctrl` form-control skeleton hash must equal that baseline. Body text and
+   tails are deliberately excluded from this hash. A mismatch is HARD
+   `form_mutated`; a legacy workspace with no recorded structure hash emits
+   WARN `form_baseline_absent`. The baseline is trusted-on-record: if it is
+   written after a mutation, that mutation is undetectable. A signed external
+   baseline is deferred.
+   Either absent request key is skipped with a compatibility note, but
+   reopen/extension/proof-grade checks never skip.
 
 ```sh
 python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status awaiting_gate
@@ -37,13 +46,25 @@ python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
 python pipeline/scripts/workflow_lint.py <WS> --json
 ```
 
-4. Fill `pipeline/references/wiki_entry_template.md` as a local knowledge record
+4. OPTIONAL advisory corpus check before the wiki return. Configure a private
+   corpus root containing prior reports for one student only; the checker also
+   requires each compared workspace's recorded `student_id` (or fallback
+   `student_name`) to match the current workspace. A WARN is surfaced to the
+   operator but does not block delivery. Omit this step when no private corpus
+   is configured.
+
+```sh
+python pipeline/scripts/check_corpus.py <WS> --corpus-root <root>
+# or set RIGORLOOM_CORPUS_ROOT and omit --corpus-root
+```
+
+5. Fill `pipeline/references/wiki_entry_template.md` as a local knowledge record
    under `<WS>/archive/knowledge/`.
-5. Promote reusable troubleshooting patterns and public sources into that local
+6. Promote reusable troubleshooting patterns and public sources into that local
    record. Do not copy private report prose or identity data.
-6. Report the canonical output path, gate history, `proof_grade`, and any
+7. Report the canonical output path, gate history, `proof_grade`, and any
    remaining manual work to the operator.
-7. Close the workflow only after the script gate is approved:
+8. Close the workflow only after the script gate is approved:
 
 ```sh
 python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status done
@@ -71,4 +92,6 @@ FAILURE table:
 | preflight filename/identity mismatch | request contract not reflected in artifact | rename/rebuild or fill required fields, then rerun the gate |
 | artifact reopen fails | corrupt/unsupported submission file | rebuild a valid HWPX or text-bearing PDF |
 | `proof_grade` missing | renderer evidence not recorded | regenerate the assembly verdict with an explicit proof grade |
+| `form_mutated` | assembled form-owned style/section skeleton differs from the pristine baseline | rebuild from the untouched form copy; do not replace the baseline with the mutated output hash |
+| `form_baseline_absent` WARN | legacy workspace did not record a structure digest | surface the warning; for a new run, record the pristine Stage 0 digest before assembly |
 | lint H6 stale assembly | output newer than content audit | invalidate from 4.5, rerun audit, and rebuild |

@@ -67,6 +67,23 @@ the checker could not parse its inputs; exit 3 means missing assembly output or
 a real format violation. Do not advance 5.3 after either nonzero exit. A
 successful 5.3 advance resumes at Stage 5.5.
 
+FORM-STRUCTURE BASELINE (HWPX/HWP): preserve the Stage 0 structure digest in
+`<WS>/form_baseline.json` as `{"structure_sha256": "<64-hex>"}`, or in
+`build.yaml` as `form_structure_sha256: <64-hex>`. The digest is over
+FORM-owned XML structure only: all `charPr`, `paraPr`, `secPr`, table/cell
+(`tbl`/`tc`), and form-control (`ctrl`) skeleton elements from XML parts sorted
+by archive path, retaining namespace-expanded element names, sorted attributes,
+recursive child-element structure, and per-part occurrence order. Element text
+and tails are excluded, so inserted report body text cannot change the digest;
+ZIP member order, XML whitespace, and attribute serialization order also cannot
+change it. The Stage 6
+`submission_preflight.py` implementation is self-contained and recomputes
+this same canonical JSON SHA-256 from the assembled HWPX. A different digest is
+HARD `form_mutated`; no recorded digest is WARN
+`form_baseline_absent`. The stored digest is trusted-on-record, not proof of
+when or from which pristine file it was created: a baseline written after a
+mutation cannot detect that mutation. A signed external baseline is deferred.
+
 ---
 
 ## §HWPX — COM-free form fill (any OS; advisory proof only)
