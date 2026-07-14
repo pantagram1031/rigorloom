@@ -32,6 +32,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 
@@ -39,6 +41,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))          # pipeline/scripts
 _PIPELINE_DIR = os.path.dirname(_HERE)                        # pipeline
 if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from adapters_impl import read_build_yaml_key  # noqa: E402
 
@@ -70,6 +74,8 @@ _HWPX_POINTER = (
 # marker check just catches misconfiguration (e.g. the env var pointing at
 # the wrong directory) — it is not a security boundary.
 _HWP_MASTER_MARKERS = ("fill_report.py", "eqn.py", "xml_backend.py")
+_CONTENT_EQ_RE = re.compile(r"\[\[\s*EQ\b", re.IGNORECASE)
+_XML_EQ_RE = re.compile(br"<(?:[A-Za-z_][\w.-]*:)?equation\b", re.IGNORECASE)
 
 
 def _resolve_hwpx_fill_report() -> str | None:
@@ -81,6 +87,134 @@ def _resolve_hwpx_fill_report() -> str | None:
                for marker in _HWP_MASTER_MARKERS):
         return None
     return os.path.join(base, "fill_report.py")
+
+
+def _workspace_has_equations(ws: str, target: str, render_probe) -> bool:
+    """Detect equation content before or after HWPX assembly."""
+    if render_probe.hwpx_has_equations(target):
+        return True
+
+    content = os.path.join(ws, "bundle", "content.md")
+    with open(content, encoding="utf-8") as stream:
+        if _CONTENT_EQ_RE.search(stream.read()):
+            return True
+
+    form_copy = os.path.join(ws, "output", "form_copy.hwpx")
+    if render_probe.hwpx_has_equations(form_copy):
+        return True
+
+    for directory, dirnames, filenames in os.walk(ws, followlinks=False):
+        dirnames[:] = [name for name in dirnames
+                       if not os.path.islink(os.path.join(directory, name))]
+        for filename in filenames:
+            if not (filename.lower().startswith("section")
+                    and filename.lower().endswith(".xml")):
+                continue
+            with open(os.path.join(directory, filename), "rb") as stream:
+                if _XML_EQ_RE.search(stream.read()):
+                    return True
+    return False
+
+
+def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
+    """Choose proof routing for this workspace's assembled HWPX.
+
+    Hancom stays on fill_report's native route (no external ``--pdf-cmd``).
+    Soffice is external advisory proof and is unsafe for equation documents.
+    """
+    target = os.path.join(out_dir or os.path.join(ws, "output"), "out.hwpx")
+    try:
+        import render_probe
+        result = render_probe.probe()
+        has_equations = _workspace_has_equations(ws, target, render_probe)
+    except Exception:
+        return {
+            "target": target, "equations": None, "available": [],
+            "selected": None, "proof_grade": "none",
+            "reason": "renderer_probe_failed", "pdf_cmd_argv": None,
+        }
+
+    renderers = result.get("renderers", [])
+    available = [renderer.get("name") for renderer in renderers
+                 if renderer.get("name")]
+    capabilities = result.get("capabilities", {})
+    hancom_available = bool(capabilities.get("hancom_com")) or "hancom" in available
+    if hancom_available:
+        return {
+            "target": target, "equations": has_equations,
+            "available": available, "selected": "hancom",
+            "proof_grade": "hancom", "reason": "hancom_com_available",
+            "pdf_cmd_argv": None,
+        }
+
+    soffice = next(
+        (renderer for renderer in renderers
+         if renderer.get("name") in {"soffice_local", "soffice_wsl"}
+         and renderer.get("argv")),
+        None,
+    )
+    if soffice is None:
+        return {
+            "target": target, "equations": has_equations,
+            "available": available, "selected": None,
+            "proof_grade": "none", "reason": "renderer_unavailable",
+            "pdf_cmd_argv": None,
+        }
+    if has_equations:
+        return {
+            "target": target, "equations": True, "available": available,
+            "selected": None, "proof_grade": "none",
+            "reason": "renderer_cannot_eqn", "pdf_cmd_argv": None,
+        }
+    return {
+        "target": target, "equations": False, "available": available,
+        "selected": soffice["name"], "proof_grade": "advisory",
+        "reason": "equation_free", "pdf_cmd_argv": list(soffice["argv"]),
+    }
+
+
+def _fill_report_help(fill_report: str) -> str:
+    """Return bounded fill_report help output, or an empty string."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, fill_report, "--help"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def _public_renderer_decision(decision: dict) -> dict:
+    return {key: value for key, value in decision.items()
+            if key != "pdf_cmd_argv"}
+
+
+def _emit_hwpx_result(completed, decision: dict) -> None:
+    """Emit one JSON object while preserving a JSON adapter result's fields."""
+    raw = completed.stdout or ""
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("adapter result is not an object")
+    except (json.JSONDecodeError, ValueError):
+        payload = {
+            "ok": completed.returncode == 0,
+            "backend": "hwpx",
+            "adapter_stdout": raw,
+        }
+
+    payload["renderer_decision"] = _public_renderer_decision(decision)
+    if completed.returncode == 0:
+        payload["proof_grade"] = decision["proof_grade"]
+        if decision["reason"] == "renderer_cannot_eqn":
+            payload["reason"] = decision["reason"]
+        else:
+            payload.setdefault("reason", decision["reason"])
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
@@ -98,6 +232,29 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
         "--content", os.path.join(ws, "bundle", "content.md"),
         "--out-dir", out_dir or os.path.join(ws, "output"),
     ]
+
+    decision = _hwpx_renderer_decision(ws, out_dir)
+    help_text = _fill_report_help(fill_report)
+    pdf_cmd_argv = decision["pdf_cmd_argv"]
+    if pdf_cmd_argv and "--pdf-cmd" in help_text:
+        command += ["--pdf-cmd", shlex.join(pdf_cmd_argv)]
+    elif pdf_cmd_argv:
+        decision.update({
+            "selected": None,
+            "proof_grade": "none",
+            "reason": "fill_report_pdf_cmd_unsupported",
+            "pdf_cmd_argv": None,
+        })
+
+    if decision["proof_grade"] == "none":
+        reason_flag = next(
+            (flag for flag in ("--proof-reason", "--no-proof-reason")
+             if flag in help_text),
+            None,
+        )
+        if reason_flag:
+            command += [reason_flag, decision["reason"]]
+
     try:
         completed = subprocess.run(command, capture_output=True, text=True,
                                    encoding="utf-8", errors="replace")
@@ -106,10 +263,9 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
         print(json.dumps({"ok": False, "backend": "hwpx", "external": True,
                           "reason": "failed to launch hwp-master XML adapter"}))
         return 4
-    if completed.stdout:
-        sys.stdout.write(completed.stdout)
     if completed.stderr:
         sys.stderr.write(completed.stderr)
+    _emit_hwpx_result(completed, decision)
     return completed.returncode
 
 

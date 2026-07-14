@@ -28,10 +28,19 @@ candidate; agent.worker/high is the fallback per agents.yaml);
 reviewer-logic=agent.worker/high + agent.worker/high (numbers); judge=agent.worker/high;
 code=deterministic script. All fresh contexts.
 
-EXIT + gate: scorecard.json written, weighted score ≥ threshold. No
-pipeline_ctl gate (gate:null) — panel verdict is internal. Advance → stage 6:
+EXIT + script gate `final_panel`: write `output/scorecard.json`, including the
+three explicit stop-line fields `SENSITIVE_FRAMING`,
+`LOAD_BEARING_DISPUTE`, and `UNSUPPORTED_NOVELTY`, plus each panelist's
+findings and `blocking` flag. A high average never overrides a true stop line
+or blocking finding. Missing/malformed `output/scorecard*.json` fails closed.
+
+Resolve the registered checker, then advance to Stage 6:
+
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
+python pipeline/scripts/pipeline_ctl.py advance <WS> 5.7 --status awaiting_gate
+python pipeline/scripts/pipeline_ctl.py check <WS> final_panel
+# exit 0 -> auto_approved; exit 3 -> rejected, repair the owning stage/panel
 python pipeline/scripts/pipeline_ctl.py advance <WS> 5.7 --status done
 ```
 
@@ -42,3 +51,6 @@ FAILURE table:
 | loopback ×2 still fails | — | status=blocked + reason |
 | independent reviewers disagree on a number | — | trust the immutable simulation verdict; flag prose |
 | preferred reviewer unavailable | environment limitation | select an equivalent independent reviewer and record the substitution |
+| any stop-line field true | submission veto independent of score | loop back to the owning stage; never average it away |
+| any panelist finding has `blocking: true` | unresolved blocking defect | repair and regenerate the scorecard |
+| scorecard missing/malformed | no auditable panel verdict | create valid `output/scorecard.json`, then rerun `check final_panel` |

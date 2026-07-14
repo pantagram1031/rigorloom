@@ -64,7 +64,8 @@ class WorkflowLintTestCase(unittest.TestCase):
             argv[0] = sys.executable
         return argv
 
-    def add_receipt(self, stage, gate, *, checker_argv=None, stdout_sha256=None):
+    def add_receipt(self, stage, gate, *, checker_argv=None, stdout_sha256=None,
+                    checked_at=None, extra=None):
         """Append a gate_checks receipt. Defaults produce a GENUINE receipt
         (matching argv + a well-formed hash); pass explicit values to forge a
         bad one."""
@@ -76,6 +77,10 @@ class WorkflowLintTestCase(unittest.TestCase):
         target.parent.mkdir(parents=True, exist_ok=True)
         record = {"stage": stage, "gate": gate,
                   "checker_argv": checker_argv, "stdout_sha256": stdout_sha256}
+        if checked_at is not None:
+            record["checked_at"] = checked_at
+        if extra:
+            record.update(extra)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
 
@@ -140,6 +145,16 @@ class TestScriptGateReceipt(WorkflowLintTestCase):
         self.assertEqual(code, 3)
         self.assertTrue(any(item["code"] == "H1" for item in verdict["hard"]))
 
+    def test_legacy_done_null_gate_rows_do_not_inherit_new_script_gates(self):
+        for stage in ("5.7", "6"):
+            self.hdr["stages"][stage]["status"] = "done"
+            self.hdr["stages"][stage]["gate"] = None
+        self.write_header()
+        self.add_events()
+        verdict, code = self.lint()
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "H1" for item in verdict["hard"]))
+
 
 class TestCanonicalGateState(WorkflowLintTestCase):
     def test_canonical_output_with_pending_gate_is_hard(self):
@@ -183,6 +198,71 @@ class TestOutputEventFreshness(WorkflowLintTestCase):
         verdict, code = self.lint()
         self.assertEqual(code, 0, verdict)
         self.assertFalse(any(item["code"] == "W1" for item in verdict["warn"]))
+
+
+class TestAssemblyEventFreshness(WorkflowLintTestCase):
+    def _write_out(self, when):
+        target = self.ws / "output" / "out.pdf"
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(b"synthetic")
+        os.utime(target, (when.timestamp(), when.timestamp()))
+
+    def test_compliant_output_after_audit_but_before_last_event_is_clean(self):
+        self.add_receipt(
+            "4.5", "content_audit", checked_at=self.NOW.isoformat())
+        assembled = self.NOW + timedelta(seconds=1)
+        self._write_out(assembled)
+        (self.ws / "events.jsonl").write_text(json.dumps({
+            "ts": (assembled + timedelta(seconds=1)).isoformat(),
+            "type": "advance", "stage": "5",
+        }) + "\n", encoding="utf-8")
+        verdict, code = self.lint()
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["hard"], [])
+
+    def test_output_over_ten_minutes_after_last_event_is_hard(self):
+        self.add_receipt(
+            "4.5", "content_audit", checked_at=self.NOW.isoformat())
+        last_event = self.NOW + timedelta(seconds=1)
+        (self.ws / "events.jsonl").write_text(json.dumps({
+            "ts": last_event.isoformat(), "type": "advance", "stage": "5",
+        }) + "\n", encoding="utf-8")
+        self._write_out(last_event + timedelta(seconds=601))
+        verdict, code = self.lint()
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(item["code"] == "H3" for item in verdict["hard"]))
+
+class TestUnderstandingPendingDeliveryWarning(WorkflowLintTestCase):
+    def _resolve_all_gates(self):
+        for state in self.hdr["stages"].values():
+            if state["gate"]:
+                state["gate"]["state"] = "approved"
+
+    def _write_understanding_provenance(self, pending):
+        target = self.ws / ".pipeline" / "understanding_check.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({
+            "checked_at": self.NOW.isoformat(),
+            "answers_pending": pending,
+        }), encoding="utf-8")
+
+    def test_canonical_with_answers_pending_warns(self):
+        self.hdr["canonical_output"] = "output/out.hwpx"
+        self._resolve_all_gates()
+        self.write_header()
+        self._write_understanding_provenance(True)
+        verdict, code = self.lint()
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(item["code"] == "W4" for item in verdict["warn"]))
+
+    def test_canonical_with_answers_complete_does_not_warn(self):
+        self.hdr["canonical_output"] = "output/out.hwpx"
+        self._resolve_all_gates()
+        self.write_header()
+        self._write_understanding_provenance(False)
+        verdict, code = self.lint()
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "W4" for item in verdict["warn"]))
 
 
 class TestSupervisedAutoApproval(WorkflowLintTestCase):

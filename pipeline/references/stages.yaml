@@ -11,6 +11,6 @@ stages:
   # 4.5 content_audit gate — freeze content BEFORE assembly (see stage-4.5.md).
   - {id: "4.5", name: "content_audit", gate: {name: "content_audit", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/content_audit.py", "{WS}"]}, playbook: "playbooks/stage-4.5.md"}
   - {id: "5",   name: "assemble",      gate: null,                                                                                                        playbook: "playbooks/stage-5.md"}
-  - {id: "5.5", name: "understand",    gate: {name: "understand", type: "human"},                                                                         playbook: "playbooks/stage-5.5.md"}
-  - {id: "5.7", name: "final_panel",   gate: null,                                                                                                        playbook: "playbooks/stage-5.7.md"}
-  - {id: "6",   name: "return",        gate: null,                                                                                                        playbook: "playbooks/stage-6.md"}
+  - {id: "5.5", name: "understand",    gate: {name: "understand", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/check_understanding.py", "{WS}", "--out", "{WS}/.pipeline/understanding_check.json"]}, playbook: "playbooks/stage-5.5.md"}
+  - {id: "5.7", name: "final_panel",   gate: {name: "final_panel", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/check_scorecard.py", "{WS}"]},          playbook: "playbooks/stage-5.7.md"}
+  - {id: "6",   name: "return",        gate: {name: "submission_preflight", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/submission_preflight.py", "{WS}"]}, playbook: "playbooks/stage-6.md"}

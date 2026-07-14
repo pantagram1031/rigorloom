@@ -217,6 +217,22 @@ def _print_summary(py_version: str, profile_root: Path, packs: tuple[int, int],
         print(f"  {name.ljust(name_w)}  [{mark:<13}] {enables}")
         print(f"  {' ' * name_w}  -> {hint}")
     print("=" * 60)
+    _print_render_capabilities()
+
+
+def _print_render_capabilities() -> None:
+    """Print the render_probe capability matrix (Hancom COM / soffice / WSL /
+    H2Orestart). This is purely informational — any failure here must never
+    fail bootstrap."""
+    try:
+        if str(PIPELINE_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(PIPELINE_SCRIPTS))
+        import render_probe
+        print()
+        print(render_probe.format_table(render_probe.probe()))
+    except Exception as exc:
+        print()
+        print(f"Render capability matrix: unavailable ({exc})")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

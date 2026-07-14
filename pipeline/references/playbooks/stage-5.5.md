@@ -1,8 +1,9 @@
-# Stage 5.5 — Understanding gate (anti-slop) → 🚪 understand (human-type)
+# Stage 5.5 — Understanding gate (anti-slop) → understand (script)
 <!-- <WS> = <REPO_ROOT>/workspaces/report-<slug> (절대경로 — CWD는 <REPO_ROOT>라 상대경로 report-<slug>는 실패) -->
 
-PURPOSE: Make sure a human could defend the report. Generate 5 teacher-style
-questions; no model answers provided.
+PURPOSE: Make sure a human could defend the report. Generate 5 substantive,
+teacher-style questions. In supervised mode the operator records their own five
+answers; autonomous/night deliberately leaves answers pending.
 
 ENTRY: `pipeline_ctl resume` → stage 5.5. Stage 5 done (assemble converged +
 rubric pass). Implemented stage order (stages.yaml): …5 → **5.5 → 5.7** → 6
@@ -17,17 +18,40 @@ EXACT actions:
   5. 후속탐구 (next inquiry)
 - Present WITHOUT model answers.
 
+EXPECTED `output/QUESTIONS.md` FORMAT: exactly five numbered question blocks.
+Each block must contain substantive interrogative text, including a question
+mark; empty labels, TODO/TBD, placeholders, or bare `Question N` blocks fail
+closed. Questions may wrap across lines. A supervised human answer is non-empty
+text introduced inside each block by `Answer:`; the checker also accepts the
+equivalent Korean answer labels. Example:
+
+```
+1. Why does the integer sample index matter?
+   Answer: My explanation in my own words.
+```
+
+- supervised: the operator writes one non-empty answer under every question;
+- autonomous/night: leave model answers absent. The script gate passes only
+  when all five questions are well formed and records `answers_pending: true`
+  in `.pipeline/understanding_check.json`.
+
+Resolve the script gate through the controller. It runs the bound checker and
+preserves both the generic gate receipt and the detailed understanding
+provenance:
+
+```
+python pipeline/scripts/pipeline_ctl.py check <WS> understand
+# checker exit 0 = auto_approved by script; exit 3 = rejected, repair QUESTIONS.md
+```
+
 ROLE BINDINGS (§R): question generation = main/high-capability worker. No subagent needed.
 
-EXIT + gate: **understand** (human-type gate):
-```
-# cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python pipeline/scripts/pipeline_ctl.py gate <WS> understand --mode <mode>
-```
-- supervised: operator answers; if they can't self-answer ≥3, record
-  "제출 전 복습 필요" and still gate per operator decision.
-- autonomous/night: generate + record questions, auto_approved (mark: human
-  did not review).
+EXIT + gate: **understand** (script gate):
+- supervised: five non-empty operator answers are required; missing answers
+  reject the checker with exit 3.
+- autonomous/night: five well-formed questions are required, while missing
+  answers remain allowed under auto-approved semantics. The detailed provenance
+  retains `answers_pending: true` until a later answered check replaces it.
 Advance → stage 5.7 (eval panel):
 ```
 python pipeline/scripts/pipeline_ctl.py advance <WS> 5.5 --status done

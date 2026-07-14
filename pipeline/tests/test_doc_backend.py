@@ -246,6 +246,191 @@ class TestDispatcher(unittest.TestCase):
         self.assertTrue((inside / "preview.html").is_file())
 
 
+class TestPdfCmdWiring(unittest.TestCase):
+    """doc_backend auto-passes --pdf-cmd to fill_report only when render_probe
+    reports a usable soffice renderer AND fill_report's own --help
+    output advertises the flag at dispatch time."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ws = _make_ws(Path(self._tmp.name), content="Equation-free body.\n")
+        self.scripts = Path(self._tmp.name) / "hwp-master-scripts"
+        self.scripts.mkdir()
+        (self.scripts / "eqn.py").write_text("", encoding="utf-8")
+        (self.scripts / "xml_backend.py").write_text("", encoding="utf-8")
+        import render_probe
+        self.render_probe = render_probe
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_fake_fill_report(self, advertises_pdf_cmd: bool) -> Path:
+        help_text = "usage: fill_report.py [--engine {com,xml}]"
+        if advertises_pdf_cmd:
+            help_text += " [--pdf-cmd PDF_CMD]"
+        fake = self.scripts / "fill_report.py"
+        fake.write_text(
+            "import json, sys\n"
+            f"HELP = {help_text!r}\n"
+            "if '--help' in sys.argv[1:]:\n"
+            "    print(HELP)\n"
+            "    raise SystemExit(0)\n"
+            "print(json.dumps({'ok': True, 'argv': sys.argv[1:]}))\n"
+            "raise SystemExit(0)\n",
+            encoding="utf-8",
+        )
+        return fake
+
+    def _run(self) -> dict:
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"HWP_MASTER_SCRIPTS": str(self.scripts)}),
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+        self.assertEqual(code, 0)
+        return json.loads(stdout.getvalue())
+
+    def _run_mocked_decision(self, probe_result: dict, has_equations: bool) -> tuple[dict, list[str]]:
+        stdout = io.StringIO()
+        completed = mock.Mock(returncode=0, stdout='{"ok": true}', stderr="")
+
+        def fake_run(command, **kwargs):
+            if "--help" in command:
+                return mock.Mock(returncode=0,
+                                 stdout="usage: fill_report.py [--pdf-cmd PDF_CMD]",
+                                 stderr="")
+            completed.args = command
+            return completed
+
+        with (
+            mock.patch.object(doc_backend, "_resolve_hwpx_fill_report",
+                              return_value=str(self.scripts / "fill_report.py")),
+            mock.patch.object(self.render_probe, "probe", return_value=probe_result),
+            mock.patch.object(self.render_probe, "hwpx_has_equations",
+                              return_value=has_equations),
+            mock.patch.object(doc_backend.subprocess, "run", side_effect=fake_run),
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+
+        self.assertEqual(code, 0)
+        return json.loads(stdout.getvalue()), completed.args
+
+    def test_pdf_cmd_passed_when_renderer_usable_and_flag_advertised(self):
+        self._write_fake_fill_report(advertises_pdf_cmd=True)
+        fake_result = {"renderers": [
+            {"name": "soffice_local", "wsl": False, "argv": ["soffice", "--headless"]},
+        ]}
+        with mock.patch.object(self.render_probe, "probe", return_value=fake_result):
+            payload = self._run()
+        self.assertIn("--pdf-cmd", payload["argv"])
+        idx = payload["argv"].index("--pdf-cmd")
+        self.assertEqual(payload["argv"][idx + 1], "soffice --headless")
+
+    def test_pdf_cmd_omitted_when_flag_not_advertised(self):
+        self._write_fake_fill_report(advertises_pdf_cmd=False)
+        fake_result = {"renderers": [
+            {"name": "soffice_local", "wsl": False, "argv": ["soffice", "--headless"]},
+        ]}
+        with mock.patch.object(self.render_probe, "probe", return_value=fake_result):
+            payload = self._run()
+        self.assertNotIn("--pdf-cmd", payload["argv"])
+
+    def test_pdf_cmd_omitted_when_no_usable_renderer(self):
+        self._write_fake_fill_report(advertises_pdf_cmd=True)
+        with mock.patch.object(self.render_probe, "probe", return_value={"renderers": []}):
+            payload = self._run()
+        self.assertNotIn("--pdf-cmd", payload["argv"])
+
+    def test_pdf_cmd_passed_when_only_wsl_renderer(self):
+        self._write_fake_fill_report(advertises_pdf_cmd=True)
+        fake_result = {"renderers": [
+            {"name": "soffice_wsl", "wsl": True,
+             "argv": ["wsl", "-e", "bash", "-lc", "wslpath $1",
+                      "render_probe", "{outdir}", "{in}"]},
+        ]}
+        with mock.patch.object(self.render_probe, "probe", return_value=fake_result):
+            payload = self._run()
+        self.assertIn("--pdf-cmd", payload["argv"])
+        idx = payload["argv"].index("--pdf-cmd")
+        self.assertIn("wslpath", payload["argv"][idx + 1])
+        self.assertIn("'{outdir}'", payload["argv"][idx + 1])
+        self.assertIn("'{in}'", payload["argv"][idx + 1])
+
+    def test_only_soffice_with_equations_omits_pdf_cmd_and_explains_no_proof(self):
+        payload, command = self._run_mocked_decision(
+            {
+                "capabilities": {"hancom_com": False},
+                "renderers": [
+                    {"name": "soffice_local", "wsl": False,
+                     "argv": ["soffice", "--headless"]},
+                ],
+            },
+            has_equations=True,
+        )
+
+        self.assertNotIn("--pdf-cmd", command)
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertEqual(payload["reason"], "renderer_cannot_eqn")
+        self.assertIsNone(payload["renderer_decision"]["selected"])
+
+    def test_content_equation_before_assembly_routes_away_from_soffice(self):
+        (self.ws / "bundle" / "content.md").write_text(
+            'Before assembly [[EQ latex="E = mc^2"]] is present.\n',
+            encoding="utf-8",
+        )
+        self.assertFalse((self.ws / "output" / "out.hwpx").exists())
+
+        payload, command = self._run_mocked_decision(
+            {
+                "capabilities": {"hancom_com": False},
+                "renderers": [
+                    {"name": "soffice_local", "wsl": False,
+                     "argv": ["soffice", "--headless"]},
+                ],
+            },
+            has_equations=False,
+        )
+
+        self.assertNotIn("--pdf-cmd", command)
+        self.assertEqual(payload["reason"], "renderer_cannot_eqn")
+        self.assertEqual(payload["proof_grade"], "none")
+
+    def test_only_soffice_without_equations_passes_pdf_cmd(self):
+        payload, command = self._run_mocked_decision(
+            {
+                "capabilities": {"hancom_com": False},
+                "renderers": [
+                    {"name": "soffice_local", "wsl": False,
+                     "argv": ["soffice", "--headless"]},
+                ],
+            },
+            has_equations=False,
+        )
+
+        self.assertIn("--pdf-cmd", command)
+        self.assertEqual(payload["proof_grade"], "advisory")
+        self.assertEqual(payload["renderer_decision"]["selected"], "soffice_local")
+
+    def test_hancom_with_equations_is_preferred_over_soffice(self):
+        payload, command = self._run_mocked_decision(
+            {
+                "capabilities": {"hancom_com": True},
+                "renderers": [
+                    {"name": "hancom", "wsl": False, "argv": None},
+                    {"name": "soffice_local", "wsl": False,
+                     "argv": ["soffice", "--headless"]},
+                ],
+            },
+            has_equations=True,
+        )
+
+        self.assertNotIn("--pdf-cmd", command)
+        self.assertEqual(payload["proof_grade"], "hancom")
+        self.assertEqual(payload["renderer_decision"]["selected"], "hancom")
+
+
 class TestDocxBackend(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

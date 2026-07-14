@@ -18,6 +18,18 @@ draft ok) and Stage 4.5 `content_audit` approved via
 `python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
 NO pipeline_ctl gate for any backend (gate:null) — the verdict is internal.
 
+POST-FREEZE CONTENT RULE (ALL BACKENDS): after Stage 4.5 passes, ANY delta to
+`bundle/content.md` invalidates that audit and every downstream artifact. This
+includes the small proof-loop rewrites below. Before reassembly, always run the
+real CLI sequence (the invalidate option is named `--from`):
+
+```
+python pipeline/scripts/pipeline_ctl.py invalidate <WS> --from 4.5 --reason "post-freeze content delta"
+python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
+python pipeline/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
+# Re-enter Stage 5 and rebuild every canonical output/proof from audited content.
+```
+
 ---
 
 ## §HWPX — COM-free form fill (any OS; advisory proof only)
@@ -83,8 +95,10 @@ PROOF-LOOP PROCEDURE (step-numbered, §P):
    `mid_bottom_void`, `density_uniformity`, `table_proportion`,
    `heading_plus_void`; all four `true` to pass).
 3. All-pass → EXIT below. Any FAIL → writer applies a ±1–2 line
-   `content.md` delta per the flagged `needs`, then re-run the SAME
-   command with `--proof-needs needs.json` added (schema below).
+   `content.md` delta per the flagged `needs`, then runs the mandatory
+   POST-FREEZE CONTENT RULE above (invalidate 4.5, re-check, advance 4.5),
+   re-enters Stage 5, and runs the SAME command with
+   `--proof-needs needs.json` added (schema below).
 4. `proof_iter` > 3 → verdict `status: escalate_human`; advance
    `--status blocked` (FAILURE table).
 
@@ -116,6 +130,9 @@ Advance → 5.5 (implemented order: 5 → 5.5 → 5.7 → 6):
 ```
 python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
 ```
+
+Any proof rewrite that changes `content.md` without the invalidate/re-check
+sequence is a freeze bypass; do not reuse its assembled outputs.
 
 FAILURE table:
 | Symptom | Cause | Action |

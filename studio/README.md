@@ -2,8 +2,8 @@
 
 Rigorloom Studio is a localhost-only, offline workspace dashboard. It shows all
 report workspaces, stage and gate state, conformance, gate-check provenance,
-events, humanization rounds, bundle previews, and PDF output. It has no CDN or
-network dependency.
+events, humanization rounds, bundle previews, PDF output, and the machine's
+Hancom/LibreOffice rendering capabilities. It has no CDN or network dependency.
 
 ```sh
 python -m pip install -r studio/requirements.txt
@@ -14,7 +14,29 @@ The default contract is read-only. The server binds only to `127.0.0.1` and
 does not call model providers or external services. Optional actions are hidden
 and every action POST returns HTTP 403 unless `STUDIO_ALLOW_ACTIONS=1` is set.
 Action mode can append an operator approval and invoke repository pipeline
-commands, so enable it only for a workspace you intend to operate.
+commands, including the bundle and COM-free HWPX document backends, so enable
+it only for a workspace you intend to operate. The HWPX button is disabled
+unless the capability probe reports a renderer or `HWP_MASTER_SCRIPTS` is set.
+
+### Render capabilities and proof grades
+
+Studio runs `pipeline/scripts/render_probe.py` once per server process in a
+separate Python subprocess with a 20-second timeout. The dashboard and workspace
+detail show green/gray chips for Hancom COM, native `soffice`, WSL `soffice`,
+and H2Orestart. If the probe module is absent, fails to import, times out, or
+returns an unexpected payload, Studio shows one gray `probe n/a` chip and keeps
+the rest of the dashboard usable.
+
+For document proof state, Studio reads the newest `*verdict*.json` file under a
+workspace's `output/` directory. PDF and deliverable panels are always labeled:
+
+- `hancom`: green `제출급 증명`
+- `advisory`: amber `참고용 렌더 (LibreOffice)`
+- `none` or no verdict: gray `렌더 증명 없음`
+
+The XML verdict panel also shows gappy pages, the `needs[]` count, and
+`renderer_failed`. LibreOffice output is advisory evidence and is never shown
+without that qualification.
 
 ### Action mode CSRF protection
 
@@ -36,7 +58,7 @@ Environment variables:
 - `STUDIO_WORKSPACE_ROOT`: workspace parent directory. Defaults to the repo's
   `workspaces/` directory when present, otherwise `~/rigorloom-workspaces`.
 - `STUDIO_STAGES_YAML`: alternate stage-definition file used for stage order.
-- `STUDIO_ALLOW_ACTIONS`: set exactly to `1` to expose and allow the four action
+- `STUDIO_ALLOW_ACTIONS`: set exactly to `1` to expose and allow the five action
   endpoints. Any other value keeps Studio read-only.
 - `STUDIO_ACTION_TOKEN`: override the generated action token (e.g. to keep a
   stable token across restarts). Only read when `STUDIO_ALLOW_ACTIONS=1`.

@@ -156,14 +156,22 @@ def check(workspace: str | Path, now: datetime | None = None) -> tuple[dict, int
         # sys.executable that cmd_check rebinds into a genuine receipt.
         return pipeline_ctl._substitute_checker_argv(checker, ws)
 
-    # HARD (H1): a completed script-gated stage must have a receipt that MATCHES
-    # the graph's registered checker argv AND carries a non-empty stdout_sha256.
+    # HARD (H1): a completed stage whose OWN header row carries the graph's
+    # script gate must have a receipt that MATCHES the registered checker argv
+    # AND carries a non-empty stdout_sha256. Legacy rows with gate:null do not
+    # inherit gates added by a newer graph.
     # A receipt merely tagged with the right (stage, gate) no longer counts —
     # the argv + hash are what a forgery would have to reproduce.
     for stage_id, state in stages.items():
+        header_gate = state.get("gate")
         row = rows_by_id.get(str(stage_id), {})
         gate_cfg = row.get("gate") or {}
-        if state.get("status") != "done" or gate_cfg.get("type") != "script":
+        if (
+            state.get("status") != "done"
+            or not isinstance(header_gate, dict)
+            or gate_cfg.get("type") != "script"
+            or header_gate.get("name") != gate_cfg.get("name")
+        ):
             continue
         gate_name = str(gate_cfg.get("name"))
         expected_argv = _substituted_checker(gate_cfg)
@@ -223,6 +231,7 @@ def check(workspace: str | Path, now: datetime | None = None) -> tuple[dict, int
     # HARD: output writes must be close to a state-machine event.
     output_files = [path for path in (ws / "output").rglob("*") if path.is_file()] \
         if (ws / "output").is_dir() else []
+
     if output_files and not events_path.exists():
         warn.append({
             "code": "W1",
@@ -264,6 +273,43 @@ def check(workspace: str | Path, now: datetime | None = None) -> tuple[dict, int
                     "msg": "human gate is auto_approved in supervised mode",
                     "at": f"stage {stage_id} gate {gate.get('name')}",
                 })
+
+    # WARN (W4): autonomous/night understanding checks may validly pass with
+    # answers_pending=true, but delivery must surface that fact. Prefer the
+    # newest provenance whether it came from a future gate receipt or today's
+    # explicit .pipeline/understanding_check.json sidecar.
+    understanding_records = []
+    for record in receipts:
+        if record.get("gate") != "understand":
+            continue
+        pending = record.get("answers_pending")
+        if pending is None and isinstance(record.get("provenance"), dict):
+            pending = record["provenance"].get("answers_pending")
+        if isinstance(pending, bool):
+            understanding_records.append((
+                _epoch(record.get("checked_at") or record.get("ts")) or 0,
+                pending,
+                ".pipeline/gate_checks.jsonl",
+            ))
+    understanding_path = ws / ".pipeline" / "understanding_check.json"
+    try:
+        understanding = json.loads(understanding_path.read_text(encoding="utf-8"))
+        if isinstance(understanding, dict) and isinstance(understanding.get("answers_pending"), bool):
+            understanding_records.append((
+                _epoch(understanding.get("checked_at")) or understanding_path.stat().st_mtime,
+                understanding["answers_pending"],
+                ".pipeline/understanding_check.json",
+            ))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    if canonical_set and understanding_records:
+        _, pending, source = max(understanding_records, key=lambda item: item[0])
+        if pending:
+            warn.append({
+                "code": "W4",
+                "msg": "canonical_output is set while understanding answers are pending",
+                "at": source,
+            })
 
     heartbeat = ws / "heartbeat"
     if heartbeat.exists():
