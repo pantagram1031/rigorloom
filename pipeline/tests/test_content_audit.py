@@ -1,7 +1,7 @@
 """Tests for content_audit.py — the composite stage 4.5 gate.
 
 Runs the REAL sub-checker chain (verify_content.py + check_style.py +
-check_numbers.py + check_refs.py) against a
+check_numbers.py + check_refs.py + check_figdata.py) against a
 synthetic workspace. Synthetic fixtures ONLY (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -11,6 +11,7 @@ synthetic workspace. Synthetic fixtures ONLY (홍길동-style fakes).
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import tempfile
@@ -32,7 +33,12 @@ class ContentAuditTestCase(unittest.TestCase):
         os.environ.pop("RIGORLOOM_PROFILE_ROOT", None)
         self.ws = Path(self._tmp.name) / "report-synthetic"
         (self.ws / "bundle" / "figures").mkdir(parents=True, exist_ok=True)
-        (self.ws / "bundle" / "figures" / "plot.png").write_bytes(b"\x89PNG\r\n")
+        figure = self.ws / "bundle" / "figures" / "plot.png"
+        figure.write_bytes(b"\x89PNG\r\n")
+        figure.with_name("plot.png.sha256").write_text(
+            hashlib.sha256(figure.read_bytes()).hexdigest() + "  plot.png\n",
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self._env_patch.stop()
@@ -82,8 +88,23 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(verdict["counts"]["hard"], 0)
         self.assertEqual(
             set(verdict["sub_exit"]),
-            {"verify_content", "check_style", "check_numbers", "check_refs"},
+            {"verify_content", "check_style", "check_numbers", "check_refs",
+             "check_figdata"},
         )
+
+    def test_figdata_checker_is_fifth_composed_gate(self):
+        self.write_content(self._clean_body())
+        (self.ws / "bundle" / "figures" / "plot.png").write_bytes(b"changed")
+
+        verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["sub_exit"]["check_figdata"], 3)
+        self.assertTrue(any(
+            item.get("source") == "check_figdata"
+            and item.get("code") == "figure_data_drift"
+            for item in verdict["hard"]
+        ), verdict)
 
     def test_number_checker_is_third_composed_gate(self):
         self.write_content("# Result\nThe measured level was 7.654 dB.\n")
@@ -264,16 +285,47 @@ class TestCitation(ContentAuditTestCase):
 
 class TestUsage(ContentAuditTestCase):
     def test_missing_content_md_is_nonzero(self):
-        # no bundle/content.md -> all four sub-checkers are nonzero.
+        # no bundle/content.md -> all five sub-checkers are nonzero.
         verdict, code = content_audit.check(str(self.ws))
         self.assertNotEqual(code, 0)
         self.assertFalse(verdict["ok"])
+
+    def test_worst_exit_prefers_hard_over_usage(self):
+        self.write_content(self._clean_body())
+        passed = json.dumps({"ok": True, "hard": [], "warn": []})
+        usage = json.dumps({
+            "ok": False, "error": "synthetic usage error",
+            "hard": [], "warn": [],
+        })
+        hard = json.dumps({
+            "ok": False,
+            "hard": [{"code": "figure_data_drift", "msg": "synthetic drift"}],
+            "warn": [],
+        })
+        processes = [
+            mock.Mock(returncode=2, stdout=usage, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
+            mock.Mock(returncode=3, stdout=hard, stderr=""),
+        ]
+
+        with mock.patch.object(
+            content_audit.subprocess, "run", side_effect=processes
+        ):
+            verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["sub_exit"]["verify_content"], 2)
+        self.assertEqual(verdict["sub_exit"]["check_figdata"], 3)
+        self.assertEqual(verdict["verdict"], "fail")
 
     def test_unexpected_exit_one_is_hard_and_preserves_stderr(self):
         self.write_content(self._clean_body())
         passed = json.dumps({"ok": True, "hard": [], "warn": []})
         processes = [
             mock.Mock(returncode=1, stdout="", stderr="checker exploded"),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
