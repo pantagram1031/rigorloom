@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """content_audit.py — composite content gate for stage 4.5.
 
-Runs the six deterministic content checkers as subprocesses and combines their
+Runs the seven deterministic content checkers as subprocesses and combines their
 verdicts:
   1. verify_content.py <WS>   (web-citation / polite-ending / figure / leak)
   2. check_style.py <WS>      (prose banned-patterns / signature caps / citation)
@@ -9,6 +9,7 @@ verdicts:
   4. check_refs.py <WS>       (advisory figure/table numbering / xrefs)
   5. check_figdata.py <WS>    (referenced PNG checksum integrity)
   6. check_sources.py <WS>    (offline citation-reality verification)
+  7. check_units.py <WS>      (advisory unit/dimension consistency)
 
 When --profile-root <p> is given, pack files are resolved from it and forwarded.
 When the option is absent, a valid directory named by
@@ -26,7 +27,7 @@ cache/sources lookup.
 
 Combined verdict: worst exit wins (3 hard > 2 usage > 0 pass). Any unexpected
 nonzero sub-checker exit is normalized to hard failure so it cannot be silently
-ignored. Findings from all six sub-checkers are merged (each tagged with its
+ignored. Findings from all seven sub-checkers are merged (each tagged with its
 source checker) into one JSON verdict printed to stdout. This is the argv bound
 to the content_audit gate in stages.yaml.
 
@@ -156,7 +157,8 @@ def check(ws, profile_root=None):
             "checker": "content_audit",
             "sub_exit": {"verify_content": None, "check_style": None,
                          "check_numbers": None, "check_refs": None,
-                         "check_figdata": None, "check_sources": None},
+                         "check_figdata": None, "check_sources": None,
+                         "check_units": None},
             "hard": pack_findings,
             "warn": [],
             "counts": {"hard": len(pack_findings), "warn": 0},
@@ -210,6 +212,10 @@ def check(ws, profile_root=None):
         if profile_root:
             csrc_argv += ["--profile-root", str(profile_root)]
         csrc_verdict, csrc_code = _run(csrc_argv)
+
+        # --- check_units ----------------------------------------------------
+        cu_argv = [py, str(_SCRIPTS_DIR / "check_units.py"), ws]
+        cu_verdict, cu_code = _run(cu_argv)
     finally:
         if gloss_tmp and os.path.exists(gloss_tmp):
             os.unlink(gloss_tmp)
@@ -218,7 +224,8 @@ def check(ws, profile_root=None):
     for name, verdict in (("verify_content", vc_verdict), ("check_style", cs_verdict),
                           ("check_numbers", cn_verdict), ("check_refs", cr_verdict),
                           ("check_figdata", cf_verdict),
-                          ("check_sources", csrc_verdict)):
+                          ("check_sources", csrc_verdict),
+                          ("check_units", cu_verdict)):
         for h in verdict.get("hard", []) or []:
             hard.append({"source": name, **h})
         for w in verdict.get("warn", []) or []:
@@ -232,14 +239,16 @@ def check(ws, profile_root=None):
                 finding["raw"] = verdict["raw"]
             hard.append(finding)
 
-    code = _worst([vc_code, cs_code, cn_code, cr_code, cf_code, csrc_code])
+    code = _worst([vc_code, cs_code, cn_code, cr_code, cf_code, csrc_code,
+                   cu_code])
     verdict = {
         "ok": code == 0,
         "workspace": ws,
         "checker": "content_audit",
         "sub_exit": {"verify_content": vc_code, "check_style": cs_code,
                      "check_numbers": cn_code, "check_refs": cr_code,
-                     "check_figdata": cf_code, "check_sources": csrc_code},
+                     "check_figdata": cf_code, "check_sources": csrc_code,
+                     "check_units": cu_code},
         "hard": hard,
         "warn": warn,
         "counts": {"hard": len(hard), "warn": len(warn)},
