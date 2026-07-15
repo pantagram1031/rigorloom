@@ -8,6 +8,7 @@ the human-readable table formatter.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,7 @@ class TestProbeAllAbsent(unittest.TestCase):
         with (
             mock.patch.object(render_probe.sys, "platform", "linux"),
             mock.patch.object(render_probe.shutil, "which", return_value=None),
+            mock.patch.dict(os.environ, {}, clear=True),
         ):
             result = render_probe.probe()
 
@@ -64,6 +66,10 @@ class TestProbeAllAbsent(unittest.TestCase):
             "soffice_path": None,
             "soffice_wsl": False,
             "h2orestart": "unknown",
+            "rhwp_path": None,
+            "rhwp_wsl": False,
+            "rhwp_version": None,
+            "rhwp_reason": "not_found",
         })
         self.assertEqual(result["renderers"], [])
 
@@ -77,12 +83,69 @@ class TestProbeAllAbsent(unittest.TestCase):
             mock.patch.object(render_probe.sys, "platform", "win32"),
             mock.patch.object(render_probe.shutil, "which", return_value=None),
             mock.patch.object(render_probe.subprocess, "run", side_effect=_boom),
+            mock.patch.dict(os.environ, {}, clear=True),
         ):
             result = render_probe.probe()
 
         self.assertFalse(result["capabilities"]["soffice_wsl"])
         self.assertEqual(result["capabilities"]["h2orestart"], "unknown")
         self.assertEqual(result["renderers"], [])
+
+
+class TestRhwpProbe(unittest.TestCase):
+    def test_native_rhwp_cli_becomes_experimental_svg_renderer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rhwp"
+            binary.write_bytes(b"synthetic executable marker")
+
+            def fake_run(command, **kwargs):
+                self.assertEqual(command, [str(binary), "--version"])
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="rhwp 0.7.18\n", stderr=""
+                )
+
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(render_probe.subprocess, "run", side_effect=fake_run),
+                mock.patch.dict(os.environ, {"RHWP_BIN": str(binary)}, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertEqual(result["capabilities"]["rhwp_path"], str(binary))
+        self.assertFalse(result["capabilities"]["rhwp_wsl"])
+        self.assertEqual(result["capabilities"]["rhwp_version"], "rhwp 0.7.18")
+        renderer = next(item for item in result["renderers"] if item["name"] == "rhwp_svg")
+        self.assertEqual(
+            renderer["argv"],
+            [str(binary), "export-svg", "{in}", "-o", "{outdir}"],
+        )
+        self.assertEqual(renderer["proof_grade"], "experimental-rhwp")
+
+    def test_windows_linux_binary_is_probed_through_wsl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rhwp"
+            binary.write_bytes(b"synthetic ELF marker")
+
+            def fake_run(command, **kwargs):
+                if command[:2] == ["wsl", "--"]:
+                    return subprocess.CompletedProcess(
+                        command, 0, stdout="rhwp 0.7.18\n", stderr=""
+                    )
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+            with (
+                mock.patch.object(render_probe.sys, "platform", "win32"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(render_probe.subprocess, "run", side_effect=fake_run),
+                mock.patch.dict(os.environ, {"RHWP_BIN": str(binary)}, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertTrue(result["capabilities"]["rhwp_wsl"])
+        renderer = next(item for item in result["renderers"] if item["name"] == "rhwp_svg")
+        self.assertTrue(renderer["wsl"])
+        self.assertEqual(renderer["argv"][:2], ["wsl", "--"])
 
 
 class TestSofficePathPresent(unittest.TestCase):
@@ -145,6 +208,9 @@ class TestWslRendererTemplate(unittest.TestCase):
             "soffice_path": None,
             "soffice_wsl": True,
             "h2orestart": "unknown",
+            "rhwp_path": None,
+            "rhwp_wsl": False,
+            "rhwp_version": None,
         })
         self.assertEqual(len(result), 1)
         renderer = result[0]
@@ -183,16 +249,27 @@ class TestBestPdfCmd(unittest.TestCase):
         ]}
         self.assertEqual(render_probe.best_pdf_cmd(result), ["soffice", "--headless"])
 
+    def test_skips_rhwp_svg_because_it_is_not_a_pdf_command(self):
+        result = {"renderers": [
+            {"name": "rhwp_svg", "wsl": False,
+             "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"]},
+        ]}
+        self.assertIsNone(render_probe.best_pdf_cmd(result))
+
 
 class TestFormatTable(unittest.TestCase):
     def test_contains_all_capability_labels(self):
         result = {
             "capabilities": {"hancom_com": False, "soffice_path": None,
-                             "soffice_wsl": False, "h2orestart": "unknown"},
+                             "soffice_wsl": False, "h2orestart": "unknown",
+                             "rhwp_path": None, "rhwp_wsl": False,
+                             "rhwp_version": None, "rhwp_reason": "not_found"},
             "renderers": [],
         }
         table = render_probe.format_table(result)
-        for label in ("hancom_com", "soffice_path", "soffice_wsl", "h2orestart", "renderers"):
+        for label in ("hancom_com", "soffice_path", "soffice_wsl", "h2orestart",
+                      "rhwp_path", "rhwp_wsl", "rhwp_version", "rhwp_reason",
+                      "renderers"):
             self.assertIn(label, table)
         self.assertIn("(none usable)", table)
 
@@ -201,9 +278,13 @@ class TestCli(unittest.TestCase):
     def test_main_returns_zero(self):
         with mock.patch.object(render_probe, "probe",
                                return_value={"capabilities": {"hancom_com": False,
-                                                              "soffice_path": None,
-                                                              "soffice_wsl": False,
-                                                              "h2orestart": "unknown"},
+                                                               "soffice_path": None,
+                                                               "soffice_wsl": False,
+                                                               "h2orestart": "unknown",
+                                                               "rhwp_path": None,
+                                                               "rhwp_wsl": False,
+                                                               "rhwp_version": None,
+                                                               "rhwp_reason": "not_found"},
                                              "renderers": []}):
             self.assertEqual(render_probe.main(["--json"]), 0)
 
