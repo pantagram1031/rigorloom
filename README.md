@@ -48,6 +48,12 @@ model-account configuration are intentionally excluded.
   render-capability probe and an advisory proof source — it is never treated
   as submission-grade proof, and it is skipped entirely for equation-bearing
   documents (H2Orestart cannot be trusted there; see the backend table).
+- **Experimental**: `experimental-rhwp` — an SVG-based overflow/pagination
+  render check for equation-bearing HWPX documents on Linux, gated behind a
+  sha256-pinned `rhwp` binary (`RHWP_SHA256`). It is hard-blocked from
+  `submission_preflight` as diagnostic-only, and pixel-level parity with
+  Hancom rendering has not been achieved (see
+  [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
 ## Quick start
@@ -105,7 +111,7 @@ Only `bundle` is required — the other three are optional extras dispatched by
 |---|---|---|---|---|
 | `bundle` | none (stdlib) | any OS, no Hancom | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview | none — advisory artifact only; cannot satisfy the Stage 5.3 format gate (`output/out.hwpx` required) |
 | `docx` | `pip install .[docx]` | any OS, no Hancom | styled `.docx` (headings, figures, tables; equations render as literal text, not OMML; PDF conversion left to LibreOffice) | none — same reason as `bundle` |
-| `hwpx` | external [hwp-master](https://github.com/pantagram1031/hwp-master) XML engine, `HWP_MASTER_SCRIPTS` set | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` at most — LibreOffice + H2Orestart headless render; unavailable for equation-bearing documents (H2Orestart cannot be trusted there), in which case proof grade is `none` |
+| `hwpx` | external [hwp-master](https://github.com/pantagram1031/hwp-master) XML engine, `HWP_MASTER_SCRIPTS` set | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` at most — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade; otherwise proof grade is `none` |
 | `hwp` | Windows + Hancom + [hwp-master](https://github.com/pantagram1031/hwp-master) COM loop | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
 
 The `bundle` backend is the any-machine floor: it runs anywhere Python runs,
