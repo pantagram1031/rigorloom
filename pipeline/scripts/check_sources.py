@@ -18,6 +18,16 @@ DOI slugs are lowercase with runs outside [a-z0-9.-] replaced by "_".
 ISBN-10 is converted to ISBN-13 for lookup. Extra JSON fields are allowed.
 The pinned default current year is 2026; override it with --now YYYY.
 
+This gate can only HARD-block citations whose identifiers are provably broken
+or whose cache record contradicts them. A fabricated-but-syntactically-valid
+DOI with no cache record is WARN ``source_unverified`` BY DESIGN. A green
+verdict therefore does not mean "citations verified real"; it means only that
+the gate found no provable break or cached contradiction.
+
+``<PROFILE_ROOT>/cache/sources/`` SHOULD be populated write-through by the
+research-time fetch tooling, not hand-authored. A hand-authored cache adds no
+adversarial resistance.
+
 Exit 0 = pass (WARNs allowed), 3 = HARD contradiction, 2 = usage/input error.
 """
 from __future__ import annotations
@@ -307,6 +317,16 @@ def _titles_match(cited: str, cached: str) -> bool:
     )
 
 
+def _titles_clearly_different(cited: str, cached: str) -> bool:
+    left = _normalized_title(cited)
+    right = _normalized_title(cached)
+    if not left or not right or left in right or right in left:
+        return False
+    left_tokens = set(_meaningful_title_tokens(left))
+    right_tokens = set(_meaningful_title_tokens(right))
+    return bool(left_tokens and right_tokens) and not (left_tokens & right_tokens)
+
+
 def _usage(ws, message: str) -> tuple[dict, int]:
     return {
         "ok": False,
@@ -315,7 +335,7 @@ def _usage(ws, message: str) -> tuple[dict, int]:
         "error": message,
         "hard": [],
         "warn": [],
-        "counts": {"hard": 0, "warn": 0},
+        "counts": {"hard": 0, "warn": 0, "unverified": 0},
         "verdict": "usage_error",
     }, 2
 
@@ -429,22 +449,45 @@ def check(
             path = cache_root / key / filename
             record, error = _load_cache_record(path, key, identifier)
             if error:
-                return _usage(ws, error)
+                warn.append({
+                    "code": "source_cache_unreadable",
+                    "msg": error,
+                    "at": cited_at,
+                    "line": entry["line"],
+                    "identifier": identifier,
+                    "cache_path": str(path),
+                })
+                continue
             if record is None:
                 continue
             cache_hit = True
             cached_title = record["title"].strip()
             cited_title = entry["title"]
             if cited_title and not _titles_match(cited_title, cached_title):
-                hard.append({
-                    "code": "source_title_mismatch",
-                    "msg": f"cached {key.upper()} record maps to a different title",
+                clearly_different = _titles_clearly_different(
+                    cited_title, cached_title
+                )
+                finding = {
+                    "code": (
+                        "source_title_mismatch"
+                        if clearly_different
+                        else "source_title_suspect"
+                    ),
+                    "msg": (
+                        f"cached {key.upper()} record maps to a different work"
+                        if clearly_different
+                        else (
+                            f"cited and cached {key.upper()} titles only "
+                            "partially overlap"
+                        )
+                    ),
                     "at": cited_at,
                     "line": entry["line"],
                     "identifier": identifier,
                     "cited_title": cited_title,
                     "cached_title": cached_title,
-                })
+                }
+                (hard if clearly_different else warn).append(finding)
 
         if not cache_hit:
             warn.append({
@@ -477,7 +520,14 @@ def check(
         "entries": public_entries,
         "hard": hard,
         "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn), "entries": len(entries)},
+        "counts": {
+            "hard": len(hard),
+            "warn": len(warn),
+            "unverified": sum(
+                item["code"] == "source_unverified" for item in warn
+            ),
+            "entries": len(entries),
+        },
         "verdict": "pass" if not hard else "fail",
     }
     return verdict, 0 if not hard else 3

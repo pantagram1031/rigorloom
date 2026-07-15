@@ -142,6 +142,36 @@ def test_same_context_numeric_contradiction_is_hard(tmp_path):
     assert finding['body_value'] == 15.0
 
 
+def test_generic_quantity_subject_contradiction_is_warn(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Temperature = 15.0 °C.\n',
+        saeteuk='Temperature = 12.0 °C.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['ok'] is True
+    assert verdict['hard'] == []
+    assert _codes(verdict, 'warn') == {'saeteuk_possible_contradiction'}
+
+
+def test_specific_quantity_subject_contradiction_stays_hard(tmp_path):
+    subject = 'Sample A temperature'
+    workspace = _write_workspace(
+        tmp_path,
+        body=f'{subject} = 15.0 °C.\n',
+        saeteuk=f'{subject} = 12.0 °C.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 3
+    assert _codes(verdict, 'hard') == {'saeteuk_number_contradiction'}
+    assert verdict['warn'] == []
+
+
 def test_repeated_identical_binding_still_detects_contradiction(tmp_path):
     workspace = _write_workspace(
         tmp_path,
