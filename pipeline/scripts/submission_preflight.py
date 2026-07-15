@@ -408,16 +408,49 @@ def check(
     warn: list[dict] = []
     notes: list[str] = []
     saeteuk_verdict, saeteuk_code = check_saeteuk.check(ws)
-    if saeteuk_code not in {0, 2, 3}:
+    raw_saeteuk_code = saeteuk_code
+    valid_saeteuk_object = isinstance(saeteuk_verdict, dict)
+    if not valid_saeteuk_object:
+        saeteuk_verdict = {}
+    if (
+        not isinstance(saeteuk_code, int)
+        or isinstance(saeteuk_code, bool)
+        or saeteuk_code not in {0, 2, 3}
+    ):
         saeteuk_code = 3
         hard.append({
             'source': 'check_saeteuk',
             'code': 'saeteuk_checker_failure',
             'msg': 'saeteuk sub-checker returned an unexpected exit code',
         })
-    for finding in saeteuk_verdict.get('hard', []) or []:
+    expected_child_state = {
+        0: (True, 'pass'),
+        2: (False, 'usage_error'),
+        3: (False, 'fail'),
+    }.get(saeteuk_code)
+    child_hard = saeteuk_verdict.get('hard')
+    child_warn = saeteuk_verdict.get('warn')
+    child_inconsistent = (
+        not valid_saeteuk_object
+        or expected_child_state is None
+        or saeteuk_verdict.get('ok') is not expected_child_state[0]
+        or saeteuk_verdict.get('verdict') != expected_child_state[1]
+        or not isinstance(child_hard, list)
+        or not isinstance(child_warn, list)
+        or (saeteuk_code == 0 and bool(child_hard))
+    )
+    if child_inconsistent:
+        hard.append({
+            'source': 'check_saeteuk',
+            'code': 'saeteuk_checker_inconsistent',
+            'msg': (
+                'saeteuk child exit is inconsistent with its JSON verdict'
+            ),
+            'child_exit': raw_saeteuk_code,
+        })
+    for finding in child_hard if isinstance(child_hard, list) else []:
         hard.append({'source': 'check_saeteuk', **finding})
-    for finding in saeteuk_verdict.get('warn', []) or []:
+    for finding in child_warn if isinstance(child_warn, list) else []:
         warn.append({'source': 'check_saeteuk', **finding})
     if saeteuk_code == 2:
         hard.append({
@@ -573,7 +606,10 @@ def check(
              and finding.get('code') == 'USAGE')
         for finding in hard
     )
-    code = 3 if has_rule_hard else (2 if saeteuk_code == 2 else 0)
+    code = (
+        3 if saeteuk_code == 3 or has_rule_hard
+        else (2 if saeteuk_code == 2 else 0)
+    )
     verdict = {
         "ok": code == 0,
         "workspace": str(ws),

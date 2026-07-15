@@ -293,13 +293,15 @@ class TestUsage(ContentAuditTestCase):
 
     def test_worst_exit_prefers_hard_over_usage(self):
         self.write_content(self._clean_body())
-        passed = json.dumps({"ok": True, "hard": [], "warn": []})
+        passed = json.dumps({
+            "ok": True, "verdict": "pass", "hard": [], "warn": [],
+        })
         usage = json.dumps({
             "ok": False, "error": "synthetic usage error",
-            "hard": [], "warn": [],
+            "verdict": "usage_error", "hard": [], "warn": [],
         })
         hard = json.dumps({
-            "ok": False,
+            "ok": False, "verdict": "fail",
             "hard": [{"code": "figure_data_drift", "msg": "synthetic drift"}],
             "warn": [],
         })
@@ -325,7 +327,9 @@ class TestUsage(ContentAuditTestCase):
 
     def test_unexpected_exit_one_is_hard_and_preserves_stderr(self):
         self.write_content(self._clean_body())
-        passed = json.dumps({"ok": True, "hard": [], "warn": []})
+        passed = json.dumps({
+            "ok": True, "verdict": "pass", "hard": [], "warn": [],
+        })
         processes = [
             mock.Mock(returncode=1, stdout="", stderr="checker exploded"),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
@@ -342,13 +346,54 @@ class TestUsage(ContentAuditTestCase):
             verdict, code = content_audit.check(str(self.ws))
 
         self.assertEqual(code, 3, verdict)
-        self.assertEqual(verdict["sub_exit"]["verify_content"], 1)
+        self.assertEqual(verdict["sub_exit"]["verify_content"], 3)
         finding = next(
             item for item in verdict["hard"]
             if item.get("source") == "verify_content"
             and item.get("code") == "USAGE"
         )
         self.assertEqual(finding["stderr"], "checker exploded")
+
+    def test_malformed_sixth_checker_stdout_normalizes_its_exit_to_hard(self):
+        self.write_content(self._clean_body())
+        passed = json.dumps({
+            "ok": True, "verdict": "pass", "hard": [], "warn": [],
+        })
+        hostile_outputs = (
+            "not " + "JSON",
+            "",
+            json.dumps([]),
+            json.dumps({
+                "ok": False, "verdict": "fail", "hard": [], "warn": [],
+            }),
+        )
+
+        for stdout in hostile_outputs:
+            with self.subTest(stdout=stdout):
+                processes = [
+                    mock.Mock(returncode=0, stdout=passed, stderr="")
+                    for _ in range(5)
+                ]
+                processes.append(
+                    mock.Mock(returncode=0, stdout=stdout, stderr="")
+                )
+                processes.append(
+                    mock.Mock(returncode=0, stdout=passed, stderr="")
+                )
+
+                with mock.patch.object(
+                    content_audit.subprocess, "run", side_effect=processes
+                ):
+                    verdict, code = content_audit.check(str(self.ws))
+
+                self.assertEqual(code, 3, verdict)
+                self.assertEqual(verdict["sub_exit"]["check_sources"], 3)
+                self.assertEqual(verdict["sub_exit"]["check_units"], 0)
+                self.assertTrue(any(
+                    item.get("source") == "check_sources"
+                    and item.get("code") == "USAGE"
+                    for item in verdict["hard"]
+                ), verdict)
 
 
 if __name__ == "__main__":

@@ -895,6 +895,26 @@ class TestCheckSubcommand(PipelineCtlTestCase):
         # provenance audit trail written
         self.assertTrue((self.ws / ".pipeline" / "gate_checks.jsonl").exists())
 
+    def test_check_surfaces_parseable_checker_hard_and_warn_counts(self):
+        self.init_ws(mode="autonomous")
+        checker_stdout = json.dumps({
+            "ok": True,
+            "verdict": "pass",
+            "hard": [],
+            "warn": [{"code": "synthetic_warning"}],
+            "counts": {"hard": 0, "warn": 1, "extra": 99},
+        })
+        self._write_sim_gate(0, stdout=checker_stdout)
+
+        payload, code = run("check", str(self.ws), "sane")
+
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+        self.assertEqual(payload["counts"], {"hard": 0, "warn": 1})
+        receipt_path = self.ws / ".pipeline" / "gate_checks.jsonl"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(receipt["counts"], {"hard": 0, "warn": 1})
+
     def test_check_reject_on_nonzero_exit(self):
         self.init_ws(mode="autonomous")
         self._write_sim_gate(3)

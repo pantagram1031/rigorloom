@@ -158,6 +158,8 @@ def extract_body_numerals(body: str, allowed_numbers=None) -> list[dict]:
             value = _parse_number(raw)
         except ValueError:
             continue
+        if not math.isfinite(value):
+            continue
         if _is_ignored_context(body, match.start(), match.end(), raw, value):
             continue
         has_unit = _has_clear_unit(body, match.end())
@@ -364,7 +366,9 @@ def check(ws, tolerance=1e-3, allowed_numbers=None, require_seed=False):
 
 
 def _emit(verdict, code, out=None):
-    rendered = json.dumps(verdict, ensure_ascii=False, indent=2)
+    rendered = json.dumps(
+        verdict, ensure_ascii=False, indent=2, allow_nan=False
+    )
     if out:
         Path(out).write_text(rendered, encoding="utf-8")
     print(rendered)

@@ -69,20 +69,47 @@ def _run(argv):
                           errors="replace", env=env)
     stdout = proc.stdout or ""
     stderr = (proc.stderr or "")[:400]
-    try:
-        verdict = json.loads(stdout) if stdout.strip() else {}
-    except json.JSONDecodeError:
-        verdict = {"ok": False, "error": "sub-checker produced non-JSON stdout",
-                   "raw": stdout[:400], "stderr": stderr}
-    if not stdout.strip() and proc.returncode != 0:
-        verdict = {
+
+    def invalid(message):
+        payload = {
             "ok": False,
-            "error": (
-                f"sub-checker exited {proc.returncode} without JSON stdout"
-            ),
+            "verdict": "fail",
+            "error": message,
+            "hard": [],
+            "warn": [],
         }
+        if stdout:
+            payload["raw"] = stdout[:400]
         if stderr:
-            verdict["stderr"] = stderr
+            payload["stderr"] = stderr
+        return payload, 3
+
+    if not stdout.strip():
+        return invalid(
+            f"sub-checker exited {proc.returncode} without JSON stdout"
+        )
+    try:
+        verdict = json.loads(stdout)
+    except json.JSONDecodeError:
+        return invalid("sub-checker produced non-JSON stdout")
+    if not isinstance(verdict, dict):
+        return invalid("sub-checker JSON stdout must be an object")
+    expected = {
+        0: (True, "pass"),
+        2: (False, "usage_error"),
+        3: (False, "fail"),
+    }.get(proc.returncode)
+    if expected is None:
+        return invalid(f"sub-checker returned unexpected exit {proc.returncode}")
+    expected_ok, expected_verdict = expected
+    if (
+        verdict.get("ok") is not expected_ok
+        or verdict.get("verdict") != expected_verdict
+        or (proc.returncode == 0 and bool(verdict.get("hard")))
+    ):
+        return invalid(
+            "sub-checker exit is inconsistent with its JSON verdict"
+        )
     return verdict, proc.returncode
 
 

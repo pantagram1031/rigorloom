@@ -213,6 +213,24 @@ class TestSeedProvenance(CheckNumbersTestCase):
 
 
 class TestUsage(CheckNumbersTestCase):
+    def test_non_finite_body_number_is_dropped_and_cli_emits_strict_json(self):
+        overflow = "1e" + "309"
+        self.write_content(f"# Result\nOverflow = {overflow} ms.\n")
+        self.write_results({"seed": 1, "value": 1.0})
+
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), str(self.ws)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("Infinity", proc.stdout)
+        self.assertNotIn("NaN", proc.stdout)
+        verdict = json.loads(proc.stdout)
+        self.assertEqual(verdict["checked_numerals"], 0)
+
     def test_empty_workspace_is_graceful_usage_error(self):
         verdict, code = check_numbers.check(str(self.ws), require_seed=True)
 

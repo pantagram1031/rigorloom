@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import zipfile
 
@@ -48,6 +49,64 @@ def test_no_saeteuk_is_noop_pass_with_zero_findings(tmp_path):
     assert verdict['saeteuk_files'] == []
 
 
+def test_markdown_saeteuk_artifact_is_discovered(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Latency = 20 ms.\n',
+        saeteuk=None,
+    )
+    target = workspace / '_saeteuk'
+    target.mkdir()
+    (target / 'record.md').write_text('Latency = 10 ms.\n', encoding='utf-8')
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 3
+    assert verdict['saeteuk_files'] == ['_saeteuk/record.md']
+    assert _codes(verdict, 'hard') == {'saeteuk_number_contradiction'}
+
+
+def test_existing_empty_local_saeteuk_warns_missing_and_ignores_parent(tmp_path):
+    parent_artifact = tmp_path / '_saeteuk'
+    parent_artifact.mkdir()
+    (parent_artifact / 'other-report.txt').write_text(
+        'Latency = 10 ms.\n', encoding='utf-8'
+    )
+    workspace = _write_workspace(
+        tmp_path,
+        body='Latency = 20 ms.\n',
+        saeteuk=None,
+    )
+    (workspace / '_saeteuk').mkdir()
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert _codes(verdict, 'warn') == {'saeteuk_missing'}
+    assert verdict['saeteuk_files'] == []
+
+
+def test_parent_saeteuk_is_never_imported_without_local_directory(tmp_path):
+    parent_artifact = tmp_path / '_saeteuk'
+    parent_artifact.mkdir()
+    (parent_artifact / 'report-a.txt').write_text(
+        'Temperature = 100 C.\n', encoding='utf-8'
+    )
+    workspace = _write_workspace(
+        tmp_path,
+        body='Temperature = 20 C.\n',
+        saeteuk=None,
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert verdict['warn'] == []
+    assert verdict['saeteuk_files'] == []
+
+
 def test_matching_numbers_pass(tmp_path):
     subject = 'Oscillation ' + 'amplitude'
     workspace = _write_workspace(
@@ -83,6 +142,119 @@ def test_same_context_numeric_contradiction_is_hard(tmp_path):
     assert finding['body_value'] == 15.0
 
 
+def test_repeated_identical_binding_still_detects_contradiction(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Latency = 20 ms.\n',
+        saeteuk='Latency = 10 ms.\nLatency = 10 ms.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 3
+    assert _codes(verdict, 'hard') == {'saeteuk_number_contradiction'}
+
+
+def test_multiple_distinct_values_on_either_side_are_ambiguous_warn(tmp_path):
+    cases = (
+        (
+            'Latency = 10 ms.\n',
+            'Latency = 10 ms.\nLatency = 11 ms.\n',
+        ),
+        (
+            'Latency = 10 ms.\nLatency = 11 ms.\n',
+            'Latency = 10 ms.\n',
+        ),
+    )
+    for index, (body, saeteuk) in enumerate(cases):
+        case_root = tmp_path / f'case-{index}'
+        case_root.mkdir()
+        workspace = _write_workspace(case_root, body=body, saeteuk=saeteuk)
+
+        verdict, code = check_saeteuk.check(workspace)
+
+        assert code == 0
+        assert verdict['hard'] == []
+        assert 'saeteuk_ambiguous' in _codes(verdict, 'warn')
+
+
+def test_same_value_and_unit_with_different_subject_is_unsupported(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Success rate = 5%.\n',
+        saeteuk='Failure rate = 5%.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert 'saeteuk_unsupported' in _codes(verdict, 'warn')
+
+
+def test_precision_aware_absolute_tolerance_accepts_rounding_near_zero(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Latency = 0.004 ms.\n',
+        saeteuk='Latency = 0 ms.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert verdict['warn'] == []
+
+
+def test_case_sensitive_si_prefixes_are_scaled_before_comparison(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Voltage = 1000000000 mV.\n',
+        saeteuk='Voltage = 1 MV.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert verdict['warn'] == []
+
+
+def test_different_case_sensitive_base_symbols_never_hard_compare(tmp_path):
+    workspace = _write_workspace(
+        tmp_path,
+        body='Voltage = 1 MA.\n',
+        saeteuk='Voltage = 1 MV.\n',
+    )
+
+    verdict, code = check_saeteuk.check(workspace)
+
+    assert code == 0
+    assert verdict['hard'] == []
+    assert 'saeteuk_unsupported' in _codes(verdict, 'warn')
+
+
+def test_non_finite_numbers_are_dropped_and_cli_emits_strict_json(tmp_path):
+    overflow = '1e' + '309'
+    workspace = _write_workspace(
+        tmp_path,
+        body='X = 1e308 ms.\n',
+        saeteuk=f'X = {overflow} ms.\n',
+    )
+
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(workspace)],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert 'Infinity' not in proc.stdout
+    assert 'NaN' not in proc.stdout
+    json.loads(proc.stdout)
+
+
 def test_unsupported_named_claim_is_warn(tmp_path):
     named_place = 'Aur' + 'ora Observatory'
     workspace = _write_workspace(
@@ -115,6 +287,10 @@ def test_stage_6_gate_composes_saeteuk_checker(tmp_path):
     assert '{PIPELINE_SCRIPTS}/submission_preflight.py' in stages
     assert 'check_saeteuk.check(ws)' in preflight
     assert 'check_saeteuk' in playbook
+    assert 'exit 2' in playbook
+    assert 'UTF-8' in playbook
+    parent_fallback = 'parent ' + chr(96) + '_saeteuk/' + chr(96) + ' fallback'
+    assert parent_fallback not in playbook
 
     subject = 'Oscillation ' + 'amplitude'
     workspace = _write_workspace(

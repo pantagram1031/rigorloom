@@ -2,20 +2,23 @@
 # -*- coding: utf-8 -*-
 '''Deterministic saeteuk-to-report consistency checker.
 
-Artifact convention follows verify_content.py: UTF-8 ``*.txt`` files in
-``<workspace>/_saeteuk/`` are preferred, with
-``<workspace-parent>/_saeteuk/`` as the compatibility fallback. Unsafe
-symlinks and paths whose real path escapes the selected directory are ignored.
-No discovered artifact is an intentional no-op PASS with zero findings.
+Artifact convention is workspace-scoped: UTF-8 ``*.txt`` and ``*.md`` files in
+``<workspace>/_saeteuk/`` are read. Parent-directory fallback is intentionally
+not used because it can bind another report's artifact. Unsafe symlinks and
+paths whose real path escapes the selected directory are ignored. No local
+directory is an intentional no-op PASS; an existing directory with no readable
+artifact is WARN ``saeteuk_missing``.
 
 Numeric candidates come directly from check_numbers.extract_body_numerals.
 A numeric context is HARD-comparable only when both sides use an explicit
 binding (``subject = value``, ``subject: value``, Korean topic particle, or a
-small English copula list), have the exact same normalized subject and explicit
-unit, and that subject/unit key occurs exactly once on each side. Values within
-1 percent relative tolerance are treated as rounding-compatible. The unique
-binding rule deliberately misses ambiguous contradictions rather than inventing
-one. Unsupported numeric claims and deterministic named-entity anchors are WARN.
+small English copula list), have the exact same normalized subject and
+case-sensitive compatible unit, and each side has one distinct value for that
+key. SI prefixes are scaled before comparison. Values within the larger of
+1 percent relative tolerance and the lower-precision value's
+half-unit-in-last-place are rounding-compatible. Multiple values for one key
+are WARN ``saeteuk_ambiguous``. Unsupported numeric claims and deterministic
+named-entity anchors are WARN.
 
 Named entities are backtick spans, English title-case sequences or acronyms
 (sentence-initial single title-case words are excluded), and Korean tokens with
@@ -43,6 +46,22 @@ import check_numbers  # noqa: E402
 
 
 ROUNDING_RELATIVE_TOLERANCE = 0.01
+SI_PREFIX_SCALES = {
+    '': 1.0,
+    'n': 1e-9,
+    'µ': 1e-6,
+    'μ': 1e-6,
+    'u': 1e-6,
+    'm': 1e-3,
+    'c': 1e-2,
+    'k': 1e3,
+    'M': 1e6,
+    'G': 1e9,
+}
+SI_BASE_UNITS = (
+    'mol', 'rad', 'Pa', 'Hz', 'cd', 'm', 's', 'g', 'L', 'N', 'J', 'W',
+    'V', 'A', 'Ω', 'C', 'K',
+)
 ENGLISH_ENTITY_RE = re.compile(
     r'(?<![\w])(?:[A-Z][a-z][A-Za-z0-9-]*|[A-Z]{2,})'
     r'(?:[ \t]+(?:[A-Z][a-z][A-Za-z0-9-]*|[A-Z]{2,})){0,3}(?![\w])'
@@ -133,7 +152,11 @@ def _safe_text_files(directory: Path) -> tuple[list[Path], list[str], str | None
             return [], [f'escaping saeteuk directory skipped: {directory.name}'], None
         files = []
         for child in sorted(directory.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
-            if child.suffix.casefold() != '.txt' or child.is_symlink() or not child.is_file():
+            if (
+                child.suffix.casefold() not in {'.txt', '.md'}
+                or child.is_symlink()
+                or not child.is_file()
+            ):
                 continue
             resolved = child.resolve(strict=True)
             if _contained(root, resolved):
@@ -142,24 +165,33 @@ def _safe_text_files(directory: Path) -> tuple[list[Path], list[str], str | None
                 notes.append(f'escaping saeteuk path skipped: {child.name}')
         return files, notes, None
     except OSError as exc:
-        return [], notes, f'saeteuk directory unreadable: {exc}'
+        notes.append(f'saeteuk directory unreadable: {exc}')
+        return [], notes, None
 
 
-def _discover_saeteuk(workspace: Path) -> tuple[list[Path], list[str], str | None]:
-    notes = []
-    for directory in (workspace / '_saeteuk', workspace.parent / '_saeteuk'):
-        files, directory_notes, error = _safe_text_files(directory)
-        notes.extend(directory_notes)
-        if error:
-            return [], notes, error
-        if files:
-            return files, notes, None
-    return [], notes, None
+def _discover_saeteuk(
+    workspace: Path,
+) -> tuple[list[Path], list[str], str | None, bool]:
+    """Discover workspace-local artifacts only; never consult the parent."""
+    directory = workspace / '_saeteuk'
+    directory_found = directory.exists() or directory.is_symlink()
+    if not directory_found:
+        return [], [], None, False
+    # TODO(v0.12): bind discovered artifacts to a workspace manifest and hash.
+    files, notes, error = _safe_text_files(directory)
+    return files, notes, error, True
 
 
-def _normalize_unit(value: str | None) -> str | None:
-    normalized = re.sub(r'\s+', '', (value or '').casefold())
-    return normalized or None
+def _canonical_unit(value: str | None) -> tuple[str | None, float]:
+    """Return a case-sensitive base symbol and SI prefix scale."""
+    normalized = re.sub(r'\s+', '', value or '')
+    if not normalized:
+        return None, 1.0
+    for base in SI_BASE_UNITS:
+        for prefix, scale in SI_PREFIX_SCALES.items():
+            if normalized == prefix + base:
+                return base, scale
+    return normalized, 1.0
 
 
 def _normalize_subject(value: str) -> str | None:
@@ -180,19 +212,22 @@ def _subject_before(line: str, number_start: int) -> str | None:
     return None
 
 
-def _unit_after(line: str, number_end: int) -> tuple[str | None, str | None]:
+def _unit_after(
+    line: str, number_end: int
+) -> tuple[str | None, str | None, float]:
     suffix = line[number_end:number_end + 24]
     match = check_numbers.UNIT_RE.match(suffix)
     if match is None:
         match = check_numbers.ENGLISH_COUNT_UNIT_RE.match(suffix)
     if match is None:
-        return None, None
+        return None, None, 1.0
     raw_with_space = match.group(0)
     extension = UNIT_EXTENSION_RE.match(suffix[match.end():])
     if extension:
         raw_with_space += extension.group(0)
     raw = raw_with_space.strip()
-    return raw, _normalize_unit(raw)
+    unit, scale = _canonical_unit(raw)
+    return raw, unit, scale
 
 
 def _number_claims(text: str, source: str) -> list[dict]:
@@ -214,13 +249,19 @@ def _number_claims(text: str, source: str) -> list[dict]:
             continue
         end = start + len(candidate['raw'])
         cursors[line_number] = end
-        unit_raw, unit = _unit_after(line, end)
+        unit_raw, unit, unit_scale = _unit_after(line, end)
+        value = candidate['value']
+        canonical_value = value * unit_scale
+        if not math.isfinite(value) or not math.isfinite(canonical_value):
+            continue
         claims.append({
             **candidate,
             'source': source,
             'subject': _subject_before(line, start),
             'unit': unit,
             'unit_raw': unit_raw,
+            'unit_scale': unit_scale,
+            'canonical_value': canonical_value,
             'snippet': line.strip()[:160],
         })
     return claims
@@ -272,9 +313,31 @@ def _compact(value: str) -> str:
     return re.sub(r'[\W_]+', '', value.casefold(), flags=re.UNICODE)
 
 
-def _compatible(left: float, right: float, tolerance: float) -> bool:
-    return left == right or math.isclose(
-        left, right, rel_tol=tolerance, abs_tol=0.0
+def _written_unit_in_last_place(raw: str) -> float:
+    cleaned = raw.replace(',', '').lstrip('+-')
+    mantissa, marker, exponent_text = cleaned.partition('e')
+    if not marker:
+        mantissa, marker, exponent_text = cleaned.partition('E')
+    exponent = int(exponent_text) if marker else 0
+    decimal_places = len(mantissa.partition('.')[2])
+    try:
+        return 10.0 ** (exponent - decimal_places)
+    except OverflowError:
+        return math.inf
+
+
+def _compatible(left: dict, right: dict, tolerance: float) -> bool:
+    left_value = left['canonical_value']
+    right_value = right['canonical_value']
+    if not math.isfinite(left_value) or not math.isfinite(right_value):
+        return False
+    relative_limit = tolerance * max(abs(left_value), abs(right_value))
+    absolute_limit = 0.5 * max(
+        _written_unit_in_last_place(left['raw']) * left['unit_scale'],
+        _written_unit_in_last_place(right['raw']) * right['unit_scale'],
+    )
+    return abs(left_value - right_value) <= max(
+        relative_limit, absolute_limit
     )
 
 
@@ -290,12 +353,30 @@ def check(workspace, tolerance=ROUNDING_RELATIVE_TOLERANCE):
             or not math.isfinite(tolerance) or tolerance < 0):
         return _usage(workspace, 'tolerance must be a finite non-negative number')
 
-    saeteuk_paths, discovery_notes, error = _discover_saeteuk(ws)
+    saeteuk_paths, discovery_notes, error, directory_found = (
+        _discover_saeteuk(ws)
+    )
     if error:
         return _usage(workspace, error)
     if not saeteuk_paths:
         verdict = _base_verdict(workspace)
-        verdict['note'] = 'no saeteuk artifact found; consistency check is a no-op'
+        if directory_found:
+            verdict['warn'] = [{
+                'code': 'saeteuk_missing',
+                'severity': 'WARN',
+                'msg': (
+                    'workspace _saeteuk directory has no readable .txt or .md '
+                    'artifact'
+                ),
+                'at': '_saeteuk',
+            }]
+            verdict['counts'] = {'hard': 0, 'warn': 1}
+            verdict['note'] = 'saeteuk directory exists but no artifact was checked'
+        else:
+            verdict['note'] = (
+                'no workspace-local saeteuk directory found; '
+                'consistency check is a no-op'
+            )
         if discovery_notes:
             verdict['notes'] = discovery_notes
         return verdict, 0
@@ -343,57 +424,100 @@ def check(workspace, tolerance=ROUNDING_RELATIVE_TOLERANCE):
 
     hard = []
     warn = []
-    for claim in saeteuk_numbers:
-        key = _context_key(claim)
-        context_matches = body_by_key.get(key, []) if key else []
-        compatible_context = [
-            item for item in context_matches
-            if _compatible(claim['value'], item['value'], float(tolerance))
-        ]
-        unique_context = (
-            key is not None
-            and len(saeteuk_by_key[key]) == 1
-            and len(context_matches) == 1
-        )
-        if unique_context and not compatible_context:
-            body_claim = context_matches[0]
-            scale = max(abs(claim['value']), abs(body_claim['value']))
-            relative = (
-                0.0 if scale == 0.0
-                else abs(claim['value'] - body_claim['value']) / scale
-            )
-            hard.append({
-                'code': 'saeteuk_number_contradiction',
-                'severity': 'HARD',
-                'msg': 'unique same-subject same-unit numeric binding contradicts report body',
-                'at': claim['source'],
-                'line': claim['line'],
-                'subject': claim['subject'],
-                'unit': claim['unit_raw'],
-                'saeteuk_value': claim['value'],
-                'body_value': body_claim['value'],
-                'body_line': body_claim['line'],
-                'relative_difference': round(relative, 6),
-            })
-            continue
-
-        same_value_and_unit = any(
-            claim['unit'] == item['unit']
-            and _compatible(claim['value'], item['value'], float(tolerance))
-            for item in body_numbers
-        )
-        if not context_matches and not same_value_and_unit:
+    evaluated_keys = set()
+    for key in sorted(saeteuk_by_key):
+        saeteuk_claims = saeteuk_by_key[key]
+        body_claims = body_by_key.get(key, [])
+        saeteuk_values = sorted({
+            claim['canonical_value'] for claim in saeteuk_claims
+        })
+        body_values = sorted({
+            claim['canonical_value'] for claim in body_claims
+        })
+        ambiguous_sides = []
+        if len(saeteuk_values) > 1:
+            ambiguous_sides.append('saeteuk')
+        if len(body_values) > 1:
+            ambiguous_sides.append('body')
+        if ambiguous_sides:
+            claim = saeteuk_claims[0]
             warn.append({
-                'code': 'saeteuk_unsupported',
+                'code': 'saeteuk_ambiguous',
                 'severity': 'WARN',
                 'kind': 'number',
-                'msg': 'saeteuk numeric claim has no supporting body mention',
+                'msg': 'subject/unit key has multiple distinct numeric values',
                 'at': claim['source'],
                 'line': claim['line'],
-                'claim': claim['raw'],
                 'subject': claim['subject'],
                 'unit': claim['unit_raw'],
+                'ambiguous_sides': ambiguous_sides,
+                'saeteuk_values': saeteuk_values,
+                'body_values': body_values,
             })
+            evaluated_keys.add(key)
+            continue
+        if len(saeteuk_values) != 1 or len(body_values) != 1:
+            continue
+
+        evaluated_keys.add(key)
+        claim = saeteuk_claims[0]
+        body_claim = body_claims[0]
+        if _compatible(claim, body_claim, float(tolerance)):
+            continue
+        scale = max(
+            abs(claim['canonical_value']),
+            abs(body_claim['canonical_value']),
+        )
+        relative = (
+            0.0 if scale == 0.0
+            else abs(
+                claim['canonical_value'] - body_claim['canonical_value']
+            ) / scale
+        )
+        hard.append({
+            'code': 'saeteuk_number_contradiction',
+            'severity': 'HARD',
+            'msg': (
+                'single distinct same-subject same-unit numeric values '
+                'contradict'
+            ),
+            'at': claim['source'],
+            'line': claim['line'],
+            'subject': claim['subject'],
+            'unit': claim['unit_raw'],
+            'saeteuk_value': claim['value'],
+            'body_value': body_claim['value'],
+            'body_line': body_claim['line'],
+            'relative_difference': round(relative, 6),
+        })
+
+    for claim in saeteuk_numbers:
+        key = _context_key(claim)
+        if key in evaluated_keys:
+            continue
+        fallback_match = (
+            claim['subject'] is None
+            and claim['unit'] is not None
+            and any(
+                item['subject'] is None
+                and claim['unit'] == item['unit']
+                and _compatible(claim, item, float(tolerance))
+                for item in body_numbers
+            )
+        )
+        if fallback_match:
+            continue
+        warn.append({
+            'code': 'saeteuk_unsupported',
+            'severity': 'WARN',
+            'kind': 'number',
+            'msg': 'saeteuk numeric claim has no supporting body mention',
+            'at': claim['source'],
+            'line': claim['line'],
+            'claim': claim['raw'],
+            'subject': claim['subject'],
+            'unit': claim['unit_raw'],
+        })
 
     compact_body = _compact(body)
     warned_entities = set()
@@ -441,7 +565,9 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     verdict, code = check(args.workspace, tolerance=args.tolerance)
-    print(json.dumps(verdict, ensure_ascii=False, indent=2))
+    print(json.dumps(
+        verdict, ensure_ascii=False, indent=2, allow_nan=False
+    ))
     return code
 
 

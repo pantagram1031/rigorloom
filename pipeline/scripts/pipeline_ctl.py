@@ -1073,9 +1073,10 @@ def cmd_check(args) -> None:
     exit 0  -> auto_approved (detail "checker")
     nonzero -> rejected (reason includes the exit code)
     Records provenance {checker_argv, exit, stdout_sha256, checked_at} into the
-    emitted JSON, events.jsonl, and .pipeline/gate_checks.jsonl. A null/missing
-    checker, a non-script gate, or an unknown gate is a usage error — never a
-    pass (a gate with no runnable checker must NOT silently auto_approve)."""
+    emitted JSON, events.jsonl, and .pipeline/gate_checks.jsonl. Parseable JSON
+    checker output also contributes HARD/WARN counts. A null/missing checker, a
+    non-script gate, or an unknown gate is a usage error — never a pass (a gate
+    with no runnable checker must NOT silently auto_approve)."""
     ws = Path(args.workspace)
     gate_name = args.gate_name
 
@@ -1143,6 +1144,21 @@ def cmd_check(args) -> None:
         "stdout_sha256": hashlib.sha256(stdout_text.encode("utf-8", "replace")).hexdigest(),
         "checked_at": checked_at,
     }
+    try:
+        checker_verdict = json.loads(stdout_text)
+    except json.JSONDecodeError:
+        checker_verdict = None
+    if isinstance(checker_verdict, dict):
+        reported = checker_verdict.get("counts")
+        counts = {}
+        for severity in ("hard", "warn"):
+            value = reported.get(severity) if isinstance(reported, dict) else None
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                counts[severity] = value
+            else:
+                findings = checker_verdict.get(severity)
+                counts[severity] = len(findings) if isinstance(findings, list) else 0
+        provenance["counts"] = counts
 
     gate_obj = hdr["stages"][target_num]["gate"]
     if exit_code == 0:

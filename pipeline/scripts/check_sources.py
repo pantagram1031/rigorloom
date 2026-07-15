@@ -3,10 +3,9 @@
 """Deterministically verify bibliography identifiers against an offline cache.
 
 Reference/endnote entries are parsed from bundle/content.md into author, year,
-title, container, DOI, ISBN, and URL fields. Section boundaries match
-check_refs.py: a decorated heading starts the block; the next Markdown heading,
-or the first blank after source content, ends it. Identifier-only lines continue
-the preceding entry.
+title, container, DOI, ISBN, and URL fields. A decorated heading starts the
+block; the next Markdown heading or EOF ends it. Blank lines are allowed inside
+the block. Identifier-only lines continue the preceding entry.
 
 No network or model calls are made. Optional cache records use this schema::
 
@@ -37,9 +36,10 @@ DEFAULT_NOW_YEAR = 2026
 DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.I)
 REFERENCE_SECTION_RE = re.compile(
     r"^\s*(?:(?:\u203b|#+|-|:)\s*)*"
-    r"(?:references?|bibliography|works\s+cited|endnotes?|sources?|source\s+list|"
+    r"(?:references?(?:\s+and\s+notes)?|reference\s+list|bibliography|"
+    r"works\s+cited|literature\s+cited|endnotes?|sources?|source\s+list|"
     r"\ucc38\uace0\s*\ubb38\ud5cc|\ucc38\uace0\s*\uc790\ub8cc|"
-    r"\ubbf8\uc8fc|\ucd9c\ucc98)"
+    r"\uc778\uc6a9\s*\ubb38\ud5cc|\ubbf8\uc8fc|\ucd9c\ucc98)"
     r"\s*(?:(?:#+|:|-)\s*)*$",
     re.I,
 )
@@ -52,7 +52,23 @@ ISBN_LABEL_RE = re.compile(
 )
 URL_RE = re.compile(r"https?://\S+", re.I)
 YEAR_RE = re.compile(r"(?<!\d)(?P<year>\d{4})(?!\d)")
+PUBLICATION_TOKEN_RE = re.compile(
+    r"\(\s*(?P<year>\d{4})"
+    r"(?:\s*[-\u2013]\s*\d{4})?"
+    r"(?:\s*,\s*(?P<qualifier>in\s+press|forthcoming))?"
+    r"\s*\)",
+    re.I,
+)
+CITATION_LIKE_LINE_RE = re.compile(
+    r"(?:\(\s*\d{4}\s*\)\s*\.|\b(?:doi|isbn(?:-1[03])?)\s*:)",
+    re.I,
+)
+MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}(?:\s+|$)")
 LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\[\d+\]\s*|\d+[.)]\s+)")
+TITLE_STOPWORDS = frozenset({
+    "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the",
+    "to", "with",
+})
 
 
 def _utf8_stdio() -> None:
@@ -116,28 +132,29 @@ def _isbn13(value: str) -> str | None:
     return stem + str((10 - subtotal % 10) % 10)
 
 
-def _reference_lines(markdown: str) -> list[tuple[int, str]]:
-    """Locate bibliography lines with check_refs.py's source-block rules."""
+def _reference_section(markdown: str) -> tuple[bool, list[tuple[int, str]]]:
+    """Return whether a recognized section exists and its nonblank lines."""
     located: list[tuple[int, str]] = []
     in_sources = False
-    source_lines_seen = False
+    section_found = False
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         if not in_sources:
             if REFERENCE_SECTION_RE.match(line):
                 in_sources = True
-                source_lines_seen = False
+                section_found = True
             continue
 
         stripped = line.strip()
-        if stripped.startswith("#"):
+        if MARKDOWN_HEADING_RE.match(line):
             break
         if not stripped:
-            if source_lines_seen:
-                break
             continue
-        source_lines_seen = True
         located.append((line_number, line))
-    return located
+    return section_found, located
+
+
+def _reference_lines(markdown: str) -> list[tuple[int, str]]:
+    return _reference_section(markdown)[1]
 
 
 def _identifier_continuation(line: str) -> bool:
@@ -188,11 +205,12 @@ def _without_identifiers(text: str) -> str:
 
 def _bibliographic_fields(
     text: str,
-) -> tuple[str | None, int | None, str | None, str | None]:
+) -> tuple[str | None, int | None, str | None, str | None, bool]:
     plain = LIST_PREFIX_RE.sub("", text).strip()
-    year_match = YEAR_RE.search(plain)
+    publication_match = PUBLICATION_TOKEN_RE.search(plain)
+    year_match = publication_match or YEAR_RE.search(plain)
     if year_match is None:
-        return None, None, None, None
+        return None, None, None, None, False
 
     author = plain[:year_match.start()].strip(" ,.;:()[]") or None
     tail = _without_identifiers(plain[year_match.end():])
@@ -201,7 +219,11 @@ def _bibliographic_fields(
     parts = [part for part in parts if part]
     title = parts[0] if parts else None
     container = ". ".join(parts[1:]) if len(parts) > 1 else None
-    return author, int(year_match.group("year")), title, container
+    advisory = bool(
+        publication_match is not None
+        and publication_match.group("qualifier")
+    )
+    return author, int(year_match.group("year")), title, container, advisory
 
 
 def parse_reference_entries(markdown: str) -> list[dict]:
@@ -211,7 +233,9 @@ def parse_reference_entries(markdown: str) -> list[dict]:
         doi, doi_valid = _extract_doi(text)
         isbn = _extract_isbn(text)
         url_match = URL_RE.search(text)
-        author, year, title, container = _bibliographic_fields(text)
+        author, year, title, container, publication_advisory = (
+            _bibliographic_fields(text)
+        )
         parsed.append({
             "author": author,
             "year": year,
@@ -223,6 +247,7 @@ def parse_reference_entries(markdown: str) -> list[dict]:
             "line": line_number,
             "text": text,
             "doi_valid": doi_valid,
+            "publication_advisory": publication_advisory,
         })
     return parsed
 
@@ -233,18 +258,53 @@ def _normalized_title(value: str) -> str:
     return " ".join(re.findall(r"\w+", normalized, flags=re.UNICODE))
 
 
+def _meaningful_title_tokens(normalized: str) -> list[str]:
+    return [
+        token for token in normalized.split()
+        if token not in TITLE_STOPWORDS
+    ]
+
+
+def _ordered_token_coverage(shorter: list[str], longer: list[str]) -> float:
+    if not shorter:
+        return 0.0
+    cursor = 0
+    matched = 0
+    for token in shorter:
+        try:
+            cursor = longer.index(token, cursor) + 1
+        except ValueError:
+            continue
+        matched += 1
+    return matched / len(shorter)
+
+
 def _titles_match(cited: str, cached: str) -> bool:
     left = _normalized_title(cited)
     right = _normalized_title(cached)
     if not left or not right:
         return False
-    if left == right or left in right or right in left:
+    if left == right:
+        return True
+    shorter_text, longer_text = sorted((left, right), key=len)
+    shorter_meaningful = _meaningful_title_tokens(shorter_text)
+    if len(shorter_meaningful) >= 3 and shorter_text in longer_text:
         return True
     ratio = SequenceMatcher(None, left, right).ratio()
-    left_tokens, right_tokens = set(left.split()), set(right.split())
-    union = left_tokens | right_tokens
-    jaccard = len(left_tokens & right_tokens) / len(union) if union else 0.0
-    return ratio >= 0.88 or jaccard >= 0.80
+    left_tokens = left.split()
+    right_tokens = right.split()
+    shorter_tokens, longer_tokens = sorted(
+        (left_tokens, right_tokens), key=len
+    )
+    left_set, right_set = set(left_tokens), set(right_tokens)
+    union = left_set | right_set
+    jaccard = len(left_set & right_set) / len(union) if union else 0.0
+    ordered = _ordered_token_coverage(shorter_tokens, longer_tokens)
+    return ratio >= 0.92 or (
+        len(_meaningful_title_tokens(" ".join(shorter_tokens))) >= 3
+        and jaccard >= 0.80
+        and ordered == 1.0
+    )
 
 
 def _usage(ws, message: str) -> tuple[dict, int]:
@@ -300,9 +360,24 @@ def check(
 
     root = _resolve_profile_root(profile_root)
     cache_root = root / "cache" / "sources" if root else None
+    section_found, _ = _reference_section(markdown)
     entries = parse_reference_entries(markdown)
     hard: list[dict] = []
     warn: list[dict] = []
+
+    if not section_found:
+        for line_number, line in enumerate(markdown.splitlines(), start=1):
+            if CITATION_LIKE_LINE_RE.search(line):
+                warn.append({
+                    "code": "references_unparsed",
+                    "msg": (
+                        "citation-like content exists without a recognized "
+                        "reference section"
+                    ),
+                    "at": line.strip()[:120],
+                    "line": line_number,
+                })
+                break
 
     for entry in entries:
         cited_at = entry["title"] or entry["author"] or entry["text"][:80]
@@ -325,12 +400,21 @@ def check(
                 "line": entry["line"],
             })
         if entry["year"] is not None and entry["year"] > now:
-            hard.append({
-                "code": "source_year_future",
-                "msg": f"publication year exceeds configured current year {now}",
+            finding = {
+                "code": (
+                    "source_year_future_advisory"
+                    if entry["publication_advisory"]
+                    else "source_year_future"
+                ),
+                "msg": (
+                    "future publication year is marked in press/forthcoming"
+                    if entry["publication_advisory"]
+                    else f"publication year exceeds configured current year {now}"
+                ),
                 "at": str(entry["year"]),
                 "line": entry["line"],
-            })
+            }
+            (warn if entry["publication_advisory"] else hard).append(finding)
 
         identifiers = []
         if doi and entry["doi_valid"]:
@@ -381,7 +465,7 @@ def check(
         {
             key: value
             for key, value in entry.items()
-            if key not in {"text", "doi_valid"}
+            if key not in {"text", "doi_valid", "publication_advisory"}
         }
         for entry in entries
     ]
@@ -389,6 +473,7 @@ def check(
         "ok": not hard,
         "workspace": str(ws),
         "checker": "check_sources",
+        "section_found": section_found,
         "entries": public_entries,
         "hard": hard,
         "warn": warn,
