@@ -430,6 +430,128 @@ class TestPdfCmdWiring(unittest.TestCase):
         self.assertEqual(payload["proof_grade"], "hancom")
         self.assertEqual(payload["renderer_decision"]["selected"], "hancom")
 
+    def test_equation_free_prefers_soffice_over_rhwp_in_either_probe_order(self):
+        rhwp_renderer = {
+            "name": "rhwp_svg", "wsl": False,
+            "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"],
+        }
+        soffice_renderer = {
+            "name": "soffice_local", "wsl": False,
+            "argv": ["soffice", "--headless"],
+        }
+        for renderers in (
+            [rhwp_renderer, soffice_renderer],
+            [soffice_renderer, rhwp_renderer],
+        ):
+            with (
+                self.subTest(order=[item["name"] for item in renderers]),
+                mock.patch.object(
+                    self.render_probe,
+                    "probe",
+                    return_value={
+                        "capabilities": {"hancom_com": False},
+                        "renderers": renderers,
+                    },
+                ),
+                mock.patch.object(
+                    self.render_probe, "hwpx_has_equations", return_value=False
+                ),
+            ):
+                decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
+
+            self.assertEqual(decision["selected"], "soffice_local")
+            self.assertEqual(decision["proof_grade"], "advisory")
+            self.assertEqual(decision["pdf_cmd_argv"], ["soffice", "--headless"])
+
+    def test_rhwp_is_selected_for_equation_documents_as_experimental(self):
+        rhwp_renderer = {
+            "name": "rhwp_svg",
+            "wsl": False,
+            "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"],
+            "proof_grade": "experimental-rhwp",
+        }
+        with (
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [
+                        rhwp_renderer,
+                        {"name": "soffice_local", "wsl": False,
+                         "argv": ["soffice", "--headless"]},
+                    ],
+                },
+            ),
+            mock.patch.object(
+                self.render_probe, "hwpx_has_equations", return_value=True
+            ),
+        ):
+            decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
+
+        self.assertEqual(decision["selected"], "rhwp_svg")
+        self.assertEqual(decision["proof_grade"], "experimental-rhwp")
+        self.assertIsNone(decision["pdf_cmd_argv"])
+        self.assertEqual(decision["rhwp_renderer"], rhwp_renderer)
+
+    def test_successful_adapter_runs_rhwp_proof_and_emits_receipt_summary(self):
+        rhwp_renderer = {
+            "name": "rhwp_svg",
+            "wsl": False,
+            "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"],
+            "proof_grade": "experimental-rhwp",
+        }
+        proof_receipt = {
+            "ok": True,
+            "proof_grade": "experimental-rhwp",
+            "submission_grade": False,
+            "page_count": 3,
+            "layout_overflow": False,
+            "parity_verdict": "partial",
+            "reason": "rhwp_svg_rendered",
+            "comparison": {"structure_mismatch": False},
+        }
+        stdout = io.StringIO()
+        completed = mock.Mock(returncode=0, stdout='{"ok": true}', stderr="")
+
+        def fake_run(command, **kwargs):
+            if "--help" in command:
+                return mock.Mock(returncode=0, stdout="usage: fill_report.py", stderr="")
+            return completed
+
+        with (
+            mock.patch.object(
+                doc_backend, "_resolve_hwpx_fill_report",
+                return_value=str(self.scripts / "fill_report.py"),
+            ),
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [rhwp_renderer],
+                },
+            ),
+            mock.patch.object(
+                self.render_probe, "hwpx_has_equations", return_value=True
+            ),
+            mock.patch.object(doc_backend.subprocess, "run", side_effect=fake_run),
+            mock.patch.object(
+                doc_backend, "_run_experimental_rhwp",
+                return_value=proof_receipt,
+            ) as run_proof,
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+
+        self.assertEqual(code, 0)
+        run_proof.assert_called_once()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["proof_grade"], "experimental-rhwp")
+        self.assertEqual(payload["render_proof"]["page_count"], 3)
+        self.assertFalse(payload["render_proof"]["submission_grade"])
+        self.assertNotIn("rhwp_renderer", payload["renderer_decision"])
+
 
 class TestDocxBackend(unittest.TestCase):
     def setUp(self):

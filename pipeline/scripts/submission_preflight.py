@@ -37,6 +37,7 @@ import check_saeteuk
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
 SUBMISSION_PROOF_GRADES = {"hancom", "advisory"}
+EXPERIMENTAL_PROOF_GRADES = {"experimental-rhwp"}
 MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 ASSEMBLY_VERDICT_REL = Path("output/verdict_v06.json")
 FORM_STRUCTURE_NAMES = frozenset({
@@ -567,6 +568,15 @@ def check(
     delivery_capabilities = None
     if grade == "none" and allow_unproven:
         notes.append("draft explicitly allows proof_grade none (--allow-unproven)")
+    elif grade in EXPERIMENTAL_PROOF_GRADES:
+        hard.append({
+            "code": "P5",
+            "msg": (
+                "experimental-rhwp is diagnostic render evidence, "
+                "not a submission proof grade"
+            ),
+            "at": ASSEMBLY_VERDICT_REL.as_posix(),
+        })
     elif grade not in SUBMISSION_PROOF_GRADES:
         hard.append({
             "code": "P5",

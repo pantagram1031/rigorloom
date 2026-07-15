@@ -187,6 +187,22 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(code, 0, verdict)
         self.assertTrue(any("draft" in note for note in verdict["notes"]))
 
+    def test_experimental_rhwp_is_never_submission_grade(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx()
+        self.write_proof_grade("experimental-rhwp")
+
+        verdict, code = submission_preflight.check(
+            self.ws,
+            allow_advisory=True,
+            reason="experimental render evidence only",
+        )
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(item["code"] == "P5" for item in verdict["hard"]))
+
     def test_hancom_grade_without_local_hancom_is_unverifiable_here(self):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(

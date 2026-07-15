@@ -102,6 +102,32 @@ H2Orestart extension is advisory render evidence only; it is not print-grade
 proof. Use the `hwp`/Hancom tier below for the full convergence and print-grade
 proof loop.
 
+When render_probe detects rhwp through RHWP_BIN or PATH, RHWP_SHA256 must contain
+the SHA-256 of that executable file (not the release archive). Unset pins are
+`rhwp_unpinned`; nonmatching pins are `rhwp_hash_mismatch`; both make the
+renderer unavailable, and the proof runner rechecks the same pin immediately
+before execution. For equation-free documents, available soffice advisory proof
+retains priority; rhwp is selected only for equation documents or when soffice
+is absent. The dispatcher then creates
+output/proof/rhwp/render-surrogate.hwpx. Only the exact synthetic one-line
+linesegarray signature produced by the XML engine is removed, and semantic
+text/table/picture/equation fingerprints are checked before rendering.
+output/out.hwpx remains the canonical submission artifact and is never
+overwritten. rhwp export-svg writes under output/proof/rhwp/svg and its receipt
+is output/proof/rhwp/receipt.json.
+
+Successful SVG output is proof_grade experimental-rhwp. This grade is
+diagnostic only and submission_preflight rejects it for graded delivery.
+Equal page counts never promote it to advisory or Hancom proof. Overflow,
+render-diff, and IR-diff data are stored in the receipt and assembly verdict
+when available. Configure an artifact-bound comparison JSON through
+RIGORLOOM_RHWP_COMPARISON_JSON. Because this JSON is supplied rather than
+computed by this repository, its receipt entry is tagged `provenance: external`
+and `reproducible: false`. A missing CLI, timeout, nonzero exit, or zero
+SVG pages leaves the canonical XML output intact and records proof_grade none
+with an explicit fallback reason. Equation-bearing HWPX is never routed to
+LibreOffice as a substitute proof path.
+
 ---
 
 ## §HWP — assemble on a form copy (Windows + Hancom + hwp-master)
