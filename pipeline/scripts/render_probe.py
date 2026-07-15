@@ -11,10 +11,15 @@ Stdlib only. Probes this machine (never launches Hancom, never raises) for:
 Each probe is individually guarded (catches its own exceptions) so a single
 missing tool, unusual PATH, or WSL hiccup never blocks the others.
 
+rhwp is exposed only as an experimental SVG renderer. It is never returned by
+best_pdf_cmd and therefore cannot be mistaken for a LibreOffice PDF command.
+
 Output schema (see probe()):
     {
       "capabilities": {"hancom_com": bool, "soffice_path": str|None,
-                       "soffice_wsl": bool, "h2orestart": "yes"|"no"|"unknown"},
+                       "soffice_wsl": bool, "h2orestart": "yes"|"no"|"unknown",
+                       "rhwp_path": str|None, "rhwp_wsl": bool,
+                       "rhwp_version": str|None, "rhwp_reason": str},
       "renderers": [{"name": str, "wsl": bool, "argv": list[str]|None}, ...]
     }
 No timestamps — the output is a pure function of machine state, kept
@@ -35,6 +40,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -58,6 +64,7 @@ _WSL_SOFFICE_SCRIPT = (
 _WSL_TIMEOUT = 10
 _H2ORESTART_TIMEOUT = 10
 _HANCOM_TIMEOUT = 10
+_RHWP_TIMEOUT = 10
 
 _HANCOM_PROBE_CODE = r"""
 import importlib.util
@@ -141,10 +148,79 @@ def _probe_h2orestart(soffice_path: str | None, soffice_wsl: bool) -> str:
                      "h2restart" in normalized) else "no"
 
 
+def _probe_rhwp() -> dict:
+    """Probe a configured or PATH rhwp binary without attempting a render."""
+    configured = os.environ.get("RHWP_BIN", "").strip()
+    candidate = configured or shutil.which("rhwp")
+    if not candidate:
+        return {
+            "path": None, "wsl": False, "version": None, "reason": "not_found",
+        }
+    candidate = os.path.abspath(os.path.expanduser(candidate))
+    if configured and not os.path.isfile(candidate):
+        return {
+            "path": candidate, "wsl": sys.platform == "win32",
+            "version": None, "reason": "configured_path_missing",
+        }
+    via_wsl = sys.platform == "win32"
+    command = (
+        ["wsl", "--", to_wsl_path(candidate), "--version"]
+        if via_wsl else [candidate, "--version"]
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_RHWP_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "path": candidate, "wsl": via_wsl,
+            "version": None, "reason": "probe_timeout",
+        }
+    except (OSError, ValueError):
+        return {
+            "path": candidate, "wsl": via_wsl,
+            "version": None, "reason": "probe_failed",
+        }
+    if completed.returncode != 0:
+        return {
+            "path": candidate, "wsl": via_wsl,
+            "version": None, "reason": "probe_nonzero",
+        }
+    version_blob = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    version = next((line.strip() for line in version_blob.splitlines() if line.strip()), "unknown")
+    return {
+        "path": candidate, "wsl": via_wsl,
+        "version": version, "reason": "available",
+    }
+
+
 def _build_renderers(capabilities: dict) -> list[dict]:
     renderers: list[dict] = []
     if capabilities["hancom_com"]:
         renderers.append({"name": "hancom", "wsl": False, "argv": None})
+    if (capabilities.get("rhwp_path")
+            and capabilities.get("rhwp_reason") == "available"):
+        binary = capabilities["rhwp_path"]
+        via_wsl = capabilities.get("rhwp_wsl") is True
+        if via_wsl:
+            binary = to_wsl_path(binary)
+        argv = (
+            ["wsl", "--", binary, "export-svg", "{in}", "-o", "{outdir}"]
+            if via_wsl else
+            [binary, "export-svg", "{in}", "-o", "{outdir}"]
+        )
+        renderers.append({
+            "name": "rhwp_svg",
+            "wsl": via_wsl,
+            "argv": argv,
+            "version": capabilities.get("rhwp_version"),
+            "proof_grade": "experimental-rhwp",
+        })
     if capabilities["soffice_path"]:
         renderers.append({"name": "soffice_local", "wsl": False,
                           "argv": [capabilities["soffice_path"], *_SOFFICE_ARGS]})
@@ -176,12 +252,23 @@ def probe() -> dict:
         h2orestart = _probe_h2orestart(soffice_path, soffice_wsl)
     except Exception:
         h2orestart = "unknown"
+    try:
+        rhwp = _probe_rhwp()
+    except Exception:
+        rhwp = {
+            "path": None, "wsl": False, "version": None,
+            "reason": "probe_failed",
+        }
 
     capabilities = {
         "hancom_com": hancom_com,
         "soffice_path": soffice_path,
         "soffice_wsl": soffice_wsl,
         "h2orestart": h2orestart,
+        "rhwp_path": rhwp["path"],
+        "rhwp_wsl": rhwp["wsl"],
+        "rhwp_version": rhwp["version"],
+        "rhwp_reason": rhwp["reason"],
     }
     return {"capabilities": capabilities, "renderers": _build_renderers(capabilities)}
 
@@ -205,7 +292,8 @@ def best_pdf_cmd(result: dict) -> list[str] | None:
     `{in}` and `{outdir}`.
     """
     for renderer in result.get("renderers", []):
-        if renderer.get("argv"):
+        if (renderer.get("name") in {"soffice_local", "soffice_wsl"}
+                and renderer.get("argv")):
             return list(renderer["argv"])
     return None
 
@@ -238,6 +326,10 @@ def format_table(result: dict) -> str:
         ("soffice_path", str(caps.get("soffice_path"))),
         ("soffice_wsl", str(caps.get("soffice_wsl"))),
         ("h2orestart", str(caps.get("h2orestart"))),
+        ("rhwp_path", str(caps.get("rhwp_path"))),
+        ("rhwp_wsl", str(caps.get("rhwp_wsl"))),
+        ("rhwp_version", str(caps.get("rhwp_version"))),
+        ("rhwp_reason", str(caps.get("rhwp_reason"))),
     ]
     width = max(len(label) for label, _ in rows)
     lines = ["Render capability matrix", "-" * 40]
@@ -250,7 +342,7 @@ def format_table(result: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Render capability probe (Hancom COM / soffice / WSL / H2Orestart)")
+        description="Render capability probe (Hancom COM / rhwp / soffice / WSL / H2Orestart)")
     ap.add_argument("--json", action="store_true",
                     help="print raw JSON instead of the human-readable table")
     ap.add_argument("--out", default=None, help="also write the JSON result to this path")
