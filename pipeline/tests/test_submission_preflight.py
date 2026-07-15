@@ -69,6 +69,50 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(verdict["artifact"], "output/submission.hwpx")
         self.assertEqual(verdict["proof_grade"], "hancom")
 
+    def test_saeteuk_exit_three_and_child_inconsistency_fail_closed(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\nrequired_fields: []\n',
+            encoding="utf-8",
+        )
+        self.write_hwpx()
+        self.write_proof_grade("none")
+        cases = (
+            ({
+                "ok": False,
+                "verdict": "fail",
+                "hard": [],
+                "warn": [],
+                "saeteuk_files": [],
+            }, 3, None),
+            ({
+                "ok": False,
+                "verdict": "fail",
+                "hard": [],
+                "warn": [],
+                "saeteuk_files": [],
+            }, 0, "saeteuk_checker_inconsistent"),
+        )
+
+        for child_verdict, child_code, expected_hard in cases:
+            with self.subTest(child_code=child_code):
+                with mock.patch.object(
+                    submission_preflight.check_saeteuk,
+                    "check",
+                    return_value=(child_verdict, child_code),
+                ):
+                    verdict, code = submission_preflight.check(
+                        self.ws, allow_unproven=True
+                    )
+
+                self.assertEqual(code, 3, verdict)
+                self.assertFalse(verdict["ok"])
+                if expected_hard:
+                    self.assertTrue(any(
+                        finding.get("code") == expected_hard
+                        for finding in verdict["hard"]
+                    ), verdict)
+
     def test_one_optional_request_key_can_be_absent_with_note(self):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(

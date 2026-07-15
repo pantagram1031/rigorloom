@@ -14,6 +14,10 @@ that requires a non-empty reason and records it in the verdict JSON.
 Form baselines in ``form_baseline.json`` or ``build.yaml`` are trusted-on-record,
 not cryptographically proven: recording a baseline after a mutation cannot
 detect that mutation. A signed external baseline is deferred.
+
+The registered Stage 6 command also composes check_saeteuk.py. Its findings are
+source-tagged and merged here so a provable saeteuk contradiction rejects this
+gate while unsupported anchors remain advisory.
 """
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import render_probe
+import check_saeteuk
 
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
@@ -402,6 +407,57 @@ def check(
     hard: list[dict] = []
     warn: list[dict] = []
     notes: list[str] = []
+    saeteuk_verdict, saeteuk_code = check_saeteuk.check(ws)
+    raw_saeteuk_code = saeteuk_code
+    valid_saeteuk_object = isinstance(saeteuk_verdict, dict)
+    if not valid_saeteuk_object:
+        saeteuk_verdict = {}
+    if (
+        not isinstance(saeteuk_code, int)
+        or isinstance(saeteuk_code, bool)
+        or saeteuk_code not in {0, 2, 3}
+    ):
+        saeteuk_code = 3
+        hard.append({
+            'source': 'check_saeteuk',
+            'code': 'saeteuk_checker_failure',
+            'msg': 'saeteuk sub-checker returned an unexpected exit code',
+        })
+    expected_child_state = {
+        0: (True, 'pass'),
+        2: (False, 'usage_error'),
+        3: (False, 'fail'),
+    }.get(saeteuk_code)
+    child_hard = saeteuk_verdict.get('hard')
+    child_warn = saeteuk_verdict.get('warn')
+    child_inconsistent = (
+        not valid_saeteuk_object
+        or expected_child_state is None
+        or saeteuk_verdict.get('ok') is not expected_child_state[0]
+        or saeteuk_verdict.get('verdict') != expected_child_state[1]
+        or not isinstance(child_hard, list)
+        or not isinstance(child_warn, list)
+        or (saeteuk_code == 0 and bool(child_hard))
+    )
+    if child_inconsistent:
+        hard.append({
+            'source': 'check_saeteuk',
+            'code': 'saeteuk_checker_inconsistent',
+            'msg': (
+                'saeteuk child exit is inconsistent with its JSON verdict'
+            ),
+            'child_exit': raw_saeteuk_code,
+        })
+    for finding in child_hard if isinstance(child_hard, list) else []:
+        hard.append({'source': 'check_saeteuk', **finding})
+    for finding in child_warn if isinstance(child_warn, list) else []:
+        warn.append({'source': 'check_saeteuk', **finding})
+    if saeteuk_code == 2:
+        hard.append({
+            'source': 'check_saeteuk',
+            'code': 'USAGE',
+            'msg': saeteuk_verdict.get('error', 'saeteuk sub-checker input error'),
+        })
     scalars, required_fields, request_error = _scan_request(ws / "request.yaml")
     if request_error:
         hard.append({
@@ -545,8 +601,17 @@ def check(
             notes.append(
                 "draft explicitly accepts advisory proof (--allow-advisory)")
 
+    has_rule_hard = any(
+        not (finding.get('source') == 'check_saeteuk'
+             and finding.get('code') == 'USAGE')
+        for finding in hard
+    )
+    code = (
+        3 if saeteuk_code == 3 or has_rule_hard
+        else (2 if saeteuk_code == 2 else 0)
+    )
     verdict = {
-        "ok": not hard,
+        "ok": code == 0,
         "workspace": str(ws),
         "artifact": artifact_rel,
         "proof_grade": grade,
@@ -559,13 +624,15 @@ def check(
         "form_baseline_sha256": baseline_sha256,
         "form_baseline_source": baseline_source,
         "advisory_reason": advisory_reason if allow_advisory else None,
+        "saeteuk_exit": saeteuk_code,
+        "saeteuk_files": saeteuk_verdict.get('saeteuk_files', []),
         "notes": notes,
         "hard": hard,
         "warn": warn,
         "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if not hard else "fail",
+        "verdict": "pass" if code == 0 else ("fail" if code == 3 else "usage_error"),
     }
-    return verdict, 0 if not hard else 3
+    return verdict, code
 
 
 def main(argv=None) -> int:

@@ -28,12 +28,21 @@ EXACT actions:
    written after a mutation, that mutation is undetectable. A signed external
    baseline is deferred.
    Either absent request key is skipped with a compatibility note, but
-   reopen/extension/proof-grade checks never skip.
+   reopen/extension/proof-grade checks never skip. The registered preflight
+   also composes `check_saeteuk.py`: it compares UTF-8 `.txt` and `.md`
+   artifacts under the workspace-local `_saeteuk/` directory with
+   `bundle/content.md`. Parent directories are never consulted. A single
+   distinct same-subject, compatible-unit numeric conflict beyond the
+   precision-aware tolerance is HARD `saeteuk_number_contradiction`;
+   unsupported or ambiguous numeric/entity anchors are WARN. With no local
+   `_saeteuk/` directory, this sub-check is a zero-finding no-op PASS; an
+   existing directory with no readable artifact is WARN `saeteuk_missing`.
 
 ```sh
 python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status awaiting_gate
 python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
 # exit 0 -> auto_approved; exit 3 -> rejected, repair package and rerun check
+# exit 2 -> rejected usage/input; repair UTF-8/input readability and rerun check
 ```
 
 3. Run the conformance linter after preflight approval and before creating or
@@ -91,6 +100,7 @@ FAILURE table:
 | `canonical_output` null | Stage 5 incomplete | return to Stage 5; do not close |
 | preflight filename/identity mismatch | request contract not reflected in artifact | rename/rebuild or fill required fields, then rerun the gate |
 | artifact reopen fails | corrupt/unsupported submission file | rebuild a valid HWPX or text-bearing PDF |
+| preflight exit 2 / non-UTF-8 saeteuk | input artifact cannot be decoded or read | convert the local `_saeteuk/` artifact to valid UTF-8, repair permissions/input, and rerun the gate |
 | `proof_grade` missing | renderer evidence not recorded | regenerate the assembly verdict with an explicit proof grade |
 | `form_mutated` | assembled form-owned style/section skeleton differs from the pristine baseline | rebuild from the untouched form copy; do not replace the baseline with the mutated output hash |
 | `form_baseline_absent` WARN | legacy workspace did not record a structure digest | surface the warning; for a new run, record the pristine Stage 0 digest before assembly |

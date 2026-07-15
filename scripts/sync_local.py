@@ -608,13 +608,28 @@ def _pid_is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == 'nt':
-        import subprocess as _sp
+        import ctypes
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = (
+            ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32
+        )
+        open_process.restype = ctypes.c_void_p
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)
+        )
+        get_exit_code.restype = ctypes.c_int
+        handle = open_process(0x1000, False, pid)
+        if not handle:
+            return ctypes.get_last_error() != 87
         try:
-            out = _sp.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'],
-                          capture_output=True, text=True, timeout=10)
-        except (OSError, _sp.SubprocessError):
-            return True  # cannot determine -> assume alive (never delete a live tree)
-        return str(pid) in (out.stdout or '')
+            exit_code = ctypes.c_ulong()
+            if not get_exit_code(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == 259
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
