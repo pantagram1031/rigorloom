@@ -8,6 +8,7 @@ the human-readable table formatter.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -108,19 +109,60 @@ class TestRhwpProbe(unittest.TestCase):
                 mock.patch.object(render_probe.sys, "platform", "linux"),
                 mock.patch.object(render_probe.shutil, "which", return_value=None),
                 mock.patch.object(render_probe.subprocess, "run", side_effect=fake_run),
-                mock.patch.dict(os.environ, {"RHWP_BIN": str(binary)}, clear=True),
+                mock.patch.dict(os.environ, {
+                    "RHWP_BIN": str(binary),
+                    "RHWP_SHA256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                }, clear=True),
             ):
                 result = render_probe.probe()
 
         self.assertEqual(result["capabilities"]["rhwp_path"], str(binary))
         self.assertFalse(result["capabilities"]["rhwp_wsl"])
         self.assertEqual(result["capabilities"]["rhwp_version"], "rhwp 0.7.18")
+        self.assertEqual(result["capabilities"]["rhwp_reason"], "available")
         renderer = next(item for item in result["renderers"] if item["name"] == "rhwp_svg")
         self.assertEqual(
             renderer["argv"],
             [str(binary), "export-svg", "{in}", "-o", "{outdir}"],
         )
         self.assertEqual(renderer["proof_grade"], "experimental-rhwp")
+
+    def test_rhwp_hash_mismatch_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rhwp"
+            binary.write_bytes(b"synthetic executable marker")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(render_probe.subprocess, "run") as run,
+                mock.patch.dict(os.environ, {
+                    "RHWP_BIN": str(binary),
+                    "RHWP_SHA256": "0" * 64,
+                }, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertEqual(
+            result["capabilities"]["rhwp_reason"], "rhwp_hash_mismatch"
+        )
+        self.assertNotIn("rhwp_svg", [item["name"] for item in result["renderers"]])
+        run.assert_not_called()
+
+    def test_unpinned_rhwp_is_unavailable_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "rhwp"
+            binary.write_bytes(b"synthetic executable marker")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(render_probe.subprocess, "run") as run,
+                mock.patch.dict(os.environ, {"RHWP_BIN": str(binary)}, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertEqual(result["capabilities"]["rhwp_reason"], "rhwp_unpinned")
+        self.assertNotIn("rhwp_svg", [item["name"] for item in result["renderers"]])
+        run.assert_not_called()
 
     def test_windows_linux_binary_is_probed_through_wsl(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,7 +180,10 @@ class TestRhwpProbe(unittest.TestCase):
                 mock.patch.object(render_probe.sys, "platform", "win32"),
                 mock.patch.object(render_probe.shutil, "which", return_value=None),
                 mock.patch.object(render_probe.subprocess, "run", side_effect=fake_run),
-                mock.patch.dict(os.environ, {"RHWP_BIN": str(binary)}, clear=True),
+                mock.patch.dict(os.environ, {
+                    "RHWP_BIN": str(binary),
+                    "RHWP_SHA256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                }, clear=True),
             ):
                 result = render_probe.probe()
 

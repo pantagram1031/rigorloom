@@ -16,6 +16,12 @@ from hwpx_render_surrogate import create_render_surrogate
 
 
 EXPERIMENTAL_GRADE = "experimental-rhwp"
+PROOF_GRADE_RANK = {
+    "none": 0,
+    EXPERIMENTAL_GRADE: 1,
+    "advisory": 2,
+    "hancom": 3,
+}
 DEFAULT_TIMEOUT_SECONDS = 45.0
 _OUTPUT_LIMIT = 16_000
 
@@ -63,15 +69,40 @@ def _comparison_record(comparison: dict | None) -> dict:
         render_diff.get("status") != "not_run"
         and ir_diff.get("status") != "not_run"
     )
-    return {
+    record = {
         "render_diff": render_diff,
         "ir_diff": ir_diff,
         "structure_mismatch": mismatch_pages > 0 or difference_count > 0,
         "complete": complete,
     }
+    if isinstance(comparison, dict):
+        record.update({"provenance": "external", "reproducible": False})
+    return record
 
 
-def _command(renderer: dict, surrogate: Path, svg_dir: Path) -> list[str]:
+def _verify_renderer_binary(renderer: dict) -> dict:
+    argv = renderer.get("argv")
+    candidate = renderer.get("binary_path")
+    if not candidate and isinstance(argv, list) and argv:
+        if renderer.get("wsl"):
+            candidate = argv[2] if argv[:2] == ["wsl", "--"] and len(argv) > 2 else None
+        else:
+            candidate = argv[0]
+    if not candidate:
+        return {
+            "ok": False, "path": None, "sha256": None,
+            "reason": "rhwp_unpinned",
+        }
+    from render_probe import verify_rhwp_binary
+    return verify_rhwp_binary(candidate)
+
+
+def _command(
+    renderer: dict,
+    surrogate: Path,
+    svg_dir: Path,
+    verified_binary: str,
+) -> list[str]:
     argv = renderer.get("argv")
     if not isinstance(argv, list) or not argv:
         raise ValueError("rhwp renderer has no argv template")
@@ -81,10 +112,17 @@ def _command(renderer: dict, surrogate: Path, svg_dir: Path) -> list[str]:
         from render_probe import to_wsl_path
         input_value = to_wsl_path(input_value)
         output_value = to_wsl_path(output_value)
-    return [
+    command = [
         str(item).replace("{in}", input_value).replace("{outdir}", output_value)
         for item in argv
     ]
+    if renderer.get("wsl"):
+        if command[:2] != ["wsl", "--"] or len(command) < 3:
+            raise ValueError("unsupported rhwp WSL command template")
+        command[2] = to_wsl_path(verified_binary)
+    else:
+        command[0] = verified_binary
+    return command
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -133,10 +171,20 @@ def run_svg_proof(
         "comparison": _comparison_record(comparison),
         "fallback": None,
     }
+    verification = _verify_renderer_binary(renderer)
+    receipt["renderer_binary"] = {
+        "path": verification.get("path"),
+        "sha256": verification.get("sha256"),
+    }
+    if verification.get("ok") is not True:
+        receipt["reason"] = verification.get("reason", "rhwp_unpinned")
+        receipt["fallback"] = "canonical_hwpx_without_render_proof"
+        _write_json(proof_path / "receipt.json", receipt)
+        return receipt
     try:
         surrogate_receipt = create_render_surrogate(canonical_path, surrogate)
         receipt["surrogate"] = surrogate_receipt
-        command = _command(renderer, surrogate, svg_dir)
+        command = _command(renderer, surrogate, svg_dir, verification["path"])
         receipt["command"] = command
         completed = subprocess.run(
             command,
@@ -215,10 +263,19 @@ def merge_assembly_verdict(
         "reason": receipt.get("reason"),
         "comparison": receipt.get("comparison", {}),
     }
-    payload["render_proof"] = summary
-    payload["proof_grade"] = (
-        EXPERIMENTAL_GRADE if receipt.get("ok") is True else "none"
+    payload["rhwp_proof"] = summary
+    rhwp_grade = (
+        str(receipt.get("proof_grade", "none")).strip().lower()
+        if receipt.get("ok") is True else "none"
     )
+    if rhwp_grade not in PROOF_GRADE_RANK:
+        rhwp_grade = "none"
+    existing_grade = payload.get("proof_grade")
+    existing_rank = PROOF_GRADE_RANK.get(
+        str(existing_grade).strip().lower(), -1
+    )
+    if existing_grade is None or PROOF_GRADE_RANK[rhwp_grade] > existing_rank:
+        payload["proof_grade"] = rhwp_grade
     _write_json(path, payload)
     return payload
 
@@ -246,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="run experimental rhwp SVG proof")
     parser.add_argument("canonical")
     parser.add_argument("proof_dir")
-    parser.add_argument("--rhwp", default="rhwp")
+    parser.add_argument("--rhwp", default=None)
     parser.add_argument("--wsl", action="store_true")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--comparison-json")
@@ -254,13 +311,15 @@ def main(argv: list[str] | None = None) -> int:
     comparison = None
     if args.comparison_json:
         comparison = json.loads(Path(args.comparison_json).read_text(encoding="utf-8"))
-    rhwp_binary = args.rhwp
+    rhwp_binary = args.rhwp or os.environ.get("RHWP_BIN", "").strip() or "rhwp"
+    local_binary = rhwp_binary
     if args.wsl:
         from render_probe import to_wsl_path
         rhwp_binary = to_wsl_path(rhwp_binary)
     renderer = {
         "name": "rhwp_svg",
         "wsl": args.wsl,
+        "binary_path": local_binary,
         "argv": (
             ["wsl", "--", rhwp_binary, "export-svg", "{in}", "-o", "{outdir}"]
             if args.wsl else

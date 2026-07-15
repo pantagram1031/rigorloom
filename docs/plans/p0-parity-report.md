@@ -2,6 +2,25 @@
 
 ???: 2026-07-15
 
+## Evidence provenance for numeric claims
+
+Machine-reproduced in this commit's recorded local run are the surrogate and
+fallback facts: canonical SHA-256 before/after equality, removal of 74 stale
+`linesegarray` entries, normalized-text SHA-256, semantic counts 74/1/2/8, and
+the live proof failure (`command exit 3`, WSL `E_ACCESSDENIED`, `page_count 0`).
+
+The `676.33 px` maximum displacement, `2` structural-mismatch pages, and `109`
+IR differences were **not** reproduced by this commit. They were imported from
+an earlier out-of-band comparison run through externally supplied comparison
+JSON. This repository contains no differ that computes those values, and the
+live reproduction attempt failed at WSL startup. Receipts now identify supplied
+comparison data as `{"provenance": "external", "reproducible": false}`.
+
+The release checksum below is for the downloaded archive. Runtime policy is
+stricter: `RHWP_SHA256` must be the SHA-256 of the selected `rhwp` executable
+file itself; without that executable pin the renderer is unavailable as
+`rhwp_unpinned`.
+
 ## 1. ??: PARTIAL
 
 P0? ??? render-surrogate ??, rhwp ??, experimental SVG proof,
@@ -186,8 +205,8 @@ HWPX? ???? ?? ??/???? ???? ????. Hancom?
 
     python -m pytest pipeline/tests -q
 
-- exit 0, 394 passed, 1 optional python-docx skip
-- 341.59?; ??? suite? 8? wrapper ?? ??? ??
+- exit 0, 399 passed, 1 optional python-docx skip, 4 subtests passed
+- 592.18 s
 
     python -m compileall -q pipeline/scripts pipeline/tests
     git diff --check

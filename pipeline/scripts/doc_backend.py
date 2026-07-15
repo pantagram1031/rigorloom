@@ -153,7 +153,13 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
          if renderer.get("name") == "rhwp_svg" and renderer.get("argv")),
         None,
     )
-    if rhwp_renderer is not None:
+    soffice = next(
+        (renderer for renderer in renderers
+         if renderer.get("name") in {"soffice_local", "soffice_wsl"}
+         and renderer.get("argv")),
+        None,
+    )
+    if rhwp_renderer is not None and (has_equations or soffice is None):
         return {
             "target": target,
             "equations": has_equations,
@@ -164,13 +170,6 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
             "pdf_cmd_argv": None,
             "rhwp_renderer": dict(rhwp_renderer),
         }
-
-    soffice = next(
-        (renderer for renderer in renderers
-         if renderer.get("name") in {"soffice_local", "soffice_wsl"}
-         and renderer.get("argv")),
-        None,
-    )
     if soffice is None:
         return {
             "target": target, "equations": has_equations,

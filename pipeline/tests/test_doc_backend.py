@@ -430,6 +430,39 @@ class TestPdfCmdWiring(unittest.TestCase):
         self.assertEqual(payload["proof_grade"], "hancom")
         self.assertEqual(payload["renderer_decision"]["selected"], "hancom")
 
+    def test_equation_free_prefers_soffice_over_rhwp_in_either_probe_order(self):
+        rhwp_renderer = {
+            "name": "rhwp_svg", "wsl": False,
+            "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"],
+        }
+        soffice_renderer = {
+            "name": "soffice_local", "wsl": False,
+            "argv": ["soffice", "--headless"],
+        }
+        for renderers in (
+            [rhwp_renderer, soffice_renderer],
+            [soffice_renderer, rhwp_renderer],
+        ):
+            with (
+                self.subTest(order=[item["name"] for item in renderers]),
+                mock.patch.object(
+                    self.render_probe,
+                    "probe",
+                    return_value={
+                        "capabilities": {"hancom_com": False},
+                        "renderers": renderers,
+                    },
+                ),
+                mock.patch.object(
+                    self.render_probe, "hwpx_has_equations", return_value=False
+                ),
+            ):
+                decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
+
+            self.assertEqual(decision["selected"], "soffice_local")
+            self.assertEqual(decision["proof_grade"], "advisory")
+            self.assertEqual(decision["pdf_cmd_argv"], ["soffice", "--headless"])
+
     def test_rhwp_is_selected_for_equation_documents_as_experimental(self):
         rhwp_renderer = {
             "name": "rhwp_svg",

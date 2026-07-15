@@ -13,6 +13,8 @@ missing tool, unusual PATH, or WSL hiccup never blocks the others.
 
 rhwp is exposed only as an experimental SVG renderer. It is never returned by
 best_pdf_cmd and therefore cannot be mistaken for a LibreOffice PDF command.
+RHWP_SHA256 is mandatory and must match the executable file selected by
+RHWP_BIN or PATH; an unpinned or mismatched binary is never reported available.
 
 Output schema (see probe()):
     {
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -148,6 +151,53 @@ def _probe_h2orestart(soffice_path: str | None, soffice_wsl: bool) -> str:
                      "h2restart" in normalized) else "no"
 
 
+def verify_rhwp_binary(
+    candidate: str | os.PathLike[str],
+    expected_sha256: str | None = None,
+) -> dict:
+    """Bind an rhwp executable path to the mandatory SHA-256 pin."""
+    raw_candidate = os.path.expanduser(os.fspath(candidate))
+    resolved = (
+        raw_candidate if os.path.isabs(raw_candidate)
+        else (shutil.which(raw_candidate) or raw_candidate)
+    )
+    path = os.path.abspath(resolved)
+    if not os.path.isfile(path):
+        return {
+            "ok": False, "path": path, "sha256": None,
+            "reason": "configured_path_missing",
+        }
+    expected = (
+        os.environ.get("RHWP_SHA256", "")
+        if expected_sha256 is None else expected_sha256
+    ).strip().lower()
+    if not expected:
+        return {
+            "ok": False, "path": path, "sha256": None,
+            "reason": "rhwp_unpinned",
+        }
+
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return {
+            "ok": False, "path": path, "sha256": None,
+            "reason": "probe_failed",
+        }
+    actual = digest.hexdigest()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or actual != expected:
+        return {
+            "ok": False, "path": path, "sha256": actual,
+            "reason": "rhwp_hash_mismatch",
+        }
+    return {
+        "ok": True, "path": path, "sha256": actual, "reason": "available",
+    }
+
+
 def _probe_rhwp() -> dict:
     """Probe a configured or PATH rhwp binary without attempting a render."""
     configured = os.environ.get("RHWP_BIN", "").strip()
@@ -161,6 +211,13 @@ def _probe_rhwp() -> dict:
         return {
             "path": candidate, "wsl": sys.platform == "win32",
             "version": None, "reason": "configured_path_missing",
+        }
+    verification = verify_rhwp_binary(candidate)
+    candidate = verification["path"]
+    if verification["ok"] is not True:
+        return {
+            "path": candidate, "wsl": sys.platform == "win32",
+            "version": None, "reason": verification["reason"],
         }
     via_wsl = sys.platform == "win32"
     command = (
@@ -218,6 +275,7 @@ def _build_renderers(capabilities: dict) -> list[dict]:
             "name": "rhwp_svg",
             "wsl": via_wsl,
             "argv": argv,
+            "binary_path": capabilities["rhwp_path"],
             "version": capabilities.get("rhwp_version"),
             "proof_grade": "experimental-rhwp",
         })
