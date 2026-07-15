@@ -1,26 +1,73 @@
 # Rigorloom
 
+**A verifiable report pipeline for HWPX documents — deterministic gates,
+graded render proof, Hancom-free by default.**
+
+[![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest tag](https://img.shields.io/github/v/tag/pantagram1031/rigorloom)](https://github.com/pantagram1031/rigorloom/tags)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![OS: Windows | Linux](https://img.shields.io/badge/os-Windows%20%7C%20Linux-lightgrey.svg)](docs/golden-path.md)
+
 Rigorloom is an agent-neutral, resumable workflow for weaving evidence,
-personalization, document forms, verification, and delivery into one report run.
-Current release: **v0.11.3**. See [CHANGELOG.md](CHANGELOG.md) for the version
-history and [docs/golden-path.md](docs/golden-path.md) for an end-to-end,
-Hancom-free walkthrough.
+personalization, document forms, verification, and delivery into one report
+run. Current release: **v0.11.3**. See [CHANGELOG.md](CHANGELOG.md) for the
+version history and [docs/golden-path.md](docs/golden-path.md) for an
+end-to-end, Hancom-free walkthrough.
 
 The state machine is deterministic and provider-independent. Claude, Codex,
-Gemini, local models, human operators, or any other capable agent can act as the
-orchestrator or worker. Model names in examples are optional adapters, not
-requirements.
+Gemini, local models, human operators, or any other capable agent can act as
+the orchestrator or worker. Model names in examples are optional adapters,
+not requirements.
 
-## What is included
+## Why rigorloom
 
-- A config-driven pipeline kernel (stage schema version `0.6`, unchanged since
-  v0.7) with hard and human gates. The kernel is stable; everything below has
-  been layered on top of it through the v0.7–v0.11 waves.
-- A stage 4.5 **content audit** gate that runs seven deterministic sub-checkers
-  before assembly ever starts (see below), and a stage 6 **submission
+- **Deterministic gates that can't be post-edited.** Script verdicts are
+  computed by code and recorded as immutable inputs to state transitions —
+  the old "caller-supplied-integer" bypass was retired in v0.7 (see
+  [CHANGELOG.md](CHANGELOG.md)).
+- **A graded render proof ladder, not a single pass/fail.** Delivery is
+  ranked `none < experimental-rhwp < advisory < hancom`, and the ladder is
+  cross-checked against what this machine can actually render, not trusted
+  blindly.
+- **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
+  XML directly through the external hwp-master engine, without Hancom or COM,
+  on any OS.
+- **Agent-neutral.** The stage machine drives entirely through CLIs; any
+  coding-capable agent can orchestrate it, and provider roles are assigned by
+  capability, not by vendor name (see [AGENTS.md](AGENTS.md)).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[research] --> B[design]
+    B --> C[data / sim]
+    C --> D[write]
+    D --> E[humanize]
+    E --> F["content audit\n(stage 4.5, 7 checkers)"]
+    F --> G["assemble\n(backend tiers)"]
+    G --> H[render proof]
+    H --> I["submission preflight\n(stage 6)"]
+```
+
+Stage 4.5 `content_audit` runs seven deterministic sub-checkers as
+subprocesses before assembly is allowed to start; any sub-checker's HARD
+finding fails the whole gate. Stage 6 `submission_preflight` grades the
+finished artifact and requires a render `proof_grade` of `hancom` or
+`advisory`. See [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md)
+for the full stage graph and gate contracts.
+
+## Feature highlights
+
+- A config-driven pipeline kernel (stage schema version `0.6`, unchanged
+  since v0.7) with hard and human gates. The kernel is stable; everything
+  below has been layered on top of it through the v0.7–v0.11 waves.
+- A stage 4.5 **content audit** gate that runs seven deterministic
+  sub-checkers before assembly ever starts, and a stage 6 **submission
   preflight** gate that grades the finished artifact before delivery.
-- Four pluggable Stage 5 document backends — `bundle`, `docx`, `hwpx`, `hwp` —
-  so the pipeline runs end to end without Hancom (see the backend table below).
+- Four pluggable Stage 5 document backends — `bundle`, `docx`, `hwpx`, `hwp`
+  — so the pipeline runs end to end without Hancom.
 - Stage playbooks and a single master workflow document.
 - Automatic handoff generation and safe archival after stage transitions.
 - A privacy-first local Studio, read-only by default, for inspecting
@@ -34,71 +81,8 @@ requirements.
   supplies both the Hancom-COM assembly loop and the Hancom-free HWPX XML
   engine.
 
-Personal reports, student data, private templates, local logs, credentials, and
-model-account configuration are intentionally excluded.
-
-### What's stable vs. experimental
-
-- **Stable**: the stage state machine, the `bundle` backend, the seven content
-  sub-checkers, `submission_preflight`'s form-hash and proof-grade checks, and
-  the read-only Studio.
-- **Optional, well-exercised**: the `docx` backend, and the `hwpx` XML engine
-  path (Hancom-free, cross-OS) via the external hwp-master project.
-- **Advisory only**: LibreOffice/H2Orestart PDF rendering is used as a
-  render-capability probe and an advisory proof source — it is never treated
-  as submission-grade proof, and it is skipped entirely for equation-bearing
-  documents (H2Orestart cannot be trusted there; see the backend table).
-- **Experimental**: `experimental-rhwp` — an SVG-based overflow/pagination
-  render check for equation-bearing HWPX documents on Linux, gated behind a
-  sha256-pinned `rhwp` binary (`RHWP_SHA256`). It is hard-blocked from
-  `submission_preflight` as diagnostic-only, and pixel-level parity with
-  Hancom rendering has not been achieved (see
-  [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
-- **Studio action mode**: opt-in and token-guarded; off by default.
-
-## Quick start
-
-Only a Python 3.10+ standard library is required to run the pipeline. No Hancom,
-no Windows, and no model account are needed for the zero-dependency `bundle`
-document backend (see the backend table below). Clone, then run `bootstrap.py`:
-
-Linux / macOS:
-
-```sh
-git clone https://github.com/pantagram1031/rigorloom.git
-cd rigorloom
-python3 scripts/bootstrap.py
-```
-
-Windows (PowerShell):
-
-```powershell
-git clone https://github.com/pantagram1031/rigorloom.git
-cd rigorloom
-python scripts\bootstrap.py
-```
-
-`bootstrap.py` uses only the standard library. It verifies the interpreter,
-creates a private neutral personalization profile under the Git-ignored
-`.local/`, registers the public default preference packs, and runs an end-to-end
-smoke (scaffold a demo workspace → `resume` → resolve a passing script gate) so a
-fresh clone is proven working. It is idempotent; re-run it any time. Pass
-`--skip-smoke` to only set up the profile, or `--profile-root` / `--workspace-root`
-to redirect where it writes. On success it prints what works and which optional
-extras (`docx`, `studio`, `hwp`) add, each with a one-line install hint.
-
-Then start a report and drive it:
-
-```sh
-python scripts/new_report.py --slug demo --subject math \
-  --topic "A testable question" --form /absolute/path/to/form.hwpx
-python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
-```
-
-`setup_profile.py` (run by `bootstrap.py`) can also be run on its own to author a
-private writing profile interactively; the generated `.local/` directory is
-ignored by Git. For form-specific preferences and feedback candidates, see the
-[personalization contract](pipeline/references/personalization_contract.md).
+Personal reports, student data, private templates, local logs, credentials,
+and model-account configuration are intentionally excluded.
 
 ### Document backends
 
@@ -140,60 +124,92 @@ Two composite gates guard delivery, both fail-closed:
   fields against `request.yaml`, recomputes the assembled HWPX's form-owned
   structure hash and compares it against the recorded `form_baseline.json`
   (non-destructive-form proof), and reads `output/verdict_v06.json`'s
-  `proof_grade` — requiring `hancom` or `advisory`, cross-checked against this
-  machine's actual render capabilities (`render_probe.py`). All of this is
-  trusted-on-record, not cryptographically proven: a baseline recorded after a
-  mutation cannot detect that mutation, and full artifact-bound proof receipts
-  are deferred to later attestation work.
+  `proof_grade` — requiring `hancom` or `advisory`, cross-checked against
+  this machine's actual render capabilities (`render_probe.py`). All of this
+  is trusted-on-record, not cryptographically proven: a baseline recorded
+  after a mutation cannot detect that mutation, and full artifact-bound proof
+  receipts are deferred to later attestation work.
 
-### Any coding-capable agent
+## Quick start
 
-The state machine is provider-independent and drives entirely through CLIs, so
-any agent with coding ability can orchestrate it. Vendor-neutral bootstrap
-prompts and drop-in entrypoints live under [`adapters/`](adapters/); Claude Code
-skill files ship alongside them but are not required.
+Only a Python 3.10+ standard library is required to run the pipeline — no
+Hancom, no Windows, and no model account for the `bundle` backend.
 
-### HWP/HWPX output requirements
+```sh
+git clone https://github.com/pantagram1031/rigorloom.git
+cd rigorloom
+python3 scripts/bootstrap.py   # PowerShell: python scripts\bootstrap.py
 
-The pipeline state machine itself has no model-provider or HWP dependency.
-However, the full `.hwp` document workflow requires all of the following on the
-machine that runs the document stages:
+python scripts/new_report.py --slug demo --subject math \
+  --topic "A testable question" --form /absolute/path/to/form.hwpx
+python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+```
 
-- Windows with the desktop **Hancom Office HWP** application installed and licensed
-- the separate [`hwp-master`](https://github.com/pantagram1031/hwp-master) checkout
-- its optional COM packages: `python -m pip install ".[windows]"`
-- its optional PDF-proof packages when visual gates are used: `python -m pip install ".[proof]"`
+`bootstrap.py` verifies the interpreter, provisions a private profile, and
+runs an end-to-end smoke test, so a fresh clone is proven working. For the
+full stage-by-stage walkthrough to a graded artifact, see
+[docs/golden-path.md](docs/golden-path.md).
 
-Verify the machine before starting an HWP report:
+### Windows + Hancom
+
+The full `.hwp` document workflow additionally needs Windows, a licensed
+Hancom Office HWP install, and the separate
+[hwp-master](https://github.com/pantagram1031/hwp-master) checkout with its
+`[windows]`/`[proof]` extras. Verify the machine before starting an HWP
+report:
 
 ```powershell
 cd ..\hwp-master
-python scripts/doctor.py --require-com --require-proof `
-  --report-pipeline ..\rigorloom
+python scripts/doctor.py --require-com --require-proof --report-pipeline ..\rigorloom
 ```
 
-Installing these repositories does not install Hancom Office. Web Hancom Docs,
-Linux, and macOS cannot run the local COM editing backend; they can still run the
-pipeline and non-COM HWPX/XML stages.
+Installing these repositories does not install Hancom Office. Web Hancom
+Docs, Linux, and macOS cannot run the local COM editing backend; they can
+still run the pipeline and non-COM HWPX/XML stages.
 
-Read [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) before running
-a stage. Open the returned playbook and follow its entry, role, exit, and gate
-contract. Every successful transition refreshes `NEXT_TASK.md` and
-`.pipeline/handoff.json` inside the workspace. It also maintains
-`WORKSPACE_INDEX.md`, `.pipeline/artifacts.json`, stage receipts, and a clean
-stage-owned work area.
+## Any coding-capable agent
 
-Operational knowledge distilled from previous runs is kept in
-[lessons learned](docs/lessons-learned.md),
-[design decisions](docs/design-decisions.md), and
-[troubleshooting](docs/troubleshooting.md). These documents contain generalized
-failure patterns only; personal reports and private templates are not included.
+The state machine is provider-independent and drives entirely through CLIs,
+so any agent with coding ability can orchestrate it. Vendor-neutral bootstrap
+prompts and drop-in entrypoints live under [`adapters/`](adapters/); Claude
+Code skill files ship alongside them but are not required.
 
 Stage 4 includes provider-neutral, rollback-safe humanization. It freezes the
 verified draft, uses independent local reviewer/rewriter workers by default,
-and restores only paragraphs whose protected facts change. Pantadex remains an
-optional adapter; detector scores are advisory. See
+and restores only paragraphs whose protected facts change. Pantadex remains
+an optional adapter; detector scores are advisory. See
 [`humanization_contract.md`](pipeline/references/humanization_contract.md).
+
+## Local Studio
+
+The Studio never uploads report data or calls a model. It reads ignored
+local workspaces and shows the live stage graph, next action, personalization
+lock, evidence ledger, drafts, PDF iterations, provenance, and scorecards.
+Older workspaces fall back to a read-only `PIPELINE.md` scan.
+
+```sh
+python -m pip install -r studio/requirements.txt
+python studio/main.py
+```
+
+Studio has two modes (`studio/main.py`):
+
+- **Read-only (default)**: browsing and inspection only, no writes.
+- **Action mode (opt-in)**: set `STUDIO_ALLOW_ACTIONS=1` to enable a small
+  set of POST actions (`check-gate`, `approve-human-gate`, `run-content-audit`,
+  `build-bundle`, `build-hwpx`), each guarded by a per-run `X-Studio-Token`
+  CSRF header.
+
+## Safety model
+
+- Human gates cannot be approved by an agent in supervised mode.
+- Script verdicts are immutable inputs to state transitions.
+- Canonical artifacts are never moved by automatic housekeeping.
+- Only known scratch files and run logs are archived.
+- Workspace paths and slugs are validated before writes.
+- Temporary agent work is isolated by stage and archived at transition.
+- Artifact hashes and missing required files are visible before the next
+  task.
 
 ## Repository map
 
@@ -208,39 +224,44 @@ docs/        current architecture and operating documentation
 workspaces/  local run data; ignored by Git
 ```
 
-## Local Studio
+## Project status
 
-The Studio never uploads report data or calls a model. It reads ignored local
-workspaces and shows the live stage graph, next action, personalization lock,
-evidence ledger, drafts, PDF iterations, provenance, and scorecards. Its action
-rail reads the generated handoff contract to show the next playbook, work area,
-missing inputs and outputs, exact gate/resume commands, and the latest normalized
-FILL/proof issues. Older workspaces fall back to a read-only `PIPELINE.md` scan.
+- **Stable**: the stage state machine, the `bundle` backend, the seven
+  content sub-checkers, `submission_preflight`'s form-hash and proof-grade
+  checks, and the read-only Studio.
+- **Optional, well-exercised**: the `docx` backend, and the `hwpx` XML engine
+  path (Hancom-free, cross-OS) via the external hwp-master project.
+- **Advisory only**: LibreOffice/H2Orestart PDF rendering is used as a
+  render-capability probe and an advisory proof source — it is never treated
+  as submission-grade proof, and it is skipped entirely for equation-bearing
+  documents (H2Orestart cannot be trusted there; see the backend table
+  above).
+- **Experimental**: `experimental-rhwp` — an SVG-based overflow/pagination
+  render check for equation-bearing HWPX documents on Linux, gated behind a
+  sha256-pinned `rhwp` binary (`RHWP_SHA256`). It is hard-blocked from
+  `submission_preflight` as diagnostic-only, and pixel-level parity with
+  Hancom rendering has not been achieved (see
+  [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
+- **Studio action mode**: opt-in and token-guarded; off by default.
 
-```sh
-python -m pip install -r studio/requirements.txt
-python studio/main.py
-```
+Rigorloom is under active development on the v0.11 line. See
+[CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
+[docs/plans/](docs/plans/) for the design history behind each wave.
 
-Studio has two modes (`studio/main.py`):
+## Docs
 
-- **Read-only (default)**: browsing and inspection only, no writes.
-- **Action mode (opt-in)**: set `STUDIO_ALLOW_ACTIONS=1` to enable a small set
-  of POST actions (`check-gate`, `approve-human-gate`, `run-content-audit`,
-  `build-bundle`, `build-hwpx`). Every action request must carry the printed
-  `X-Studio-Token` header value as a CSRF guard — a per-run random token
-  (override with `STUDIO_ACTION_TOKEN`) that stops a hostile page in the same
-  browser from POSTing to the local server.
-
-## Safety model
-
-- Human gates cannot be approved by an agent in supervised mode.
-- Script verdicts are immutable inputs to state transitions.
-- Canonical artifacts are never moved by automatic housekeeping.
-- Only known scratch files and run logs are archived.
-- Workspace paths and slugs are validated before writes.
-- Temporary agent work is isolated by stage and archived at transition.
-- Artifact hashes and missing required files are visible before the next task.
+- [docs/golden-path.md](docs/golden-path.md) — full clone-to-graded-artifact
+  walkthrough.
+- [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) — the stage
+  graph and gate contract, read this before running a stage.
+- [CHANGELOG.md](CHANGELOG.md) — release history.
+- [docs/plans/](docs/plans/) — design docs and hardening-wave reports.
+- [docs/lessons-learned.md](docs/lessons-learned.md),
+  [docs/design-decisions.md](docs/design-decisions.md), and
+  [docs/troubleshooting.md](docs/troubleshooting.md) — operational knowledge
+  distilled from previous runs.
+- [docs/README.md](docs/README.md) — index of the full `docs/` directory.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup and review discipline.
 
 ## Validation
 
@@ -249,4 +270,13 @@ python -m pytest -q
 python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py
 ```
 
-Licensed under MIT.
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for dev
+setup, the review discipline this repo follows, and PR expectations. Please
+also read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and, for reporting a
+security issue, [SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under the [MIT License](LICENSE).
