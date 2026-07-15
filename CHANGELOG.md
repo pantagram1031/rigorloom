@@ -6,6 +6,44 @@ stages.yaml`'s `version: "0.6"`) has not changed since v0.7 — these releases
 add gates, backends, and tooling on top of a stable kernel, they do not change
 the kernel's contract shape.
 
+## Unreleased — Linux equation-render parity P0 (experimental)
+
+- Added `pipeline/scripts/hwpx_render_surrogate.py`: builds a canonical-immutable
+  render-only HWPX copy for experimental renderers — strips only the XML
+  backend's exact stale one-line `linesegarray` placeholder signature,
+  verifies the canonical file's SHA-256 is unchanged on disk, and rejects the
+  surrogate if a runtime semantic fingerprint (normalized body-text hash plus
+  paragraph/table/picture/equation counts) doesn't match the canonical before
+  and after.
+- Added `pipeline/scripts/rhwp_proof.py`: a fail-closed experimental SVG proof
+  runner — creates the surrogate, invokes `rhwp export-svg`, and always writes
+  a `receipt.json` (`ok`, `proof_grade`, `page_count`, `layout_overflow`,
+  `parity_verdict`) even when the binary is missing/unpinned, the run times
+  out, exits nonzero, or produces zero pages, with an explicit
+  `canonical_hwpx_without_render_proof` fallback reason.
+- `render_probe.py`'s `verify_rhwp_binary` now mandates a `RHWP_SHA256` pin
+  matching the SHA-256 of the selected `rhwp` executable file itself; an
+  unpinned or mismatched binary is reported `rhwp_unpinned` /
+  `rhwp_hash_mismatch` and is never surfaced as an available renderer.
+- `doc_backend.py`'s `_hwpx_renderer_decision` extends the proof-grade ladder
+  to `none < experimental-rhwp < advisory < hancom` and selects `rhwp_svg`
+  when Hancom is unavailable and the document has equations (or no `soffice`
+  renderer exists at all); `submission_preflight.py` hard-blocks
+  `experimental-rhwp` from submission (`P5`: "diagnostic render evidence, not
+  a submission proof grade") — unlike `advisory`, it cannot be waived with
+  `--allow-advisory`.
+- Added `adapters/hancom-linux-sdk/README.md`: an interface-and-evaluation-
+  plan-only contract for a future Hancom Linux SDK adapter (probe/render
+  receipt shape, 0.5 mm baseline/bbox error and 300 dpi SSIM ≥ 0.995
+  acceptance matrix); no commercial SDK, credential, or runtime integration
+  is included.
+- Honest status: `docs/plans/p0-parity-report.md` records this work as
+  **PARTIAL** — canonical-preservation and semantic-fingerprint parity are
+  reproduced in this repository, but pixel-level parity with Hancom rendering
+  is not achieved, and the largest reported displacement/mismatch figures are
+  externally supplied (`provenance: external`, `reproducible: false`), not
+  computed by any differ in this repository.
+
 ## v0.11.3 (v0.11-Z5) — anti-fabrication frontier
 
 - Added `check_sources.py`: offline citation-reality verification against a

@@ -172,6 +172,27 @@ to land in `<WS>/output/verdict_v06.json` (written by the hwp-master assembly
 loop itself) as the `proof_grade` field — that is exactly what Stage 6
 `submission_preflight.py` reads later.
 
+### Equation documents on Linux (experimental)
+
+When there's no Hancom and the document has equations (or no `soffice`
+renderer is installed at all), `doc_backend.py` can route to `rhwp_svg`
+instead of leaving `proof_grade: none`. To enable it: install `rhwp`, point
+`RHWP_BIN` at it (or leave it on `PATH`), and set `RHWP_SHA256` to the
+SHA-256 of that exact executable file — the pin is mandatory; an unpinned or
+mismatched binary is never treated as available
+(`render_probe.verify_rhwp_binary`). The probe then runs `rhwp export-svg`
+against a canonical-immutable render surrogate and writes a fail-closed
+receipt to `output/proof/rhwp/receipt.json`, reporting an SVG page count and
+an overflow/pagination check (`layout_overflow`, `parity_verdict`).
+
+What you do **not** get: submission grade. `proof_grade: experimental-rhwp`
+is hard-blocked by `submission_preflight.py` (`P5`: "diagnostic render
+evidence, not a submission proof grade") and, unlike `advisory`, cannot be
+waived with `--allow-advisory`. Pixel-level parity with Hancom rendering has
+not been achieved — see
+[`docs/plans/p0-parity-report.md`](plans/p0-parity-report.md) for the honest
+status.
+
 ## 5. Post-assembly gates
 
 ```sh
