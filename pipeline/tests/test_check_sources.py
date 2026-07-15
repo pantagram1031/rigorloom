@@ -91,12 +91,27 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(code, 3, verdict)
         self.assertIn("source_year_future", self.hard_codes(verdict))
 
-    def test_cache_title_mismatch_is_hard(self):
+    def test_partial_overlap_cache_title_mismatch_is_warn(self):
         doi = "10." + "1234/synthetic-source"
         self.write_content(
             self.reference("Study of Synthetic Cats", 2024, f"DOI: {doi}")
         )
         self.write_doi_cache(doi, "Study of Synthetic Dogs")
+
+        verdict, code = check_sources.check(
+            self.ws, profile_root=self.profile
+        )
+
+        self.assertEqual(code, 0, verdict)
+        self.assertNotIn("source_title_mismatch", self.hard_codes(verdict))
+        self.assertIn("source_title_suspect", self.warn_codes(verdict))
+
+    def test_zero_overlap_cache_title_mismatch_is_hard(self):
+        doi = "10." + "1234/different-work"
+        self.write_content(
+            self.reference("Solar Flare Measurements", 2024, f"DOI: {doi}")
+        )
+        self.write_doi_cache(doi, "Deep Ocean Microbiology")
 
         verdict, code = check_sources.check(
             self.ws, profile_root=self.profile
@@ -116,6 +131,7 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(code, 0, verdict)
         self.assertTrue(verdict["ok"])
         self.assertIn("source_unverified", self.warn_codes(verdict))
+        self.assertEqual(verdict["counts"]["unverified"], 1)
 
     def test_matching_cache_is_clean_pass_and_fields_are_structured(self):
         doi = "10." + "1234/verified-source"
@@ -130,7 +146,10 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(code, 0, verdict)
         self.assertTrue(verdict["ok"])
         self.assertTrue(verdict["section_found"])
-        self.assertEqual(verdict["counts"], {"hard": 0, "warn": 0, "entries": 1})
+        self.assertEqual(
+            verdict["counts"],
+            {"hard": 0, "warn": 0, "unverified": 0, "entries": 1},
+        )
         entry = verdict["entries"][0]
         self.assertEqual(entry["author"], "Synthetic Author")
         self.assertEqual(entry["year"], 2024)
@@ -146,7 +165,10 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(code, 0, verdict)
         self.assertFalse(verdict["section_found"])
         self.assertEqual(verdict["entries"], [])
-        self.assertEqual(verdict["counts"], {"hard": 0, "warn": 0, "entries": 0})
+        self.assertEqual(
+            verdict["counts"],
+            {"hard": 0, "warn": 0, "unverified": 0, "entries": 0},
+        )
 
     def test_recognized_reference_heading_variants_parse_entries(self):
         headings = (
@@ -200,7 +222,7 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertIn("source_year_future", self.hard_codes(verdict))
         self.assertIn("source_doi_malformed", self.hard_codes(verdict))
 
-    def test_generic_and_reordered_titles_do_not_match_cache(self):
+    def test_generic_and_reordered_titles_are_suspect_not_matches(self):
         cases = (
             ("Study", "A Completely Different Study of Frogs"),
             ("Effect of A on B", "Effect of B on A"),
@@ -215,8 +237,36 @@ class CheckSourcesTests(unittest.TestCase):
                     self.ws, profile_root=self.profile
                 )
 
-                self.assertEqual(code, 3, verdict)
-                self.assertIn("source_title_mismatch", self.hard_codes(verdict))
+                self.assertEqual(code, 0, verdict)
+                self.assertNotIn(
+                    "source_title_mismatch", self.hard_codes(verdict)
+                )
+                self.assertIn("source_title_suspect", self.warn_codes(verdict))
+
+    def test_malformed_cache_warns_and_remaining_entries_are_checked(self):
+        malformed_doi = "10." + "1234/malformed-cache"
+        other_doi = "10." + "1234/other-cache"
+        self.write_content(
+            "# References\n\n"
+            f"- Doe (2024). Broken Cache Entry. Journal. DOI: {malformed_doi}\n"
+            f"- Roe (2024). Solar Flare Measurements. Journal. DOI: {other_doi}\n"
+        )
+        malformed_target = (
+            self.profile / "cache" / "sources" / "doi"
+            / f"{check_sources._doi_slug(malformed_doi)}.json"
+        )
+        malformed_target.parent.mkdir(parents=True, exist_ok=True)
+        malformed_target.write_text("{not json", encoding="utf-8")
+        self.write_doi_cache(other_doi, "Deep Ocean Microbiology")
+
+        verdict, code = check_sources.check(
+            self.ws, profile_root=self.profile
+        )
+
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["verdict"], "fail")
+        self.assertIn("source_cache_unreadable", self.warn_codes(verdict))
+        self.assertIn("source_title_mismatch", self.hard_codes(verdict))
 
     def test_three_token_subtitle_truncation_still_matches(self):
         doi = "10." + "1234/subtitle-truncation"

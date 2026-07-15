@@ -14,7 +14,9 @@ A numeric context is HARD-comparable only when both sides use an explicit
 binding (``subject = value``, ``subject: value``, Korean topic particle, or a
 small English copula list), have the exact same normalized subject and
 case-sensitive compatible unit, and each side has one distinct value for that
-key. SI prefixes are scaled before comparison. Values within the larger of
+key. A subject consisting only of a generic quantity word is instead WARN
+``saeteuk_possible_contradiction``, because the two values may describe
+different physical objects. SI prefixes are scaled before comparison. Values within the larger of
 1 percent relative tolerance and the lower-precision value's
 half-unit-in-last-place are rounding-compatible. Multiple values for one key
 are WARN ``saeteuk_ambiguous``. Unsupported numeric claims and deterministic
@@ -43,6 +45,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 import check_numbers  # noqa: E402
+import check_units  # noqa: E402
 
 
 ROUNDING_RELATIVE_TOLERANCE = 0.01
@@ -91,6 +94,10 @@ SUBJECT_PATTERNS = (
         r'\s+(?:is|was|were|equals?|measured(?:\s+at)?|reached)\s*$',
         re.I,
     ),
+)
+GENERIC_QUANTITY_SUBJECTS = frozenset(
+    re.sub(r'[\s_]+', ' ', quantity).strip().casefold()
+    for quantity, _dimension in check_units.QUANTITY_DIMENSIONS
 )
 
 
@@ -474,12 +481,21 @@ def check(workspace, tolerance=ROUNDING_RELATIVE_TOLERANCE):
                 claim['canonical_value'] - body_claim['canonical_value']
             ) / scale
         )
-        hard.append({
-            'code': 'saeteuk_number_contradiction',
-            'severity': 'HARD',
+        generic_subject = claim['subject'] in GENERIC_QUANTITY_SUBJECTS
+        finding = {
+            'code': (
+                'saeteuk_possible_contradiction'
+                if generic_subject
+                else 'saeteuk_number_contradiction'
+            ),
+            'severity': 'WARN' if generic_subject else 'HARD',
             'msg': (
-                'single distinct same-subject same-unit numeric values '
-                'contradict'
+                'bare quantity-word subject may refer to different objects'
+                if generic_subject
+                else (
+                    'single distinct same-subject same-unit numeric values '
+                    'contradict'
+                )
             ),
             'at': claim['source'],
             'line': claim['line'],
@@ -489,7 +505,8 @@ def check(workspace, tolerance=ROUNDING_RELATIVE_TOLERANCE):
             'body_value': body_claim['value'],
             'body_line': body_claim['line'],
             'relative_difference': round(relative, 6),
-        })
+        }
+        (warn if generic_subject else hard).append(finding)
 
     for claim in saeteuk_numbers:
         key = _context_key(claim)
