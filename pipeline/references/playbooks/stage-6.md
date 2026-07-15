@@ -28,7 +28,13 @@ EXACT actions:
    written after a mutation, that mutation is undetectable. A signed external
    baseline is deferred.
    Either absent request key is skipped with a compatibility note, but
-   reopen/extension/proof-grade checks never skip.
+   reopen/extension/proof-grade checks never skip. The registered preflight
+   also composes `check_saeteuk.py`: it compares UTF-8 text artifacts under the
+   workspace-local `_saeteuk/` directory (or the parent `_saeteuk/` fallback)
+   with `bundle/content.md`. A unique same-subject, same-unit numeric conflict
+   beyond the 1% rounding tolerance is HARD `saeteuk_number_contradiction`;
+   unsupported numeric/entity anchors are WARN `saeteuk_unsupported`. With no
+   saeteuk artifact, this sub-check is a zero-finding no-op PASS.
 
 ```sh
 python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status awaiting_gate

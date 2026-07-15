@@ -1,7 +1,7 @@
 """Tests for content_audit.py — the composite stage 4.5 gate.
 
 Runs the REAL sub-checker chain (verify_content.py + check_style.py +
-check_numbers.py + check_refs.py + check_figdata.py) against a
+check_numbers.py + check_refs.py + check_figdata.py + check_sources.py) against a
 synthetic workspace. Synthetic fixtures ONLY (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -89,7 +89,7 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(
             set(verdict["sub_exit"]),
             {"verify_content", "check_style", "check_numbers", "check_refs",
-             "check_figdata"},
+             "check_figdata", "check_sources"},
         )
 
     def test_figdata_checker_is_fifth_composed_gate(self):
@@ -285,7 +285,7 @@ class TestCitation(ContentAuditTestCase):
 
 class TestUsage(ContentAuditTestCase):
     def test_missing_content_md_is_nonzero(self):
-        # no bundle/content.md -> all five sub-checkers are nonzero.
+        # no bundle/content.md -> all six sub-checkers are nonzero.
         verdict, code = content_audit.check(str(self.ws))
         self.assertNotEqual(code, 0)
         self.assertFalse(verdict["ok"])
@@ -308,6 +308,7 @@ class TestUsage(ContentAuditTestCase):
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=3, stdout=hard, stderr=""),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
         ]
 
         with mock.patch.object(
@@ -325,6 +326,7 @@ class TestUsage(ContentAuditTestCase):
         passed = json.dumps({"ok": True, "hard": [], "warn": []})
         processes = [
             mock.Mock(returncode=1, stdout="", stderr="checker exploded"),
+            mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
             mock.Mock(returncode=0, stdout=passed, stderr=""),
