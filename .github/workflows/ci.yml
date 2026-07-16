@@ -22,6 +22,87 @@ jobs:
       # them through literally and py_compile fails on the literal pattern)
       - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py
         shell: bash
+      - name: Compose smoke
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          expected = {
+              "full-report": [
+                  "research", "design", "data_sim", "write", "humanize",
+                  "content_verify", "assemble", "render_proof", "submit_verify",
+              ],
+              "pre-researched": [
+                  "design", "data_sim", "write", "humanize", "content_verify",
+                  "assemble", "render_proof", "submit_verify",
+              ],
+              "verify-only": ["submit_verify"],
+              "assemble-only": ["assemble", "render_proof", "submit_verify"],
+          }
+          ctl = Path("pipeline/scripts/pipeline_ctl.py").resolve()
+          compose = Path("pipeline/scripts/compose.py").resolve()
+          with tempfile.TemporaryDirectory() as temporary:
+              ws = Path(temporary) / "report-compose-smoke"
+              (ws / "refs").mkdir(parents=True)
+              form = ws / "refs" / "form.hwpx"
+              form.write_bytes(b"synthetic form")
+              (ws / "request.yaml").write_text(
+                  f'topic: "synthetic topic"\nform: "{form.as_posix()}"\n',
+                  encoding="utf-8",
+              )
+              subprocess.run([
+                  sys.executable, str(ctl), "init", str(ws),
+                  "--slug", "compose-smoke", "--mode", "autonomous",
+                  "--subject", "ci", "--topic", "synthetic topic",
+                  "--form", str(form),
+              ], check=True, capture_output=True, text=True, encoding="utf-8")
+              (ws / "research").mkdir(exist_ok=True)
+              (ws / "research" / "evidence.md").write_text(
+                  "synthetic evidence\n", encoding="utf-8")
+              (ws / "research" / "sources.json").write_text(
+                  "[]\n", encoding="utf-8")
+              (ws / "research" / "claims.yaml").write_text(
+                  "claims: []\n", encoding="utf-8")
+              (ws / "bundle").mkdir(exist_ok=True)
+              (ws / "bundle" / "content.md").write_text(
+                  "synthetic content\n", encoding="utf-8")
+              (ws / "output").mkdir(exist_ok=True)
+              (ws / "output" / "out.hwpx").write_bytes(b"synthetic hwpx")
+              (ws / "output" / "verdict_v06.json").write_text(
+                  '{"proof_grade": "advisory"}\n', encoding="utf-8")
+              for alias, chain in expected.items():
+                  proc = subprocess.run([
+                      sys.executable, str(compose), "--alias", alias,
+                      "--dry",
+                  ], capture_output=True, text=True, encoding="utf-8")
+                  if proc.returncode != 0:
+                      raise SystemExit(
+                          f"{alias} failed ({proc.returncode}): {proc.stdout}{proc.stderr}")
+                  payload = json.loads(proc.stdout)
+                  if payload["modules"] != chain:
+                      raise SystemExit(
+                          f"{alias}: expected {chain}, got {payload['modules']}")
+
+              applied = subprocess.run([
+                  sys.executable, str(compose), "--alias", "full-report",
+                  "--apply", str(ws),
+              ], capture_output=True, text=True, encoding="utf-8")
+              if applied.returncode != 0:
+                  raise SystemExit(
+                      f"full-report apply failed ({applied.returncode}): "
+                      f"{applied.stdout}{applied.stderr}")
+              applied_payload = json.loads(applied.stdout)
+              mandatory = {"2.5", "5.3", "5.5", "5.7", "6"}
+              if not mandatory.issubset(applied_payload["stages"]):
+                  raise SystemExit(
+                      f"full-report missing mandatory stages: "
+                      f"{sorted(mandatory - set(applied_payload['stages']))}")
+          PY
       # Prove clone-and-go on both operating systems (COM-free by design).
       - run: python scripts/bootstrap.py --profile-root .ci-profile --workspace-root .ci-ws
 
