@@ -664,7 +664,7 @@ def render_yaml_body(hdr: dict, graph_ctx: dict | None = None) -> str:
     # stages.yaml schema version (v0.6+), read by pipeline_ctl.py only.
     lines = ["# pipeline-state: v0.4"]
     top_keys = ["pipeline_version", "graph", "slug", "mode", "subject", "topic", "form",
-                "updated", "canonical_output"]
+                "updated", "canonical_output", "compose_provenance"]
     for k in top_keys:
         if k not in hdr:
             continue
@@ -1374,6 +1374,24 @@ def cmd_heartbeat(args) -> None:
     out({"ok": True})
 
 
+def cmd_compose(args) -> None:
+    """Delegate module resolution without duplicating state serialization."""
+    import compose as compose_script
+
+    try:
+        plan = compose_script.compose_request(
+            have=args.have, want=args.want, alias=args.alias,
+            forced=args.force, apply=args.apply, dry=args.dry,
+            modules_path=args.manifest, aliases_path=args.aliases,
+            force_recompose=args.force_recompose,
+            recompose_reason=args.reason,
+        )
+    except compose_script.ComposeError as exc:
+        usage_error(str(exc))
+        return
+    out(plan)
+
+
 def cmd_init(args) -> None:
     ws = Path(args.workspace)
     ws.mkdir(parents=True, exist_ok=True)
@@ -1482,6 +1500,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_hb = sub.add_parser("heartbeat", help="Write current timestamp to <workspace>/heartbeat.")
     p_hb.add_argument("workspace")
     p_hb.set_defaults(func=cmd_heartbeat)
+
+    p_compose = sub.add_parser(
+        "compose",
+        help="Resolve typed modules into a stage plan; never runs stages.",
+    )
+    p_compose.add_argument("--have")
+    p_compose.add_argument("--want")
+    p_compose.add_argument("--alias")
+    p_compose.add_argument("--force")
+    p_compose.add_argument("--apply", metavar="WORKSPACE")
+    p_compose.add_argument("--force-recompose", action="store_true")
+    p_compose.add_argument("--reason")
+    p_compose.add_argument("--dry", action="store_true")
+    refs_dir = Path(__file__).resolve().parent.parent / "references"
+    p_compose.add_argument(
+        "--manifest", default=str(refs_dir / "modules.yaml"))
+    p_compose.add_argument(
+        "--aliases", default=str(refs_dir / "aliases.yaml"))
+    p_compose.set_defaults(func=cmd_compose)
 
     p_init = sub.add_parser("init", help="Create a new PIPELINE.md with the full v0.4 YAML header template.")
     p_init.add_argument("workspace")
