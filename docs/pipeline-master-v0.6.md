@@ -124,7 +124,7 @@ Authoritative order:
 | Stage | Purpose | Main output | Gate |
 |---|---|---|---|
 | -1 | Create job ticket and initialize | request/build/PIPELINE | none |
-| 0 | Inspect the form and freeze metrics | form_profile, baseline | none |
+| 0 | Pick the topic and freeze form metrics | form_profile, baseline | human topic_pick |
 | 1 | Build an evidence pack | evidence and sources | none |
 | 2 | Design the investigation | 01_design.md | human `design` |
 | 2.5 | Cast off pages before writing | layout_plan.json | script `layout` |

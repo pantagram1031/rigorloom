@@ -51,6 +51,17 @@ class PipelineCtlTestCase(unittest.TestCase):
         )
         self.assertEqual(code, 0, payload)
         self.assertTrue(payload["ok"])
+        if graph == "build":
+            if mode == "supervised":
+                (self.ws / "APPROVALS.md").write_text(
+                    "topic_pick: approved by=<name> "
+                    "at=2026-07-17T09:10:00+09:00\n",
+                    encoding="utf-8",
+                )
+            gate_payload, gate_code = run(
+                "gate", str(self.ws), "topic_pick", "--mode", mode,
+            )
+            self.assertEqual(gate_code, 0, gate_payload)
         return payload
 
 
@@ -175,7 +186,7 @@ class TestAdvance(PipelineCtlTestCase):
 class TestGate(PipelineCtlTestCase):
     def test_gate_approved_only_via_approvals_md(self):
         self.init_ws(mode="supervised")
-        # no APPROVALS.md yet -> supervised refuses
+        # No design approval line exists yet, so supervised refuses.
         payload, code = run("gate", str(self.ws), "design", "--mode", "supervised")
         self.assertEqual(code, 1)
         self.assertFalse(payload["ok"])

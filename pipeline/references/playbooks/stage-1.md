@@ -15,7 +15,19 @@ EXACT commands / actions:
 # Output:
 #   research/evidence.md   numbered claims, each tagged with source id(s)
 #   research/sources.json  [{id,title,url,accessed,kind:web|dataset|paper|book,claim_ids}]
+#   claims.yaml            per-claim evidence ledger at workspace root
 ```
+At research time, record every verified DOI or ISBN through the write-through
+cache, for example `python pipeline/scripts/source_fetch.py record --doi
+10.x/y --title "..." --retrieved-from <URL> --content-sha256 <SHA256>`.
+Do this when the source is verified, not later at gate time; the command writes only under
+`<PROFILE_ROOT>/cache/sources/`.
+
+For the `backfill` alias, run `python pipeline/scripts/claims_ledger.py
+claim_extract <WS>` first, then use retro-research to fill every skeleton entry
+with source id, locator, and short quote while building the evidence pack. The
+skeleton intentionally fails `check_claims` until evidenced; retro-research is
+complete only when `python pipeline/scripts/check_claims.py <WS>` exits 0.
 - Any body-fact claim needs ≥1 source id; uncited → flag, body only as
   student inference.
 - Datasets: record REAL url + size/header assertion (block the
@@ -27,8 +39,8 @@ ROLE BINDINGS (registry §R): researcher×3 = agent.worker/medium parallel
 (medium). cross-examiner = agent.worker/high (high). Subagents return
 verdict/summary only — no raw search dumps to main context.
 
-EXIT + gate: evidence.md + sources.json + curriculum.md written; cross-exam
-done. No human gate. Advance → stage 2:
+EXIT + gate: evidence.md + sources.json + claims.yaml + curriculum.md written;
+cross-exam done. No human gate. Advance → stage 2:
 ```
 python pipeline/scripts/pipeline_ctl.py advance <WS> 1 --status done
 ```

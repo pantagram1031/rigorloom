@@ -58,7 +58,9 @@ def _synthetic_catalog(
     return compose.load_module_catalog(path)
 
 
-def _init_workspace(tmp_path: Path, request_text: str) -> Path:
+def _init_workspace(
+    tmp_path: Path, request_text: str, *, mode: str = "autonomous",
+) -> Path:
     ws = tmp_path / "workspace"
     ws.mkdir()
     form = ws / "refs" / "form.hwpx"
@@ -66,24 +68,21 @@ def _init_workspace(tmp_path: Path, request_text: str) -> Path:
     form.write_bytes(b"synthetic form")
     (ws / "request.yaml").write_text(request_text, encoding="utf-8")
     payload, code = _run_ctl(
-        "init", str(ws), "--slug", "synthetic", "--mode", "autonomous",
+        "init", str(ws), "--slug", "synthetic", "--mode", mode,
         "--subject", "test", "--topic", "test topic", "--form", str(form),
     )
     assert code == 0, payload
     return ws
 
 
-def test_catalog_has_sixteen_modules_and_only_w3_w4_scripts_are_planned():
+def test_catalog_has_sixteen_modules_and_only_w4_scripts_are_planned():
     catalog = compose.load_module_catalog()
     assert len(catalog["modules"]) == 16
     planned = {
         module["id"] for module in catalog["modules"]
         if module["status"] == "planned"
     }
-    assert planned == {
-        "retro_research", "content_extract", "form_extract",
-        "style_extract", "claim_extract",
-    }
+    assert planned == {"content_extract", "form_extract", "style_extract"}
 
 
 def test_full_chain_from_topic_is_minimal_and_ordered():
@@ -177,6 +176,57 @@ def test_alias_is_equivalent_to_explicit_have_and_want():
     )
     assert saved["modules"] == explicit["modules"]
     assert saved["stages"] == explicit["stages"]
+
+
+def test_w3_aliases_are_active_and_resolve_expected_chains():
+    catalog = compose.load_module_catalog()
+    aliases = compose.load_alias_catalog(module_catalog=catalog)
+
+    conditions = compose.resolve_alias("conditions-only", catalog, aliases)
+    backfill = compose.resolve_alias("backfill", catalog, aliases)
+
+    assert conditions["modules"] == ["topic_select", *FULL_CHAIN]
+    assert backfill["modules"] == [
+        "claim_extract", "retro_research", "content_verify", "submit_verify",
+    ]
+    modules = {module["id"]: module for module in catalog["modules"]}
+    assert modules["claim_extract"]["stage"].endswith(
+        "claims_ledger.py claim_extract"
+    )
+    assert modules["retro_research"]["gates"] == ["check_claims"]
+
+
+def test_conditions_only_has_enforced_human_topic_gate_before_research(
+    tmp_path,
+):
+    ws = _init_workspace(
+        tmp_path,
+        "mode: conditions-only\ntopic: pending human choice\n"
+        "form: refs/form.hwpx\n",
+        mode="supervised",
+    )
+    catalog = compose.load_module_catalog()
+    aliases = compose.load_alias_catalog(module_catalog=catalog)
+    plan = compose.resolve_alias("conditions-only", catalog, aliases)
+
+    applied = compose.apply_plan(ws, plan, catalog)
+    header = pipeline_ctl.load_header(ws)[3]
+    graph = pipeline_ctl.graph_context_for_header(header)
+
+    assert applied.index("0") < applied.index("1")
+    assert header["stages"]["0"]["gate"]["name"] == "topic_pick"
+    assert header["stages"]["0"]["gate"]["state"] == "pending"
+    assert graph["gate_types"]["0"] == "human"
+
+    advanced, advance_code = _run_ctl(
+        "advance", str(ws), "0", "--status", "awaiting_gate",
+    )
+    assert advance_code == 0, advanced
+    resumed, resume_code = _run_ctl("resume", str(ws))
+    assert resume_code == 0, resumed
+    assert resumed["blocked"] is True
+    assert resumed["next_stage"] == "0"
+    assert resumed["gate"]["name"] == "topic_pick"
 
 
 def test_request_mode_intake_failure_lists_missing_first_consumes(tmp_path):

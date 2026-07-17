@@ -43,6 +43,15 @@ jobs:
               ],
               "verify-only": ["submit_verify"],
               "assemble-only": ["assemble", "render_proof", "submit_verify"],
+              "conditions-only": [
+                  "topic_select", "research", "design", "data_sim", "write",
+                  "humanize", "content_verify", "assemble", "render_proof",
+                  "submit_verify",
+              ],
+              "backfill": [
+                  "claim_extract", "retro_research", "content_verify",
+                  "submit_verify",
+              ],
           }
           ctl = Path("pipeline/scripts/pipeline_ctl.py").resolve()
           compose = Path("pipeline/scripts/compose.py").resolve()
@@ -66,8 +75,9 @@ jobs:
                   "synthetic evidence\n", encoding="utf-8")
               (ws / "research" / "sources.json").write_text(
                   "[]\n", encoding="utf-8")
-              (ws / "research" / "claims.yaml").write_text(
-                  "claims: []\n", encoding="utf-8")
+              (ws / "claims.yaml").write_text(
+                  '{"schema":"rigorloom-claims/v1","claims":[]}\n',
+                  encoding="utf-8")
               (ws / "bundle").mkdir(exist_ok=True)
               (ws / "bundle" / "content.md").write_text(
                   "synthetic content\n", encoding="utf-8")

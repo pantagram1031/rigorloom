@@ -5,10 +5,10 @@ artifact_types: [constraints, topic, evidence_pack, claims, design, data, conten
 # and 5.3/5.5/5.7/6 when the span enters Stage 5. Module stage mappings name
 # where work runs; they do not replace or weaken that floor.
 modules:
-  - {id: topic_select, consumes: [constraints], produces: [topic], stage: 0, gates: [], os: any, status: active}
+  - {id: topic_select, consumes: [constraints], produces: [topic], stage: 0, gates: [topic_pick], os: any, status: active}
   - {id: research, consumes: [topic], produces: [evidence_pack, claims], stage: 1, gates: [], os: any, status: active}
-  - {id: claim_extract, consumes: [content_md], produces: [claims], stage: pipeline/scripts/claim_extract.py, gates: [], os: any, status: planned}
-  - {id: retro_research, consumes: [claims], produces: [evidence_pack, claims], stage: pipeline/scripts/retro_research.py, gates: [], os: any, status: planned}
+  - {id: claim_extract, consumes: [content_md], produces: [claims], stage: pipeline/scripts/claims_ledger.py claim_extract, gates: [], os: any, status: active}
+  - {id: retro_research, consumes: [claims], produces: [evidence_pack, claims], stage: 1, gates: [check_claims], os: any, status: active}
   - {id: design, consumes: [topic, evidence_pack], produces: [design], stage: 2, gates: [design], os: any, status: active}
   - {id: data_sim, consumes: [design], produces: [data], stage: 3, gates: [sane], os: any, status: active}
   - {id: write, consumes: [design, evidence_pack, claims, data], produces: [content_draft], stage: 4, gates: [draft], os: any, status: active}

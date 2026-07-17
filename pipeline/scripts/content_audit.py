@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """content_audit.py — composite content gate for stage 4.5.
 
-Runs eight deterministic content checkers in-process and combines their
+Runs nine deterministic content checkers in-process and combines their
 verdicts:
   1. verify_content.check       (web-citation / polite-ending / figure / leak)
   2. check_style.check          (prose banned-patterns / signature caps / citation)
@@ -11,6 +11,7 @@ verdicts:
   6. check_sources.check        (offline citation-reality verification)
   7. check_units.check          (advisory unit/dimension consistency)
   8. check_saeteuk.check        (advisory early saeteuk consistency mirror)
+  9. check_claims.check         (claim-ledger evidence traceability)
 
 Stage 4.5 is early discovery: valid check_saeteuk HARD findings are demoted to
 WARN here. Stage 6 remains the full enforcement authority for those findings.
@@ -21,6 +22,7 @@ used instead. All recognized JSON packs are schema-validated before the
 forwarded subset reaches the content checkers. A missing pack file falls back
 to that checker's neutral default. The resolved profile root is also forwarded
 to check_sources for its offline cache/sources lookup.
+When RIGORLOOM_REQUIRE_LEDGER is truthy, check_claims runs in strict mode.
 
 Combined verdict: worst effective exit wins (3 hard > 2 usage > 0 pass). Any
 exception, invalid return, or unexpected exit is normalized to hard failure so
@@ -40,6 +42,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import check_figdata  # noqa: E402
+import check_claims  # noqa: E402
 import check_numbers  # noqa: E402
 import check_refs  # noqa: E402
 import check_saeteuk  # noqa: E402
@@ -66,6 +69,13 @@ def _resolve_profile_root(profile_root):
         return None
     candidate = Path(configured).expanduser()
     return candidate if candidate.is_dir() else None
+
+
+def _environment_truthy(name):
+    value = os.environ.get(name)
+    return bool(
+        value and value.strip().casefold() in {"1", "true", "yes", "on"}
+    )
 
 
 def _worst(codes):
@@ -204,6 +214,7 @@ def check(ws, profile_root=None):
         "check_sources",
         "check_units",
         "check_saeteuk",
+        "check_claims",
     )
 
     pack_findings = _validate_operator_packs(packs_dir) if packs_dir else []
@@ -288,6 +299,17 @@ def check(ws, profile_root=None):
         (
             "check_saeteuk",
             *_run("check_saeteuk", check_saeteuk.check, ws),
+        ),
+        (
+            "check_claims",
+            *_run(
+                "check_claims",
+                check_claims.check,
+                ws,
+                require_ledger=_environment_truthy(
+                    "RIGORLOOM_REQUIRE_LEDGER"
+                ),
+            ),
         ),
     ]
 
