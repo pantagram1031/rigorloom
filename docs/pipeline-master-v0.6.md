@@ -248,8 +248,9 @@ judge. The human draft gate concerns content, not typesetting.
 Freeze the draft before assembly. Assembly through the document adapter is slow
 and single-instance, so every text or number change after Stage 5 forces a full
 re-normalize and re-assemble. The `content_audit` script gate recomputes
-content-level checks on `bundle/content.md` (composite checker: verify_content
-plus, where configured, check_style, pack-driven) while edits are still cheap.
+content-level checks on `bundle/content.md` in-process while edits are still
+cheap. Its saeteuk consistency mirror is advisory early discovery at Stage 4.5;
+Stage 6 submission preflight remains the full HARD enforcement authority.
 Resolve it with `pipeline_ctl check <WS> content_audit`; Stage 5 begins only from
 frozen, audited content.
 

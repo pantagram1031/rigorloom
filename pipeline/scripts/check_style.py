@@ -30,6 +30,13 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 import personalization_ctl  # noqa: E402  (stdlib-only sibling module)
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    exit_code,
+    usage_error,
+    verdict_skeleton,
+)
 
 _DEFAULTS_DIR = _SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
 DEFAULT_PROSE_PACK = _DEFAULTS_DIR / "prose_rules.json"
@@ -64,7 +71,7 @@ def check(ws, prose_pack=None, structure_pack=None, allow_terms=None):
     hard, warn = [], []
     md = read(os.path.join(ws, "bundle", "content.md"))
     if md is None:
-        return {"ok": False, "error": "bundle/content.md not found"}, 2
+        return usage_error(ws, None, "bundle/content.md not found", minimal=True)
     body = find_body(md)
     allow_terms = allow_terms or []
 
@@ -124,16 +131,10 @@ def check(ws, prose_pack=None, structure_pack=None, allow_terms=None):
             except re.error:
                 pass
 
-    verdict = {
-        "ok": len(hard) == 0,
-        "workspace": ws,
-        "checker": "check_style",
-        "hard": hard,
-        "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if not hard else "fail",
-    }
-    return verdict, (0 if not hard else 3)
+    verdict = verdict_skeleton(
+        ws, "check_style", hard=hard, warn=warn
+    )
+    return verdict, exit_code(hard=hard)
 
 
 def _load_pack(path, default_path):
@@ -141,51 +142,60 @@ def _load_pack(path, default_path):
     return personalization_ctl.load_pack_file(src)
 
 
-def main():
-    ap = argparse.ArgumentParser(description="deterministic prose/structure style gate")
-    ap.add_argument("workspace", help="report workspace dir (…/workspaces/report-<slug>)")
-    ap.add_argument("--pack", default=None, help="prose_rules pack file (JSON or YAML subset); "
-                    "default = neutral public prose_rules.json")
-    ap.add_argument("--structure-pack", default=None,
-                    help="report_structure pack file (optional; enables citation/title checks)")
-    ap.add_argument("--allowlist", default=None,
-                    help="one-term-per-line file; a banned-pattern match containing "
-                    "an allowlisted term is exempted (units/symbols/proper nouns)")
-    ap.add_argument("--out", default=None, help="write verdict JSON here")
-    a = ap.parse_args()
+def main(argv=None) -> int:
+    _utf8_stdio()
+    parser = argparse.ArgumentParser(
+        description="deterministic prose/structure style gate"
+    )
+    parser.add_argument(
+        "workspace", help="report workspace dir (…/workspaces/report-<slug>)"
+    )
+    parser.add_argument(
+        "--pack", default=None,
+        help=("prose_rules pack file (JSON or YAML subset); "
+              "default = neutral public prose_rules.json"),
+    )
+    parser.add_argument(
+        "--structure-pack", default=None,
+        help="report_structure pack file (optional; enables citation/title checks)",
+    )
+    parser.add_argument(
+        "--allowlist", default=None,
+        help=("one-term-per-line file; a banned-pattern match containing "
+              "an allowlisted term is exempted (units/symbols/proper nouns)"),
+    )
+    parser.add_argument("--out", default=None, help="write verdict JSON here")
 
-    prose_pack = _load_pack(a.pack, DEFAULT_PROSE_PACK)
-    structure_pack = personalization_ctl.load_pack_file(Path(a.structure_pack)) if a.structure_pack else None
-    allow_terms = []
-    if a.allowlist:
-        raw = read(a.allowlist)
-        if raw is None:
-            print(json.dumps({"ok": False, "error": f"allowlist not found: {a.allowlist}"}))
-            sys.exit(2)
-        allow_terms = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.startswith("#")]
+    def invoke(args):
+        prose_pack = _load_pack(args.pack, DEFAULT_PROSE_PACK)
+        structure_pack = (
+            personalization_ctl.load_pack_file(Path(args.structure_pack))
+            if args.structure_pack else None
+        )
+        allow_terms = []
+        if args.allowlist:
+            raw = read(args.allowlist)
+            if raw is None:
+                return usage_error(
+                    args.workspace,
+                    None,
+                    f"allowlist not found: {args.allowlist}",
+                    minimal=True,
+                )
+            allow_terms = [
+                line.strip()
+                for line in raw.splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+        return check(
+            args.workspace,
+            prose_pack=prose_pack,
+            structure_pack=structure_pack,
+            allow_terms=allow_terms,
+        )
 
-    v, code = check(a.workspace, prose_pack=prose_pack, structure_pack=structure_pack,
-                    allow_terms=allow_terms)
-    js = json.dumps(v, ensure_ascii=False, indent=2)
-    if a.out:
-        open(a.out, "w", encoding="utf-8").write(js)
-    print(js)
-    sys.exit(code)
-
-
-
-def _utf8_stdio():
-    """Windows consoles/CI default to a legacy codepage; JSON/finding output is
-    UTF-8. Reconfigure stdio so printing Korean text never dies with a
-    UnicodeEncodeError (no-op where already UTF-8 or unsupported)."""
-    import sys as _sys
-    for stream in (_sys.stdout, _sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+    return cli_main(parser, invoke, argv)
 
 
 if __name__ == "__main__":
-    _utf8_stdio()
-    main()
+    raise SystemExit(main())

@@ -18,6 +18,17 @@ import re
 import sys
 
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    usage_error,
+    verdict_skeleton,
+)
+
+
 TAG_RE = re.compile(r"\[\[.*?\]\]", re.S)
 BUILD_TAG_RE = re.compile(
     r"\[\[(?P<kind>FIG|TABLE)\b(?P<attrs>.*?)\]\]", re.S
@@ -135,15 +146,15 @@ def check(ws):
     try:
         markdown = content_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {
-            "ok": False,
-            "error": "bundle/content.md not found",
-        }, 2
+        return usage_error(
+            str(ws), None, "bundle/content.md not found", minimal=True
+        )
     except (OSError, UnicodeError) as exc:
-        return {
-            "ok": False,
-            "error": f"bundle/content.md unreadable: {exc}",
-        }, 2
+        return usage_error(
+            str(ws), None,
+            f"bundle/content.md unreadable: {exc}",
+            minimal=True,
+        )
 
     figures, tables, tag_counts = _caption_definitions(markdown)
     body = _without_tags(markdown)
@@ -200,18 +211,19 @@ def check(ws):
                 "at": f"그림 {number}",
             })
 
-    verdict = {
-        "ok": True,
-        "workspace": str(ws),
-        "checker": "check_refs",
-        "defined": {"figures": figures, "tables": tables},
-        "build_tags": {
-            "figures": tag_counts["FIG"],
-            "tables": tag_counts["TABLE"],
+    verdict = verdict_skeleton(
+        str(ws),
+        "check_refs",
+        hard=hard,
+        warn=warn,
+        extra={
+            "defined": {"figures": figures, "tables": tables},
+            "build_tags": {
+                "figures": tag_counts["FIG"],
+                "tables": tag_counts["TABLE"],
+            },
         },
-        "hard": hard,
-        "warn": warn,
-        "counts": {
+        counts={
             "hard": len(hard),
             "warn": len(warn),
             "figure_captions": len(figures),
@@ -220,12 +232,12 @@ def check(ws):
             "table_tags": tag_counts["TABLE"],
             "cross_references": cross_reference_count,
         },
-        "verdict": "pass",
-    }
+    )
     return verdict, 0
 
 
-def main():
+def main(argv=None) -> int:
+    _utf8_stdio()
     parser = argparse.ArgumentParser(
         description="lint figure/table numbering and cross-references"
     )
@@ -233,24 +245,8 @@ def main():
         "workspace", help="report workspace dir (.../workspaces/report-<slug>)"
     )
     parser.add_argument("--out", default=None, help="write verdict JSON here")
-    args = parser.parse_args()
-    verdict, code = check(args.workspace)
-    output = json.dumps(verdict, ensure_ascii=False, indent=2)
-    if args.out:
-        Path(args.out).write_text(output, encoding="utf-8")
-    print(output)
-    sys.exit(code)
-
-
-def _utf8_stdio():
-    """Ensure Korean JSON findings print safely on Windows consoles and CI."""
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+    return cli_main(parser, lambda args: check(args.workspace), argv)
 
 
 if __name__ == "__main__":
-    _utf8_stdio()
-    main()
+    raise SystemExit(main())

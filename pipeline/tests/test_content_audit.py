@@ -2,7 +2,7 @@
 
 Runs the REAL sub-checker chain (verify_content.py + check_style.py +
 check_numbers.py + check_refs.py + check_figdata.py + check_sources.py +
-check_units.py) against a synthetic workspace. Synthetic fixtures ONLY
+check_units.py + advisory check_saeteuk.py) against a synthetic workspace. Synthetic fixtures ONLY
 (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -90,7 +90,7 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(
             set(verdict["sub_exit"]),
             {"verify_content", "check_style", "check_numbers", "check_refs",
-             "check_figdata", "check_sources", "check_units"},
+             "check_figdata", "check_sources", "check_units", "check_saeteuk"},
         )
 
     def test_figdata_checker_is_fifth_composed_gate(self):
@@ -212,6 +212,52 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(code, 0, verdict)
 
 
+class TestSaeteukAdvisory(ContentAuditTestCase):
+    def test_stage_45_demotes_saeteuk_hard_finding_to_warn(self):
+        self.write_content("Sample A latency = 20 ms.\n")
+        target = self.ws / "_saeteuk"
+        target.mkdir()
+        (target / "record.txt").write_text(
+            "Sample A latency = 10 ms.\n", encoding="utf-8"
+        )
+
+        verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["sub_exit"]["check_saeteuk"], 3)
+        self.assertFalse(any(
+            item.get("source") == "check_saeteuk"
+            for item in verdict["hard"]
+        ), verdict)
+        self.assertTrue(any(
+            item.get("source") == "check_saeteuk"
+            and item.get("code") == "saeteuk_number_contradiction"
+            and item.get("severity") == "WARN"
+            for item in verdict["warn"]
+        ), verdict)
+
+    def test_stage_45_saeteuk_crash_warns_instead_of_blocking(self):
+        self.write_content("Sample A latency = 20 ms.\n")
+
+        def boom(ws, **kwargs):
+            raise RuntimeError("synthetic saeteuk mirror crash")
+
+        with mock.patch.object(content_audit.check_saeteuk, "check", boom):
+            verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            item.get("source") == "check_saeteuk"
+            for item in verdict["hard"]
+        ), verdict)
+        self.assertTrue(any(
+            item.get("source") == "check_saeteuk"
+            and item.get("severity") == "WARN"
+            and "synthetic saeteuk mirror crash" in str(item.get("msg", ""))
+            for item in verdict["warn"]
+        ), verdict)
+
+
 class TestPackSchema(ContentAuditTestCase):
     def test_invalid_operator_pack_fails_closed_before_forwarding(self):
         self.write_content(self._clean_body())
@@ -286,37 +332,59 @@ class TestCitation(ContentAuditTestCase):
 
 class TestUsage(ContentAuditTestCase):
     def test_missing_content_md_is_nonzero(self):
-        # no bundle/content.md -> all seven sub-checkers are nonzero.
+        # no bundle/content.md -> the content-dependent sub-checkers are nonzero.
         verdict, code = content_audit.check(str(self.ws))
         self.assertNotEqual(code, 0)
         self.assertFalse(verdict["ok"])
 
     def test_worst_exit_prefers_hard_over_usage(self):
         self.write_content(self._clean_body())
-        passed = json.dumps({
+        passed = {
             "ok": True, "verdict": "pass", "hard": [], "warn": [],
-        })
-        usage = json.dumps({
+        }
+        usage = {
             "ok": False, "error": "synthetic usage error",
             "verdict": "usage_error", "hard": [], "warn": [],
-        })
-        hard = json.dumps({
+        }
+        hard = {
             "ok": False, "verdict": "fail",
             "hard": [{"code": "figure_data_drift", "msg": "synthetic drift"}],
             "warn": [],
-        })
-        processes = [
-            mock.Mock(returncode=2, stdout=usage, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=3, stdout=hard, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-        ]
+        }
 
-        with mock.patch.object(
-            content_audit.subprocess, "run", side_effect=processes
+        with (
+            mock.patch.object(
+                content_audit.verify_content, "check",
+                return_value=(usage, 2),
+            ),
+            mock.patch.object(
+                content_audit.check_style, "check",
+                return_value=(passed, 0),
+            ),
+            mock.patch.object(
+                content_audit.check_numbers, "check",
+                return_value=(passed, 0),
+            ),
+            mock.patch.object(
+                content_audit.check_refs, "check",
+                return_value=(passed, 0),
+            ),
+            mock.patch.object(
+                content_audit.check_figdata, "check",
+                return_value=(hard, 3),
+            ),
+            mock.patch.object(
+                content_audit.check_sources, "check",
+                return_value=(passed, 0),
+            ),
+            mock.patch.object(
+                content_audit.check_units, "check",
+                return_value=(passed, 0),
+            ),
+            mock.patch.object(
+                content_audit.check_saeteuk, "check",
+                return_value=(passed, 0),
+            ),
         ):
             verdict, code = content_audit.check(str(self.ws))
 
@@ -325,23 +393,13 @@ class TestUsage(ContentAuditTestCase):
         self.assertEqual(verdict["sub_exit"]["check_figdata"], 3)
         self.assertEqual(verdict["verdict"], "fail")
 
-    def test_unexpected_exit_one_is_hard_and_preserves_stderr(self):
+    def test_in_process_exception_is_hard_with_truncated_traceback(self):
         self.write_content(self._clean_body())
-        passed = json.dumps({
-            "ok": True, "verdict": "pass", "hard": [], "warn": [],
-        })
-        processes = [
-            mock.Mock(returncode=1, stdout="", stderr="checker exploded"),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-            mock.Mock(returncode=0, stdout=passed, stderr=""),
-        ]
 
         with mock.patch.object(
-            content_audit.subprocess, "run", side_effect=processes
+            content_audit.verify_content,
+            "check",
+            side_effect=RuntimeError("checker exploded"),
         ):
             verdict, code = content_audit.check(str(self.ws))
 
@@ -352,37 +410,30 @@ class TestUsage(ContentAuditTestCase):
             if item.get("source") == "verify_content"
             and item.get("code") == "USAGE"
         )
-        self.assertEqual(finding["stderr"], "checker exploded")
+        self.assertIn("checker exploded", finding["msg"])
+        self.assertIn("RuntimeError", finding["traceback"])
+        self.assertLessEqual(len(finding["traceback"]), 1600)
 
-    def test_malformed_sixth_checker_stdout_normalizes_its_exit_to_hard(self):
+    def test_malformed_sixth_checker_return_normalizes_its_exit_to_hard(self):
         self.write_content(self._clean_body())
-        passed = json.dumps({
-            "ok": True, "verdict": "pass", "hard": [], "warn": [],
-        })
-        hostile_outputs = (
-            "not " + "JSON",
-            "",
-            json.dumps([]),
-            json.dumps({
+        hostile_returns = (
+            None,
+            ([], 0),
+            ({
                 "ok": False, "verdict": "fail", "hard": [], "warn": [],
-            }),
+            }, 0),
+            ({
+                "ok": True, "verdict": "pass",
+                "hard": [{"code": "synthetic"}], "warn": [],
+            }, 0),
         )
 
-        for stdout in hostile_outputs:
-            with self.subTest(stdout=stdout):
-                processes = [
-                    mock.Mock(returncode=0, stdout=passed, stderr="")
-                    for _ in range(5)
-                ]
-                processes.append(
-                    mock.Mock(returncode=0, stdout=stdout, stderr="")
-                )
-                processes.append(
-                    mock.Mock(returncode=0, stdout=passed, stderr="")
-                )
-
+        for return_value in hostile_returns:
+            with self.subTest(return_value=return_value):
                 with mock.patch.object(
-                    content_audit.subprocess, "run", side_effect=processes
+                    content_audit.check_sources,
+                    "check",
+                    return_value=return_value,
                 ):
                     verdict, code = content_audit.check(str(self.ws))
 
@@ -394,6 +445,7 @@ class TestUsage(ContentAuditTestCase):
                     and item.get("code") == "USAGE"
                     for item in verdict["hard"]
                 ), verdict)
+
 
 
 if __name__ == "__main__":

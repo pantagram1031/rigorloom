@@ -29,7 +29,8 @@ EXACT actions:
    baseline is deferred.
    Either absent request key is skipped with a compatibility note, but
    reopen/extension/proof-grade checks never skip. The registered preflight
-   also composes `check_saeteuk.py`: it compares UTF-8 `.txt` and `.md`
+   also composes `check_saeteuk.py` with full HARD enforcement (the Stage 4.5
+   mirror is early-discovery WARN-only): it compares UTF-8 `.txt` and `.md`
    artifacts under the workspace-local `_saeteuk/` directory with
    `bundle/content.md`. Parent directories are never consulted. A single
    distinct same-subject, compatible-unit numeric conflict beyond the

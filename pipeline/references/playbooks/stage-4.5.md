@@ -23,9 +23,10 @@ EXACT actions:
    Re-run `prose_fidelity` if you invoke the humanization controller, exactly as
    in Stage 4 (facts never change to make a style proposal pass).
 3. Resolve the script gate — this RUNS the bound composite checker
-   (`content_audit.py`: `verify_content.py`, then `check_style.py`, then
-   `check_numbers.py --require-seed`, then `check_refs.py`); it does not accept a hand-supplied
-   verdict:
+   (`content_audit.py`: `verify_content.py`, `check_style.py`,
+   `check_numbers.py --require-seed`, `check_refs.py`, `check_figdata.py`,
+   `check_sources.py`, `check_units.py`, and `check_saeteuk.py` in-process);
+   it does not accept a hand-supplied verdict:
    ```
    # cd <REPO_ROOT>/
    python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
@@ -44,6 +45,9 @@ EXACT actions:
    check_refs.py is fully advisory: caption-number gaps/duplicates, dangling
    figure/table references, and unreferenced figures are WARN suspects for
    human review and never fail the gate.
+   check_saeteuk.py is also advisory at Stage 4.5: this mirror discovers
+   saeteuk/body drift while edits are cheap and demotes its valid HARD findings
+   to WARN. Stage 6 submission_preflight retains full HARD enforcement authority.
    Pass report-specific proper nouns via `--allowlist` if the checker is invoked
    directly for triage. Legitimate non-simulation numbers may be listed in
    `<PROFILE_ROOT>/packs/numeral_allowlist.txt` (one exact number per line).
