@@ -947,15 +947,48 @@ class TestCheckSubcommand(PipelineCtlTestCase):
         self.assertEqual(payload["state"], "auto_approved")
 
     def test_check_null_checker_is_usage_error(self):
-        # 'layout' has checker: null (external) — check must error, never pass.
-        self.init_ws(mode="autonomous")
-        payload, code = run("check", str(self.ws), "layout")
-        self.assertEqual(code, 2)
-        self.assertFalse(payload["ok"])
-        self.assertIn("layout", payload["error"])
-        text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
-        line = [l for l in text.split("```")[1].splitlines() if '"2.5":' in l][0]
-        self.assertIn("state: pending", line)
+        # A script gate with checker: null must make `check` error, never pass.
+        # The shipped graph no longer has one (layout is bound via
+        # check_layout.py), so exercise the path with a synthetic graph on a
+        # copied pipeline_ctl (stdlib-only, config resolved relative to the
+        # script location).
+        import shutil
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_scripts = root / "scripts"
+            fake_scripts.mkdir()
+            shutil.copy2(SCRIPT, fake_scripts / "pipeline_ctl.py")
+            fake_refs = root / "references"
+            fake_refs.mkdir()
+            (fake_refs / "stages.yaml").write_text(
+                'version: "0.6"\n'
+                'stages:\n'
+                '  - {id: "0", name: "intake", gate: null, playbook: "p0"}\n'
+                '  - {id: "1", name: "plan", gate: {name: "orphan", '
+                'type: "script", checker: null}, playbook: "p1"}\n',
+                encoding="utf-8",
+            )
+            ws = root / "ws"
+            fake = [sys.executable, str(fake_scripts / "pipeline_ctl.py")]
+            env = {**os.environ, "_PIPELINE_CTL_UTF8_REEXEC": "1"}
+            init = subprocess.run(
+                [*fake, "init", str(ws), "--slug", "report-x",
+                 "--mode", "autonomous", "--subject", "s", "--topic", "t",
+                 "--form", "f.hwpx"],
+                capture_output=True, text=True, encoding="utf-8", env=env)
+            self.assertEqual(
+                json.loads(init.stdout.strip()).get("ok"), True, init.stdout)
+            proc = subprocess.run(
+                [*fake, "check", str(ws), "orphan"],
+                capture_output=True, text=True, encoding="utf-8", env=env)
+            payload = json.loads(proc.stdout.strip())
+            self.assertEqual(proc.returncode, 2)
+            self.assertFalse(payload["ok"])
+            self.assertIn("orphan", payload["error"])
+            text = (ws / "PIPELINE.md").read_text(encoding="utf-8")
+            line = [l for l in text.split("```")[1].splitlines()
+                    if '"1":' in l][0]
+            self.assertIn("state: pending", line)
 
     def test_check_unknown_gate_is_usage_error(self):
         self.init_ws(mode="autonomous")
