@@ -6,6 +6,12 @@ table map, break state) and draft build.yaml. Feeds §N cast-off.
 
 ENTRY: `pipeline_ctl resume` → stage 0. request.yaml complete.
 
+For the `conditions-only` alias, the agent first derives a short set of topic
+candidates from the recorded constraints and pauses for the human
+`topic_pick`; write the selected topic to `request.yaml` before normal form
+intake continues. The agent may propose candidates but may not choose for the
+human.
+
 EXACT commands (form_inspect v2, CONTRACT §E amended / §T inspect):
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
@@ -32,9 +38,13 @@ this run's conditions. Generated report prose is never private-style evidence.
 
 ROLE BINDINGS: mech-worker runs form inspection; designer interprets the form.
 
-EXIT + gate: form_profile.json (with page_metrics/table_map/break_audit) +
-build.yaml written. No human gate. Advance → stage 1:
+EXIT + gate: selected topic recorded; form_profile.json (with
+page_metrics/table_map/break_audit) + build.yaml written. Resolve the human
+topic gate before research:
 ```
+python pipeline/scripts/pipeline_ctl.py gate <WS> topic_pick --mode <mode>
+# supervised → STOP, request approval and transcribe it to APPROVALS.md.
+# autonomous/night → auto_approved (logged).
 python pipeline/scripts/pipeline_ctl.py advance <WS> 0 --status done
 ```
 

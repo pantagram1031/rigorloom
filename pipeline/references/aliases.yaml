@@ -4,8 +4,8 @@ aliases:
   - {id: pre-researched, have: [topic, evidence_pack, claims, form], want: verdict_6, forced: [], status: active}
   - {id: verify-only, have: [content_md, hwpx, proof, verdict_45], want: verdict_6, forced: [], status: active}
   - {id: assemble-only, have: [content_md, form, verdict_45], want: verdict_6, forced: [], status: active}
-  - {id: conditions-only, have: [constraints, form], want: verdict_6, forced: [], status: planned}
-  - {id: backfill, have: [content_md, hwpx, proof], want: verdict_6, forced: [claim_extract, retro_research], status: planned}
+  - {id: conditions-only, have: [constraints, form], want: verdict_6, forced: [], status: active}
+  - {id: backfill, have: [content_md, hwpx, proof], want: verdict_6, forced: [claim_extract, retro_research], status: active}
   - {id: form-edit, have: [report, edit_request, verdict_45], want: verdict_6, forced: [edit], status: planned}
   - {id: form-convert, have: [report, form, verdict_45], want: verdict_6, forced: [content_extract], status: planned}
   - {id: taste-mine, have: [corpus], want: pack_draft, forced: [], status: planned}

@@ -1,6 +1,6 @@
 version: "0.6"
 stages:
-  - {id: "0",   name: "form_intake",   gate: null,                                                                                                        playbook: "playbooks/stage-0.md"}
+  - {id: "0",   name: "form_intake",   gate: {name: "topic_pick", type: "human"},                                                                         playbook: "playbooks/stage-0.md"}
   - {id: "1",   name: "research",      gate: null,                                                                                                        playbook: "playbooks/stage-1.md"}
   - {id: "2",   name: "design",        gate: {name: "design", type: "human"},                                                                             playbook: "playbooks/stage-2.md"}
   # 2.5 layout gate — external checker: layout_plan_check.py from hwp-master; register locally, hence checker null.

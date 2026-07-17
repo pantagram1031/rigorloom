@@ -47,16 +47,24 @@ class CheckSourcesTests(unittest.TestCase):
             f"{identifier}\n"
         )
 
-    def write_doi_cache(self, doi: str, title: str) -> None:
+    def write_doi_cache(
+        self, doi: str, title: str, *, verified: bool = True,
+    ) -> None:
         target = (
             self.profile / "cache" / "sources" / "doi"
             / f"{check_sources._doi_slug(doi)}.json"
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps({"doi": doi, "title": title}),
-            encoding="utf-8",
-        )
+        verification = None
+        if verified:
+            verification = {
+                "retrieved_from": "https://example.invalid/source",
+                "content_sha256": "a" * 64,
+                "retrieved_at": "2026-07-17T01:02:03+00:00",
+            }
+        target.write_text(json.dumps({
+            "doi": doi, "title": title, "verification": verification,
+        }), encoding="utf-8")
 
     def hard_codes(self, verdict):
         return {item["code"] for item in verdict["hard"]}
@@ -120,6 +128,22 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(code, 3, verdict)
         self.assertIn("source_title_mismatch", self.hard_codes(verdict))
 
+    def test_unverified_cache_title_contradiction_is_still_hard(self):
+        doi = "10." + "1234/self-authored-contradiction"
+        self.write_content(
+            self.reference("Solar Flare Measurements", 2024, f"DOI: {doi}")
+        )
+        self.write_doi_cache(doi, "Deep Ocean Microbiology", verified=False)
+
+        verdict, code = check_sources.check(
+            self.ws, profile_root=self.profile
+        )
+
+        self.assertEqual(code, 3, verdict)
+        self.assertIn("source_title_mismatch", self.hard_codes(verdict))
+        self.assertIn("source_selfauthored", self.warn_codes(verdict))
+        self.assertIn("source_unverified", self.warn_codes(verdict))
+
     def test_cache_miss_is_warn_only(self):
         doi = "10." + "1234/missing-source"
         self.write_content(
@@ -156,6 +180,21 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(entry["title"], title)
         self.assertEqual(entry["container"], "Journal of Examples")
         self.assertEqual(entry["doi"], doi)
+
+    def test_matching_cache_without_verification_metadata_stays_unverified(self):
+        doi = "10." + "1234/self-authored-source"
+        title = "Self Authored Synthetic Evidence"
+        self.write_content(self.reference(title, 2024, f"DOI: {doi}"))
+        self.write_doi_cache(doi, title, verified=False)
+
+        verdict, code = check_sources.check(
+            self.ws, profile_root=self.profile
+        )
+
+        self.assertEqual(code, 0, verdict)
+        self.assertIn("source_selfauthored", self.warn_codes(verdict))
+        self.assertIn("source_unverified", self.warn_codes(verdict))
+        self.assertEqual(verdict["counts"]["unverified"], 1)
 
     def test_no_reference_section_is_clean_pass(self):
         self.write_content("# Results\nSynthetic body without endnotes.\n")

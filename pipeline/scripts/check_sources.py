@@ -28,11 +28,16 @@ the gate found no provable break or cached contradiction.
 research-time fetch tooling, not hand-authored. A hand-authored cache adds no
 adversarial resistance.
 
+Only a structurally complete verification object (retrieved URL, content
+SHA-256, and retrieval timestamp) makes a matching cache title authoritative.
+Missing or malformed retrieval metadata leaves the source unverified.
+
 Exit 0 = pass (WARNs allowed), 3 = HARD contradiction, 2 = usage/input error.
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from difflib import SequenceMatcher
 import json
 import os
@@ -40,6 +45,7 @@ from pathlib import Path
 import re
 import sys
 import unicodedata
+from urllib.parse import urlsplit
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -342,24 +348,55 @@ def _usage(ws, message: str) -> tuple[dict, int]:
 
 def _load_cache_record(
     path: Path, key: str, expected: str
-) -> tuple[dict | None, str | None]:
+) -> tuple[dict | None, str | None, bool]:
     if not path.is_file():
-        return None, None
+        return None, None, False
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return None, f"source cache record unreadable: {path}: {exc}"
+        return None, f"source cache record unreadable: {path}: {exc}", False
     if not isinstance(payload, dict):
-        return None, f"source cache record must contain an object: {path}"
+        return None, f"source cache record must contain an object: {path}", False
     identifier = payload.get(key)
     title = payload.get("title")
     if not isinstance(identifier, str) or not isinstance(title, str) or not title.strip():
-        return None, f"source cache record requires string {key} and title: {path}"
+        return (
+            None,
+            f"source cache record requires string {key} and title: {path}",
+            False,
+        )
     actual = identifier.casefold() if key == "doi" else _isbn_digits(identifier)
     wanted = expected.casefold() if key == "doi" else expected
     if actual != wanted:
-        return None, f"source cache record {key} does not match its lookup key: {path}"
-    return payload, None
+        return (
+            None,
+            f"source cache record {key} does not match its lookup key: {path}",
+            False,
+        )
+    return payload, None, _has_verification_metadata(payload)
+
+
+def _has_verification_metadata(payload: dict) -> bool:
+    verification = payload.get("verification")
+    if not isinstance(verification, dict):
+        return False
+    retrieved_from = verification.get("retrieved_from")
+    digest = verification.get("content_sha256")
+    retrieved_at = verification.get("retrieved_at")
+    if not all(isinstance(value, str) and value.strip() for value in (
+        retrieved_from, digest, retrieved_at,
+    )):
+        return False
+    try:
+        parts = urlsplit(retrieved_from.strip())
+        datetime.fromisoformat(retrieved_at.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (
+        parts.scheme.casefold() in {"http", "https"}
+        and bool(parts.netloc)
+        and re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()) is not None
+    )
 
 
 def check(
@@ -442,12 +479,15 @@ def check(
         if isbn13:
             identifiers.append(("isbn", isbn13, isbn13 + ".json"))
 
-        cache_hit = False
+        authoritative_hit = False
+        non_authoritative_hit = False
         for key, identifier, filename in identifiers:
             if cache_root is None:
                 continue
             path = cache_root / key / filename
-            record, error = _load_cache_record(path, key, identifier)
+            record, error, authoritative = _load_cache_record(
+                path, key, identifier
+            )
             if error:
                 warn.append({
                     "code": "source_cache_unreadable",
@@ -460,7 +500,10 @@ def check(
                 continue
             if record is None:
                 continue
-            cache_hit = True
+            if authoritative:
+                authoritative_hit = True
+            else:
+                non_authoritative_hit = True
             cached_title = record["title"].strip()
             cited_title = entry["title"]
             if cited_title and not _titles_match(cited_title, cached_title):
@@ -489,10 +532,21 @@ def check(
                 }
                 (hard if clearly_different else warn).append(finding)
 
-        if not cache_hit:
+        if non_authoritative_hit and not authoritative_hit:
+            warn.append({
+                "code": "source_selfauthored",
+                "msg": (
+                    "cache record lacks retrieval metadata; treat as unverified"
+                ),
+                "at": cited_at,
+                "line": entry["line"],
+            })
+        if not authoritative_hit:
             warn.append({
                 "code": "source_unverified",
-                "msg": "source has no matching offline DOI/ISBN cache record",
+                "msg": (
+                    "source has no authoritative offline DOI/ISBN cache record"
+                ),
                 "at": cited_at,
                 "line": entry["line"],
             })

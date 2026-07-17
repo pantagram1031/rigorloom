@@ -10,8 +10,8 @@ The OS ceiling is the most restrictive module in the chain: any < tiered < windo
 | pre-researched | active | design -> data_sim -> write -> humanize -> content_verify -> assemble -> render_proof -> submit_verify | tiered |
 | verify-only | active | submit_verify | any |
 | assemble-only | active | assemble -> render_proof -> submit_verify | tiered |
-| conditions-only | planned | topic_select -> research -> design -> data_sim -> write -> humanize -> content_verify -> assemble -> render_proof -> submit_verify | tiered |
-| backfill | planned | claim_extract -> retro_research -> content_verify -> submit_verify | any |
+| conditions-only | active | topic_select -> research -> design -> data_sim -> write -> humanize -> content_verify -> assemble -> render_proof -> submit_verify | tiered |
+| backfill | active | claim_extract -> retro_research -> content_verify -> submit_verify | any |
 | form-edit | planned | edit -> render_proof -> submit_verify | tiered |
 | form-convert | planned | content_extract -> assemble -> render_proof -> submit_verify | tiered |
 | taste-mine | planned | form_extract -> style_extract | any |
