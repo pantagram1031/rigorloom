@@ -19,16 +19,19 @@ import re
 import sys
 from pathlib import Path
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    exit_code,
+    usage_error,
+    verdict_skeleton,
+)
+
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _FIG_RE = re.compile(r'\[\[FIG\s+file="([^"]+)"')
-
-
-def _utf8_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
 
 
 def _sha256(path: Path) -> str:
@@ -110,15 +113,20 @@ def check(workspace: str | Path) -> tuple[dict, int]:
     try:
         content = content_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {"ok": False, "error": "bundle/content.md not found"}, 2
+        return usage_error(
+            str(ws), None, "bundle/content.md not found", minimal=True
+        )
     except (OSError, UnicodeError) as exc:
-        return {"ok": False, "error": f"bundle/content.md unreadable: {exc}"}, 2
+        return usage_error(
+            str(ws), None,
+            f"bundle/content.md unreadable: {exc}", minimal=True,
+        )
 
     figures = ws / "bundle" / "figures"
     manifest_path = figures / "figures_manifest.json"
     manifest, manifest_error = _load_manifest(manifest_path)
     if manifest_error:
-        return {"ok": False, "error": manifest_error}, 2
+        return usage_error(str(ws), None, manifest_error, minimal=True)
 
     hard: list[dict] = []
     warn: list[dict] = []
@@ -157,10 +165,11 @@ def check(workspace: str | Path) -> tuple[dict, int]:
         try:
             actual = _sha256(figure)
         except OSError as exc:
-            return {
-                "ok": False,
-                "error": f"referenced figure is unreadable: {normalized}: {exc}",
-            }, 2
+            return usage_error(
+                str(ws), None,
+                f"referenced figure is unreadable: {normalized}: {exc}",
+                minimal=True,
+            )
         for source, digest in expected:
             normalized_digest = digest.lower()
             if (not _SHA256_RE.fullmatch(digest)
@@ -174,32 +183,25 @@ def check(workspace: str | Path) -> tuple[dict, int]:
                     "actual": actual,
                 })
 
-    verdict = {
-        "ok": not hard,
-        "workspace": str(ws),
-        "checker": "check_figdata",
-        "hard": hard,
-        "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if not hard else "fail",
-    }
-    return verdict, 0 if not hard else 3
+    verdict = verdict_skeleton(
+        str(ws), "check_figdata", hard=hard, warn=warn
+    )
+    return verdict, exit_code(hard=hard)
 
 
 def main(argv=None) -> int:
     _utf8_stdio()
-    parser = argparse.ArgumentParser(description="verify referenced figure checksums")
+    parser = argparse.ArgumentParser(
+        description="verify referenced figure checksums"
+    )
     parser.add_argument("workspace")
     parser.add_argument("--out", default=None)
-    args = parser.parse_args(argv)
-    verdict, code = check(args.workspace)
-    rendered = json.dumps(verdict, ensure_ascii=False, indent=2)
-    if args.out:
-        target = Path(args.out)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rendered, encoding="utf-8")
-    print(rendered)
-    return code
+    return cli_main(
+        parser,
+        lambda args: check(args.workspace),
+        argv,
+        create_out_parent=True,
+    )
 
 
 if __name__ == "__main__":

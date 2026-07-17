@@ -42,6 +42,18 @@ import sys
 import unicodedata
 
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    exit_code,
+    usage_error,
+    verdict_skeleton,
+)
+
+
 DEFAULT_NOW_YEAR = 2026
 DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.I)
 REFERENCE_SECTION_RE = re.compile(
@@ -79,14 +91,6 @@ TITLE_STOPWORDS = frozenset({
     "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the",
     "to", "with",
 })
-
-
-def _utf8_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
 
 
 def _resolve_profile_root(profile_root) -> Path | None:
@@ -328,16 +332,12 @@ def _titles_clearly_different(cited: str, cached: str) -> bool:
 
 
 def _usage(ws, message: str) -> tuple[dict, int]:
-    return {
-        "ok": False,
-        "workspace": str(ws),
-        "checker": "check_sources",
-        "error": message,
-        "hard": [],
-        "warn": [],
-        "counts": {"hard": 0, "warn": 0, "unverified": 0},
-        "verdict": "usage_error",
-    }, 2
+    return usage_error(
+        str(ws),
+        "check_sources",
+        message,
+        counts={"hard": 0, "warn": 0, "unverified": 0},
+    )
 
 
 def _load_cache_record(
@@ -512,15 +512,16 @@ def check(
         }
         for entry in entries
     ]
-    verdict = {
-        "ok": not hard,
-        "workspace": str(ws),
-        "checker": "check_sources",
-        "section_found": section_found,
-        "entries": public_entries,
-        "hard": hard,
-        "warn": warn,
-        "counts": {
+    verdict = verdict_skeleton(
+        str(ws),
+        "check_sources",
+        hard=hard,
+        warn=warn,
+        extra={
+            "section_found": section_found,
+            "entries": public_entries,
+        },
+        counts={
             "hard": len(hard),
             "warn": len(warn),
             "unverified": sum(
@@ -528,9 +529,8 @@ def check(
             ),
             "entries": len(entries),
         },
-        "verdict": "pass" if not hard else "fail",
-    }
-    return verdict, 0 if not hard else 3
+    )
+    return verdict, exit_code(hard=hard)
 
 
 def main(argv=None) -> int:
@@ -555,19 +555,16 @@ def main(argv=None) -> int:
         help=f"current year for future-year checks (default: {DEFAULT_NOW_YEAR})",
     )
     parser.add_argument("--out", default=None, help="write verdict JSON here")
-    args = parser.parse_args(argv)
-    verdict, code = check(
-        args.workspace,
-        profile_root=args.profile_root,
-        now=args.now,
+    return cli_main(
+        parser,
+        lambda args: check(
+            args.workspace,
+            profile_root=args.profile_root,
+            now=args.now,
+        ),
+        argv,
+        create_out_parent=True,
     )
-    rendered = json.dumps(verdict, ensure_ascii=False, indent=2)
-    if args.out:
-        target = Path(args.out)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rendered, encoding="utf-8")
-    print(rendered)
-    return code
 
 
 if __name__ == "__main__":

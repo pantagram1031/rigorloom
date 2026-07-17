@@ -26,6 +26,18 @@ Allowlist: a small NEUTRAL builtin (units/symbols only) plus an optional
 specific proper nouns are NOT builtin — pass them per report via --allowlist.
 """
 import sys, os, re, json, argparse
+from pathlib import Path
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    exit_code,
+    usage_error,
+    verdict_skeleton,
+)
 
 # Neutral builtin: units / symbols / generic method names only. NO
 # report-topic-specific proper nouns (those belong in a per-report --allowlist).
@@ -84,7 +96,7 @@ def check(ws, allow_gloss=None):
     hard, warn = [], []
     md = read(os.path.join(ws, "bundle", "content.md"))
     if md is None:
-        return {"ok": False, "error": "bundle/content.md not found"}, 2
+        return usage_error(ws, None, "bundle/content.md not found", minimal=True)
     body = find_body(md)
 
     # H1 no web citation
@@ -152,46 +164,32 @@ def check(ws, allow_gloss=None):
         if m.group(1) not in biblio:
             warn.append({"code": "W3", "msg": "in-text cite w/o bibliography match", "at": m.group(0)})
 
-    verdict = {
-        "ok": len(hard) == 0,
-        "workspace": ws,
-        "hard": hard,
-        "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if not hard else "fail",
-    }
-    return verdict, (0 if not hard else 3)
+    verdict = verdict_skeleton(
+        ws, None, hard=hard, warn=warn
+    )
+    return verdict, exit_code(hard=hard)
 
 
-def main():
-    ap = argparse.ArgumentParser(description="deterministic content gate")
-    ap.add_argument("workspace", help="report workspace dir (…/workspaces/report-<slug>)")
-    ap.add_argument("--out", default=None, help="write verdict JSON here")
-    ap.add_argument("--allowlist", default=None,
-                    help="file of extra allowed gloss terms (one per line or YAML list), merged over the neutral builtin")
-    a = ap.parse_args()
-    extra = load_allowlist(a.allowlist)
-    v, code = check(a.workspace, allow_gloss=extra)
-    js = json.dumps(v, ensure_ascii=False, indent=2)
-    if a.out:
-        open(a.out, "w", encoding="utf-8").write(js)
-    print(js)
-    sys.exit(code)
-
-
-
-def _utf8_stdio():
-    """Windows consoles/CI default to a legacy codepage; JSON/finding output is
-    UTF-8. Reconfigure stdio so printing Korean text never dies with a
-    UnicodeEncodeError (no-op where already UTF-8 or unsupported)."""
-    import sys as _sys
-    for stream in (_sys.stdout, _sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+def main(argv=None) -> int:
+    _utf8_stdio()
+    parser = argparse.ArgumentParser(description="deterministic content gate")
+    parser.add_argument(
+        "workspace", help="report workspace dir (…/workspaces/report-<slug>)"
+    )
+    parser.add_argument("--out", default=None, help="write verdict JSON here")
+    parser.add_argument(
+        "--allowlist", default=None,
+        help=("file of extra allowed gloss terms (one per line or YAML list), "
+              "merged over the neutral builtin"),
+    )
+    return cli_main(
+        parser,
+        lambda args: check(
+            args.workspace, allow_gloss=load_allowlist(args.allowlist)
+        ),
+        argv,
+    )
 
 
 if __name__ == "__main__":
-    _utf8_stdio()
-    main()
+    raise SystemExit(main())

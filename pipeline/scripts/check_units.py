@@ -43,125 +43,23 @@ import sys
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-import check_numbers  # noqa: E402
+import claim_extraction  # noqa: E402
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    usage_error,
+    verdict_skeleton,
+)
 
 
 ROUNDING_RELATIVE_TOLERANCE = 0.01
-PREFIXES = ('n', 'µ', 'μ', 'u', 'm', 'c', 'k', 'M', 'G')
-PREFIXABLE_UNITS = {
-    'm': 'length',
-    's': 'time',
-    'g': 'mass',
-    'N': 'force',
-    'J': 'energy',
-    'W': 'power',
-    'Pa': 'pressure',
-    'Hz': 'frequency',
-    'V': 'voltage',
-    'A': 'current',
-    'Ω': 'resistance',
-    'C': 'charge',
-    'K': 'temperature',
-    'mol': 'amount',
-    'cd': 'luminous_intensity',
-    'rad': 'angle',
-}
-REPORT_UNIT_ALIASES = {
-    '%': ('%', 'dimensionless'),
-    'percent': ('%', 'dimensionless'),
-    '퍼센트': ('%', 'dimensionless'),
-    'dB': ('dB', 'logarithmic_ratio'),
-    '데시벨': ('dB', 'logarithmic_ratio'),
-    'min': ('min', 'time'),
-    'minute': ('min', 'time'),
-    'minutes': ('min', 'time'),
-    'h': ('h', 'time'),
-    'hour': ('h', 'time'),
-    'hours': ('h', 'time'),
-    'second': ('s', 'time'),
-    'seconds': ('s', 'time'),
-    'meter': ('m', 'length'),
-    'meters': ('m', 'length'),
-    'metre': ('m', 'length'),
-    'metres': ('m', 'length'),
-    'kilometer': ('km', 'length'),
-    'kilometers': ('km', 'length'),
-    'kilometre': ('km', 'length'),
-    'kilometres': ('km', 'length'),
-    'gram': ('g', 'mass'),
-    'grams': ('g', 'mass'),
-    'kilogram': ('kg', 'mass'),
-    'kilograms': ('kg', 'mass'),
-    '°C': ('°C', 'temperature'),
-    '°F': ('°F', 'temperature'),
-    '초': ('s', 'time'),
-    '분': ('min', 'time'),
-    '시간': ('h', 'time'),
-    '미터': ('m', 'length'),
-    '센티미터': ('cm', 'length'),
-    '밀리미터': ('mm', 'length'),
-    '킬로미터': ('km', 'length'),
-    '그램': ('g', 'mass'),
-    '밀리그램': ('mg', 'mass'),
-    '킬로그램': ('kg', 'mass'),
-    '뉴턴': ('N', 'force'),
-    '와트': ('W', 'power'),
-    '파스칼': ('Pa', 'pressure'),
-    '헤르츠': ('Hz', 'frequency'),
-    '볼트': ('V', 'voltage'),
-    '암페어': ('A', 'current'),
-    '옴': ('Ω', 'resistance'),
-    '켈빈': ('K', 'temperature'),
-    '몰': ('mol', 'amount'),
-    '라디안': ('rad', 'angle'),
-}
-
-UNIT_ALIASES = {}
-for _symbol, _dimension in PREFIXABLE_UNITS.items():
-    UNIT_ALIASES[_symbol] = (_symbol, _dimension)
-    for _prefix in PREFIXES:
-        _canonical_prefix = 'µ' if _prefix in {'µ', 'μ', 'u'} else _prefix
-        UNIT_ALIASES[_prefix + _symbol] = (
-            _canonical_prefix + _symbol,
-            _dimension,
-        )
-UNIT_ALIASES.update(REPORT_UNIT_ALIASES)
-
-_ATOMIC_ALTERNATIVES = '|'.join(
-    re.escape(alias)
-    for alias in sorted(UNIT_ALIASES, key=lambda item: (-len(item), item))
-)
-ATOMIC_UNIT_RE = re.compile(
-    rf'^\s*(?P<unit>{_ATOMIC_ALTERNATIVES})(?![A-Za-z가-힣])'
-)
-COMPOUND_UNIT_PATTERNS = (
-    (re.compile(r'^\s*(?P<unit>m\s*/\s*s\s*(?:\^\s*2|²))(?![A-Za-z가-힣])'),
-     'm/s^2', 'acceleration'),
-    (re.compile(r'^\s*(?P<unit>미터\s*/\s*초\s*(?:\^\s*2|²))(?![A-Za-z가-힣])'),
-     'm/s^2', 'acceleration'),
-    (re.compile(r'^\s*(?P<unit>km\s*/\s*h)(?![A-Za-z가-힣])'),
-     'km/h', 'speed'),
-    (re.compile(r'^\s*(?P<unit>킬로미터\s*/\s*시간)(?![A-Za-z가-힣])'),
-     'km/h', 'speed'),
-    (re.compile(r'^\s*(?P<unit>m\s*/\s*s)(?![A-Za-z가-힣])'),
-     'm/s', 'speed'),
-    (re.compile(r'^\s*(?P<unit>미터\s*/\s*초)(?![A-Za-z가-힣])'),
-     'm/s', 'speed'),
-    (re.compile(r'^\s*(?P<unit>N\s*[·*]\s*m)(?![A-Za-z가-힣])'),
-     'N·m', 'energy'),
-    (re.compile(r'^\s*(?P<unit>뉴턴\s*[·*]\s*미터)(?![A-Za-z가-힣])'),
-     'N·m', 'energy'),
-)
-SUBJECT_PATTERNS = (
-    re.compile(
-        r'(?P<subject>[A-Za-z가-힣Α-Ωα-ω][A-Za-z0-9가-힣Α-Ωα-ω _/-]{0,79}?)'
-        r'\s*(?:=|:)\s*$'
-    ),
-    re.compile(
-        r'(?P<subject>[A-Za-z가-힣Α-Ωα-ω][A-Za-z0-9가-힣Α-Ωα-ω _/-]{0,79}?)'
-        r'\s*(?:은|는|이|가)\s*$'
-    ),
-)
+PREFIXES = claim_extraction.PREFIXES
+PREFIXABLE_UNITS = claim_extraction.PREFIXABLE_UNITS
+REPORT_UNIT_ALIASES = claim_extraction.REPORT_UNIT_ALIASES
+UNIT_ALIASES = claim_extraction.UNIT_ALIASES
+ATOMIC_UNIT_RE = claim_extraction.ATOMIC_UNIT_RE
+COMPOUND_UNIT_PATTERNS = claim_extraction.COMPOUND_UNIT_PATTERNS
+SUBJECT_PATTERNS = claim_extraction.BASIC_SUBJECT_PATTERNS
 QUANTITY_DIMENSIONS = (
     ('elapsed time', 'time'),
     ('acceleration', 'acceleration'),
@@ -187,96 +85,40 @@ QUANTITY_DIMENSIONS = (
 
 
 def _usage(workspace, message):
-    return {
-        'ok': False,
-        'workspace': str(workspace),
-        'checker': 'check_units',
-        'error': message,
-        'hard': [],
-        'warn': [],
-        'counts': {'hard': 0, 'warn': 0},
-        'verdict': 'usage_error',
-    }, 2
+    return usage_error(
+        str(workspace), "check_units", message,
+        counts={"hard": 0, "warn": 0},
+    )
 
 
 def _base_verdict(workspace, tolerance):
-    return {
-        'ok': True,
-        'workspace': str(workspace),
-        'checker': 'check_units',
-        'rounding_relative_tolerance': float(tolerance),
-        'checked_numerals': 0,
-        'tagged_units': 0,
-        'hard': [],
-        'warn': [],
-        'counts': {'hard': 0, 'warn': 0},
-        'verdict': 'pass',
-    }
+    return verdict_skeleton(
+        str(workspace),
+        "check_units",
+        extra={
+            "rounding_relative_tolerance": float(tolerance),
+            "checked_numerals": 0,
+            "tagged_units": 0,
+        },
+    )
 
 
 def _match_unit(suffix: str) -> dict | None:
-    for pattern, canonical, dimension in COMPOUND_UNIT_PATTERNS:
-        match = pattern.match(suffix)
-        if match:
-            return {
-                'raw': match.group('unit'),
-                'canonical': canonical,
-                'dimension': dimension,
-                'start': match.start('unit'),
-                'end': match.end('unit'),
-            }
-    match = ATOMIC_UNIT_RE.match(suffix)
-    if match is None:
-        return None
-    raw = match.group('unit')
-    canonical, dimension = UNIT_ALIASES[raw]
-    return {
-        'raw': raw,
-        'canonical': canonical,
-        'dimension': dimension,
-        'start': match.start('unit'),
-        'end': match.end('unit'),
-    }
+    return claim_extraction.match_units_unit(suffix)
 
 
 def _extraction_view(body: str) -> str:
-    """Make every local dictionary unit visible to check_numbers extraction.
-
-    ``extract_body_numerals`` already accepts integers followed by units in its
-    own smaller dictionary. For S3-only aliases, replace just the unit text in a
-    same-length view with ``m`` before calling that extractor. Numeric text,
-    offsets, newlines, and the source body remain unchanged.
-    """
-    chars = list(body)
-    for number in check_numbers.NUMBER_RE.finditer(body):
-        tag = _match_unit(body[number.end():number.end() + 64])
-        if tag is None:
-            continue
-        start = number.end() + tag['start']
-        end = number.end() + tag['end']
-        chars[start] = 'm'
-        for index in range(start + 1, end):
-            if chars[index] not in '\r\n':
-                chars[index] = ' '
-    return ''.join(chars)
+    return claim_extraction._units_extraction_view(body)
 
 
 def _normalize_subject(value: str) -> str | None:
-    value = re.sub(r'^\s*(?:#{1,6}|[-*+])\s*', '', value)
-    value = re.sub(r'[\s_]+', ' ', value).strip(' -/:;,.()[]{}').casefold()
-    value = re.sub(r'^(?:the|a|an)\s+', '', value)
-    return value or None
+    return claim_extraction.normalize_subject(value)
 
 
 def _subject_before(line: str, number_start: int) -> str | None:
-    prefix = line[:number_start]
-    boundary = max(prefix.rfind(mark) for mark in ';,.!?。！？')
-    clause = prefix[boundary + 1:]
-    for pattern in SUBJECT_PATTERNS:
-        match = pattern.search(clause)
-        if match:
-            return _normalize_subject(match.group('subject'))
-    return None
+    return claim_extraction.subject_before(
+        line, number_start, include_english=False
+    )
 
 
 def _subject_dimension(subject: str | None) -> str | None:
@@ -292,35 +134,23 @@ def _subject_dimension(subject: str | None) -> str | None:
 
 
 def _number_claims(text: str) -> tuple[list[dict], int]:
-    cleaned = check_numbers.find_body(text)
-    candidates = check_numbers.extract_body_numerals(_extraction_view(cleaned))
-    lines = cleaned.splitlines()
-    cursors: dict[int, int] = defaultdict(int)
-    claims = []
-    for candidate in candidates:
-        line_number = candidate['line']
-        if not (1 <= line_number <= len(lines)):
-            continue
-        line = lines[line_number - 1]
-        start = line.find(candidate['raw'], cursors[line_number])
-        if start < 0:
-            start = line.find(candidate['raw'])
-        if start < 0:
-            continue
-        end = start + len(candidate['raw'])
-        cursors[line_number] = end
-        tag = _match_unit(line[end:end + 64])
-        if tag is None:
-            continue
-        claims.append({
-            **candidate,
-            'subject': _subject_before(line, start),
-            'unit': tag['canonical'],
-            'unit_raw': tag['raw'],
-            'dimension': tag['dimension'],
-            'snippet': line.strip()[:160],
-        })
-    return claims, len(candidates)
+    shared, checked = claim_extraction.extract_numeric_claims(
+        text, policy="units"
+    )
+    claims = [
+        {
+            "value": claim["value"],
+            "raw": claim["raw"],
+            "line": claim["line"],
+            "subject": claim["subject"],
+            "unit": claim["unit"],
+            "unit_raw": claim["unit_raw"],
+            "dimension": claim["dimension"],
+            "snippet": claim["snippet"],
+        }
+        for claim in shared
+    ]
+    return claims, checked
 
 
 def _compatible(left: float, right: float, tolerance: float) -> bool:
@@ -414,18 +244,12 @@ def main(argv=None) -> int:
         default=ROUNDING_RELATIVE_TOLERANCE,
         help='relative tolerance for close-value restatements (default: 0.01)',
     )
-    args = parser.parse_args(argv)
-    verdict, code = check(args.workspace, tolerance=args.tolerance)
-    print(json.dumps(verdict, ensure_ascii=False, indent=2))
-    return code
-
-
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding='utf-8')
-        except (AttributeError, ValueError):
-            pass
+    parser.add_argument('--out', default=None, help='write verdict JSON here')
+    return cli_main(
+        parser,
+        lambda args: check(args.workspace, tolerance=args.tolerance),
+        argv,
+    )
 
 
 if __name__ == '__main__':
