@@ -109,6 +109,26 @@ def test_equation_in_cell_round_trips_script_counts_and_verify(tmp_path: Path) -
                for item in tampered["hard"])
 
 
+def test_bracketed_equation_round_trips_fingerprint_and_verify(tmp_path: Path) -> None:
+    source = write_hwpx(
+        tmp_path / "source.hwpx",
+        inline_equation_script="sample = [left, right]",
+    )
+    out_dir = tmp_path / "extract"
+
+    verdict, code = content_extract.run_extract(source, out_dir, verify=True)
+
+    assert code == 0, verdict
+    manifest = json.loads(
+        (out_dir / "extraction_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["semantic_fingerprint"]["counts"]["equations"] == 1
+    assert manifest["content_semantic_fingerprint"]["counts"]["equations"] == 1
+    assert manifest["semantic_fingerprint"]["equation_scripts"] == (
+        manifest["content_semantic_fingerprint"]["equation_scripts"]
+    )
+
+
 def test_nested_table_is_flattened_once_and_round_trips(tmp_path: Path) -> None:
     source = write_hwpx(tmp_path / "source.hwpx", nested_table=True)
     out_dir = tmp_path / "extract"

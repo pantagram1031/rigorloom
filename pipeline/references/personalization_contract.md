@@ -52,6 +52,7 @@ repository. Taste is data; the engine is code.
 | `report_structure` | title template, section policies, abstract mode, citation style (sources + in-text), curriculum-anchor-first, hedge cap, preferred sections |
 | `saeteuk` | short-record char target, byte ceiling, special-char and numeric-overclaim bans, style |
 | `gloss_allowlist` | terms allowed as a parenthetical gloss despite a general gloss ban |
+| `constants_allowlist` | numeric constants that may bypass `unbacked_numeral` when value and optional unit match |
 | `backends` | council seating; every command is an `args_argv` array, never a shell string |
 | `policy_floors` | privacy/fidelity/safety floors that lower layers cannot weaken |
 
@@ -66,6 +67,27 @@ python pipeline/scripts/personalization_ctl.py --profile-root <ROOT> show-pack -
 `register-pack` parses `.json` or a documented `.yaml` subset (see
 `load_pack_file`/`parse_yaml` in `personalization_ctl.py`), validates against
 the type's schema, and stores a canonical copy at `<ROOT>/packs/<type>.json`.
+
+`constants_allowlist.json` is intentionally a root JSON list rather than a
+metadata wrapper. Each item has a numeric `value`, an optional `unit`, and a
+human-readable `label`:
+
+    [
+      {"value": 9.81, "unit": "m/s^2", "label": "standard gravity"},
+      {"value": 3.14159, "label": "pi approximation"}
+    ]
+
+When `unit` is present, both value and normalized unit must match the body
+numeral. When it is absent, the exemption is value-only. The neutral public
+default contains only universal constants and common conversions. Private
+operator constants live at
+`<PROFILE_ROOT>/packs/constants_allowlist.json` and are schema-validated
+before the content audit runs.
+
+The public `gloss_allowlist` is always the baseline. Operator gloss terms
+extend it; they do not remove neutral software names. Unit-symbol exemptions
+come from the shared `claim_extraction` unit dictionary rather than a second
+list in the style checker.
 
 ### Schema validator subset
 

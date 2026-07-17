@@ -1,0 +1,14 @@
+[
+  {"value": 9.8, "unit": "m/s^2", "label": "standard gravity, rounded"},
+  {"value": 9.81, "unit": "m/s^2", "label": "standard gravity, rounded"},
+  {"value": 300000000, "unit": "m/s", "label": "speed of light, rounded"},
+  {"value": 3.14, "label": "pi approximation"},
+  {"value": 3.14159, "label": "pi approximation"},
+  {"value": -273.15, "unit": "°C", "label": "absolute zero"},
+  {"value": 0, "unit": "K", "label": "absolute zero"},
+  {"value": 60, "unit": "s", "label": "seconds per minute"},
+  {"value": 60, "unit": "min", "label": "minutes per hour"},
+  {"value": 3600, "unit": "s", "label": "seconds per hour"},
+  {"value": 100, "unit": "cm", "label": "centimetres per metre"},
+  {"value": 1000, "unit": "m", "label": "metres per kilometre"}
+]

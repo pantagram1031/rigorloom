@@ -117,7 +117,7 @@ def _numeric_entry_values(entry: dict[str, Any]) -> set[float]:
     return {claim["value"] for claim in claims}
 
 
-def _numeric_traced(
+def numeric_traced(
     candidate: dict[str, Any], line_text: str, entries: list[dict[str, Any]]
 ) -> bool:
     for entry in entries:
@@ -240,7 +240,7 @@ def check(
             if 1 <= line_number <= len(body_lines)
             else candidate["snippet"]
         )
-        if not _numeric_traced(candidate, line_text, numeric_entries):
+        if not numeric_traced(candidate, line_text, numeric_entries):
             unledgered.append({
                 "code": "claim_unledgered",
                 "msg": "body numeric claim has no matching numeric ledger entry",

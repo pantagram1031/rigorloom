@@ -13,6 +13,9 @@ matching and prose heuristics are not precise enough to block a valid report.
 ``--require-seed`` keeps invalid seed values HARD; a missing seed is HARD only
 for canonical ``sim/results.json`` containing other numeric results and WARN in
 ambiguous, empty, or legacy cases.
+An otherwise unmatched numeral is also backed by a matching, evidenced claim
+whose source ids resolve, or by a validated constants allowlist entry whose
+optional unit matches.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 
@@ -29,6 +33,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 import claim_extraction  # noqa: E402
+import check_claims  # noqa: E402
+import claims_ledger  # noqa: E402
+import personalization_ctl  # noqa: E402
 from checker_base import (  # noqa: E402
     _utf8_stdio,
     cli_main,
@@ -42,6 +49,13 @@ RESULT_PATHS = (Path("sim/results.json"), Path("results.json"))
 PROVENANCE_PATHS = (
     Path("sim/provenance.json"),
     Path("sim/provenance"),
+)
+DEFAULT_CONSTANTS_PACK = (
+    SCRIPTS_DIR.parent
+    / "references"
+    / "preference_packs"
+    / "defaults"
+    / "constants_allowlist.json"
 )
 
 NUMBER_RE = claim_extraction.NUMBER_RE
@@ -120,6 +134,34 @@ def load_allowlist(path) -> set[float]:
     return allowed
 
 
+def load_constants_allowlist(path=None) -> list[dict]:
+    """Load and validate the unit-aware constants list or its public default."""
+    source = Path(path) if path else DEFAULT_CONSTANTS_PACK
+    payload, error = _read_json(source)
+    if error:
+        raise ValueError(f"constants allowlist unreadable: {error}")
+    errors = personalization_ctl.validate_instance(
+        payload,
+        personalization_ctl.pack_schema("constants_allowlist"),
+    )
+    if errors:
+        raise ValueError(
+            "constants allowlist failed schema validation: "
+            + "; ".join(errors)
+        )
+    constants = []
+    for item in payload:
+        value = float(item["value"])
+        if not math.isfinite(value):
+            raise ValueError("constants allowlist values must be finite")
+        constants.append({
+            "value": value,
+            "unit": item.get("unit"),
+            "label": item["label"],
+        })
+    return constants
+
+
 def _environment_allowlist_path() -> Path | None:
     """Resolve a numeric allowlist from a valid operator profile root."""
     configured = os.environ.get("RIGORLOOM_PROFILE_ROOT")
@@ -137,6 +179,17 @@ def _environment_allowlist_path() -> Path | None:
         root / "number_allowlist.txt",
     )
     return next((path for path in candidates if path.is_file()), None)
+
+
+def _environment_constants_path() -> Path | None:
+    configured = os.environ.get("RIGORLOOM_PROFILE_ROOT")
+    if not configured:
+        return None
+    root = Path(configured).expanduser()
+    if not root.is_dir():
+        return None
+    path = root / "packs" / "constants_allowlist.json"
+    return path if path.is_file() else None
 
 
 def _usage(ws, message):
@@ -157,7 +210,55 @@ def _relative_match(body_value: float, result_value: float, tolerance: float) ->
     )
 
 
-def check(ws, tolerance=1e-3, allowed_numbers=None, require_seed=False):
+def _normalized_unit(value) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.replace("²", "^2").replace("·", "*")
+    normalized = unicodedata.normalize("NFKC", normalized)
+    normalized = re.sub(r"\s+", "", normalized)
+    if normalized.casefold() in {"°c", "℃"}:
+        return "°C"
+    if normalized.casefold() in {"°f", "℉"}:
+        return "°F"
+    return normalized
+
+
+def _candidate_unit(candidate: dict) -> str | None:
+    union = candidate.get("union_unit")
+    if isinstance(union, dict):
+        return _normalized_unit(union.get("canonical") or union.get("raw"))
+    return _normalized_unit(candidate.get("unit_raw") or candidate.get("unit"))
+
+
+def _constant_matches(candidate: dict, constant: dict) -> bool:
+    if candidate["value"] != constant["value"]:
+        return False
+    wanted_unit = _normalized_unit(constant.get("unit"))
+    return wanted_unit is None or _candidate_unit(candidate) == wanted_unit
+
+
+def _backed_ledger_entries(workspace: Path) -> list[dict]:
+    """Return evidenced numeric claims only when every source id resolves."""
+    if not (workspace / claims_ledger.LEDGER_NAME).is_file():
+        return []
+    try:
+        ledger = claims_ledger.load_claims(workspace, validate_sources=True)
+    except claims_ledger.ClaimsLedgerError:
+        return []
+    return [
+        entry
+        for entry in ledger["claims"]
+        if entry["kind"] == "numeric" and entry["evidence"]
+    ]
+
+
+def check(
+    ws,
+    tolerance=1e-3,
+    allowed_numbers=None,
+    require_seed=False,
+    constants=None,
+):
     workspace = Path(ws)
     if not isinstance(tolerance, (int, float)) or not math.isfinite(tolerance) or tolerance < 0:
         return _usage(ws, "tolerance must be a finite non-negative number")
@@ -187,16 +288,47 @@ def check(ws, tolerance=1e-3, allowed_numbers=None, require_seed=False):
 
     hard, warn = [], []
     result_values = collect_numeric_values(results)
-    candidates = extract_body_numerals(find_body(md), allowed_numbers=allowed_numbers)
+    body = find_body(md)
+    candidates, _ = claim_extraction.extract_numeric_claims(
+        body,
+        policy="saeteuk",
+        allowed_numbers=allowed_numbers,
+    )
+    constant_entries = (
+        load_constants_allowlist() if constants is None else list(constants)
+    )
+    ledger_entries = _backed_ledger_entries(workspace)
+    body_lines = body.splitlines()
+    constant_backed = 0
+    ledger_backed = 0
     for candidate in candidates:
         value = candidate["value"]
-        if not any(_relative_match(value, result, float(tolerance)) for result in result_values):
-            warn.append({
-                "code": "unbacked_numeral",
-                "msg": "body numeral has no matching numeric value in results.json",
-                "at": candidate["raw"],
-                "line": candidate["line"],
-            })
+        if any(
+            _relative_match(value, result, float(tolerance))
+            for result in result_values
+        ):
+            continue
+        if any(_constant_matches(candidate, item) for item in constant_entries):
+            constant_backed += 1
+            continue
+        line_number = candidate["line"]
+        line_text = (
+            body_lines[line_number - 1]
+            if 1 <= line_number <= len(body_lines)
+            else candidate["snippet"]
+        )
+        if check_claims.numeric_traced(candidate, line_text, ledger_entries):
+            ledger_backed += 1
+            continue
+        warn.append({
+            "code": "unbacked_numeral",
+            "msg": (
+                "body numeral has no matching result, evidenced ledger claim, "
+                "or allowlisted constant"
+            ),
+            "at": candidate["raw"],
+            "line": candidate["line"],
+        })
 
     if results_path is None:
         warn.append({
@@ -258,6 +390,9 @@ def check(ws, tolerance=1e-3, allowed_numbers=None, require_seed=False):
             "seed_required": bool(require_seed),
             "checked_numerals": len(candidates),
             "result_numeric_values": len(result_values),
+            "ledger_backed_numerals": ledger_backed,
+            "constant_backed_numerals": constant_backed,
+            "constants_allowlist_entries": len(constant_entries),
         },
     )
     return verdict, exit_code(hard=hard)
@@ -282,6 +417,14 @@ def main(argv=None) -> int:
         "--require-seed", action="store_true",
         help="require a numeric seed for populated simulation results",
     )
+    parser.add_argument(
+        "--constants",
+        default=None,
+        help=(
+            "unit-aware constants_allowlist.json; defaults to the operator "
+            "profile pack, then the neutral public default"
+        ),
+    )
     parser.add_argument("--out", default=None, help="write verdict JSON here")
 
     def invoke(args):
@@ -292,13 +435,20 @@ def main(argv=None) -> int:
                 else _environment_allowlist_path()
             )
             allowed = load_allowlist(allow_path)
-        except OSError as exc:
+            constants_path = (
+                args.constants
+                if args.constants is not None
+                else _environment_constants_path()
+            )
+            constants = load_constants_allowlist(constants_path)
+        except (OSError, ValueError) as exc:
             return _usage(args.workspace, f"allowlist unreadable: {exc}")
         return check(
             args.workspace,
             tolerance=args.tolerance,
             allowed_numbers=allowed,
             require_seed=args.require_seed,
+            constants=constants,
         )
 
     return cli_main(parser, invoke, argv)

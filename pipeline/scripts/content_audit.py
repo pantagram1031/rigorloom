@@ -228,11 +228,17 @@ def check(ws, profile_root=None):
         )
         return verdict, 3
 
-    verify_gloss_terms, style_gloss_terms = set(), []
+    verify_gloss_terms, style_gloss_terms = _gloss_terms(
+        check_style.DEFAULT_GLOSS_PACK
+    )
     if packs_dir:
         gloss = packs_dir / "gloss_allowlist.json"
         if gloss.exists():
-            verify_gloss_terms, style_gloss_terms = _gloss_terms(gloss)
+            operator_verify, operator_style = _gloss_terms(gloss)
+            verify_gloss_terms |= operator_verify
+            style_gloss_terms = sorted(
+                set(style_gloss_terms) | set(operator_style)
+            )
 
     def run_style():
         prose_path = packs_dir / "prose_rules.json" if packs_dir else None
@@ -262,7 +268,14 @@ def check(ws, profile_root=None):
             number_allow = check_numbers._environment_allowlist_path()
         try:
             allowed = check_numbers.load_allowlist(number_allow)
-        except OSError as exc:
+            constants_path = (
+                packs_dir / "constants_allowlist.json"
+                if packs_dir
+                and (packs_dir / "constants_allowlist.json").is_file()
+                else None
+            )
+            constants = check_numbers.load_constants_allowlist(constants_path)
+        except (OSError, ValueError) as exc:
             return check_numbers._usage(
                 ws, f"allowlist unreadable: {exc}"
             )
@@ -270,6 +283,7 @@ def check(ws, profile_root=None):
             ws,
             allowed_numbers=allowed,
             require_seed=True,
+            constants=constants,
         )
 
     results = [

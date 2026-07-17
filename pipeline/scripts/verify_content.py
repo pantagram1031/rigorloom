@@ -11,7 +11,7 @@ Exit 0 = pass (no HARD violations). Exit 3 = HARD violation(s). Exit 2 = usage e
 WARN findings never fail the gate (reported for the orchestrator to weigh).
 
 HARD rules (unambiguous, fail-closed):
-  H1 no web citation — no http(s):// or www. in content.md
+  H1 no web citation in body prose; recognized reference-section lines exempt
   H2 no '~습니다/~ㅂ니다' polite endings in body prose
   H3 every [[FIG file="x.png"]] resolves to bundle/figures/x.png
   H4 세특 files (if any) <= 1500 bytes each
@@ -38,6 +38,7 @@ from checker_base import (  # noqa: E402
     usage_error,
     verdict_skeleton,
 )
+import check_sources  # noqa: E402
 
 # Neutral builtin: units / symbols / generic method names only. NO
 # report-topic-specific proper nouns (those belong in a per-report --allowlist).
@@ -99,9 +100,19 @@ def check(ws, allow_gloss=None):
         return usage_error(ws, None, "bundle/content.md not found", minimal=True)
     body = find_body(md)
 
-    # H1 no web citation
-    for m in re.finditer(r"(https?://|www\.)\S+", md):
-        hard.append({"code": "H1", "msg": "web citation/URL in content.md", "at": m.group(0)[:60]})
+    # H1 no web citation in body prose. Bibliography URLs are source metadata,
+    # not inline web citations; use check_sources' single section recognizer.
+    _, reference_lines = check_sources.reference_section(md)
+    reference_line_numbers = {line_number for line_number, _ in reference_lines}
+    for line_number, line in enumerate(md.splitlines(), start=1):
+        if line_number in reference_line_numbers:
+            continue
+        for m in re.finditer(r"(https?://|www\.)\S+", line):
+            hard.append({
+                "code": "H1",
+                "msg": "web citation/URL in content.md",
+                "at": m.group(0)[:60],
+            })
     # H2 no polite endings
     for m in re.finditer(r"[가-힣](습니다|ㅂ니다|습니까)", body):
         hard.append({"code": "H2", "msg": "polite ending '~습니다' in body", "at": m.group(0)})
