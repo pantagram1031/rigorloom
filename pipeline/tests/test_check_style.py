@@ -94,5 +94,153 @@ class TestNegative(CheckStyleTestCase):
         self.assertEqual(code, 0, verdict)
 
 
+class TestGlossCalibration(CheckStyleTestCase):
+    GLOSS_PACK = {
+        "schema": "x",
+        "pack_type": "prose_rules",
+        "name": "synthetic-gloss-ban",
+        "version": 1,
+        "banned_patterns": [{
+            "id": "gloss-english",
+            "regex": r"[가-힣]+\([A-Za-z][A-Za-z0-9+.-]*\)",
+            "severity": "hard",
+            "description": "Synthetic parenthetical English gloss ban.",
+        }],
+    }
+
+    def test_claim_unit_symbols_and_default_software_names_are_exempt(self):
+        self.write_content(
+            "거리(AU), 온도(K), 계산(SymPy)은 합법적인 전문 표기다.\n"
+        )
+
+        verdict, code = self.check(prose=self.GLOSS_PACK)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            item["code"] == "BAN:gloss-english" for item in verdict["hard"]
+        ), verdict)
+
+    def test_operator_terms_extend_default_software_names(self):
+        self.write_content("계산(SymPy)과 모형(TopicCalc)을 사용했다.\n")
+
+        verdict, code = check_style.check(
+            str(self.ws),
+            prose_pack=self.GLOSS_PACK,
+            allow_terms=["TopicCalc"],
+        )
+
+        self.assertEqual(code, 0, verdict)
+
+    def test_unknown_gloss_still_triggers_hard_ban(self):
+        self.write_content("계산(Fictronix)을 사용했다.\n")
+
+        verdict, code = self.check(prose=self.GLOSS_PACK)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "BAN:gloss-english" for item in verdict["hard"]
+        ), verdict)
+
+    def test_count_word_alias_is_not_a_unit_symbol_exemption(self):
+        self.write_content("분류(case)를 사용했다.\n")
+
+        verdict, code = self.check(prose=self.GLOSS_PACK)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "BAN:gloss-english" for item in verdict["hard"]
+        ), verdict)
+
+    def test_public_software_term_does_not_exempt_other_ban_ids(self):
+        pack = {
+            "banned_patterns": [{
+                "id": "synthetic-software-ban",
+                "regex": "SymPy",
+                "severity": "hard",
+            }],
+        }
+        self.write_content("SymPy\n")
+
+        verdict, code = self.check(prose=pack)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "BAN:synthetic-software-ban"
+            for item in verdict["hard"]
+        ), verdict)
+
+
+class TestTitleMetadata(CheckStyleTestCase):
+    STRUCTURE = {
+        "schema": "x",
+        "pack_type": "report_structure",
+        "name": "synthetic-structure",
+        "version": 1,
+        "title_format": "An Inquiry into {topic}",
+    }
+
+    def test_activity_topic_metadata_without_declared_key_warns(self):
+        self.write_content(
+            "과목: Synthetic Physics\n"
+            "활동주제: An Inquiry into Orbital Motion\n"
+            "탐구방법: Synthetic comparison\n\n"
+            "# 1. Introduction\n"
+        )
+
+        verdict, code = self.check(prose={}, structure=self.STRUCTURE)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(item["code"] == "TITLE" for item in verdict["warn"]))
+
+    def test_pack_declared_activity_topic_metadata_is_used_as_title(self):
+        self.write_content(
+            "과목: Synthetic Physics\n"
+            "활동주제: An Inquiry into Orbital Motion\n"
+            "탐구방법: Synthetic comparison\n\n"
+            "# 1. Introduction\n"
+        )
+        structure = {
+            **self.STRUCTURE,
+            "title_metadata_keys": ["활동주제"],
+        }
+
+        verdict, code = self.check(prose={}, structure=structure)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "TITLE" for item in verdict["warn"]))
+
+    def test_pack_keys_extend_documented_title_metadata_defaults(self):
+        self.write_content(
+            "title: An Inquiry into Orbital Motion\n\n"
+            "# 1. Introduction\n"
+        )
+        structure = {
+            **self.STRUCTURE,
+            "title_metadata_keys": ["활동주제"],
+        }
+
+        verdict, code = self.check(prose={}, structure=structure)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "TITLE" for item in verdict["warn"]))
+
+    def test_mismatching_activity_topic_metadata_still_warns(self):
+        self.write_content(
+            "과목: Synthetic Physics\n"
+            "활동주제: Unrelated label\n\n"
+            "# 1. Introduction\n"
+        )
+
+        structure = {
+            **self.STRUCTURE,
+            "title_metadata_keys": ["활동주제"],
+        }
+
+        verdict, code = self.check(prose={}, structure=structure)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(item["code"] == "TITLE" for item in verdict["warn"]))
+
+
 if __name__ == "__main__":
     unittest.main()

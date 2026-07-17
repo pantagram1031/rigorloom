@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/constants_allowlist-v1",
+  "title": "Numeric constants allowlist preference pack",
+  "description": "Universal or operator-approved numeric constants exempt from unbacked_numeral when value and optional unit match.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["value", "label"],
+    "properties": {
+      "value": {"type": "number"},
+      "unit": {"type": "string"},
+      "label": {"type": "string"}
+    }
+  }
+}

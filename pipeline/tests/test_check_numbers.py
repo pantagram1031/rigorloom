@@ -35,6 +35,37 @@ class CheckNumbersTestCase(unittest.TestCase):
             json.dumps(payload, ensure_ascii=False), encoding="utf-8"
         )
 
+    def write_backed_claim(
+        self,
+        text: str,
+        *,
+        evidence: bool = True,
+        resolvable: bool = True,
+    ) -> None:
+        (self.ws / "research").mkdir(exist_ok=True)
+        source_id = "synthetic-source"
+        (self.ws / "research" / "sources.json").write_text(
+            json.dumps(
+                [{"id": source_id, "title": "Synthetic evidence"}]
+                if resolvable else []
+            ),
+            encoding="utf-8",
+        )
+        evidence_items = ([{
+            "source_id": source_id,
+            "locator": "section 1",
+            "quote": "Synthetic numeric support.",
+        }] if evidence else [])
+        (self.ws / "claims.yaml").write_text(json.dumps({
+            "schema": "rigorloom-claims/v1",
+            "claims": [{
+                "id": "synthetic-numeric-claim",
+                "text": text,
+                "kind": "numeric",
+                "evidence": evidence_items,
+            }],
+        }), encoding="utf-8")
+
 
 class TestNumericProvenance(CheckNumbersTestCase):
     def test_body_numeral_present_in_results_passes(self):
@@ -74,6 +105,39 @@ class TestNumericProvenance(CheckNumbersTestCase):
         self.assertFalse(any(
             item["code"] == "unbacked_numeral"
             for item in verdict["hard"] + verdict["warn"]
+        ), verdict)
+
+    def test_environment_constants_pack_is_used_by_cli(self):
+        self.write_content("# Result\nThe calibration value was 98.765 dB.\n")
+        self.write_results({"seed": 17, "metrics": {"level_db": 12.345}})
+        root = Path(self._tmp.name) / "profile-constants"
+        (root / "packs").mkdir(parents=True)
+        (root / "packs" / "constants_allowlist.json").write_text(
+            json.dumps([{
+                "value": 98.765,
+                "unit": "dB",
+                "label": "synthetic calibration constant",
+            }]),
+            encoding="utf-8",
+        )
+        env = dict(
+            os.environ,
+            RIGORLOOM_PROFILE_ROOT=str(root),
+            PYTHONIOENCODING="utf-8",
+        )
+
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--require-seed", str(self.ws)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+        )
+        verdict = json.loads(proc.stdout)
+
+        self.assertEqual(proc.returncode, 0, verdict)
+        self.assertFalse(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
         ), verdict)
 
     def test_explicit_allowlist_precedes_environment_profile(self):
@@ -123,6 +187,67 @@ class TestNumericProvenance(CheckNumbersTestCase):
         self.assertTrue(any(
             item["code"] == "unbacked_numeral" for item in verdict["warn"]
         ))
+
+    def test_evidenced_resolvable_ledger_claim_backs_matching_numeral(self):
+        line = "The reference acceleration was 12.345 m/s^2."
+        self.write_content(f"# Result\n{line}\n")
+        self.write_results({"seed": 17, "other_value": 4.5})
+        self.write_backed_claim(line)
+
+        verdict, code = check_numbers.check(str(self.ws), require_seed=True)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
+        ), verdict)
+
+    def test_unevidenced_ledger_claim_does_not_back_matching_numeral(self):
+        line = "The reference acceleration was 12.345 m/s^2."
+        self.write_content(f"# Result\n{line}\n")
+        self.write_results({"seed": 17, "other_value": 4.5})
+        self.write_backed_claim(line, evidence=False)
+
+        verdict, code = check_numbers.check(str(self.ws), require_seed=True)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
+        ), verdict)
+
+    def test_unresolvable_ledger_source_does_not_back_matching_numeral(self):
+        line = "The reference acceleration was 12.345 m/s^2."
+        self.write_content(f"# Result\n{line}\n")
+        self.write_results({"seed": 17, "other_value": 4.5})
+        self.write_backed_claim(line, resolvable=False)
+
+        verdict, code = check_numbers.check(str(self.ws), require_seed=True)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
+        ), verdict)
+
+    def test_public_constant_with_matching_unit_is_exempt(self):
+        self.write_content("# Method\nReference gravity was 9.81 m/s^2.\n")
+        self.write_results({"seed": 17, "other_value": 4.5})
+
+        verdict, code = check_numbers.check(str(self.ws), require_seed=True)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
+        ), verdict)
+
+    def test_public_constant_value_with_wrong_unit_still_warns(self):
+        self.write_content("# Result\nThe synthetic level was 9.81 dB.\n")
+        self.write_results({"seed": 17, "other_value": 4.5})
+
+        verdict, code = check_numbers.check(str(self.ws), require_seed=True)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(any(
+            item["code"] == "unbacked_numeral" for item in verdict["warn"]
+        ), verdict)
 
     def test_year_and_allowlisted_count_pass(self):
         self.write_content("# Method\nIn 2024, 12 trials used a duration of 3.25 ms.\n")

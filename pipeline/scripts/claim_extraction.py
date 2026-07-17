@@ -21,7 +21,7 @@ NUMBER_RE = re.compile(
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w.])"
 )
 UNIT_RE = re.compile(
-    r"^\s*(?:%|\u2030|\u00b0\s*[CFK]?|dB|Hz|kHz|MHz|GHz|ms|\u03bcs|us|ns|s|min|h|"
+    r"^\s*(?:%|\u2030|\u00b0\s*[CFK]?|dB|Hz|kHz|MHz|GHz|ms|\u03bcs|us|ns|s|min|h|AU|"
     r"mm|cm|km|m|mg|kg|g|mL|L|N|Pa|kPa|MPa|J|W|kW|V|mV|A|mA|"
     r"\u03a9|ohm|rad|rpm|m/s|km/h|\ucd08|\ubd84|\uc2dc\uac04|\ub3c4|"
     r"\ud68c|\ubc88|\uac1c|\uba85|\uac74)(?![A-Za-z])",
@@ -61,6 +61,7 @@ REPORT_UNIT_ALIASES = {
     "percent": ("%", "dimensionless"),
     "퍼센트": ("%", "dimensionless"),
     "dB": ("dB", "logarithmic_ratio"),
+    "AU": ("AU", "length"),
     "데시벨": ("dB", "logarithmic_ratio"),
     "min": ("min", "time"),
     "minute": ("min", "time"),
