@@ -64,6 +64,8 @@ DEFAULT_NOW_YEAR = 2026
 DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.I)
 REFERENCE_SECTION_RE = re.compile(
     r"^\s*(?:(?:\u203b|#+|-|:)\s*)*"
+    r"(?:section\s*:\s*)?"
+    r"(?:(?:\d+|[ivxlcdm]+|[\u2160-\u217f]+)\s*[.)]\s*)?"
     r"(?:references?(?:\s+and\s+notes)?|reference\s+list|bibliography|"
     r"works\s+cited|literature\s+cited|endnotes?|sources?|source\s+list|"
     r"\ucc38\uace0\s*\ubb38\ud5cc|\ucc38\uace0\s*\uc790\ub8cc|"
@@ -152,7 +154,7 @@ def _isbn13(value: str) -> str | None:
     return stem + str((10 - subtotal % 10) % 10)
 
 
-def _reference_section(markdown: str) -> tuple[bool, list[tuple[int, str]]]:
+def reference_section(markdown: str) -> tuple[bool, list[tuple[int, str]]]:
     """Return whether a recognized section exists and its nonblank lines."""
     located: list[tuple[int, str]] = []
     in_sources = False
@@ -174,7 +176,7 @@ def _reference_section(markdown: str) -> tuple[bool, list[tuple[int, str]]]:
 
 
 def _reference_lines(markdown: str) -> list[tuple[int, str]]:
-    return _reference_section(markdown)[1]
+    return reference_section(markdown)[1]
 
 
 def _identifier_continuation(line: str) -> bool:
@@ -417,7 +419,7 @@ def check(
 
     root = _resolve_profile_root(profile_root)
     cache_root = root / "cache" / "sources" if root else None
-    section_found, _ = _reference_section(markdown)
+    section_found, _ = reference_section(markdown)
     entries = parse_reference_entries(markdown)
     hard: list[dict] = []
     warn: list[dict] = []

@@ -218,6 +218,9 @@ class CheckSourcesTests(unittest.TestCase):
             "Reference List",
             "Literature Cited",
             "References and Notes",
+            "7. 참고문헌",
+            "SECTION: VI. 참고문헌",
+            "SECTION: Ⅵ. 참고 문헌",
         )
         doi = "10." + "1234/heading-variant"
         for heading in headings:

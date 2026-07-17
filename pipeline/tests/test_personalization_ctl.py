@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,7 @@ assert SPEC.loader
 SPEC.loader.exec_module(personalization)
 
 
-def _write(path: Path, value: dict) -> Path:
+def _write(path: Path, value: Any) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     return path
@@ -115,6 +116,42 @@ def test_pack_type_mismatch_rejected(tmp_path: Path) -> None:
     pack_file = _write(tmp_path / "prose.json", _valid_prose_pack())
     with pytest.raises(ValueError):
         personalization.register_pack(root, "figure_style", pack_file)
+
+
+def test_constants_allowlist_is_a_validated_list_pack(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    constants = [
+        {"value": 9.81, "unit": "m/s^2", "label": "standard gravity"},
+        {"value": 3.14159, "label": "pi approximation"},
+    ]
+
+    result = personalization.register_pack(
+        root,
+        "constants_allowlist",
+        _write(tmp_path / "constants.json", constants),
+    )
+
+    assert result["ok"] is True
+    assert personalization.stored_pack(root, "constants_allowlist") == constants
+    assert personalization.validate_instance(
+        constants,
+        personalization.pack_schema("constants_allowlist"),
+    ) == []
+
+
+def test_constants_allowlist_rejects_missing_label(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+
+    with pytest.raises(ValueError) as caught:
+        personalization.register_pack(
+            root,
+            "constants_allowlist",
+            _write(tmp_path / "constants.json", [{"value": 9.81}]),
+        )
+
+    assert "label" in str(caught.value)
 
 
 def test_resolve_lock_is_hash_only(tmp_path: Path) -> None:

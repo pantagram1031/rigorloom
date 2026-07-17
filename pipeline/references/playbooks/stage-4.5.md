@@ -33,14 +33,16 @@ EXACT actions:
    # exit 0 → auto_approved (HARD rules all clean) → advance
    # nonzero → rejected (HARD violation) → fix content.md, re-run check
    ```
-   HARD rules (fail-closed): no web URLs, no '~습니다' polite endings, every
+   HARD rules (fail-closed): no web URLs in body prose (URLs inside a recognized
+   bibliography/reference section are source metadata), no '~습니다' polite endings, every
    `[[FIG]]` file present, 세특 ≤1500 B, no LaTeX/tag leak in any assembled PDF.
    Invalid explicit seed values remain HARD. A missing seed is HARD only when
    canonical `sim/results.json` contains other numeric simulation results; it
    is WARN for empty, boolean-only, compatibility, or otherwise ambiguous
    artifacts.
    WARN rules (괄호-영어 gloss, numbered refs, unmatched in-text cites, and
-   body numerals absent from recursively collected `sim/results.json` values)
+   body numerals absent from recursively collected `sim/results.json` values,
+   evidenced/resolvable `claims.yaml` entries, and validated constants)
    never fail the gate; suspect numerals remain visible for human review.
    check_refs.py is fully advisory: caption-number gaps/duplicates, dangling
    figure/table references, and unreferenced figures are WARN suspects for
@@ -51,6 +53,11 @@ EXACT actions:
    Pass report-specific proper nouns via `--allowlist` if the checker is invoked
    directly for triage. Legitimate non-simulation numbers may be listed in
    `<PROFILE_ROOT>/packs/numeral_allowlist.txt` (one exact number per line).
+   Reusable constants belong in the validated
+   `<PROFILE_ROOT>/packs/constants_allowlist.json` list; an item is
+   `{"value": number, "unit": optional-string, "label": string}`. The neutral
+   public default covers universal constants and common conversions. A unitful
+   entry exempts only the same value with the same normalized unit.
    The operator environment/bootstrap must set
    `RIGORLOOM_PROFILE_ROOT=<PROFILE_ROOT>` before `pipeline_ctl check`; the gate
    then schema-validates every recognized operator pack (including figure
@@ -59,7 +66,8 @@ EXACT actions:
    `content_audit.py --profile-root <PROFILE_ROOT>` overrides the environment.
    With neither source set (or with an invalid environment directory), neutral
    defaults remain unchanged. Direct `check_numbers.py` calls likewise derive
-   `--allow` from the valid environment root only when `--allow` is absent.
+   `--allow` and `--constants` from the valid environment root only when
+   their explicit options are absent.
 4. Any content edit made AFTER this gate passes → invalidate from 4.5 so the
    frozen input and downstream assembly are rebuilt from the corrected prose:
    ```

@@ -51,6 +51,20 @@ class TestPositive(VerifyContentTestCase):
         self.assertTrue(verdict["ok"])
         self.assertEqual(verdict["counts"]["hard"], 0)
 
+    def test_url_inside_recognized_reference_section_is_not_H1(self):
+        self.write_content(
+            "# Synthetic report\n"
+            "Body prose contains no web citation.\n\n"
+            "## 참고 문헌\n"
+            "- Example Author (2024). Synthetic source. "
+            "https://example.invalid/source\n"
+        )
+
+        verdict, code = self.check()
+
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "H1" for item in verdict["hard"]))
+
 
 class TestNegative(VerifyContentTestCase):
     def test_missing_content_md_is_usage_exit_2(self):

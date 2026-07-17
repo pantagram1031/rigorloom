@@ -2,6 +2,21 @@
   "schema": "report-pipeline/preference-pack/gloss_allowlist-v1",
   "pack_type": "gloss_allowlist",
   "name": "neutral-default",
-  "version": 1,
-  "terms": ["Hz", "dB", "DOI", "mm", "kg", "RK4"]
+  "version": 2,
+  "terms": [
+    "Hz",
+    "dB",
+    "DOI",
+    "mm",
+    "kg",
+    "RK4",
+    "SymPy",
+    "NumPy",
+    "SciPy",
+    "MATLAB",
+    "Python",
+    "Arduino",
+    "pandas",
+    "Matplotlib"
+  ]
 }
