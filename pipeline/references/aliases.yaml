@@ -6,6 +6,7 @@ aliases:
   - {id: assemble-only, have: [content_md, form, verdict_45], want: verdict_6, forced: [], status: active}
   - {id: conditions-only, have: [constraints, form], want: verdict_6, forced: [], status: active}
   - {id: backfill, have: [content_md, hwpx, proof], want: verdict_6, forced: [claim_extract, retro_research], status: active}
-  - {id: form-edit, have: [report, edit_request, verdict_45], want: verdict_6, forced: [edit], status: planned}
-  - {id: form-convert, have: [report, form, verdict_45], want: verdict_6, forced: [content_extract], status: planned}
-  - {id: taste-mine, have: [corpus], want: pack_draft, forced: [], status: planned}
+  - {id: form-edit, have: [report, edit_request], want: verdict_6, forced: [edit], status: active}
+  - {id: form-convert, have: [report, form], want: verdict_6, forced: [content_extract, convert_parity], status: active}
+  - {id: taste-mine, have: [corpus], want: pack_draft, forced: [style_extract], status: active}
+  - {id: form-mine, have: [form_instances], want: form_template, forced: [form_extract], status: active}

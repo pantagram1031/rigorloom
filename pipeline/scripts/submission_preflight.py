@@ -296,12 +296,8 @@ def _canonical_structure_element(element: ElementTree.Element) -> dict:
     }
 
 
-def _hwpx_form_structure_sha256(path: Path) -> str:
-    """Hash style, section, table/cell, and control skeletons without text/tails.
-
-    The supplied baseline is trusted-on-record; one recorded after mutation
-    cannot reveal that mutation. Signed external provenance is deferred.
-    """
+def _hwpx_form_structure_records(path: Path) -> list[dict]:
+    """Walk form-owned elements without text/tails for reuse by form_extract."""
     records = []
     with zipfile.ZipFile(path) as archive:
         bad = archive.testzip()
@@ -325,6 +321,16 @@ def _hwpx_form_structure_sha256(path: Path) -> str:
                         "element": _canonical_structure_element(element),
                     })
                     occurrence += 1
+    return records
+
+
+def _hwpx_form_structure_sha256(path: Path) -> str:
+    """Hash style, section, table/cell, and control skeletons without text/tails.
+
+    The supplied baseline is trusted-on-record; one recorded after mutation
+    cannot reveal that mutation. Signed external provenance is deferred.
+    """
+    records = _hwpx_form_structure_records(path)
     canonical = json.dumps(
         records, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")

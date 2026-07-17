@@ -1,5 +1,5 @@
 schema: rigorloom-modules/v1
-artifact_types: [constraints, topic, evidence_pack, claims, design, data, content_draft, content_md, form, hwpx, proof, verdict_45, verdict_6, report, edit_request, edited_report, corpus, form_template, pack_draft]
+artifact_types: [constraints, topic, evidence_pack, claims, design, data, content_draft, content_md, form, hwpx, proof, verdict_45, verdict_6, report, edit_request, edited_report, corpus, form_instances, form_template, pack_draft, convert_verdict]
 # Applying build modules retains the registered gate floor from stages.yaml:
 # gate-bearing stages inside the selected span, 2.5 when Stage 2 is selected,
 # and 5.3/5.5/5.7/6 when the span enters Stage 5. Module stage mappings name
@@ -15,11 +15,14 @@ modules:
   - {id: humanize, consumes: [content_draft], produces: [content_md], stage: 4, gates: [], os: any, status: active}
   - {id: content_verify, consumes: [content_md], produces: [verdict_45], stage: 4.5, gates: [content_audit], os: any, status: active}
   - {id: assemble, consumes: [content_md, form, verdict_45], produces: [hwpx], stage: 5, gates: [], os: tiered, status: active}
+  - {id: convert_parity, consumes: [content_md, hwpx], produces: [convert_verdict], stage: pipeline/scripts/check_convert_parity.py, gates: [convert_content_drift], os: any, status: active}
   # Render probing/proof routing runs in Stage 5 via doc_backend.py. Stage 5.3
   # is the separate verify_format.py gate and is retained by the applied floor.
   - {id: render_proof, consumes: [hwpx], produces: [proof], stage: 5, gates: [], os: tiered, status: active}
   - {id: submit_verify, consumes: [hwpx, proof, verdict_45], produces: [verdict_6], stage: 6, gates: [submission_preflight], os: any, status: active}
-  - {id: content_extract, consumes: [report], produces: [content_md], stage: pipeline/scripts/content_extract.py, gates: [], os: any, status: planned}
-  - {id: form_extract, consumes: [corpus], produces: [form_template], stage: pipeline/scripts/form_extract.py, gates: [], os: any, status: planned}
-  - {id: style_extract, consumes: [corpus, form_template], produces: [pack_draft], stage: pipeline/scripts/style_extract.py, gates: [], os: any, status: planned}
-  - {id: edit, consumes: [report, edit_request], produces: [edited_report, hwpx], stage: 2, graph: edit, gates: [edit_spec, content_audit, edit_verify, edit_accept], os: tiered, status: active}
+  - {id: content_extract, consumes: [report], produces: [content_md], stage: pipeline/scripts/content_extract.py, gates: [extraction_fidelity], os: any, status: active}
+  - {id: form_extract, consumes: [form_instances], produces: [form_template], stage: pipeline/scripts/form_extract.py, gates: [skeleton_hash_sanity], os: any, status: active}
+  # content.md has no trustworthy visual-style evidence; output is DRAFT only
+  # and style_extract refuses profile-root destinations.
+  - {id: style_extract, consumes: [corpus], produces: [pack_draft], stage: pipeline/scripts/style_extract.py, gates: [schema_validation], os: any, status: active}
+  - {id: edit, consumes: [report, edit_request], produces: [edited_report, hwpx, verdict_6], stage: 2, graph: edit, gates: [edit_spec, content_audit, edit_verify, edit_accept, submission_preflight], os: tiered, status: active}

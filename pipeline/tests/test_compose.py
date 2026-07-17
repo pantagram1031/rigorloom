@@ -60,6 +60,7 @@ def _synthetic_catalog(
 
 def _init_workspace(
     tmp_path: Path, request_text: str, *, mode: str = "autonomous",
+    graph: str = "build",
 ) -> Path:
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -70,19 +71,16 @@ def _init_workspace(
     payload, code = _run_ctl(
         "init", str(ws), "--slug", "synthetic", "--mode", mode,
         "--subject", "test", "--topic", "test topic", "--form", str(form),
+        "--graph", graph,
     )
     assert code == 0, payload
     return ws
 
 
-def test_catalog_has_sixteen_modules_and_only_w4_scripts_are_planned():
+def test_catalog_has_seventeen_active_modules_after_w4():
     catalog = compose.load_module_catalog()
-    assert len(catalog["modules"]) == 16
-    planned = {
-        module["id"] for module in catalog["modules"]
-        if module["status"] == "planned"
-    }
-    assert planned == {"content_extract", "form_extract", "style_extract"}
+    assert len(catalog["modules"]) == 17
+    assert all(module["status"] == "active" for module in catalog["modules"])
 
 
 def test_full_chain_from_topic_is_minimal_and_ordered():
@@ -101,18 +99,44 @@ def test_verify_only_given_content_is_short_chain():
     assert plan["stages"] == ["6"]
 
 
-def test_planned_module_is_refused_with_clear_name():
+def test_w4_aliases_are_active_and_resolve_transform_chains():
     catalog = compose.load_module_catalog()
-    with pytest.raises(compose.ComposeError) as caught:
-        compose.build_plan(catalog, ["corpus"], "form_template")
-    message = str(caught.value)
-    assert "planned" in message
-    assert "form_extract" in message
+    aliases = compose.load_alias_catalog(module_catalog=catalog)
+    convert = compose.resolve_alias("form-convert", catalog, aliases)
+    taste = compose.resolve_alias("taste-mine", catalog, aliases)
+    form_mine = compose.resolve_alias("form-mine", catalog, aliases)
+    edit = compose.resolve_alias("form-edit", catalog, aliases)
 
-    with pytest.raises(compose.ComposeError) as extraction:
-        compose.build_plan(catalog, ["report"], "content_md")
-    assert "planned" in str(extraction.value)
-    assert "content_extract" in str(extraction.value)
+    assert convert["modules"] == [
+        "content_extract", "content_verify", "assemble", "convert_parity",
+        "render_proof", "submit_verify",
+    ]
+    assert convert["modules"][-1] == "submit_verify"
+    assert taste["modules"] == ["style_extract"]
+    assert form_mine["modules"] == ["form_extract"]
+    assert edit["modules"] == ["edit"]
+    modules = {module["id"]: module for module in catalog["modules"]}
+    assert modules["content_extract"]["gates"] == ["extraction_fidelity"]
+    assert modules["convert_parity"]["gates"] == ["convert_content_drift"]
+    assert "submission_preflight" in modules["edit"]["gates"]
+
+
+def test_form_edit_apply_retains_full_graph_and_final_preflight(tmp_path):
+    ws = _init_workspace(
+        tmp_path,
+        "mode: form-edit\ntopic: edit\nform: refs/form.hwpx\n",
+        graph="edit",
+    )
+    (ws / "edit_request.yaml").write_text("changes: test\n", encoding="utf-8")
+    catalog = compose.load_module_catalog()
+    aliases = compose.load_alias_catalog(module_catalog=catalog)
+    plan = compose.resolve_alias("form-edit", catalog, aliases)
+
+    applied = compose.apply_plan(ws, plan, catalog)
+    header = pipeline_ctl.load_header(ws)[3]
+
+    assert applied == ["0", "1", "2", "2.5", "3", "3.5", "4", "4.5", "5"]
+    assert header["stages"]["4.5"]["gate"]["name"] == "submission_preflight"
 
 
 def test_cycle_detection_uses_runtime_assembled_fixture(tmp_path):
