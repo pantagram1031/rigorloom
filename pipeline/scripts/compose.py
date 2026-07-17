@@ -334,6 +334,24 @@ def resolve_modules(
     resolving_artifacts: list[str] = []
     resolving_modules: list[str] = []
 
+    def module_reachable(module: dict, seen: frozenset[str] = frozenset()) -> bool:
+        for consumed in module["consumes"]:
+            if consumed in available:
+                continue
+            if consumed in seen:
+                return False
+            upstream = [
+                candidate for candidate in producers.get(consumed, [])
+                if candidate["status"] == "active"
+                and candidate["graph"] == module["graph"]
+            ]
+            if not upstream or not any(
+                module_reachable(candidate, seen | {consumed})
+                for candidate in upstream
+            ):
+                return False
+        return True
+
     def planned_error(items: list[dict], artifact: str | None = None) -> ComposeError:
         names = ", ".join(module["id"] for module in items)
         subject = f" for artifact '{artifact}'" if artifact else ""
@@ -377,6 +395,24 @@ def resolve_modules(
             ]
             if same_graph:
                 candidates = same_graph
+        elif selected:
+            selected_graphs = {by_id[module_id]["graph"] for module_id in selected}
+            if len(selected_graphs) == 1:
+                selected_graph = next(iter(selected_graphs))
+                same_graph = [
+                    module for module in candidates
+                    if module["graph"] == selected_graph
+                ]
+                if same_graph:
+                    candidates = same_graph
+        else:
+            # The build graph is the default workspace graph. Alternate graph
+            # producers become eligible once a forced module selects that graph.
+            build_graph = [
+                module for module in candidates if module["graph"] == "build"
+            ]
+            if build_graph:
+                candidates = build_graph
         active = [module for module in candidates if module["status"] == "active"]
         planned = [module for module in candidates if module["status"] == "planned"]
         if not allow_planned:
@@ -406,7 +442,24 @@ def resolve_modules(
         elif len(active) == 1:
             chosen = active[0]
         else:
-            ambiguous = satisfied if len(satisfied) > 1 else active
+            reachable = (
+                [module for module in active if module_reachable(module)]
+                if not satisfied else []
+            )
+            if len(reachable) == 1:
+                chosen = reachable[0]
+                resolving_artifacts.append(artifact)
+                try:
+                    schedule(chosen)
+                finally:
+                    resolving_artifacts.pop()
+                if artifact not in available:
+                    raise ComposeError(
+                        f"module '{chosen['id']}' did not provide requested "
+                        f"artifact '{artifact}'"
+                    )
+                return
+            ambiguous = satisfied if len(satisfied) > 1 else (reachable or active)
             names = ", ".join(module["id"] for module in ambiguous)
             raise ComposeError(
                 f"ambiguous active producers for artifact '{artifact}': {names}; "
@@ -664,6 +717,8 @@ def artifact_present(workspace: str | Path, artifact: str) -> bool:
         return _glob_file(ws, ("form_template.*", "refs/form_template.*"))
     if artifact == "pack_draft":
         return _glob_file(ws, ("packs/draft/*.*", "bundle/packs/draft/*.*"))
+    if artifact == "convert_verdict":
+        return _glob_file(ws, ("output/convert_parity*.json",))
     raise ComposeError(f"no workspace probe registered for artifact '{artifact}'")
 
 
@@ -696,6 +751,8 @@ def _mandatory_stage_floor(stages: Iterable[str], graph_ctx: dict) -> list[str]:
     """Project module stages onto the graph without deleting mandatory gates."""
     order = graph_ctx["order"]
     selected = set(stages)
+    if graph_ctx["name"] == "edit" and selected:
+        return list(order)
     if graph_ctx["name"] != "build" or not selected:
         return [stage for stage in order if stage in selected]
 

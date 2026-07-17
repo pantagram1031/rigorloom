@@ -7,4 +7,5 @@ stages:
   - {id: "3",   name: "reassemble",    gate: null,                                                                                                        playbook: "playbooks/edit-stage-3.md"}
   - {id: "3.5", name: "verify_out",    gate: {name: "edit_verify", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/verify_format.py", "{WS}"]},  playbook: "playbooks/edit-stage-3.5.md"}
   - {id: "4",   name: "accept",        gate: {name: "edit_accept", type: "human"},                                                                        playbook: "playbooks/edit-stage-4.md"}
+  - {id: "4.5", name: "submit_verify", gate: {name: "submission_preflight", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/submission_preflight.py", "{WS}"]}, playbook: "playbooks/edit-stage-4.5.md"}
   - {id: "5",   name: "deliver",       gate: null,                                                                                                        playbook: "playbooks/edit-stage-5.md"}

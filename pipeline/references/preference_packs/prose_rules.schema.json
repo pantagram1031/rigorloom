@@ -7,6 +7,27 @@
   "additionalProperties": false,
   "required": ["schema", "pack_type", "name", "version", "banned_patterns"],
   "properties": {
+    "draft": {"type": "boolean"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus"],
+      "properties": {
+        "corpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "mining_stats": {"type": "object", "additionalProperties": true},
     "schema": {"type": "string"},
     "pack_type": {"type": "string", "enum": ["prose_rules"]},
     "name": {"type": "string"},
