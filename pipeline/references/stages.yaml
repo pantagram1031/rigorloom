@@ -3,8 +3,8 @@ stages:
   - {id: "0",   name: "form_intake",   gate: {name: "topic_pick", type: "human"},                                                                         playbook: "playbooks/stage-0.md"}
   - {id: "1",   name: "research",      gate: null,                                                                                                        playbook: "playbooks/stage-1.md"}
   - {id: "2",   name: "design",        gate: {name: "design", type: "human"},                                                                             playbook: "playbooks/stage-2.md"}
-  # 2.5 layout gate — external checker: layout_plan_check.py from hwp-master; register locally, hence checker null.
-  - {id: "2.5", name: "layout_plan",   gate: {name: "layout", type: "script", checker: null},                                                             playbook: "playbooks/stage-2.5.md"}
+  # 2.5 layout gate — delegates to hwp-master's layout_plan_check via HWP_MASTER_SCRIPTS (check_layout.py).
+  - {id: "2.5", name: "layout_plan",   gate: {name: "layout", type: "script", checker: ["python", "{PIPELINE_SCRIPTS}/check_layout.py", "{WS}"]},         playbook: "playbooks/stage-2.5.md"}
   # 3 sane gate — checker is the per-workspace sim harness (emits sim/gate_result.json).
   - {id: "3",   name: "sim",           gate: {name: "sane", type: "script", checker: ["python", "{WS}/sim/gates.py"]},                                     playbook: "playbooks/stage-3.md"}
   - {id: "4",   name: "write",         gate: {name: "draft", type: "human"},                                                                              playbook: "playbooks/stage-4.md"}
