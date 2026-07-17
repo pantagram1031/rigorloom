@@ -44,27 +44,19 @@ import sys
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-import check_numbers  # noqa: E402
+import claim_extraction  # noqa: E402
 import check_units  # noqa: E402
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    usage_error,
+    verdict_skeleton,
+)
 
 
 ROUNDING_RELATIVE_TOLERANCE = 0.01
-SI_PREFIX_SCALES = {
-    '': 1.0,
-    'n': 1e-9,
-    'µ': 1e-6,
-    'μ': 1e-6,
-    'u': 1e-6,
-    'm': 1e-3,
-    'c': 1e-2,
-    'k': 1e3,
-    'M': 1e6,
-    'G': 1e9,
-}
-SI_BASE_UNITS = (
-    'mol', 'rad', 'Pa', 'Hz', 'cd', 'm', 's', 'g', 'L', 'N', 'J', 'W',
-    'V', 'A', 'Ω', 'C', 'K',
-)
+SI_PREFIX_SCALES = claim_extraction.SI_PREFIX_SCALES
+SI_BASE_UNITS = claim_extraction.SI_BASE_UNITS
 ENGLISH_ENTITY_RE = re.compile(
     r'(?<![\w])(?:[A-Z][a-z][A-Za-z0-9-]*|[A-Z]{2,})'
     r'(?:[ \t]+(?:[A-Z][a-z][A-Za-z0-9-]*|[A-Z]{2,})){0,3}(?![\w])'
@@ -73,28 +65,12 @@ BACKTICK_ENTITY_RE = re.compile(r'`(?P<entity>[^`\r\n]{2,60})`')
 KOREAN_ENTITY_RE = re.compile(
     r'(?<![가-힣])(?P<entity>[가-힣]{2,24}(?:대학교|대학|연구소|학회|재단|박물관|관측소|프로젝트))(?![가-힣])'
 )
-UNIT_EXTENSION_RE = re.compile(
-    r'^(?:(?:[/·*^]\s*[A-Za-zΑ-Ωα-ω0-9+-]+)|[²³])+'
-)
 SINGLE_TITLE_STOPWORDS = frozenset({
     'a', 'an', 'and', 'as', 'at', 'for', 'from', 'in', 'measurements', 'result',
     'results', 'the', 'this', 'to', 'using', 'we', 'with',
 })
-SUBJECT_PATTERNS = (
-    re.compile(
-        r'(?P<subject>[A-Za-z가-힣Α-Ωα-ω][A-Za-z0-9가-힣Α-Ωα-ω _/-]{0,79}?)'
-        r'\s*(?:=|:)\s*$'
-    ),
-    re.compile(
-        r'(?P<subject>[A-Za-z가-힣Α-Ωα-ω][A-Za-z0-9가-힣Α-Ωα-ω _/-]{0,79}?)'
-        r'\s*(?:은|는|이|가)\s*$'
-    ),
-    re.compile(
-        r'(?P<subject>[A-Za-z가-힣Α-Ωα-ω][A-Za-z0-9가-힣Α-Ωα-ω _/-]{0,79}?)'
-        r'\s+(?:is|was|were|equals?|measured(?:\s+at)?|reached)\s*$',
-        re.I,
-    ),
-)
+UNIT_EXTENSION_RE = claim_extraction.SAETEUK_UNIT_EXTENSION_RE
+SUBJECT_PATTERNS = claim_extraction.SUBJECT_PATTERNS
 GENERIC_QUANTITY_SUBJECTS = frozenset(
     re.sub(r'[\s_]+', ' ', quantity).strip().casefold()
     for quantity, _dimension in check_units.QUANTITY_DIMENSIONS
@@ -102,32 +78,23 @@ GENERIC_QUANTITY_SUBJECTS = frozenset(
 
 
 def _usage(workspace, message):
-    return {
-        'ok': False,
-        'workspace': str(workspace),
-        'checker': 'check_saeteuk',
-        'error': message,
-        'hard': [],
-        'warn': [],
-        'counts': {'hard': 0, 'warn': 0},
-        'verdict': 'usage_error',
-    }, 2
+    return usage_error(
+        str(workspace), "check_saeteuk", message,
+        counts={"hard": 0, "warn": 0},
+    )
 
 
 def _base_verdict(workspace) -> dict:
-    return {
-        'ok': True,
-        'workspace': str(workspace),
-        'checker': 'check_saeteuk',
-        'saeteuk_files': [],
-        'rounding_relative_tolerance': ROUNDING_RELATIVE_TOLERANCE,
-        'checked_numbers': 0,
-        'checked_entities': 0,
-        'hard': [],
-        'warn': [],
-        'counts': {'hard': 0, 'warn': 0},
-        'verdict': 'pass',
-    }
+    return verdict_skeleton(
+        str(workspace),
+        "check_saeteuk",
+        extra={
+            "saeteuk_files": [],
+            "rounding_relative_tolerance": ROUNDING_RELATIVE_TOLERANCE,
+            "checked_numbers": 0,
+            "checked_entities": 0,
+        },
+    )
 
 
 def _contained(root: Path, candidate: Path) -> bool:
@@ -190,88 +157,47 @@ def _discover_saeteuk(
 
 
 def _canonical_unit(value: str | None) -> tuple[str | None, float]:
-    """Return a case-sensitive base symbol and SI prefix scale."""
-    normalized = re.sub(r'\s+', '', value or '')
-    if not normalized:
-        return None, 1.0
-    for base in SI_BASE_UNITS:
-        for prefix, scale in SI_PREFIX_SCALES.items():
-            if normalized == prefix + base:
-                return base, scale
-    return normalized, 1.0
+    return claim_extraction.canonical_si_unit(value)
 
 
 def _normalize_subject(value: str) -> str | None:
-    value = re.sub(r'^\s*(?:#{1,6}|[-*+])\s*', '', value)
-    value = re.sub(r'[\s_]+', ' ', value).strip(' -/:;,.()[]{}').casefold()
-    value = re.sub(r'^(?:the|a|an)\s+', '', value)
-    return value or None
+    return claim_extraction.normalize_subject(value)
 
 
 def _subject_before(line: str, number_start: int) -> str | None:
-    prefix = line[:number_start]
-    boundary = max(prefix.rfind(mark) for mark in ';,.!?。！？')
-    clause = prefix[boundary + 1:]
-    for pattern in SUBJECT_PATTERNS:
-        match = pattern.search(clause)
-        if match:
-            return _normalize_subject(match.group('subject'))
-    return None
+    return claim_extraction.subject_before(
+        line, number_start, include_english=True
+    )
 
 
 def _unit_after(
     line: str, number_end: int
 ) -> tuple[str | None, str | None, float]:
-    suffix = line[number_end:number_end + 24]
-    match = check_numbers.UNIT_RE.match(suffix)
-    if match is None:
-        match = check_numbers.ENGLISH_COUNT_UNIT_RE.match(suffix)
-    if match is None:
+    tag = claim_extraction.match_saeteuk_unit(line[number_end:])
+    if tag is None:
         return None, None, 1.0
-    raw_with_space = match.group(0)
-    extension = UNIT_EXTENSION_RE.match(suffix[match.end():])
-    if extension:
-        raw_with_space += extension.group(0)
-    raw = raw_with_space.strip()
-    unit, scale = _canonical_unit(raw)
-    return raw, unit, scale
+    return tag["raw"], tag["canonical"], tag["scale"]
 
 
 def _number_claims(text: str, source: str) -> list[dict]:
-    '''Enrich check_numbers candidates without performing a second extraction.'''
-    cleaned = check_numbers.find_body(text)
-    candidates = check_numbers.extract_body_numerals(cleaned)
-    lines = cleaned.splitlines()
-    cursors: dict[int, int] = defaultdict(int)
-    claims = []
-    for candidate in candidates:
-        line_number = candidate['line']
-        if not (1 <= line_number <= len(lines)):
-            continue
-        line = lines[line_number - 1]
-        start = line.find(candidate['raw'], cursors[line_number])
-        if start < 0:
-            start = line.find(candidate['raw'])
-        if start < 0:
-            continue
-        end = start + len(candidate['raw'])
-        cursors[line_number] = end
-        unit_raw, unit, unit_scale = _unit_after(line, end)
-        value = candidate['value']
-        canonical_value = value * unit_scale
-        if not math.isfinite(value) or not math.isfinite(canonical_value):
-            continue
-        claims.append({
-            **candidate,
-            'source': source,
-            'subject': _subject_before(line, start),
-            'unit': unit,
-            'unit_raw': unit_raw,
-            'unit_scale': unit_scale,
-            'canonical_value': canonical_value,
-            'snippet': line.strip()[:160],
-        })
-    return claims
+    shared, _checked = claim_extraction.extract_numeric_claims(
+        text, source=source, policy="saeteuk"
+    )
+    return [
+        {
+            "value": claim["value"],
+            "raw": claim["raw"],
+            "line": claim["line"],
+            "source": claim["source"],
+            "subject": claim["subject"],
+            "unit": claim["unit"],
+            "unit_raw": claim["unit_raw"],
+            "unit_scale": claim["unit_scale"],
+            "canonical_value": claim["canonical_value"],
+            "snippet": claim["snippet"],
+        }
+        for claim in shared
+    ]
 
 
 def _sentence_initial(text: str, start: int) -> bool:
@@ -281,7 +207,7 @@ def _sentence_initial(text: str, start: int) -> bool:
 
 def extract_entities(text: str) -> list[dict]:
     '''Return deterministic proper-name anchors with stable line numbers.'''
-    cleaned = check_numbers.find_body(text)
+    cleaned = claim_extraction.find_body(text)
     found = []
     for match in BACKTICK_ENTITY_RE.finditer(cleaned):
         found.append((match.start(), match.group('entity').strip()))
@@ -580,20 +506,12 @@ def main(argv=None) -> int:
         default=ROUNDING_RELATIVE_TOLERANCE,
         help='relative rounding tolerance (default: 0.01)',
     )
-    args = parser.parse_args(argv)
-    verdict, code = check(args.workspace, tolerance=args.tolerance)
-    print(json.dumps(
-        verdict, ensure_ascii=False, indent=2, allow_nan=False
-    ))
-    return code
-
-
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding='utf-8')
-        except (AttributeError, ValueError):
-            pass
+    parser.add_argument('--out', default=None, help='write verdict JSON here')
+    return cli_main(
+        parser,
+        lambda args: check(args.workspace, tolerance=args.tolerance),
+        argv,
+    )
 
 
 if __name__ == '__main__':

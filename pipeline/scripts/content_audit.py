@@ -1,45 +1,58 @@
 # -*- coding: utf-8 -*-
 """content_audit.py — composite content gate for stage 4.5.
 
-Runs the seven deterministic content checkers as subprocesses and combines their
+Runs eight deterministic content checkers in-process and combines their
 verdicts:
-  1. verify_content.py <WS>   (web-citation / polite-ending / figure / leak)
-  2. check_style.py <WS>      (prose banned-patterns / signature caps / citation)
-  3. check_numbers.py --require-seed <WS> (body numerals / RNG provenance)
-  4. check_refs.py <WS>       (advisory figure/table numbering / xrefs)
-  5. check_figdata.py <WS>    (referenced PNG checksum integrity)
-  6. check_sources.py <WS>    (offline citation-reality verification)
-  7. check_units.py <WS>      (advisory unit/dimension consistency)
+  1. verify_content.check       (web-citation / polite-ending / figure / leak)
+  2. check_style.check          (prose banned-patterns / signature caps / citation)
+  3. check_numbers.check        (body numerals / RNG provenance)
+  4. check_refs.check           (advisory figure/table numbering / xrefs)
+  5. check_figdata.check        (referenced PNG checksum integrity)
+  6. check_sources.check        (offline citation-reality verification)
+  7. check_units.check          (advisory unit/dimension consistency)
+  8. check_saeteuk.check        (advisory early saeteuk consistency mirror)
+
+Stage 4.5 is early discovery: valid check_saeteuk HARD findings are demoted to
+WARN here. Stage 6 remains the full enforcement authority for those findings.
 
 When --profile-root <p> is given, pack files are resolved from it and forwarded.
-When the option is absent, a valid directory named by
-RIGORLOOM_PROFILE_ROOT is used instead:
-  <p>/packs/gloss_allowlist.json  -> verify_content --allowlist  (terms extracted
-        to a temp one-term-per-line file, since --allowlist takes a term list)
-  <p>/packs/prose_rules.json      -> check_style --pack
-  <p>/packs/report_structure.json -> check_style --structure-pack
-  <p>/packs/numeral_allowlist.txt -> check_numbers --allow
-All recognized JSON packs, including figure_style, are schema-validated before
-the forwarded subset reaches the content checkers. A missing pack file simply
-falls back to that checker's own neutral default.
-The resolved profile root is also forwarded to check_sources for its offline
-cache/sources lookup.
+When the option is absent, a valid directory named by RIGORLOOM_PROFILE_ROOT is
+used instead. All recognized JSON packs are schema-validated before the
+forwarded subset reaches the content checkers. A missing pack file falls back
+to that checker's neutral default. The resolved profile root is also forwarded
+to check_sources for its offline cache/sources lookup.
 
-Combined verdict: worst exit wins (3 hard > 2 usage > 0 pass). Any unexpected
-nonzero sub-checker exit is normalized to hard failure so it cannot be silently
-ignored. Findings from all seven sub-checkers are merged (each tagged with its
-source checker) into one JSON verdict printed to stdout. This is the argv bound
-to the content_audit gate in stages.yaml.
+Combined verdict: worst effective exit wins (3 hard > 2 usage > 0 pass). Any
+exception, invalid return, or unexpected exit is normalized to hard failure so
+it cannot pass silently. Findings are tagged with their source checker.
 
 Exit 0 = pass, 3 = HARD violation(s), 2 = a sub-checker usage error.
 """
-import sys, os, json, argparse, subprocess, tempfile
+import argparse
+import json
+import os
 from pathlib import Path
+import sys
+import traceback
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
-import personalization_ctl
+
+import check_figdata  # noqa: E402
+import check_numbers  # noqa: E402
+import check_refs  # noqa: E402
+import check_saeteuk  # noqa: E402
+import check_sources  # noqa: E402
+import check_style  # noqa: E402
+import check_units  # noqa: E402
+import personalization_ctl  # noqa: E402
+import verify_content  # noqa: E402
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    verdict_skeleton,
+)
 
 _VALIDATED_PACKS = tuple(personalization_ctl.PACK_TYPES)
 
@@ -63,72 +76,80 @@ def _worst(codes):
     return ranked[0] if ranked else 0
 
 
-def _run(argv):
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env)
-    stdout = proc.stdout or ""
-    stderr = (proc.stderr or "")[:400]
+def _run(name, checker, *args, **kwargs):
+    """Call one checker and normalize every fail-open return to exit 3."""
 
-    def invalid(message):
+    def invalid(message, *, exception=None):
         payload = {
             "ok": False,
             "verdict": "fail",
             "error": message,
             "hard": [],
             "warn": [],
+            "_failure_code": "USAGE",
         }
-        if stdout:
-            payload["raw"] = stdout[:400]
-        if stderr:
-            payload["stderr"] = stderr
+        if exception is not None:
+            payload["traceback"] = traceback.format_exc()[-1600:]
         return payload, 3
 
-    if not stdout.strip():
-        return invalid(
-            f"sub-checker exited {proc.returncode} without JSON stdout"
-        )
     try:
-        verdict = json.loads(stdout)
-    except json.JSONDecodeError:
-        return invalid("sub-checker produced non-JSON stdout")
+        result = checker(*args, **kwargs)
+    except Exception as exc:
+        return invalid(
+            f"{type(exc).__name__}: {exc}",
+            exception=exc,
+        )
+
+    if not isinstance(result, tuple) or len(result) != 2:
+        return invalid("sub-checker must return (verdict_dict, code)")
+    verdict, code = result
     if not isinstance(verdict, dict):
-        return invalid("sub-checker JSON stdout must be an object")
+        return invalid("sub-checker verdict must be an object")
     expected = {
         0: (True, "pass"),
         2: (False, "usage_error"),
         3: (False, "fail"),
-    }.get(proc.returncode)
+    }.get(code)
     if expected is None:
-        return invalid(f"sub-checker returned unexpected exit {proc.returncode}")
+        return invalid(f"sub-checker returned unexpected exit {code}")
     expected_ok, expected_verdict = expected
     if (
         verdict.get("ok") is not expected_ok
         or verdict.get("verdict") != expected_verdict
-        or (proc.returncode == 0 and bool(verdict.get("hard")))
+        or (code == 0 and bool(verdict.get("hard")))
     ):
-        return invalid(
-            "sub-checker exit is inconsistent with its JSON verdict"
-        )
-    return verdict, proc.returncode
+        return invalid("sub-checker exit is inconsistent with its JSON verdict")
+    return verdict, code
 
 
-def _gloss_terms_tempfile(pack_path):
-    """Extract terms[] from a gloss_allowlist pack and write them one-per-line
-    to a temp file suitable for verify_content --allowlist. Returns the path
-    (caller unlinks) or None if no usable terms."""
+def _gloss_terms(pack_path):
+    """Return the two legacy allowlist views without creating a temp file."""
     try:
         pack = personalization_ctl.load_pack_file(Path(pack_path))
     except Exception:
-        return None
+        return set(), []
     terms = pack.get("terms") if isinstance(pack, dict) else None
     if not terms:
-        return None
-    fd, path = tempfile.mkstemp(prefix="gloss_allow_", suffix=".txt")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        for t in terms:
-            f.write(f"{t}\n")
-    return path
+        return set(), []
+
+    rendered = "".join(f"{term}\n" for term in terms)
+    verify_terms = set()
+    for raw in rendered.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        if len(line) >= 2 and line[0] in "\"'" and line[-1] == line[0]:
+            line = line[1:-1]
+        if line:
+            verify_terms.add(line)
+    style_terms = [
+        line.strip()
+        for line in rendered.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    return verify_terms, style_terms
 
 
 def _number_allowlist_path(profile_root):
@@ -174,145 +195,187 @@ def _validate_operator_packs(packs_dir):
 def check(ws, profile_root=None):
     profile_root = _resolve_profile_root(profile_root)
     packs_dir = Path(profile_root) / "packs" if profile_root else None
-    py = sys.executable
+    checker_names = (
+        "verify_content",
+        "check_style",
+        "check_numbers",
+        "check_refs",
+        "check_figdata",
+        "check_sources",
+        "check_units",
+        "check_saeteuk",
+    )
 
     pack_findings = _validate_operator_packs(packs_dir) if packs_dir else []
     if pack_findings:
-        return {
-            "ok": False,
-            "workspace": ws,
-            "checker": "content_audit",
-            "sub_exit": {"verify_content": None, "check_style": None,
-                         "check_numbers": None, "check_refs": None,
-                         "check_figdata": None, "check_sources": None,
-                         "check_units": None},
-            "hard": pack_findings,
-            "warn": [],
-            "counts": {"hard": len(pack_findings), "warn": 0},
-            "verdict": "fail",
-        }, 3
+        verdict = verdict_skeleton(
+            ws,
+            "content_audit",
+            hard=pack_findings,
+            warn=[],
+            extra={"sub_exit": {name: None for name in checker_names}},
+        )
+        return verdict, 3
 
-    # --- verify_content ------------------------------------------------------
-    vc_argv = [py, str(_SCRIPTS_DIR / "verify_content.py"), ws]
-    gloss_tmp = None
+    verify_gloss_terms, style_gloss_terms = set(), []
     if packs_dir:
         gloss = packs_dir / "gloss_allowlist.json"
         if gloss.exists():
-            gloss_tmp = _gloss_terms_tempfile(gloss)
-            if gloss_tmp:
-                vc_argv += ["--allowlist", gloss_tmp]
-    try:
-        vc_verdict, vc_code = _run(vc_argv)
+            verify_gloss_terms, style_gloss_terms = _gloss_terms(gloss)
 
-        # --- check_style -----------------------------------------------------
-        cs_argv = [py, str(_SCRIPTS_DIR / "check_style.py"), ws]
-        if packs_dir:
-            prose = packs_dir / "prose_rules.json"
-            if prose.exists():
-                cs_argv += ["--pack", str(prose)]
-            structure = packs_dir / "report_structure.json"
-            if structure.exists():
-                cs_argv += ["--structure-pack", str(structure)]
-        if gloss_tmp:
-            # same allowlist exempts gloss-style banned patterns (e.g. "(dB)")
-            cs_argv += ["--allowlist", gloss_tmp]
-        cs_verdict, cs_code = _run(cs_argv)
+    def run_style():
+        prose_path = packs_dir / "prose_rules.json" if packs_dir else None
+        structure_path = (
+            packs_dir / "report_structure.json" if packs_dir else None
+        )
+        prose_pack = check_style._load_pack(
+            prose_path if prose_path and prose_path.exists() else None,
+            check_style.DEFAULT_PROSE_PACK,
+        )
+        structure_pack = (
+            personalization_ctl.load_pack_file(structure_path)
+            if structure_path and structure_path.exists()
+            else None
+        )
+        return check_style.check(
+            ws,
+            prose_pack=prose_pack,
+            structure_pack=structure_pack,
+            allow_terms=style_gloss_terms,
+        )
 
-        # --- check_numbers --------------------------------------------------
-        cn_argv = [py, str(_SCRIPTS_DIR / "check_numbers.py"),
-                   "--require-seed", ws]
+    def run_numbers():
         number_allow = _number_allowlist_path(profile_root)
-        if number_allow:
-            cn_argv += ["--allow", str(number_allow)]
-        cn_verdict, cn_code = _run(cn_argv)
+        if number_allow is None:
+            # Preserve the old subprocess CLI's inherited-environment fallback.
+            number_allow = check_numbers._environment_allowlist_path()
+        try:
+            allowed = check_numbers.load_allowlist(number_allow)
+        except OSError as exc:
+            return check_numbers._usage(
+                ws, f"allowlist unreadable: {exc}"
+            )
+        return check_numbers.check(
+            ws,
+            allowed_numbers=allowed,
+            require_seed=True,
+        )
 
-        # --- check_refs -----------------------------------------------------
-        cr_argv = [py, str(_SCRIPTS_DIR / "check_refs.py"), ws]
-        cr_verdict, cr_code = _run(cr_argv)
-
-        # --- check_figdata --------------------------------------------------
-        cf_argv = [py, str(_SCRIPTS_DIR / "check_figdata.py"), ws]
-        cf_verdict, cf_code = _run(cf_argv)
-
-        # --- check_sources --------------------------------------------------
-        csrc_argv = [py, str(_SCRIPTS_DIR / "check_sources.py"), ws]
-        if profile_root:
-            csrc_argv += ["--profile-root", str(profile_root)]
-        csrc_verdict, csrc_code = _run(csrc_argv)
-
-        # --- check_units ----------------------------------------------------
-        cu_argv = [py, str(_SCRIPTS_DIR / "check_units.py"), ws]
-        cu_verdict, cu_code = _run(cu_argv)
-    finally:
-        if gloss_tmp and os.path.exists(gloss_tmp):
-            os.unlink(gloss_tmp)
+    results = [
+        (
+            "verify_content",
+            *_run(
+                "verify_content",
+                verify_content.check,
+                ws,
+                allow_gloss=verify_gloss_terms,
+            ),
+        ),
+        ("check_style", *_run("check_style", run_style)),
+        ("check_numbers", *_run("check_numbers", run_numbers)),
+        ("check_refs", *_run("check_refs", check_refs.check, ws)),
+        ("check_figdata", *_run("check_figdata", check_figdata.check, ws)),
+        (
+            "check_sources",
+            *_run(
+                "check_sources",
+                check_sources.check,
+                ws,
+                profile_root=profile_root,
+            ),
+        ),
+        ("check_units", *_run("check_units", check_units.check, ws)),
+        (
+            "check_saeteuk",
+            *_run("check_saeteuk", check_saeteuk.check, ws),
+        ),
+    ]
 
     hard, warn = [], []
-    for name, verdict in (("verify_content", vc_verdict), ("check_style", cs_verdict),
-                          ("check_numbers", cn_verdict), ("check_refs", cr_verdict),
-                          ("check_figdata", cf_verdict),
-                          ("check_sources", csrc_verdict),
-                          ("check_units", cu_verdict)):
-        for h in verdict.get("hard", []) or []:
-            hard.append({"source": name, **h})
-        for w in verdict.get("warn", []) or []:
-            warn.append({"source": name, **w})
-        err = verdict.get("error")
-        if err:
-            finding = {"source": name, "code": "USAGE", "msg": err}
-            if verdict.get("stderr"):
-                finding["stderr"] = verdict["stderr"]
-            if verdict.get("raw"):
-                finding["raw"] = verdict["raw"]
-            hard.append(finding)
+    effective_codes = []
+    sub_exit = {}
+    for name, sub_verdict, sub_code in results:
+        sub_exit[name] = sub_code
+        advisory_saeteuk = name == "check_saeteuk"
+        for finding in sub_verdict.get("hard", []) or []:
+            tagged = {"source": name, **finding}
+            if advisory_saeteuk:
+                tagged["severity"] = "WARN"
+                warn.append(tagged)
+            else:
+                hard.append(tagged)
+        for finding in sub_verdict.get("warn", []) or []:
+            warn.append({"source": name, **finding})
 
-    code = _worst([vc_code, cs_code, cn_code, cr_code, cf_code, csrc_code,
-                   cu_code])
-    verdict = {
-        "ok": code == 0,
-        "workspace": ws,
-        "checker": "content_audit",
-        "sub_exit": {"verify_content": vc_code, "check_style": cs_code,
-                     "check_numbers": cn_code, "check_refs": cr_code,
-                     "check_figdata": cf_code, "check_sources": csrc_code,
-                     "check_units": cu_code},
-        "hard": hard,
-        "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if code == 0 else ("fail" if code == 3 else "usage_error"),
-    }
+        error = sub_verdict.get("error")
+        if error:
+            finding = {
+                "source": name,
+                "code": sub_verdict.get("_failure_code", "USAGE"),
+                "msg": error,
+            }
+            for field in ("traceback", "stderr", "raw"):
+                if sub_verdict.get(field):
+                    finding[field] = sub_verdict[field]
+            if advisory_saeteuk:
+                # The 4.5 saeteuk run is an early-discovery mirror; its own
+                # crash/usage failure must not block the cheap-edit stage.
+                # Stage 6 re-runs the same check with full HARD authority,
+                # so fail-closed enforcement is preserved there.
+                finding["severity"] = "WARN"
+                warn.append(finding)
+            else:
+                hard.append(finding)
+
+        if advisory_saeteuk:
+            effective_codes.append(0)
+        else:
+            effective_codes.append(sub_code)
+
+    code = _worst(effective_codes)
+    verdict = verdict_skeleton(
+        ws,
+        "content_audit",
+        hard=hard,
+        warn=warn,
+        extra={"sub_exit": sub_exit},
+        ok=code == 0,
+        verdict=(
+            "pass" if code == 0
+            else ("fail" if code == 3 else "usage_error")
+        ),
+    )
     return verdict, code
 
 
-def main():
-    ap = argparse.ArgumentParser(description="composite stage 4.5 content gate")
-    ap.add_argument("workspace", help="report workspace dir (…/workspaces/report-<slug>)")
-    ap.add_argument("--profile-root", default=None,
-                    help=("personalization profile root; packs/*.json forwarded to "
-                          "sub-checkers (default: valid RIGORLOOM_PROFILE_ROOT)"))
-    ap.add_argument("--out", default=None, help="write combined verdict JSON here")
-    a = ap.parse_args()
-    v, code = check(a.workspace, profile_root=a.profile_root)
-    js = json.dumps(v, ensure_ascii=False, indent=2)
-    if a.out:
-        open(a.out, "w", encoding="utf-8").write(js)
-    print(js)
-    sys.exit(code)
-
-
-
-def _utf8_stdio():
-    """Windows consoles/CI default to a legacy codepage; JSON/finding output is
-    UTF-8. Reconfigure stdio so printing Korean text never dies with a
-    UnicodeEncodeError (no-op where already UTF-8 or unsupported)."""
-    import sys as _sys
-    for stream in (_sys.stdout, _sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+def main(argv=None) -> int:
+    _utf8_stdio()
+    parser = argparse.ArgumentParser(
+        description="composite stage 4.5 content gate"
+    )
+    parser.add_argument(
+        "workspace",
+        help="report workspace dir (…/workspaces/report-<slug>)",
+    )
+    parser.add_argument(
+        "--profile-root",
+        default=None,
+        help=(
+            "personalization profile root; packs/*.json forwarded to "
+            "sub-checkers (default: valid RIGORLOOM_PROFILE_ROOT)"
+        ),
+    )
+    parser.add_argument(
+        "--out", default=None, help="write combined verdict JSON here"
+    )
+    return cli_main(
+        parser,
+        lambda args: check(
+            args.workspace, profile_root=args.profile_root
+        ),
+        argv,
+    )
 
 
 if __name__ == "__main__":
-    _utf8_stdio()
-    main()
+    raise SystemExit(main())

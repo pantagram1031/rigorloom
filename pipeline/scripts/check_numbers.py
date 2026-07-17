@@ -25,40 +25,31 @@ import sys
 from pathlib import Path
 
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+import claim_extraction  # noqa: E402
+from checker_base import (  # noqa: E402
+    _utf8_stdio,
+    cli_main,
+    exit_code,
+    usage_error,
+    verdict_skeleton,
+)
+
+
 RESULT_PATHS = (Path("sim/results.json"), Path("results.json"))
 PROVENANCE_PATHS = (
     Path("sim/provenance.json"),
     Path("sim/provenance"),
 )
 
-NUMBER_RE = re.compile(
-    r"(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+|\.\d+)"
-    r"(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w.])"
-)
-UNIT_RE = re.compile(
-    r"^\s*(?:%|\u2030|\u00b0\s*[CFK]?|dB|Hz|kHz|MHz|GHz|ms|\u03bcs|us|ns|s|min|h|"
-    r"mm|cm|km|m|mg|kg|g|mL|L|N|Pa|kPa|MPa|J|W|kW|V|mV|A|mA|"
-    r"\u03a9|ohm|rad|rpm|m/s|km/h|\ucd08|\ubd84|\uc2dc\uac04|\ub3c4|"
-    r"\ud68c|\ubc88|\uac1c|\uba85|\uac74)(?![A-Za-z])",
-    re.I,
-)
-ENGLISH_COUNT_UNIT_RE = re.compile(
-    r"^\s*(?:trials?|runs?|samples?|iterations?|cases?|times?)\b", re.I
-)
-REFERENCE_PREFIX_RE = re.compile(
-    r"(?:figure|fig\.?|table|page|pages|p\.?|pp\.?|section|sec\.?|"
-    r"\uadf8\ub9bc|\ud45c|\ud398\uc774\uc9c0|\ucabd|\uc808|\uc7a5)"
-    r"\s*(?:no\.?\s*)?$",
-    re.I,
-)
-REFERENCE_SUFFIX_RE = re.compile(
-    r"^\s*(?:\ucabd|\ud398\uc774\uc9c0|\uc808|\uc7a5)(?![A-Za-z])"
-)
-
-
-def find_body(md: str) -> str:
-    """Return content.md with build tags removed, matching sibling checkers."""
-    return re.sub(r"\[\[.*?\]\]", " ", md, flags=re.S)
+NUMBER_RE = claim_extraction.NUMBER_RE
+UNIT_RE = claim_extraction.UNIT_RE
+ENGLISH_COUNT_UNIT_RE = claim_extraction.ENGLISH_COUNT_UNIT_RE
+find_body = claim_extraction.find_body
+extract_body_numerals = claim_extraction.extract_body_numerals
+_is_number = claim_extraction.is_number
 
 
 def _read_json(path: Path):
@@ -66,10 +57,6 @@ def _read_json(path: Path):
         return json.loads(path.read_text(encoding="utf-8")), None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return None, str(exc)
-
-
-def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def collect_numeric_values(value) -> list[float]:
@@ -92,86 +79,6 @@ def _populated(value) -> bool:
     if isinstance(value, (dict, list, str)):
         return bool(value)
     return True
-
-
-def _parse_number(raw: str) -> float:
-    return float(raw.replace(",", ""))
-
-
-def _significant_digits(raw: str) -> int:
-    mantissa = re.split(r"[eE]", raw.replace(",", ""))[0].lstrip("+-")
-    digits = mantissa.replace(".", "").lstrip("0")
-    return len(digits)
-
-
-def _is_ignored_context(body: str, start: int, end: int, raw: str, value: float) -> bool:
-    before = body[max(0, start - 48):start]
-    after = body[end:end + 24]
-
-    # Four-digit years are metadata/citation context, not simulation claims.
-    if re.fullmatch(r"\d{4}", raw.replace(",", "")) and 1800 <= value <= 2199:
-        return True
-
-    line_start = body.rfind("\n", 0, start) + 1
-    line_end = body.find("\n", end)
-    if line_end < 0:
-        line_end = len(body)
-    line = body[line_start:line_end]
-    relative_start = start - line_start
-    relative_end = end - line_start
-    open_paren = line.rfind("(", 0, relative_start)
-    close_paren = line.find(")", relative_end)
-    if open_paren >= 0 and close_paren >= 0:
-        parenthetical = line[open_paren:close_paren + 1]
-        if re.search(r"(?:18|19|20|21)\d{2}", parenthetical):
-            return True
-    open_bracket = line.rfind("[", 0, relative_start)
-    close_bracket = line.find("]", relative_end)
-    if open_bracket >= 0 and close_bracket >= 0:
-        bracketed = line[open_bracket:close_bracket + 1]
-        if re.search(r"(?:18|19|20|21)\d{2}", bracketed):
-            return True
-    if REFERENCE_PREFIX_RE.search(before) or REFERENCE_SUFFIX_RE.match(after):
-        return True
-
-    # Markdown headings/list labels are structural indices ("## 3. ...", "1. ...").
-    line_prefix = before.rsplit("\n", 1)[-1]
-    if re.fullmatch(r"\s*#{1,6}\s*", line_prefix):
-        return True
-    if re.fullmatch(r"\s*", line_prefix) and re.match(r"\s*[.)]\s+", after):
-        return True
-    return False
-
-
-def _has_clear_unit(body: str, end: int) -> bool:
-    after = body[end:end + 24]
-    return bool(UNIT_RE.match(after) or ENGLISH_COUNT_UNIT_RE.match(after))
-
-
-def extract_body_numerals(body: str, allowed_numbers=None) -> list[dict]:
-    """Return conservative body-number candidates not covered by the allowlist."""
-    allowed = {float(v) for v in (allowed_numbers or set()) if _is_number(v)}
-    candidates = []
-    for match in NUMBER_RE.finditer(body):
-        raw = match.group(0)
-        try:
-            value = _parse_number(raw)
-        except ValueError:
-            continue
-        if not math.isfinite(value):
-            continue
-        if _is_ignored_context(body, match.start(), match.end(), raw, value):
-            continue
-        has_unit = _has_clear_unit(body, match.end())
-        if "." not in raw and "e" not in raw.lower() and not has_unit:
-            continue
-        if not has_unit and _significant_digits(raw) < 2:
-            continue
-        if any(value == allowed_value for allowed_value in allowed):
-            continue
-        line = body.count("\n", 0, match.start()) + 1
-        candidates.append({"value": value, "raw": raw, "line": line})
-    return candidates
 
 
 def load_allowlist(path) -> set[float]:
@@ -233,16 +140,7 @@ def _environment_allowlist_path() -> Path | None:
 
 
 def _usage(ws, message):
-    return {
-        "ok": False,
-        "workspace": str(ws),
-        "checker": "check_numbers",
-        "error": message,
-        "hard": [],
-        "warn": [],
-        "counts": {"hard": 0, "warn": 0},
-        "verdict": "usage_error",
-    }, 2
+    return usage_error(str(ws), "check_numbers", message)
 
 
 def _find_existing(ws: Path, candidates) -> Path | None:
@@ -346,36 +244,27 @@ def check(ws, tolerance=1e-3, allowed_numbers=None, require_seed=False):
                 "msg": "numeric seed not found in legacy/empty simulation artifacts",
             })
 
-    verdict = {
-        "ok": not hard,
-        "workspace": str(ws),
-        "checker": "check_numbers",
-        "results_file": (
-            results_path.relative_to(workspace).as_posix() if results_path else None
-        ),
-        "tolerance": float(tolerance),
-        "seed_required": bool(require_seed),
-        "checked_numerals": len(candidates),
-        "result_numeric_values": len(result_values),
-        "hard": hard,
-        "warn": warn,
-        "counts": {"hard": len(hard), "warn": len(warn)},
-        "verdict": "pass" if not hard else "fail",
-    }
-    return verdict, (0 if not hard else 3)
-
-
-def _emit(verdict, code, out=None):
-    rendered = json.dumps(
-        verdict, ensure_ascii=False, indent=2, allow_nan=False
+    verdict = verdict_skeleton(
+        str(ws),
+        "check_numbers",
+        hard=hard,
+        warn=warn,
+        extra={
+            "results_file": (
+                results_path.relative_to(workspace).as_posix()
+                if results_path else None
+            ),
+            "tolerance": float(tolerance),
+            "seed_required": bool(require_seed),
+            "checked_numerals": len(candidates),
+            "result_numeric_values": len(result_values),
+        },
     )
-    if out:
-        Path(out).write_text(rendered, encoding="utf-8")
-    print(rendered)
-    return code
+    return verdict, exit_code(hard=hard)
 
 
-def main():
+def main(argv=None) -> int:
+    _utf8_stdio()
     parser = argparse.ArgumentParser(
         description="check report body numerals against simulation results"
     )
@@ -394,32 +283,26 @@ def main():
         help="require a numeric seed for populated simulation results",
     )
     parser.add_argument("--out", default=None, help="write verdict JSON here")
-    args = parser.parse_args()
 
-    try:
-        allow_path = args.allow if args.allow is not None else _environment_allowlist_path()
-        allowed = load_allowlist(allow_path)
-    except OSError as exc:
-        verdict, code = _usage(args.workspace, f"allowlist unreadable: {exc}")
-        raise SystemExit(_emit(verdict, code, args.out))
-
-    verdict, code = check(
-        args.workspace,
-        tolerance=args.tolerance,
-        allowed_numbers=allowed,
-        require_seed=args.require_seed,
-    )
-    raise SystemExit(_emit(verdict, code, args.out))
-
-
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
+    def invoke(args):
         try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+            allow_path = (
+                args.allow
+                if args.allow is not None
+                else _environment_allowlist_path()
+            )
+            allowed = load_allowlist(allow_path)
+        except OSError as exc:
+            return _usage(args.workspace, f"allowlist unreadable: {exc}")
+        return check(
+            args.workspace,
+            tolerance=args.tolerance,
+            allowed_numbers=allowed,
+            require_seed=args.require_seed,
+        )
+
+    return cli_main(parser, invoke, argv)
 
 
 if __name__ == "__main__":
-    _utf8_stdio()
-    main()
+    raise SystemExit(main())
