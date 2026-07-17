@@ -20,7 +20,7 @@ from pathlib import Path
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
-from checker_base import cli_main, dump_json, usage_error  # noqa: E402
+from checker_base import cli_main, usage_error  # noqa: E402
 
 
 def _locate_delegate():
@@ -78,11 +78,12 @@ def main(argv=None):
     ap.add_argument("workspace")
     ap.add_argument("--plan", default=None)
     ap.add_argument("--form-profile", default=None)
-    a = ap.parse_args(argv)
-    verdict, code = check(a.workspace, plan=a.plan, form_profile=a.form_profile)
-    print(dump_json(verdict))
-    return code
+    return cli_main(
+        ap,
+        lambda a: check(a.workspace, plan=a.plan, form_profile=a.form_profile),
+        argv,
+    )
 
 
 if __name__ == "__main__":
-    sys.exit(cli_main(main))
+    sys.exit(main())
