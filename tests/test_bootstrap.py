@@ -34,14 +34,14 @@ def test_bootstrap_creates_smoke_artifacts(tmp_path: Path):
     proc = _run(tmp_path)
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
-    # Profile: all seven public default packs registered into the private store.
+    # Profile: every public default pack registered into the private store.
     packs = tmp_path / "prof" / "packs"
     assert packs.is_dir()
     names = sorted(p.name for p in packs.glob("*.json"))
     assert names == [
-        "backends.json", "figure_style.json", "gloss_allowlist.json",
-        "policy_floors.json", "prose_rules.json", "report_structure.json",
-        "saeteuk.json",
+        "backends.json", "constants_allowlist.json", "figure_style.json",
+        "gloss_allowlist.json", "policy_floors.json", "prose_rules.json",
+        "report_structure.json", "saeteuk.json",
     ]
 
     # Smoke workspace with the passing gate checker and the resolved gate.

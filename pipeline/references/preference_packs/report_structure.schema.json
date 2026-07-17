@@ -32,6 +32,11 @@
     "name": {"type": "string"},
     "version": {"type": "integer"},
     "title_format": {"type": "string"},
+    "title_metadata_keys": {
+      "type": "array",
+      "description": "Additional metadata keys that may carry the report title; extends the documented public defaults.",
+      "items": {"type": "string"}
+    },
     "section_policies": {"type": "object", "additionalProperties": true},
     "abstract_mode": {"type": "string"},
     "citation_style": {

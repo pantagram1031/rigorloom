@@ -24,7 +24,8 @@ DEFAULT_ROOT = Path(__file__).resolve().parents[2] / ".local" / "personalization
 PACK_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "references" / "preference_packs"
 PACK_DEFAULTS_DIR = PACK_SCHEMA_DIR / "defaults"
 PACK_TYPES = ["prose_rules", "figure_style", "report_structure", "saeteuk",
-              "gloss_allowlist", "backends", "policy_floors"]
+              "gloss_allowlist", "constants_allowlist", "backends",
+              "policy_floors"]
 
 
 def now() -> str:
@@ -207,6 +208,12 @@ def deep_merge(base: Any, over: Any) -> Any:
     return over
 
 
+def _pack_metadata(content: Any) -> tuple[Any, Any]:
+    if not isinstance(content, dict):
+        return None, None
+    return content.get("name"), content.get("version")
+
+
 def _get_dotted(obj: Any, dotted: str) -> tuple[bool, Any]:
     cur = obj
     for part in dotted.split("."):
@@ -233,9 +240,9 @@ def register_pack(root: Path, pack_type: str, file: Path) -> dict[str, Any]:
     if pack_type not in PACK_TYPES:
         raise ValueError(f"unknown pack type: {pack_type} (known: {', '.join(PACK_TYPES)})")
     content = load_pack_file(file)
-    if not isinstance(content, dict):
-        raise ValueError(f"pack file did not parse to a mapping: {file}")
-    declared = content.get("pack_type")
+    if not isinstance(content, (dict, list)):
+        raise ValueError(f"pack file did not parse to a mapping or list: {file}")
+    declared = content.get("pack_type") if isinstance(content, dict) else None
     if declared is not None and declared != pack_type:
         raise ValueError(f"pack_type mismatch: file declares {declared!r}, --type is {pack_type!r}")
     errors = validate_instance(content, pack_schema(pack_type))
@@ -244,8 +251,9 @@ def register_pack(root: Path, pack_type: str, file: Path) -> dict[str, Any]:
     store = root / "packs" / f"{pack_type}.json"
     write_json(store, content)
     digest = sha256_bytes(canonical_bytes(content))
-    return {"ok": True, "pack_type": pack_type, "name": content.get("name"),
-            "version": content.get("version"), "sha256": digest, "stored": str(store.resolve())}
+    name, version = _pack_metadata(content)
+    return {"ok": True, "pack_type": pack_type, "name": name,
+            "version": version, "sha256": digest, "stored": str(store.resolve())}
 
 
 def stored_pack(root: Path, pack_type: str) -> Any | None:
@@ -276,8 +284,9 @@ def list_packs(root: Path) -> dict[str, Any]:
             source = "public-default"
         else:
             source = "profile"
-        rows.append({"pack_type": pack_type, "source": source, "name": content.get("name"),
-                     "version": content.get("version"),
+        name, version = _pack_metadata(content)
+        rows.append({"pack_type": pack_type, "source": source, "name": name,
+                     "version": version,
                      "sha256": sha256_bytes(canonical_bytes(content))})
     return {"ok": True, "packs": rows}
 
@@ -328,8 +337,9 @@ def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> d
     records = []
     for pack_type in PACK_TYPES:
         content = resolved[pack_type]
+        name, version = _pack_metadata(content)
         records.append({"pack_type": pack_type, "source": source[pack_type],
-                        "name": content.get("name"), "version": content.get("version"),
+                        "name": name, "version": version,
                         "sha256": sha256_bytes(canonical_bytes(content))})
     return {"packs": records, "floor_warnings": floor_warnings}
 

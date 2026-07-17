@@ -312,6 +312,18 @@ class TestSaeteukAdvisory(ContentAuditTestCase):
 
 
 class TestPackSchema(ContentAuditTestCase):
+    def test_report_structure_accepts_optional_title_metadata_keys(self):
+        root = self.make_profile_root_with_structure()
+        pack_path = root / "packs" / "report_structure.json"
+        payload = json.loads(pack_path.read_text(encoding="utf-8"))
+        payload["title_metadata_keys"] = ["활동주제"]
+        pack_path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        findings = content_audit._validate_operator_packs(pack_path.parent)
+
+        self.assertEqual(findings, [])
+
     def test_invalid_operator_pack_fails_closed_before_forwarding(self):
         self.write_content(self._clean_body())
         root = self.make_profile_root_with_structure()

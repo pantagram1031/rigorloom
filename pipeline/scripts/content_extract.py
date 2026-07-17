@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""COM-free deterministic extraction of content and media from HWPX."""
+"""COM-free deterministic extraction of content and media from HWPX.
+
+Equation parity depends on symmetric source and Markdown fingerprints. Real
+HwpEqn scripts commonly contain literal square brackets; the Markdown tag
+parser is therefore quote-aware so a closing bracket inside the hwpeqn
+attribute is content, not the end of the EQ tag. This closes the W5 21-to-18
+and 39-to-38 equation undercounts without excluding any HWPX container type.
+"""
 from __future__ import annotations
 
 import argparse
@@ -28,7 +35,7 @@ HEADING = re.compile(
     r"(?:서론|본론|결론|초록|요약|참고문헌|introduction|methods?|results?|"
     r"discussion|conclusion|references))\s*$", re.I)
 ATTR = re.compile(r'\b([A-Za-z_][\w-]*)="([^"]*)"')
-EQ_TAG = re.compile(r"\[\[EQ\b([^\]]*)\]\]")
+EQ_TAG = re.compile(r'\[\[EQ\b((?:[^\]"]|"[^"]*")*)\]\]')
 PARAGRAPH_MARKER = re.compile(
     r"^<!-- HWPX-SOURCE-PARAGRAPHS: ([1-9]\d*) -->$")
 

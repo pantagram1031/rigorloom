@@ -21,7 +21,8 @@ HARD rules:
     in-text parenthetical (저자, 연도) citation is present         -> exit 3
 WARN rules:
   banned_patterns[*] with severity "warn" that match the body
-  report_structure.title_format mismatch vs the first heading (best-effort)
+  report_structure.title_format mismatch vs title metadata, falling back
+    to the first heading (best-effort)
 """
 import sys, os, re, json, argparse
 from pathlib import Path
@@ -30,6 +31,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 import personalization_ctl  # noqa: E402  (stdlib-only sibling module)
+import claim_extraction  # noqa: E402
 from checker_base import (  # noqa: E402
     _utf8_stdio,
     cli_main,
@@ -40,9 +42,29 @@ from checker_base import (  # noqa: E402
 
 _DEFAULTS_DIR = _SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
 DEFAULT_PROSE_PACK = _DEFAULTS_DIR / "prose_rules.json"
+DEFAULT_GLOSS_PACK = _DEFAULTS_DIR / "gloss_allowlist.json"
 
 # in-text parenthetical citation, e.g. "(김철수, 2020)" or "(Smith, 2019)".
 CITATION_PAREN_RE = re.compile(r"\([가-힣A-Za-z .]+,\s*\d{4}\)")
+DEFAULT_TITLE_METADATA_KEYS = ("title", "제목")
+
+
+def _title_metadata_re(additional_keys=None):
+    keys = list(DEFAULT_TITLE_METADATA_KEYS)
+    if isinstance(additional_keys, list):
+        keys.extend(
+            key.strip()
+            for key in additional_keys
+            if isinstance(key, str) and key.strip()
+        )
+    key_pattern = "|".join(re.escape(key) for key in dict.fromkeys(keys))
+    return re.compile(
+        rf"^\s*(?:{key_pattern})\s*[:：]\s*(?P<title>\S.*)\s*$",
+        re.I,
+    )
+
+
+TITLE_METADATA_RE = _title_metadata_re()
 
 
 def read(p):
@@ -60,6 +82,38 @@ def first_heading(md):
     return m.group(1).strip() if m else None
 
 
+def metadata_title(md, additional_keys=None):
+    """Return a recognized title metadata value before the first heading."""
+    matcher = (
+        _title_metadata_re(additional_keys)
+        if additional_keys
+        else TITLE_METADATA_RE
+    )
+    for line in md.splitlines():
+        if re.match(r"^\s*#{1,6}(?:\s+|$)", line):
+            break
+        match = matcher.match(line)
+        if match:
+            return match.group("title").strip()
+    return None
+
+
+def _default_gloss_terms():
+    pack = personalization_ctl.load_pack_file(DEFAULT_GLOSS_PACK)
+    terms = pack.get("terms", []) if isinstance(pack, dict) else []
+    return {term for term in terms if isinstance(term, str) and term}
+
+
+def _gloss_match_is_allowed(matched, allowed):
+    """Use exact parenthetical terms so short unit symbols cannot over-exempt."""
+    parenthetical = [
+        value.strip()
+        for value in re.findall(r"\(([^()]*)\)", matched)
+        if value.strip()
+    ]
+    return any(value in allowed for value in parenthetical)
+
+
 def _title_format_to_regex(title_format):
     """Turn a title_format template ('An Inquiry into {topic}') into a loose
     regex by escaping literals and replacing {placeholder} runs with '.+'."""
@@ -73,7 +127,22 @@ def check(ws, prose_pack=None, structure_pack=None, allow_terms=None):
     if md is None:
         return usage_error(ws, None, "bundle/content.md not found", minimal=True)
     body = find_body(md)
-    allow_terms = allow_terms or []
+    operator_allow_terms = set(allow_terms or [])
+    unit_terms = {
+        alias
+        for alias, (canonical, dimension) in (
+            claim_extraction.UNION_UNIT_ALIASES.items()
+        )
+        if dimension != "count" and alias == canonical
+    }
+    unit_terms.update(
+        canonical
+        for canonical, dimension in claim_extraction.UNION_UNIT_ALIASES.values()
+        if dimension != "count"
+    )
+    gloss_allow_terms = (
+        operator_allow_terms | _default_gloss_terms() | unit_terms
+    )
 
     # --- prose_rules ---------------------------------------------------------
     banned = prose_pack.get("banned_patterns", []) if isinstance(prose_pack, dict) else []
@@ -88,9 +157,20 @@ def check(ws, prose_pack=None, structure_pack=None, allow_terms=None):
             continue
         for m in rx.finditer(body):
             matched = m.group(0)
-            # allowlisted terms (units/symbols/proper nouns) exempt a match —
-            # e.g. a gloss rule hitting "거리(dB)" when dB is allowlisted
-            if any(t and t in matched for t in allow_terms):
+            # Gloss matches use exact parenthetical terms. Unit symbols come
+            # from claim_extraction's dictionary; public and operator gloss
+            # packs are additive. Other ban ids retain the legacy substring
+            # exemption for explicitly supplied operator terms.
+            if (
+                pid == "gloss-english"
+                and _gloss_match_is_allowed(matched, gloss_allow_terms)
+            ) or (
+                pid != "gloss-english"
+                and any(
+                    term and term in matched
+                    for term in operator_allow_terms
+                )
+            ):
                 continue
             hit = {"code": f"BAN:{pid}", "msg": entry.get("description", "banned pattern"),
                    "at": matched[:60]}
@@ -117,7 +197,9 @@ def check(ws, prose_pack=None, structure_pack=None, allow_terms=None):
                 hard.append({"code": "CITE", "msg": "in-text parenthetical citation but "
                              "citation_style.in_text is narrative", "at": m.group(0)[:40]})
         title_format = structure_pack.get("title_format")
-        heading = first_heading(md)
+        heading = metadata_title(
+            md, structure_pack.get("title_metadata_keys")
+        ) or first_heading(md)
         # In this pipeline's build grammar the document title never appears in
         # content.md — headings are '## SECTION: <anchor>' markers. Skip the
         # title check when that convention is detected (title lives in the form).
