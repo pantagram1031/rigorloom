@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rigorloom-claims/v1",
+  "title": "Rigorloom per-claim evidence ledger",
+  "type": "object",
+  "required": ["schema", "claims"],
+  "properties": {
+    "schema": {"const": "rigorloom-claims/v1"},
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "kind", "evidence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "text": {"type": "string", "minLength": 1},
+          "kind": {
+            "type": "string",
+            "enum": ["numeric", "citation", "qualitative"]
+          },
+          "evidence": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "required": ["source_id", "locator", "quote"],
+              "properties": {
+                "source_id": {"type": "string", "minLength": 1},
+                "locator": {"type": "string", "minLength": 1},
+                "quote": {"type": "string", "minLength": 1, "maxLength": 1000}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

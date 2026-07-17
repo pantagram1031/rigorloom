@@ -615,7 +615,7 @@ def artifact_present(workspace: str | Path, artifact: str) -> bool:
             and _valid_json(ws / "research" / "sources.json")
         )
     if artifact == "claims":
-        return _glob_file(ws, ("research/claims.yaml", "claims.yaml"))
+        return _nonempty(ws / "claims.yaml")
     if artifact == "design":
         return _nonempty(ws / "01_design.md")
     if artifact == "data":

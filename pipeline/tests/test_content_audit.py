@@ -2,7 +2,8 @@
 
 Runs the REAL sub-checker chain (verify_content.py + check_style.py +
 check_numbers.py + check_refs.py + check_figdata.py + check_sources.py +
-check_units.py + advisory check_saeteuk.py) against a synthetic workspace. Synthetic fixtures ONLY
+check_units.py + advisory check_saeteuk.py + check_claims.py) against a
+synthetic workspace. Synthetic fixtures ONLY
 (홍길동-style fakes).
   - clean bundle/content.md            -> exit 0
   - planted '습니다' polite ending     -> exit 3 (via verify_content path)
@@ -32,6 +33,7 @@ class ContentAuditTestCase(unittest.TestCase):
         self._env_patch = mock.patch.dict(os.environ, clear=False)
         self._env_patch.start()
         os.environ.pop("RIGORLOOM_PROFILE_ROOT", None)
+        os.environ.pop("RIGORLOOM_REQUIRE_LEDGER", None)
         self.ws = Path(self._tmp.name) / "report-synthetic"
         (self.ws / "bundle" / "figures").mkdir(parents=True, exist_ok=True)
         figure = self.ws / "bundle" / "figures" / "plot.png"
@@ -90,8 +92,39 @@ class TestClean(ContentAuditTestCase):
         self.assertEqual(
             set(verdict["sub_exit"]),
             {"verify_content", "check_style", "check_numbers", "check_refs",
-             "check_figdata", "check_sources", "check_units", "check_saeteuk"},
+             "check_figdata", "check_sources", "check_units", "check_saeteuk",
+             "check_claims"},
         )
+
+    def test_claim_checker_is_ninth_composed_gate(self):
+        self.write_content(self._clean_body())
+        missing_id = "local-" + "missing-evidence"
+        (self.ws / "claims.yaml").write_text(
+            json.dumps({
+                "schema": "rigorloom-claims/v1",
+                "claims": [{
+                    "id": "unsupported-qualitative-claim",
+                    "text": "Synthetic unsupported claim.",
+                    "kind": "qualitative",
+                    "evidence": [{
+                        "source_id": missing_id,
+                        "locator": "section 1",
+                        "quote": "Synthetic quote.",
+                    }],
+                }],
+            }),
+            encoding="utf-8",
+        )
+
+        verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["sub_exit"]["check_claims"], 3)
+        self.assertTrue(any(
+            item.get("source") == "check_claims"
+            and item.get("code") == "claim_source_missing"
+            for item in verdict["hard"]
+        ), verdict)
 
     def test_figdata_checker_is_fifth_composed_gate(self):
         self.write_content(self._clean_body())
@@ -119,6 +152,26 @@ class TestClean(ContentAuditTestCase):
             and item.get("code") == "unbacked_numeral"
             for item in verdict["warn"]
         ))
+
+    def test_truthy_require_ledger_environment_makes_unledgered_claim_hard(self):
+        self.write_content("# Result\nThe measured level was 7.654 dB.\n")
+        self.write_results({"seed": 21, "level_db": 1.234})
+        (self.ws / "claims.yaml").write_text(
+            json.dumps({"schema": "rigorloom-claims/v1", "claims": []}),
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(
+            os.environ, {"RIGORLOOM_REQUIRE_LEDGER": "yes"}, clear=False,
+        ):
+            verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item.get("source") == "check_claims"
+            and item.get("code") == "claim_unledgered"
+            for item in verdict["hard"]
+        ), verdict)
 
     def test_ref_checker_is_fourth_composed_gate(self):
         self.write_content(

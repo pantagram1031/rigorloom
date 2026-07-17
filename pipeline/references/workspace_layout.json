@@ -50,6 +50,7 @@
       "outputs": [
         {"pattern": "research/evidence.md", "required": true},
         {"pattern": "research/sources.json", "required": true},
+        {"pattern": "claims.yaml", "required": true},
         {"pattern": "research/curriculum.md", "required": false},
         {"pattern": "research/assets/*", "required": false}
       ]
@@ -91,6 +92,7 @@
       "inputs": [
         {"pattern": "research/evidence.md", "required": true},
         {"pattern": "research/sources.json", "required": true},
+        {"pattern": "claims.yaml", "required": true},
         {"pattern": "01_design.md", "required": true},
         {"pattern": "bundle/layout_plan.json", "required": true},
         {"pattern": "sim/gate_result.json", "required": true}
