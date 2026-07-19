@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigorloom.local/schemas/extension-pack-v1.json",
+  "title": "Rigorloom data-only extension pack manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "kind",
+    "rigorloom_api",
+    "priority",
+    "description",
+    "packs"
+  ],
+  "properties": {
+    "schema": {"const": "rigorloom/extension-pack-v1"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "kind": {"const": "data-pack"},
+    "rigorloom_api": {"const": 1},
+    "priority": {"type": "integer", "minimum": -1000, "maximum": 1000},
+    "description": {"type": "string", "minLength": 1},
+    "packs": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "prose_rules": {"type": "string"},
+        "figure_style": {"type": "string"},
+        "report_structure": {"type": "string"},
+        "saeteuk": {"type": "string"},
+        "gloss_allowlist": {"type": "string"},
+        "constants_allowlist": {"type": "string"}
+      }
+    }
+  }
+}

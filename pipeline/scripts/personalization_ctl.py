@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 import zipfile
@@ -26,6 +27,14 @@ PACK_DEFAULTS_DIR = PACK_SCHEMA_DIR / "defaults"
 PACK_TYPES = ["prose_rules", "figure_style", "report_structure", "saeteuk",
               "gloss_allowlist", "constants_allowlist", "backends",
               "policy_floors"]
+DATA_EXTENSION_PACK_TYPES = (
+    "prose_rules", "figure_style", "report_structure", "saeteuk",
+    "gloss_allowlist", "constants_allowlist",
+)
+EXTENSION_REGISTRY_SCHEMA = "rigorloom/extension-registry-v1"
+EXTENSION_RECEIPT_SCHEMA = "rigorloom/extension-receipt-v1"
+_EXTENSION_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
+_EXTENSION_VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
 def now() -> str:
@@ -208,6 +217,36 @@ def deep_merge(base: Any, over: Any) -> Any:
     return over
 
 
+def _stable_union(base: list[Any], over: list[Any]) -> list[Any]:
+    """Append JSON values once while preserving lower-precedence order."""
+    merged: list[Any] = []
+    seen: set[bytes] = set()
+    for item in [*base, *over]:
+        key = canonical_bytes(item)
+        if key not in seen:
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def merge_pack(pack_type: str, base: Any, over: Any) -> Any:
+    """Merge one preference-pack layer with pack-specific semantics.
+
+    Glossary terms and numeric constants are additive safety allowlists. A
+    higher-precedence profile may extend them but must not silently erase the
+    public baseline that keeps deterministic checkers from regressing.
+    """
+    merged = deep_merge(base, over)
+    if pack_type == "gloss_allowlist" and isinstance(base, dict) and isinstance(over, dict):
+        base_terms = base.get("terms", [])
+        over_terms = over.get("terms", [])
+        if isinstance(base_terms, list) and isinstance(over_terms, list):
+            merged["terms"] = _stable_union(base_terms, over_terms)
+    elif pack_type == "constants_allowlist" and isinstance(base, list) and isinstance(over, list):
+        merged = _stable_union(base, over)
+    return merged
+
+
 def _pack_metadata(content: Any) -> tuple[Any, Any]:
     if not isinstance(content, dict):
         return None, None
@@ -291,32 +330,134 @@ def list_packs(root: Path) -> dict[str, Any]:
     return {"ok": True, "packs": rows}
 
 
-def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> dict[str, Any]:
-    """Merge packs by precedence (defaults < global < subject < form), then apply
-    policy_floors LAST. Floor keys win unconditionally; a differing higher-precedence
-    value is refused and recorded as a warning. Returns hash-only records plus the
-    floor-warning list. Resolved rule CONTENT is never returned to the lock."""
+def _extension_registry(root: Path) -> dict[str, Any]:
+    path = root / "extensions" / "registry.json"
+    if not path.exists():
+        return {"schema": EXTENSION_REGISTRY_SCHEMA, "api": 1, "extensions": {}}
+    registry = read_json(path, {})
+    if (not isinstance(registry, dict)
+            or registry.get("schema") != EXTENSION_REGISTRY_SCHEMA
+            or registry.get("api") != 1
+            or not isinstance(registry.get("extensions"), dict)):
+        raise ValueError(f"invalid extension registry: {path}")
+    return registry
+
+
+def _contained_file(root: Path, relative: str) -> Path:
+    if not isinstance(relative, str):
+        raise ValueError(f"extension path must be a string: {relative!r}")
+    rel = Path(relative)
+    if rel.is_absolute() or rel.drive or ".." in rel.parts:
+        raise ValueError(f"extension path escapes install root: {relative}")
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"extension path escapes install root: {relative}") from exc
+    return candidate
+
+
+def _active_extension_layers(root: Path) -> list[dict[str, Any]]:
+    """Load active data packs and verify every byte against its install receipt."""
+    registry = _extension_registry(root)
+    layers: list[dict[str, Any]] = []
+    for extension_id, entry in registry["extensions"].items():
+        if not isinstance(extension_id, str) or not _EXTENSION_ID.fullmatch(extension_id):
+            raise ValueError(f"invalid extension id in registry: {extension_id!r}")
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid extension registry entry: {extension_id}")
+        version = entry.get("active_version")
+        if not isinstance(version, str) or not _EXTENSION_VERSION.fullmatch(version):
+            raise ValueError(f"invalid extension version in registry: {extension_id}@{version!r}")
+        record = entry.get("versions", {}).get(version) if isinstance(entry.get("versions"), dict) else None
+        if not isinstance(version, str) or not isinstance(record, dict):
+            raise ValueError(f"active extension version is not registered: {extension_id}@{version}")
+        extensions_root = root / "extensions"
+        target = _contained_file(extensions_root, f"{extension_id}/{version}")
+        receipt_path = target / ".receipt.json"
+        if not receipt_path.is_file():
+            raise ValueError(f"active extension receipt is missing: {extension_id}@{version}")
+        receipt = read_json(receipt_path, {})
+        if (not isinstance(receipt, dict)
+                or receipt.get("schema") != EXTENSION_RECEIPT_SCHEMA
+                or receipt.get("id") != extension_id
+                or receipt.get("version") != version):
+            raise ValueError(f"active extension receipt is invalid: {extension_id}@{version}")
+        receipt_sha = sha256_bytes(canonical_bytes(receipt))
+        if receipt_sha != record.get("receipt_sha256"):
+            raise ValueError(f"active extension receipt sha256 mismatch: {extension_id}@{version}")
+        priority = receipt.get("priority")
+        if priority != entry.get("priority"):
+            raise ValueError(f"active extension priority mismatch: {extension_id}@{version}")
+        file_hashes = receipt.get("files")
+        if not isinstance(file_hashes, dict):
+            raise ValueError(f"active extension file receipt is invalid: {extension_id}@{version}")
+        for relative, expected in file_hashes.items():
+            path = _contained_file(target, relative)
+            if not path.is_file() or sha256(path) != expected:
+                raise ValueError(f"active extension sha256 mismatch: {extension_id}@{version}/{relative}")
+        packs: dict[str, Any] = {}
+        receipt_packs = receipt.get("packs")
+        if not isinstance(receipt_packs, list) or not receipt_packs:
+            raise ValueError(f"active extension pack receipt is invalid: {extension_id}@{version}")
+        for row in receipt_packs:
+            if not isinstance(row, dict):
+                raise ValueError(f"active extension pack receipt is invalid: {extension_id}@{version}")
+            pack_type = row.get("pack_type")
+            if pack_type not in DATA_EXTENSION_PACK_TYPES:
+                raise ValueError(
+                    f"pack type is not allowed in a data-only extension: {pack_type}; "
+                    "backends and policy_floors require a separate trust model"
+                )
+            path = _contained_file(target, row.get("path", ""))
+            content = load_pack_file(path)
+            errors = validate_instance(content, pack_schema(pack_type))
+            if errors:
+                raise ValueError(
+                    f"active extension pack failed schema validation: {extension_id}@{version}: "
+                    + "; ".join(errors)
+                )
+            packs[pack_type] = content
+        layers.append({
+            "id": extension_id, "version": version, "priority": priority,
+            "receipt_sha256": receipt_sha, "packs": packs,
+        })
+    return sorted(layers, key=lambda row: (row["priority"], row["id"]))
+
+
+def resolve_pack_set(root: Path, subject: str | None = None,
+                     form_digest: str | None = None) -> dict[str, Any]:
+    """Resolve private pack content and receipt-backed extension provenance."""
+    layers = _active_extension_layers(root)
     resolved: dict[str, Any] = {}
-    source: dict[str, str] = {}
+    sources: dict[str, str] = {}
     for pack_type in PACK_TYPES:
         merged = pack_default(pack_type)
         src = "public-default"
+        for layer in layers:
+            if pack_type in layer["packs"]:
+                merged = merge_pack(pack_type, merged, layer["packs"][pack_type])
+                src = f"extension:{layer['id']}@{layer['version']}"
         glob = stored_pack(root, pack_type)
         if glob is not None:
-            merged = deep_merge(merged, glob)
+            merged = merge_pack(pack_type, merged, glob)
             src = "global"
         if subject:
             sub = root / "academics" / "subjects" / subject / "packs" / f"{pack_type}.json"
             if sub.exists():
-                merged = deep_merge(merged, json.loads(sub.read_text(encoding="utf-8")))
+                merged = merge_pack(
+                    pack_type, merged, json.loads(sub.read_text(encoding="utf-8"))
+                )
                 src = "subject"
         if form_digest:
             frm = root / "forms" / form_digest / "packs" / f"{pack_type}.json"
             if frm.exists():
-                merged = deep_merge(merged, json.loads(frm.read_text(encoding="utf-8")))
+                merged = merge_pack(
+                    pack_type, merged, json.loads(frm.read_text(encoding="utf-8"))
+                )
                 src = "form"
         resolved[pack_type] = merged
-        source[pack_type] = src
+        sources[pack_type] = src
 
     floor_warnings: list[dict[str, Any]] = []
     floors_pack = resolved.get("policy_floors", {})
@@ -333,15 +474,39 @@ def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> d
                                    "attempted_value": current, "floor_value": floor_value,
                                    "severity": entry.get("severity", "hard")})
         _set_dotted(target, key, floor_value)
+    extensions = [{key: row[key] for key in ("id", "version", "priority", "receipt_sha256")}
+                  for row in layers]
+    return {"contents": resolved, "sources": sources, "extensions": extensions,
+            "floor_warnings": floor_warnings}
 
+
+def resolve_pack_content(root: Path, pack_type: str, subject: str | None = None,
+                         form_digest: str | None = None) -> tuple[Any, dict[str, Any]]:
+    if pack_type not in PACK_TYPES:
+        raise ValueError(f"unknown pack type: {pack_type}")
+    result = resolve_pack_set(root, subject, form_digest)
+    return result["contents"][pack_type], {
+        "source": result["sources"][pack_type],
+        "extensions": result["extensions"],
+        "floor_warnings": result["floor_warnings"],
+    }
+
+
+def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> dict[str, Any]:
+    """Merge packs by precedence (defaults < extensions < global < subject < form), then apply
+    policy_floors LAST. Floor keys win unconditionally; a differing higher-precedence
+    value is refused and recorded as a warning. Returns hash-only records plus the
+    floor-warning list. Resolved rule CONTENT is never returned to the lock."""
+    result = resolve_pack_set(root, subject, form_digest)
     records = []
     for pack_type in PACK_TYPES:
-        content = resolved[pack_type]
+        content = result["contents"][pack_type]
         name, version = _pack_metadata(content)
-        records.append({"pack_type": pack_type, "source": source[pack_type],
+        records.append({"pack_type": pack_type, "source": result["sources"][pack_type],
                         "name": name, "version": version,
                         "sha256": sha256_bytes(canonical_bytes(content))})
-    return {"packs": records, "floor_warnings": floor_warnings}
+    return {"packs": records, "extensions": result["extensions"],
+            "floor_warnings": result["floor_warnings"]}
 
 
 def profile_paths(root: Path) -> dict[str, Path]:
@@ -443,7 +608,26 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
     }
     if overrides:
         effective["form_overrides"] = overrides
-    pack_resolution = resolve_packs(root, subject, str(form_digest) if form_digest else None)
+    resolved_pack_set = resolve_pack_set(root, subject, str(form_digest) if form_digest else None)
+    # Resolved rules are private operator data. They belong in the profile-side
+    # effective document, while the workspace lock receives hashes/provenance only.
+    effective["packs"] = resolved_pack_set["contents"]
+    pack_records = []
+    for pack_type in PACK_TYPES:
+        content = resolved_pack_set["contents"][pack_type]
+        name, version = _pack_metadata(content)
+        pack_records.append({
+            "pack_type": pack_type,
+            "source": resolved_pack_set["sources"][pack_type],
+            "name": name,
+            "version": version,
+            "sha256": sha256_bytes(canonical_bytes(content)),
+        })
+    pack_resolution = {
+        "packs": pack_records,
+        "extensions": resolved_pack_set["extensions"],
+        "floor_warnings": resolved_pack_set["floor_warnings"],
+    }
     # The private feedback log keeps full floor-override values (it never leaves
     # the profile root); the workspace lock, by contrast, must carry NO values.
     for warning in pack_resolution["floor_warnings"]:
@@ -470,12 +654,13 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
         for w in pack_resolution["floor_warnings"]
     ]
 
-    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 3, "generated_at": now(),
+    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 4, "generated_at": now(),
             "profile_schema": SCHEMA, "profile_root_hint": root.name, "form_sha256": form_digest,
             "subject": subject, "identity_enabled": bool(read_json(paths["identity"], {}).get("enabled")),
             "effective_sha256": effective_sha256,
             "resolved_path_hint": resolved_rel,
             "packs": pack_resolution["packs"],
+            "extensions": pack_resolution["extensions"],
             "floor_warnings": redacted_warnings,
             "sources": {"writing": "global-writing-profile", "subject": f"subject:{subject}" if subject else None,
                         "form": f"sha256:{form_digest}" if form_digest else None},
