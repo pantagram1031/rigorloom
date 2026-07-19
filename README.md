@@ -254,6 +254,8 @@ Rigorloom is under active development on the v0.11 line. See
   walkthrough.
 - [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) — the stage
   graph and gate contract, read this before running a stage.
+- [docs/extensions.md](docs/extensions.md) — installable, data-only local
+  knowledge packs with immutable receipts and deterministic precedence.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 - [docs/plans/](docs/plans/) — design docs and hardening-wave reports.
 - [docs/lessons-learned.md](docs/lessons-learned.md),

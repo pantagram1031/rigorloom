@@ -138,6 +138,11 @@ def _gloss_terms(pack_path):
         pack = personalization_ctl.load_pack_file(Path(pack_path))
     except Exception:
         return set(), []
+    return _gloss_terms_from_pack(pack)
+
+
+def _gloss_terms_from_pack(pack):
+    """Return checker-specific term views from resolved pack content."""
     terms = pack.get("terms") if isinstance(pack, dict) else None
     if not terms:
         return set(), []
@@ -218,6 +223,20 @@ def check(ws, profile_root=None):
     )
 
     pack_findings = _validate_operator_packs(packs_dir) if packs_dir else []
+    resolved_packs = None
+    if profile_root and not pack_findings:
+        try:
+            resolved_packs = personalization_ctl.resolve_pack_set(
+                Path(profile_root), None, None
+            )["contents"]
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            pack_findings.append({
+                "source": "content_audit",
+                "code": "extension_pack_invalid",
+                "msg": "installed extension pack failed integrity validation",
+                "at": str(Path(profile_root) / "extensions"),
+                "errors": [str(exc)],
+            })
     if pack_findings:
         verdict = verdict_skeleton(
             ws,
@@ -228,32 +247,20 @@ def check(ws, profile_root=None):
         )
         return verdict, 3
 
-    verify_gloss_terms, style_gloss_terms = _gloss_terms(
-        check_style.DEFAULT_GLOSS_PACK
-    )
-    if packs_dir:
-        gloss = packs_dir / "gloss_allowlist.json"
-        if gloss.exists():
-            operator_verify, operator_style = _gloss_terms(gloss)
-            verify_gloss_terms |= operator_verify
-            style_gloss_terms = sorted(
-                set(style_gloss_terms) | set(operator_style)
-            )
+    if resolved_packs is not None:
+        verify_gloss_terms, style_gloss_terms = _gloss_terms_from_pack(
+            resolved_packs["gloss_allowlist"]
+        )
+    else:
+        verify_gloss_terms, style_gloss_terms = _gloss_terms(
+            check_style.DEFAULT_GLOSS_PACK
+        )
 
     def run_style():
-        prose_path = packs_dir / "prose_rules.json" if packs_dir else None
-        structure_path = (
-            packs_dir / "report_structure.json" if packs_dir else None
-        )
-        prose_pack = check_style._load_pack(
-            prose_path if prose_path and prose_path.exists() else None,
-            check_style.DEFAULT_PROSE_PACK,
-        )
-        structure_pack = (
-            personalization_ctl.load_pack_file(structure_path)
-            if structure_path and structure_path.exists()
-            else None
-        )
+        prose_pack = (resolved_packs["prose_rules"] if resolved_packs is not None
+                      else check_style._load_pack(None, check_style.DEFAULT_PROSE_PACK))
+        structure_pack = (resolved_packs["report_structure"]
+                          if resolved_packs is not None else None)
         return check_style.check(
             ws,
             prose_pack=prose_pack,
@@ -268,13 +275,9 @@ def check(ws, profile_root=None):
             number_allow = check_numbers._environment_allowlist_path()
         try:
             allowed = check_numbers.load_allowlist(number_allow)
-            constants_path = (
-                packs_dir / "constants_allowlist.json"
-                if packs_dir
-                and (packs_dir / "constants_allowlist.json").is_file()
-                else None
-            )
-            constants = check_numbers.load_constants_allowlist(constants_path)
+            constants = (resolved_packs["constants_allowlist"]
+                         if resolved_packs is not None
+                         else check_numbers.load_constants_allowlist(None))
         except (OSError, ValueError) as exc:
             return check_numbers._usage(
                 ws, f"allowlist unreadable: {exc}"
