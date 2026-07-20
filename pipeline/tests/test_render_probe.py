@@ -193,6 +193,77 @@ class TestRhwpProbe(unittest.TestCase):
         self.assertEqual(renderer["argv"][:2], ["wsl", "--"])
 
 
+class TestCertifiedRendererProbe(unittest.TestCase):
+    def test_valid_configured_certificate_advertises_certified_renderer(self):
+        certificate = {
+            "renderer_id": "mock",
+            "renderer_version": "mock 1.0",
+            "renderer_binary_path": "/opt/mock-renderer",
+            "renderer_argv": ["/opt/mock-renderer", "{in}", "{out}"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            cert_path = Path(tmp) / "certificate.json"
+            cert_path.write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(
+                    render_probe.render_cert,
+                    "verify_certificate",
+                    return_value={
+                        "ok": True,
+                        "reason_code": "certificate_valid",
+                        "certificate": certificate,
+                    },
+                ),
+                mock.patch.dict(os.environ, {
+                    "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
+                }, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertEqual(
+            result["capabilities"]["render_certificate_reason"],
+            "certificate_valid",
+        )
+        renderer = next(
+            item for item in result["renderers"]
+            if item["proof_grade"] == "certified"
+        )
+        self.assertEqual(renderer["certificate"], str(cert_path.resolve()))
+        self.assertEqual(renderer["argv"], certificate["renderer_argv"])
+
+    def test_invalid_certificate_is_not_advertised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cert_path = Path(tmp) / "certificate.json"
+            cert_path.write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(
+                    render_probe.render_cert,
+                    "verify_certificate",
+                    return_value={
+                        "ok": False,
+                        "reason_code": "certificate_hash_mismatch",
+                    },
+                ),
+                mock.patch.dict(os.environ, {
+                    "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
+                }, clear=True),
+            ):
+                result = render_probe.probe()
+
+        self.assertEqual(
+            result["capabilities"]["render_certificate_reason"],
+            "certificate_hash_mismatch",
+        )
+        self.assertFalse(any(
+            item.get("proof_grade") == "certified"
+            for item in result["renderers"]
+        ))
+
+
 class TestSofficePathPresent(unittest.TestCase):
     def test_soffice_local_renderer_has_placeholders(self):
         with (
@@ -300,6 +371,17 @@ class TestBestPdfCmd(unittest.TestCase):
              "argv": ["rhwp", "export-svg", "{in}", "-o", "{outdir}"]},
         ]}
         self.assertIsNone(render_probe.best_pdf_cmd(result))
+
+    def test_certified_pdf_command_outranks_advisory_soffice(self):
+        certified = {
+            "name": "certified_mock", "proof_grade": "certified",
+            "argv": ["mock-render", "{in}", "{out}"],
+        }
+        result = {"renderers": [
+            {"name": "soffice_local", "argv": ["soffice", "--headless"]},
+            certified,
+        ]}
+        self.assertEqual(render_probe.best_pdf_cmd(result), certified["argv"])
 
 
 class TestFormatTable(unittest.TestCase):

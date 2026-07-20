@@ -157,8 +157,11 @@ exits 4 and prints the exact fix instead of guessing.
 render capabilities (`render_probe.py`: Hancom COM, `soffice` local/WSL,
 H2Orestart) and picks a renderer:
 
-- Hancom COM available → `proof_grade: hancom` (the only submission-grade
-  proof this pipeline recognizes).
+- Hancom COM available → `proof_grade: hancom` (always outranks other grades).
+- No Hancom, but a probe-verified document-scoped certificate is configured
+  and `build.yaml` explicitly sets `certified_render: true` plus
+  `render_certificate: <path>` → eligible documents may receive
+  `proof_grade: certified`. This grade sits above advisory and below Hancom.
 - No Hancom, `soffice`+H2Orestart available, and the document has **no**
   equations → `proof_grade: advisory` (a LibreOffice-rendered PDF, not
   print-grade proof).
@@ -219,15 +222,18 @@ python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
 - `submission_preflight` composes `check_saeteuk.py`, checks the canonical
   artifact's identity fields against `request.yaml`, recomputes and compares
   the assembled HWPX's form-structure hash against `form_baseline.json`, and
-  requires `proof_grade` to be `hancom` or `advisory` — cross-checked against
-  this machine's actual render capabilities, so a recorded `hancom` grade
+  requires `proof_grade` to be `hancom`, `certified`, or `advisory`.
+  `certified` additionally requires the build opt-in, a passing live
+  `render_cert check`, and a certificate whose self-hash, corpus manifest,
+  renderer binary, and pinned versions re-verify. Hancom/advisory grades are
+  cross-checked against this machine's actual render capabilities, so a recorded `hancom` grade
   that can't be reproduced here (no Hancom on this delivery machine) is
   rejected rather than trusted blindly.
 
 ## 6. Where you land
 
 - Exit 0 on `submission_preflight` = a graded verdict: `proof_grade` is
-  `hancom` or `advisory`, the form structure is unmutated, and identity
+  `hancom`, `certified`, or `advisory`, the form structure is unmutated, and identity
   fields are filled. This is printed as JSON and can be written with `--out`.
 - An `advisory`-grade equation document, or any `proof_grade: none` run, is
   rejected by default. To record an explicit draft exception (never a silent

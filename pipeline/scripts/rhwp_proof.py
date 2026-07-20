@@ -20,7 +20,8 @@ PROOF_GRADE_RANK = {
     "none": 0,
     EXPERIMENTAL_GRADE: 1,
     "advisory": 2,
-    "hancom": 3,
+    "certified": 3,
+    "hancom": 4,
 }
 DEFAULT_TIMEOUT_SECONDS = 45.0
 _OUTPUT_LIMIT = 16_000
