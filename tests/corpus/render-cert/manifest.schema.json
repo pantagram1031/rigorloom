@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rigorloom renderer certification corpus",
+  "type": "object",
+  "required": ["schema_version", "documents"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "split", "document", "generator", "features", "reference_pdf", "hancom_version"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "split": {"enum": ["train", "holdout"]},
+          "document": {"type": "string", "minLength": 1},
+          "generator": {"type": "object"},
+          "features": {
+            "type": ["object", "null"],
+            "additionalProperties": {"type": "integer", "minimum": 1}
+          },
+          "reference_pdf": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          "hancom_version": {"type": ["string", "null"]},
+          "status": {"type": "string"}
+        }
+      }
+    }
+  }
+}

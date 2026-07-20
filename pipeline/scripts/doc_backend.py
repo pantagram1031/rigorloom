@@ -34,8 +34,11 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 _HERE = os.path.dirname(os.path.abspath(__file__))          # pipeline/scripts
 _PIPELINE_DIR = os.path.dirname(_HERE)                        # pipeline
@@ -46,6 +49,7 @@ if _HERE not in sys.path:
 
 from adapters_impl import read_build_yaml_key  # noqa: E402
 import rhwp_proof  # noqa: E402
+import render_cert  # noqa: E402
 
 _HWP_POINTER = (
     "hwp backend is an EXTERNAL adapter (Windows + Hancom + hwp-master).\n"
@@ -117,6 +121,32 @@ def _workspace_has_equations(ws: str, target: str, render_probe) -> bool:
     return False
 
 
+def _certified_renderer_for_workspace(ws: str, renderers: list[dict]) -> dict | None:
+    """Return the configured certified renderer only after explicit build opt-in."""
+    build = os.path.join(ws, "build.yaml")
+    enabled = read_build_yaml_key(build, "certified_render")
+    configured = read_build_yaml_key(build, "render_certificate")
+    if str(enabled or "").strip().casefold() != "true" or not configured:
+        return None
+    configured_path = Path(configured).expanduser()
+    if not configured_path.is_absolute():
+        configured_path = Path(ws) / configured_path
+    try:
+        expected = configured_path.resolve()
+    except OSError:
+        return None
+    for renderer in renderers:
+        if renderer.get("proof_grade") != "certified" or not renderer.get("argv"):
+            continue
+        try:
+            certificate = Path(str(renderer.get("certificate", ""))).resolve()
+        except OSError:
+            continue
+        if certificate == expected:
+            return dict(renderer)
+    return None
+
+
 def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
     """Choose proof routing for this workspace's assembled HWPX.
 
@@ -148,6 +178,13 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
             "pdf_cmd_argv": None,
         }
 
+    certified_renderer = _certified_renderer_for_workspace(ws, renderers)
+
+    def with_certified(decision: dict) -> dict:
+        if certified_renderer is not None:
+            decision["certified_renderer"] = certified_renderer
+        return decision
+
     rhwp_renderer = next(
         (renderer for renderer in renderers
          if renderer.get("name") == "rhwp_svg" and renderer.get("argv")),
@@ -160,7 +197,7 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
         None,
     )
     if rhwp_renderer is not None and (has_equations or soffice is None):
-        return {
+        return with_certified({
             "target": target,
             "equations": has_equations,
             "available": available,
@@ -169,25 +206,25 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
             "reason": "experimental_rhwp_available",
             "pdf_cmd_argv": None,
             "rhwp_renderer": dict(rhwp_renderer),
-        }
+        })
     if soffice is None:
-        return {
+        return with_certified({
             "target": target, "equations": has_equations,
             "available": available, "selected": None,
             "proof_grade": "none", "reason": "renderer_unavailable",
             "pdf_cmd_argv": None,
-        }
+        })
     if has_equations:
-        return {
+        return with_certified({
             "target": target, "equations": True, "available": available,
             "selected": None, "proof_grade": "none",
             "reason": "renderer_cannot_eqn", "pdf_cmd_argv": None,
-        }
-    return {
+        })
+    return with_certified({
         "target": target, "equations": False, "available": available,
         "selected": soffice["name"], "proof_grade": "advisory",
         "reason": "equation_free", "pdf_cmd_argv": list(soffice["argv"]),
-    }
+    })
 
 
 def _fill_report_help(fill_report: str) -> str:
@@ -207,14 +244,14 @@ def _fill_report_help(fill_report: str) -> str:
 
 def _public_renderer_decision(decision: dict) -> dict:
     return {key: value for key, value in decision.items()
-            if key not in {"pdf_cmd_argv", "rhwp_renderer"}}
+            if key not in {"pdf_cmd_argv", "rhwp_renderer", "certified_renderer"}}
 
 
 def _render_proof_summary(receipt: dict) -> dict:
     return {
         "ok": receipt.get("ok") is True,
         "proof_grade": receipt.get("proof_grade", "none"),
-        "submission_grade": False,
+        "submission_grade": receipt.get("submission_grade", False),
         "page_count": receipt.get("page_count", 0),
         "layout_overflow": receipt.get("layout_overflow"),
         "parity_verdict": receipt.get("parity_verdict", "fail"),
@@ -287,6 +324,131 @@ def _run_experimental_rhwp(
     )
 
 
+def _certified_timeout() -> float:
+    raw = os.environ.get("RIGORLOOM_CERTIFIED_RENDER_TIMEOUT", "").strip()
+    if not raw:
+        return render_cert.DEFAULT_RENDER_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return render_cert.DEFAULT_RENDER_TIMEOUT
+    return value if value > 0 else render_cert.DEFAULT_RENDER_TIMEOUT
+
+
+def _run_certified_renderer(
+    ws: str,
+    out_dir: str | None,
+    renderer: dict,
+) -> dict:
+    """Post-assembly certified render; replace the fallback PDF only on success."""
+    output = Path(out_dir or os.path.join(ws, "output")).resolve()
+    target = output / "out.hwpx"
+    certificate = Path(str(renderer.get("certificate", ""))).expanduser()
+    proof_dir = output / "proof" / "certified"
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "ok": False,
+        "renderer": renderer.get("name"),
+        "proof_grade": "none",
+        "submission_grade": False,
+        "page_count": 0,
+        "layout_overflow": None,
+        "parity_verdict": "fail",
+        "reason": "certified_check_failed",
+        "certificate": str(certificate),
+        "comparison": {},
+    }
+    try:
+        eligibility = render_cert.check_document(target, certificate)
+    except Exception as exc:
+        receipt["error"] = str(exc)
+        render_cert.write_json(proof_dir / "receipt.json", receipt)
+        return receipt
+    receipt["eligibility"] = eligibility
+    if eligibility.get("eligible") is not True:
+        receipt["reason"] = eligibility.get("reason_code", "certified_check_failed")
+        render_cert.write_json(proof_dir / "receipt.json", receipt)
+        return receipt
+
+    argv = renderer.get("argv")
+    if not isinstance(argv, list) or not argv:
+        receipt["reason"] = "certificate_runtime_command_invalid"
+        render_cert.write_json(proof_dir / "receipt.json", receipt)
+        return receipt
+    try:
+        with tempfile.TemporaryDirectory(prefix="candidate-", dir=proof_dir) as tmp:
+            candidate_dir = Path(tmp)
+            explicit_candidate = candidate_dir / "candidate.pdf"
+            input_value = str(target)
+            output_value = str(explicit_candidate)
+            outdir_value = str(candidate_dir)
+            if renderer.get("wsl"):
+                import render_probe
+                input_value = render_probe.to_wsl_path(input_value)
+                output_value = render_probe.to_wsl_path(output_value)
+                outdir_value = render_probe.to_wsl_path(outdir_value)
+            command = [
+                str(item).replace("{in}", input_value)
+                .replace("{out}", output_value)
+                .replace("{outdir}", outdir_value)
+                for item in argv
+            ]
+            receipt["command"] = command
+            completed = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=_certified_timeout(),
+            )
+            receipt["exit_code"] = completed.returncode
+            receipt["stdout"] = (completed.stdout or "")[-16000:]
+            receipt["stderr"] = (completed.stderr or "")[-16000:]
+            candidates = [explicit_candidate, candidate_dir / "out.pdf"]
+            produced = next(
+                (path for path in candidates if path.is_file() and path.stat().st_size > 0),
+                None,
+            )
+            if completed.returncode != 0:
+                receipt["reason"] = "certified_renderer_nonzero"
+            elif produced is None:
+                receipt["reason"] = "certified_renderer_output_missing"
+            else:
+                receipt["page_count"] = render_cert.pdf_page_count(produced)
+                staged = output / ".out.certified.tmp"
+                try:
+                    shutil.copyfile(produced, staged)
+                    os.replace(staged, output / "out.pdf")
+                finally:
+                    staged.unlink(missing_ok=True)
+                receipt.update({
+                    "ok": True,
+                    "proof_grade": "certified",
+                    "submission_grade": True,
+                    "parity_verdict": "pass",
+                    "reason": "certified_rendered",
+                    "certificate_sha256": eligibility.get("certificate_sha256"),
+                })
+    except subprocess.TimeoutExpired:
+        receipt["reason"] = "certified_renderer_timeout"
+    except (OSError, RuntimeError, ValueError) as exc:
+        receipt["reason"] = "certified_renderer_failed"
+        receipt["error"] = str(exc)
+
+    render_cert.write_json(proof_dir / "receipt.json", receipt)
+    if receipt["ok"]:
+        verdict_path = output / "verdict_v06.json"
+        try:
+            verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            verdict = None
+        if isinstance(verdict, dict):
+            verdict["certified_proof"] = _render_proof_summary(receipt)
+            existing = str(verdict.get("proof_grade", "none")).strip().lower()
+            if (rhwp_proof.PROOF_GRADE_RANK["certified"]
+                    > rhwp_proof.PROOF_GRADE_RANK.get(existing, -1)):
+                verdict["proof_grade"] = "certified"
+            render_cert.write_json(verdict_path, verdict)
+    return receipt
+
+
 def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     fill_report = _resolve_hwpx_fill_report()
     if fill_report is None:
@@ -336,7 +498,25 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     if completed.stderr:
         sys.stderr.write(completed.stderr)
     proof_receipt = None
-    if completed.returncode == 0 and decision.get("selected") == "rhwp_svg":
+    if completed.returncode == 0 and decision.get("certified_renderer"):
+        try:
+            certified_receipt = _run_certified_renderer(
+                ws, out_dir, decision["certified_renderer"]
+            )
+        except Exception as exc:
+            certified_receipt = {
+                "ok": False, "proof_grade": "none", "submission_grade": False,
+                "reason": "certified_renderer_failed", "error": str(exc),
+                "comparison": {},
+            }
+        if certified_receipt.get("ok") is True:
+            proof_receipt = certified_receipt
+            decision["selected"] = decision["certified_renderer"].get("name")
+            decision["proof_grade"] = "certified"
+            decision["reason"] = "certified_rendered"
+
+    if (completed.returncode == 0 and proof_receipt is None
+            and decision.get("selected") == "rhwp_svg"):
         try:
             proof_receipt = _run_experimental_rhwp(ws, out_dir, decision)
         except Exception as exc:

@@ -1,5 +1,8 @@
 # v0.15 — Renderer certification: retire Hancom from runtime to certification facility
 
+Swap: codex stalled after finishing the fix-round edits (no commit for 35+ min);
+Claude verified (634 tests green, opus re-audit READY) and committed.
+
 Status: PLANNED. Input: docs/research/linux-hwp-edit.md (merged, PR #26).
 Owner: orchestrator (Claude) plans/reviews; codex implements; opus judgment pass
 on the gate integration before merge.
@@ -18,6 +21,11 @@ a certification facility invoked when (re)issuing certificates.
 Non-goals: a universal "Linux renders HWP correctly" claim (induction problem —
 certificates are envelope-scoped and version-pinned); replacing the hancom
 proof grade as the default submit grade in this wave.
+
+Induction caveat: the certified envelope is downward-closed. A measured feature
+ceiling admits documents containing subset combinations beneath that ceiling,
+even when every subset was not independently measured; this extrapolation is
+intentional, envelope-scoped, and not evidence of universal renderer fidelity.
 
 ## Components
 

@@ -32,11 +32,12 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import render_probe
+import render_cert
 import check_saeteuk
 
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
-SUBMISSION_PROOF_GRADES = {"hancom", "advisory"}
+SUBMISSION_PROOF_GRADES = {"hancom", "certified", "advisory"}
 EXPERIMENTAL_PROOF_GRADES = {"experimental-rhwp"}
 MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 ASSEMBLY_VERDICT_REL = Path("output/verdict_v06.json")
@@ -273,6 +274,31 @@ def _proof_grade(ws: Path):
     if not isinstance(payload, dict) or "proof_grade" not in payload:
         return None, source
     return str(payload["proof_grade"]).strip().lower(), source
+
+
+def _build_scalar(path: Path, key: str) -> str | None:
+    """Read one top-level build.yaml scalar without accepting nested lookalikes."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    match = re.search(
+        rf"(?m)^{re.escape(key)}\s*:\s*([^#\r\n]+)", text
+    )
+    if not match:
+        return None
+    value = _unquote(match.group(1)).strip()
+    return value or None
+
+
+def _certified_build_config(ws: Path) -> tuple[bool, Path | None]:
+    build = ws / "build.yaml"
+    enabled = (_build_scalar(build, "certified_render") or "").casefold() == "true"
+    configured = _build_scalar(build, "render_certificate")
+    if not configured:
+        return enabled, None
+    path = Path(configured).expanduser()
+    return enabled, path if path.is_absolute() else ws / path
 
 
 def _normalized(value: str) -> str:
@@ -572,6 +598,10 @@ def check(
 
     grade, grade_source = _proof_grade(ws)
     delivery_capabilities = None
+    render_certificate_rel = None
+    render_certificate_verification = None
+    render_cert_check = None
+    render_cert_document = None
     if grade == "none" and allow_unproven:
         notes.append("draft explicitly allows proof_grade none (--allow-unproven)")
     elif grade in EXPERIMENTAL_PROOF_GRADES:
@@ -586,9 +616,91 @@ def check(
     elif grade not in SUBMISSION_PROOF_GRADES:
         hard.append({
             "code": "P5",
-            "msg": "graded submission proof_grade must be hancom or advisory",
+            "msg": "graded submission proof_grade must be hancom, certified, or advisory",
             "at": ASSEMBLY_VERDICT_REL.as_posix(),
         })
+    elif grade == "certified":
+        certified_enabled, certificate_path = _certified_build_config(ws)
+        if not certified_enabled:
+            hard.append({
+                "code": "P5",
+                "msg": "certified proof requires build.yaml certified_render: true opt-in",
+                "at": "build.yaml",
+            })
+        elif certificate_path is None or not certificate_path.is_file():
+            hard.append({
+                "code": "P5",
+                "msg": "certified proof requires an existing build.yaml render_certificate file",
+                "at": "build.yaml",
+            })
+        elif artifact is None or not artifact.is_file():
+            hard.append({
+                "code": "P5",
+                "msg": "certified proof cannot be checked without the canonical artifact",
+                "at": artifact_rel or "output/out.*",
+            })
+        else:
+            certificate_document = artifact
+            if artifact.suffix.lower() == ".pdf":
+                assembled_hwpx = ws / "output" / "out.hwpx"
+                certificate_document = (
+                    assembled_hwpx if assembled_hwpx.is_file() else None
+                )
+            if certificate_document is None:
+                hard.append({
+                    "code": "P5",
+                    "msg": (
+                        "certified PDF submission requires output/out.hwpx "
+                        "for feature re-check"
+                    ),
+                    "at": "output/out.hwpx",
+                })
+                certificate_document = artifact
+            try:
+                render_cert_document = (
+                    certificate_document.resolve()
+                    .relative_to(ws.resolve()).as_posix()
+                )
+            except (OSError, ValueError):
+                render_cert_document = str(certificate_document.resolve())
+            try:
+                render_certificate_rel = certificate_path.resolve().relative_to(ws.resolve()).as_posix()
+            except (OSError, ValueError):
+                render_certificate_rel = str(certificate_path.resolve())
+            try:
+                render_certificate_verification = render_cert.verify_certificate(certificate_path)
+            except Exception:
+                render_certificate_verification = {
+                    "ok": False, "reason_code": "certificate_probe_failed"
+                }
+            if render_certificate_verification.get("ok") is not True:
+                reason_code = render_certificate_verification.get(
+                    "reason_code", "certificate_invalid"
+                )
+                hard.append({
+                    "code": "P5",
+                    "msg": f"certified proof certificate re-verification failed: {reason_code}",
+                    "at": render_certificate_rel,
+                })
+            else:
+                try:
+                    render_cert_check = render_cert.check_document(
+                        certificate_document, certificate_path
+                    )
+                except Exception:
+                    render_cert_check = {
+                        "eligible": False, "reason_code": "certificate_check_failed"
+                    }
+                if render_cert_check.get("eligible") is not True:
+                    reason_code = render_cert_check.get(
+                        "reason_code", "certificate_check_failed"
+                    )
+                    hard.append({
+                        "code": "P5",
+                        "msg": f"certified proof eligibility check failed: {reason_code}",
+                        "at": render_cert_document or artifact_rel
+                        or ASSEMBLY_VERDICT_REL.as_posix(),
+                    })
     else:
         probe_result = render_probe.probe()
         capabilities = probe_result.get("capabilities", {})
@@ -648,6 +760,13 @@ def check(
         "counts": {"hard": len(hard), "warn": len(warn)},
         "verdict": "pass" if code == 0 else ("fail" if code == 3 else "usage_error"),
     }
+    if grade == "certified":
+        verdict.update({
+            "render_certificate": render_certificate_rel,
+            "render_certificate_verification": render_certificate_verification,
+            "render_cert_check": render_cert_check,
+            "render_cert_document": render_cert_document,
+        })
     return verdict, code
 
 
