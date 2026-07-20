@@ -81,11 +81,25 @@ SECTION_CONFIG_TAGS = frozenset({
 })
 
 
-def _attr_fingerprint(element: ElementTree.Element) -> str:
-    items = sorted(
+def _config_shape(element: ElementTree.Element) -> list:
+    # Canonical subtree shape: local name, sorted own attributes, children in
+    # document order. Children such as pageBorderFill/offset are rendering
+    # configuration too, so the fingerprint must cover the WHOLE subtree —
+    # own-attribute-only hashing would be fail-open for child-level variants.
+    attrs = sorted(
         (_local_name(name), str(value)) for name, value in element.attrib.items()
     )
-    blob = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    children = [
+        _config_shape(child) for child in element
+        if isinstance(child.tag, str)
+    ]
+    return [_local_name(element.tag), attrs, children]
+
+
+def _attr_fingerprint(element: ElementTree.Element) -> str:
+    blob = json.dumps(
+        _config_shape(element), ensure_ascii=False, separators=(",", ":"),
+    )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:8]
 
 

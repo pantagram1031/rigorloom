@@ -127,7 +127,9 @@ class FeatureExtractTestCase(unittest.TestCase):
       <hp:pagePr width="59528" height="84186">
         <hp:margin left="5669" right="5669" top="5669" bottom="5669"/>
       </hp:pagePr>
-      <hp:pageBorderFill type="{border}" borderFillIDRef="1"/>
+      <hp:pageBorderFill type="{border}" borderFillIDRef="1">
+        <hp:offset left="{offset}" right="1417" top="1417" bottom="1417"/>
+      </hp:pageBorderFill>
       <hp:visibility hideFirstHeader="{hide}"/>
     </hp:secPr>
   </hp:run></hp:p>
@@ -135,16 +137,17 @@ class FeatureExtractTestCase(unittest.TestCase):
 """
         with tempfile.TemporaryDirectory() as tmp:
             docs = {}
-            for name, border, hide in (
-                ("plain", "NONE", "0"),
-                ("bordered", "BOTH", "0"),
-                ("hidden-header", "NONE", "1"),
+            for name, border, hide, offset in (
+                ("plain", "NONE", "0", "1417"),
+                ("bordered", "BOTH", "0", "1417"),
+                ("hidden-header", "NONE", "1", "1417"),
+                ("child-offset", "NONE", "0", "2834"),
             ):
                 path = Path(tmp) / f"{name}.hwpx"
                 _write_hwpx(path, [
                     ("Contents/header.xml", HEADER_XML),
                     ("Contents/section0.xml",
-                     template.format(border=border, hide=hide)),
+                     template.format(border=border, hide=hide, offset=offset)),
                 ])
                 docs[name] = feature_extract.extract_feature_counts(path)
 
@@ -158,9 +161,12 @@ class FeatureExtractTestCase(unittest.TestCase):
                 )
             # A changed section configuration must change the feature map, so
             # an envelope measured on one variant never admits another.
-            self.assertNotEqual(docs["plain"], docs["bordered"])
-            self.assertNotEqual(docs["plain"], docs["hidden-header"])
-            self.assertNotEqual(docs["bordered"], docs["hidden-header"])
+            names = sorted(docs)
+            for i, first in enumerate(names):
+                for second in names[i + 1:]:
+                    self.assertNotEqual(
+                        docs[first], docs[second], (first, second),
+                    )
 
 
 if __name__ == "__main__":
