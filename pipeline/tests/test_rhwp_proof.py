@@ -220,6 +220,16 @@ class RhwpProofTests(unittest.TestCase):
             self.assertIsNone(merged)
             self.assertFalse(verdict_path.exists())
 
+    def test_certified_grade_rank_is_above_advisory_below_hancom(self):
+        self.assertLess(
+            rhwp_proof.PROOF_GRADE_RANK["advisory"],
+            rhwp_proof.PROOF_GRADE_RANK["certified"],
+        )
+        self.assertLess(
+            rhwp_proof.PROOF_GRADE_RANK["certified"],
+            rhwp_proof.PROOF_GRADE_RANK["hancom"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

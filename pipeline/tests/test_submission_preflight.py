@@ -440,6 +440,128 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             item["code"] == "form_baseline_absent" for item in verdict["warn"]
         ), verdict)
 
+    def _prepare_certified_workspace(self, *, opt_in=True, certificate=True):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8"
+        )
+        artifact = self.write_hwpx()
+        self.write_proof_grade("certified")
+        build_lines = ["doc_backend: hwpx"]
+        if opt_in:
+            build_lines += [
+                "certified_render: true",
+                "render_certificate: render-certificate.json",
+            ]
+        (self.ws / "build.yaml").write_text(
+            "\n".join(build_lines) + "\n", encoding="utf-8"
+        )
+        cert_path = self.ws / "render-certificate.json"
+        if certificate:
+            cert_path.write_text("{}\n", encoding="utf-8")
+        return artifact, cert_path
+
+    def test_certified_grade_requires_opt_in_check_pass_and_certificate_reverify(self):
+        artifact, cert_path = self._prepare_certified_workspace()
+        valid = {"ok": True, "reason_code": "certificate_valid"}
+        eligible = {"ok": True, "eligible": True, "reason_code": "eligible"}
+
+        with (
+            mock.patch.object(
+                submission_preflight.render_cert, "verify_certificate",
+                return_value=valid,
+            ) as verify,
+            mock.patch.object(
+                submission_preflight.render_cert, "check_document",
+                return_value=eligible,
+            ) as check_document,
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 0, verdict)
+        verify.assert_called_once_with(cert_path)
+        check_document.assert_called_once_with(artifact, cert_path)
+        self.assertEqual(verdict["proof_grade"], "certified")
+        self.assertEqual(verdict["render_certificate"], "render-certificate.json")
+        self.assertEqual(verdict["render_cert_check"]["reason_code"], "eligible")
+
+    def test_certified_grade_without_build_opt_in_is_today_style_p5_failure(self):
+        self._prepare_certified_workspace(opt_in=False, certificate=False)
+
+        verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(item["code"] == "P5" for item in verdict["hard"]), verdict)
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_certified_pdf_submission_rechecks_the_assembled_hwpx(self):
+        import fitz
+
+        self.write_header("output/submission.pdf")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.pdf"\n', encoding="utf-8"
+        )
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "submission text")
+        document.save(self.ws / "output" / "submission.pdf")
+        document.close()
+        assembled = self.write_hwpx(name="out.hwpx")
+        self.write_proof_grade("certified")
+        (self.ws / "build.yaml").write_text(
+            "certified_render: true\n"
+            "render_certificate: render-certificate.json\n",
+            encoding="utf-8",
+        )
+        cert_path = self.ws / "render-certificate.json"
+        cert_path.write_text("{}", encoding="utf-8")
+
+        with (
+            mock.patch.object(
+                submission_preflight.render_cert, "verify_certificate",
+                return_value={"ok": True, "reason_code": "certificate_valid"},
+            ),
+            mock.patch.object(
+                submission_preflight.render_cert, "check_document",
+                return_value={
+                    "ok": True, "eligible": True, "reason_code": "eligible"
+                },
+            ) as check_document,
+        ):
+            verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 0, verdict)
+        check_document.assert_called_once_with(assembled, cert_path)
+        self.assertEqual(verdict["render_cert_document"], "output/out.hwpx")
+
+    def test_certified_grade_fails_when_certificate_reverify_or_check_fails(self):
+        self._prepare_certified_workspace()
+        cases = (
+            ({"ok": False, "reason_code": "certificate_hash_mismatch"},
+             {"eligible": True, "reason_code": "eligible"},
+             "certificate_hash_mismatch"),
+            ({"ok": True, "reason_code": "certificate_valid"},
+             {"eligible": False, "reason_code": "envelope_mismatch"},
+             "envelope_mismatch"),
+        )
+        for verification, eligibility, expected in cases:
+            with (
+                self.subTest(expected=expected),
+                mock.patch.object(
+                    submission_preflight.render_cert, "verify_certificate",
+                    return_value=verification,
+                ),
+                mock.patch.object(
+                    submission_preflight.render_cert, "check_document",
+                    return_value=eligibility,
+                ),
+            ):
+                verdict, code = submission_preflight.check(self.ws)
+            self.assertEqual(code, 3, verdict)
+            self.assertTrue(any(
+                item["code"] == "P5" and expected in item["msg"]
+                for item in verdict["hard"]
+            ), verdict)
+
 
 if __name__ == "__main__":
     unittest.main()

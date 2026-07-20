@@ -552,6 +552,89 @@ class TestPdfCmdWiring(unittest.TestCase):
         self.assertFalse(payload["render_proof"]["submission_grade"])
         self.assertNotIn("rhwp_renderer", payload["renderer_decision"])
 
+    def test_certified_renderer_is_retained_as_post_assembly_upgrade(self):
+        certificate = self.ws / "render-certificate.json"
+        certificate.write_text("{}", encoding="utf-8")
+        (self.ws / "build.yaml").write_text(
+            "doc_backend: hwpx\n"
+            "certified_render: true\n"
+            "render_certificate: render-certificate.json\n",
+            encoding="utf-8",
+        )
+        certified = {
+            "name": "certified_mock", "proof_grade": "certified",
+            "certificate": str(certificate.resolve()),
+            "argv": ["mock-render", "{in}", "{out}"],
+        }
+        with (
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [
+                        certified,
+                        {"name": "soffice_local", "wsl": False,
+                         "argv": ["soffice", "--headless"]},
+                    ],
+                },
+            ),
+            mock.patch.object(
+                self.render_probe, "hwpx_has_equations", return_value=False
+            ),
+        ):
+            decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
+
+        self.assertEqual(decision["proof_grade"], "advisory")
+        self.assertEqual(decision["certified_renderer"], certified)
+        self.assertNotIn(
+            "certified_renderer", doc_backend._public_renderer_decision(decision)
+        )
+
+    def test_certified_post_render_promotes_verdict_and_preserves_candidate(self):
+        certificate = self.ws / "render-certificate.json"
+        certificate.write_text("{}", encoding="utf-8")
+        output = self.ws / "output"
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "out.hwpx").write_bytes(b"synthetic hwpx")
+        (output / "verdict_v06.json").write_text(
+            json.dumps({"ok": True, "proof_grade": "advisory"}),
+            encoding="utf-8",
+        )
+        renderer = {
+            "name": "certified_mock", "proof_grade": "certified",
+            "certificate": str(certificate), "wsl": False,
+            "argv": ["mock-render", "{in}", "{out}"],
+        }
+
+        def fake_run(command, **kwargs):
+            Path(command[-1]).write_bytes(b"certified pdf")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.object(
+                doc_backend.render_cert, "check_document",
+                return_value={
+                    "ok": True, "eligible": True, "reason_code": "eligible",
+                    "certificate_sha256": "a" * 64,
+                },
+            ),
+            mock.patch.object(
+                doc_backend.render_cert, "pdf_page_count", return_value=1
+            ),
+            mock.patch.object(doc_backend.subprocess, "run", side_effect=fake_run),
+        ):
+            receipt = doc_backend._run_certified_renderer(
+                str(self.ws), None, renderer
+            )
+
+        self.assertTrue(receipt["ok"], receipt)
+        self.assertEqual(receipt["page_count"], 1)
+        self.assertEqual((output / "out.pdf").read_bytes(), b"certified pdf")
+        verdict = json.loads((output / "verdict_v06.json").read_text(encoding="utf-8"))
+        self.assertEqual(verdict["proof_grade"], "certified")
+        self.assertEqual(verdict["certified_proof"]["reason"], "certified_rendered")
+
 
 class TestDocxBackend(unittest.TestCase):
     def setUp(self):

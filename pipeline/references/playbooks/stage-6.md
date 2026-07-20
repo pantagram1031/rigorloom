@@ -12,7 +12,11 @@ ENTRY: `pipeline_ctl resume` returns Stage 6; Stage 5.7 is complete and its
 EXACT actions:
 
 1. Confirm `canonical_output`, proof verdict, scorecard, sources, and provenance.
-   The assembly verdict must record `proof_grade: hancom|advisory|none`.
+   The assembly verdict must record
+   `proof_grade: hancom|certified|advisory|experimental-rhwp|none`.
+   `certified` is accepted only with explicit `build.yaml` opt-in, a passing
+   live document-envelope check, and full certificate re-verification;
+   `experimental-rhwp` remains diagnostic-only.
 2. Resolve the Stage 6 `submission_preflight` script gate before delivery. It
    always checks extension, sane size, and file reopen (HWPX ZIP + XML parse;
    PDF PyMuPDF open + nonzero text). When `request.yaml` declares

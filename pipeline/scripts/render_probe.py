@@ -50,6 +50,8 @@ import subprocess
 import sys
 import zipfile
 
+import render_cert
+
 _SOFFICE_ARGS = (
     "--headless",
     "-env:UserInstallation=file:///tmp/lo-profile",
@@ -256,10 +258,57 @@ def _probe_rhwp() -> dict:
     }
 
 
-def _build_renderers(capabilities: dict) -> list[dict]:
+def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
+    """Verify an explicitly configured certificate without a document check.
+
+    Document-envelope membership is checked later by ``render_cert check``.
+    With no environment configuration this function is not called, preserving
+    the historical probe schema byte-for-byte.
+    """
+    configured = os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "").strip()
+    if not configured:
+        return None, None, None
+    certificate_path = os.path.abspath(os.path.expanduser(configured))
+    try:
+        verification = render_cert.verify_certificate(certificate_path)
+    except Exception:
+        return None, certificate_path, "certificate_probe_failed"
+    reason = str(verification.get("reason_code", "certificate_probe_failed"))
+    if verification.get("ok") is not True:
+        return None, certificate_path, reason
+    certificate = verification.get("certificate")
+    if not isinstance(certificate, dict):
+        return None, certificate_path, "certificate_schema_invalid"
+    argv = certificate.get("renderer_argv")
+    if (not isinstance(argv, list) or not argv
+            or not any("{in}" in str(item) for item in argv)
+            or not any(
+                "{out}" in str(item) or "{outdir}" in str(item)
+                for item in argv
+            )):
+        return None, certificate_path, "certificate_runtime_command_invalid"
+    renderer_id = str(certificate.get("renderer_id", "renderer"))
+    renderer = {
+        "name": f"certified_{renderer_id}",
+        "wsl": bool(argv and str(argv[0]).lower() in {"wsl", "wsl.exe"}),
+        "argv": [str(item) for item in argv],
+        "binary_path": certificate.get("renderer_binary_path"),
+        "version": certificate.get("renderer_version"),
+        "proof_grade": "certified",
+        "certificate": certificate_path,
+    }
+    return renderer, certificate_path, reason
+
+
+def _build_renderers(
+    capabilities: dict,
+    certified_renderer: dict | None = None,
+) -> list[dict]:
     renderers: list[dict] = []
     if capabilities["hancom_com"]:
         renderers.append({"name": "hancom", "wsl": False, "argv": None})
+    if certified_renderer is not None:
+        renderers.append(certified_renderer)
     if (capabilities.get("rhwp_path")
             and capabilities.get("rhwp_reason") == "available"):
         binary = capabilities["rhwp_path"]
@@ -328,7 +377,23 @@ def probe() -> dict:
         "rhwp_version": rhwp["version"],
         "rhwp_reason": rhwp["reason"],
     }
-    return {"capabilities": capabilities, "renderers": _build_renderers(capabilities)}
+    certified_renderer = None
+    if os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "").strip():
+        try:
+            certified_renderer, certificate_path, certificate_reason = (
+                _probe_certified_renderer()
+            )
+        except Exception:
+            certificate_path = os.path.abspath(os.path.expanduser(
+                os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "")
+            ))
+            certificate_reason = "certificate_probe_failed"
+        capabilities["render_certificate"] = certificate_path
+        capabilities["render_certificate_reason"] = certificate_reason
+    return {
+        "capabilities": capabilities,
+        "renderers": _build_renderers(capabilities, certified_renderer),
+    }
 
 
 def to_wsl_path(path: str) -> str:
@@ -349,7 +414,11 @@ def best_pdf_cmd(result: dict) -> list[str] | None:
     they perform their path translation inside WSL after fill_report replaces
     `{in}` and `{outdir}`.
     """
-    for renderer in result.get("renderers", []):
+    renderers = result.get("renderers", [])
+    for renderer in renderers:
+        if renderer.get("proof_grade") == "certified" and renderer.get("argv"):
+            return list(renderer["argv"])
+    for renderer in renderers:
         if (renderer.get("name") in {"soffice_local", "soffice_wsl"}
                 and renderer.get("argv")):
             return list(renderer["argv"])
@@ -389,6 +458,11 @@ def format_table(result: dict) -> str:
         ("rhwp_version", str(caps.get("rhwp_version"))),
         ("rhwp_reason", str(caps.get("rhwp_reason"))),
     ]
+    if "render_certificate" in caps:
+        rows += [
+            ("render_certificate", str(caps.get("render_certificate"))),
+            ("render_certificate_reason", str(caps.get("render_certificate_reason"))),
+        ]
     width = max(len(label) for label, _ in rows)
     lines = ["Render capability matrix", "-" * 40]
     lines += [f"  {label.ljust(width)}  {value}" for label, value in rows]
