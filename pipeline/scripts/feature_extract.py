@@ -62,6 +62,14 @@ KNOWN_BENIGN_SECTION_TAGS = frozenset({
     "autoNumFormat", "cellMargin", "cellSz", "endNotePr", "footNotePr",
     "inMargin", "noteLine", "noteSpacing", "numbering", "offset", "outMargin",
     "placement", "shapeComment", "sz",
+    # Image-object internals and field parameters observed in a real pipeline
+    # report (2026-07-20). All are per-object geometry/payload children of the
+    # handled pic/fieldBegin features — the same content-sampling class as
+    # cell geometry above. fieldEnd pairs the handled fieldBegin.
+    "curSz", "effects", "fieldEnd", "flip", "imgClip", "imgDim", "imgRect",
+    "integerParam", "orgSz", "parameters", "pt0", "pt1", "pt2", "pt3",
+    "renderingInfo", "rotMatrix", "rotationInfo", "scaMatrix", "stringParam",
+    "transMatrix",
 })
 
 # Section-level rendering configuration. These are NOT benign: a different
