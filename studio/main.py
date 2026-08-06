@@ -1115,8 +1115,12 @@ def workspace_action(
         argv = [sys.executable, str(pipeline_ctl), "gate", str(base.resolve()), gate,
                 "--mode", "supervised"]
     elif kind == "run-content-audit":
-        argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
-                                    "content_audit.py"), str(base.resolve())]
+        # TRANSITIONAL (v0.16 W3.3): content_audit now lives in the report
+        # distribution module; this direct path becomes a declarative
+        # studio_panels/registry dispatch in W3.4.
+        argv = [sys.executable, str(REPO_ROOT / "modules" / "report" /
+                                    "scripts" / "content_audit.py"),
+                str(base.resolve())]
     elif kind == "build-bundle":
         argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
                                     "doc_backend.py"), str(base.resolve()),

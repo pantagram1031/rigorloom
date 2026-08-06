@@ -25,9 +25,13 @@ humanization = _load(
     "humanization_ctl_for_extension_tests",
     REPO_ROOT / "pipeline" / "scripts" / "humanization_ctl.py",
 )
+# TRANSITIONAL (v0.16 W3.3): content_audit moved into the report distribution
+# module; this core test keeps its fail-closed integration coverage by loading
+# it from the module payload (file presence is repo-guaranteed, enablement is
+# irrelevant to this in-process check).
 content_audit = _load(
     "content_audit_for_extension_tests",
-    REPO_ROOT / "pipeline" / "scripts" / "content_audit.py",
+    REPO_ROOT / "modules" / "report" / "scripts" / "content_audit.py",
 )
 
 
