@@ -17,6 +17,31 @@ PIPELINE_CTL = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
 PERSONALIZATION_CTL = REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py"
 SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
+MODULE_REQUIRED_MSG = (
+    "the report pipeline requires the report distribution module — enable it "
+    "in modules/enabled.yaml (python pipeline/scripts/module_registry.py "
+    "write-enabled --all)"
+)
+
+
+def _module_cli_script(command: str) -> Path:
+    """Resolve a report-module CLI payload path through the distribution-
+    module registry (v0.16 W3-S2b: the stage-machine payload lives in
+    modules/report/). A disabled/missing module is a clear refusal, never a
+    stack trace from a dangling path."""
+    core_scripts = REPO_ROOT / "pipeline" / "scripts"
+    if str(core_scripts) not in sys.path:
+        sys.path.insert(0, str(core_scripts))
+    from module_registry import ModuleError, ModuleRegistry
+    try:
+        rows = ModuleRegistry().enabled_cli()
+    except ModuleError as exc:
+        raise SystemExit(f"error: {exc}")
+    for row in rows:
+        if row["command"] == command:
+            return Path(row["script"])
+    raise SystemExit(f"error: {MODULE_REQUIRED_MSG}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a Rigorloom report workspace")
@@ -155,7 +180,7 @@ def main() -> int:
     # The handoff was generated while the workspace had its staging path.
     # Regenerate it after the atomic rename so all paths are final.
     subprocess.run(
-        [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" / "workspace_organizer.py"),
+        [sys.executable, str(_module_cli_script("organize-workspace")),
          str(final), "--no-archive"],
         check=True, capture_output=True, text=True, encoding="utf-8",
     )

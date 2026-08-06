@@ -33,7 +33,7 @@ EXACT actions:
 - Every fresh simulation fixes a numeric RNG `seed` in its spec and echoes the
   same seed into `sim/results.json` or `sim/provenance.json`. An empty/string
   seed is invalid. Before the sane gate, run
-  `python pipeline/scripts/check_numbers.py --require-seed <WS>`; a populated
+  `python modules/report/scripts/check_numbers.py --require-seed <WS>`; a populated
   results file without the seed is HARD. A missing/empty legacy results file is
   only advisory until the simulation is rerun.
 - `sim/VERIFY.md`: show RAW + ADJUSTED verdict side by side. Never write

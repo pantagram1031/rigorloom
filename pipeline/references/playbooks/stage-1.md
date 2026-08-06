@@ -23,11 +23,11 @@ cache, for example `python modules/report/scripts/source_fetch.py record --doi
 Do this when the source is verified, not later at gate time; the command writes only under
 `<PROFILE_ROOT>/cache/sources/`.
 
-For the `backfill` alias, run `python pipeline/scripts/claims_ledger.py
+For the `backfill` alias, run `python modules/report/scripts/claims_ledger.py
 claim_extract <WS>` first, then use retro-research to fill every skeleton entry
 with source id, locator, and short quote while building the evidence pack. The
 skeleton intentionally fails `check_claims` until evidenced; retro-research is
-complete only when `python pipeline/scripts/check_claims.py <WS>` exits 0.
+complete only when `python modules/report/scripts/check_claims.py <WS>` exits 0.
 - Any body-fact claim needs ≥1 source id; uncited → flag, body only as
   student inference.
 - Datasets: record REAL url + size/header assertion (block the

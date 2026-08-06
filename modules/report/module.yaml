@@ -16,8 +16,14 @@ provides:
     - {name: check_tone_rules, script: scripts/check_tone_rules.py}
     - {name: content_audit, script: scripts/content_audit.py}
     - {name: verify_content, script: scripts/verify_content.py}
+    - {name: check_canonical, script: scripts/check_canonical.py}
+    - {name: check_claims, script: scripts/check_claims.py}
+    - {name: check_numbers, script: scripts/check_numbers.py}
+    - {name: check_sources, script: scripts/check_sources.py}
   cli:
     - {command: source-fetch, script: scripts/source_fetch.py}
+    - {command: organize-workspace, script: scripts/workspace_organizer.py}
+    - {command: claims-ledger, script: scripts/claims_ledger.py}
   pack_types: [saeteuk, report_structure, gloss_allowlist, constants_allowlist, tone_rules]
   run_modes:
     - {name: night, state_policy: stage_machine, gates: stages.yaml}

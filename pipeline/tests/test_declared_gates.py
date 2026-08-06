@@ -26,6 +26,21 @@ SLUG = "report-synthetic"
 HEADER = f"workspace_slug: {SLUG}\n"
 
 
+def _canonical_delegate_available() -> bool:
+    """True when an enabled distribution module provides check_canonical
+    (v0.16 W3-S2b: it is report-module payload; core-only runs must refuse
+    canonical gates loudly instead of running them)."""
+    try:
+        registry = declared_gates.module_registry.ModuleRegistry()
+        return any(row["name"] == "check_canonical"
+                   for row in registry.enabled_checkers())
+    except Exception:
+        return False
+
+
+CANONICAL_AVAILABLE = _canonical_delegate_available()
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -698,6 +713,30 @@ class DelegationTests(Base):
             "next_stage": None,
         })
 
+    def test_canonical_without_providing_module_is_loud_refusal(self):
+        """Core-only: a workspace declaring a canonical gate while no enabled
+        module provides check_canonical must be a config refusal (exit 2
+        path), never a silent pass or a crash."""
+        if CANONICAL_AVAILABLE:
+            self.skipTest("a module providing check_canonical is enabled")
+        self.canonical_workspace()
+        self.write_text("output/final.hwpx", "ship artifact")
+        self.write_gates(
+            "gates:\n"
+            "  - id: final_pointer\n"
+            "    kind: canonical\n"
+        )
+        with self.assertRaises(declared_gates.GatesConfigError):
+            self.run_all()
+        code, stdout = self.run_cli()
+        self.assertEqual(code, declared_gates.EXIT_USAGE)
+        self.assertIn("check_canonical", stdout)
+        # a refusal must never look like a run
+        self.assertFalse((self.ws / "gate_result.json").exists())
+
+    @unittest.skipUnless(
+        CANONICAL_AVAILABLE,
+        "no enabled distribution module provides check_canonical")
     def test_canonical_delegation_pass(self):
         self.canonical_workspace()
         self.write_text("output/final.hwpx", "ship artifact")
@@ -715,6 +754,9 @@ class DelegationTests(Base):
         self.assertEqual(row["targets"][0]["path"], "output/final.hwpx")
         self.assertTrue(row["targets"][0]["sha256"])
 
+    @unittest.skipUnless(
+        CANONICAL_AVAILABLE,
+        "no enabled distribution module provides check_canonical")
     def test_canonical_target_missing_fails(self):
         self.canonical_workspace(pointer="output/vanished.hwpx")
         self.write_gates(

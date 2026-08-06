@@ -6,11 +6,19 @@ import argparse
 import hashlib
 import json
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
+SCRIPTS_DIR = Path(__file__).resolve().parent
+_CORE_SCRIPTS_DIR = SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (_CORE_SCRIPTS_DIR, SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 
-LAYOUT_PATH = Path(__file__).resolve().parent.parent / "references" / "workspace_layout.json"
+LAYOUT_PATH = SCRIPTS_DIR.parent / "references" / "workspace_layout.json"
 ROOT_TRANSIENT_PATTERNS = ("*.tmp", "*.bak", "*.old")
 OUTPUT_TRANSIENT_PATTERNS = (
     "loop*_stderr.log", "loop*_stdout.json", "loop*_err.txt", "loop*_run.log",
@@ -218,7 +226,7 @@ Generated automatically at {inventory['generated_at']}.
 {chr(10).join(rows)}
 
 Temporary work belongs under `work/stage-<id>/scratch/`. Canonical artifacts
-belong only at the paths declared in `pipeline/references/workspace_layout.json`.
+belong only at the paths declared in `modules/report/references/workspace_layout.json`.
 """
 
 

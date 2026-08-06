@@ -60,7 +60,23 @@ def _sibling(name: str):
         if scripts_dir not in sys.path:
             sys.path.insert(0, scripts_dir)
         import importlib
-        mod = importlib.import_module(name)
+        try:
+            mod = importlib.import_module(name)
+        except ModuleNotFoundError:
+            # TRANSITIONAL (v0.16 W3-S2b, erased when pipeline_ctl itself
+            # moves into modules/report in the very next commit): the
+            # workspace-bound checkers (workspace_organizer, check_canonical,
+            # ...) moved into the report module one commit ahead of the stage
+            # machine, so bridge the gap from the module payload dir.
+            module_dir = (Path(__file__).resolve().parents[2]
+                          / "modules" / "report" / "scripts")
+            candidate = module_dir / f"{name}.py"
+            if not candidate.is_file():
+                raise
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(name, candidate)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
         _SIBLING_MODULES[name] = mod
     return mod
 
@@ -866,7 +882,7 @@ def refresh_handoff(
 ) -> None:
     """Refresh derived handoff files without weakening state enforcement."""
     try:
-        from workspace_organizer import organize_workspace
+        organize_workspace = _sibling("workspace_organizer").organize_workspace
         graph_ctx = graph_ctx or graph_context_for_header(hdr)
         organize_workspace(
             ws, hdr, graph_ctx["order"],

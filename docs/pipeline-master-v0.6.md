@@ -367,7 +367,7 @@ approvals, proofs, or final outputs. It archives only documented scratch paths
 and run-log patterns. Run it manually when needed:
 
 ```sh
-python pipeline/scripts/workspace_organizer.py <WS> --completed-stage <stage>
+python modules/report/scripts/workspace_organizer.py <WS> --completed-stage <stage>
 ```
 
 The next agent should trust `PIPELINE.md`, then use `NEXT_TASK.md` as a concise

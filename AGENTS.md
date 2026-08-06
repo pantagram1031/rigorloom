@@ -8,7 +8,7 @@ Read `docs/pipeline-master-v0.6.md` before operating a workspace.
 4. Put drafts, downloads, logs, and experiments in the active
    `work/stage-<id>/scratch/` directory.
 5. Publish only canonical outputs declared in
-   `pipeline/references/workspace_layout.json`.
+   `modules/report/references/workspace_layout.json`.
 6. Resolve gates through `pipeline_ctl.py`; never edit PIPELINE.md state by hand.
 7. After a transition, read the regenerated `NEXT_TASK.md` or
    `.pipeline/handoff.json` before beginning another task.
