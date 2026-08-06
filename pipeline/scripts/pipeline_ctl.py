@@ -45,6 +45,26 @@ def _reexec_utf8_if_needed() -> None:
         )
         sys.exit(_proc.returncode)
 
+_SIBLING_MODULES: dict = {}
+
+
+def _sibling(name: str):
+    """Import a sibling pipeline script lazily (receipt_sign, verdict_schema,
+    check_canonical, ...). Lazy so pipeline_ctl.py keeps its standalone-copy
+    property: subcommands that never touch amendments (init/check/advance/...)
+    must keep working from a bare copied script with only stages.yaml beside
+    it. Amendment commands hard-fail if the sibling is genuinely absent."""
+    mod = _SIBLING_MODULES.get(name)
+    if mod is None:
+        scripts_dir = str(Path(__file__).resolve().parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import importlib
+        mod = importlib.import_module(name)
+        _SIBLING_MODULES[name] = mod
+    return mod
+
+
 PIPELINE_VERSION = "0.6"
 SYNC_RECEIPT_NAME = '.sync_receipt.json'
 KERNEL_ROOT_ENV = 'RIGORLOOM_KERNEL_ROOT'
@@ -59,9 +79,28 @@ class StagesConfigError(Exception):
     to operate on a graph it cannot trust."""
 
 
-STATUS_ENUM = {"pending", "in_progress", "awaiting_gate", "done", "blocked"}
+STATUS_ENUM = {"pending", "in_progress", "awaiting_gate", "done", "blocked", "amending"}
 GATE_ENUM = {"pending", "approved", "auto_approved", "rejected"}
 MODE_ENUM = {"autonomous", "supervised", "night"}
+
+# ── amendment schema (reopen/amend design, slice 1) ─────────────────
+#
+# PIPELINE.md YAML header gains an append-only `amendments:` list:
+#   amendments:
+#     - {id: A1, opened_at: "...", reason: "...", scope: ["5"], status: open,
+#        closed_at: null, artifact_before: <sha256>|null, artifact_after: null,
+#        gates_rerun: []}
+# Reopening never rewrites history: the stage's prior done record (events,
+# stage receipts) stays; an amendment is a NEW record, and the canonical
+# pointer is invalidated with a `canonical_invalidated_by: A<n>` marker
+# rather than deleted (append-only honesty).
+AMENDMENT_STATUS_ENUM = {"open", "closed"}
+AMENDMENT_ID_RE = re.compile(r"^A(\d+)$")
+AMENDMENT_RECEIPT_SCHEMA = "report-pipeline-amendment-receipt/v1"
+AMENDMENT_RECEIPT_HMAC_FIELD = "receipt_hmac_sha256"
+AMENDMENT_RECEIPT_DIGEST_FIELD = "receipt_sha256"
+GREEN_GATE_STATES = {"approved", "auto_approved"}
+ASSEMBLY_VERDICT_REL = "output/verdict_v06.json"
 
 
 # ── stages.yaml config loader ───────────────────────────────────────
@@ -599,16 +638,91 @@ def find_yaml_fence(text: str):
     return None
 
 
+def _parse_amendment_row(inner: str) -> dict:
+    """Parse one `- {…}` amendment row body into a normalized record.
+
+    Tolerant like the stage-row parser above (never raises on a stray part),
+    but NEVER drops a row: an unparsable status coerces to "open" (fail-closed
+    — an open amendment blocks completion; a silently-closed one would not).
+    """
+    raw: dict = {}
+    for part in _split_top_commas(inner):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        try:
+            raw[k.strip()] = _parse_scalar_or_container(v)
+        except Exception:
+            raw[k.strip()] = _strip_q(v)
+    status = raw.get("status")
+    if status not in AMENDMENT_STATUS_ENUM:
+        status = "open"
+    scope = raw.get("scope")
+    if not isinstance(scope, list):
+        scope = [str(scope)] if scope not in (None, "") else []
+    gates_rerun = raw.get("gates_rerun")
+    if not isinstance(gates_rerun, list):
+        gates_rerun = []
+    return {
+        "id": str(raw.get("id") or ""),
+        "opened_at": raw.get("opened_at") or None,
+        "reason": str(raw.get("reason") or ""),
+        "scope": [str(s) for s in scope],
+        "status": status,
+        "closed_at": raw.get("closed_at") or None,
+        "artifact_before": raw.get("artifact_before") or None,
+        "artifact_after": raw.get("artifact_after") or None,
+        "gates_rerun": [str(g) for g in gates_rerun],
+    }
+
+
+def render_amendment(amend: dict) -> str:
+    """Render one amendment record as a YAML inline map (design's exact
+    field order). Free-text and timestamp scalars are JSON-quoted so commas,
+    colons, and Korean reasons round-trip through the inline-map parser."""
+    def _q(value) -> str:
+        return "null" if value in (None, "") else json.dumps(str(value), ensure_ascii=False)
+
+    def _lst(items) -> str:
+        return "[" + ", ".join(json.dumps(str(i), ensure_ascii=False) for i in (items or [])) + "]"
+
+    return ("{id: %s, opened_at: %s, reason: %s, scope: %s, status: %s, "
+            "closed_at: %s, artifact_before: %s, artifact_after: %s, "
+            "gates_rerun: %s}") % (
+        amend.get("id") or "null",
+        _q(amend.get("opened_at")),
+        json.dumps(amend.get("reason") or "", ensure_ascii=False),
+        _lst(amend.get("scope")),
+        amend.get("status", "open"),
+        _q(amend.get("closed_at")),
+        amend.get("artifact_before") or "null",
+        amend.get("artifact_after") or "null",
+        _lst(amend.get("gates_rerun")),
+    )
+
+
 def parse_yaml_header(body: str) -> dict:
     top: dict = {}
     stages: dict = {}
+    amendments: list = []
     in_stages = False
+    in_amendments = False
     for raw in body.splitlines():
         line = raw.rstrip()
         if not line.strip() or line.strip().startswith("#"):
             continue
         if re.match(r"^stages:\s*$", line):
             in_stages = True
+            in_amendments = False
+            continue
+        if re.match(r"^amendments:\s*$", line):
+            in_amendments = True
+            in_stages = False
+            continue
+        if in_amendments and re.match(r"^\s+", line):
+            m = re.match(r"^\s*-\s*\{(.*)\}\s*$", line)
+            if m:
+                amendments.append(_parse_amendment_row(m.group(1)))
             continue
         if in_stages and re.match(r"^\s+", line):
             m = re.match(r'^\s+"?([\d.]+)"?\s*:\s*(.*)$', line)
@@ -635,10 +749,15 @@ def parse_yaml_header(body: str) -> dict:
                 stages[num] = {"status": status, "gate": gate}
             continue
         in_stages = False
+        in_amendments = False
         m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
         if m:
             top[m.group(1)] = _strip_q(_strip_inline_comment(m.group(2)))
     top["stages"] = stages
+    # Drop the empty-scalar artifact left by the `amendments:` list-key line.
+    top.pop("amendments", None)
+    if amendments:
+        top["amendments"] = amendments
     return top
 
 
@@ -664,7 +783,8 @@ def render_yaml_body(hdr: dict, graph_ctx: dict | None = None) -> str:
     # stages.yaml schema version (v0.6+), read by pipeline_ctl.py only.
     lines = ["# pipeline-state: v0.4"]
     top_keys = ["pipeline_version", "graph", "slug", "mode", "subject", "topic", "form",
-                "updated", "canonical_output", "compose_provenance"]
+                "updated", "canonical_output", "canonical_invalidated_by",
+                "compose_provenance"]
     for k in top_keys:
         if k not in hdr:
             continue
@@ -686,6 +806,11 @@ def render_yaml_body(hdr: dict, graph_ctx: dict | None = None) -> str:
         status = st.get("status", "pending")
         gate = st.get("gate")
         lines.append(f'  "{num}":   {{status: {status}, gate: {render_gate(gate)}}}')
+    amendments = hdr.get("amendments") or []
+    if amendments:
+        lines.append("amendments:")
+        for amend in amendments:
+            lines.append("  - " + render_amendment(amend))
     return "\n".join(lines)
 
 
@@ -840,6 +965,18 @@ def cmd_resume(args) -> None:
             break
 
     if resume_stage is None:
+        open_amendments = [a.get("id") for a in hdr.get("amendments") or []
+                           if a.get("status") == "open"]
+        if open_amendments:
+            # An amending stage is not a resume point, but an open amendment
+            # must never read as "all stages done" — that is exactly the
+            # post-done honesty hole the amendment mechanism exists to close.
+            resume_out({"ok": True, "next_stage": None,
+                        "reason": ("open amendments must be closed via "
+                                   "amend-close: " + ", ".join(open_amendments)),
+                        "mode": mode, "blocked": True,
+                        "open_amendments": open_amendments})
+            return
         resume_out({"ok": True, "next_stage": None, "reason": "all stages done",
                     "mode": mode, "blocked": False})
         return
@@ -1204,6 +1341,9 @@ LEGAL_TRANSITIONS = {
     "awaiting_gate": {"in_progress", "done", "blocked"},
     "done": set(),
     "blocked": {"in_progress"},
+    # `amending` is entered only via `reopen` and left only via `amend-close`
+    # — `advance` must never move an amending stage (no legal targets).
+    "amending": set(),
 }
 
 # Statuses that move a stage forward and therefore must respect an earlier
@@ -1289,6 +1429,19 @@ def cmd_invalidate(args) -> None:
 
     idx = stage_order.index(from_stage)
     reset_stages = [n for n in stage_order[idx:] if n in stages]
+    # An open amendment pins its stages to the amending lifecycle: resetting
+    # them to pending would orphan the amendment (amend-close requires the
+    # stage to still be 'amending'), deadlocking the workspace. Close first.
+    blocking_amendments = sorted({
+        a.get("id") for a in hdr.get("amendments") or []
+        if a.get("status") == "open"
+        and any(sid in reset_stages for sid in (a.get("scope") or []))
+    })
+    if blocking_amendments:
+        fail(f"invalidate would reset stage(s) covered by open amendment(s) "
+             f"{', '.join(blocking_amendments)} — close them first via amend-close",
+             open_amendments=blocking_amendments)
+        return
     for num in reset_stages:
         st = stages[num]
         st["status"] = "pending"
@@ -1315,6 +1468,430 @@ def cmd_invalidate(args) -> None:
     refresh_handoff(ws, hdr)
     out({"ok": True, "from_stage": from_stage, "reset_stages": reset_stages,
          "reason": reason})
+
+
+# ── reopen / amend-close (post-done amendment transitions) ──────────
+
+# Pointer values that mean "no canonical output declared" (kept in sync with
+# check_canonical.NULL_TOKENS, including variant B's literal "null" string).
+_NULL_POINTER_TOKENS = frozenset({"", "null", "none", "~"})
+
+
+def _is_null_pointer(value) -> bool:
+    return value is None or str(value).strip().lower() in _NULL_POINTER_TOKENS
+
+
+def _resolve_pointer(ws: Path, pointer) -> Path:
+    target = Path(str(pointer))
+    return target if target.is_absolute() else ws / target
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _receipt_stamp() -> str:
+    return datetime.now().strftime("%Y%m%dT%H%M%S")
+
+
+def sign_amendment_receipt(payload: dict, key: bytes) -> dict:
+    """Return `payload` with a self-digest and keyed HMAC added, mirroring the
+    render_cert certificate pattern: sha256 over the canonical body (both
+    integrity fields omitted), then HMAC-SHA256 over everything except the
+    HMAC field itself — so the digest is inside the authenticated envelope."""
+    receipt_sign = _sibling("receipt_sign")
+    body = dict(payload)
+    body.pop(AMENDMENT_RECEIPT_DIGEST_FIELD, None)
+    body.pop(AMENDMENT_RECEIPT_HMAC_FIELD, None)
+    body[AMENDMENT_RECEIPT_DIGEST_FIELD] = hashlib.sha256(
+        receipt_sign.canonical_json_bytes(
+            body,
+            omit_fields=(AMENDMENT_RECEIPT_DIGEST_FIELD,
+                         AMENDMENT_RECEIPT_HMAC_FIELD),
+        )
+    ).hexdigest()
+    body[AMENDMENT_RECEIPT_HMAC_FIELD] = receipt_sign.hmac_sha256(
+        body, key, omit_fields=(AMENDMENT_RECEIPT_HMAC_FIELD,),
+    )
+    return body
+
+
+def verify_amendment_receipt(payload, key: bytes | None = None):
+    """Verify a signed amendment receipt. Returns (ok, reason).
+
+    Rejects: non-object payloads, wrong schema, a self-digest that does not
+    match the body (tampered content), a missing/unloadable operator key, and
+    an HMAC that does not verify (forged or re-signed with a different key)."""
+    receipt_sign = _sibling("receipt_sign")
+    if not isinstance(payload, dict):
+        return False, "receipt is not an object"
+    if payload.get("schema") != AMENDMENT_RECEIPT_SCHEMA:
+        return False, "receipt schema mismatch"
+    expected_digest = payload.get(AMENDMENT_RECEIPT_DIGEST_FIELD)
+    actual_digest = hashlib.sha256(
+        receipt_sign.canonical_json_bytes(
+            payload,
+            omit_fields=(AMENDMENT_RECEIPT_DIGEST_FIELD,
+                         AMENDMENT_RECEIPT_HMAC_FIELD),
+        )
+    ).hexdigest()
+    if not isinstance(expected_digest, str) or actual_digest != expected_digest:
+        return False, "receipt digest mismatch (payload tampered)"
+    expected_hmac = payload.get(AMENDMENT_RECEIPT_HMAC_FIELD)
+    if not isinstance(expected_hmac, str) or not expected_hmac:
+        return False, "receipt HMAC missing"
+    if key is None:
+        try:
+            key = receipt_sign.load_operator_key(create=False)
+        except receipt_sign.ReceiptKeyError as exc:
+            return False, f"operator key unavailable: {exc}"
+    if not receipt_sign.verify_hmac_sha256(
+        payload, key, expected_hmac,
+        omit_fields=(AMENDMENT_RECEIPT_HMAC_FIELD,),
+    ):
+        return False, "receipt HMAC mismatch (forged or wrong key)"
+    return True, "ok"
+
+
+def _amendment_receipt_payload(hdr: dict, amend: dict, transition: str) -> dict:
+    return {
+        "schema": AMENDMENT_RECEIPT_SCHEMA,
+        "transition": transition,  # "open" | "close"
+        "workspace_slug": hdr.get("slug"),
+        "amendment": {k: amend.get(k) for k in (
+            "id", "opened_at", "reason", "scope", "status", "closed_at",
+            "artifact_before", "artifact_after", "gates_rerun")},
+        "recorded_at": now_iso(),
+    }
+
+
+def _write_amendment_receipt(ws: Path, amend_id: str, transition: str,
+                             payload: dict) -> str:
+    receipts = ws / ".pipeline" / "receipts"
+    receipts.mkdir(parents=True, exist_ok=True)
+    path = receipts / f"amendment-{amend_id}-{transition}-{_receipt_stamp()}.json"
+    counter = 1
+    while path.exists():
+        path = receipts / (f"amendment-{amend_id}-{transition}-"
+                           f"{_receipt_stamp()}-{counter}.json")
+        counter += 1
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    return path.relative_to(ws).as_posix()
+
+
+def _load_latest_amendment_receipt(ws: Path, amend_id: str, transition: str):
+    """Return (payload, rel_path) of the newest matching receipt, or (None, None)."""
+    receipts = ws / ".pipeline" / "receipts"
+    candidates = sorted(receipts.glob(f"amendment-{amend_id}-{transition}-*.json"))
+    for path in reversed(candidates):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        return payload, path.relative_to(ws).as_posix()
+    return None, None
+
+
+def _latest_gate_check(ws: Path, gate_name: str):
+    """Newest .pipeline/gate_checks.jsonl record for `gate_name`, or None."""
+    path = ws / ".pipeline" / "gate_checks.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    latest = None
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and rec.get("gate") == gate_name:
+            latest = rec
+    return latest
+
+
+def cmd_reopen(args) -> None:
+    """Reopen a `done` stage under a new signed amendment.
+
+    Append-only honesty: the stage's completion history (events, stage
+    receipts) is never rewritten — the stage moves to the new `amending`
+    status, an OPEN amendment record is added, and the canonical pointer is
+    invalidated with a `canonical_invalidated_by: A<n>` marker (the pointer
+    value itself is preserved, never deleted)."""
+    ws = Path(args.workspace)
+    stage = args.stage
+    reason = (args.reason or "").strip()
+    if not reason:
+        usage_error("reopen requires a non-empty --reason")
+        return
+
+    loaded = load_header(ws)
+    if loaded is None:
+        fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
+        return
+    text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
+    if stage not in graph_ctx["order"]:
+        usage_error(f"reopen: unknown stage '{stage}'; must be one of {graph_ctx['order']}")
+        return
+    stages = hdr.get("stages", {})
+    if stage not in stages:
+        usage_error(f"reopen: stage '{stage}' not present in PIPELINE.md header")
+        return
+
+    amendments = hdr.get("amendments") or []
+    already_open = [a["id"] for a in amendments
+                    if a.get("status") == "open" and stage in (a.get("scope") or [])]
+    if already_open:
+        usage_error(f"reopen: stage {stage} already has an open amendment "
+                    f"({', '.join(already_open)}) — close it first via amend-close")
+        return
+    current_status = stages[stage].get("status")
+    if current_status != "done":
+        usage_error(f"reopen: stage {stage} is '{current_status}' — only done "
+                    f"stages can be reopened (amendments record post-done rework)")
+        return
+
+    # Load the signing key BEFORE any mutation: an amendment that cannot be
+    # receipt-signed must not exist (unsigned amendments would be forgeable).
+    receipt_sign = _sibling("receipt_sign")
+    try:
+        key = receipt_sign.load_operator_key(create=True)
+    except receipt_sign.ReceiptKeyError as exc:
+        fail(f"reopen: operator receipt key unavailable ({exc}) — "
+             f"set {receipt_sign.PROFILE_ROOT_ENV} to a private profile dir")
+        return
+
+    highest = 0
+    for amend in amendments:
+        m = AMENDMENT_ID_RE.match(str(amend.get("id") or ""))
+        if m:
+            highest = max(highest, int(m.group(1)))
+    amend_id = f"A{highest + 1}"
+    opened_at = now_iso()
+
+    pointer = hdr.get("canonical_output")
+    artifact_before = None
+    canonical_invalidated = False
+    if not _is_null_pointer(pointer):
+        artifact_before = _sha256_file(_resolve_pointer(ws, pointer))
+        # Keep the FIRST invalidating amendment's attribution if another
+        # amendment is already holding the pointer invalid — its amend-close
+        # is the one that re-validates the pointer.
+        if not hdr.get("canonical_invalidated_by"):
+            hdr["canonical_invalidated_by"] = amend_id
+        canonical_invalidated = True
+
+    amend = {
+        "id": amend_id,
+        "opened_at": opened_at,
+        "reason": reason,
+        "scope": [stage],
+        "status": "open",
+        "closed_at": None,
+        "artifact_before": artifact_before,
+        "artifact_after": None,
+        "gates_rerun": [],
+    }
+    amendments.append(amend)
+    hdr["amendments"] = amendments
+    stages[stage]["status"] = "amending"
+    gate = stages[stage].get("gate")
+    if gate:
+        # Force a FRESH green: the pre-reopen approval must not satisfy
+        # amend-close. The historical resolution stays in events.jsonl and
+        # (for script gates) .pipeline/gate_checks.jsonl.
+        gate["state"] = "pending"
+        gate["by"] = None
+        gate["at"] = None
+    hdr["updated"] = now_iso()
+
+    receipt = sign_amendment_receipt(
+        _amendment_receipt_payload(hdr, amend, "open"), key)
+    save_header(ws, text, start, end, hdr)
+    receipt_path = _write_amendment_receipt(ws, amend_id, "open", receipt)
+    append_event(ws, "reopen", stage,
+                 f"amendment {amend_id} opened on stage {stage}: {reason}")
+    write_heartbeat(ws)
+    refresh_handoff(ws, hdr)
+    out({"ok": True, "amendment": amend, "stage": stage, "status": "amending",
+         "canonical_invalidated": canonical_invalidated,
+         "receipt": receipt_path})
+
+
+def cmd_amend_close(args) -> None:
+    """Close an open amendment — refuses unless every reopened stage's gate
+    re-ran green AFTER the amendment opened, check_canonical passes on the
+    re-designated pointer, and the assembly verdict passes verdict_schema."""
+    ws = Path(args.workspace)
+    amend_id = args.amendment_id
+
+    loaded = load_header(ws)
+    if loaded is None:
+        fail("PIPELINE.md missing or has no v0.4 header", workspace=str(ws))
+        return
+    text, start, end, hdr = loaded
+    graph_ctx = graph_context_for_header(hdr)
+    stages = hdr.get("stages", {})
+    amendments = hdr.get("amendments") or []
+    amend = next((a for a in amendments if a.get("id") == amend_id), None)
+    if amend is None:
+        known = [a.get("id") for a in amendments]
+        usage_error(f"amend-close: unknown amendment id '{amend_id}' "
+                    f"(known: {known or 'none'})")
+        return
+    if amend.get("status") == "closed":
+        usage_error(f"amend-close: amendment {amend_id} is already closed "
+                    f"(closed_at: {amend.get('closed_at')})")
+        return
+
+    # The OPEN receipt must exist and verify — a header edited to fabricate
+    # or postdate an amendment fails here (the receipt is HMAC-signed).
+    open_receipt, open_receipt_path = _load_latest_amendment_receipt(
+        ws, amend_id, "open")
+    if open_receipt is None:
+        fail(f"amend-close: no signed open receipt found for {amend_id} under "
+             f".pipeline/receipts/ — refusing to close an unreceipted amendment")
+        return
+    verified, why = verify_amendment_receipt(open_receipt)
+    if not verified:
+        fail(f"amend-close: open receipt for {amend_id} failed verification "
+             f"({why}) — refusing to close a forged amendment",
+             receipt=open_receipt_path)
+        return
+    receipt_amend = open_receipt.get("amendment") or {}
+    if (receipt_amend.get("id") != amend_id
+            or receipt_amend.get("opened_at") != amend.get("opened_at")
+            or receipt_amend.get("scope") != amend.get("scope")):
+        fail(f"amend-close: header amendment {amend_id} does not match its "
+             f"signed open receipt (id/opened_at/scope) — refusing to close a "
+             f"postdated or rescoped amendment", receipt=open_receipt_path)
+        return
+
+    opened_at = str(amend.get("opened_at") or "")
+    failures = []
+    gates_rerun = []
+    for sid in amend.get("scope") or []:
+        st = stages.get(sid)
+        if st is None:
+            failures.append(f"stage {sid} missing from PIPELINE.md header")
+            continue
+        if st.get("status") != "amending":
+            failures.append(f"stage {sid} is '{st.get('status')}' — expected "
+                            f"'amending' (state was mutated outside reopen)")
+            continue
+        gate = st.get("gate")
+        if not gate:
+            continue
+        gname = gate.get("name")
+        gstate = gate.get("state")
+        gat = gate.get("at")
+        if gstate not in GREEN_GATE_STATES:
+            failures.append(f"stage {sid} gate '{gname}' is '{gstate}' — "
+                            f"re-run it green before closing")
+            continue
+        if not gat or str(gat) < opened_at:
+            failures.append(f"stage {sid} gate '{gname}' was resolved at "
+                            f"{gat!r}, before the amendment opened "
+                            f"({opened_at}) — a fresh re-run is required")
+            continue
+        try:
+            gtype = _gate_type_for(sid, gname, graph_ctx)
+        except StagesConfigError as exc:
+            failures.append(str(exc))
+            continue
+        if gtype == "script":
+            latest = _latest_gate_check(ws, gname)
+            if latest is None:
+                failures.append(f"stage {sid} script gate '{gname}' has no "
+                                f"gate_checks.jsonl record — resolve via check")
+                continue
+            if latest.get("exit") != 0:
+                failures.append(f"stage {sid} script gate '{gname}' latest "
+                                f"checker run exited {latest.get('exit')}")
+                continue
+            if str(latest.get("ts") or "") < opened_at:
+                failures.append(f"stage {sid} script gate '{gname}' latest "
+                                f"checker run ({latest.get('ts')!r}) predates "
+                                f"the amendment ({opened_at})")
+                continue
+        gates_rerun.append(gname)
+    if failures:
+        fail(f"amend-close refused for {amend_id}: reopened stages' gates "
+             f"have not re-run green", failures=failures)
+        return
+
+    # Canonical pointer: if this amendment invalidated it, it must have been
+    # re-designated; either way check_canonical must pass on the current one.
+    marker = hdr.get("canonical_invalidated_by")
+    pointer = hdr.get("canonical_output")
+    if marker == amend_id and _is_null_pointer(pointer):
+        fail(f"amend-close refused for {amend_id}: the canonical pointer was "
+             f"invalidated by this amendment and has not been re-designated")
+        return
+    check_canonical = _sibling("check_canonical")
+    canonical_verdict, canonical_code = check_canonical.check(ws)
+    if canonical_code != 0:
+        fail(f"amend-close refused for {amend_id}: check_canonical failed on "
+             f"the canonical pointer",
+             canonical_findings=canonical_verdict.get("hard")
+             or canonical_verdict.get("error"))
+        return
+
+    verdict_schema = _sibling("verdict_schema")
+    verdict_findings = verdict_schema.validate_verdict_file(
+        ws / ASSEMBLY_VERDICT_REL, at=ASSEMBLY_VERDICT_REL)
+    if verdict_findings:
+        fail(f"amend-close refused for {amend_id}: assembly verdict fails "
+             f"verdict_schema", verdict_findings=verdict_findings)
+        return
+
+    receipt_sign = _sibling("receipt_sign")
+    try:
+        key = receipt_sign.load_operator_key(create=True)
+    except receipt_sign.ReceiptKeyError as exc:
+        fail(f"amend-close: operator receipt key unavailable ({exc})")
+        return
+
+    artifact_after = None
+    if not _is_null_pointer(pointer):
+        artifact_after = _sha256_file(_resolve_pointer(ws, pointer))
+        if artifact_after is None:
+            fail(f"amend-close refused for {amend_id}: canonical target is "
+                 f"unreadable — cannot record artifact_after")
+            return
+
+    amend["status"] = "closed"
+    amend["closed_at"] = now_iso()
+    amend["artifact_after"] = artifact_after
+    amend["gates_rerun"] = gates_rerun
+    for sid in amend.get("scope") or []:
+        stages[sid]["status"] = "done"
+    if marker == amend_id:
+        # The invalidation marker is a live-state flag, not history — the
+        # permanent record lives in the amendment + both signed receipts.
+        del hdr["canonical_invalidated_by"]
+    hdr["updated"] = now_iso()
+
+    receipt = sign_amendment_receipt(
+        _amendment_receipt_payload(hdr, amend, "close"), key)
+    save_header(ws, text, start, end, hdr)
+    receipt_path = _write_amendment_receipt(ws, amend_id, "close", receipt)
+    append_event(ws, "amend_close", ",".join(amend.get("scope") or []),
+                 f"amendment {amend_id} closed; gates_rerun={gates_rerun}; "
+                 f"artifact_after={artifact_after}")
+    write_heartbeat(ws)
+    refresh_handoff(ws, hdr)
+    out({"ok": True, "amendment": amend, "gates_rerun": gates_rerun,
+         "artifact_after": artifact_after, "receipt": receipt_path})
 
 
 def cmd_trouble(args) -> None:
@@ -1486,6 +2063,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_inval.add_argument("--from", dest="from_stage", required=True)
     p_inval.add_argument("--reason", default="")
     p_inval.set_defaults(func=cmd_invalidate)
+
+    p_reopen = sub.add_parser(
+        "reopen",
+        help="Reopen a done stage under a new signed amendment (status -> "
+             "amending; canonical pointer invalidated, never deleted).")
+    p_reopen.add_argument("workspace")
+    p_reopen.add_argument("stage")
+    p_reopen.add_argument("--reason", required=True,
+                          help="why the finished stage is being reworked "
+                               "(recorded verbatim in the amendment)")
+    p_reopen.set_defaults(func=cmd_reopen)
+
+    p_amend_close = sub.add_parser(
+        "amend-close",
+        help="Close an open amendment: refuses unless reopened stages' gates "
+             "re-ran green after opening, check_canonical passes, and the "
+             "assembly verdict passes verdict_schema.")
+    p_amend_close.add_argument("workspace")
+    p_amend_close.add_argument("amendment_id", help="amendment id, e.g. A1")
+    p_amend_close.set_defaults(func=cmd_amend_close)
 
     p_trouble = sub.add_parser("trouble", help="Log a failure to TROUBLES.md and the shared kb/model-log.md.")
     p_trouble.add_argument("workspace")
