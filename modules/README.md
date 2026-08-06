@@ -53,6 +53,8 @@ provides:
     - saeteuk
   run_modes:                      # run-mode definitions (plan §3.2)
     - { name: night, state_policy: stage_machine, gates: [content_audit] }
+  gate_kinds:                     # declared-gate kind mechanisms (declared_gates.py)
+    - { kind: canonical, checker: check_canonical }
   studio_panels:                  # declarative UI contributions (plan §3.4)
     - { id: stage-progress, title: Stage progress, entry: studio/stage_panel.js }
   skill:                          # SKILL fragment merged by the installer
@@ -90,6 +92,7 @@ enablement error, not a silent skip.
 | `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
 | `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
 | `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by the registry-declared `check_canonical` checker — report-module payload since W3-S2b); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
+| `gate_kinds` | list of `{kind, checker}` | Declared-gate kind registrations for `declared_gates.py` (one runner, registry mechanisms, declared values). `kind` joins the declared-gates vocabulary (unique across enabled modules; must not shadow a core-implemented kind); `checker` names an enabled module's `provides.checkers` entry whose in-process `check(workspace, **declared_params)` implements the kind — a dangling binding is a loud enablement error. A workspace `gates.yaml` declaring a kind no enabled module registers is a loud config refusal (exit 2), never a silent pass. Core-implemented kinds (`json_equals`/`json_lt`/`json_gt`/`file_exists`/`text_absent`, `residue`, `density`) stay core. |
 | `studio_panels` | list of `{id, title, entry}` | Declarative studio contributions (plan §3.4). Studio exposes enabled panels at `GET /api/panels` and serves each `entry` (an HTML/JS fragment, path-contained inside the module dir) at `GET /api/panels/<id>/entry`; a JS entry registers its renderer via `window.RigorloomStudio.register(id, render)`. Absent module, absent panel; studio never learns a module's name. |
 | `skill` | `{fragment, references}` | One SKILL fragment plus its reference files, merged into the distribution bundle's router SKILL.md by the installer. A core-only install never sees the fragment's vocabulary. |
 | `playbooks` | list of paths | Stage/task playbooks the module contributes. |

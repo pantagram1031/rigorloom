@@ -75,6 +75,8 @@ provides:
     - dummy_pack
   run_modes:
     - {{ name: night, state_policy: stage_machine, gates: [content_audit, dummy_probe] }}
+  gate_kinds:
+    - {{ kind: dummy_kind, checker: dummy_probe }}
   studio_panels:
     - {{ id: dummy-panel, title: "Dummy panel", entry: studio/panel.js }}
   skill:
@@ -136,6 +138,10 @@ class TestThrowawayModuleProof:
         assert modes == [{
             "name": "night", "state_policy": "stage_machine",
             "gates": ["content_audit", "dummy_probe"], "module": "throwaway",
+        }]
+        assert registry.enabled_gate_kinds() == [{
+            "kind": "dummy_kind", "checker": "dummy_probe",
+            "module": "throwaway",
         }]
         panels = registry.enabled_studio_panels()
         assert [p["id"] for p in panels] == ["dummy-panel"]
@@ -330,6 +336,41 @@ class TestLoudValidation:
         write_enabled(tmp_path, ["throwaway", "clone"])
         registry = registry_for(tmp_path)
         with pytest.raises(ModuleError, match="both provide checkers"):
+            registry.enabled_modules()
+
+    def test_gate_kind_collision_across_modules_is_loud(self, tmp_path):
+        make_module(tmp_path, "throwaway")
+        clone = make_module(tmp_path, "clone")
+        (clone / "module.yaml").write_text(
+            "schema: rigorloom-module/v1\n"
+            "name: clone\n"
+            'requires: { rigorloom: ">=0.1" }\n'
+            "provides:\n"
+            "  checkers:\n"
+            "    - { name: clone_probe, script: scripts/check_dummy.py }\n"
+            "  gate_kinds:\n"
+            "    - { kind: dummy_kind, checker: clone_probe }\n",
+            encoding="utf-8",
+        )
+        write_enabled(tmp_path, ["throwaway", "clone"])
+        registry = registry_for(tmp_path)
+        with pytest.raises(ModuleError, match="both provide gate_kinds"):
+            registry.enabled_modules()
+
+    def test_gate_kind_bound_to_unprovided_checker_is_loud(self, tmp_path):
+        module = make_module(tmp_path)
+        (module / "module.yaml").write_text(
+            "schema: rigorloom-module/v1\n"
+            "name: throwaway\n"
+            'requires: { rigorloom: ">=0.1" }\n'
+            "provides:\n"
+            "  gate_kinds:\n"
+            "    - { kind: dummy_kind, checker: nobody_provides_this }\n",
+            encoding="utf-8",
+        )
+        write_enabled(tmp_path, ["throwaway"])
+        registry = registry_for(tmp_path)
+        with pytest.raises(ModuleError, match="nobody_provides_this"):
             registry.enabled_modules()
 
     def test_malformed_enabled_file_is_loud(self, tmp_path):

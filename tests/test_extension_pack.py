@@ -25,14 +25,9 @@ humanization = _load(
     "humanization_ctl_for_extension_tests",
     REPO_ROOT / "pipeline" / "scripts" / "humanization_ctl.py",
 )
-# TRANSITIONAL (v0.16 W3.3): content_audit moved into the report distribution
-# module; this core test keeps its fail-closed integration coverage by loading
-# it from the module payload (file presence is repo-guaranteed, enablement is
-# irrelevant to this in-process check).
-content_audit = _load(
-    "content_audit_for_extension_tests",
-    REPO_ROOT / "modules" / "report" / "scripts" / "content_audit.py",
-)
+# The content_audit fail-closed integration test moved to
+# modules/report/tests/test_content_audit.py (v0.16 W3-S3): the behavior
+# under test is content_audit's, which is report-module payload.
 
 
 def _prose_pack(name: str, marker: str) -> dict:
@@ -424,18 +419,6 @@ def test_humanization_consumes_the_canonical_extension_resolution(tmp_path: Path
 
     assert resolved["name"] == "example.report-style"
     assert resolved["banned_patterns"][0]["regex"] == "HUMANIZE_EXTENSION_MARKER"
-
-
-def test_content_audit_fails_closed_on_corrupt_active_extension(tmp_path: Path) -> None:
-    profile = tmp_path / "profile"
-    result = extension_pack.install_pack(_extension(tmp_path / "source"), profile)
-    installed = Path(result["installed"])
-    (installed / "packs" / "prose_rules.json").write_text("{}", encoding="utf-8")
-
-    verdict, code = content_audit.check(tmp_path / "unused-workspace", profile)
-
-    assert code == 3
-    assert any(item["code"] == "extension_pack_invalid" for item in verdict["hard"])
 
 
 def test_activate_switches_versions_without_deleting_previous_install(tmp_path: Path) -> None:

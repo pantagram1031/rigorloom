@@ -77,6 +77,19 @@
             }
           }
         },
+        "gate_kinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "checker"],
+            "properties": {
+              "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Declared-gate kind name this module registers (joins declared_gates.py's kind vocabulary; unique across enabled modules; must not shadow a core-implemented kind)."},
+              "checker": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Name of a checker (provided via provides.checkers by an enabled module) whose in-process check(workspace, **declared_params) implements the kind. A gate_kind naming a checker no enabled module provides is a loud enablement error."}
+            }
+          },
+          "description": "Declared-gate kind mechanisms (declared_gates.py delegation). A workspace gates.yaml declaring a kind with no enabled provider is a loud config refusal (exit 2), never a silent pass. Core-implemented kinds (json_equals/json_lt/json_gt/file_exists/text_absent, residue, density) stay core."
+        },
         "studio_panels": {
           "type": "array",
           "items": {
