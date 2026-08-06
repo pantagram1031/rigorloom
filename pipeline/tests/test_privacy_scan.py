@@ -376,3 +376,154 @@ def test_large_jsonl_store_log_is_still_detected(tmp_path: Path):
 
     assert code == 3
     assert "profile_store_content" in rules(payload)
+
+
+# --- Corpus binary allowlist (W5.2 privacy ruling) ---------------------------
+# Relaxation: manifest-listed, sha256-pinned binaries pass binary_document_ext.
+# Still-catches #1: unlisted binary / hash drift stays HARD.
+# Still-catches #2: PII inside an allowlisted binary stays HARD.
+
+import hashlib
+import zipfile
+
+
+def _write_manifest(manifest_path: Path, entries: list[tuple[str, bytes]]) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    docs = [{"path": rel, "sha256": hashlib.sha256(data).hexdigest()}
+            for rel, data in entries]
+    manifest_path.write_text(
+        json.dumps({"schema_version": 1, "documents": docs}), encoding="utf-8")
+
+
+def _write_hwpx(path: Path, section_xml: str) -> bytes:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/hwp+zip")
+        archive.writestr("Contents/section0.xml", section_xml)
+    return path.read_bytes()
+
+
+def test_allowlisted_pinned_binary_passes(tmp_path: Path):
+    form = tmp_path / "blank.hwpx"
+    data = _write_hwpx(form, "<hs:sec>성명 (서명 또는 인)</hs:sec>")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("blank.hwpx", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 0
+    assert "binary_document_ext" not in rules(payload)
+
+
+def test_unlisted_binary_is_still_hard(tmp_path: Path):
+    listed = tmp_path / "blank.hwpx"
+    data = _write_hwpx(listed, "<hs:sec>blank</hs:sec>")
+    (tmp_path / "stray.hwpx").write_bytes(b"unlisted binary")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("blank.hwpx", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 3
+    hard = [f for f in payload["findings"] if f["severity"] == "HARD"]
+    assert [f["file"] for f in hard] == ["stray.hwpx"]
+    assert hard[0]["rule"] == "binary_document_ext"
+
+
+def test_allowlisted_binary_hash_drift_is_hard(tmp_path: Path):
+    form = tmp_path / "blank.hwpx"
+    data = _write_hwpx(form, "<hs:sec>blank</hs:sec>")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("blank.hwpx", data)])
+    # Tamper after pinning: substitution must be HARD (still-catches #1).
+    _write_hwpx(form, "<hs:sec>tampered</hs:sec>")
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 3
+    assert "binary_allowlist_hash_mismatch" in rules(payload)
+
+
+def test_allowlisted_hwpx_with_rrn_is_hard(tmp_path: Path):
+    form = tmp_path / "filled.hwpx"
+    data = _write_hwpx(
+        form, "<hs:sec>주민등록번호 900101-2345678 홍길동</hs:sec>")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("filled.hwpx", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 3
+    assert "binary_pii_rrn" in rules(payload)
+
+
+def test_allowlisted_hwpx_with_filled_phone_is_hard(tmp_path: Path):
+    form = tmp_path / "filled.hwpx"
+    data = _write_hwpx(form, "<hs:sec>연락처: 010-1234-5678</hs:sec>")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("filled.hwpx", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 3
+    assert "binary_pii_phone" in rules(payload)
+
+
+def test_allowlisted_hwp_utf16_pii_is_hard(tmp_path: Path):
+    # A fake .hwp whose bytes carry a UTF-16LE RRN run — the stdlib harvest
+    # must surface it even without a CFB parser.
+    form = tmp_path / "filled.hwp"
+    data = (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 16
+            + "성명 김철수 900101-1234567".encode("utf-16-le") + b"\x00" * 16)
+    form.write_bytes(data)
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("filled.hwp", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 3
+    assert "binary_pii_rrn" in rules(payload)
+
+
+def test_corpus_manifest_is_autodetected_at_repo_root(tmp_path: Path):
+    corpus = tmp_path / "tests" / "corpus" / "forms" / "fam"
+    corpus.mkdir(parents=True)
+    form = corpus / "blank.hwpx"
+    data = _write_hwpx(form, "<hs:sec>blank template</hs:sec>")
+    _write_manifest(tmp_path / "tests" / "corpus" / "forms" / "manifest.json",
+                    [("fam/blank.hwpx", data)])
+
+    payload, code = run(tmp_path)  # no --binary-allowlist flag
+
+    assert code == 0
+    assert "binary_document_ext" not in rules(payload)
+
+
+def test_blank_form_labels_do_not_false_positive(tmp_path: Path):
+    # Blank-form placeholder shapes (unfilled label + digit ruler) must not
+    # trip the PII nets — only *filled* values do.
+    form = tmp_path / "blank.hwpx"
+    data = _write_hwpx(
+        form,
+        "<hs:sec>전화번호(또는 휴대전화번호):      주민등록번호: - "
+        "생년월일(성별) (    )</hs:sec>")
+    manifest = tmp_path / "corpus.json"
+    _write_manifest(manifest, [("blank.hwpx", data)])
+
+    payload, code = run(tmp_path, "--binary-allowlist", str(manifest))
+
+    assert code == 0
+
+
+def test_malformed_allowlist_manifest_is_usage_error(tmp_path: Path):
+    (tmp_path / "blank.hwpx").write_bytes(b"binary")
+    manifest = tmp_path / "corpus.json"
+    manifest.write_text('{"documents": [{"path": "blank.hwpx"}]}', encoding="utf-8")
+
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--json",
+         "--binary-allowlist", str(manifest)],
+        capture_output=True, text=True, encoding="utf-8", env=env,
+    )
+
+    assert proc.returncode == 2

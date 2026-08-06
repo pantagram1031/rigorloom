@@ -8,6 +8,31 @@ the kernel's contract shape.
 
 ## Unreleased (main, post-v0.15.0-alpha)
 
+- (`privacy: sha256-pinned corpus allowlist w/ content-scan still-catches`,
+  branch `w5-evals`, v0.16 W5.2) — `privacy_scan` gained
+  `--binary-allowlist <manifest.json>` (auto-detected at
+  `tests/corpus/forms/manifest.json`): a binary document passes the
+  categorical `binary_document_ext` rule only when its path is listed AND
+  its sha256 matches the manifest pin; unlisted binaries and hash drift
+  stay HARD (`binary_allowlist_hash_mismatch`), and allowlisted files are
+  still content-scanned (new HARD rules `binary_pii_rrn` /
+  `binary_pii_phone` plus the existing email/user-path/denylist nets over
+  extracted hwpx XML or a stdlib UTF-16 harvest of binary hwp) so a filled
+  document can never hide behind the allowlist. Bundles never apply the
+  allowlist — `package_module` staging stays categorical, with a regression
+  test asserting no `tests/corpus/forms` member lands in any bundle
+  (module bundles carry their own tests only). Ruling recorded in
+  `docs/gate-calibration.md` and the corpus manifest's `privacy` section.
+- (`evals: blank-form corpus (official sources) + per-family eval
+  scenarios`, branch `w5-evals`, v0.16 W5.2) — `tests/corpus/forms/`:
+  12 blank official templates across 5 families with a sha256/source/license
+  manifest and 5 recorded skips (school family = corpus gap, corp family =
+  documented no-official-source boundary); `probe_results.json` Bench-0
+  baseline (`form_inspect` over both native hwpx members; the 10 `.hwp`
+  members recorded as conversion-blocked until W6 XC-1);
+  `docs/research/form-eval-scenarios.md` with 10 open→recognize→fill→verify
+  scenarios (machine + judgment rubrics; A1/A2 runnable today and set as
+  the W5.3 acceptance floor).
 - (`personalization: general/report pack split, store portability, schema
   rename w/ compat`, branch `w4-personalization`, v0.16 W4.1) — core
   `personalization_ctl` now declares only GENERAL pack types (`prose_rules`,

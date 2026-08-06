@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "description": "Bench-0 descriptive baseline: engine/scripts/form_inspect.py (offline XML) run over every .hwpx corpus member. Not a pass/fail gate. .hwp members skipped with reason.",
+  "tool": "engine/scripts/form_inspect.py",
+  "results": [
+    {
+      "slug": "jumin-deungchobon-sinchengseo",
+      "family": "petition",
+      "path": "petition/jumin-deungchobon-sinchengseo.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "jeongbo-gonggae-cheongguseo",
+      "family": "petition",
+      "path": "petition/jeongbo-gonggae-cheongguseo.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "saeopja-deungnok-sinchengseo",
+      "family": "petition",
+      "path": "petition/saeopja-deungnok-sinchengseo.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
+      "family": "petition",
+      "path": "petition/admrul-gajokdolbom-hyuga-sinchengseo.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "gianmun-byeolji-1ho",
+      "family": "gongmun",
+      "path": "gongmun/gianmun-byeolji-1ho.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "gianmun-byeolji-2ho",
+      "family": "gongmun",
+      "path": "gongmun/gianmun-byeolji-2ho.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "nrf-gyeolgwa-bogoseo-yangsik",
+      "family": "research",
+      "path": "research/nrf-gyeolgwa-bogoseo-yangsik.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+      "family": "grant",
+      "path": "grant/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "pps-hyeopeop-seungin-sinchengseo",
+      "family": "grant",
+      "path": "grant/pps-hyeopeop-seungin-sinchengseo.hwpx",
+      "status": "probed",
+      "anchors": 29,
+      "guide_text": 0,
+      "constraints_detected": 0,
+      "constraints": {
+        "base_pt": null,
+        "line_spacing_pct": null,
+        "max_pages": null,
+        "min_pages": null
+      },
+      "tables": 1,
+      "table_cells": 45
+    },
+    {
+      "slug": "pps-jeongbogonggae-donguiseo",
+      "family": "grant",
+      "path": "grant/pps-jeongbogonggae-donguiseo.hwpx",
+      "status": "probed",
+      "anchors": 28,
+      "guide_text": 0,
+      "constraints_detected": 0,
+      "constraints": {
+        "base_pt": null,
+        "line_spacing_pct": null,
+        "max_pages": null,
+        "min_pages": null
+      },
+      "tables": 3,
+      "table_cells": 16
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2013",
+      "family": "hr",
+      "path": "hr/moel-pyojun-geunrogyeyakseo-2013.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2025",
+      "family": "hr",
+      "path": "hr/moel-pyojun-geunrogyeyakseo-2025.hwp",
+      "status": "skipped",
+      "reason": "format=hwp (binary CFB); form_inspect is hwpx-only XML-level parsing. hwp->hwpx conversion is a W6 measurement on the COM/operator machine."
+    }
+  ]
+}
