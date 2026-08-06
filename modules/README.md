@@ -9,7 +9,7 @@ version as core.
 
 > **Naming: "distribution module" vs "stage contract".**
 > This repo already uses the word "module" for a different thing:
-> `pipeline/references/modules.yaml` + `pipeline/scripts/compose.py` define the
+> `modules/report/references/modules.yaml` + `modules/report/scripts/compose.py` define the
 > v0.12 *pipeline stage composition* vocabulary (16 typed consumes/produces
 > contracts with a mandatory-gate floor). Those are **stage contracts** — units
 > of *pipeline work*. The things in this directory are **distribution
@@ -89,10 +89,11 @@ enablement error, not a silent skip.
 | `checkers` | list of `{name, script}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. |
 | `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
 | `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
-| `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by core's `check_canonical`); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
+| `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by the registry-declared `check_canonical` checker — report-module payload since W3-S2b); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
 | `studio_panels` | list of `{id, title, entry}` | Declarative studio contributions (plan §3.4). Studio renders enabled panels by `entry` path; absent module, absent panel; studio never learns a module's name. |
 | `skill` | `{fragment, references}` | One SKILL fragment plus its reference files, merged into the distribution bundle's router SKILL.md by the installer. A core-only install never sees the fragment's vocabulary. |
-| `playbooks` | list of paths | Stage/task playbooks the module contributes (merged alongside `pipeline/references/playbooks/`). |
+| `playbooks` | list of paths | Stage/task playbooks the module contributes. |
+| `preflight` | list of `{name, script}` | Submission-preflight contributions. Core's `submission_preflight` (artifact/proof half: P1/P2/P3/P5, form-structure hash, verdict_schema) asks the registry for enabled modules' contributions via `enabled_preflight()` and subprocess-composes each script's JSON findings source-tagged into its own verdict — the same merge semantics the former in-process saeteuk composition had. `name` is unique across enabled modules; `script` honours the checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3) and is invoked as `python <script> <workspace>`. No modules enabled = those checks simply absent (absence is not failure). |
 
 ## Enablement model
 

@@ -56,27 +56,18 @@ def _sibling(name: str):
     it. Amendment commands hard-fail if the sibling is genuinely absent."""
     mod = _SIBLING_MODULES.get(name)
     if mod is None:
-        scripts_dir = str(Path(__file__).resolve().parent)
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
+        # Module-script import mechanism (see modules/README.md): sibling
+        # module scripts win by sys.path position; core helpers
+        # (receipt_sign, verdict_schema, ...) resolve from the core
+        # pipeline/scripts dir when the repo layout is present. In a
+        # flattened skill install both live beside this file.
+        own_dir = Path(__file__).resolve().parent
+        core_dir = own_dir.parents[2] / "pipeline" / "scripts"
+        for directory in (core_dir, own_dir):
+            if directory.is_dir() and str(directory) not in sys.path:
+                sys.path.insert(0, str(directory))
         import importlib
-        try:
-            mod = importlib.import_module(name)
-        except ModuleNotFoundError:
-            # TRANSITIONAL (v0.16 W3-S2b, erased when pipeline_ctl itself
-            # moves into modules/report in the very next commit): the
-            # workspace-bound checkers (workspace_organizer, check_canonical,
-            # ...) moved into the report module one commit ahead of the stage
-            # machine, so bridge the gap from the module payload dir.
-            module_dir = (Path(__file__).resolve().parents[2]
-                          / "modules" / "report" / "scripts")
-            candidate = module_dir / f"{name}.py"
-            if not candidate.is_file():
-                raise
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(name, candidate)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+        mod = importlib.import_module(name)
         _SIBLING_MODULES[name] = mod
     return mod
 
@@ -406,7 +397,8 @@ def _discover_kernel_root(install_root: Path):
         if candidate == install_root or not candidate.is_dir():
             continue
         if ((candidate / 'scripts' / 'sync_local.py').is_file()
-                and (candidate / 'pipeline' / 'scripts' / 'pipeline_ctl.py').is_file()):
+                and (candidate / 'modules' / 'report' / 'scripts'
+                     / 'pipeline_ctl.py').is_file()):
             return candidate
     return None
 
@@ -1194,19 +1186,17 @@ def _resolve_gate_checker(gate_name: str, graph_ctx: dict | None = None):
 
 def _substitute_checker_argv(checker: list, ws: Path) -> list:
     """Substitute {WS}, {PIPELINE_SCRIPTS} and {REPORT_SCRIPTS} placeholders in
-    each argv token. {WS} = workspace absolute path; {PIPELINE_SCRIPTS} = this
-    script's dir; {REPORT_SCRIPTS} = the report distribution module's scripts
-    dir (modules/report/scripts).
-
-    TRANSITIONAL (v0.16 W3.3): {REPORT_SCRIPTS} exists only because the stage
-    machine itself is still in core while the report checkers it gates have
-    already moved into modules/report/. When pipeline_ctl moves into the
-    report module, this placeholder collapses to a module-relative path and
-    the name-level knowledge of modules/report leaves core."""
+    each argv token. {WS} = workspace absolute path; {REPORT_SCRIPTS} = this
+    script's own dir (the report module's scripts payload — the stage machine
+    and its report checkers are module-internal since v0.16 W3-S2b);
+    {PIPELINE_SCRIPTS} = the core pipeline/scripts dir when the repo layout
+    is present, else this script's dir (flattened skill installs keep core
+    helpers and module payload side by side)."""
     ws_abs = str(ws.resolve())
-    scripts_dir = str(Path(__file__).resolve().parent)
-    report_scripts_dir = str(
-        Path(__file__).resolve().parents[2] / "modules" / "report" / "scripts")
+    own_dir = Path(__file__).resolve().parent
+    core_dir = own_dir.parents[2] / "pipeline" / "scripts"
+    scripts_dir = str(core_dir if core_dir.is_dir() else own_dir)
+    report_scripts_dir = str(own_dir)
     argv = []
     for tok in checker:
         s = (str(tok).replace("{WS}", ws_abs)

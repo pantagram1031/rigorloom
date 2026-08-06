@@ -54,8 +54,8 @@ checker itself (never a hand-supplied exit code). `layout`'s checker (`layout_pl
 `engine/scripts` and reached through the `check_layout.py` delegate bound in
 `stages.yaml`, so `check` runs it directly; THEN advance:
 ```
-python pipeline/scripts/pipeline_ctl.py check <WS> layout
-python pipeline/scripts/pipeline_ctl.py advance <WS> 2.5 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> layout
+python modules/report/scripts/pipeline_ctl.py advance <WS> 2.5 --status done
 ```
 (`check` exit 0 → auto_approved; nonzero → rejected, records provenance. Until a
 checker is bound, `check <WS> layout` is a usage error — it never silently

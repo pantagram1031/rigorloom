@@ -10,7 +10,7 @@ EXACT actions:
 2. Run the registered checker:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
+python modules/report/scripts/pipeline_ctl.py check <WS> content_audit
 ```
 
 3. Correct inputs and rerun after rejection; never edit the verdict.

@@ -29,7 +29,7 @@ EXACT actions:
    it does not accept a hand-supplied verdict:
    ```
    # cd <REPO_ROOT>/
-   python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
+   python modules/report/scripts/pipeline_ctl.py check <WS> content_audit
    # exit 0 → auto_approved (HARD rules all clean) → advance
    # nonzero → rejected (HARD violation) → fix content.md, re-run check
    ```
@@ -71,7 +71,7 @@ EXACT actions:
 4. Any content edit made AFTER this gate passes → invalidate from 4.5 so the
    frozen input and downstream assembly are rebuilt from the corrected prose:
    ```
-   python pipeline/scripts/pipeline_ctl.py invalidate <WS> --from 4.5 --reason "post-freeze content edit"
+   python modules/report/scripts/pipeline_ctl.py invalidate <WS> --from 4.5 --reason "post-freeze content edit"
    ```
 
 ROLE BINDINGS (§R): reviewer-ai-tell = agent.worker/high (fresh, independent);
@@ -81,7 +81,7 @@ comparison judge and can never bypass the local checker verdict.
 
 EXIT + gate: `content_audit` auto_approved (checker exit 0), THEN advance → 5:
 ```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
 ```
 
 FAILURE table:

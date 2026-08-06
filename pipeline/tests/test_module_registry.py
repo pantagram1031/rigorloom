@@ -499,8 +499,10 @@ class TestCli:
 
 def test_stage_contract_catalog_untouched_by_this_registry():
     """The v0.12 stage-contract catalog is a different axis and must keep
-    existing exactly where compose.py reads it."""
-    catalog = REPO_ROOT / "pipeline" / "references" / "modules.yaml"
+    existing exactly where compose.py reads it (module payload since
+    W3-S2b: compose.py resolves it module-relative)."""
+    catalog = (REPO_ROOT / "modules" / "report" / "references"
+               / "modules.yaml")
     assert catalog.is_file()
     assert "rigorloom-modules/v1" in catalog.read_text(encoding="utf-8")
     # And the distribution-module registry never reads it.

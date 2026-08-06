@@ -9,13 +9,18 @@ import sys
 import zipfile
 
 
-ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / 'pipeline' / 'scripts' / 'check_saeteuk.py'
+MODULE_ROOT = Path(__file__).parents[1]
+REPO_ROOT = Path(__file__).parents[3]
+SCRIPT = MODULE_ROOT / 'scripts' / 'check_saeteuk.py'
 _spec = importlib.util.spec_from_file_location('check_saeteuk', SCRIPT)
 check_saeteuk = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_saeteuk)
-sys.path.insert(0, str(SCRIPT.parent))
-import submission_preflight  # noqa: E402
+# The saeteuk composition is the module's preflight contribution since the
+# W3-S2b submission_preflight split.
+_spec_pr = importlib.util.spec_from_file_location(
+    'preflight_report', MODULE_ROOT / 'scripts' / 'preflight_report.py')
+preflight_report = importlib.util.module_from_spec(_spec_pr)
+_spec_pr.loader.exec_module(preflight_report)
 
 
 def _write_workspace(tmp_path: Path, body: str | None, saeteuk: str | None) -> Path:
@@ -303,19 +308,19 @@ def test_unsupported_named_claim_is_warn(tmp_path):
 
 
 def test_stage_6_gate_composes_saeteuk_checker(tmp_path):
-    stages = (ROOT / 'pipeline' / 'references' / 'stages.yaml').read_text(
+    stages = (MODULE_ROOT / 'references' / 'stages.yaml').read_text(
         encoding='utf-8'
     )
-    preflight = (
-        ROOT / 'pipeline' / 'scripts' / 'submission_preflight.py'
+    contribution = (
+        MODULE_ROOT / 'scripts' / 'preflight_report.py'
     ).read_text(encoding='utf-8')
     playbook = (
-        ROOT / 'pipeline' / 'references' / 'playbooks' / 'stage-6.md'
+        MODULE_ROOT / 'references' / 'playbooks' / 'stage-6.md'
     ).read_text(encoding='utf-8')
 
     assert '{id: ' + chr(34) + '6' + chr(34) in stages
     assert '{PIPELINE_SCRIPTS}/submission_preflight.py' in stages
-    assert 'check_saeteuk.check(ws)' in preflight
+    assert 'check_saeteuk.check(ws)' in contribution
     assert 'check_saeteuk' in playbook
     assert 'exit 2' in playbook
     assert 'UTF-8' in playbook
@@ -343,7 +348,7 @@ def test_stage_6_gate_composes_saeteuk_checker(tmp_path):
     with zipfile.ZipFile(output / 'submission.hwpx', 'w') as archive:
         archive.writestr('Contents/section0.xml', '<doc><p>synthetic</p></doc>')
 
-    verdict, code = submission_preflight.check(workspace)
+    verdict, code = preflight_report.check(workspace)
 
     assert code == 3
     assert any(

@@ -9,7 +9,7 @@ EXACT actions:
 1. Run the registered format checker:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py check <WS> edit_verify
+python modules/report/scripts/pipeline_ctl.py check <WS> edit_verify
 ```
 
 2. Inspect the checker receipt and proof artifacts.

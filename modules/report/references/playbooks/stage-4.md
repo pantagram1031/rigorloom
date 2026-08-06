@@ -57,8 +57,8 @@ required and cannot bypass local fidelity.
 EXIT + gate:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py gate <WS> draft --mode <mode>
-python pipeline/scripts/pipeline_ctl.py advance <WS> 4 --status done
+python modules/report/scripts/pipeline_ctl.py gate <WS> draft --mode <mode>
+python modules/report/scripts/pipeline_ctl.py advance <WS> 4 --status done
 ```
 
 Next is **Stage 4.5 `content_audit`** (script gate), not assembly. Freeze the

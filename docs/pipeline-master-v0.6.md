@@ -22,7 +22,7 @@ post-assembly repair is limited to small content deltas.
 Non-negotiable invariants:
 
 1. `PIPELINE.md` is the source of truth for stage and gate state.
-2. State changes go through `pipeline/scripts/pipeline_ctl.py`, never manual
+2. State changes go through `modules/report/scripts/pipeline_ctl.py`, never manual
    YAML edits.
 3. Script verdicts are immutable. Change their inputs and rerun the script.
 4. A supervised human gate can only be approved by a human.
@@ -93,13 +93,13 @@ archive/                   preserved scratch and superseded run outputs
 ## 3. The only orchestration loop
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py resume <ABSOLUTE_WORKSPACE>
+python modules/report/scripts/pipeline_ctl.py resume <ABSOLUTE_WORKSPACE>
 ```
 
 Then:
 
 1. Read the returned stage playbook in
-   `pipeline/references/playbooks/stage-<n>.md`.
+   `modules/report/references/playbooks/stage-<n>.md`.
 2. Satisfy its entry conditions.
 3. Use the work area named in `NEXT_TASK.md` for drafts and temporary files.
 4. Publish only outputs declared in
@@ -146,13 +146,13 @@ Human gates:
 Script gates run the registered checker themselves:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py check <WS> layout
-python pipeline/scripts/pipeline_ctl.py check <WS> sane
-python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
+python modules/report/scripts/pipeline_ctl.py check <WS> layout
+python modules/report/scripts/pipeline_ctl.py check <WS> sane
+python modules/report/scripts/pipeline_ctl.py check <WS> content_audit
 ```
 
 `check` invokes the checker bound to the gate in
-`pipeline/references/stages.yaml`, then records provenance (checker argv, exit
+`modules/report/references/stages.yaml`, then records provenance (checker argv, exit
 code, stdout sha256, checked-at) to the event stream and
 `.pipeline/gate_checks.jsonl`. The `PIPELINE.md` header gate scalar keeps its
 studio-compatible name/state/by/at shape. A non-zero checker exit rejects the

@@ -21,9 +21,31 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.ws = Path(self._tmp.name) / "report-preflight"
         (self.ws / "output").mkdir(parents=True)
+        # Core tests must be matrix-independent: stub the registry so no real
+        # module contribution runs unless a test installs a fake one.
+        self._registry_patch = mock.patch.object(
+            submission_preflight.module_registry, "ModuleRegistry")
+        registry_cls = self._registry_patch.start()
+        self.registry = registry_cls.return_value
+        self.registry.enabled_preflight.return_value = []
 
     def tearDown(self):
+        self._registry_patch.stop()
         self._tmp.cleanup()
+
+    def install_contribution(self, payload, exit_code, name="fake_preflight"):
+        """Declare one fake registry preflight contribution whose script
+        prints ``payload`` (dict -> JSON, str -> verbatim) and exits
+        ``exit_code``."""
+        script = Path(self._tmp.name) / f"{name}.py"
+        body = payload if isinstance(payload, str) else json.dumps(payload)
+        script.write_text(
+            "import sys\n"
+            f"sys.stdout.write({body!r})\n"
+            f"sys.exit({exit_code})\n", encoding="utf-8")
+        self.registry.enabled_preflight.return_value = [
+            {"name": name, "script": str(script), "module": "fake"}]
+        return script
 
     def write_header(self, canonical):
         (self.ws / "PIPELINE.md").write_text(
@@ -69,49 +91,101 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(verdict["artifact"], "output/submission.hwpx")
         self.assertEqual(verdict["proof_grade"], "hancom")
 
-    def test_saeteuk_exit_three_and_child_inconsistency_fail_closed(self):
+    def _passing_workspace(self, proof_grade="none"):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(
             'output_filename: "submission.hwpx"\nrequired_fields: []\n',
             encoding="utf-8",
         )
         self.write_hwpx()
-        self.write_proof_grade("none")
+        self.write_proof_grade(proof_grade)
+
+    def test_contribution_exit_three_and_inconsistency_fail_closed(self):
+        """A registry preflight contribution that fails, or whose exit code
+        contradicts its JSON verdict, rejects the composed gate (the merge
+        semantics the in-process saeteuk composition had before W3-S2b)."""
+        self._passing_workspace()
         cases = (
             ({
                 "ok": False,
                 "verdict": "fail",
-                "hard": [],
+                "hard": [{"code": "P0", "msg": "request.yaml is missing"}],
                 "warn": [],
-                "saeteuk_files": [],
-            }, 3, None),
+            }, 3, "P0"),
             ({
                 "ok": False,
                 "verdict": "fail",
                 "hard": [],
                 "warn": [],
-                "saeteuk_files": [],
-            }, 0, "saeteuk_checker_inconsistent"),
+            }, 0, "preflight_contribution_inconsistent"),
         )
 
         for child_verdict, child_code, expected_hard in cases:
             with self.subTest(child_code=child_code):
-                with mock.patch.object(
-                    submission_preflight.check_saeteuk,
-                    "check",
-                    return_value=(child_verdict, child_code),
-                ):
-                    verdict, code = submission_preflight.check(
-                        self.ws, allow_unproven=True
-                    )
+                self.install_contribution(child_verdict, child_code)
+                verdict, code = submission_preflight.check(
+                    self.ws, allow_unproven=True
+                )
 
                 self.assertEqual(code, 3, verdict)
                 self.assertFalse(verdict["ok"])
-                if expected_hard:
-                    self.assertTrue(any(
-                        finding.get("code") == expected_hard
-                        for finding in verdict["hard"]
-                    ), verdict)
+                self.assertTrue(any(
+                    finding.get("code") == expected_hard
+                    for finding in verdict["hard"]
+                ), verdict)
+                # every merged finding is source-tagged
+                self.assertTrue(all(
+                    finding.get("source") == "fake_preflight"
+                    for finding in verdict["hard"]
+                ), verdict)
+                self.assertEqual(
+                    verdict["preflight_contributions"],
+                    [{"name": "fake_preflight", "module": "fake", "exit": 3}])
+
+    def test_contribution_usage_error_is_source_tagged_usage_exit_two(self):
+        self._passing_workspace()
+        self.install_contribution({
+            "ok": False, "verdict": "usage_error",
+            "error": "request.yaml unreadable",
+            "hard": [], "warn": [],
+        }, 2)
+        verdict, code = submission_preflight.check(self.ws, allow_unproven=True)
+        self.assertEqual(code, 2, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "USAGE"
+            and finding.get("source") == "fake_preflight"
+            for finding in verdict["hard"]
+        ), verdict)
+
+    def test_contribution_non_json_output_is_hard_finding(self):
+        self._passing_workspace()
+        self.install_contribution("this is not a JSON verdict", 0)
+        verdict, code = submission_preflight.check(self.ws, allow_unproven=True)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "preflight_contribution_inconsistent"
+            for finding in verdict["hard"]
+        ), verdict)
+
+    def test_contribution_warn_findings_merge_without_failing(self):
+        self._passing_workspace()
+        self.install_contribution({
+            "ok": True, "verdict": "pass",
+            "hard": [], "warn": [{"code": "W1", "msg": "advisory"}],
+        }, 0)
+        verdict, code = submission_preflight.check(self.ws, allow_unproven=True)
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(
+            [w for w in verdict["warn"] if w.get("code") == "W1"][0]["source"],
+            "fake_preflight")
+
+    def test_no_enabled_contributions_means_checks_simply_absent(self):
+        """Core-only semantics: with no modules enabled the workspace-
+        vocabulary checks are absent — absence is not failure."""
+        self._passing_workspace()
+        verdict, code = submission_preflight.check(self.ws, allow_unproven=True)
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["preflight_contributions"], [])
 
     def test_one_optional_request_key_can_be_absent_with_note(self):
         self.write_header("output/submission.hwpx")
@@ -123,7 +197,10 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(code, 0, verdict)
         self.assertTrue(any("output_filename" in note for note in verdict["notes"]))
 
-    def test_wrong_structure_with_only_indented_expected_keys_is_malformed(self):
+    def test_malformed_request_structure_is_note_p0_is_module_contribution(self):
+        """Core keeps only the artifact/proof half (W3-S2b): an unusable
+        request.yaml downgrades filename matching to a note here; the P0
+        hard finding is the report module's preflight contribution."""
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(
             "submission:\n"
@@ -132,13 +209,14 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             encoding="utf-8",
         )
         self.write_hwpx()
-        self.write_proof_grade()
+        self.write_proof_grade("advisory")
 
         verdict, code = submission_preflight.check(self.ws)
 
-        self.assertEqual(code, 3, verdict)
-        self.assertTrue(any(item["code"] == "P0" for item in verdict["hard"]))
-        self.assertFalse(any("skipped" in note for note in verdict["notes"]))
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
+        self.assertTrue(any("request.yaml unusable" in note
+                            for note in verdict["notes"]))
 
     @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
     def test_valid_text_bearing_pdf_reopens(self):
@@ -154,23 +232,25 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         verdict, code = submission_preflight.check(self.ws)
         self.assertEqual(code, 0, verdict)
 
-    def test_missing_request_yaml_fails_closed(self):
+    def test_missing_request_yaml_is_note_in_core(self):
         self.write_header("output/submission.hwpx")
         self.write_hwpx()
-        self.write_proof_grade()
+        self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 3, verdict)
-        self.assertTrue(any(item["code"] == "P0" for item in verdict["hard"]))
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
+        self.assertTrue(any("request.yaml unusable" in note
+                            for note in verdict["notes"]))
 
-    def test_malformed_request_yaml_fails_closed(self):
+    def test_malformed_request_yaml_is_note_in_core(self):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(
             'output_filename: "submission.hwpx\n', encoding="utf-8")
         self.write_hwpx()
-        self.write_proof_grade()
+        self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 3, verdict)
-        self.assertTrue(any(item["code"] == "P0" for item in verdict["hard"]))
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
 
     def test_none_proof_grade_requires_explicit_draft_escape(self):
         self.write_header("output/submission.hwpx")
@@ -297,7 +377,9 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             verdict["proof_grade_source"], "output/verdict_v06.json")
         self.assertTrue(any(item["code"] == "P5" for item in verdict["hard"]))
 
-    def test_filename_or_identity_mismatch_fails(self):
+    def test_filename_mismatch_fails(self):
+        """P2 stays core; the P4 identity half is the report module's
+        preflight contribution since the W3-S2b split."""
         self.write_header("output/wrong.hwpx")
         (self.ws / "request.yaml").write_text(
             'output_filename: "expected.hwpx"\n'
@@ -310,7 +392,7 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(code, 3, verdict)
         codes = {item["code"] for item in verdict["hard"]}
         self.assertIn("P2", codes)
-        self.assertIn("P4", codes)
+        self.assertNotIn("P4", codes)
 
     def test_corrupt_hwpx_and_missing_proof_grade_fail_closed(self):
         self.write_header("output/submission.hwpx")

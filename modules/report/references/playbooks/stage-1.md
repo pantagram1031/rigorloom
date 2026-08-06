@@ -42,7 +42,7 @@ verdict/summary only — no raw search dumps to main context.
 EXIT + gate: evidence.md + sources.json + claims.yaml + curriculum.md written;
 cross-exam done. No human gate. Advance → stage 2:
 ```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 1 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 1 --status done
 ```
 
 FAILURE table:

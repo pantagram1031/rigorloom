@@ -41,9 +41,13 @@ import re
 import sys
 
 
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
 SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+_CORE_SCRIPTS_DIR = SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (_CORE_SCRIPTS_DIR, SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 import claim_extraction  # noqa: E402
 import check_units  # noqa: E402
 from checker_base import (  # noqa: E402

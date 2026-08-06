@@ -24,10 +24,10 @@ agent.worker/high (independent proposals). designer/main = high-capability worke
 EXIT + gate: `01_design.md` complete. **Gate design** (CONTRACT §A):
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python pipeline/scripts/pipeline_ctl.py gate <WS> design --mode <mode>
+python modules/report/scripts/pipeline_ctl.py gate <WS> design --mode <mode>
 # supervised → STOP, request approval (chat "approve design" → transcribe
 #   to APPROVALS.md then gate). autonomous/night → auto_approved (logged).
-python pipeline/scripts/pipeline_ctl.py advance <WS> 2 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 2 --status done
 ```
 
 FAILURE table:

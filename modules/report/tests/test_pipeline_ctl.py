@@ -16,9 +16,10 @@ from unittest import mock
 
 import pytest
 
-from pipeline.scripts import pipeline_ctl as ctl
-
 SCRIPT = Path(__file__).parents[1] / "scripts" / "pipeline_ctl.py"
+if str(SCRIPT.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT.parent))
+import pipeline_ctl as ctl  # noqa: E402
 
 
 def run(*args) -> dict:
@@ -90,7 +91,7 @@ class TestInitAndResume(PipelineCtlTestCase):
         handoff = json.loads(
             (self.ws / ".pipeline" / "handoff.json").read_text(encoding="utf-8"))
         self.assertEqual(handoff["playbook"],
-                         "pipeline/references/playbooks/edit-stage-0.md")
+                         "modules/report/references/playbooks/edit-stage-0.md")
         resumed, code = run("resume", str(self.ws))
         self.assertEqual(code, 0, resumed)
         self.assertEqual(resumed["next_stage"], "0")

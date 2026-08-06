@@ -63,10 +63,10 @@ Resolve the registered checker, then advance to Stage 6:
 
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.7 --status awaiting_gate
-python pipeline/scripts/pipeline_ctl.py check <WS> final_panel
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.7 --status awaiting_gate
+python modules/report/scripts/pipeline_ctl.py check <WS> final_panel
 # exit 0 -> auto_approved; exit 3 -> rejected, repair the owning stage/panel
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.7 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.7 --status done
 ```
 
 FAILURE table:

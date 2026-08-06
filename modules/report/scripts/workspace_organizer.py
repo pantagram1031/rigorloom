@@ -260,7 +260,7 @@ def organize_workspace(
     if next_stage:
         playbook = (stage_playbooks or {}).get(
             next_stage, f"playbooks/stage-{next_stage}.md")
-        playbook = f"pipeline/references/{playbook}"
+        playbook = f"modules/report/references/{playbook}"
     summary = _stage_summary(inventory, next_stage)
     handoff = {
         "schema": "report-pipeline-handoff/v2",
@@ -279,7 +279,7 @@ def organize_workspace(
         "missing_inputs": summary["missing_inputs"],
         "missing_outputs": summary["missing_outputs"],
         "inventory": ".pipeline/artifacts.json",
-        "resume_command": f'python pipeline/scripts/pipeline_ctl.py resume "{ws}"',
+        "resume_command": f'python modules/report/scripts/pipeline_ctl.py resume "{ws}"',
         "archived": archived,
         "personalization_lock": ".pipeline/personalization.lock.json" if (ws / ".pipeline" / "personalization.lock.json").is_file() else None,
         "generated_at": _now(),

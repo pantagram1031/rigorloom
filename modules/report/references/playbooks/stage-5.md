@@ -15,7 +15,7 @@ chosen in `build.yaml` (`doc_backend:`) and dispatched by
 Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
 `bundle`. ENTRY REQUIREMENT IS THE SAME FOR ALL BACKENDS: Stage 4 done (gate
 draft ok) and Stage 4.5 `content_audit` approved via
-`python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
+`python modules/report/scripts/pipeline_ctl.py check <WS> content_audit`. Stage 5 has
 no gate of its own (`gate:null`); every backend exits through the Stage 5.3
 `format_check` script gate after assembly.
 
@@ -39,9 +39,9 @@ includes the small proof-loop rewrites below. Before reassembly, always run the
 real CLI sequence (the invalidate option is named `--from`):
 
 ```
-python pipeline/scripts/pipeline_ctl.py invalidate <WS> --from 4.5 --reason "post-freeze content delta"
-python pipeline/scripts/pipeline_ctl.py check <WS> content_audit
-python pipeline/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
+python modules/report/scripts/pipeline_ctl.py invalidate <WS> --from 4.5 --reason "post-freeze content delta"
+python modules/report/scripts/pipeline_ctl.py check <WS> content_audit
+python modules/report/scripts/pipeline_ctl.py advance <WS> 4.5 --status done
 # Re-enter Stage 5 and rebuild every canonical output/proof from audited content.
 ```
 
@@ -49,9 +49,9 @@ STAGE 5.3 FORMAT GATE (ALL BACKENDS): once the selected backend has produced
 its canonical deliverable, complete Stage 5 and run the registered checker:
 
 ```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
-python pipeline/scripts/pipeline_ctl.py check <WS> format_check
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.3 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> format_check
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.3 --status done
 ```
 
 `format_check` runs `verify_format.py <WS> --require-output`. Because this is a
@@ -158,7 +158,7 @@ layout conventions as input constraints. Do not edit the lock during assembly.
 
 ENTRY: `pipeline_ctl resume` → stage 5. Stage 4 done (gate draft ok) and
 Stage 4.5 `content_audit` approved via
-`python pipeline/scripts/pipeline_ctl.py check <WS> content_audit`. Always start
+`python modules/report/scripts/pipeline_ctl.py check <WS> content_audit`. Always start
 from an UNTOUCHED `<WS>/output/form_copy.hwpx` (§8/§T non-destructive).
 
 SINGLE ASSEMBLY PATH: no manual assemble+tidy steps. The ONLY path is

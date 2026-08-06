@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rigorloom.local/schemas/module-v1.json",
   "title": "Rigorloom distribution-module declaration (modules/<name>/module.yaml)",
-  "description": "Normative shape for a distribution module's module.yaml. Distribution modules (packaging/capability units, this schema) are distinct from the v0.12 stage contracts in pipeline/references/modules.yaml (pipeline stage composition). Validated structurally by pipeline/scripts/module_registry.py; declarations are pure literals — no expressions, includes, or interpolation.",
+  "description": "Normative shape for a distribution module's module.yaml. Distribution modules (packaging/capability units, this schema) are distinct from the v0.12 stage contracts in modules/report/references/modules.yaml (pipeline stage composition). Validated structurally by pipeline/scripts/module_registry.py; declarations are pure literals — no expressions, includes, or interpolation.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "name", "requires", "provides"],
@@ -66,7 +66,7 @@
             "required": ["name", "state_policy", "gates"],
             "properties": {
               "name": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
-              "state_policy": {"enum": ["stage_machine", "receipts", "stateless", "stateless_final_pointer"], "description": "stateless_final_pointer = stateless with a mandatory canonical/FINAL pointer at delivery (validated by core's check_canonical)."},
+              "state_policy": {"enum": ["stage_machine", "receipts", "stateless", "stateless_final_pointer"], "description": "stateless_final_pointer = stateless with a mandatory canonical/FINAL pointer at delivery (validated by the registry-declared check_canonical checker; module payload since v0.16 W3-S2b)."},
               "gates": {
                 "oneOf": [
                   {"type": "array", "items": {"type": "string", "minLength": 1}},
@@ -103,6 +103,19 @@
           "type": "array",
           "items": {"type": "string", "minLength": 1},
           "description": "Module-relative paths to stage/task playbooks."
+        },
+        "preflight": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "script"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "script": {"type": "string", "minLength": 1, "description": "Module-relative path to a preflight-contribution script honouring the checker_base.py contract (JSON verdict on stdout, exit 0/2/3), invoked as `python <script> <workspace>`."}
+            }
+          },
+          "description": "Submission-preflight contributions: core's submission_preflight subprocess-composes each enabled contribution's JSON findings source-tagged into its own verdict. No modules enabled = those checks simply absent (absence is not failure)."
         }
       }
     }

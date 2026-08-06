@@ -24,7 +24,7 @@ EXIT + gate: `request.yaml`, `build.yaml`, and kernel-generated `PIPELINE.md`
 exist. No human gate. The scaffolder generates `NEXT_TASK.md`; follow it or run:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py resume <WS>
+python modules/report/scripts/pipeline_ctl.py resume <WS>
 ```
 
 FAILURE table:

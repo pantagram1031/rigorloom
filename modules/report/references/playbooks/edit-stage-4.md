@@ -13,8 +13,8 @@ EXACT actions:
 EXIT + gate:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py gate <WS> edit_accept --mode <mode>
-python pipeline/scripts/pipeline_ctl.py advance <WS> 4 --status done
+python modules/report/scripts/pipeline_ctl.py gate <WS> edit_accept --mode <mode>
+python modules/report/scripts/pipeline_ctl.py advance <WS> 4 --status done
 ```
 
 FAILURE: Rejection returns to the earliest affected edit stage through `pipeline_ctl invalidate`.

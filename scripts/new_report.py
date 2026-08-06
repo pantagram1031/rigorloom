@@ -13,7 +13,6 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_CTL = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
 PERSONALIZATION_CTL = REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py"
 SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -141,9 +140,9 @@ def main() -> int:
     if final.exists():
         print(f"error: workspace already exists: {final}", file=sys.stderr)
         return 1
-    if not PIPELINE_CTL.is_file():
-        print(f"error: pipeline kernel missing: {PIPELINE_CTL}", file=sys.stderr)
-        return 1
+    # Registry lookup (v0.16 W3-S2b): the stage machine is report-module
+    # payload; a disabled module is a clear refusal before anything is staged.
+    pipeline_ctl = _module_cli_script("pipeline")
 
     workspace_root.mkdir(parents=True, exist_ok=True)
     staging = workspace_root / f".creating-{args.slug}-{uuid.uuid4().hex[:8]}"
@@ -155,7 +154,7 @@ def main() -> int:
         (staging / "APPROVALS.md").write_text(_approvals_text(), encoding="utf-8")
 
         command = [
-            sys.executable, str(PIPELINE_CTL), "init", str(staging),
+            sys.executable, str(pipeline_ctl), "init", str(staging),
             "--slug", f"report-{args.slug}", "--mode", args.mode,
             "--subject", args.subject, "--topic", args.topic, "--form", str(form),
         ]
@@ -187,7 +186,7 @@ def main() -> int:
     print(json.dumps({
         "ok": True,
         "workspace": str(final),
-        "next": f'python pipeline/scripts/pipeline_ctl.py resume "{final}"',
+        "next": f'python modules/report/scripts/pipeline_ctl.py resume "{final}"',
     }, ensure_ascii=False))
     return 0
 

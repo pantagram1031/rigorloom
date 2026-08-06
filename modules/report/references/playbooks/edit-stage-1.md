@@ -13,8 +13,8 @@ EXACT actions:
 EXIT + gate:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py gate <WS> edit_spec --mode <mode>
-python pipeline/scripts/pipeline_ctl.py advance <WS> 1 --status done
+python modules/report/scripts/pipeline_ctl.py gate <WS> edit_spec --mode <mode>
+python modules/report/scripts/pipeline_ctl.py advance <WS> 1 --status done
 ```
 
 FAILURE: A rejected or ambiguous specification stops the edit.

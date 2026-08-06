@@ -13,7 +13,7 @@ Two things this doc is honest about up front:
   sim, write) produce the evidence and prose that later gates check. This doc
   shows the mechanical stage-machine commands to move through them, not how
   to write a report — that is what the stage playbooks under
-  `pipeline/references/playbooks/` and the `report-pipeline` skill are for.
+  `modules/report/references/playbooks/` and the `report-pipeline` skill are for.
 - **Only `hwpx` and `hwp` backends can reach a graded verdict.** The `bundle`
   and `docx` backends never produce `output/out.hwpx`, so they cannot pass
   the Stage 5.3 `format_check` gate or reach Stage 6 (see the backend table
@@ -78,13 +78,13 @@ walkthrough; script gates are never auto-approved — they always run their
 bound checker. This prints the workspace path and the next command:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
 ## 3. Walk the stage graph
 
 `pipeline_ctl.py resume <WS>` always tells you the next stage. The gate kinds
-are declared in `pipeline/references/stages.yaml`:
+are declared in `modules/report/references/stages.yaml`:
 
 | Stage | Name | Gate kind | Resolve with |
 |---|---|---|---|
@@ -107,7 +107,7 @@ auto-approve, regardless of mode — this is the fail-closed fix from the
 v0.7 hardening wave. After each resolved gate, advance the stage:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py advance <WS> <stage> --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> <stage> --status done
 ```
 
 Stage 4.5's `content_audit.py` runs seven sub-checkers against
@@ -194,17 +194,17 @@ status.
 ## 5. Post-assembly gates
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5 --status done
-python pipeline/scripts/pipeline_ctl.py check <WS> format_check
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.3 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> format_check
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.3 --status done
 
-python pipeline/scripts/pipeline_ctl.py check <WS> understand
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.5 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> understand
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.5 --status done
 
-python pipeline/scripts/pipeline_ctl.py check <WS> final_panel
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.7 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> final_panel
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.7 --status done
 
-python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
+python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
 ```
 
 - `format_check` (`verify_format.py <WS> --require-output`) hard-enforces
@@ -242,7 +242,7 @@ Everything from step 4B onward has a Hancom/COM equivalent: set
 `doc_backend: hwp`, ensure the engine's `.[windows]`/`.[proof]` extras and a
 licensed Hancom install are present, and run
 `engine/scripts/fill_report.py --loop --proof ...` per
-`pipeline/references/playbooks/stage-5.md`'s §HWP section instead of
+`modules/report/references/playbooks/stage-5.md`'s §HWP section instead of
 `doc_backend.py --backend hwpx`. That path reaches `proof_grade: hancom`
 directly and includes the engine's own render-measured fill/tidy/typeset
 loop, which the XML engine only gained (optionally, when a renderer is

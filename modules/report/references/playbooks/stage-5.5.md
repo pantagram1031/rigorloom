@@ -40,7 +40,7 @@ preserves both the generic gate receipt and the detailed understanding
 provenance:
 
 ```
-python pipeline/scripts/pipeline_ctl.py check <WS> understand
+python modules/report/scripts/pipeline_ctl.py check <WS> understand
 # checker exit 0 = auto_approved by script; exit 3 = rejected, repair QUESTIONS.md
 ```
 
@@ -54,7 +54,7 @@ EXIT + gate: **understand** (script gate):
   retains `answers_pending: true` until a later answered check replaces it.
 Advance → stage 5.7 (eval panel):
 ```
-python pipeline/scripts/pipeline_ctl.py advance <WS> 5.5 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 5.5 --status done
 ```
 
 FAILURE table:

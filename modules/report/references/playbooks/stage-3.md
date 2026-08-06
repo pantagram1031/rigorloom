@@ -52,8 +52,8 @@ verdict. `sim/gates.py` must exit 0 on pass, nonzero on fail. Run `check`,
 THEN advance → stage 4:
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python pipeline/scripts/pipeline_ctl.py check <WS> sane
-python pipeline/scripts/pipeline_ctl.py advance <WS> 3 --status done
+python modules/report/scripts/pipeline_ctl.py check <WS> sane
+python modules/report/scripts/pipeline_ctl.py advance <WS> 3 --status done
 ```
 
 FAILURE table:

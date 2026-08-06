@@ -8,4 +8,4 @@ form copy; never replace the baseline with the edited output's hash.
 
 Resolve only through:
 
-    python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
+    python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight

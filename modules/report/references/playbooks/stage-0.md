@@ -42,10 +42,10 @@ EXIT + gate: selected topic recorded; form_profile.json (with
 page_metrics/table_map/break_audit) + build.yaml written. Resolve the human
 topic gate before research:
 ```
-python pipeline/scripts/pipeline_ctl.py gate <WS> topic_pick --mode <mode>
+python modules/report/scripts/pipeline_ctl.py gate <WS> topic_pick --mode <mode>
 # supervised → STOP, request approval and transcribe it to APPROVALS.md.
 # autonomous/night → auto_approved (logged).
-python pipeline/scripts/pipeline_ctl.py advance <WS> 0 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 0 --status done
 ```
 
 FAILURE table:

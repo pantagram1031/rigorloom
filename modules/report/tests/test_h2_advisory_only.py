@@ -31,9 +31,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pipeline.scripts import pipeline_ctl as ctl
+MODULE_SCRIPTS = Path(__file__).parents[1] / "scripts"
+if str(MODULE_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(MODULE_SCRIPTS))
+import pipeline_ctl as ctl  # noqa: E402
 
-ROOT = Path(__file__).parents[2]
+ROOT = Path(__file__).parents[3]
 SCRIPTS_DIR = ROOT / "pipeline" / "scripts"
 HUMANIZE = SCRIPTS_DIR / "humanization_ctl.py"
 
@@ -63,10 +66,10 @@ class CheckRegistryHasNoDetectorTrigger(unittest.TestCase):
 
     def test_no_pipeline_script_references_detector_score_apis(self):
         offenders = []
-        # Report-shaped checkers moved to modules/report/scripts (v0.16 W3.3);
-        # the H2-advisory policy keeps governing them from here because this
-        # is a repo-policy scan, not a runtime import.
-        scan_dirs = (SCRIPTS_DIR, ROOT / "modules" / "report" / "scripts")
+        # The H2-advisory policy governs core pipeline scripts AND the report
+        # module payload (this test lives with the stage machine since
+        # W3-S2b, but the scan stays a repo-policy scan over both dirs).
+        scan_dirs = (SCRIPTS_DIR, MODULE_SCRIPTS)
         for scan_dir in scan_dirs:
             for script in sorted(scan_dir.glob("*.py")):
                 if script.name in ALLOWED_REFERENCES:

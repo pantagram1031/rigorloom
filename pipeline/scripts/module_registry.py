@@ -6,7 +6,7 @@ Terminology guard: the things this registry manages are **distribution
 modules** — packaging/capability units declared by ``modules/<name>/module.yaml``
 per ``pipeline/references/module.schema.json`` and ``modules/README.md``. They
 are unrelated to the v0.12 **stage contracts** in
-``pipeline/references/modules.yaml`` (pipeline stage composition, consumed by
+``modules/report/references/modules.yaml`` (pipeline stage composition, consumed by
 ``compose.py``), which keep working untouched.
 
 Contract rules enforced here:
@@ -51,7 +51,7 @@ _STATE_POLICIES = (
     "stage_machine", "receipts", "stateless", "stateless_final_pointer")
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes",
-    "studio_panels", "skill", "playbooks",
+    "studio_panels", "skill", "playbooks", "preflight",
 )
 _COMPARATOR_RE = re.compile(r"^(==|!=|>=|<=|>|<)\s*(\d+(?:\.\d+){0,2})$")
 
@@ -438,6 +438,10 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
         out["playbooks"] = [
             _require_str(module, item, f"provides.playbooks[{idx}]")
             for idx, item in enumerate(playbooks)]
+    if "preflight" in provides:
+        out["preflight"] = _require_entry_list(
+            module, provides["preflight"], "preflight",
+            {"name": _CHECKER_NAME_RE, "script": None})
     return normalized
 
 
@@ -574,6 +578,7 @@ class ModuleRegistry:
         for kind, keys in (
             ("checkers", "name"), ("cli", "command"),
             ("run_modes", "name"), ("studio_panels", "id"),
+            ("preflight", "name"),
         ):
             seen: dict[str, str] = {}
             for spec in specs:
@@ -643,6 +648,12 @@ class ModuleRegistry:
                 })
         return rows
 
+    def enabled_preflight(self) -> list[dict[str, Any]]:
+        """[{name, script(abs path), module}] submission-preflight
+        contributions across all enabled modules; core's
+        submission_preflight subprocess-composes them source-tagged."""
+        return self._entries("preflight", ("script",))
+
     def enabled_playbooks(self) -> list[dict[str, Any]]:
         """[{path(abs), module}]."""
         rows = []
@@ -672,6 +683,7 @@ class ModuleRegistry:
             "studio_panels": self.enabled_studio_panels(),
             "skill_fragments": self.enabled_skill_fragments(),
             "playbooks": self.enabled_playbooks(),
+            "preflight": self.enabled_preflight(),
         }
 
 
@@ -679,6 +691,8 @@ def _declared_paths(provides: dict[str, Any]) -> Iterator[str]:
     for entry in provides.get("checkers", []):
         yield entry["script"]
     for entry in provides.get("cli", []):
+        yield entry["script"]
+    for entry in provides.get("preflight", []):
         yield entry["script"]
     for entry in provides.get("studio_panels", []):
         yield entry["entry"]

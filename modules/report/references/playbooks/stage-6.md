@@ -44,8 +44,8 @@ EXACT actions:
    existing directory with no readable artifact is WARN `saeteuk_missing`.
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status awaiting_gate
-python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
+python modules/report/scripts/pipeline_ctl.py advance <WS> 6 --status awaiting_gate
+python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
 # exit 0 -> auto_approved; exit 3 -> rejected, repair package and rerun check
 # exit 2 -> rejected usage/input; repair UTF-8/input readability and rerun check
 ```
@@ -57,7 +57,7 @@ python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
    a WARN that must be surfaced as remaining manual work.
 
 ```sh
-python pipeline/scripts/workflow_lint.py <WS> --json
+python modules/report/scripts/workflow_lint.py <WS> --json
 ```
 
 4. OPTIONAL advisory corpus check before the wiki return. Configure a private
@@ -81,7 +81,7 @@ python modules/report/scripts/check_corpus.py <WS> --corpus-root <root>
 8. Close the workflow only after the script gate is approved:
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py advance <WS> 6 --status done
+python modules/report/scripts/pipeline_ctl.py advance <WS> 6 --status done
 ```
 
 The automatic organizer regenerates `NEXT_TASK.md`, writes the final handoff,
