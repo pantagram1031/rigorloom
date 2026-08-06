@@ -13,6 +13,10 @@ def test_noninteractive_profile_is_local_and_machine_readable(tmp_path: Path):
     output = tmp_path / ".local" / "user-profile" / "writing_preferences.json"
     proc = subprocess.run([
         sys.executable, str(SCRIPT), "--non-interactive", "--output", str(output),
+        # Pin the personalization store to tmp_path: setup_profile's default
+        # --profile-root is REPO_ROOT/.local/personalization, so omitting it
+        # made the suite write into the repo checkout (hygiene issue #12).
+        "--profile-root", str(tmp_path / "personalization"),
         "--language", "ko", "--level", "high-school", "--register", "formal-student-report",
         "--avoid", "generic growth narrative", "--avoid", "repeated transitions",
     ], capture_output=True, text=True)

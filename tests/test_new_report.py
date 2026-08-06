@@ -60,6 +60,10 @@ def test_scaffolder_initializes_atomically(tmp_path: Path):
             sys.executable, str(MODULE_PATH), "--slug", "demo", "--subject", "science: one",
             "--topic", "line one # literal\nline two", "--form", str(form),
             "--workspace-root", str(root),
+            # Pin the personalization store to tmp_path: new_report falls back
+            # to REPO_ROOT/.local/personalization when --profile-root is
+            # omitted, so this test wrote into the repo checkout (issue #12).
+            "--profile-root", str(tmp_path / "personalization"),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
