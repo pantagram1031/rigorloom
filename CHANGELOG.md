@@ -8,6 +8,28 @@ the kernel's contract shape.
 
 ## Unreleased (main, post-v0.15.0-alpha)
 
+- (`personalization: general/report pack split, store portability, schema
+  rename w/ compat`, branch `w4-personalization`, v0.16 W4.1) — core
+  `personalization_ctl` now declares only GENERAL pack types (`prose_rules`,
+  `figure_style`, `backends`, `policy_floors`); the report-flavored five
+  (`saeteuk`, `report_structure`, `gloss_allowlist`, `constants_allowlist`,
+  `tone_rules`) are report-module payload — their schema/default files moved
+  to `modules/report/references/preference_packs/`, and `PACK_TYPES` /
+  `DATA_EXTENSION_PACK_TYPES` are computed at access time from core built-ins
+  + `ModuleRegistry.enabled_pack_types()` (trust-sensitive types —
+  `backends`, `policy_floors`, `constants_allowlist`, and per the W4.1
+  ruling `tone_rules`, a deterministic-checker relaxation vector — stay
+  excluded from extensions, runtime re-enforced on resolve). Using a
+  module-declared pack type on a core-only install is a loud error naming
+  the missing module. Store schema renamed
+  `report-pipeline/personalization-v1` → `rigorloom/personalization-v1`
+  (lock likewise, `lock_version` 5) with legacy strings accepted on read
+  (warned once). New `export`/`import` CLI: manifest+sha256 zip of the
+  profile root that NEVER includes the privacy denylist; import verifies
+  byte-for-byte, refuses tamper and non-empty targets. `privacy_scan` gained
+  the profile-store leak marker class (`profile_store_content` /
+  `profile_store_path`, both HARD), so packaging refuses any bundle staging
+  store content.
 - **#29** (`v0.15 follow-up: feature-classification fixes + v0.16 master
   plan`, landed directly on `main`) — the first real corpus run (genuine
   Hancom-saved documents) surfaced five section-level rendering element

@@ -55,6 +55,45 @@ STREAM_CHUNK_BYTES = 1024 * 1024
 # denylist term crossing the boundary appears whole (see _scan_large_file).
 STREAM_CARRY_MIN_CHARS = 4096
 
+# --- Profile-store leak markers (v0.16 W4.1) --------------------------------
+# A build/packaging staging dir must never contain personalization-store
+# content. Two marker classes, both HARD:
+#   profile_store_path    a staged file whose PATH sits inside a store layout
+#                         (`.local/personalization/...`). Path-based, so docs
+#                         that merely *mention* the store location in prose do
+#                         not false-positive.
+#   profile_store_content a staged .json/.jsonl document whose top-level
+#                         "schema" is a personalization-store schema: store
+#                         manifests (current AND legacy string), identity,
+#                         writing profile/rules, layout/academic profiles,
+#                         forms index/records, feedback logs, humanize voice
+#                         sidecars, portability export manifests, and the
+#                         extension-pack registry/receipts (pack registry ids).
+# Structural (parsed JSON), not substring: source code that names these
+# schema strings in string literals stays clean.
+PROFILE_STORE_SCHEMAS = frozenset({
+    "rigorloom/personalization-v1",
+    "report-pipeline/personalization-v1",
+    "rigorloom/personalization-export-v1",
+    "report-pipeline/identity-v1",
+    "report-pipeline/writing-profile-v1",
+    "report-pipeline/writing-rules-v1",
+    "report-pipeline/layout-profile-v1",
+    "report-pipeline/academic-profile-v1",
+    "report-pipeline/subject-profile-v1",
+    "report-pipeline/forms-index-v1",
+    "report-pipeline/form-record-v1",
+    "report-pipeline/form-conditions-v1",
+    "report-pipeline/feedback-event-v1",
+    "report-pipeline/feedback-candidate-v1",
+    "report-pipeline/feedback-decision-v1",
+    "report-pipeline/floor-override-warning-v1",
+    "report-pipeline/humanization-voice-v1",
+    "rigorloom/extension-registry-v1",
+    "rigorloom/extension-receipt-v1",
+})
+_STORE_PATH_SEGMENTS = (".local", "personalization")
+
 RE_USER_PATH = re.compile(r'C:\\Users\\([^\\/\s"\']+)')
 RE_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 RE_DIGIT5 = re.compile(r"(?<!\d)\d{5}(?!\d)")
@@ -273,11 +312,59 @@ def _scan_large_file(rel: str, path: Path, denylist_terms: list[tuple[str, str]]
     return []
 
 
+def _store_schema_of(payload) -> str | None:
+    if isinstance(payload, dict):
+        schema = payload.get("schema")
+        if isinstance(schema, str) and schema in PROFILE_STORE_SCHEMAS:
+            return schema
+    return None
+
+
+def _scan_profile_store_json(rel: str, suffix: str, text: str) -> list[dict]:
+    """Structural profile-store content detection for .json/.jsonl files."""
+    findings: list[dict] = []
+    if suffix == ".json":
+        try:
+            payload = json.loads(text)
+        except (ValueError, RecursionError):
+            return findings
+        schema = _store_schema_of(payload)
+        if schema:
+            findings.append(_finding(
+                rel, None, "profile_store_content", "HARD", schema))
+        return findings
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        schema = _store_schema_of(payload)
+        if schema:
+            findings.append(_finding(
+                rel, lineno, "profile_store_content", "HARD", schema))
+    return findings
+
+
+def _profile_store_path_finding(rel: str, parts: tuple[str, ...]) -> dict | None:
+    for index in range(len(parts) - 1):
+        if parts[index] == _STORE_PATH_SEGMENTS[0] and parts[index + 1] == _STORE_PATH_SEGMENTS[1]:
+            return _finding(rel, None, "profile_store_path", "HARD", rel)
+    return None
+
+
 def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
     findings: list[dict] = []
-    rel = path.relative_to(root).as_posix()
+    relative = path.relative_to(root)
+    rel = relative.as_posix()
     name = unicodedata.normalize("NFC", path.name)
     suffix = Path(name).suffix.lower()
+
+    store_path_finding = _profile_store_path_finding(rel, relative.parts)
+    if store_path_finding:
+        findings.append(store_path_finding)
 
     if suffix in BINARY_EXTS:
         findings.append(_finding(rel, None, "binary_document_ext", "HARD", name))
@@ -299,6 +386,17 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         # chunks with per-line truncation instead of skipping content entirely.
         findings.append(_finding(rel, None, "large_file", "WARN", f"{size} bytes"))
         findings.extend(_scan_large_file(rel, path, denylist_terms))
+        if suffix == ".jsonl":
+            # A store feedback log can exceed the large-file bound; its schema
+            # marker sits on every line, so a bounded head read suffices.
+            try:
+                head = path.open("rb").read(8 * STREAM_CHUNK_BYTES)
+            except OSError:
+                head = b""
+            head_text = head.decode("utf-8", errors="ignore")
+            head_lines = head_text.splitlines()[:-1] or [head_text]
+            findings.extend(_scan_profile_store_json(
+                rel, ".jsonl", "\n".join(head_lines)))
         return findings
 
     text = _read_text(path)
@@ -306,6 +404,8 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         return findings  # undecodable binary blob: only name/extension/size checks apply
 
     text = unicodedata.normalize("NFC", text)
+    if suffix in (".json", ".jsonl"):
+        findings.extend(_scan_profile_store_json(rel, suffix, text))
     for lineno, full_line in enumerate(text.splitlines(), start=1):
         # denylist is a linear substring check: safe on the full (untruncated)
         # line so a term past the regex cap is still caught.

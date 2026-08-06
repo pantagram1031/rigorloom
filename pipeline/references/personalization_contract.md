@@ -37,24 +37,40 @@ the public repository, and it does not infer identity.
 ## Preference packs v2
 
 A *preference pack* is a validated, versioned data file that encodes one facet
-of operator taste. The public repository ships JSON Schemas
-(`pipeline/references/preference_packs/*.schema.json`) and one neutral default
-instance per type (`.../defaults/*.json`). The operator's real taste packs live
-only under a private `--profile-root` (e.g. `~/.report-profile`), never in any
-repository. Taste is data; the engine is code.
+of operator taste. The public repository ships JSON Schemas and one neutral
+default instance per type. The operator's real taste packs live only under a
+private `--profile-root` (e.g. `~/.report-profile`), never in any repository.
+Taste is data; the engine is code.
 
-### Pack types
+### Pack types (general/report split, v0.16 W4.1)
+
+Core declares only the GENERAL pack types; schema + default files live in
+`pipeline/references/preference_packs/`. Report-flavored pack types are
+declared by the report distribution module (`module.yaml` `pack_types`) and
+their schema + default files live in
+`modules/report/references/preference_packs/`. `PACK_TYPES` is computed at
+runtime as core built-ins + `ModuleRegistry.enabled_pack_types()`; using a
+module-declared pack type on an install where that module is not enabled is a
+loud error naming the missing module.
+
+Core (general):
 
 | Pack | Encodes |
 |---|---|
 | `prose_rules` | banned regex patterns (`hard`/`warn`), signature-phrase caps, endings policy per doc type, advisory notes |
 | `figure_style` | plotting look (background, spines, grid, tick direction, color cycle, font, dpi, legend), colormap whitelist, banned aesthetics, caption-source policy |
+| `backends` | council seating; every command is an `args_argv` array, never a shell string |
+| `policy_floors` | privacy/fidelity/safety floors that lower layers cannot weaken |
+
+Report module:
+
+| Pack | Encodes |
+|---|---|
 | `report_structure` | title template, section policies, abstract mode, citation style (sources + in-text), curriculum-anchor-first, hedge cap, preferred sections |
 | `saeteuk` | short-record char target, byte ceiling, special-char and numeric-overclaim bans, style |
 | `gloss_allowlist` | terms allowed as a parenthetical gloss despite a general gloss ban |
 | `constants_allowlist` | numeric constants that may bypass `unbacked_numeral` when value and optional unit match |
-| `backends` | council seating; every command is an `args_argv` array, never a shell string |
-| `policy_floors` | privacy/fidelity/safety floors that lower layers cannot weaken |
+| `tone_rules` | checkable tone rules (hedge-on-measured-value, conclusion pivot density) for `check_tone_rules` |
 
 ### Commands
 
@@ -120,3 +136,30 @@ and floor values are reduced to `sha256:` prefixes. Consumers re-resolve the
 actual rule content from the profile root at runtime and verify it against the
 recorded hashes; the lock stays safe to keep inside a workspace because it leaks
 no taste text and no identity.
+
+### Schema names (v0.16 rename, read-compat)
+
+The store manifest schema is `rigorloom/personalization-v1` and the workspace
+lock schema is `rigorloom/personalization-lock-v1`. The pre-rename strings
+(`report-pipeline/personalization-v1`, `report-pipeline/personalization-lock-v1`)
+are still accepted on read with a once-per-process warning; new writes always
+use the current strings.
+
+### Store portability (export / import)
+
+```sh
+python pipeline/scripts/personalization_ctl.py --profile-root <ROOT> export --output <STORE.zip>
+python pipeline/scripts/personalization_ctl.py --profile-root <NEW_ROOT> import --input <STORE.zip>
+```
+
+`export` zips the profile root with an `export_manifest.json` (per-file
+sha256); the privacy denylist file is NEVER included. `import` verifies the
+manifest byte-for-byte (extra, missing, or hash-mismatched members are a
+refusal), refuses an archive that claims to carry a denylist, and refuses a
+non-empty target root. Acceptance flow: create profile on machine A → export →
+import on machine B → drive a build, with no repository ever holding the
+store's content. The packaging privacy gate backs this structurally:
+`privacy_scan` HARD-fails any staged bundle containing profile-store content
+markers (`profile_store_content`: store-schema JSON/JSONL documents, including
+the extension-pack registry/receipts; `profile_store_path`: files under a
+`.local/personalization` layout).

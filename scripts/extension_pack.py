@@ -128,7 +128,8 @@ def _manifest(source: Path) -> dict[str, Any]:
             raise ValueError(
                 f"pack type is not allowed in a data-only extension: {pack_type}; "
                 "backends and policy_floors require a separate trust model, and "
-                "constants_allowlist relaxes deterministic checks (profile-level only)"
+                "constants_allowlist/tone_rules relax deterministic checks "
+                "(profile-level only)"
             )
         if not isinstance(relative, str):
             raise ValueError(f"pack path for {pack_type} must be a string")
