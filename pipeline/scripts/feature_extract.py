@@ -50,7 +50,65 @@ FEATURE_HANDLED_SECTION_TAGS = frozenset({
 KNOWN_BENIGN_SECTION_TAGS = frozenset({
     "cellAddr", "cellSpan", "ctrl", "lineseg", "linesegarray", "p", "run",
     "script", "sec", "section", "secPr", "subList", "t", "tc", "tr",
+    # Object-scoped property children of already-handled features, observed in
+    # genuine Hancom-saved documents (2026-07-20 corpus run). Each is geometry
+    # or a default-property block of a parent element this extractor counts
+    # (tbl/tc cells, equation/shape object frames, secPr note defaults), so
+    # certification measurement exercises them through that parent, the same
+    # way it samples any other per-object content (cell widths vary like table
+    # text varies — the corpus samples the space; the induction caveat covers
+    # it). Note-property defaults (footNotePr/endNotePr and children) render
+    # only through the separately handled footNote/endNote features.
+    "autoNumFormat", "cellMargin", "cellSz", "endNotePr", "footNotePr",
+    "inMargin", "noteLine", "noteSpacing", "numbering", "offset", "outMargin",
+    "placement", "shapeComment", "sz",
+    # Image-object internals and field parameters observed in a real pipeline
+    # report (2026-07-20). All are per-object geometry/payload children of the
+    # handled pic/fieldBegin features — the same content-sampling class as
+    # cell geometry above. fieldEnd pairs the handled fieldBegin.
+    "curSz", "effects", "fieldEnd", "flip", "imgClip", "imgDim", "imgRect",
+    "integerParam", "orgSz", "parameters", "pt0", "pt1", "pt2", "pt3",
+    "renderingInfo", "rotMatrix", "rotationInfo", "scaMatrix", "stringParam",
+    "transMatrix",
 })
+
+# Section-level rendering configuration. These are NOT benign: a different
+# configuration (a visible page border, hidden first-page header, a changed
+# start number, a printing grid, line numbering) renders differently on its
+# own, so blanket-benign classification would let unmeasured variants inside
+# a certified envelope (fail-open). Each occurrence is emitted as an
+# attribute-aware feature class `sec-config:<tag>:<fp>` — the fingerprint of
+# its canonical attribute set — mirroring the page-size:/page-margins:
+# pattern. A document certifies only under the exact configurations the
+# corpus measured. Known residual: attribute values that are ID references
+# into doc-level parts (e.g. borderFillIDRef) fingerprint the reference, not
+# the referenced definition (header.xml is outside this walk — documented
+# scope boundary).
+SECTION_CONFIG_TAGS = frozenset({
+    "grid", "lineNumberShape", "pageBorderFill", "startNum", "visibility",
+})
+
+
+def _config_shape(element: ElementTree.Element) -> list:
+    # Canonical subtree shape: local name, sorted own attributes, children in
+    # document order. Children such as pageBorderFill/offset are rendering
+    # configuration too, so the fingerprint must cover the WHOLE subtree —
+    # own-attribute-only hashing would be fail-open for child-level variants.
+    attrs = sorted(
+        (_local_name(name), str(value)) for name, value in element.attrib.items()
+    )
+    children = [
+        _config_shape(child) for child in element
+        if isinstance(child.tag, str)
+    ]
+    return [_local_name(element.tag), attrs, children]
+
+
+def _attr_fingerprint(element: ElementTree.Element) -> str:
+    blob = json.dumps(
+        _config_shape(element), ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:8]
 
 
 def _local_name(tag: str) -> str:
@@ -220,13 +278,18 @@ def extract_feature_counts(document: str | Path) -> dict[str, int]:
                 )
                 counts[f"page-margins:{_page_margin_class(margin) if margin is not None else 'custom'}"] += 1
 
-    classified = FEATURE_HANDLED_SECTION_TAGS | KNOWN_BENIGN_SECTION_TAGS
+    classified = (
+        FEATURE_HANDLED_SECTION_TAGS | KNOWN_BENIGN_SECTION_TAGS
+        | SECTION_CONFIG_TAGS
+    )
     for root in section_roots:
         for element in root.iter():
             if not isinstance(element.tag, str):
                 continue
             local = _local_name(element.tag)
-            if local not in classified:
+            if local in SECTION_CONFIG_TAGS:
+                counts[f"sec-config:{local}:{_attr_fingerprint(element)}"] += 1
+            elif local not in classified:
                 counts[f"unknown:{local}"] += 1
 
     if maximum_table_depth:

@@ -119,6 +119,55 @@ class FeatureExtractTestCase(unittest.TestCase):
             for tag in features
         ))
 
+    def test_section_config_variants_get_distinct_feature_classes(self):
+        template = """<?xml version="1.0" encoding="UTF-8"?>
+<hs:sec xmlns:hs="urn:section" xmlns:hp="urn:paragraph">
+  <hp:p><hp:run>
+    <hp:secPr>
+      <hp:pagePr width="59528" height="84186">
+        <hp:margin left="5669" right="5669" top="5669" bottom="5669"/>
+      </hp:pagePr>
+      <hp:pageBorderFill type="{border}" borderFillIDRef="1">
+        <hp:offset left="{offset}" right="1417" top="1417" bottom="1417"/>
+      </hp:pageBorderFill>
+      <hp:visibility hideFirstHeader="{hide}"/>
+    </hp:secPr>
+  </hp:run></hp:p>
+</hs:sec>
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = {}
+            for name, border, hide, offset in (
+                ("plain", "NONE", "0", "1417"),
+                ("bordered", "BOTH", "0", "1417"),
+                ("hidden-header", "NONE", "1", "1417"),
+                ("child-offset", "NONE", "0", "2834"),
+            ):
+                path = Path(tmp) / f"{name}.hwpx"
+                _write_hwpx(path, [
+                    ("Contents/header.xml", HEADER_XML),
+                    ("Contents/section0.xml",
+                     template.format(border=border, hide=hide, offset=offset)),
+                ])
+                docs[name] = feature_extract.extract_feature_counts(path)
+
+            for features in docs.values():
+                self.assertFalse(
+                    any(tag.startswith("unknown:") for tag in features), features,
+                )
+                self.assertEqual(
+                    sum(1 for tag in features
+                        if tag.startswith("sec-config:pageBorderFill:")), 1,
+                )
+            # A changed section configuration must change the feature map, so
+            # an envelope measured on one variant never admits another.
+            names = sorted(docs)
+            for i, first in enumerate(names):
+                for second in names[i + 1:]:
+                    self.assertNotEqual(
+                        docs[first], docs[second], (first, second),
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
