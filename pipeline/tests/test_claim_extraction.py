@@ -17,8 +17,27 @@ def _load(name):
 
 
 claim_extraction = _load("claim_extraction")
-check_saeteuk = _load("check_saeteuk")
 check_units = _load("check_units")
+
+
+def _load_check_saeteuk():
+    """check_saeteuk is report-module payload (W3-S2b): resolve it through
+    the registry and skip the integration half when no enabled module
+    provides it."""
+    import pytest
+    module_registry = _load("module_registry")
+    try:
+        rows = module_registry.ModuleRegistry().enabled_checkers()
+    except module_registry.ModuleError:
+        rows = []
+    script = next((row["script"] for row in rows
+                   if row["name"] == "check_saeteuk"), None)
+    if script is None:
+        pytest.skip("no enabled distribution module provides check_saeteuk")
+    spec = importlib.util.spec_from_file_location("check_saeteuk", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_saeteuk_fixture_claim_parity_uses_f12_scale_and_subject():
@@ -110,7 +129,7 @@ def test_union_only_korean_tag_does_not_widen_saeteuk_comparison(tmp_path):
         text, encoding="utf-8"
     )
 
-    verdict, code = check_saeteuk.check(workspace)
+    verdict, code = _load_check_saeteuk().check(workspace)
 
     assert code == 0
     assert verdict["hard"] == []

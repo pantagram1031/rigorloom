@@ -20,11 +20,11 @@ Run every command from the repository root (`<CHECKOUT>`). `<WS>` is always
 the workspace's absolute path.
 
 ```sh
-python pipeline/scripts/pipeline_ctl.py resume <WS>
+python modules/report/scripts/pipeline_ctl.py resume <WS>
 ```
 
 1. **RESUME** — the command above returns the stage to work on next.
-2. **PLAYBOOK** — open `pipeline/references/playbooks/stage-<n>.md` for that
+2. **PLAYBOOK** — open `modules/report/references/playbooks/stage-<n>.md` for that
    stage and read it in full. It has the exact commands; do not improvise
    substitutes.
 3. **FOLLOW** — execute those commands. Bind each role the playbook names to
@@ -33,7 +33,7 @@ python pipeline/scripts/pipeline_ctl.py resume <WS>
 5. **ADVANCE** — run the playbook's exit/advance command, then go back to
    step 1.
 
-A brand-new run starts at stage `-1` (`pipeline/references/playbooks/stage--1.md`,
+A brand-new run starts at stage `-1` (`modules/report/references/playbooks/stage--1.md`,
 setup/scaffold). Because `resume` is deterministic, re-reading `PIPELINE.md`
 after any interruption — including handing the workspace to a different agent
 or provider mid-run — reproduces the same next step. Read the regenerated
@@ -43,7 +43,7 @@ point, `WORKSPACE_INDEX.md` is the full artifact table, and
 caller.
 
 The authoritative stage order and gate types are in
-`pipeline/references/stages.yaml` and are explained in
+`modules/report/references/stages.yaml` and are explained in
 `docs/pipeline-master-v0.6.md` (§4). If this file and the code ever disagree,
 the code and `pipeline/references/CONTRACT_v0.6.md` win.
 
@@ -104,7 +104,7 @@ Roles are capability labels, defined provider-neutrally in
 A single agent may perform several roles sequentially when no parallel workers
 are available, but it must record the reduced independence (e.g. in
 `events.jsonl` or `TROUBLES.md`) rather than silently presenting a self-review
-as independent verification. See `pipeline/references/playbooks/adapters.md`
+as independent verification. See `modules/report/references/playbooks/adapters.md`
 for the fuller capability-mapping table and provider examples (all
 non-normative — any backend meeting the capability qualifies).
 

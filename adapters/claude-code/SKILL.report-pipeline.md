@@ -31,10 +31,10 @@ placeholders.
 
 ```sh
 # 1. RESUME — the YAML header of PIPELINE.md is the single source of truth.
-python pipeline/scripts/pipeline_ctl.py resume <WS>
+python modules/report/scripts/pipeline_ctl.py resume <WS>
 # -> returns the stage to resume.
 
-# 2. PLAYBOOK — open pipeline/references/playbooks/stage-<n>.md for that stage.
+# 2. PLAYBOOK — open modules/report/references/playbooks/stage-<n>.md for that stage.
 # 3. FOLLOW  — execute its EXACT commands; bind each role to a backend as declared.
 # 4. ADVANCE — run the playbook's EXIT + gate commands, then go to 1.
 ```
@@ -49,8 +49,8 @@ is deterministic, a dropped or `/clear`ed session returns to the same point.
   and rerun the checker. Resolve these gates only through `pipeline_ctl`:
 
   ```sh
-  python pipeline/scripts/pipeline_ctl.py gate <WS> layout --script-exit 0   # stage 2.5
-  python pipeline/scripts/pipeline_ctl.py gate <WS> sane   --script-exit 0   # stage 3
+  python modules/report/scripts/pipeline_ctl.py gate <WS> layout --script-exit 0   # stage 2.5
+  python modules/report/scripts/pipeline_ctl.py gate <WS> sane   --script-exit 0   # stage 3
   ```
 
   A non-zero checker exit rejects the gate. Stage 5 (assemble/proof converge +
@@ -93,10 +93,10 @@ are fixed strings — never renumber.
 | Contract (single truth) | `pipeline/references/CONTRACT_v0.6.md` |
 | Master workflow (orchestrator-neutral) | `docs/pipeline-master-v0.6.md` |
 | Agent-neutral bootstrap (any provider) | `adapters/generic/ORCHESTRATOR.md` |
-| Stage procedures | `pipeline/references/playbooks/stage-<n>.md` |
-| Backend routing | `pipeline/references/playbooks/adapters.md` |
-| Subagent prompts | `pipeline/references/playbooks/subagent-templates.md` |
-| Composition rubric | `pipeline/references/playbooks/rubric-composition.md` |
+| Stage procedures | `modules/report/references/playbooks/stage-<n>.md` |
+| Backend routing | `modules/report/references/playbooks/adapters.md` |
+| Subagent prompts | `modules/report/references/playbooks/subagent-templates.md` |
+| Composition rubric | `modules/report/references/playbooks/rubric-composition.md` |
 | Stage 4↔5 interface | `pipeline/references/bundle_spec.md` |
 | Registry / stage graph | `pipeline/references/agents.yaml`, `stages.yaml` |
 | HWP/HWPX document stages | `engine/SKILL.md` (bundled engine, `engine/scripts`) |

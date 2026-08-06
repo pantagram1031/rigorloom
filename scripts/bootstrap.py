@@ -26,7 +26,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 PIPELINE_SCRIPTS = REPO_ROOT / "pipeline" / "scripts"
 PERSONALIZATION_CTL = PIPELINE_SCRIPTS / "personalization_ctl.py"
-PIPELINE_CTL = PIPELINE_SCRIPTS / "pipeline_ctl.py"
 NEW_REPORT = SCRIPTS / "new_report.py"
 SETUP_PROFILE = SCRIPTS / "setup_profile.py"
 PACK_DEFAULTS = REPO_ROOT / "pipeline" / "references" / "preference_packs" / "defaults"
@@ -68,6 +67,27 @@ def _last_json(text: str) -> dict:
 
 class BootstrapError(RuntimeError):
     pass
+
+
+def _pipeline_ctl_script() -> Path:
+    """Resolve the stage-machine CLI through the distribution-module registry
+    (v0.16 W3-S2b: pipeline_ctl is report-module payload). A disabled module
+    is a clear refusal, not a dangling-path crash."""
+    if str(PIPELINE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(PIPELINE_SCRIPTS))
+    from module_registry import ModuleError, ModuleRegistry
+    try:
+        rows = ModuleRegistry().enabled_cli()
+    except ModuleError as exc:
+        raise BootstrapError(str(exc))
+    for row in rows:
+        if row["command"] == "pipeline":
+            return Path(row["script"])
+    raise BootstrapError(
+        "the smoke run drives the report pipeline, which requires the report "
+        "distribution module — enable it in modules/enabled.yaml (python "
+        "pipeline/scripts/module_registry.py write-enabled --all) or pass "
+        "--skip-smoke")
 
 
 def check_python() -> str:
@@ -122,6 +142,7 @@ def _reset_workspace(workspace_root: Path) -> Path:
 def smoke(profile_root: Path, workspace_root: Path) -> dict:
     """new_report --mode night -> resume -> passing `sane` gate via `check`.
     Returns a step->status map; raises BootstrapError on the first failure."""
+    pipeline_ctl = _pipeline_ctl_script()
     workspace_root.mkdir(parents=True, exist_ok=True)
     ws = _reset_workspace(workspace_root)
 
@@ -149,7 +170,7 @@ def smoke(profile_root: Path, workspace_root: Path) -> dict:
         raise BootstrapError(
             f"new_report returned a workspace outside --workspace-root: {ws}")
 
-    proc = _run(_py(PIPELINE_CTL, "resume", ws))
+    proc = _run(_py(pipeline_ctl, "resume", ws))
     resumed = _last_json(proc.stdout)
     if proc.returncode != 0 or not resumed.get("ok"):
         raise BootstrapError(f"resume failed ({proc.returncode}): "
@@ -161,7 +182,7 @@ def smoke(profile_root: Path, workspace_root: Path) -> dict:
     gates_py.parent.mkdir(parents=True, exist_ok=True)
     gates_py.write_text(FAKE_CHECKER, encoding="utf-8")
 
-    proc = _run(_py(PIPELINE_CTL, "check", ws, "sane"))
+    proc = _run(_py(pipeline_ctl, "check", ws, "sane"))
     checked = _last_json(proc.stdout)
     if proc.returncode != 0 or checked.get("state") != "auto_approved":
         raise BootstrapError(

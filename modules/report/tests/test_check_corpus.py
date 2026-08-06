@@ -177,10 +177,10 @@ def test_environment_corpus_root_fallback(tmp_path, monkeypatch):
 
 
 def test_stage_6_wires_optional_advisory_corpus_check():
-    # Stage playbooks are still core-held (the stage machine did not move in
-    # this slice); reach them at their core location.
+    # Stage playbooks are module payload since W3-S2b (the stage machine
+    # moved as one unit); they are siblings of this test's module.
     playbook = (
-        Path(__file__).parents[3] / "pipeline" / "references" / "playbooks"
+        Path(__file__).parents[1] / "references" / "playbooks"
         / "stage-6.md"
     ).read_text(encoding="utf-8")
 

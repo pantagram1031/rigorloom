@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Declared-values gate runner (variant-audit "Gate architecture" row).
 
-Mechanisms live in the registry (check_residue / check_density /
-check_canonical); *values* are declared per workspace in
-``<workspace>/gates.yaml``. Ported from the audit winner (reportkit.gates:
+Mechanisms live in the registry (core: check_residue / check_density;
+module-provided: check_canonical via the distribution-module registry);
+*values* are declared per workspace in ``<workspace>/gates.yaml``. Ported from the audit winner (reportkit.gates:
 YAML gate list, kinds json_equals/json_lt/json_gt/file_exists/text_absent,
 dotted-path resolution, missing input = FAIL not crash, gate_result.json
 output) with the audit-mandated hardening:
@@ -97,9 +97,9 @@ from checker_base import (  # noqa: E402
     _utf8_stdio,
     dump_json,
 )
-import check_canonical  # noqa: E402
 import check_density  # noqa: E402
 import check_residue  # noqa: E402
+import module_registry  # noqa: E402
 
 
 CHECKER = "declared_gates"
@@ -135,6 +135,42 @@ HOLDOUT_RULE = (
     "copy a gates.yaml wholesale into another report "
     "(variant-audit 'Gate architecture' row / calibration-no-overfit)"
 )
+
+# Delegated kinds whose mechanism is distribution-module payload rather than
+# a core sibling (v0.16 W3-S2b: check_canonical is report-module payload).
+# The kind stays declared here; the *implementation* is resolved through the
+# module registry at validation time, so a workspace declaring such a gate
+# without the providing module enabled is a loud config refusal (exit 2),
+# never a silent pass.
+_MODULE_DELEGATE_CHECKERS = {"canonical": "check_canonical"}
+_MODULE_DELEGATE_CACHE: dict = {}
+
+
+def _module_delegate(kind: str):
+    """Load the registry-declared checker implementing a delegated kind."""
+    checker_name = _MODULE_DELEGATE_CHECKERS[kind]
+    cached = _MODULE_DELEGATE_CACHE.get(checker_name)
+    if cached is not None:
+        return cached
+    try:
+        rows = module_registry.ModuleRegistry().enabled_checkers()
+    except module_registry.ModuleError as exc:
+        raise GatesConfigError(
+            f"gate kind {kind!r}: distribution-module registry error: {exc}")
+    script = next(
+        (row["script"] for row in rows if row["name"] == checker_name), None)
+    if script is None:
+        raise GatesConfigError(
+            f"gate kind {kind!r} delegates to checker {checker_name!r}, which "
+            "no enabled distribution module provides — enable the module that "
+            "ships it in modules/enabled.yaml (python "
+            "pipeline/scripts/module_registry.py write-enabled --all)")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(checker_name, script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _MODULE_DELEGATE_CACHE[checker_name] = module
+    return module
 
 
 class GatesConfigError(ValueError):
@@ -438,6 +474,10 @@ def validate_declaration(config: dict, ws: Path) -> None:
                 gate["keep_pattern"], str):
             raise GatesConfigError(
                 f"gate {gid!r}: 'keep_pattern' must be a string")
+        if kind in _MODULE_DELEGATE_CHECKERS:
+            # Resolve the module-provided mechanism NOW: a declaration that
+            # cannot bind its delegate is a usage refusal, not a gate run.
+            _module_delegate(kind)
         # canonical binding: every declared file path must stay inside ws
         for path_key in _file_keys(gate):
             _bind(ws, str(gate[path_key]), gid, path_key)
@@ -635,6 +675,7 @@ def _eval_delegated(ws: Path, gate: dict, targets: list[dict],
             + tuple(gate.get("labels") or ()),
         )
     else:  # canonical
+        check_canonical = _module_delegate("canonical")
         verdict, code = check_canonical.check(
             ws,
             done_after=float(gate.get(

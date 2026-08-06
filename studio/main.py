@@ -14,6 +14,40 @@ import time
 app = FastAPI(title="Rigorloom Studio", version="0.7")
 
 REPO_ROOT = Path(__file__).parent.parent
+_CORE_SCRIPTS = REPO_ROOT / "pipeline" / "scripts"
+
+
+def _stage_machine_cli() -> Path | None:
+    """Path of the stage-machine CLI (declared CLI command 'pipeline')
+    provided by an enabled distribution module, or None when no enabled
+    module provides it (v0.16 W3-S2b: the stage machine is module payload).
+    Studio resolves by declared command through the registry — it never
+    learns a module's name."""
+    if str(_CORE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_CORE_SCRIPTS))
+    try:
+        from module_registry import ModuleRegistry
+        for row in ModuleRegistry().enabled_cli():
+            if row["command"] == "pipeline":
+                return Path(row["script"])
+    except Exception:
+        return None
+    return None
+
+
+def _stage_machine_references_dir() -> Path | None:
+    """The stage-machine module's references dir (stage graphs, playbooks),
+    derived from the declared CLI payload path; None when unavailable."""
+    cli = _stage_machine_cli()
+    if cli is None:
+        return None
+    return cli.parent.parent / "references"
+
+
+STAGE_MACHINE_REQUIRED_DETAIL = (
+    "this action drives the report pipeline's stage machine, which requires "
+    "the report distribution module — enable it in modules/enabled.yaml "
+    "(python pipeline/scripts/module_registry.py write-enabled --all)")
 _LINT_CACHE: dict[str, tuple[float, dict]] = {}
 _LINT_CACHE_LOCKS: dict[str, threading.Lock] = {}
 _LINT_CACHE_LOCKS_GUARD = threading.Lock()
@@ -269,10 +303,15 @@ def _load_stage_order() -> list[str]:
     """Read stage ids from the kernel config, with a safe embedded fallback.
     STUDIO_STAGES_YAML overrides the config path for installs where the
     kernel references live outside this repo layout (e.g. a skills dir)."""
-    fallback = ["0", "1", "2", "2.5", "3", "4", "4.5", "5", "5.5", "5.7", "6"]
+    fallback = ["0", "1", "2", "2.5", "3", "4", "4.5", "5", "5.3", "5.5",
+                "5.7", "6"]
     env_path = os.environ.get("STUDIO_STAGES_YAML")
-    config = (Path(env_path) if env_path
-              else Path(__file__).parent.parent / "pipeline" / "references" / "stages.yaml")
+    if env_path:
+        config = Path(env_path)
+    else:
+        refs = _stage_machine_references_dir()
+        config = ((refs / "stages.yaml") if refs
+                  else REPO_ROOT / ".stage-machine-absent" / "stages.yaml")
     try:
         ids = []
         for line in config.read_text(encoding="utf-8").splitlines():
@@ -300,7 +339,11 @@ def _graph_stages_path(graph: str) -> Path:
         env_path = os.environ.get("STUDIO_STAGES_YAML")
         if env_path:
             return Path(env_path)
-    return Path(__file__).parent.parent / "pipeline" / "references" / filename
+    refs = _stage_machine_references_dir()
+    # A missing stage-machine module yields a non-existent path; callers
+    # already treat an unreadable graph as "no valid gates", never a skip.
+    return ((refs / filename) if refs
+            else REPO_ROOT / ".stage-machine-absent" / filename)
 
 
 def _load_graph_gate_names(graph: str) -> set[str]:
@@ -1103,7 +1146,9 @@ def workspace_action(
     if kind in gate_actions and (not gate or gate not in _workspace_gate_names(base)):
         raise HTTPException(status_code=400, detail="gate does not belong to workspace")
 
-    pipeline_ctl = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
+    pipeline_ctl = _stage_machine_cli()
+    if kind in gate_actions and pipeline_ctl is None:
+        raise HTTPException(status_code=503, detail=STAGE_MACHINE_REQUIRED_DETAIL)
     if kind == "check-gate":
         argv = [sys.executable, str(pipeline_ctl), "check", str(base.resolve()), gate]
     elif kind == "approve-human-gate":
@@ -1532,7 +1577,7 @@ def _resume_command(base: Path) -> str:
     command = _read_json_dict(base / ".pipeline" / "handoff.json").get("resume_command")
     if command:
         return command
-    return f'python pipeline/scripts/pipeline_ctl.py resume "{base.resolve()}"'
+    return f'python modules/report/scripts/pipeline_ctl.py resume "{base.resolve()}"'
 
 
 @app.get("/workspace/{slug}/readiness")
@@ -1552,7 +1597,7 @@ def workspace_readiness(slug: str):
             "next_gate": ({"name": next_record.get("gate_name"),
                            "state": next_record.get("gate_state")}
                           if next_record.get("gate") else None),
-            "playbook": (f"pipeline/references/playbooks/stage-{next_stage}.md"
+            "playbook": (f"modules/report/references/playbooks/stage-{next_stage}.md"
                          if next_stage else None),
             "work_dir": (f"work/stage-{next_stage}" if next_stage else None),
             "missing_inputs": [], "missing_outputs": [],
@@ -1620,7 +1665,7 @@ def workspace_yourmove(slug: str):
     if gate_stage and pipeline["mode"] == "supervised":
         gate_name = gate_stage.get("gate_name") or gate_stage["label"]
         approval_line = f"{gate_name}: approved by=<name> at={_now_iso()}"
-        gate_command = (f'python pipeline/scripts/pipeline_ctl.py gate "{base.resolve()}" '
+        gate_command = (f'python modules/report/scripts/pipeline_ctl.py gate "{base.resolve()}" '
                         f'"{gate_name}" --mode {pipeline["mode"]}')
         return {"kind": "gate_wait", "gate": gate_name, "approval_line": approval_line,
                 "reason": f"Stage {gate_stage['num']} ({gate_stage['label']}) 게이트 승인 대기 중.",

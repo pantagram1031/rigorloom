@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _module_gating import core_only, requires_report_module
+
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "new_report.py"
 SPEC = importlib.util.spec_from_file_location("new_report", MODULE_PATH)
@@ -30,6 +32,25 @@ def test_yaml_string_handles_quotes_and_newlines():
     assert '\\"one\\"' in encoded
 
 
+@core_only
+def test_scaffolder_refuses_clearly_without_report_module(tmp_path: Path):
+    """Core-only: the scaffolder must name the missing report module, not
+    crash on a dangling path (v0.16 W3-S2b decision 6)."""
+    form = tmp_path / "form.hwpx"
+    form.write_bytes(b"fixture")
+    proc = subprocess.run(
+        [
+            sys.executable, str(MODULE_PATH), "--slug", "demo",
+            "--subject", "science", "--topic", "topic", "--form", str(form),
+            "--workspace-root", str(tmp_path / "runs"),
+        ],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode != 0
+    assert "report distribution module" in (proc.stderr + proc.stdout)
+
+
+@requires_report_module
 def test_scaffolder_initializes_atomically(tmp_path: Path):
     form = tmp_path / "form #1.hwpx"
     form.write_bytes(b"fixture")

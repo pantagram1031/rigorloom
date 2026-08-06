@@ -64,7 +64,7 @@ Environment variables:
 - `STUDIO_ACTION_TOKEN`: override the generated action token (e.g. to keep a
   stable token across restarts). Only read when `STUDIO_ALLOW_ACTIONS=1`.
 
-When available, `pipeline/scripts/workflow_lint.py` runs with `--json` and a
+When available, `modules/report/scripts/workflow_lint.py` runs with `--json` and a
 30-second timeout. Results are cached for 60 seconds per workspace. Missing or
 unparseable lint output is displayed as `lint n/a`; it never prevents the
 dashboard from rendering.

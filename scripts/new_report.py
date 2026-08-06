@@ -13,9 +13,33 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_CTL = REPO_ROOT / "pipeline" / "scripts" / "pipeline_ctl.py"
 PERSONALIZATION_CTL = REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py"
 SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+MODULE_REQUIRED_MSG = (
+    "the report pipeline requires the report distribution module — enable it "
+    "in modules/enabled.yaml (python pipeline/scripts/module_registry.py "
+    "write-enabled --all)"
+)
+
+
+def _module_cli_script(command: str) -> Path:
+    """Resolve a report-module CLI payload path through the distribution-
+    module registry (v0.16 W3-S2b: the stage-machine payload lives in
+    modules/report/). A disabled/missing module is a clear refusal, never a
+    stack trace from a dangling path."""
+    core_scripts = REPO_ROOT / "pipeline" / "scripts"
+    if str(core_scripts) not in sys.path:
+        sys.path.insert(0, str(core_scripts))
+    from module_registry import ModuleError, ModuleRegistry
+    try:
+        rows = ModuleRegistry().enabled_cli()
+    except ModuleError as exc:
+        raise SystemExit(f"error: {exc}")
+    for row in rows:
+        if row["command"] == command:
+            return Path(row["script"])
+    raise SystemExit(f"error: {MODULE_REQUIRED_MSG}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,9 +140,9 @@ def main() -> int:
     if final.exists():
         print(f"error: workspace already exists: {final}", file=sys.stderr)
         return 1
-    if not PIPELINE_CTL.is_file():
-        print(f"error: pipeline kernel missing: {PIPELINE_CTL}", file=sys.stderr)
-        return 1
+    # Registry lookup (v0.16 W3-S2b): the stage machine is report-module
+    # payload; a disabled module is a clear refusal before anything is staged.
+    pipeline_ctl = _module_cli_script("pipeline")
 
     workspace_root.mkdir(parents=True, exist_ok=True)
     staging = workspace_root / f".creating-{args.slug}-{uuid.uuid4().hex[:8]}"
@@ -130,7 +154,7 @@ def main() -> int:
         (staging / "APPROVALS.md").write_text(_approvals_text(), encoding="utf-8")
 
         command = [
-            sys.executable, str(PIPELINE_CTL), "init", str(staging),
+            sys.executable, str(pipeline_ctl), "init", str(staging),
             "--slug", f"report-{args.slug}", "--mode", args.mode,
             "--subject", args.subject, "--topic", args.topic, "--form", str(form),
         ]
@@ -155,14 +179,14 @@ def main() -> int:
     # The handoff was generated while the workspace had its staging path.
     # Regenerate it after the atomic rename so all paths are final.
     subprocess.run(
-        [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" / "workspace_organizer.py"),
+        [sys.executable, str(_module_cli_script("organize-workspace")),
          str(final), "--no-archive"],
         check=True, capture_output=True, text=True, encoding="utf-8",
     )
     print(json.dumps({
         "ok": True,
         "workspace": str(final),
-        "next": f'python pipeline/scripts/pipeline_ctl.py resume "{final}"',
+        "next": f'python modules/report/scripts/pipeline_ctl.py resume "{final}"',
     }, ensure_ascii=False))
     return 0
 

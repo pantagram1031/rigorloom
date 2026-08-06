@@ -1,9 +1,8 @@
 # Report distribution module — declaration (schema: pipeline/references/module.schema.json).
-# Slice W3.3 (partial): report-semantic checkers moved behind the contract.
-# The stage machine (pipeline_ctl/compose/workflow_lint + stage graphs +
-# playbooks) is still core-held pending the core-dependency cuts recorded in
-# the W3.3 slice report; its playbooks/skill fragment will be declared here
-# when it moves.
+# Slice W3-S2b: the stage machine (pipeline_ctl/compose/workflow_lint + stage
+# graphs + aliases + stage-contract catalog + playbooks) and the
+# workspace-bound checkers live behind the contract. The skill fragment and
+# studio panels are declared in W3-S3.
 schema: rigorloom-module/v1
 name: report
 requires: {rigorloom: ">=0.16"}
@@ -16,9 +15,46 @@ provides:
     - {name: check_tone_rules, script: scripts/check_tone_rules.py}
     - {name: content_audit, script: scripts/content_audit.py}
     - {name: verify_content, script: scripts/verify_content.py}
+    - {name: check_canonical, script: scripts/check_canonical.py}
+    - {name: check_claims, script: scripts/check_claims.py}
+    - {name: check_numbers, script: scripts/check_numbers.py}
+    - {name: check_sources, script: scripts/check_sources.py}
+    - {name: check_saeteuk, script: scripts/check_saeteuk.py}
   cli:
     - {command: source-fetch, script: scripts/source_fetch.py}
+    - {command: organize-workspace, script: scripts/workspace_organizer.py}
+    - {command: claims-ledger, script: scripts/claims_ledger.py}
+    - {command: pipeline, script: scripts/pipeline_ctl.py}
+    - {command: compose, script: scripts/compose.py}
+    - {command: workflow-lint, script: scripts/workflow_lint.py}
+  preflight:
+    - {name: preflight_report, script: scripts/preflight_report.py}
   pack_types: [saeteuk, report_structure, gloss_allowlist, constants_allowlist, tone_rules]
   run_modes:
     - {name: night, state_policy: stage_machine, gates: stages.yaml}
     - {name: supervised-lean, state_policy: stateless_final_pointer, gates: declared}
+  playbooks:
+    - references/playbooks/adapters.md
+    - references/playbooks/edit-stage-0.md
+    - references/playbooks/edit-stage-1.md
+    - references/playbooks/edit-stage-2.5.md
+    - references/playbooks/edit-stage-2.md
+    - references/playbooks/edit-stage-3.5.md
+    - references/playbooks/edit-stage-3.md
+    - references/playbooks/edit-stage-4.5.md
+    - references/playbooks/edit-stage-4.md
+    - references/playbooks/edit-stage-5.md
+    - references/playbooks/rubric-composition.md
+    - references/playbooks/stage--1.md
+    - references/playbooks/stage-0.md
+    - references/playbooks/stage-1.md
+    - references/playbooks/stage-2.5.md
+    - references/playbooks/stage-2.md
+    - references/playbooks/stage-3.md
+    - references/playbooks/stage-4.5.md
+    - references/playbooks/stage-4.md
+    - references/playbooks/stage-5.5.md
+    - references/playbooks/stage-5.7.md
+    - references/playbooks/stage-5.md
+    - references/playbooks/stage-6.md
+    - references/playbooks/subagent-templates.md

@@ -6,6 +6,7 @@ import sys
 import types
 from pathlib import Path
 
+from _module_gating import requires_report_module
 from scripts import bootstrap
 
 
@@ -24,12 +25,14 @@ def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+@requires_report_module
 def test_bootstrap_clone_and_go_exits_zero(tmp_path: Path):
     proc = _run(tmp_path)
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "bootstrap: OK" in proc.stdout
 
 
+@requires_report_module
 def test_bootstrap_creates_smoke_artifacts(tmp_path: Path):
     proc = _run(tmp_path)
     assert proc.returncode == 0, proc.stderr or proc.stdout
@@ -57,6 +60,7 @@ def test_bootstrap_creates_smoke_artifacts(tmp_path: Path):
     assert receipt["exit"] == 0
 
 
+@requires_report_module
 def test_bootstrap_is_idempotent(tmp_path: Path):
     first = _run(tmp_path)
     assert first.returncode == 0, first.stderr or first.stdout
