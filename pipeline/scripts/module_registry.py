@@ -47,7 +47,8 @@ ENABLED_SCHEMA = "rigorloom-enabled-modules/v1"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 _CHECKER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _PACK_TYPE_RE = _CHECKER_NAME_RE
-_STATE_POLICIES = ("stage_machine", "receipts", "stateless")
+_STATE_POLICIES = (
+    "stage_machine", "receipts", "stateless", "stateless_final_pointer")
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes",
     "studio_panels", "skill", "playbooks",
@@ -330,11 +331,18 @@ def _require_entry_list(
                 _fail(module, f"{spot} is missing required key '{name}'")
             if rule == "gates":
                 gates = item[name]
-                if not isinstance(gates, list) or not all(
+                if isinstance(gates, str) and gates:
+                    # Gate-source reference: 'declared' or a stage-graph
+                    # filename (see module.schema.json / modules/README.md).
+                    entry[name] = gates
+                elif isinstance(gates, list) and all(
                     isinstance(gate, str) and gate for gate in gates
                 ):
-                    _fail(module, f"{spot}.{name} must be a list of non-empty strings")
-                entry[name] = list(gates)
+                    entry[name] = list(gates)
+                else:
+                    _fail(module,
+                          f"{spot}.{name} must be a list of non-empty strings "
+                          "or a single non-empty gate-source string")
             elif isinstance(rule, tuple):
                 choice = item[name]
                 if choice not in rule:

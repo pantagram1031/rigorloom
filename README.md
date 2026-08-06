@@ -114,7 +114,7 @@ a `docx` or `bundle`-only run never reaches that state.
 
 Two composite gates guard delivery, both fail-closed:
 
-- **Stage 4.5 `content_audit`** (`pipeline/scripts/content_audit.py`) runs
+- **Stage 4.5 `content_audit`** (`modules/report/scripts/content_audit.py`, report distribution module) runs
   seven deterministic sub-checkers as subprocesses and merges their verdicts
   before assembly is allowed to start: `verify_content.py` (web-citation /
   polite-ending / figure / leak), `check_style.py` (banned prose patterns,

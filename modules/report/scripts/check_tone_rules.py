@@ -68,9 +68,13 @@ import re
 import sys
 from pathlib import Path
 
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
 SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+CORE_SCRIPTS_DIR = SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (CORE_SCRIPTS_DIR, SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 import personalization_ctl  # noqa: E402  (stdlib-only sibling module)
 from checker_base import (  # noqa: E402
     _utf8_stdio,

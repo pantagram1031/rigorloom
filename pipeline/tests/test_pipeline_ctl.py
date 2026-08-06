@@ -1441,7 +1441,7 @@ class TestStagesConfigStrict(unittest.TestCase):
             "type": "script",
             "checker": [
                 "python",
-                "{PIPELINE_SCRIPTS}/check_understanding.py",
+                "{REPORT_SCRIPTS}/check_understanding.py",
                 "{WS}",
                 "--out",
                 "{WS}/.pipeline/understanding_check.json",
@@ -1450,7 +1450,7 @@ class TestStagesConfigStrict(unittest.TestCase):
         self.assertEqual(by_id["5.7"]["gate"], {
             "name": "final_panel",
             "type": "script",
-            "checker": ["python", "{PIPELINE_SCRIPTS}/check_scorecard.py", "{WS}"],
+            "checker": ["python", "{REPORT_SCRIPTS}/check_scorecard.py", "{WS}"],
         })
         self.assertEqual(by_id["6"]["gate"], {
             "name": "submission_preflight",

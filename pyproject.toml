@@ -12,5 +12,5 @@ engine = ["pillow>=10", "pymupdf>=1.23", "pyyaml>=6"]
 test = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["pipeline/tests", "tests", "engine/tests"]
+testpaths = ["pipeline/tests", "tests", "engine/tests", "modules/report/tests"]
 addopts = "-ra"

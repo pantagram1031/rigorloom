@@ -37,9 +37,13 @@ from pathlib import Path
 import sys
 import traceback
 
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+_CORE_SCRIPTS_DIR = _SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (_CORE_SCRIPTS_DIR, _SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 
 import check_figdata  # noqa: E402
 import check_claims  # noqa: E402

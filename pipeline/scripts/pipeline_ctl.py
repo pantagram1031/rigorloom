@@ -257,7 +257,8 @@ def _validate_stage_row(rec: dict, line: str, seen_ids: set, seen_gate_names: se
         for token in checker:
             placeholders = re.findall(r"\{[^{}]+\}", token)
             unknown = [item for item in placeholders
-                       if item not in {"{WS}", "{PIPELINE_SCRIPTS}"}]
+                       if item not in {"{WS}", "{PIPELINE_SCRIPTS}",
+                                       "{REPORT_SCRIPTS}"}]
             if unknown:
                 raise StagesConfigError(
                     f"stages.yaml gate checker has unsupported placeholder "
@@ -1176,13 +1177,25 @@ def _resolve_gate_checker(gate_name: str, graph_ctx: dict | None = None):
 
 
 def _substitute_checker_argv(checker: list, ws: Path) -> list:
-    """Substitute {WS} and {PIPELINE_SCRIPTS} placeholders in each argv token.
-    {WS} = workspace absolute path; {PIPELINE_SCRIPTS} = this script's dir."""
+    """Substitute {WS}, {PIPELINE_SCRIPTS} and {REPORT_SCRIPTS} placeholders in
+    each argv token. {WS} = workspace absolute path; {PIPELINE_SCRIPTS} = this
+    script's dir; {REPORT_SCRIPTS} = the report distribution module's scripts
+    dir (modules/report/scripts).
+
+    TRANSITIONAL (v0.16 W3.3): {REPORT_SCRIPTS} exists only because the stage
+    machine itself is still in core while the report checkers it gates have
+    already moved into modules/report/. When pipeline_ctl moves into the
+    report module, this placeholder collapses to a module-relative path and
+    the name-level knowledge of modules/report leaves core."""
     ws_abs = str(ws.resolve())
     scripts_dir = str(Path(__file__).resolve().parent)
+    report_scripts_dir = str(
+        Path(__file__).resolve().parents[2] / "modules" / "report" / "scripts")
     argv = []
     for tok in checker:
-        s = str(tok).replace("{WS}", ws_abs).replace("{PIPELINE_SCRIPTS}", scripts_dir)
+        s = (str(tok).replace("{WS}", ws_abs)
+             .replace("{PIPELINE_SCRIPTS}", scripts_dir)
+             .replace("{REPORT_SCRIPTS}", report_scripts_dir))
         argv.append(s)
     return argv
 

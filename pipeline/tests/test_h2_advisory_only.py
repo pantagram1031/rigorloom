@@ -63,11 +63,16 @@ class CheckRegistryHasNoDetectorTrigger(unittest.TestCase):
 
     def test_no_pipeline_script_references_detector_score_apis(self):
         offenders = []
-        for script in sorted(SCRIPTS_DIR.glob("*.py")):
-            if script.name in ALLOWED_REFERENCES:
-                continue
-            if DETECTOR_TOKEN_RE.search(script.read_text(encoding="utf-8")):
-                offenders.append(script.name)
+        # Report-shaped checkers moved to modules/report/scripts (v0.16 W3.3);
+        # the H2-advisory policy keeps governing them from here because this
+        # is a repo-policy scan, not a runtime import.
+        scan_dirs = (SCRIPTS_DIR, ROOT / "modules" / "report" / "scripts")
+        for scan_dir in scan_dirs:
+            for script in sorted(scan_dir.glob("*.py")):
+                if script.name in ALLOWED_REFERENCES:
+                    continue
+                if DETECTOR_TOKEN_RE.search(script.read_text(encoding="utf-8")):
+                    offenders.append(script.name)
         self.assertEqual(
             offenders, [],
             "pipeline scripts reference detector score APIs; H2 is advisory "

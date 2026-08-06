@@ -66,8 +66,14 @@
             "required": ["name", "state_policy", "gates"],
             "properties": {
               "name": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
-              "state_policy": {"enum": ["stage_machine", "receipts", "stateless"]},
-              "gates": {"type": "array", "items": {"type": "string", "minLength": 1}}
+              "state_policy": {"enum": ["stage_machine", "receipts", "stateless", "stateless_final_pointer"], "description": "stateless_final_pointer = stateless with a mandatory canonical/FINAL pointer at delivery (validated by core's check_canonical)."},
+              "gates": {
+                "oneOf": [
+                  {"type": "array", "items": {"type": "string", "minLength": 1}},
+                  {"type": "string", "minLength": 1}
+                ],
+                "description": "Either an explicit list of checker/gate names the mode enforces, or a single gate-source reference: the literal 'declared' (per-workspace declared gates via declared_gates.py) or a stage-graph filename (e.g. 'stages.yaml') whose gate table defines the mode's gates."
+              }
             }
           }
         },
