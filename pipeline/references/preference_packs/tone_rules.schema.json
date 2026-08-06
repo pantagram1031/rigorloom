@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-pipeline/preference-pack/tone_rules-v1",
+  "title": "Tone rulepack (H4 humanization regression rules)",
+  "description": "Deterministic tone rules checked by check_tone_rules.py over bundle/content.md prose. The repository ships only the neutral default instance; corpus-derived rulepacks are private profile pack instances.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version", "rules"],
+  "properties": {
+    "draft": {"type": "boolean"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus"],
+      "properties": {
+        "corpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "mining_stats": {"type": "object", "additionalProperties": true},
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["tone_rules"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {
+            "type": "string",
+            "enum": ["hedge_on_measured_value", "conclusion_pivot_density"]
+          },
+          "patterns": {"type": "array", "items": {"type": "string"}},
+          "scope": {"type": "string"},
+          "severity": {"type": "string", "enum": ["warn", "hard"]},
+          "params": {"type": "object", "additionalProperties": true},
+          "description": {"type": "string"}
+        }
+      }
+    }
+  }
+}
