@@ -69,7 +69,9 @@ anchors 목록을 tidy_blank_before로 유도해 쓴다(explicit build.yaml 키�
       기록한다 — fill_report는 content.md를 절대 재작성하지 않는다(본문 작성은
       writer/caller 몫). proof_iter는 fill_events.jsonl을 스캔해 영속화되며,
       max-proof-iters를 넘으면 status:"escalate_human"과 reason을 verdict에
-      담는다. 모든 proof 이벤트는 {ts, iter, phase:"proof", proof_iter,
+      담는다 — 이때 converged는 False로 내려가고(자기모순 쌍 금지, rigorloom
+      verdict_schema와 호환) phase-1 수렴 사실은 phase1_converged:true로
+      보존된다. 모든 proof 이벤트는 {ts, iter, phase:"proof", proof_iter,
       result|needs} 형태로 append된다.
 """
 
@@ -1095,6 +1097,31 @@ def run_proof_phase(out_pdf, out_dir, events_path, max_proof_iters, proof_needs_
     return proof_frag
 
 
+# 사람 개입을 요구하는 terminal status — converged:true와 논리적으로 양립 불가.
+# rigorloom pipeline/scripts/verdict_schema.py의 ESCALATION_STATUSES와 짝을 맞춘다.
+ESCALATION_STATUSES = frozenset({"escalate_human"})
+
+
+def merge_proof_fragment(out_obj, proof_frag):
+    """PROOF 단계 조각을 phase-1 FILL 루프 verdict에 병합한다(내부 일관성 보장).
+
+    shared-miss #5 근본 원인: 예전엔 plain ``out_obj.update(proof_frag)``라서
+    proof 단계가 status:"escalate_human"을 얹어도 phase-1의 converged:True가
+    그대로 남아 자기모순 verdict(converged:true + escalate_human)가 방출됐다 —
+    rigorloom verdict_schema가 read-time에 HARD finding으로 거부하는 쌍.
+
+    수정: escalation status가 병합되면 converged를 False로 내리고 escalate를
+    True로 맞춘다. phase-1 수렴 사실은 phase1_converged로 따로 보존한다
+    (정보 손실 없음 — proof 재진입 시 FILL 루프를 다시 돌 필요가 없다는 근거)."""
+    out_obj.update(proof_frag)
+    status = str(out_obj.get("status") or "").strip().lower()
+    if status in ESCALATION_STATUSES and out_obj.get("converged"):
+        out_obj["phase1_converged"] = True
+        out_obj["converged"] = False
+        out_obj["escalate"] = True
+    return out_obj
+
+
 def match_trouble(verdict, checks, style_anomalies, trouble_map):
     """verdict/checks/anomalies 텍스트에서 trouble_map 시그니처 키워드가
     등장하는 첫 코드를 반환(없으면 None). 실제 수정 오퍼레이션은 미래 작업 —
@@ -1320,7 +1347,7 @@ def mode_loop(args):
             proof_needs_path = getattr(args, "proof_needs", None)
             proof_frag = run_proof_phase(
                 final["pdf"], out_dir, events_path, max_proof_iters, proof_needs_path)
-            out_obj.update(proof_frag)
+            merge_proof_fragment(out_obj, proof_frag)
         else:
             out_obj["phase"] = "fill"
             out_obj["proof_skipped_reason"] = "phase-1 not converged — resolve needs first"

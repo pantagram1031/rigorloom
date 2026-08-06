@@ -424,3 +424,104 @@ def test_read_tidy_anchors_with_source_missing_profile_file_is_none(tmp_path):
     before, after, derived, keep_map = fr.read_tidy_anchors_with_source(
         str(build_yaml), str(tmp_path / "does_not_exist.json"))
     assert (before, after, derived, keep_map) == (None, None, None, None)
+
+
+# ── merge_proof_fragment (shared-miss #5: converged:true + escalate_human) ─
+#
+# 옛 코드 경로는 mode_loop에서 plain ``out_obj.update(proof_frag)``였다:
+# phase-1이 converged:True로 끝난 verdict 위에 proof 단계의
+# status:"escalate_human"이 그대로 얹혀 자기모순 쌍(converged:true +
+# escalate_human)이 방출됐고, rigorloom verdict_schema.py가 read-time에
+# HARD finding으로 거부했다(sambal + pendulum 실워크스페이스 2건).
+
+RIGORLOOM_SCHEMA = os.path.join(
+    os.path.expanduser("~"), "dev", "rigorloom", "pipeline", "scripts",
+    "verdict_schema.py")
+
+
+def _load_rigorloom_schema():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "rigorloom_verdict_schema", RIGORLOOM_SCHEMA)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _phase1_converged_verdict():
+    """finalize_loop_verdict가 converged로 끝났을 때의 핵심 필드 형태."""
+    return {
+        "converged": True,
+        "state": "converged",
+        "escalate": False,
+        "iterations": 2,
+        "page_count": 4,
+        "reason": "converged: pass + pages-in-window + figs>=min + checks clean",
+    }
+
+
+def test_merge_proof_fragment_escalation_clears_converged():
+    out_obj = _phase1_converged_verdict()
+    frag = {"phase": "proof", "proof_iter": 4, "status": "escalate_human",
+            "reason": "proof_iter 4 > max_proof_iters 3 — 수렴 실패, 사람 검토 필요"}
+    merged = fr.merge_proof_fragment(out_obj, frag)
+    # 내부 일관성: escalate_human이면 converged는 절대 True일 수 없다.
+    assert merged["status"] == "escalate_human"
+    assert merged["converged"] is False
+    assert merged["escalate"] is True
+    # phase-1 수렴 기록은 별도 필드로 보존(정보 손실 없음).
+    assert merged["phase1_converged"] is True
+    assert "수렴 실패" in merged["reason"]
+
+
+def test_merge_proof_fragment_non_escalation_keeps_converged():
+    out_obj = _phase1_converged_verdict()
+    frag = {"phase": "proof", "proof_iter": 1, "status": "awaiting_judge"}
+    merged = fr.merge_proof_fragment(out_obj, frag)
+    assert merged["converged"] is True
+    assert merged["status"] == "awaiting_judge"
+    assert merged["escalate"] is False
+    assert "phase1_converged" not in merged
+
+
+def test_merge_proof_fragment_real_over_max_frag(tmp_path):
+    """실제 run_proof_phase가 max 초과로 escalate_human 조각을 낸 뒤 병합해도
+    verdict가 내부 일관성을 유지해야 한다(mode_loop 병합 지점과 동일 경로)."""
+    pdf = _make_pdf(tmp_path, n_pages=1)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    events_path = out_dir / "fill_events.jsonl"
+    with open(events_path, "a", encoding="utf-8") as f:
+        for n in range(1, 4):
+            f.write(json.dumps({"phase": "proof", "proof_iter": n,
+                                "ts": time.time()}) + "\n")
+
+    frag = fr.run_proof_phase(pdf, out_dir, events_path, max_proof_iters=3,
+                               proof_needs_path=None)
+    assert frag["status"] == "escalate_human"
+
+    merged = fr.merge_proof_fragment(_phase1_converged_verdict(), frag)
+    assert merged["converged"] is False
+    assert merged["escalate"] is True
+    assert merged["phase1_converged"] is True
+    assert merged["contact_sheets"]  # proof 산출물은 그대로 유지.
+
+
+@pytest.mark.skipif(not os.path.exists(RIGORLOOM_SCHEMA),
+                    reason="rigorloom repo not present on this machine")
+def test_merged_escalation_verdict_passes_rigorloom_validator(tmp_path):
+    schema = _load_rigorloom_schema()
+    frag = {"phase": "proof", "proof_iter": 4, "status": "escalate_human",
+            "reason": "over max"}
+
+    # 옛 경로(plain dict.update) 재현: validator가 모순 쌍을 HARD로 잡는다.
+    old_shape = dict(_phase1_converged_verdict())
+    old_shape.update(frag)
+    old_findings = schema.contradiction_findings(old_shape)
+    assert old_findings and old_findings[0]["code"] == "verdict_contradiction"
+
+    # 새 writer 출력은 파일 기준으로도 깨끗해야 한다.
+    merged = fr.merge_proof_fragment(_phase1_converged_verdict(), frag)
+    vpath = tmp_path / "verdict.json"
+    vpath.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+    assert schema.validate_verdict_file(vpath) == []
