@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .env
 .env.*
+# Per-install distribution-module enablement (absent = core-only); written
+# by the installer or module_registry.py write-enabled, never committed.
+modules/enabled.yaml
 workspaces/
 reports/
 private/

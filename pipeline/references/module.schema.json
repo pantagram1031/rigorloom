@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigorloom.local/schemas/module-v1.json",
+  "title": "Rigorloom distribution-module declaration (modules/<name>/module.yaml)",
+  "description": "Normative shape for a distribution module's module.yaml. Distribution modules (packaging/capability units, this schema) are distinct from the v0.12 stage contracts in pipeline/references/modules.yaml (pipeline stage composition). Validated structurally by pipeline/scripts/module_registry.py; declarations are pure literals — no expressions, includes, or interpolation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "requires", "provides"],
+  "properties": {
+    "schema": {"const": "rigorloom-module/v1"},
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "description": "Kebab-case module name; MUST equal the modules/<name>/ directory name."
+    },
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rigorloom"],
+      "properties": {
+        "rigorloom": {
+          "type": "string",
+          "pattern": "^(==|!=|>=|<=|>|<)\\s*(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?(\\s*,\\s*(==|!=|>=|<=|>|<)\\s*(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?)*$",
+          "description": "Version range checked against [project].version in pyproject.toml; comma-separated comparators AND together (e.g. \">=0.16, <1.0\"). Unsatisfied = load refusal."
+        }
+      }
+    },
+    "provides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "script"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "script": {"type": "string", "minLength": 1, "description": "Module-relative path to a checker script honouring the checker_base.py contract (JSON verdict on stdout, exit 0/2/3)."}
+            }
+          }
+        },
+        "cli": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "script"],
+            "properties": {
+              "command": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+              "script": {"type": "string", "minLength": 1, "description": "Module-relative path to the script dispatched for this subcommand."}
+            }
+          }
+        },
+        "pack_types": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "description": "Personalization pack types this module defines; seeds the pack-type registry."
+        },
+        "run_modes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "state_policy", "gates"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+              "state_policy": {"enum": ["stage_machine", "receipts", "stateless"]},
+              "gates": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "studio_panels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "entry"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+              "title": {"type": "string", "minLength": 1},
+              "entry": {"type": "string", "minLength": 1, "description": "Module-relative path to the panel entry file."}
+            }
+          }
+        },
+        "skill": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fragment"],
+          "properties": {
+            "fragment": {"type": "string", "minLength": 1, "description": "Module-relative path to the SKILL fragment merged by the installer."},
+            "references": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "playbooks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Module-relative paths to stage/task playbooks."
+        }
+      }
+    }
+  }
+}

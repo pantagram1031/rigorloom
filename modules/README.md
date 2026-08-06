@@ -1,0 +1,125 @@
+# Distribution modules — the contract
+
+This directory holds rigorloom's **distribution modules**: optional capability
+bundles that install on top of the core document engine and light up extra
+checkers, CLI subcommands, run modes, studio panels, and skill fragments when
+enabled. Core ships alone (`rigorloom-core`); each module ships as its own
+installable bundle (`rigorloom-report`, `rigorloom-style`, …) at the same
+version as core.
+
+> **Naming: "distribution module" vs "stage contract".**
+> This repo already uses the word "module" for a different thing:
+> `pipeline/references/modules.yaml` + `pipeline/scripts/compose.py` define the
+> v0.12 *pipeline stage composition* vocabulary (16 typed consumes/produces
+> contracts with a mandatory-gate floor). Those are **stage contracts** — units
+> of *pipeline work*. The things in this directory are **distribution
+> modules** — units of *packaging and capability*. The two axes are unrelated:
+> a distribution module may *declare* run modes that select stage-contract
+> compositions, but nothing in this directory replaces, renames, or weakens
+> the compose resolver or its gate floor. Docs and error messages must say
+> "distribution module" or "stage contract", never a bare "module" where the
+> reader could confuse the two.
+
+## Layout
+
+```
+modules/
+  README.md            ← this contract
+  enabled.yaml         ← per-install enablement (never committed; absent = none)
+  <name>/
+    module.yaml        ← the module's declaration (schema below)
+    scripts/           ← payload: checker/CLI scripts (paths are module-relative)
+    references/        ← payload: docs, packs, playbooks
+    skill/             ← payload: SKILL fragment + references
+    ...                ← any other payload dirs the module needs
+```
+
+`module.yaml` is the only file core ever reads to learn what a module
+contributes. Its schema is `pipeline/references/module.schema.json`
+(machine-validated by `pipeline/scripts/module_registry.py`; the schema file is
+the normative shape). The declaration is pure literals — no expressions, no
+includes, no environment interpolation.
+
+```yaml
+schema: rigorloom-module/v1
+name: report                      # kebab-case; MUST equal the directory name
+requires: { rigorloom: ">=0.16" } # version range checked against pyproject
+provides:
+  checkers:                       # registered into the check registry
+    - { name: check_saeteuk, script: scripts/check_saeteuk.py }
+  cli:                            # subcommands under the main entry point
+    - { command: poster, script: scripts/poster_build.py }
+  pack_types:                     # personalization pack types it defines
+    - saeteuk
+  run_modes:                      # run-mode definitions (plan §3.2)
+    - { name: night, state_policy: stage_machine, gates: [content_audit] }
+  studio_panels:                  # declarative UI contributions (plan §3.4)
+    - { id: stage-progress, title: Stage progress, entry: studio/stage_panel.js }
+  skill:                          # SKILL fragment merged by the installer
+    fragment: skill/FRAGMENT.md
+    references: [skill/references/report_rules.md]
+  playbooks:                      # stage/task playbooks
+    - references/playbooks/night_run.md
+```
+
+## The four rules
+
+Verbatim from `docs/plans/v0.16-unified-core-and-modules.md` §3.1; the
+registry and CI enforce them.
+
+- **Core never imports a module.** Dependency points one way; modules register
+  through the registry; core has no name-level knowledge of any module.
+- **Absence is not failure.** Core's suite runs green with every module
+  disabled. CI runs both matrix points (core-only, all-modules) — added
+  **before** anything moves.
+- **Presence is integration.** Enabling a module surfaces its checkers, CLI,
+  panels, and modes with no further configuration.
+- **Adding a module later requires no core change.** Proven by a trivial
+  throwaway module in this wave.
+
+## Provides keys
+
+Every key under `provides:` is optional; an empty `provides: {}` is a valid
+(if pointless) module. All script/file paths are relative to the module
+directory and must exist at enablement time — a dangling path is a loud
+enablement error, not a silent skip.
+
+| key | shape | semantics |
+|---|---|---|
+| `checkers` | list of `{name, script}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. |
+| `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
+| `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
+| `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless`; `gates` lists checker/gate names the mode enforces. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
+| `studio_panels` | list of `{id, title, entry}` | Declarative studio contributions (plan §3.4). Studio renders enabled panels by `entry` path; absent module, absent panel; studio never learns a module's name. |
+| `skill` | `{fragment, references}` | One SKILL fragment plus its reference files, merged into the distribution bundle's router SKILL.md by the installer. A core-only install never sees the fragment's vocabulary. |
+| `playbooks` | list of paths | Stage/task playbooks the module contributes (merged alongside `pipeline/references/playbooks/`). |
+
+## Enablement model
+
+- Enablement is **per install**, recorded in `modules/enabled.yaml`:
+
+  ```yaml
+  schema: rigorloom-enabled-modules/v1
+  enabled: [report, style]
+  ```
+
+- **Missing file = nothing enabled = core-only.** This is the repo's committed
+  state; `enabled.yaml` is gitignored and written by the installer or by
+  `python pipeline/scripts/module_registry.py write-enabled`.
+- A module that is present on disk but not listed contributes **nothing** —
+  no checkers, no CLI, no panels. Discovery still validates its `module.yaml`
+  (a broken declaration is loud even when disabled, so packaging never ships a
+  dud).
+- Listing a name with no matching `modules/<name>/module.yaml` is a loud
+  configuration error, not a skip.
+- Enabling a module whose `requires.rigorloom` range does not admit the
+  project version (from `pyproject.toml`) is a **load refusal** with a message
+  naming the module, the required range, and the actual version.
+- Two enabled modules may not both provide the same checker `name`, CLI
+  `command`, `pack_type`, run-mode `name`, or panel `id` — collisions are loud
+  enablement errors.
+
+Core code consumes modules exclusively through the typed accessors on
+`pipeline/scripts/module_registry.py` (`enabled_checkers()`,
+`enabled_pack_types()`, `enabled_run_modes()`, …). If a core change needs a
+module's *name* to work, the change is wrong — that is the contract leaking.
