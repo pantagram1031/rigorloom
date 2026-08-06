@@ -2,7 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Branch pushes with an open PR were double-running the whole matrix
+# (12+ concurrent jobs after the module-set dimension) and starving the
+# hosted-runner queue ("not acquired by Runner"). One run per ref, newest wins.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
