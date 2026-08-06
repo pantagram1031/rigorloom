@@ -19,6 +19,25 @@ it only for a workspace you intend to operate. The HWPX button is disabled
 unless the bundled engine (`engine/scripts`) is resolvable or the capability
 probe reports a renderer.
 
+### Module studio panels
+
+Studio is the core base surface (open a document, structure, fillable state,
+render preview, verdicts). Enabled distribution modules extend it
+declaratively through their `module.yaml` `studio_panels` contributions
+(`modules/README.md`): `GET /api/panels` lists enabled panels
+(`[{id, title, entry, module}]`, `entry` is a studio-served URL), and
+`GET /api/panels/<id>/entry` serves the panel's HTML/JS fragment from the
+module payload directory (path-contained by the registry). The frontend
+appends one section per panel; a JS entry may call
+`window.RigorloomStudio.register(panelId, render)` and its
+`render(el, ctx)` runs on every workspace-detail refresh with
+`ctx = {slug, state, actionsEnabled, runAction, json, esc}`. A panel action
+can run a registry-declared checker via the generic
+`POST /action/<slug>/run-checker?checker=<name>` action (same token guard as
+all actions); studio resolves the checker through the registry and never
+references a module's name or path. Core-only installs: `/api/panels` is
+`[]` and no module UI renders — absence is not failure.
+
 ### Render capabilities and proof grades
 
 Studio runs `pipeline/scripts/render_probe.py` once per server process in a

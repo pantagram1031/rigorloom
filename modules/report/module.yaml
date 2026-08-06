@@ -1,8 +1,9 @@
 # Report distribution module — declaration (schema: pipeline/references/module.schema.json).
 # Slice W3-S2b: the stage machine (pipeline_ctl/compose/workflow_lint + stage
 # graphs + aliases + stage-contract catalog + playbooks) and the
-# workspace-bound checkers live behind the contract. The skill fragment and
-# studio panels are declared in W3-S3.
+# workspace-bound checkers live behind the contract. Slice W3-S3: the
+# report-flavored studio UI (content-audit action) is one studio_panels
+# contribution. The skill fragment is a later slice.
 schema: rigorloom-module/v1
 name: report
 requires: {rigorloom: ">=0.16"}
@@ -29,6 +30,8 @@ provides:
     - {command: workflow-lint, script: scripts/workflow_lint.py}
   preflight:
     - {name: preflight_report, script: scripts/preflight_report.py}
+  studio_panels:
+    - {id: report-tools, title: "Report tools", entry: studio/panel.js}
   pack_types: [saeteuk, report_structure, gloss_allowlist, constants_allowlist, tone_rules]
   run_modes:
     - {name: night, state_policy: stage_machine, gates: stages.yaml}
