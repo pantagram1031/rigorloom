@@ -242,6 +242,11 @@ class Target:
     # dir, where a backed-up copy containing SKILL.md registers as a duplicate
     # skill.
     backup_root: Optional[str] = None
+    # W5.3 skill surface: when true, the enabled distribution modules' skill
+    # fragments (module.yaml `provides.skill`) are appended to the staged
+    # SKILL.md under '## Module: <name>' headings and their reference files
+    # copied into references/. Base -> fragments -> overlay (overlay wins).
+    merge_skill_fragments: bool = False
 
 
 def load_manifest(path: str, checkout_root: str) -> List[Target]:
@@ -282,6 +287,15 @@ def _target_from_section(name: str, section: Dict[str, Any]) -> Target:
         raise SyncError(f"target {name!r}: exclude must be a list")
     overlay = section.get("overlay_root")
     backup_root = section.get("backup_root")
+    merge_raw = section.get("merge_skill_fragments", False)
+    if isinstance(merge_raw, str):
+        lowered = merge_raw.strip().lower()
+        if lowered not in ("true", "false"):
+            raise SyncError(
+                f"target {name!r}: merge_skill_fragments must be true or false")
+        merge = lowered == "true"
+    else:
+        merge = bool(merge_raw)
     return Target(
         name=name,
         install_root=os.path.abspath(str(install_root)),
@@ -289,6 +303,7 @@ def _target_from_section(name: str, section: Dict[str, Any]) -> Target:
         source_map=norm_map,
         exclude=[str(x) for x in exclude],
         backup_root=os.path.abspath(str(backup_root)) if backup_root else None,
+        merge_skill_fragments=merge,
     )
 
 
@@ -472,6 +487,12 @@ def build_staged_tree(target: Target, checkout_root: str, staging: str) -> Dict[
                 origins[dest_rel] = "base"
                 _copy_into(ap, staging, dest_rel)
 
+    # 1b. module skill fragments -- appended to the staged SKILL.md, their
+    # reference files copied beside it (W5.3). Runs before the overlay so a
+    # deliberate overlay SKILL.md still wins.
+    if target.merge_skill_fragments:
+        _merge_skill_fragments(target, checkout_root, staging, origins)
+
     # 2. overlay -- every overlay file REPLACES or ADDS on top of base
     if target.overlay_root and os.path.isdir(target.overlay_root):
         for ap, rel in _iter_files(target.overlay_root, target.exclude):
@@ -482,6 +503,75 @@ def build_staged_tree(target: Target, checkout_root: str, staging: str) -> Dict[
             _copy_into(ap, staging, dest_rel)
 
     return origins
+
+
+def _merge_skill_fragments(
+        target: Target, checkout_root: str, staging: str,
+        origins: Dict[str, str]) -> None:
+    """Append enabled distribution modules' skill fragments to the staged
+    SKILL.md ('## Module: <name>' sections) and copy their reference files
+    into references/. Uses the checkout's own module registry (the single
+    authority on enablement); every failure is a loud SyncError, never a
+    silent core-only install of a modules-enabled checkout."""
+    skill_rel = "SKILL.md"
+    if skill_rel not in origins:
+        raise SyncError(
+            "merge_skill_fragments requires the source_map to stage a root "
+            "SKILL.md (the router skill) — none was produced")
+
+    registry_dir = os.path.join(checkout_root, "pipeline", "scripts")
+    if not os.path.isdir(registry_dir):
+        raise SyncError(
+            f"merge_skill_fragments: module registry not found under "
+            f"{registry_dir}")
+    inserted = registry_dir not in sys.path
+    if inserted:
+        sys.path.insert(0, registry_dir)
+    try:
+        import module_registry as _module_registry
+        registry = _module_registry.ModuleRegistry(
+            os.path.join(checkout_root, "modules"),
+            pyproject=os.path.join(checkout_root, "pyproject.toml"),
+        )
+        try:
+            fragments = registry.enabled_skill_fragments()
+        except _module_registry.ModuleError as exc:
+            raise SyncError(f"merge_skill_fragments: {exc}")
+    except ImportError as exc:
+        raise SyncError(
+            f"merge_skill_fragments: cannot import module_registry: {exc}")
+    finally:
+        if inserted and registry_dir in sys.path:
+            sys.path.remove(registry_dir)
+
+    if not fragments:
+        return
+
+    skill_path = os.path.join(staging, skill_rel)
+    sections = [open(skill_path, "r", encoding="utf-8").read().rstrip("\n")]
+    for row in fragments:
+        try:
+            body = open(row["fragment"], "r", encoding="utf-8").read().strip("\n")
+        except OSError as exc:
+            raise SyncError(
+                f"merge_skill_fragments: fragment unreadable for module "
+                f"{row['module']!r}: {exc}")
+        sections.append(f"## Module: {row['module']}\n\n{body}")
+        for ref in row["references"]:
+            dest_rel = _norm_rel(f"references/{os.path.basename(ref)}")
+            if dest_rel in origins:
+                raise SyncError(
+                    f"merge_skill_fragments: module {row['module']!r} skill "
+                    f"reference collides with an existing staged file: "
+                    f"{dest_rel}")
+            if not os.path.isfile(ref):
+                raise SyncError(
+                    f"merge_skill_fragments: module {row['module']!r} skill "
+                    f"reference missing: {ref}")
+            origins[dest_rel] = "base"
+            _copy_into(ref, staging, dest_rel)
+    with open(skill_path, "w", encoding="utf-8") as fh:
+        fh.write("\n\n".join(sections) + "\n")
 
 
 def _install_hashes(install_root: str, exclude: List[str]) -> Dict[str, str]:

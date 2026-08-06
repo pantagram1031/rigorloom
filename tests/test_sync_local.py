@@ -570,3 +570,108 @@ def test_sync_sibling_lock_blocks_concurrent_run(world, tmp_path):
         assert os.path.exists(holder.path)
     finally:
         holder.release()
+
+
+# --------------------------------------------------------------------------- #
+# Module skill-fragment merge (W5.3)
+# --------------------------------------------------------------------------- #
+def _fragment_checkout(tmp_path, *, enabled=True, with_reference=True):
+    """A synthetic checkout carrying the router skill + one 'demo' module
+    with a skill fragment. Uses the REAL module_registry.py (copied in) so
+    the merge path exercises the actual discovery/enablement contract."""
+    import shutil
+
+    checkout = tmp_path / "frag-checkout"
+    write(str(checkout / "skill" / "SKILL.md"), "# router skill\n\nbase body\n")
+    write(str(checkout / "skill" / "references" / "operations.md"), "# ops\n")
+    write(str(checkout / "pyproject.toml"),
+          '[project]\nname = "rigorloom"\nversion = "0.16.0"\n')
+    os.makedirs(str(checkout / "pipeline" / "scripts"), exist_ok=True)
+    shutil.copy(
+        os.path.join(ROOT, "pipeline", "scripts", "module_registry.py"),
+        str(checkout / "pipeline" / "scripts" / "module_registry.py"))
+
+    refs_line = (
+        "    references: [skill/references/demo_ref.md]\n" if with_reference
+        else "    references: []\n")
+    write(str(checkout / "modules" / "demo" / "module.yaml"),
+          "schema: rigorloom-module/v1\n"
+          "name: demo\n"
+          "requires: {rigorloom: \">=0.16\"}\n"
+          "provides:\n"
+          "  skill:\n"
+          "    fragment: skill/FRAGMENT.md\n"
+          + refs_line)
+    write(str(checkout / "modules" / "demo" / "skill" / "FRAGMENT.md"),
+          "demo fragment body\n")
+    if with_reference:
+        write(str(checkout / "modules" / "demo" / "skill" / "references" / "demo_ref.md"),
+              "# demo reference\n")
+    if enabled:
+        write(str(checkout / "modules" / "enabled.yaml"),
+              "schema: rigorloom-enabled-modules/v1\nenabled: [demo]\n")
+    return str(checkout)
+
+
+def _fragment_target(world, tmp_path, **over):
+    return sl.Target(
+        name="hwp-skill",
+        install_root=over.get("install_root", os.path.join(str(tmp_path), "frag-install")),
+        overlay_root=None,
+        source_map=over.get("source_map", [
+            {"from": "skill/SKILL.md", "to": "SKILL.md"},
+            {"from": "skill/references", "to": "references"},
+        ]),
+        exclude=["__pycache__", "*.pyc", ".sync*"],
+        merge_skill_fragments=True,
+    )
+
+
+def test_skill_fragments_merged_into_installed_skill(world, tmp_path):
+    checkout = _fragment_checkout(tmp_path)
+    target = _fragment_target(world, tmp_path)
+    sl.run_target(target, checkout, dry_run=False, force=False)
+    inst = target.install_root
+    skill = read(os.path.join(inst, "SKILL.md"))
+    assert skill.startswith("# router skill")
+    assert "## Module: demo" in skill
+    assert "demo fragment body" in skill
+    # fragment section sits AFTER the base body
+    assert skill.index("base body") < skill.index("## Module: demo")
+    assert read(os.path.join(inst, "references", "demo_ref.md")) == "# demo reference\n"
+    receipt = json.loads(read(os.path.join(inst, sl.RECEIPT_NAME)))
+    assert receipt["files"]["references/demo_ref.md"]["origin"] == "base"
+    # merged SKILL.md hash in the receipt matches the installed file (drift
+    # detection keeps working on the merged content)
+    assert receipt["files"]["SKILL.md"]["sha256"] == sl._sha256(
+        os.path.join(inst, "SKILL.md"))
+
+
+def test_skill_fragments_noop_when_nothing_enabled(world, tmp_path):
+    checkout = _fragment_checkout(tmp_path, enabled=False)
+    target = _fragment_target(world, tmp_path)
+    sl.run_target(target, checkout, dry_run=False, force=False)
+    inst = target.install_root
+    skill = read(os.path.join(inst, "SKILL.md"))
+    assert "## Module:" not in skill
+    assert not os.path.exists(os.path.join(inst, "references", "demo_ref.md"))
+
+
+def test_skill_fragments_require_staged_skill_md(world, tmp_path):
+    checkout = _fragment_checkout(tmp_path)
+    target = _fragment_target(
+        world, tmp_path,
+        source_map=[{"from": "skill/references", "to": "references"}])
+    with pytest.raises(sl.SyncError, match="SKILL.md"):
+        sl.run_target(target, checkout, dry_run=True, force=False)
+
+
+def test_skill_fragment_reference_collision_is_loud(world, tmp_path):
+    checkout = _fragment_checkout(tmp_path)
+    # base already stages references/demo_ref.md -> collision with the
+    # module's fragment reference of the same basename
+    write(os.path.join(checkout, "skill", "references", "demo_ref.md"),
+          "# clashing base file\n")
+    target = _fragment_target(world, tmp_path)
+    with pytest.raises(sl.SyncError, match="collides"):
+        sl.run_target(target, checkout, dry_run=True, force=False)

@@ -263,3 +263,72 @@ slice and are the W5.3 acceptance floor.
 - W6 inherits: all XC-1-blocked scenarios + Bench-0 pinned floors
   (anchors 29/28, tables 1/3, cells 45/16) as regression values, and the
   guide_text=0 detector finding as an open 6.2 item.
+
+---
+
+## Results appendix — W5.3 machine-check run (2026-08-07)
+
+Executed on the W5.3 slice (branch `w5-skill-surface`), the scripted
+(`[machine]`) halves of the two runnable scenarios A1/A2 only. Fills used
+`engine/scripts/preedit.py replace` with a synthetic mapping on a copy of
+each corpus file (corpus untouched; artifacts written outside the repo).
+**The agent-in-the-loop half (skill loaded vs no-skill baseline, loaded-token
+footprint) is OPERATOR-RUN and still open** — the machine floors below are a
+necessary, not sufficient, condition for the 5.3 acceptance.
+
+### A1 pps-hyeopeop-seungin-sinchengseo.hwpx — all machine checks PASS
+
+| check | result |
+|---|---|
+| form_inspect exit 0; anchors >= 29; 1 table / 45 cells | PASS (anchors 29, tables 1, cells 45 — Bench-0 floor exact) |
+| fill on copy (3 synthetic keys: `우(     -     )`, `" http://"`, `년      월      일`) | PASS (hits 1/1/1) |
+| check_residue exit 0 on filled copy | PASS (form-fill keep derivation, below) |
+| table_map geometry identical blank-vs-filled (addr/width/height/borderFill/shaded per cell + rowCnt/colCnt/pageBreak) | PASS |
+| repeat-fill idempotence (2nd run `--allow-missing`, zip member contents compared) | PASS (content-identical) |
+
+### A2 pps-jeongbogonggae-donguiseo.hwpx — all machine checks PASS
+
+| check | result |
+|---|---|
+| form_inspect exit 0; anchors >= 28; tables = 3 | PASS (anchors 28, tables 3, cells 16 — Bench-0 floor exact) |
+| consent toggles as text-run edits (`(예,  아니오)` -> `(예 ☑,  아니오)`, hits=2) + dates | PASS |
+| cell count and merge map unchanged | PASS (full geometry identical) |
+| check_residue exit 0 on filled copy | PASS |
+| repeat-fill idempotence | PASS (content-identical) |
+
+Note: the two `□` glyphs in A2 are section-heading bullets ("□ 개인정보
+수집ㆍ이용 내역"), NOT checkboxes — the fillable consent slots are the
+`(예,  아니오)` text runs. Confirms the A2 judgment rubric's premise.
+
+### Protocol notes / mechanism findings
+
+1. **Form-fill keep derivation for check_residue.** The residue gate's
+   auto-derived forbidden list = anchors + guide_text (+ placeholders); on a
+   form FILL the labels legitimately survive. Honest invocation: keep =
+   (anchors ∪ placeholders) minus the entries consumed by the fill mapping
+   (whitespace-normalized substring match), passed as repeated `--keep`.
+   The gate stays non-vacuous — **negative control**: the same invocation
+   against the UNFILLED copy exits 3 on both scenarios (consumed
+   placeholders detected as residue). A1's second form label
+   `[별지 제2호의 8서식]` is profile `placeholders`, survives a legitimate
+   fill, and must be in the keep set.
+2. **Generic replace keys are unsafe (new sharp edge, documented in
+   skill/references/operations.md).** preedit tier B is a raw substring pass
+   over section XML: the key `http://` scored 15 hits (14 of them inside
+   xmlns namespace URIs — markup, not content). The document-unique run key
+   `" http://"` (leading space) hits exactly once. Rule: keys must be
+   document-unique; verify the reported hit count.
+3. `guide_text = 0` and `constraints_detected = 0` reconfirmed on both
+   forms (Bench-0 finding stands; W6 §6.2 item unchanged).
+4. Geometry comparison method: `form_inspect` table_map with the
+   text-dependent fields (`text_preview`, `classification`) stripped;
+   everything else byte-equal. Idempotence: per-member sha256 of zip
+   contents (timestamps excluded per the preedit contract).
+
+### Scenario-vs-run deltas (for the operator re-run)
+
+- A1 machine line "anchors >= 29 and 1 table / 45 cells" and A2
+  "anchors >= 28; tables = 3" matched exactly — floors unchanged.
+- The A1 scenario's "output sha256 unchanged" idempotence line is satisfied
+  at zip-member-content level (the preedit contract's own definition);
+  whole-file sha equality additionally held on this run.

@@ -2,8 +2,8 @@
 # Wave 4.2: the humanization stack (humanization_ctl + prose_fidelity +
 # check_style) is one distribution module. prose_fidelity.py is payload the
 # controller imports as a sibling, not a declared checker (it audits text
-# pairs, not a workspace). The skill fragment is a later slice; references/
-# holds its material (agent.humanizer.template.md). No pack_types: the
+# pairs, not a workspace). W5.3: the skill fragment (humanize CLI) is merged
+# into the router SKILL.md by the installer. No pack_types: the
 # prose_rules pack type is core-general ("writing voice" in plan §4.1) —
 # this module consumes it, it does not own it. No preflight contributions.
 schema: rigorloom-module/v1
@@ -14,3 +14,5 @@ provides:
     - {name: check_style, script: scripts/check_style.py}
   cli:
     - {command: humanize, script: scripts/humanization_ctl.py}
+  skill:
+    fragment: skill/FRAGMENT.md
