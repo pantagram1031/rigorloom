@@ -1,0 +1,63 @@
+{
+  "date": "2026-07-19",
+  "environment": {
+    "os": "Windows 10 host with WSL",
+    "python": "3.11.9",
+    "pymupdf": "1.27.2.3",
+    "browser_driver": "@playwright/cli via npx",
+    "renderer": "soffice_wsl",
+    "soffice": "LibreOffice 24.2.7.2 420(Build:2)",
+    "h2orestart": "yes",
+    "sample": "studio/editor/sample_data/sanitized-editable.hwpx",
+    "sample_sha256": "d6a45aba5e734f198f0b7f210b35afded132e9219b890064da4d87b413c17ba9"
+  },
+  "server_command": "python -m studio.editor.app --port 8010 --data-root scratch/studio-editor-runtime",
+  "browser_commands": [
+    "npx --package @playwright/cli playwright-cli -s=studio-spike open http://127.0.0.1:8010",
+    "npx --package @playwright/cli playwright-cli -s=studio-spike snapshot",
+    "npx --package @playwright/cli playwright-cli -s=studio-spike fill f1e39 '브라우저에서 수정한 문단입니다. HWPX XML의 다른 부분은 그대로 유지됩니다.'",
+    "npx --package @playwright/cli playwright-cli -s=studio-spike click f1e40",
+    "npx --package @playwright/cli playwright-cli -s=studio-spike fill f1e142 '두 번째 브라우저 편집입니다. 따뜻한 렌더 경로를 다시 측정합니다.'",
+    "npx --package @playwright/cli playwright-cli -s=studio-spike click f1e143"
+  ],
+  "observations": [
+    {
+      "revision": 0,
+      "kind": "initial_server_preview",
+      "render_ms": 32176.0,
+      "raster_ms": 396.3
+    },
+    {
+      "revision": 1,
+      "kind": "browser_edit_and_refresh",
+      "render_ms": 40703.6,
+      "raster_ms": 54.9,
+      "browser_cycle_ms": 40869.0,
+      "fidelity": {
+        "ok": true,
+        "changed_members": ["Contents/section0.xml"],
+        "limited_to_text_payload": true,
+        "unchanged_member_count": 10
+      }
+    },
+    {
+      "revision": 2,
+      "kind": "browser_edit_and_refresh",
+      "render_ms": 36854.8,
+      "raster_ms": 61.5,
+      "browser_cycle_ms": 37015.5,
+      "fidelity": {
+        "ok": true,
+        "changed_members": ["Contents/section0.xml"],
+        "limited_to_text_payload": true,
+        "unchanged_member_count": 10
+      }
+    }
+  ],
+  "equation_fixture": {
+    "sample": "studio/editor/sample_data/sanitized-equation-hazard.hwpx",
+    "editor_result": "paragraph s0-p9 flagged with equation and multiple-text-runs; editable=false",
+    "soffice_command": "python -u -c <discover_soffice + render sanitized-equation-hazard.hwpx>",
+    "soffice_result": "exit 1: Unspecified Application Error"
+  }
+}
