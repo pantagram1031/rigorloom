@@ -26,7 +26,7 @@ PACK_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "references" / "preferen
 PACK_DEFAULTS_DIR = PACK_SCHEMA_DIR / "defaults"
 PACK_TYPES = ["prose_rules", "figure_style", "report_structure", "saeteuk",
               "gloss_allowlist", "constants_allowlist", "backends",
-              "policy_floors"]
+              "policy_floors", "tone_rules"]
 # v0.13.1 policy boundary: constants_allowlist stays a profile-level pack but
 # is NOT installable via extension packs — it is a confirmed relaxation vector
 # for the deterministic numeric checker (check_numbers._constant_matches).

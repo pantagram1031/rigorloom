@@ -41,7 +41,7 @@ def test_bootstrap_creates_smoke_artifacts(tmp_path: Path):
     assert names == [
         "backends.json", "constants_allowlist.json", "figure_style.json",
         "gloss_allowlist.json", "policy_floors.json", "prose_rules.json",
-        "report_structure.json", "saeteuk.json",
+        "report_structure.json", "saeteuk.json", "tone_rules.json",
     ]
 
     # Smoke workspace with the passing gate checker and the resolved gate.

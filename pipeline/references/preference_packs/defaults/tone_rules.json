@@ -1,0 +1,23 @@
+{
+  "schema": "report-pipeline/preference-pack/tone_rules-v1",
+  "pack_type": "tone_rules",
+  "name": "neutral-default",
+  "version": 1,
+  "rules": [
+    {
+      "id": "hedge-on-measured",
+      "kind": "hedge_on_measured_value",
+      "scope": "body",
+      "severity": "warn",
+      "description": "Hedge markers attached to sentences carrying measured numerals soften results that were actually measured."
+    },
+    {
+      "id": "conclusion-pivot-inflation",
+      "kind": "conclusion_pivot_density",
+      "scope": "body",
+      "severity": "warn",
+      "params": {"warn_per_10k": 2.0},
+      "description": "Inflated density of pivot sentence-starts reads as machine-generated conclusion scaffolding."
+    }
+  ]
+}
