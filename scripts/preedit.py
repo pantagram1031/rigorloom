@@ -27,6 +27,11 @@ PreeditError, 아무것도 쓰지 않는다. 실전 사고(2026 공식 양식): 
 <hp:t/>를 여는 태그로 오인한 치환이 짝 없는 닫는 태그를 만들었고 한컴은
 문서 전체를 백지로 렌더했다 — 손상 출력은 구조적으로 불가능해야 한다.
 
+stale-lineseg(P0, 실사격 후속 사고): 문단 텍스트를 바꾸면서 한컴의 캐시
+레이아웃 <hp:linesegarray>를 남겨두면 옛 좌표에 겹쳐 그린다(74자 제목
+overprint). 텍스트가 바뀐 '그' 문단의 linesegarray만 제거한다 — 한컴은
+없으면 열 때 재계산하고, 바뀌지 않은 문단은 바이트 그대로 보존한다.
+
 CLI(얇은 래퍼):
     python preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
     python preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue]
@@ -60,6 +65,14 @@ SECTION_RE = re.compile(r"Contents/section\d+\.xml")
 T_FULL_RE = re.compile(
     r'(<' + NS + r':t\b[^>]*(?<!/)>)(.*?)(</' + NS + r':t>)', re.S)
 RUN_RE = re.compile(r'<(' + NS + r'):run\b([^>]*?)(?:/>|>(.*?)</\1:run>)', re.S)
+P_OPEN_RE = re.compile(r'<' + NS + r':p\b[^>]*>')
+# 한컴의 문단별 캐시 레이아웃. 텍스트를 바꾼 문단에 이걸 남겨두면 한컴이
+# 옛 좌표에 세그먼트를 그대로 그려 겹쳐 찍힌다(stale-lineseg — 실사격에서
+# 74자 제목이 옛 자리표시자 레이아웃 위에 OVERPRINT). linesegarray가 없으면
+# 한컴은 열 때 레이아웃을 재계산한다(rigorloom P0 parity와 동일 원리).
+LINESEG_RE = re.compile(
+    r'<' + NS + r':linesegarray\b(?:[^>]*/>|[^>]*>.*?</' + NS
+    + r':linesegarray>)', re.S)
 CHARPR_OPEN_RE = re.compile(r'<' + NS + r':charPr\b')
 CHARPROPERTIES_RE = re.compile(r'<' + NS + r':charProperties\b[^>]*>')
 
@@ -146,6 +159,79 @@ def _strip_tags(xml_text):
 # 1) replace_placeholders — dict 기반 치환, whitespace-tolerant, 0-hit=ERROR
 # ---------------------------------------------------------------------------
 
+def _apply_tiers(text, mapping, hits):
+    """치환 2단(tier A: 런 strip-비교 / tier B: raw 부분문자열)을 문자열
+    조각에 적용하고 새 문자열을 돌려준다. hit는 hits dict에 누적."""
+    for key, value in mapping.items():
+        key_stripped = str(key).strip()
+        value_esc = escape(str(value))
+
+        def _sub_t(m, _k=key_stripped, _v=value_esc, _key=key):
+            inner = m.group(2)
+            if _strip_tags(inner).strip() == _k and inner != _v:
+                hits[_key] += 1
+                return m.group(1) + _v + m.group(3)
+            return m.group(0)
+
+        text = T_FULL_RE.sub(_sub_t, text)
+        for needle in dict.fromkeys([str(key), escape(str(key))]):
+            n = text.count(needle)
+            if n:
+                hits[key] += n
+                text = text.replace(needle, value_esc)
+    return text
+
+
+def _replace_in_paragraph(p_xml, mapping, hits):
+    """문단 하나에 치환 적용(중첩 셀 문단은 재귀). 자신의 텍스트가 바뀐
+    문단만 자기 linesegarray를 제거한다(stale-lineseg P0).
+
+    귀속 규칙: 문단 inner를 '중첩 문단 스팬'과 그 밖의 gap(자기 런·개체
+    래퍼 태그·자기 linesegarray)으로 나눈다. <hp:t>는 항상 gap 안에 통째로
+    있으므로 gap 치환은 문단 구조를 깨지 않는다. gap이 바뀌면 이 문단
+    '자신의' 텍스트가 바뀐 것 — 자기 gap의 linesegarray만 제거하고, 중첩
+    문단은 각자 재귀에서 판단한다(바뀌지 않은 문단의 lineseg는 바이트
+    그대로 보존 — byte-fidelity)."""
+    open_m = P_OPEN_RE.match(p_xml)
+    if not open_m:  # 방어 — _find_paragraphs 조각이면 항상 매치
+        return _apply_tiers(p_xml, mapping, hits)
+    close_idx = p_xml.rfind("</")
+    open_tag = p_xml[:open_m.end()]
+    inner = p_xml[open_m.end():close_idx]
+    close_tag = p_xml[close_idx:]
+
+    nested = _find_paragraphs(inner)
+    gaps, nested_out, last = [], [], 0
+    for start, end, np_xml in nested:
+        gaps.append(inner[last:start])
+        nested_out.append(_replace_in_paragraph(np_xml, mapping, hits))
+        last = end
+    gaps.append(inner[last:])
+
+    new_gaps = [_apply_tiers(g, mapping, hits) for g in gaps]
+    if new_gaps != gaps:  # 이 문단 자신의 텍스트가 바뀜 → 캐시 레이아웃 제거
+        new_gaps = [LINESEG_RE.sub("", g) for g in new_gaps]
+
+    out = []
+    for i, np_new in enumerate(nested_out):
+        out.append(new_gaps[i])
+        out.append(np_new)
+    out.append(new_gaps[-1])
+    return open_tag + "".join(out) + close_tag
+
+
+def _replace_in_section(xml, mapping, hits):
+    """섹션 XML 전체에 문단 단위 치환 적용(문단 밖 영역은 raw tier만)."""
+    paras = _find_paragraphs(xml)
+    out, last = [], 0
+    for start, end, p_xml in paras:
+        out.append(_apply_tiers(xml[last:start], mapping, hits))
+        out.append(_replace_in_paragraph(p_xml, mapping, hits))
+        last = end
+    out.append(_apply_tiers(xml[last:], mapping, hits))
+    return "".join(out)
+
+
 def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
     """section*.xml 전반에 dict 기반 자리표시자 치환. 키별 hit 수를 보고한다.
 
@@ -172,6 +258,12 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
     T_FULL_RE 주석). 사후 불변식: 수정된 모든 XML 멤버는 쓰기 전에
     well-formed 검증을 통과해야 한다(실패 시 PreeditError, 출력 미작성).
 
+    stale-lineseg(P0): 텍스트가 바뀐 문단은 <hp:linesegarray>(한컴의 캐시
+    레이아웃)를 제거한다 — 남겨두면 한컴이 옛 좌표에 겹쳐 그린다(실사격:
+    74자 제목이 자리표시자 레이아웃 위에 overprint). linesegarray가 없으면
+    한컴이 열 때 재계산한다. 바뀌지 않은 문단(중첩 셀 문단 포함)의
+    linesegarray는 바이트 그대로 보존.
+
     반환: {"ok": True, "hits": {key: n}}
     """
     if on_zero_hits not in ("error", "ignore"):
@@ -186,27 +278,7 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
 
     for sname in _section_names(contents):
         original = contents[sname]
-        xml = original.decode("utf-8")
-        for key, value in mapping.items():
-            key_stripped = str(key).strip()
-            value_esc = escape(str(value))
-
-            # tier A — 런 텍스트 strip-비교(whitespace-tolerant 정확일치)
-            def _sub_t(m, _k=key_stripped, _v=value_esc, _key=key):
-                inner = m.group(2)
-                if _strip_tags(inner).strip() == _k and inner != _v:
-                    hits[_key] += 1
-                    return m.group(1) + _v + m.group(3)
-                return m.group(0)
-
-            xml = T_FULL_RE.sub(_sub_t, xml)
-
-            # tier B — raw 부분문자열(감사 승자 동작). 키의 이스케이프형도 시도.
-            for needle in dict.fromkeys([str(key), escape(str(key))]):
-                n = xml.count(needle)
-                if n:
-                    hits[key] += n
-                    xml = xml.replace(needle, value_esc)
+        xml = _replace_in_section(original.decode("utf-8"), mapping, hits)
         data = xml.encode("utf-8")
         if data != original:
             contents[sname] = data
@@ -289,6 +361,11 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
     유효한 XML이며 그대로 통과). 사후 불변식: 수정된 XML 멤버는 쓰기 전
     well-formed 검증 통과(실패 시 PreeditError, 출력 미작성).
 
+    stale-lineseg(P0): 혼합 문단에서 가이드 런을 걷어내면 문단 텍스트가
+    바뀌므로 그 문단의 <hp:linesegarray>도 제거한다(한컴이 열 때 재계산).
+    통째로 삭제되는 문단은 lineseg째 사라지니 해당 없음. 건드리지 않은
+    문단의 linesegarray는 바이트 그대로.
+
     반환: {"ok": True, "deleted": n, "protected_skipped": n,
            "mixed_runs_removed": n, "guide_charpr_ids": [...]}
     """
@@ -333,6 +410,10 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
                         new_p = new_p[:m.start()] + new_p[m.end():]
                         removed_here += 1
                 if removed_here:
+                    # stale-lineseg(P0): 런을 걷어내 텍스트가 바뀐 문단은
+                    # 캐시 레이아웃도 제거(비보호 문단 = 개체·중첩 문단
+                    # 없음이 보장되므로 조각 전체 strip이 곧 자기 것만 제거).
+                    new_p = LINESEG_RE.sub("", new_p)
                     xml = xml[:start] + new_p + xml[end:]
                     mixed_runs_removed += removed_here
         data = xml.encode("utf-8")
@@ -397,6 +478,10 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
          strip-비교로 text와 같은 것을 to_id로 재지정(text=None이면 전부).
          whitespace-tolerant — trailing/leading 공백이 있어도 매칭(결함 클래스
          수정). 0건이어도 오류 아님(2회차 실행에서 이미 재지정된 상태가 정상).
+         repoint는 런 텍스트를 편집하지 않는다(여는 태그의 charPrIDRef만) —
+         linesegarray는 건드리지 않는다(stale-lineseg 조건 아님). 단, 클론이
+         글자 크기/폰트 등 메트릭을 바꾸면 레이아웃이 낡을 수 있다 — 색
+         전환(#0000FF→#000000) 용도로만 쓸 것.
       5) 내장 사후검사 2종 — 실패 시 출력 파일은 쓰지 않는다:
          (a) 수정된 XML 멤버 전부 well-formed(_assert_members_well_formed,
              실패 시 PreeditError — 실전 사고: 자기닫힘 <hp:t/> 손상 →
