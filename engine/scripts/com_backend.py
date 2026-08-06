@@ -81,6 +81,10 @@ def _kill_stale_hwp():
 
 
 def open_hwp(filepath, visible=False, kill_stale=False):
+    # T25: 입력 파일이 없으면 Hwp가 빈 문서를 조용히 열어 백지 산출물이
+    # ok:true로 나간다 — 존재 검사는 COM 기동 전에, 소리나게.
+    if not Path(filepath).exists():
+        _die(f"입력 파일 없음: {filepath}")
     try:
         from pyhwpx import Hwp
     except ImportError:
