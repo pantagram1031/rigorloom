@@ -181,6 +181,69 @@ class CheckResidueTests(unittest.TestCase):
         verdict, code = self.run_check(target)
         self.assertEqual(code, 3, verdict)
 
+    # ── validity precedes text scanning (live-fire blind spot) ───────
+    def test_malformed_section_xml_is_hard_not_pass(self):
+        # The exact live-fire pattern: a self-closed <hp:t/> followed by a
+        # stray closing </hp:t> — Hancom renders the document blank, and the
+        # old tag-strip fallback scanned it as clean text and PASSED.
+        target = self.base / "malformed.hwpx"
+        with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr(
+                "Contents/section0.xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<doc xmlns:hp="urn:hancom"><p><hp:t/>본문 텍스트</hp:t></p></doc>',
+            )
+        verdict, code = self.run_check(target)
+        self.assertEqual(code, 3, verdict)
+        self.assertFalse(verdict["ok"])
+        malformed = [item for item in verdict["hard"]
+                     if item["code"] == "artifact_malformed"]
+        self.assertEqual(len(malformed), 1, verdict)
+        self.assertEqual(malformed[0]["at"], "Contents/section0.xml")
+        # msg carries the member and the parser's position
+        self.assertIn("Contents/section0.xml", malformed[0]["msg"])
+        self.assertRegex(malformed[0]["msg"], r"line \d+, column \d+")
+        # no residue scan happened on the broken bytes
+        self.assertEqual(verdict["counts"]["residue"], 0)
+        self.assertEqual(verdict["malformed_members"][0]["member"],
+                         "Contents/section0.xml")
+
+    def test_malformed_header_xml_is_hard(self):
+        target = self.base / "badheader.hwpx"
+        with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr("Contents/header.xml", "<head><open></head>")
+            archive.writestr(
+                "Contents/section0.xml", "<doc><p>깨끗한 본문</p></doc>"
+            )
+        verdict, code = self.run_check(target)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "artifact_malformed"
+            and item["at"] == "Contents/header.xml"
+            for item in verdict["hard"]
+        ), verdict)
+
+    def test_wellformed_hwpx_is_unaffected_by_validation(self):
+        artifact = self.write_hwpx("fine.hwpx", "I.  서론 잘 조립된 본문")
+        verdict, code = self.run_check(artifact)
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["hard"], [])
+        self.assertNotIn("malformed_members", verdict)
+
+    def test_text_dump_is_exempt_from_xml_validation(self):
+        # A text dump may legitimately contain XML-ish fragments; only hwpx
+        # zips get well-formedness validation.
+        dump = self.base / "dump.txt"
+        dump.write_text(
+            "<hp:t/>본문 조각</hp:t> 잘린 태그가 있어도 텍스트 덤프는 통과",
+            encoding="utf-8",
+        )
+        verdict, code = self.run_check(dump)
+        self.assertEqual(code, 0, verdict)
+        self.assertFalse(any(
+            item["code"] == "artifact_malformed" for item in verdict["hard"]
+        ), verdict)
+
     def test_verdict_carries_form_hash_and_counts(self):
         artifact = self.write_hwpx("clean.hwpx", "본문만 있다")
         verdict, code = self.run_check(artifact)
