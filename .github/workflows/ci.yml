@@ -6,10 +6,18 @@ on:
 
 jobs:
   test:
+    # Two module-set points guard the Wave 3 distribution-module contract:
+    # core-only proves "absence is not failure" (suite green with every
+    # distribution module disabled — an explicit empty modules/enabled.yaml),
+    # all-modules proves enabling everything discovered stays green. Added
+    # BEFORE any report code moves into modules/ so W3-S2 cannot silently
+    # break the core-only install.
+    name: ${{ matrix.module-set }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        module-set: [core-only, all-modules]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +25,15 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip pytest fastapi pymupdf pillow pyyaml
+      - name: Select distribution modules (${{ matrix.module-set }})
+        shell: bash
+        run: |
+          if [ "${{ matrix.module-set }}" = "all-modules" ]; then
+            python pipeline/scripts/module_registry.py write-enabled --all
+          else
+            python pipeline/scripts/module_registry.py write-enabled --none
+          fi
+          python pipeline/scripts/module_registry.py list
       - run: python -m pytest -q
       # bash so the *.py globs expand on the Windows runner too (pwsh passes
       # them through literally and py_compile fails on the literal pattern)
