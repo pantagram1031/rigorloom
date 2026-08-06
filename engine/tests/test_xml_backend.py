@@ -141,7 +141,7 @@ def _write_fake_renderer(path, *, fail=False):
         source = "import sys\nsys.exit(7)\n"
     else:
         source = """\
-import fitz
+fitz = pytest.importorskip("fitz")
 import sys
 
 doc = fitz.open()

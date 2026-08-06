@@ -11,6 +11,8 @@ HERE = os.path.dirname(__file__)
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+import pytest
+pytest.importorskip("fitz")
 import fitz  # noqa: E402
 import layout_qa as lq  # noqa: E402
 

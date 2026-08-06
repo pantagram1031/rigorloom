@@ -13,6 +13,7 @@ HERE = os.path.dirname(__file__)
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+pytest.importorskip("PIL")  # Pillow optional in CI
 import contact_sheet  # noqa: E402
 
 SCRIPT_PATH = os.path.join(ROOT, "scripts", "contact_sheet.py")
