@@ -11,9 +11,13 @@ graded render proof, Hancom-free by default.**
 
 Rigorloom is an agent-neutral, resumable workflow for weaving evidence,
 personalization, document forms, verification, and delivery into one report
-run. Current release: **v0.11.3**. See [CHANGELOG.md](CHANGELOG.md) for the
-version history and [docs/golden-path.md](docs/golden-path.md) for an
-end-to-end, Hancom-free walkthrough.
+run. Current release: **v0.15.0-alpha** (tag). `main` is ahead of the tag
+with post-tag hardening — feature-classification fail-open fixes, the
+variant-audit decision matrix, v0.13 data-only extension packs (landed under
+v0.13.1 policy conditions), and new content-integrity checkers — see
+[CHANGELOG.md](CHANGELOG.md) for the version history and
+[docs/golden-path.md](docs/golden-path.md) for an end-to-end, Hancom-free
+walkthrough.
 
 The state machine is deterministic and provider-independent. Claude, Codex,
 Gemini, local models, human operators, or any other capable agent can act as
@@ -27,9 +31,11 @@ not requirements.
   the old "caller-supplied-integer" bypass was retired in v0.7 (see
   [CHANGELOG.md](CHANGELOG.md)).
 - **A graded render proof ladder, not a single pass/fail.** Delivery is
-  ranked `none < experimental-rhwp < advisory < hancom`, and the ladder is
-  cross-checked against what this machine can actually render, not trusted
-  blindly.
+  ranked `none < experimental-rhwp < advisory < certified < hancom` — v0.15
+  added `certified`, an opt-in, HMAC-signed operator render certificate that
+  lets the `hwpx` backend clear submission grade on equation-bearing
+  documents without Hancom — and the ladder is cross-checked against what
+  this machine can actually render, not trusted blindly.
 - **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
   XML directly through the external hwp-master engine, without Hancom or COM,
   on any OS.
@@ -54,15 +60,16 @@ flowchart LR
 Stage 4.5 `content_audit` runs seven deterministic sub-checkers as
 subprocesses before assembly is allowed to start; any sub-checker's HARD
 finding fails the whole gate. Stage 6 `submission_preflight` grades the
-finished artifact and requires a render `proof_grade` of `hancom` or
-`advisory`. See [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md)
+finished artifact and requires a render `proof_grade` of `hancom`,
+`certified`, or `advisory`. See
+[docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md)
 for the full stage graph and gate contracts.
 
 ## Feature highlights
 
 - A config-driven pipeline kernel (stage schema version `0.6`, unchanged
   since v0.7) with hard and human gates. The kernel is stable; everything
-  below has been layered on top of it through the v0.7–v0.11 waves.
+  below has been layered on top of it through the v0.7–v0.15 waves.
 - A stage 4.5 **content audit** gate that runs seven deterministic
   sub-checkers before assembly ever starts, and a stage 6 **submission
   preflight** gate that grades the finished artifact before delivery.
@@ -95,14 +102,14 @@ Only `bundle` is required — the other three are optional extras dispatched by
 |---|---|---|---|---|
 | `bundle` | none (stdlib) | any OS, no Hancom | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview | none — advisory artifact only; cannot satisfy the Stage 5.3 format gate (`output/out.hwpx` required) |
 | `docx` | `pip install .[docx]` | any OS, no Hancom | styled `.docx` (headings, figures, tables; equations render as literal text, not OMML; PDF conversion left to LibreOffice) | none — same reason as `bundle` |
-| `hwpx` | external [hwp-master](https://github.com/pantagram1031/hwp-master) XML engine, `HWP_MASTER_SCRIPTS` set | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` at most — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade; otherwise proof grade is `none` |
+| `hwpx` | external [hwp-master](https://github.com/pantagram1031/hwp-master) XML engine, `HWP_MASTER_SCRIPTS` set | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` by default — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own; otherwise proof grade is `none`. Opt into `certified` (submission-grade, ranks between `advisory` and `hancom`) by setting `certified_render: true` and `render_certificate: <path>` in `build.yaml` once an operator has issued an HMAC-signed certificate (`render_cert.py measure`/`certify`) — the certificate is independently re-verified at submission time |
 | `hwp` | Windows + Hancom + [hwp-master](https://github.com/pantagram1031/hwp-master) COM loop | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
 
 The `bundle` backend is the any-machine floor: it runs anywhere Python runs,
 with zero dependencies, but it is a preview/review artifact, not a graded
 submission. Stage 6 `submission_preflight` requires `proof_grade` to be
-`hancom` or `advisory` (`pipeline/scripts/submission_preflight.py`); a `docx`
-or `bundle`-only run never reaches that state.
+`hancom`, `certified`, or `advisory` (`pipeline/scripts/submission_preflight.py`);
+a `docx` or `bundle`-only run never reaches that state.
 
 ### Content audit and submission gates
 
@@ -120,15 +127,29 @@ Two composite gates guard delivery, both fail-closed:
   whole gate; the worst exit code wins.
 - **Stage 6 `submission_preflight`** (`pipeline/scripts/submission_preflight.py`)
   grades the finished artifact: it composes `check_saeteuk.py` (saeteuk/report
-  numeric-and-entity consistency), verifies the canonical artifact's identity
+  numeric-and-entity consistency), `verdict_schema.py` (rejects a
+  self-contradictory assembly verdict — `converged: true` together with
+  `status: escalate_human`), verifies the canonical artifact's identity
   fields against `request.yaml`, recomputes the assembled HWPX's form-owned
   structure hash and compares it against the recorded `form_baseline.json`
   (non-destructive-form proof), and reads `output/verdict_v06.json`'s
-  `proof_grade` — requiring `hancom` or `advisory`, cross-checked against
-  this machine's actual render capabilities (`render_probe.py`). All of this
-  is trusted-on-record, not cryptographically proven: a baseline recorded
-  after a mutation cannot detect that mutation, and full artifact-bound proof
-  receipts are deferred to later attestation work.
+  `proof_grade` — requiring `hancom`, `certified`, or `advisory`,
+  cross-checked against this machine's actual render capabilities
+  (`render_probe.py`). All of this is trusted-on-record, not
+  cryptographically proven: a baseline recorded after a mutation cannot
+  detect that mutation, and full artifact-bound proof receipts are deferred
+  to later attestation work.
+- **Post-v0.15.0-alpha, not yet composed into a gate**
+  (`pipeline/scripts/`): `check_residue.py` (auto-derives its forbidden
+  residue list from the form scan's anchor inventory instead of a
+  hand-written vocabulary, and HARD-fails on malformed section XML before it
+  scans any text), `check_density.py` (H5 structural gate — bold-subhead
+  density per 10k bytes of `content.md`), and `check_canonical.py` (the
+  workspace's declared canonical/`FINAL` pointer must exist and resolve).
+  Each ships with tests and a documented regression case, but none is wired
+  into `content_audit` or `submission_preflight` yet; that is a pending Wave 1
+  Lane V gate-architecture decision — see
+  [docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md).
 
 ## Quick start
 
@@ -242,10 +263,19 @@ workspaces/  local run data; ignored by Git
   `submission_preflight` as diagnostic-only, and pixel-level parity with
   Hancom rendering has not been achieved (see
   [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
+- **Certified (v0.15, opt-in)**: `certified` is a submission-grade proof
+  tier between `advisory` and `hancom` — an operator issues an HMAC-signed
+  render certificate (`pipeline/scripts/render_cert.py measure`/`certify`)
+  from a Windows/Hancom reference machine, and `submission_preflight`
+  independently re-verifies it before accepting the grade. It is the only
+  path to a submission-grade `hwpx` artifact for equation-bearing documents
+  without Hancom present on the build machine itself.
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
-Rigorloom is under active development on the v0.11 line. See
-[CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
+Rigorloom is under active development past the v0.15.0-alpha tag, converging
+toward v0.16 (engine absorption, personalization/style as separate modules —
+see [docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md)).
+See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
 [docs/plans/](docs/plans/) for the design history behind each wave.
 
 ## Docs
