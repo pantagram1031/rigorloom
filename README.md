@@ -214,7 +214,7 @@ Studio has two modes (`studio/main.py`):
 
 - **Read-only (default)**: browsing and inspection only, no writes.
 - **Action mode (opt-in)**: set `STUDIO_ALLOW_ACTIONS=1` to enable a small
-  set of POST actions (`check-gate`, `approve-human-gate`, `run-content-audit`,
+  set of POST actions (`check-gate`, `approve-human-gate`, `run-checker`,
   `build-bundle`, `build-hwpx`), each guarded by a per-run `X-Studio-Token`
   CSRF header.
 

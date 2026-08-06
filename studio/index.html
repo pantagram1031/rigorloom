@@ -77,7 +77,7 @@ async function json(url,options){const response=await fetch(url,options);if(!res
 async function loadDetail(){
   try{
     const [state,checks,human]=await Promise.all([json(`/workspace/${slug}/state`),json(`/workspace/${slug}/gate-checks`),json(`/workspace/${slug}/humanization`)]);
-    currentState=state;renderCapabilities("detail-capabilities",state.verdict);renderStages(state);renderChecks(checks);renderHumanization(human);renderVerdict(state.verdict);renderPdf(state);await renderDeliverable();renderActions();await loadEvents();
+    currentState=state;renderCapabilities("detail-capabilities",state.verdict);renderStages(state);renderChecks(checks);renderHumanization(human);renderVerdict(state.verdict);renderPdf(state);await renderDeliverable();renderActions();renderModulePanels();await loadEvents();
   }catch(error){$("stages").innerHTML=`<div class="empty">${esc(error.message)}</div>`;}
 }
 function renderStages(state){$("stages").innerHTML=(state.stages||[]).map(s=>`<div class="stage"><span class="stage-num">${esc(s.num)}</span><span>${esc(s.label)}${s.gate_name?` <span class="badge gate">${esc(s.gate_name)}</span>`:""}</span><span class="stage-state ${esc(s.status)}">${esc(s.raw_status)}</span></div>`).join("")||'<div class="empty">No pipeline state.</div>';}
@@ -88,8 +88,39 @@ function renderPdf(state){const pages=state.pdf_pages||[];$("pdf-panel").hidden=
 async function renderDeliverable(){const url=`/workspace/${slug}/deliverable/preview.html`;try{const response=await fetch(url);if(!response.ok)throw new Error();$("deliverable-panel").hidden=false;$("deliverable").innerHTML=`<div class="proof-wrap">${proofBadgeHtml(currentState?.verdict)}</div><iframe class="viewer" sandbox src="${esc(url)}" title="Deliverable preview"></iframe>`;}catch{$("deliverable-panel").hidden=true;$("deliverable").innerHTML="";}}
 
 function pendingGate(){return (currentState?.stages||[]).find(s=>s.gate&&s.gate_state==="pending");}
-function renderActions(){const panel=$("actions-panel");if(!boot.actions_enabled){panel.hidden=true;return;}panel.hidden=false;const gate=pendingGate();let buttons=[];if(gate){buttons.push(["check-gate",`Check ${gate.gate_name}`,true,""]);if(["design","draft","understand"].includes(gate.gate_name))buttons.push(["approve-human-gate",`Approve ${gate.gate_name}`,true,""]);}buttons.push(["run-content-audit","Run content audit",true,""],["build-bundle","Build bundle",true,""]);const hwpx=Boolean(boot.hwpx_available);buttons.push(["build-hwpx","Build HWPX",hwpx,hwpx?"":"HWPX requires the bundled engine (engine/scripts) or a detected renderer"]);$("actions").innerHTML=buttons.map(([kind,label,enabled,title])=>`<button class="button ${kind==="approve-human-gate"?"danger":""}" data-kind="${kind}" ${enabled?"":"disabled"} title="${esc(title)}">${esc(label)}</button>`).join("");document.querySelectorAll("#actions button:not([disabled])").forEach(button=>button.onclick=()=>runAction(button.dataset.kind,gate?.gate_name));}
-async function runAction(kind,gate){const query=gate?`?gate=${encodeURIComponent(gate)}`:"";const out=$("action-result");out.innerHTML='<div class="result">Running?</div>';try{const data=await json(`/action/${slug}/${kind}${query}`,{method:"POST",headers:{"X-Studio-Token":actionToken}});out.innerHTML=`<div class="result">${esc(JSON.stringify(data.argv))}\nexit: ${esc(data.exit_code)}\n${esc(data.output_tail)}</div>`;await loadDetail();}catch(error){out.innerHTML=`<div class="result">${esc(error.message)}</div>`;}}
+function renderActions(){const panel=$("actions-panel");if(!boot.actions_enabled){panel.hidden=true;return;}panel.hidden=false;const gate=pendingGate();let buttons=[];if(gate){buttons.push(["check-gate",`Check ${gate.gate_name}`,true,""]);if(["design","draft","understand"].includes(gate.gate_name))buttons.push(["approve-human-gate",`Approve ${gate.gate_name}`,true,""]);}buttons.push(["build-bundle","Build bundle",true,""]);const hwpx=Boolean(boot.hwpx_available);buttons.push(["build-hwpx","Build HWPX",hwpx,hwpx?"":"HWPX requires the bundled engine (engine/scripts) or a detected renderer"]);$("actions").innerHTML=buttons.map(([kind,label,enabled,title])=>`<button class="button ${kind==="approve-human-gate"?"danger":""}" data-kind="${kind}" ${enabled?"":"disabled"} title="${esc(title)}">${esc(label)}</button>`).join("");document.querySelectorAll("#actions button:not([disabled])").forEach(button=>button.onclick=()=>runAction(button.dataset.kind,gate?.gate_name));}
+async function runAction(kind,gate,params){const query=new URLSearchParams();if(gate)query.set("gate",gate);for(const [key,value] of Object.entries(params||{}))query.set(key,value);const qs=query.toString();const out=$("action-result");out.innerHTML='<div class="result">Running?</div>';try{const data=await json(`/action/${slug}/${kind}${qs?`?${qs}`:""}`,{method:"POST",headers:{"X-Studio-Token":actionToken}});out.innerHTML=`<div class="result">${esc(JSON.stringify(data.argv))}\nexit: ${esc(data.exit_code)}\n${esc(data.output_tail)}</div>`;await loadDetail();}catch(error){out.innerHTML=`<div class="result">${esc(error.message)}</div>`;}}
+
+/* Module studio panels (distribution modules, GET /api/panels): each enabled
+   panel gets its own section; a JS entry may call
+   window.RigorloomStudio.register(panelId, render) and render(el, ctx) runs
+   on every workspace detail refresh. Core-only installs: no panels, no UI. */
+let modulePanels=[];const panelRenderers={};
+window.RigorloomStudio={register(id,render){panelRenderers[id]=render;renderModulePanels();}};
+async function initModulePanels(){
+  try{
+    const data=await json("/api/panels");modulePanels=data.panels||[];
+    const aside=document.querySelector("#detail aside");
+    for(const panel of modulePanels){
+      const section=document.createElement("section");section.className="panel";section.id=`module-panel-${panel.id}`;
+      section.innerHTML=`<h3>${esc(panel.title)}</h3><div id="module-panel-body-${esc(panel.id)}"></div>`;
+      aside.appendChild(section);
+      try{
+        const response=await fetch(panel.entry);if(!response.ok)continue;
+        const type=response.headers.get("content-type")||"";const text=await response.text();
+        if(type.includes("javascript")){const script=document.createElement("script");script.textContent=text;document.body.appendChild(script);}
+        else{const body=$(`module-panel-body-${panel.id}`);body.innerHTML=text;body.querySelectorAll("script").forEach(old=>{const script=document.createElement("script");script.textContent=old.textContent;old.replaceWith(script);});}
+      }catch{}
+    }
+  }catch{}
+}
+function renderModulePanels(){
+  if(!slug)return;
+  for(const panel of modulePanels){
+    const render=panelRenderers[panel.id];const el=$(`module-panel-body-${panel.id}`);
+    if(render&&el)try{render(el,{slug,state:currentState,actionsEnabled:Boolean(boot.actions_enabled),runAction,json,esc});}catch{}
+  }
+}
 
 async function loadEvents(){if(!slug||paused)return;try{const data=await json(`/workspace/${slug}/events?after=${eventOffset}`);eventOffset=data.next??eventOffset;const rows=(data.events||[]).map(event=>`<div class="event"><time>${esc(event.ts||event.at||event.timestamp||"")}</time><pre>${esc(event.detail||event.kind||JSON.stringify(event))}</pre></div>`).join("");if(rows)$("events").insertAdjacentHTML("afterbegin",rows);if(!$("events").children.length)$("events").innerHTML='<div class="empty">No events.</div>';}catch{}}
 function startPolling(){stopPolling();pollTimer=setInterval(loadEvents,5000)}function stopPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=null;}
@@ -98,7 +129,7 @@ $("back").onclick=closeDetail;$("pause").onclick=()=>{paused=!paused;$("pause").
 $("theme").onclick=()=>{const current=document.documentElement.dataset.theme;const dark=current?current==="dark":matchMedia("(prefers-color-scheme:dark)").matches;document.documentElement.dataset.theme=dark?"light":"dark";localStorage.setItem("studio-theme",document.documentElement.dataset.theme);};
 const savedTheme=localStorage.getItem("studio-theme");if(savedTheme)document.documentElement.dataset.theme=savedTheme;
 document.addEventListener("keydown",event=>{if(event.target.matches("input,textarea,button"))return;if(event.key==="j"||event.key==="k"){event.preventDefault();const delta=event.key==="j"?1:-1;selected=Math.max(0,Math.min(workspaces.length-1,(selected<0?0:selected)+delta));if(slug)openWorkspace(selected);else{renderCards();document.querySelector(`.card[data-index="${selected}"]`)?.focus();}}else if(event.key==="Enter"&&!slug&&selected>=0)openWorkspace(selected);else if(event.key==="Escape"&&slug)closeDetail();});
-$("action-mode").textContent=boot.actions_enabled?"ACTION MODE":"READ ONLY";$("action-mode").classList.toggle("on",boot.actions_enabled);renderCapabilities("dashboard-capabilities");renderCards();
+$("action-mode").textContent=boot.actions_enabled?"ACTION MODE":"READ ONLY";$("action-mode").classList.toggle("on",boot.actions_enabled);renderCapabilities("dashboard-capabilities");renderCards();initModulePanels();
 </script>
 </body>
 </html>

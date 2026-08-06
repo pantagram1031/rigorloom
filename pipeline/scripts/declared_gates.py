@@ -2,8 +2,10 @@
 """Declared-values gate runner (variant-audit "Gate architecture" row).
 
 Mechanisms live in the registry (core: check_residue / check_density;
-module-provided: check_canonical via the distribution-module registry);
-*values* are declared per workspace in ``<workspace>/gates.yaml``. Ported from the audit winner (reportkit.gates:
+module-registered: any kind a distribution module declares through its
+``module.yaml`` ``gate_kinds: [{kind, checker}]`` — e.g. the report module's
+``{kind: canonical, checker: check_canonical}``); *values* are declared per
+workspace in ``<workspace>/gates.yaml``. Ported from the audit winner (reportkit.gates:
 YAML gate list, kinds json_equals/json_lt/json_gt/file_exists/text_absent,
 dotted-path resolution, missing input = FAIL not crash, gate_result.json
 output) with the audit-mandated hardening:
@@ -24,10 +26,15 @@ output) with the audit-mandated hardening:
    the next report). A declared ``form_hash`` is checked against the form
    profile that a ``residue`` gate loads — mismatch fails that gate
    (``form_hash_mismatch``).
-4. **Mechanism delegation** — kinds ``residue`` / ``density`` /
-   ``canonical`` delegate to the registry checkers with declared
-   parameters: one runner, registry mechanisms, declared values. A
-   delegate that usage-errors NEVER passes the gate.
+4. **Mechanism delegation** — the core kinds ``residue`` / ``density``
+   delegate to core checkers; every other delegated kind is
+   registry-registered (v0.16 W3-S3): the enabled distribution modules'
+   ``gate_kinds`` declarations extend the kind vocabulary, binding each
+   kind to a registry checker invoked in-process as
+   ``check(workspace, **declared_params)``. One runner, registry
+   mechanisms, declared values. A delegate that usage-errors NEVER passes
+   the gate. A kind with no enabled provider is a loud config refusal
+   (exit 2), never a silent pass.
 
 gates.yaml shape (constrained YAML subset, stdlib-parsed — no pyyaml)::
 
@@ -56,7 +63,8 @@ gates.yaml shape (constrained YAML subset, stdlib-parsed — no pyyaml)::
         kind: density                 # delegates to check_density
         content: bundle/content.md    # optional (this is the default)
       - id: final_pointer
-        kind: canonical               # delegates to check_canonical
+        kind: canonical               # registry-registered kind (report
+                                      # module gate_kinds -> check_canonical)
 
 Output: ``<workspace>/gate_result.json``::
 
@@ -110,11 +118,15 @@ _MISSING = object()
 
 BUILTIN_KINDS = ("json_equals", "json_lt", "json_gt", "file_exists",
                  "text_absent")
-DELEGATED_KINDS = ("residue", "density", "canonical")
-KNOWN_KINDS = BUILTIN_KINDS + DELEGATED_KINDS
+# Delegated kinds whose mechanism is a core sibling checker. Every other
+# delegated kind comes from the distribution-module registry's gate_kinds
+# declarations (v0.16 W3-S3) — nothing else is hardcoded here.
+CORE_DELEGATED_KINDS = ("residue", "density")
 
-# Allowed declaration keys per kind (strict: a typo'd key is a config
-# error, not a silently ignored one).
+# Allowed declaration keys per core kind (strict: a typo'd key is a config
+# error, not a silently ignored one). Registry-registered kinds are open
+# vocabulary — their params are validated against the delegate checker's
+# ``check()`` signature instead (see validate_declaration).
 _ALLOWED_KEYS = {
     "json_equals": {"id", "kind", "file", "path", "expect"},
     "json_lt": {"id", "kind", "file", "path", "expect"},
@@ -125,7 +137,6 @@ _ALLOWED_KEYS = {
                 "keep"},
     "density": {"id", "kind", "content", "warn_per_10k", "hard_per_10k",
                 "labels"},
-    "canonical": {"id", "kind", "done_after"},
 }
 
 _ALLOWED_TOP_KEYS = {"workspace_slug", "form_hash", "gates"}
@@ -136,19 +147,33 @@ HOLDOUT_RULE = (
     "(variant-audit 'Gate architecture' row / calibration-no-overfit)"
 )
 
-# Delegated kinds whose mechanism is distribution-module payload rather than
-# a core sibling (v0.16 W3-S2b: check_canonical is report-module payload).
-# The kind stays declared here; the *implementation* is resolved through the
-# module registry at validation time, so a workspace declaring such a gate
-# without the providing module enabled is a loud config refusal (exit 2),
-# never a silent pass.
-_MODULE_DELEGATE_CHECKERS = {"canonical": "check_canonical"}
 _MODULE_DELEGATE_CACHE: dict = {}
 
 
-def _module_delegate(kind: str):
-    """Load the registry-declared checker implementing a delegated kind."""
-    checker_name = _MODULE_DELEGATE_CHECKERS[kind]
+def registry_gate_kinds() -> dict[str, str]:
+    """kind -> checker-name mapping declared by enabled distribution
+    modules through ``gate_kinds`` (module.yaml). A registry error is a
+    config refusal — silence is how gates rot. A module kind may not
+    shadow a core-implemented kind (the registry's collision check covers
+    module-vs-module; this covers module-vs-core)."""
+    try:
+        rows = module_registry.ModuleRegistry().enabled_gate_kinds()
+    except module_registry.ModuleError as exc:
+        raise GatesConfigError(
+            f"distribution-module registry error while resolving gate "
+            f"kinds: {exc}")
+    kinds: dict[str, str] = {}
+    for row in rows:
+        if row["kind"] in BUILTIN_KINDS + CORE_DELEGATED_KINDS:
+            raise GatesConfigError(
+                f"distribution module '{row['module']}' registers gate kind "
+                f"{row['kind']!r}, which shadows a core-implemented kind")
+        kinds[row["kind"]] = row["checker"]
+    return kinds
+
+
+def _module_delegate(checker_name: str):
+    """Load the registry-declared checker implementing a registered kind."""
     cached = _MODULE_DELEGATE_CACHE.get(checker_name)
     if cached is not None:
         return cached
@@ -156,21 +181,40 @@ def _module_delegate(kind: str):
         rows = module_registry.ModuleRegistry().enabled_checkers()
     except module_registry.ModuleError as exc:
         raise GatesConfigError(
-            f"gate kind {kind!r}: distribution-module registry error: {exc}")
+            f"distribution-module registry error: {exc}")
     script = next(
         (row["script"] for row in rows if row["name"] == checker_name), None)
     if script is None:
+        # unreachable when the registry's gate-kind binding check holds,
+        # but a dangling binding must still refuse, never crash
         raise GatesConfigError(
-            f"gate kind {kind!r} delegates to checker {checker_name!r}, which "
-            "no enabled distribution module provides — enable the module that "
-            "ships it in modules/enabled.yaml (python "
-            "pipeline/scripts/module_registry.py write-enabled --all)")
+            f"gate-kind checker {checker_name!r} is not provided by any "
+            "enabled distribution module")
     import importlib.util
     spec = importlib.util.spec_from_file_location(checker_name, script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     _MODULE_DELEGATE_CACHE[checker_name] = module
     return module
+
+
+def _delegate_param_names(delegate) -> tuple[set[str], bool]:
+    """(named keyword params of delegate.check besides the workspace,
+    accepts_var_keyword). Used to refuse a declaration whose params the
+    mechanism cannot bind — at validation time, not mid-run."""
+    import inspect
+    try:
+        parameters = inspect.signature(delegate.check).parameters
+    except (TypeError, ValueError, AttributeError):
+        return set(), True
+    names = set()
+    accepts_var = False
+    for index, (name, param) in enumerate(parameters.items()):
+        if param.kind == param.VAR_KEYWORD:
+            accepts_var = True
+        elif index > 0:  # first positional is the workspace
+            names.add(name)
+    return names, accepts_var
 
 
 class GatesConfigError(ValueError):
@@ -399,8 +443,14 @@ def _require_str(gate: dict, key: str, gid: str) -> str:
     return value
 
 
-def validate_declaration(config: dict, ws: Path) -> None:
-    """Strict pre-run validation: holdout header + per-gate contracts."""
+def validate_declaration(config: dict, ws: Path,
+                         module_kinds: dict[str, str] | None = None) -> None:
+    """Strict pre-run validation: holdout header + per-gate contracts.
+
+    ``module_kinds`` is the registry's kind->checker mapping (computed once
+    per run in run_all); None recomputes it."""
+    if module_kinds is None:
+        module_kinds = registry_gate_kinds()
     slug = config.get("workspace_slug")
     if not isinstance(slug, str) or not slug.strip():
         raise GatesConfigError(
@@ -428,15 +478,36 @@ def validate_declaration(config: dict, ws: Path) -> None:
             raise GatesConfigError(f"duplicate gate id {gid!r}")
         seen_ids.add(gid)
         kind = gate.get("kind")
-        if kind not in KNOWN_KINDS:
+        if kind in _ALLOWED_KEYS:
+            extra = set(gate) - _ALLOWED_KEYS[kind]
+            if extra:
+                raise GatesConfigError(
+                    f"gate {gid!r} (kind {kind}): unexpected keys "
+                    f"{sorted(extra)} (allowed: {sorted(_ALLOWED_KEYS[kind])})")
+        elif kind in module_kinds:
+            # Registry-registered kind: resolve + load the delegate NOW (a
+            # declaration that cannot bind its mechanism is a usage refusal,
+            # not a gate run) and validate the declared params against the
+            # delegate's check() signature — a typo'd key is a config error
+            # discovered before anything runs, never mid-run.
+            delegate = _module_delegate(module_kinds[kind])
+            names, accepts_var = _delegate_param_names(delegate)
+            params = set(gate) - {"id", "kind"}
+            if not accepts_var:
+                extra = params - names
+                if extra:
+                    raise GatesConfigError(
+                        f"gate {gid!r} (kind {kind}): unexpected keys "
+                        f"{sorted(extra)} (delegate checker "
+                        f"{module_kinds[kind]!r} accepts: {sorted(names)})")
+        else:
+            known = list(BUILTIN_KINDS + CORE_DELEGATED_KINDS) + sorted(module_kinds)
             raise GatesConfigError(
-                f"gate {gid!r}: unknown kind {kind!r} "
-                f"(known: {list(KNOWN_KINDS)})")
-        extra = set(gate) - _ALLOWED_KEYS[kind]
-        if extra:
-            raise GatesConfigError(
-                f"gate {gid!r} (kind {kind}): unexpected keys "
-                f"{sorted(extra)} (allowed: {sorted(_ALLOWED_KEYS[kind])})")
+                f"gate {gid!r}: unknown kind {kind!r} (known: {known}) — a "
+                "module-registered kind requires the distribution module "
+                "that declares it via gate_kinds to be enabled in "
+                "modules/enabled.yaml (python pipeline/scripts/"
+                "module_registry.py write-enabled --all)")
         if kind in ("json_equals", "json_lt", "json_gt", "text_absent"):
             _require_str(gate, "file", gid)
         if kind == "text_absent":
@@ -456,7 +527,7 @@ def validate_declaration(config: dict, ws: Path) -> None:
         if kind == "residue":
             _require_str(gate, "form_profile", gid)
             _require_str(gate, "artifact", gid)
-        for num_key in ("warn_per_10k", "hard_per_10k", "done_after"):
+        for num_key in ("warn_per_10k", "hard_per_10k"):
             if num_key in gate and not isinstance(
                     gate[num_key], (int, float)):
                 raise GatesConfigError(
@@ -474,10 +545,6 @@ def validate_declaration(config: dict, ws: Path) -> None:
                 gate["keep_pattern"], str):
             raise GatesConfigError(
                 f"gate {gid!r}: 'keep_pattern' must be a string")
-        if kind in _MODULE_DELEGATE_CHECKERS:
-            # Resolve the module-provided mechanism NOW: a declaration that
-            # cannot bind its delegate is a usage refusal, not a gate run.
-            _module_delegate(kind)
         # canonical binding: every declared file path must stay inside ws
         for path_key in _file_keys(gate):
             _bind(ws, str(gate[path_key]), gid, path_key)
@@ -651,7 +718,7 @@ def _eval_builtin(ws: Path, gate: dict, targets: list[dict]) -> dict:
 
 
 def _eval_delegated(ws: Path, gate: dict, targets: list[dict],
-                    declared_form_hash) -> dict:
+                    declared_form_hash, module_kinds: dict[str, str]) -> dict:
     """One runner, registry mechanisms, declared values."""
     kind = gate["kind"]
     if kind == "residue":
@@ -674,13 +741,12 @@ def _eval_delegated(ws: Path, gate: dict, targets: list[dict],
             guide_labels=check_density.DEFAULT_GUIDE_LABELS
             + tuple(gate.get("labels") or ()),
         )
-    else:  # canonical
-        check_canonical = _module_delegate("canonical")
-        verdict, code = check_canonical.check(
-            ws,
-            done_after=float(gate.get(
-                "done_after", check_canonical.DEFAULT_DONE_AFTER)),
-        )
+    else:  # registry-registered kind (validated to exist in module_kinds)
+        delegate = _module_delegate(module_kinds[kind])
+        params = {key: gate[key] for key in gate if key not in ("id", "kind")}
+        verdict, code = delegate.check(ws, **params)
+        # A delegate that reports the pinned target it resolved (e.g.
+        # check_canonical's FINAL pointer) gets a staleness record too.
         pointer = verdict.get("target")
         if pointer and not Path(str(pointer)).is_absolute():
             targets = targets + [target_meta(ws, str(pointer))]
@@ -705,20 +771,26 @@ def _eval_delegated(ws: Path, gate: dict, targets: list[dict],
                 findings=findings, targets=targets, verdict=verdict)
 
 
-def run_gate(ws: Path, gate: dict, declared_form_hash=None) -> dict:
+def run_gate(ws: Path, gate: dict, declared_form_hash=None,
+             module_kinds: dict[str, str] | None = None) -> dict:
     """Evaluate one declared gate. Targets are stat'd + hashed first; a
     missing pinned target short-circuits to a loud recorded failure."""
+    if module_kinds is None:
+        module_kinds = registry_gate_kinds()
     targets = [target_meta(ws, str(gate[key])) for key in _file_keys(gate)]
     if gate["kind"] == "density" and not gate.get("content"):
         targets = [target_meta(ws, "bundle/content.md")]
+    delegated = (gate["kind"] in CORE_DELEGATED_KINDS
+                 or gate["kind"] in module_kinds)
     expect = (True if gate["kind"] == "file_exists"
-              else "pass" if gate["kind"] in DELEGATED_KINDS
+              else "pass" if delegated
               else gate.get("expect"))
 
     if any(not t["exists"] for t in targets):
         return _missing_target_row(gate, expect, targets)
-    if gate["kind"] in DELEGATED_KINDS:
-        return _eval_delegated(ws, gate, targets, declared_form_hash)
+    if delegated:
+        return _eval_delegated(ws, gate, targets, declared_form_hash,
+                               module_kinds)
     return _eval_builtin(ws, gate, targets)
 
 
@@ -740,10 +812,11 @@ def run_all(ws: str | Path) -> tuple[dict, int]:
         raise GatesConfigError(f"gates.yaml unreadable: {exc}")
 
     config = parse_gates_yaml(text)
-    validate_declaration(config, ws)
+    module_kinds = registry_gate_kinds()
+    validate_declaration(config, ws, module_kinds)
 
     declared_form_hash = config.get("form_hash")
-    rows = [run_gate(ws, gate, declared_form_hash)
+    rows = [run_gate(ws, gate, declared_form_hash, module_kinds)
             for gate in config["gates"]]
     failed = [row for row in rows if not row["pass"]]
     # empty gate list is never a pass: nothing declared = nothing verified

@@ -50,7 +50,7 @@ _PACK_TYPE_RE = _CHECKER_NAME_RE
 _STATE_POLICIES = (
     "stage_machine", "receipts", "stateless", "stateless_final_pointer")
 _PROVIDES_KEYS = (
-    "checkers", "cli", "pack_types", "run_modes",
+    "checkers", "cli", "pack_types", "run_modes", "gate_kinds",
     "studio_panels", "skill", "playbooks", "preflight",
 )
 _COMPARATOR_RE = re.compile(r"^(==|!=|>=|<=|>|<)\s*(\d+(?:\.\d+){0,2})$")
@@ -410,6 +410,10 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
         out["run_modes"] = _require_entry_list(
             module, provides["run_modes"], "run_modes",
             {"name": _NAME_RE, "state_policy": _STATE_POLICIES, "gates": "gates"})
+    if "gate_kinds" in provides:
+        out["gate_kinds"] = _require_entry_list(
+            module, provides["gate_kinds"], "gate_kinds",
+            {"kind": _CHECKER_NAME_RE, "checker": _CHECKER_NAME_RE})
     if "studio_panels" in provides:
         out["studio_panels"] = _require_entry_list(
             module, provides["studio_panels"], "studio_panels",
@@ -565,6 +569,7 @@ class ModuleRegistry:
             self._check_payload_paths(spec)
             specs.append(spec)
         self._check_collisions(specs)
+        self._check_gate_kind_bindings(specs)
         self._enabled = specs
         return specs
 
@@ -577,8 +582,8 @@ class ModuleRegistry:
     def _check_collisions(specs: list[ModuleSpec]) -> None:
         for kind, keys in (
             ("checkers", "name"), ("cli", "command"),
-            ("run_modes", "name"), ("studio_panels", "id"),
-            ("preflight", "name"),
+            ("run_modes", "name"), ("gate_kinds", "kind"),
+            ("studio_panels", "id"), ("preflight", "name"),
         ):
             seen: dict[str, str] = {}
             for spec in specs:
@@ -597,6 +602,24 @@ class ModuleRegistry:
                         f"distribution modules '{seen[pack]}' and '{spec.name}' "
                         f"both provide pack_type {pack!r}")
                 seen[pack] = spec.name
+
+    @staticmethod
+    def _check_gate_kind_bindings(specs: list[ModuleSpec]) -> None:
+        """Every declared gate_kind must bind to a checker some enabled
+        module provides — a dangling binding is a loud enablement error,
+        never a run-time surprise."""
+        checker_names = {
+            entry["name"]
+            for spec in specs for entry in spec.provides.get("checkers", [])
+        }
+        for spec in specs:
+            for entry in spec.provides.get("gate_kinds", []):
+                if entry["checker"] not in checker_names:
+                    raise ModuleError(
+                        f"distribution module '{spec.name}' registers gate "
+                        f"kind {entry['kind']!r} bound to checker "
+                        f"{entry['checker']!r}, which no enabled module "
+                        "provides via provides.checkers")
 
     # -- typed accessors (core consumes these; never module names) -----------
 
@@ -629,6 +652,12 @@ class ModuleRegistry:
     def enabled_run_modes(self) -> list[dict[str, Any]]:
         """[{name, state_policy, gates, module}]."""
         return self._entries("run_modes", ())
+
+    def enabled_gate_kinds(self) -> list[dict[str, Any]]:
+        """[{kind, checker, module}] declared-gate kind registrations;
+        declared_gates.py resolves a workspace gate's kind to its checker
+        mechanism through this accessor."""
+        return self._entries("gate_kinds", ())
 
     def enabled_studio_panels(self) -> list[dict[str, Any]]:
         """[{id, title, entry(abs path), module}]."""
@@ -680,6 +709,7 @@ class ModuleRegistry:
             "cli": self.enabled_cli(),
             "pack_types": self.enabled_pack_types(),
             "run_modes": self.enabled_run_modes(),
+            "gate_kinds": self.enabled_gate_kinds(),
             "studio_panels": self.enabled_studio_panels(),
             "skill_fragments": self.enabled_skill_fragments(),
             "playbooks": self.enabled_playbooks(),

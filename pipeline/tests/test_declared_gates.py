@@ -15,6 +15,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "declared_gates.py"
@@ -27,13 +28,13 @@ HEADER = f"workspace_slug: {SLUG}\n"
 
 
 def _canonical_delegate_available() -> bool:
-    """True when an enabled distribution module provides check_canonical
-    (v0.16 W3-S2b: it is report-module payload; core-only runs must refuse
-    canonical gates loudly instead of running them)."""
+    """True when an enabled distribution module registers the 'canonical'
+    gate kind (v0.16 W3-S3: gate_kinds declaration in module.yaml; core-only
+    runs must refuse canonical gates loudly instead of running them)."""
     try:
         registry = declared_gates.module_registry.ModuleRegistry()
-        return any(row["name"] == "check_canonical"
-                   for row in registry.enabled_checkers())
+        return any(row["kind"] == "canonical"
+                   for row in registry.enabled_gate_kinds())
     except Exception:
         return False
 
@@ -715,10 +716,10 @@ class DelegationTests(Base):
 
     def test_canonical_without_providing_module_is_loud_refusal(self):
         """Core-only: a workspace declaring a canonical gate while no enabled
-        module provides check_canonical must be a config refusal (exit 2
-        path), never a silent pass or a crash."""
+        module registers that kind must be a config refusal (exit 2 path) —
+        an unknown kind with no provider, never a silent pass or a crash."""
         if CANONICAL_AVAILABLE:
-            self.skipTest("a module providing check_canonical is enabled")
+            self.skipTest("a module registering gate kind 'canonical' is enabled")
         self.canonical_workspace()
         self.write_text("output/final.hwpx", "ship artifact")
         self.write_gates(
@@ -730,7 +731,8 @@ class DelegationTests(Base):
             self.run_all()
         code, stdout = self.run_cli()
         self.assertEqual(code, declared_gates.EXIT_USAGE)
-        self.assertIn("check_canonical", stdout)
+        self.assertIn("unknown kind", stdout)
+        self.assertIn("gate_kinds", stdout)
         # a refusal must never look like a run
         self.assertFalse((self.ws / "gate_result.json").exists())
 
@@ -784,6 +786,118 @@ class DelegationTests(Base):
         row = self.gate(result, "subhead_density")
         self.assertFalse(row["pass"])
         self.assertIn("delegate_usage_error", row["findings"])
+
+
+# ── registry-registered gate kinds (v0.16 W3-S3 gate_kinds) ─────────
+
+_CUSTOM_CHECKER = '''\
+def check(ws, threshold=1):
+    """Synthetic gate-kind delegate honouring the in-process contract."""
+    hard = [] if threshold <= 1 else [{"code": "threshold_exceeded"}]
+    verdict = {"checker": "check_custom", "verdict": "pass" if not hard else "fail",
+               "hard": hard, "target": "output/final.txt"}
+    return verdict, 0 if not hard else 3
+'''
+
+_CUSTOM_MANIFEST = """\
+schema: rigorloom-module/v1
+name: gatekit
+requires: { rigorloom: ">=0.1" }
+provides:
+  checkers:
+    - { name: check_custom, script: scripts/check_custom.py }
+  gate_kinds:
+    - { kind: custom, checker: check_custom }
+"""
+
+
+class RegistryGateKindTests(Base):
+    """The kind vocabulary itself is registry-driven: a throwaway module's
+    gate_kinds declaration lights a new kind up in declared_gates with no
+    core change, and its declared params are signature-validated."""
+
+    def setUp(self):
+        super().setUp()
+        modules_root = Path(self._tmp.name) / "modules"
+        module = modules_root / "gatekit"
+        (module / "scripts").mkdir(parents=True)
+        (module / "scripts" / "check_custom.py").write_text(
+            _CUSTOM_CHECKER, encoding="utf-8")
+        (module / "module.yaml").write_text(_CUSTOM_MANIFEST, encoding="utf-8")
+        (modules_root / "enabled.yaml").write_text(
+            "schema: rigorloom-enabled-modules/v1\nenabled: [gatekit]\n",
+            encoding="utf-8")
+        real_registry = declared_gates.module_registry.ModuleRegistry
+        self._registry_patch = mock.patch.object(
+            declared_gates.module_registry, "ModuleRegistry",
+            lambda *args, **kwargs: real_registry(
+                modules_root, version="0.16.0"))
+        self._registry_patch.start()
+        declared_gates._MODULE_DELEGATE_CACHE.clear()
+
+    def tearDown(self):
+        self._registry_patch.stop()
+        declared_gates._MODULE_DELEGATE_CACHE.clear()
+        super().tearDown()
+
+    def test_module_registered_kind_runs_with_declared_params(self):
+        self.write_text("output/final.txt", "artifact")
+        self.write_gates(
+            "gates:\n"
+            "  - id: custom_gate\n"
+            "    kind: custom\n"
+            "    threshold: 1\n"
+        )
+        result, code = self.run_all()
+        self.assertEqual(code, 0, result)
+        row = self.gate(result, "custom_gate")
+        self.assertTrue(row["pass"])
+        self.assertEqual(row["expect"], "pass")
+        self.assertEqual(row["verdict"]["checker"], "check_custom")
+        # the delegate-reported target gets a staleness record
+        self.assertEqual(row["targets"][0]["path"], "output/final.txt")
+        self.assertTrue(row["targets"][0]["sha256"])
+
+    def test_module_registered_kind_failure_is_recorded(self):
+        self.write_text("output/final.txt", "artifact")
+        self.write_gates(
+            "gates:\n"
+            "  - id: custom_gate\n"
+            "    kind: custom\n"
+            "    threshold: 5\n"
+        )
+        result, code = self.run_all()
+        self.assertEqual(code, 3, result)
+        row = self.gate(result, "custom_gate")
+        self.assertFalse(row["pass"])
+        self.assertIn("threshold_exceeded", row["findings"])
+
+    def test_param_typo_is_validation_refusal_not_midrun_crash(self):
+        self.write_gates(
+            "gates:\n"
+            "  - id: custom_gate\n"
+            "    kind: custom\n"
+            "    thresold: 5\n"
+        )
+        with self.assertRaises(declared_gates.GatesConfigError) as ctx:
+            self.run_all()
+        self.assertIn("unexpected keys", str(ctx.exception))
+        self.assertIn("check_custom", str(ctx.exception))
+
+    def test_module_kind_may_not_shadow_core_kind(self):
+        modules_root = Path(self._tmp.name) / "modules"
+        (modules_root / "gatekit" / "module.yaml").write_text(
+            _CUSTOM_MANIFEST.replace("kind: custom", "kind: density"),
+            encoding="utf-8")
+        self.write_gates(
+            "gates:\n"
+            "  - id: anything\n"
+            "    kind: file_exists\n"
+            "    file: a.txt\n"
+        )
+        with self.assertRaises(declared_gates.GatesConfigError) as ctx:
+            self.run_all()
+        self.assertIn("shadows a core-implemented kind", str(ctx.exception))
 
 
 # ── CLI contract ────────────────────────────────────────────────────
