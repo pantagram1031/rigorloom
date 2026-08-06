@@ -27,6 +27,21 @@
   private templates.
 - [trouble-table.md](trouble-table.md) — indexed troubleshooting entries.
 
+## `research/`
+
+[research/](research/) holds point-in-time investigations that feed a
+plan, not living documentation:
+
+- [research/variant-audit.md](research/variant-audit.md) — the Phase 0.C
+  variant-audit decision matrix: five differential benches over existing
+  artifacts, the hybrid gate-architecture verdict, and the shared-miss
+  mechanisms that motivated the new post-v0.15.0-alpha checkers (see
+  `CHANGELOG.md`).
+- [research/skill-efficiency-gen5.md](research/skill-efficiency-gen5.md) —
+  authoring research for 5-gen models.
+- [research/linux-hwp-edit.md](research/linux-hwp-edit.md) — Linux HWP/HWPX
+  tooling research behind the v0.15 renderer-certification work.
+
 ## `plans/`
 
 [plans/](plans/) holds the design history behind each release wave — one doc
@@ -35,3 +50,9 @@ per hardening or feature wave (for example
 [plans/p0-parity-report.md](plans/p0-parity-report.md)). These are point-in-time
 design and status records, not living documentation; for current behavior,
 prefer the docs listed above and [CHANGELOG.md](../CHANGELOG.md).
+
+The current wave is v0.16 — start with
+[plans/v0.16-unified-core-and-modules.md](plans/v0.16-unified-core-and-modules.md)
+(the master plan: engine absorption, personalization/style as separate
+distribution modules) and its Phase 0 companion
+[plans/v0.16-prep-variant-audit.md](plans/v0.16-prep-variant-audit.md).

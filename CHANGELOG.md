@@ -6,6 +6,72 @@ stages.yaml`'s `version: "0.6"`) has not changed since v0.7 — these releases
 add gates, backends, and tooling on top of a stable kernel, they do not change
 the kernel's contract shape.
 
+## Unreleased (main, post-v0.15.0-alpha)
+
+- **#29** (`v0.15 follow-up: feature-classification fixes + v0.16 master
+  plan`, landed directly on `main`) — the first real corpus run (genuine
+  Hancom-saved documents) surfaced five section-level rendering element
+  names (`pageBorderFill`, `visibility`, `startNum`, `grid`,
+  `lineNumberShape`) that a blanket-benign classification would have made
+  fail-open in `feature_extract.py`; they now emit attribute- and
+  whole-subtree-fingerprinted feature classes (`sec-config:<tag>:<fp>`), so
+  a document certifies only under the exact section configuration the
+  corpus measured. Also added the v0.16 master plan
+  (`docs/plans/v0.16-unified-core-and-modules.md`,
+  `docs/plans/v0.16-prep-variant-audit.md`) and
+  `docs/research/skill-efficiency-gen5.md`.
+- **#30** (`docs: audit performance metrics + Phase 0 judgment verdicts`,
+  branch `docs/audit-metrics-and-verdicts`) — docs-only: added the
+  variant-audit metrics section (gate quality / convergence cost / assembly
+  fidelity / output-vs-corpus-band / ops / skill efficiency) as the Wave 1
+  Lane V exit criterion, and recorded the master plan's extension-packs
+  ABSORB verdict (v0.13.1 conditions).
+- **#31** (`research: variant-audit decision matrix (Phase 0.C complete)`,
+  branch `audit/decision-matrix`) — added `docs/research/variant-audit.md`:
+  five differential benches over existing artifacts (zero pipeline reruns).
+  Headline findings: all five audited variants' recorded state diverged
+  from reality; `score_ai_tells` showed zero discrimination on a
+  25%-changed section; a hawkes-sim pre-edit latent defect was found.
+  Verdicts: hybrid gate architecture with form-scan auto-derived residue
+  lists, two run modes plus a mandatory provenance floor, H2 advisory-only,
+  and five shared-miss mechanisms. Unblocks the Wave 1 Lane V docket.
+- **#32** (`packs: land v013 extension packs with v0.13.1 policy
+  conditions`, branch `v013-packs-landing` merging
+  `codex/v013-extension-packs`) — landed the data-only extension-pack
+  system (`scripts/extension_pack.py`: validate/install/list/doctor/activate,
+  `docs/extensions.md`) under a v0.13.1 policy boundary applied at merge:
+  `constants_allowlist` is excluded from `DATA_EXTENSION_PACK_TYPES` — it
+  stays a profile-level pack managed through `personalization_ctl` and is
+  never installable from an extension pack, since it is a confirmed
+  relaxation vector for `check_numbers`' deterministic numeric checker.
+  Also fixed a `merge_pack`/`_stable_union` regression where a global
+  `gloss_allowlist` pack deep-merged over defaults erased the 14 W5b
+  neutral terms; the resolved terms are now the stable union. Full suite at
+  merge: 662 passed, 1 skipped, 28 subtests.
+- **#33** (`gates: residue auto-derivation, H5 density, canonical binding,
+  verdict contradiction`, landed directly on `main`) — added four new
+  checkers from the variant-audit's shared-miss findings:
+  `check_residue.py` (a form's scanned anchor/guide-text inventory becomes
+  the final artifact's forbidden list, auto-derived per form; a missing
+  pinned target is HARD, never a silent pass), `check_density.py` (H5
+  structural gate: bold-subhead count per 10k bytes of `content.md`, WARN
+  at >= 3.0, HARD at >= 4.5), `check_canonical.py` (the workspace's
+  declared canonical/`FINAL` pointer must exist and resolve once a delivery
+  stage claims done), and `verdict_schema.py` (rejects a `converged: true`
+  + `status: escalate_human` contradiction in an assembly verdict file;
+  wired into `submission_preflight`). `check_residue`, `check_density`, and
+  `check_canonical` are standalone, tested CLI scripts — none of the three
+  is composed into `content_audit` or `submission_preflight` yet; that
+  remains a pending Wave 1 Lane V gate-architecture decision.
+- **#34** (`gates: malformed artifact XML is HARD in check_residue`, landed
+  directly on `main`) — `check_residue.py` now XML-parses every hwpx
+  section/header member before the residue text scan; a parse failure is a
+  HARD `artifact_malformed` finding (member + position). Found live: a
+  corrupt `section0.xml` passed the prior regex text scan while Hancom
+  rendered the document blank (T23).
+
+Full suite as of this window: 712 passed.
+
 ## Unreleased — Linux equation-render parity P0 (experimental)
 
 - Added `pipeline/scripts/hwpx_render_surrogate.py`: builds a canonical-immutable
