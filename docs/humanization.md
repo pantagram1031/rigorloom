@@ -57,7 +57,7 @@ Audited 2026-08-06; evidence and bench data in
   regression guard on the check registry.
 - **H4 tone rulepack — pack-based regression check.** Its rules provably
   track real humanizer edits (bench 2b: conclusion_pivot 1→0).
-  `pipeline/scripts/check_tone_rules.py` runs a tone-rulepack over
+  `modules/report/scripts/check_tone_rules.py` runs a tone-rulepack over
   `bundle/content.md` (WARN-only by default; a pack may escalate). The repo
   ships only the neutral default pack; the corpus-derived rulepack is a
   private profile pack instance (`personalization_ctl.py register-pack

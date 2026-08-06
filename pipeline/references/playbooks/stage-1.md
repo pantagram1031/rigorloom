@@ -18,7 +18,7 @@ EXACT commands / actions:
 #   claims.yaml            per-claim evidence ledger at workspace root
 ```
 At research time, record every verified DOI or ISBN through the write-through
-cache, for example `python pipeline/scripts/source_fetch.py record --doi
+cache, for example `python modules/report/scripts/source_fetch.py record --doi
 10.x/y --title "..." --retrieved-from <URL> --content-sha256 <SHA256>`.
 Do this when the source is verified, not later at gate time; the command writes only under
 `<PROFILE_ROOT>/cache/sources/`.

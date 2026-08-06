@@ -68,7 +68,7 @@ python pipeline/scripts/workflow_lint.py <WS> --json
    is configured.
 
 ```sh
-python pipeline/scripts/check_corpus.py <WS> --corpus-root <root>
+python modules/report/scripts/check_corpus.py <WS> --corpus-root <root>
 # or set RIGORLOOM_CORPUS_ROOT and omit --corpus-root
 ```
 
