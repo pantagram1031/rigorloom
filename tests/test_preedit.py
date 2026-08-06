@@ -542,3 +542,115 @@ class TestStaleLineseg:
         delete_guide_paragraphs(r2, d1, color="#0000FF")
         delete_guide_paragraphs(d1, d2, color="#0000FF")
         assert content_fingerprint(d1) == content_fingerprint(d2)
+
+
+# ---------------------------------------------------------------------------
+# 6) 스코프 재지정(분할 런 저자표 검정 전환) + id↔위치 진단
+# ---------------------------------------------------------------------------
+
+def _split_byline_fixture(tmp_path, with_lineseg=False):
+    """form_final2 감식 재현: 저자표 셀 문단이 '학번 런(파랑 5) + 이름 런
+    (네이비 6) + 개체 런'으로 쪼개져 있다. 바깥에 무관 파란 문단 하나."""
+    cell_runs = ('<hp:run charPrIDRef="5"><hp:t>20999 </hp:t></hp:run>'
+                 '<hp:run charPrIDRef="6"><hp:t>김가상</hp:t></hp:run>'
+                 '<hp:run charPrIDRef="5"><hp:pic id="77"/></hp:run>')
+    cell_para = ('<hp:p paraPrIDRef="34">' + cell_runs
+                 + (LINESEG if with_lineseg else "") + '</hp:p>')
+    sec = SEC(TBL_P(cell_para), P(R(5, "무관 파란 문단")))
+    return make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE, CP_NAVY]), sec)
+
+
+class TestScopedRepoint:
+    def test_split_run_byline_both_black(self, tmp_path):
+        """failing-before(form_final2 실사격): 텍스트 매치 repoint는 학번
+        런만 잡고 이름 런(다른 charPr)은 파랑으로 남았다. 스코프 재지정은
+        앵커 문단(표 셀)의 텍스트 런 '전부'를 검정 클론으로 — 개체 런은
+        불가침. 앵커는 분할 런·공백에 관용(공백 제거 부분일치)."""
+        src = _split_byline_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        # 새 id "3" = 현재 def 개수(0,5,6 → 3번째 위치) — id==위치 유지 지침
+        result = normalize_clones(
+            src, out, [("5", "3")], clone_attrs={"textColor": "#000000"},
+            scope_repoints=[("3", "20999 김가상")])
+        assert result["scope_repointed"] == [
+            {"to": "3", "anchor": "20999 김가상", "paragraphs": 1, "runs": 2}]
+        sec = section_xml(out)
+        ET.fromstring(sec)
+        assert '<hp:run charPrIDRef="3"><hp:t>20999 </hp:t></hp:run>' in sec
+        assert '<hp:run charPrIDRef="3"><hp:t>김가상</hp:t></hp:run>' in sec
+        # 개체 런은 원래 charPr 그대로
+        assert '<hp:run charPrIDRef="5"><hp:pic id="77"/></hp:run>' in sec
+        # 스코프 밖 문단은 불가침
+        assert '<hp:run charPrIDRef="5"><hp:t>무관 파란 문단</hp:t>' in sec
+
+    def test_scope_zero_match_raises(self, tmp_path):
+        src = _split_byline_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="없는사람"):
+            normalize_clones(src, out, [("5", "3")],
+                             clone_attrs={"textColor": "#000000"},
+                             scope_repoints=[("3", "없는사람")])
+        assert not out.exists()
+
+    def test_scope_idempotent_and_second_run_zero(self, tmp_path):
+        src = _split_byline_fixture(tmp_path)
+        o1 = tmp_path / "o1.hwpx"
+        o2 = tmp_path / "o2.hwpx"
+        kwargs = dict(clone_attrs={"textColor": "#000000"},
+                      scope_repoints=[("3", "20999 김가상")])
+        normalize_clones(src, o1, [("5", "3")], **kwargs)
+        r2 = normalize_clones(o1, o2, [("5", "3")], **kwargs)
+        assert content_fingerprint(o1) == content_fingerprint(o2)
+        # 2회차: 문단은 여전히 매치(텍스트 불변), 바꾼 런은 0 — 멱등 보고
+        assert r2["scope_repointed"][0]["paragraphs"] == 1
+        assert r2["scope_repointed"][0]["runs"] == 0
+
+    def test_scope_does_not_strip_lineseg(self, tmp_path):
+        """스코프 재지정은 텍스트를 바꾸지 않으므로 linesegarray 불가침
+        (stale-lineseg 조건 아님 — 색만 바뀌고 메트릭 불변)."""
+        src = _split_byline_fixture(tmp_path, with_lineseg=True)
+        out = tmp_path / "out.hwpx"
+        normalize_clones(src, out, [("5", "3")],
+                         clone_attrs={"textColor": "#000000"},
+                         scope_repoints=[("3", "20999 김가상")])
+        sec = section_xml(out)
+        assert LINESEG in sec  # 바이트 그대로
+
+    def test_clone_appended_at_end_with_position_diagnostic(self, tmp_path):
+        """form_final2 원흉 재발 방지: 클론은 배열 끝 append(중간 삽입
+        금지). id↔위치 진단 — 연속 id 입력 + 위치==id 클론이면 빈 목록,
+        희소 id 입력이면 불일치가 보고된다."""
+        # (a) 연속 id 0,1 + 클론 id 2 → 불일치 없음
+        cp0 = '<hh:charPr id="0" height="1000" textColor="#000000"/>'
+        cp1 = '<hh:charPr id="1" height="1000" textColor="#0000FF"/>'
+        clean = make_hwpx(tmp_path, make_header([cp0, cp1]),
+                          SEC(P(R(1, "저자명"))), name="clean.hwpx")
+        out_a = tmp_path / "a.hwpx"
+        ra = normalize_clones(clean, out_a, [("1", "2")],
+                              clone_attrs={"textColor": "#000000"})
+        assert ra["id_position_mismatch"] == []
+        header_a = header_xml_of(out_a)
+        ids = __import__("re").findall(r'<hh:charPr\b[^>]*?\bid="(\d+)"',
+                                       header_a)
+        assert ids == ["0", "1", "2"]  # 끝 append — id==위치 보존
+        # (b) 희소 id(0,5,6) 입력 → desync가 진단에 잡힌다
+        sparse = _split_byline_fixture(tmp_path)
+        out_b = tmp_path / "b.hwpx"
+        rb = normalize_clones(sparse, out_b, [("5", "3")],
+                              clone_attrs={"textColor": "#000000"},
+                              scope_repoints=[("3", "김가상")])
+        assert {"pos": 1, "id": "5"} in rb["id_position_mismatch"]
+        assert {"pos": 2, "id": "6"} in rb["id_position_mismatch"]
+        # 클론 id 3은 위치 3 — 스스로는 불일치를 만들지 않는다
+        assert {"pos": 3, "id": "3"} not in rb["id_position_mismatch"]
+
+    def test_scope_without_clones_targets_existing_charpr(self, tmp_path):
+        """clones 없이 scope_repoints만으로 기존 검정 charPr(0)로 재지정."""
+        src = _split_byline_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = normalize_clones(
+            src, out, scope_repoints=[("0", "김가상")])
+        assert result["clones"] == []
+        assert result["scope_repointed"][0]["runs"] == 2
+        assert '<hp:run charPrIDRef="0"><hp:t>김가상</hp:t></hp:run>' \
+            in section_xml(out)
