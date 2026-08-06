@@ -98,6 +98,42 @@ def test_register_pack_validates_and_stores(tmp_path: Path) -> None:
     assert result["sha256"] == personalization.sha256_bytes(personalization.canonical_bytes(stored))
 
 
+def test_global_gloss_pack_adds_terms_without_removing_public_defaults(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    default_terms = personalization.pack_default("gloss_allowlist")["terms"]
+    operator_pack = {
+        "schema": "report-pipeline/preference-pack/gloss_allowlist-v1",
+        "pack_type": "gloss_allowlist",
+        "name": "operator-gloss",
+        "version": 1,
+        "terms": ["ENSO"],
+    }
+    personalization.register_pack(
+        root, "gloss_allowlist", _write(tmp_path / "gloss.json", operator_pack)
+    )
+
+    resolved, _metadata = personalization.resolve_pack_content(root, "gloss_allowlist")
+
+    assert set(default_terms).issubset(resolved["terms"])
+    assert "ENSO" in resolved["terms"]
+
+
+def test_global_constants_pack_adds_entries_without_removing_public_defaults(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    defaults = personalization.pack_default("constants_allowlist")
+    operator_entry = {"value": 42, "unit": "answer", "label": "synthetic constant"}
+    personalization.register_pack(
+        root,
+        "constants_allowlist",
+        _write(tmp_path / "constants.json", [operator_entry]),
+    )
+
+    resolved, _metadata = personalization.resolve_pack_content(root, "constants_allowlist")
+
+    assert all(entry in resolved for entry in defaults)
+    assert operator_entry in resolved
+
+
 def test_invalid_pack_rejected(tmp_path: Path) -> None:
     root = tmp_path / "profile"
     personalization.init(root)

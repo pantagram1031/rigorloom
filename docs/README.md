@@ -14,6 +14,8 @@
   by the content-audit checkers.
 - [migration.md](migration.md) — upgrading a workspace across pipeline
   versions.
+- [extensions.md](extensions.md) — installing receipt-backed, data-only local
+  knowledge packs and understanding their resolution precedence.
 - [skills-install.md](skills-install.md) — installing this pipeline as a
   Claude-style skill directory via `sync_local`.
 - [archive-policy.md](archive-policy.md) — what gets archived vs. kept
