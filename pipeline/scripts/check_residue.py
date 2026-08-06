@@ -17,7 +17,15 @@ Loud-failure contract (shared-miss #4): a missing pinned artifact is a HARD
 error (exit 3, finding ``pinned_target_missing``), never a silent pass. A
 missing or unparsable form profile is a usage error (exit 2).
 
-Exit 0 = clean, 2 = usage/input error, 3 = residue found or target missing.
+Validity precedes text scanning: for an hwpx artifact, every
+``Contents/section*.xml`` and ``header.xml`` member is XML-parsed BEFORE any
+residue scan. A ParseError is a HARD finding (``artifact_malformed``) — a
+malformed section renders blank in Hancom, so tag-strip-scanning its bytes
+and reporting ``pass`` would certify an unopenable document (live-fire
+finding, 2026-08). Plain-text-dump artifacts are exempt from XML validation.
+
+Exit 0 = clean, 2 = usage/input error, 3 = residue found, target missing, or
+artifact malformed.
 """
 from __future__ import annotations
 
@@ -51,6 +59,12 @@ DEFAULT_KEEP_PATTERN = r"^[IVX]+\.|^\d+\."
 
 _WS_RE = re.compile(r"\s+")
 _TAG_RE = re.compile(r"<[^>]+>")
+
+# Members whose well-formedness decides whether Hancom can render the
+# document at all: every section body plus the style/metadata header.
+_CRITICAL_MEMBER_RE = re.compile(
+    r"^Contents/(?:section\d*|header)\.xml$", re.IGNORECASE
+)
 
 
 def _normalize(text: str) -> str:
@@ -111,12 +125,37 @@ def derive_forbidden(
 
 
 def _xml_entry_text(payload: bytes) -> str:
-    """Extract visible text from one XML entry; tag-strip on parse failure."""
+    """Extract visible text from one XML entry; tag-strip on parse failure.
+
+    The fallback only ever runs for NON-critical members: every
+    ``Contents/section*.xml`` / ``header.xml`` member has already passed
+    :func:`malformed_members` by the time text extraction happens.
+    """
     try:
         root = ElementTree.fromstring(payload)
         return " ".join(root.itertext())
     except ElementTree.ParseError:
         return _TAG_RE.sub(" ", payload.decode("utf-8", errors="replace"))
+
+
+def malformed_members(path: Path) -> list[dict]:
+    """XML-validate every render-critical member of an hwpx zip.
+
+    Returns one ``{"member", "error"}`` row per Contents/section*.xml or
+    header.xml member that fails to parse (the error string carries the
+    parser's line/column position). Empty list = all critical members are
+    well-formed. Non-zip paths never reach this function.
+    """
+    findings: list[dict] = []
+    with zipfile.ZipFile(path) as archive:
+        for name in sorted(archive.namelist()):
+            if not _CRITICAL_MEMBER_RE.match(name.replace("\\", "/")):
+                continue
+            try:
+                ElementTree.fromstring(archive.read(name))
+            except ElementTree.ParseError as exc:
+                findings.append({"member": name, "error": str(exc)})
+    return findings
 
 
 def artifact_text(path: Path) -> str:
@@ -200,6 +239,46 @@ def check(
             },
         )
         return verdict, exit_code(hard=hard)
+
+    # Validity precedes text scanning (live-fire finding): a malformed
+    # section renders BLANK in Hancom, so a text scan over its raw bytes
+    # could report "pass" for a document that does not open. HARD-fail and
+    # skip the residue scan entirely — its result would be meaningless.
+    if zipfile.is_zipfile(artifact_path):
+        try:
+            broken = malformed_members(artifact_path)
+        except (OSError, zipfile.BadZipFile) as exc:
+            return usage_error(
+                str(artifact_path), CHECKER,
+                f"artifact unreadable: {exc}",
+            )
+        if broken:
+            for row in broken:
+                hard.append({
+                    "code": "artifact_malformed",
+                    "msg": (
+                        f"render-critical member {row['member']} is not "
+                        f"well-formed XML ({row['error']}) — document "
+                        "renders blank; residue scan skipped"
+                    ),
+                    "at": row["member"],
+                })
+            verdict = verdict_skeleton(
+                str(artifact_path), CHECKER,
+                hard=hard, warn=warn,
+                extra={
+                    "form_hash": profile.get("form_hash"),
+                    "artifact": str(artifact_path),
+                    "residue": [],
+                    "malformed_members": broken,
+                },
+                counts={
+                    "hard": len(hard), "warn": len(warn),
+                    "forbidden": len(forbidden), "kept": len(kept),
+                    "residue": 0,
+                },
+            )
+            return verdict, exit_code(hard=hard)
 
     try:
         haystack = artifact_text(artifact_path)
