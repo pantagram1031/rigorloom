@@ -72,43 +72,171 @@ the kernel's contract shape.
 
 Full suite as of this window: 712 passed.
 
-## Unreleased — Linux equation-render parity P0 (experimental)
+## v0.15.0-alpha — renderer certification harness
 
-- Added `pipeline/scripts/hwpx_render_surrogate.py`: builds a canonical-immutable
-  render-only HWPX copy for experimental renderers — strips only the XML
-  backend's exact stale one-line `linesegarray` placeholder signature,
-  verifies the canonical file's SHA-256 is unchanged on disk, and rejects the
-  surrogate if a runtime semantic fingerprint (normalized body-text hash plus
-  paragraph/table/picture/equation counts) doesn't match the canonical before
-  and after.
-- Added `pipeline/scripts/rhwp_proof.py`: a fail-closed experimental SVG proof
-  runner — creates the surrogate, invokes `rhwp export-svg`, and always writes
-  a `receipt.json` (`ok`, `proof_grade`, `page_count`, `layout_overflow`,
-  `parity_verdict`) even when the binary is missing/unpinned, the run times
-  out, exits nonzero, or produces zero pages, with an explicit
-  `canonical_hwpx_without_render_proof` fallback reason.
-- `render_probe.py`'s `verify_rhwp_binary` now mandates a `RHWP_SHA256` pin
-  matching the SHA-256 of the selected `rhwp` executable file itself; an
-  unpinned or mismatched binary is reported `rhwp_unpinned` /
-  `rhwp_hash_mismatch` and is never surfaced as an available renderer.
-- `doc_backend.py`'s `_hwpx_renderer_decision` extends the proof-grade ladder
-  to `none < experimental-rhwp < advisory < hancom` and selects `rhwp_svg`
-  when Hancom is unavailable and the document has equations (or no `soffice`
-  renderer exists at all); `submission_preflight.py` hard-blocks
-  `experimental-rhwp` from submission (`P5`: "diagnostic render evidence, not
-  a submission proof grade") — unlike `advisory`, it cannot be waived with
-  `--allow-advisory`.
+- Added `feature_extract.py` + `render_cert.py`: a renderer certification
+  harness that binds a document's feature envelope (train/holdout stats) to a
+  corpus hash and an operator key; every section-body element is classified
+  handled, explicitly known-benign, or `unknown:<local-name>` over a full
+  tree walk, and unrecognized elements outside `<ctrl>` direct children fail
+  closed (#28).
+- Certificate trust hardened after an adversarial audit: `verify_certificate`
+  re-derives the envelope and train/holdout stats from the hash-anchored
+  manifest plus the certificate's embedded measurement records and refuses on
+  any mismatch, and certificates are HMAC-SHA256-signed over canonical bytes
+  with a private operator key (`receipt_sign.py`, 0600 owner-only key at issue
+  time) — a widened or fabricated certificate with a recomputed self-hash no
+  longer verifies (#28).
+- Registered the Stage 2.5 layout gate: `check_layout.py` locates hwp-master's
+  `layout_plan_check.py` via `HWP_MASTER_SCRIPTS` (the checker had shipped
+  null in `stages.yaml`, blocking composed pipelines — found live by the
+  held-out sample run); a follow-up fix corrected a wrong `cli_main` call
+  signature that had crashed the delegate at CLI entry.
+- docs: Linux HWP/HWPX tooling research (#26) — on WSL2 x86_64 and OCI ARM64,
+  `rhwp` 0.7.19 and the hwplib+hwp2hwpx+hwpxlib Java family both convert
+  HWP<->HWPX at 0.0 px displacement under Hancom re-render on sanitized
+  fixtures (rhwp SVG previews at 22-87 ms/page); LibreOffice+H2Orestart stays
+  advisory (645 px worst case); corrects the previously-cited 676.33 px figure
+  as a render-tree metric, not a LibreOffice PDF measurement.
+- docs: v0.15 renderer certification plan (#27) — Hancom as the certification
+  facility.
+- Suite: 634+1 passed (was 625+1); privacy scan HARD 0.
+
+## v0.12.4 (v0.12-W5) — gate recalibration from the real-report campaign
+
+- Measured on 13 real workspaces (39 gate runs, 0 crashes); every relaxation
+  is mechanism-level and ships a still-catches adversarial test, and an
+  independent overfitting audit classified all changes, resolving its one
+  OVERFIT verdict here.
+- H1 web-citation ban: URLs inside the recognized reference section are now
+  exempt (12/12 campaign hits were bibliography lines); body URLs stay HARD.
+- `unbacked_numeral`: ledgered claims (resolvable source + evidence) back
+  matching numerals; added a `constants_allowlist` pack type (schema-
+  validated, additive operator override) with universal-only public defaults
+  (g, c, pi, absolute zero, metric conversions).
+- Gloss ban: unit symbols from the shared unit dictionary are exempt; neutral
+  software-name defaults (SymPy/NumPy/MATLAB/...) extend rather than replace;
+  the exemption path is tightened to exact-parenthetical match. Reference-
+  heading and TITLE-matcher recognition are limited to the documented section
+  grammar; corpus-specific activity-sheet keys moved to an optional
+  `report_structure` pack field instead of a public default.
+- Root-caused and fixed `extraction_infidelity`: the EQ tag regex misparsed
+  hwpeqn scripts containing square brackets (parser correctness fix, no
+  tolerance widened). Added `docs/gate-calibration.md` as the aggregate
+  calibration record.
+
+## v0.12.3 (v0.12-W4) — transform modules: extraction, form conversion, taste mining
+
+- `content_extract.py`: hwpx -> `content.md` inverse extraction (stdlib
+  zip+XML) with ordered paragraphs, direct-row table walk, and cell-level
+  picture/equation recursion; `--verify` cross-checks independent source
+  fingerprint counts against the extracted counts and the NFC text hash, so
+  textless structure can no longer vanish behind a green verify.
+- `check_convert_parity.py`: a form-convert gate comparing normalized text
+  hash, element counts, normalized equation SCRIPT text, and independent
+  source-walk fingerprints of both hwpx files.
+- `form_extract.py`: form skeleton + fill-slot inventory from multiple
+  instances; on skeleton divergence the inventory is suppressed instead of
+  shipping misaligned data. `style_extract.py`: corpus -> DRAFT prose/
+  structure packs, schema-validated at emit, `draft:true` + corpus sha256
+  provenance, never auto-installed.
+- New aliases (form-convert, form-edit, taste-mine, form-mine) and fixtures
+  (picture-in-cell, equation-in-cell, nested-table, extra-row) with honest-
+  PASS / tampered-HARD round-trips.
+- Suite: 578 passed; privacy 0 HARD.
+
+## v0.12.2 (v0.12-W3) — claim ledger + write-through source cache
+
+- `claims.yaml` ledger (schema + `claims_ledger.py`): every factual claim
+  bound to evidence `{source_id, locator, quote}`; stable ids, duplicate and
+  dangling-source detection; `claim_extract` subcommand seeds a mechanical
+  skeleton for backfill.
+- `check_claims` added as the 9th `content_audit` sub-checker: unledgered
+  numeric/citation content WARNs (escalates to HARD under
+  `--require-ledger`); a ledgered claim with a dangling source is HARD; a
+  numeric/citation claim with zero evidence is HARD; URL-only sources WARN;
+  no ledger at all stays a single legacy-safe WARN.
+- `source_fetch.py` write-through cache CLI records DOI/ISBN verification
+  into the schema `check_sources` reads; a different-title overwrite is
+  refused unless `--force`.
+- Closed a self-dealing hole: cache records without retrieval metadata
+  (`retrieved_from` + content sha256 + timestamp) are non-authoritative — a
+  title match no longer suppresses `source_unverified`.
+- `topic_pick` registered as an ENFORCED stage-0 human gate; `claim_extract`
+  and `retro_research` aliases activated.
+- Suite: 550+ passed; privacy 0 HARD.
+
+## v0.12.1 (v0.12-W2) — checker_base refactor
+
+- `checker_base.py`: shared verdict skeleton, usage/exit conventions,
+  `_utf8_stdio`, strict JSON (`allow_nan=False`), CLI frame; all 8 checkers
+  migrated behavior-preservingly, each keeping its own logic and standalone
+  CLI.
+- `claim_extraction.py` unifies the previously-diverged
+  check_saeteuk/check_units/check_numbers dictionaries into one subject/
+  unit/number extraction pass.
+- `content_audit` sub-checkers now compose in-process (no subprocess spawn);
+  any checker exception becomes a hard finding with a truncated traceback,
+  while `SystemExit`/`KeyboardInterrupt` still propagate.
+- `check_saeteuk` added as an ADVISORY 8th `content_audit` sub-checker: its
+  contradiction HARDs surface as WARN at stage 4.5 for early discovery, while
+  stage 6 keeps full HARD enforcement of the same workspace-local artifacts.
+- Independent opus review confirmed the refactor behavior-preserving; suite:
+  524 -> 530 passed, privacy 0 HARD.
+
+## v0.12.0 (v0.12-W1) — composable module contracts + resolver
+
+- `pipeline/references/modules.yaml`: 16 typed module contracts (consumes/
+  produces/stage/gates/os); not-yet-implemented modules are declared
+  `status:planned` and refused by the resolver.
+- `compose.py`: a backward DAG resolver (`--have`/`--want`/`--alias`/`--dry`/
+  `--apply`/`--matrix`) with cycle detection; ambiguity is always an error,
+  never a silent choice.
+- Review round closed before merge: composed plans always retain gate-bearing
+  stages (2.5, 5.3/5.5/5.7/6); intake gate receipts are verified via
+  `workflow_lint._receipt_satisfies_h1`; recompose refuses to discard
+  non-pending stage/gate state.
+- `aliases.yaml`: full-report/pre-researched/verify-only/assemble-only
+  active; `docs/capability-matrix.md` generated per-alias; CI smoke asserts
+  chain content on ubuntu+windows.
+- R3: open-source repo surface — hero README (badges, mermaid pipeline
+  diagram, project-status honesty section), CONTRIBUTING, SECURITY,
+  CODE_OF_CONDUCT, issue/PR templates.
+- Suite: 514+ passed; privacy 0 HARD.
+
+## v0.11.4 — Linux equation-render parity P0 (experimental) + release consolidation
+
+- Added `pipeline/scripts/hwpx_render_surrogate.py` (canonical-immutable
+  render-only HWPX copy for experimental renderers, proven via SHA-256 plus a
+  runtime semantic fingerprint) and `pipeline/scripts/rhwp_proof.py` (a
+  fail-closed experimental SVG proof runner that always writes `receipt.json`
+  with an explicit fallback reason on any failure mode).
+- `render_probe.py` mandates a `RHWP_SHA256` pin at both probe and exec time
+  (unpinned/mismatched binary is never surfaced as available);
+  `doc_backend.py`'s proof-grade ladder becomes
+  `none < experimental-rhwp < advisory < hancom`, selecting `rhwp_svg` only
+  for equation docs when Hancom is unavailable (equation-free docs keep their
+  `soffice` advisory grade); `submission_preflight.py` hard-blocks
+  `experimental-rhwp` from submission — unlike `advisory`, it cannot be
+  waived with `--allow-advisory`.
 - Added `adapters/hancom-linux-sdk/README.md`: an interface-and-evaluation-
-  plan-only contract for a future Hancom Linux SDK adapter (probe/render
-  receipt shape, 0.5 mm baseline/bbox error and 300 dpi SSIM ≥ 0.995
-  acceptance matrix); no commercial SDK, credential, or runtime integration
-  is included.
+  plan-only contract for a future Hancom Linux SDK adapter (0.5 mm
+  baseline/bbox error and 300 dpi SSIM >= 0.995 acceptance matrix); no
+  commercial SDK, credential, or runtime integration included.
+- R1: docs realigned with v0.11.3 reality — README (release version,
+  kernel-schema vs release-version distinction, four-backend table with
+  proof-grade ceilings, Studio read-only default), `pyproject` rename
+  `agent-report-pipeline` -> `rigorloom`, `docs/golden-path.md` single
+  end-to-end walkthrough, CHANGELOG backfill for v0.7.0-v0.11.3.
+- R2: documented the experimental rhwp path post-P0 merge (README backend
+  table + experimental section, golden-path "equation documents on Linux
+  (experimental)" subsection); externally-supplied pixel metrics stayed
+  tagged `provenance: external` rather than restated as repo facts.
 - Honest status: `docs/plans/p0-parity-report.md` records this work as
   **PARTIAL** — canonical-preservation and semantic-fingerprint parity are
   reproduced in this repository, but pixel-level parity with Hancom rendering
-  is not achieved, and the largest reported displacement/mismatch figures are
-  externally supplied (`provenance: external`, `reproducible: false`), not
-  computed by any differ in this repository.
+  is not achieved (max displacement 676px externally reported, `provenance:
+  external`, `reproducible: false`), so COM stays the submission-grade proof.
 
 ## v0.11.3 (v0.11-Z5) — anti-fabrication frontier
 
