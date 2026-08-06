@@ -204,8 +204,8 @@
   ],
   "privacy": {
     "scanned_at": "2026-08-07",
-    "privacy_scan": "pipeline/scripts/privacy_scan.py reports 12 HARD findings, ALL rule=binary_document_ext (categorical: any .hwp/.hwpx is flagged because binaries cannot be content-scanned). Zero content findings. This is a policy collision between the repo-wide binary ban and an intentional binary corpus - decision needed: allowlist tests/corpus/forms/ (manifest-pinned sha256) in privacy_scan, or keep the corpus HARD-flagged and exclude it from release bundles (bundles must stay HARD-clean per v0.16 plan 6.3).",
-    "content_check": "Offline scan (PrvText for .hwp via olefile, all XML/text parts for .hwpx): zero RRN patterns, zero filled phone numbers, zero email addresses in any file. All files verified blank templates via preview text.",
+    "ruling": "W5.2 coordinator ruling: privacy_scan gained a manifest-pinned binary allowlist (--binary-allowlist, auto-detected at this file). A binary passes the categorical binary_document_ext rule ONLY when its path is listed here AND its sha256 matches; any unlisted binary or hash drift stays HARD (still-catches #1). Allowlisted binaries are still content-scanned (RRN, filled phone, email, user-path, denylist over extracted hwp/hwpx text) - PII in an allowlisted blank is HARD (still-catches #2). Bundles never apply the allowlist: tests/test_package_module.py asserts no corpus member lands in any bundle. Recorded in docs/gate-calibration.md.",
+    "content_check": "Offline scan (PrvText for .hwp, all XML/text parts for .hwpx): zero RRN patterns, zero filled phone numbers, zero email addresses in any file. All files verified blank templates via preview text. The same nets now run inside privacy_scan on every allowlisted member.",
     "metadata_note": "Several .hwp files carry issuing-agency author names in HwpSummaryInformation as published by the government source (e.g. 법령정보센터 clerk names). Kept as-is to preserve byte-exact provenance (sha256 above matches the official download); if this is judged unacceptable, strip DocSummary on the operator machine during XC-1 conversion and record new hashes for the converted siblings only."
   }
 }
