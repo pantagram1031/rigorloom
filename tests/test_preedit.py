@@ -450,3 +450,95 @@ class TestSelfClosedTAndInvariant:
         with pytest.raises(PreeditError, match="x.xml"):
             preedit._assert_members_well_formed(
                 {"x.xml": b"<a><b></a>"}, {"x.xml"})
+
+
+# ---------------------------------------------------------------------------
+# 5) stale-lineseg(P0) — 텍스트 바뀐 문단의 캐시 레이아웃 제거
+# ---------------------------------------------------------------------------
+
+LINESEG = ('<hp:linesegarray><hp:lineseg textpos="0" vertpos="0"'
+           ' textheight="1000" baseline="850" spacing="600" horzpos="0"'
+           ' horzsize="42520" flags="393216"/></hp:linesegarray>')
+
+
+def PL(*runs):
+    """실제 한컴 직렬화처럼 linesegarray가 붙은 문단."""
+    return '<hp:p paraPrIDRef="34">' + "".join(runs) + LINESEG + '</hp:p>'
+
+
+class TestStaleLineseg:
+    def test_replace_strips_modified_para_only(self, tmp_path):
+        """failing-before(실사격 후속 사고): 치환된 문단에 linesegarray가
+        남으면 한컴이 옛 좌표에 겹쳐 그린다(제목 overprint). 바뀐 문단만
+        lineseg를 잃고, 안 바뀐 문단은 바이트 그대로여야 한다."""
+        untouched = PL(R(0, "그대로 본문"))
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(PL(R(0, "제목 자리")), untouched))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"제목 자리": "진짜 제목"})
+        assert result["hits"] == {"제목 자리": 1}
+        sec = section_xml(out)
+        ET.fromstring(sec)
+        # 바뀐 문단: lineseg 없음, 텍스트는 교체됨
+        assert ('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                '<hp:t>진짜 제목</hp:t></hp:run></hp:p>') in sec
+        # 안 바뀐 문단: linesegarray 포함 바이트 그대로
+        assert untouched in sec
+        assert sec.count("<hp:linesegarray") == 1
+
+    def test_replace_nested_cell_precision(self, tmp_path):
+        """표 셀 문단만 바뀌면 셀 문단의 lineseg만 제거 — 바깥(표를 담은)
+        문단 자신의 텍스트는 안 바뀌었으므로 그 lineseg는 보존."""
+        cell = PL(R(0, "셀 자리표시자"))
+        outer = ('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                 '<hp:tbl id="9" rowCnt="1" colCnt="1"><hp:tr><hp:tc>'
+                 '<hp:subList>' + cell + '</hp:subList></hp:tc></hp:tr>'
+                 '</hp:tbl></hp:run>' + LINESEG + '</hp:p>')
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]), SEC(outer))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"셀 자리표시자": "값"})
+        assert result["hits"] == {"셀 자리표시자": 1}
+        sec = section_xml(out)
+        ET.fromstring(sec)
+        # 셀 문단: lineseg 제거 + 텍스트 교체
+        assert ('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                '<hp:t>값</hp:t></hp:run></hp:p>') in sec
+        # 바깥 문단 자신의 lineseg는 그대로(표 닫힘 직후 위치 불변)
+        assert '</hp:tbl></hp:run>' + LINESEG + '</hp:p>' in sec
+        assert sec.count("<hp:linesegarray") == 1
+
+    def test_delete_mixed_run_strips_lineseg(self, tmp_path):
+        """혼합 문단에서 가이드 런 제거 = 텍스트 변경 → lineseg도 제거.
+        무관 문단의 lineseg는 바이트 그대로."""
+        unrelated = PL(R(0, "무관 문단"))
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE]),
+                        SEC(PL(R(0, "유지 본문"), R(5, "파란 안내")),
+                            unrelated))
+        out = tmp_path / "out.hwpx"
+        result = delete_guide_paragraphs(src, out, color="#0000FF")
+        assert result["mixed_runs_removed"] == 1
+        sec = section_xml(out)
+        ET.fromstring(sec)
+        assert "유지 본문" in sec
+        assert "파란 안내" not in sec
+        assert unrelated in sec
+        assert sec.count("<hp:linesegarray") == 1  # 혼합 문단 것만 사라짐
+
+    def test_double_run_idempotent_with_linesegs(self, tmp_path):
+        """멱등성: lineseg 제거 포함 2회차 실행도 content-identical —
+        1회차에 이미 제거됐고 2회차는 무변경이라 재제거도 없다."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE]),
+                        SEC(PL(R(0, "제목 자리")),
+                            PL(R(0, "유지"), R(5, "안내")),
+                            PL(R(0, "그대로"))))
+        mapping = {"제목 자리": "진짜 제목"}
+        r1 = tmp_path / "r1.hwpx"
+        r2 = tmp_path / "r2.hwpx"
+        replace_placeholders(src, r1, mapping)
+        replace_placeholders(r1, r2, mapping, on_zero_hits="ignore")
+        assert content_fingerprint(r1) == content_fingerprint(r2)
+        d1 = tmp_path / "d1.hwpx"
+        d2 = tmp_path / "d2.hwpx"
+        delete_guide_paragraphs(r2, d1, color="#0000FF")
+        delete_guide_paragraphs(d1, d2, color="#0000FF")
+        assert content_fingerprint(d1) == content_fingerprint(d2)
