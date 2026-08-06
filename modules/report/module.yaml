@@ -4,7 +4,8 @@
 # workspace-bound checkers live behind the contract. Slice W3-S3: the
 # report-flavored studio UI (content-audit action) is one studio_panels
 # contribution, and the declared-gate kind 'canonical' is registered via
-# gate_kinds. The skill fragment is a later slice.
+# gate_kinds. Slice W5.3: the skill fragment (pipeline entry:
+# compose/resume/gates) merged into the router SKILL.md by the installer.
 schema: rigorloom-module/v1
 name: report
 requires: {rigorloom: ">=0.16"}
@@ -43,6 +44,9 @@ provides:
     - {name: supervised-lean, state_policy: stateless_final_pointer, gates: declared}
   gate_kinds:
     - {kind: canonical, checker: check_canonical}
+  skill:
+    fragment: skill/FRAGMENT.md
+    references: [skill/references/report_pipeline.md]
   playbooks:
     - references/playbooks/adapters.md
     - references/playbooks/edit-stage-0.md

@@ -52,6 +52,32 @@ exclude:
   - ".pytest_cache"
   - ".sync*"
 
+# --- rigorloom-hwp router skill target (W5.3) ------------------------------ #
+# The engine skill surface installs from skill/ and merges enabled
+# distribution modules' skill fragments (module.yaml `provides.skill`) into
+# the installed SKILL.md under '## Module: <name>' headings, with their
+# reference files copied into references/. Enable with
+# `merge_skill_fragments: true` (default false); requires the source_map to
+# stage a root SKILL.md. Merge order: base -> fragments -> overlay.
+#
+# repo_targets:
+#   - name: "rigorloom-hwp"
+#     install_root: "C:\\Users\\me\\.claude\\skills\\rigorloom-hwp"
+#     merge_skill_fragments: true
+#     source_map:
+#       - from: "skill/SKILL.md"
+#         to: "SKILL.md"
+#       - from: "skill/references"
+#         to: "references"
+#       - from: "engine/scripts"
+#         to: "engine/scripts"        # probe.py path in SKILL.md stays valid
+#       - from: "pipeline/scripts"
+#         to: "pipeline/scripts"
+#     exclude:
+#       - "__pycache__"
+#       - "*.pyc"
+#       - ".sync*"
+
 # --- SECOND section: repo_targets (same semantics, other install root) ----- #
 # Example: sync the local studio/ viewer into a sibling repo's checkout.
 # Each entry accepts install_root, overlay_root, source_map, exclude.
