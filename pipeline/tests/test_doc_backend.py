@@ -156,11 +156,24 @@ class TestDispatcher(unittest.TestCase):
         code = doc_backend.main([str(self.ws), "--backend", "hwp"])
         self.assertEqual(code, 4)
 
-    def test_hwpx_without_external_adapter_exits_4_with_instructions(self):
+    def test_hwpx_default_resolves_to_bundled_engine(self):
+        # No env override: the resolver defaults to <repo>/engine/scripts,
+        # which ships in-repo since the Wave 2 absorb.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            resolved = doc_backend._resolve_hwpx_fill_report()
+        self.assertEqual(
+            resolved,
+            os.path.join(doc_backend._ENGINE_SCRIPTS, "fill_report.py"))
+        self.assertTrue(os.path.isfile(resolved))
+
+    def test_hwpx_with_corrupted_engine_exits_4_with_instructions(self):
+        # Bundled engine missing (corrupted install) and no override set.
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
             mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(doc_backend, "_ENGINE_SCRIPTS",
+                              str(Path(self._tmp.name) / "no-engine")),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):

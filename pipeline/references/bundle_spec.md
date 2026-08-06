@@ -1,7 +1,7 @@
 # Report Bundle 명세 v2
 
 Stage 4(집필)의 출력이자 Stage 5(조립)의 입력. `build_report.py`가 이 형식을 파싱해
-hwp-master ops JSON을 **결정론적으로** 생성한다. 사람이 읽기에도 자연스러워야 한다.
+엔진(engine/scripts) ops JSON을 **결정론적으로** 생성한다. 사람이 읽기에도 자연스러워야 한다.
 
 **v2 변경(CONTRACT_v0.6 §N/§O):** ①`[[TABLE cols= pt=]]` 열비율·글자크기 지정 추가
 ②`[[EQ]]` **기본값이 inline으로 전환**(display는 opt-in) ③cast-off 결과인
@@ -125,7 +125,7 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
    순수 리스트를 모두 받는다.
 5. `--dry-run`: ops만 출력하고 한글 미실행 (단위 테스트용)
 
-## 검증 (조립 후, hwp-master 절차에 추가)
+## 검증 (조립 후, 엔진(engine/scripts) 절차에 추가)
 - post_inspect: 수식 = EQ 개수, 그림 = FIG 개수, 표 = TABLE 개수(초록 off면 -1)
 - **charPr 수치**(.hwpx unzip): 본문·수식·캡션·URL = base_pt, 본문 검정, URL 파랑·밑줄,
   제목은 양식 원본 크기 보존

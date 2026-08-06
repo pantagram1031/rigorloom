@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Read-time schema validation for assembly/proof verdict files.
 
-Shared-miss #5 (variant audit, B4 bonus finding): the external proof-loop
-verdict writer (hwp-master ``fill_report.py``) can emit ``converged: true``
+Shared-miss #5 (variant audit, B4 bonus finding): the proof-loop
+verdict writer (``engine/scripts/fill_report.py``) can emit ``converged: true``
 together with ``status: escalate_human`` — phase-1 convergence stays recorded
 while the proof phase overlays an escalation status onto the same object.
-The writer lives in an external repo, so rigorloom rejects the contradictory
-pair at read time instead: any consumer of a verdict file (Stage 6
+The read-time rejection predates the Wave 2 absorb (the writer used to live
+in the external hwp-master repo) and stays as defense in depth: any consumer of a verdict file (Stage 6
 ``submission_preflight`` is the fail-closed gate) must treat the pair as a
 HARD finding, never as a converged result.
 

@@ -3,8 +3,8 @@
 
 These are the zero/low-dependency document backends that ship WITH the public
 clone (the `bundle` floor and the optional `docx` extra). The `hwp` backend is
-NOT here: it lives in the separate hwp-master repo and is dispatched to by
-pipeline/scripts/doc_backend.py, which prints a pointer and exits.
+NOT here: it is the COM assembly loop bundled at engine/scripts, and
+pipeline/scripts/doc_backend.py prints the run instruction and exits.
 
 This package module holds the shared content.md parser (the build grammar
 defined in pipeline/references/bundle_spec.md) so both backends agree on how a
