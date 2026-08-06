@@ -431,7 +431,102 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
 
 # ---------------------------------------------------------------------------
 # 3) normalize_clones — 정규화형 postedit + itemCnt 실측 + T22 사후검사
+#
+# 위치-해석 발견(form_final2 실사격 감식): 한컴은 charPrIDRef를 id 속성이
+# 아니라 charProperties 배열의 '순서'로 해석한다 — id ≠ 위치가 되는 순간
+# 참조가 조용히 이웃 def로 미끄러진다. 증거(XML+렌더 4건 전부 일치):
+# ref35('20999', 검정 def) → 파랑 렌더, ref36('초록', 검정 def) → 파랑 렌더.
+# 원흉은 클론을 src 바로 뒤에 '중간 삽입'하던 옛 postedit 패턴(참조 sim
+# 스크립트 계승분) — pos23부터 전부 밀린다. 그래서 이 함수는 클론을 배열
+# '끝'에 append하고, 최종 header의 id↔위치 불일치를 결과에 보고한다.
+# 새 id는 반드시 '현재 def 개수'(= 최종 위치)로 고를 것.
 # ---------------------------------------------------------------------------
+
+FIELD_CTRL_RE = re.compile(
+    r'<' + NS + r':(ctrl|secPr|fieldBegin|fieldEnd)\b')
+
+
+def _repoint_text_runs(fragment, to_id):
+    """fragment 안 텍스트 런의 charPrIDRef를 to_id로 재지정.
+
+    텍스트 런 = 비공백 텍스트가 있고 개체(표/그림/수식 등)·컨트롤·필드
+    태그가 없는 런. 개체/필드 런은 불가침. 이미 to_id인 런은 그대로(멱등).
+    반환: (new_fragment, changed_count)
+    """
+    edits = []
+    for m in RUN_RE.finditer(fragment):
+        body = m.group(3) or ""
+        text = _strip_tags("".join(
+            t for _o, t, _c in T_FULL_RE.findall(body)))
+        if not text.strip():
+            continue
+        if OBJECT_TAG_RE.search(body) or FIELD_CTRL_RE.search(body):
+            continue  # 개체/필드 런은 건드리지 않는다
+        open_m = re.match(r'<' + NS + r':run\b[^>]*?/?>', m.group(0))
+        old_open = open_m.group(0)
+        cm = re.search(r'\bcharPrIDRef="(\d+)"', old_open)
+        if cm and cm.group(1) == str(to_id):
+            continue  # 이미 목표 — 멱등
+        if cm:
+            new_open = (old_open[:cm.start(1)] + str(to_id)
+                        + old_open[cm.end(1):])
+        else:
+            new_open = _tag_set_attr(old_open, "charPrIDRef", str(to_id))
+        edits.append((m.start(), m.start() + open_m.end(), new_open))
+    for s, e, new_open in reversed(edits):
+        fragment = fragment[:s] + new_open + fragment[e:]
+    return fragment, len(edits)
+
+
+def _scope_repoint_paragraph(p_xml, to_id, anchor_norm):
+    """문단 하나(중첩 셀 문단 재귀)에 스코프 재지정 적용.
+
+    문단 '자신의' 텍스트(중첩 문단 밖 gap의 런들)가 anchor를 포함하면
+    (공백 전부 제거 후 부분일치 — 분할 런·공백 런에 관용) 자기 gap의
+    모든 텍스트 런을 to_id로 재지정한다. 중첩 문단은 각자 판단(표를 담은
+    바깥 문단의 own text에는 셀 텍스트가 포함되지 않으므로 과잉 매치 없음).
+    텍스트는 바꾸지 않으므로 linesegarray는 건드릴 필요가 없다(stale-lineseg
+    조건 아님 — 색만 바뀌고 메트릭 불변).
+    반환: (new_xml, paragraphs_hit, runs_changed)
+    """
+    open_m = P_OPEN_RE.match(p_xml)
+    if not open_m:
+        return p_xml, 0, 0
+    close_idx = p_xml.rfind("</")
+    open_tag = p_xml[:open_m.end()]
+    inner = p_xml[open_m.end():close_idx]
+    close_tag = p_xml[close_idx:]
+
+    nested = _find_paragraphs(inner)
+    gaps, nested_out, last = [], [], 0
+    paras_hit = runs_changed = 0
+    for start, end, np_xml in nested:
+        gaps.append(inner[last:start])
+        nx, ph, rc = _scope_repoint_paragraph(np_xml, to_id, anchor_norm)
+        nested_out.append(nx)
+        paras_hit += ph
+        runs_changed += rc
+        last = end
+    gaps.append(inner[last:])
+
+    own_text = "".join(
+        _strip_tags("".join(t for _o, t, _c in T_FULL_RE.findall(g)))
+        for g in gaps)
+    if anchor_norm in re.sub(r"\s+", "", own_text):
+        paras_hit += 1
+        new_gaps = []
+        for g in gaps:
+            g2, rc = _repoint_text_runs(g, to_id)
+            runs_changed += rc
+            new_gaps.append(g2)
+        gaps = new_gaps
+
+    out = []
+    for i, nx in enumerate(nested_out):
+        out.append(gaps[i])
+        out.append(nx)
+    out.append(gaps[-1])
+    return open_tag + "".join(out) + close_tag, paras_hit, runs_changed
 
 def _tag_set_attr(tag, name, value):
     """여는 태그 문자열의 속성을 치환(없으면 '>' 또는 '/>' 직전에 삽입)."""
@@ -465,14 +560,19 @@ def _charpr_block(header_xml, cpr_id, start_at=0):
     return open_start, end, header_xml[open_start:end]
 
 
-def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
-                     repoints=None):
+def normalize_clones(hwpx_in, hwpx_out, clones=None, *, clone_attrs=None,
+                     repoints=None, scope_repoints=None):
     """정규화형 charPr 클론 postedit — sim/postedit_byline_black.py의 패턴 승계.
 
     절차(멱등):
       1) new_id를 가진 기존 def를 **전부** 제거(중복 클론 정리),
       2) 각 (src_id, new_id)마다 src def를 복제해 id 치환 + clone_attrs 적용,
-         src 바로 뒤에 정확히 하나 삽입,
+         charProperties 배열 **끝에** 정확히 하나 append. (src 바로 뒤 중간
+         삽입이던 참조 sim 패턴은 id↔위치 desync의 원흉 — 한컴은
+         charPrIDRef를 id 속성이 아니라 배열 위치로 해석한다. form_final2
+         감식: ref35/36이 검정 def를 가리키는데 파랑으로 렌더 — 4개 관측
+         전부 위치-해석과 일치, id-해석과 모순. 새 id는 반드시 현재 def
+         개수(= append 후 위치)로 고를 것.)
       3) charProperties itemCnt를 실측(charPr 요소 수)으로 재계산,
       4) repoints: (from_id, to_id, text) — charPrIDRef=from_id 런 중 런 텍스트가
          strip-비교로 text와 같은 것을 to_id로 재지정(text=None이면 전부).
@@ -482,6 +582,15 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
          linesegarray는 건드리지 않는다(stale-lineseg 조건 아님). 단, 클론이
          글자 크기/폰트 등 메트릭을 바꾸면 레이아웃이 낡을 수 있다 — 색
          전환(#0000FF→#000000) 용도로만 쓸 것.
+      4b) scope_repoints: (to_id, anchor) — anchor 텍스트를 (공백 전부 제거
+         후 부분일치로) '자신의' 런 텍스트에 담은 문단을 전부 찾아, 그 문단
+         안 모든 텍스트 런을 to_id로 재지정한다. 분할 런 대응(저자표의
+         '학번 런 + 이름 런'처럼 한 문단이 여러 charPr 런으로 쪼개진 경우
+         전부 검정 클론으로) — 표 셀 문단도 대상. 개체/컨트롤/필드 런은
+         불가침. 앵커당 매치 문단 0개면 PreeditError(오타 방지). 매치
+         여러 문단 허용 — 문단·런 수를 앵커별로 보고. 텍스트 불변이므로
+         linesegarray 제거 불필요(scoped repoint는 stale-lineseg 조건이
+         아니다 — 확인됨).
       5) 내장 사후검사 2종 — 실패 시 출력 파일은 쓰지 않는다:
          (a) 수정된 XML 멤버 전부 well-formed(_assert_members_well_formed,
              실패 시 PreeditError — 실전 사고: 자기닫힘 <hp:t/> 손상 →
@@ -490,19 +599,29 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
              AssertionError).
 
     clones: [(src_id, new_id)] / clone_attrs: 클론 여는 태그에 적용할 속성
-    dict(예: {"textColor": "#000000"}) / repoints: [(from_id, to_id, text|None)].
+    dict(예: {"textColor": "#000000"}) / repoints: [(from_id, to_id, text|None)]
+    / scope_repoints: [(to_id, anchor)].
+
+    결과의 id_position_mismatch: 최종 header에서 id ≠ 배열 위치인 def 목록
+    (위치-해석 desync 진단 — 비어 있지 않으면 한컴 렌더가 참조를 이웃 def로
+    미끄러뜨릴 수 있다. 이미 뒤틀린 파일의 전면 수리는 별도 op: 모든 charPr
+    id를 위치로 재번호 + 섹션·스타일의 charPrIDRef 전부 재매핑 — 미구현,
+    필요 시 후속 슬라이스).
 
     반환: {"ok": True, "stale_clones_removed": n, "clones": [[src,new],...],
-           "item_cnt": n, "repointed": [{"from":..,"to":..,"text":..,"count":n}]}
+           "item_cnt": n, "repointed": [{"from":..,"to":..,"text":..,"count":n}],
+           "scope_repointed": [{"to":..,"anchor":..,"paragraphs":n,"runs":n}],
+           "id_position_mismatch": [{"pos":i,"id":..}, ...]}
     """
-    clones = [(str(a), str(b)) for a, b in clones]
-    if not clones:
-        raise ValueError("clones가 비어 있음")
+    clones = [(str(a), str(b)) for a, b in (clones or [])]
     for src_id, new_id in clones:
         if src_id == new_id:
             raise ValueError(f"src_id == new_id ({src_id}) — 클론이 아님")
     clone_attrs = dict(clone_attrs or {})
     repoints = [(str(f), str(t), x) for f, t, x in (repoints or [])]
+    scope_repoints = [(str(t), a) for t, a in (scope_repoints or [])]
+    if not clones and not repoints and not scope_repoints:
+        raise ValueError("clones/repoints/scope_repoints 중 최소 하나 필요")
 
     infos, contents = _read_zip(hwpx_in)
     header_name = _header_name(contents)
@@ -519,12 +638,13 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
             header = header[:s] + header[e:]
             stale_removed += 1
 
-    # 2) 클론을 정확히 하나씩 재생성 — src 바로 뒤 삽입
+    # 2) 클론을 정확히 하나씩 재생성 — 배열 '끝'에 append (중간 삽입 금지:
+    #    id↔위치 desync 생성기였다 — 위치-해석 발견 참조)
     for src_id, new_id in clones:
         if not guards.charpr_id_present(header, src_id):
             raise PreeditError(
                 f"클론 원본 charPr id={src_id} 이 header에 없음 (T22 가드)")
-        s, e, block = _charpr_block(header, src_id)
+        _s, _e, block = _charpr_block(header, src_id)
         open_end = block.find(">") + 1
         open_tag = block[:open_end]
         open_tag = re.sub(r'(\bid\s*=\s*")' + re.escape(src_id) + r'(")',
@@ -532,7 +652,11 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
         for name, value in clone_attrs.items():
             open_tag = _tag_set_attr(open_tag, name, value)
         clone_block = open_tag + block[open_end:]
-        header = header[:e] + clone_block + header[e:]
+        cp_close = re.search(r'</' + NS + r':charProperties>', header)
+        if cp_close is None:
+            raise PreeditError("header에 charProperties 닫는 태그 없음 — 구조 이상")
+        header = (header[:cp_close.start()] + clone_block
+                  + header[cp_close.start():])
 
     # 3) itemCnt 실측 재계산
     item_cnt = len(CHARPR_OPEN_RE.findall(header))
@@ -577,6 +701,38 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
         repointed.append({"from": from_id, "to": to_id,
                           "text": text, "count": count})
 
+    # 4b) 스코프 재지정 — anchor 문단의 모든 텍스트 런을 to_id로
+    scope_repointed = []
+    for to_id, anchor in scope_repoints:
+        anchor_norm = re.sub(r"\s+", "", str(anchor))
+        if not anchor_norm:
+            raise ValueError(f"scope 앵커가 비어 있음: {anchor!r}")
+        p_total = r_total = 0
+        for sname in section_names:
+            xml = contents[sname].decode("utf-8")
+            out, last = [], 0
+            for start, end, p_xml in _find_paragraphs(xml):
+                out.append(xml[last:start])
+                nx, ph, rc = _scope_repoint_paragraph(p_xml, to_id,
+                                                      anchor_norm)
+                out.append(nx)
+                p_total += ph
+                r_total += rc
+                last = end
+            out.append(xml[last:])
+            contents[sname] = "".join(out).encode("utf-8")
+        if p_total == 0:
+            raise PreeditError(
+                f"scope 앵커 매치 문단 0개(오타 의심): {anchor!r}")
+        scope_repointed.append({"to": to_id, "anchor": anchor,
+                                "paragraphs": p_total, "runs": r_total})
+
+    # id↔위치 진단 — 위치-해석 desync 검출(비어 있어야 정상)
+    id_order = re.findall(r'<' + NS + r':charPr\b[^>]*?\bid="(\d+)"', header)
+    id_position_mismatch = [
+        {"pos": i, "id": cid} for i, cid in enumerate(id_order)
+        if int(cid) != i]
+
     # 5) 내장 사후검사 — 실패 시 출력 미작성:
     #    (a) 수정 멤버 well-formed, (b) 공중 charPr 참조 없음(T22)
     contents[header_name] = header.encode("utf-8")
@@ -590,7 +746,8 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "stale_clones_removed": stale_removed,
             "clones": [list(c) for c in clones], "item_cnt": item_cnt,
-            "repointed": repointed}
+            "repointed": repointed, "scope_repointed": scope_repointed,
+            "id_position_mismatch": id_position_mismatch}
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +798,11 @@ def main(argv=None):
     p_nc.add_argument("--repoint", action="append", default=[],
                       metavar="FROM:TO:TEXT",
                       help="런 재지정(TEXT 생략 시 전부: FROM:TO)")
+    p_nc.add_argument("--repoint-scope", action="append", default=[],
+                      metavar="TO:ANCHOR",
+                      help="ANCHOR 텍스트를 담은 문단(표 셀 포함)의 모든 "
+                           "텍스트 런을 charPr TO로 재지정(분할 런 저자표 "
+                           "일괄 검정 전환용, 개체/필드 런은 불가침)")
 
     args = ap.parse_args(argv)
     if not Path(args.file).exists():
@@ -679,8 +841,15 @@ def main(argv=None):
                     repoints.append((parts[0], parts[1], parts[2]))
                 else:
                     _die(f"--repoint 형식은 FROM:TO[:TEXT]: {spec!r}", code=2)
+            scope_repoints = []
+            for spec in args.repoint_scope:
+                to_id, sep, anchor = spec.partition(":")
+                if not to_id or not sep or not anchor:
+                    _die(f"--repoint-scope 형식은 TO:ANCHOR: {spec!r}", code=2)
+                scope_repoints.append((to_id, anchor))
             result = normalize_clones(args.file, args.out, clones,
-                                      clone_attrs=attrs, repoints=repoints)
+                                      clone_attrs=attrs, repoints=repoints,
+                                      scope_repoints=scope_repoints)
     except (PreeditError, ValueError, AssertionError) as exc:
         _die(str(exc))
     except json.JSONDecodeError as exc:
