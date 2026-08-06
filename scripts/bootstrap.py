@@ -25,10 +25,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 PIPELINE_SCRIPTS = REPO_ROOT / "pipeline" / "scripts"
+if str(PIPELINE_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_SCRIPTS))
 PERSONALIZATION_CTL = PIPELINE_SCRIPTS / "personalization_ctl.py"
 NEW_REPORT = SCRIPTS / "new_report.py"
 SETUP_PROFILE = SCRIPTS / "setup_profile.py"
-PACK_DEFAULTS = REPO_ROOT / "pipeline" / "references" / "preference_packs" / "defaults"
 
 MIN_PYTHON = (3, 10)
 SMOKE_SLUG = "bootstrap-smoke"
@@ -113,13 +114,16 @@ def create_profile(profile_root: Path) -> None:
 
 def register_packs(profile_root: Path) -> tuple[int, int]:
     """Register every public default pack into the profile. register-pack
-    overwrites, so re-runs are safe. Returns (registered, total)."""
-    files = sorted(PACK_DEFAULTS.glob("*.json"))
+    overwrites, so re-runs are safe. Returns (registered, total).
+
+    Registry-aware (v0.16 W4.1 pack split): the default set is core's general
+    packs plus every enabled distribution module's pack defaults."""
+    import personalization_ctl  # noqa: E402  (PIPELINE_SCRIPTS on sys.path)
+    files = dict(sorted(personalization_ctl.default_pack_files().items()))
     if not files:
-        raise BootstrapError(f"no default packs found under {PACK_DEFAULTS}")
+        raise BootstrapError("no default packs known to personalization_ctl")
     registered = 0
-    for pack in files:
-        pack_type = pack.stem
+    for pack_type, pack in files.items():
         proc = _run(_py(PERSONALIZATION_CTL, "--profile-root", profile_root,
                         "register-pack", "--type", pack_type, "--file", pack))
         if proc.returncode != 0:

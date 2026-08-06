@@ -21,10 +21,12 @@ for _dir in (_CORE_SCRIPTS_DIR, _SCRIPTS_DIR):
 
 from checker_base import EXIT_HARD, EXIT_PASS, cli_main, usage_error, verdict_skeleton  # noqa: E402
 from claim_extraction import find_body  # noqa: E402
-from personalization_ctl import pack_schema, validate_instance  # noqa: E402
-
-
-PROFILE_SCHEMA = "report-pipeline/personalization-v1"
+from personalization_ctl import (  # noqa: E402
+    PROFILE_SCHEMAS,
+    known_pack_types,
+    pack_schema,
+    validate_instance,
+)
 
 
 def sha_file(path: Path) -> str:
@@ -56,7 +58,9 @@ def profile_marker(out_dir: Path) -> Path | None:
             payload = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
-        if isinstance(payload, dict) and payload.get("schema") == PROFILE_SCHEMA:
+        # Accept legacy AND current store schemas: the draft-write guard must
+        # keep protecting stores created before the rigorloom/* rename.
+        if isinstance(payload, dict) and payload.get("schema") in PROFILE_SCHEMAS:
             return marker
     return None
 
@@ -216,6 +220,13 @@ def mine(inputs: list[str | Path], out_dir: str | Path) -> tuple[dict, int]:
         packs = build_packs(paths)
     except (OSError, UnicodeError) as exc:
         return usage_error(out_dir, "style_extract", f"corpus unreadable: {exc}")
+    # Draft only the pack types this install knows: report_structure is a
+    # report-module pack type (v0.16 W4.1 split), so a core-only install
+    # mines a prose_rules draft and reports the rest as skipped.
+    known = set(known_pack_types())
+    skipped_pack_types = sorted(set(packs) - known)
+    packs = {pack_type: pack for pack_type, pack in packs.items()
+             if pack_type in known}
     hard, errors_by_pack = [], {}
     for pack_type, pack in packs.items():
         errors = validate_instance(pack, pack_schema(pack_type))
@@ -236,6 +247,7 @@ def mine(inputs: list[str | Path], out_dir: str | Path) -> tuple[dict, int]:
         str(out_dir.resolve()), "style_extract", hard=hard,
         extra={"drafts": outputs, "corpus_files": [str(path) for path in paths],
                "manual_install_required": True,
+               "skipped_pack_types": skipped_pack_types,
                "schema_errors": errors_by_pack})
     return verdict, EXIT_HARD if hard else EXIT_PASS
 

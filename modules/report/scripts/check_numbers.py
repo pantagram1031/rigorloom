@@ -54,10 +54,12 @@ PROVENANCE_PATHS = (
     Path("sim/provenance.json"),
     Path("sim/provenance"),
 )
-# Core pack defaults stay in pipeline/references; resolve through the core
-# personalization helper rather than a module-relative path (W3-S2b move).
+# constants_allowlist is a report-module pack type (v0.16 W4.1 split); its
+# public default ships as module payload, so the default path is
+# module-relative — no registry lookup needed from inside the module.
 DEFAULT_CONSTANTS_PACK = (
-    personalization_ctl.PACK_DEFAULTS_DIR / "constants_allowlist.json"
+    SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
+    / "constants_allowlist.json"
 )
 
 NUMBER_RE = claim_extraction.NUMBER_RE

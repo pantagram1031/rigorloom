@@ -49,7 +49,6 @@ from checker_base import (  # noqa: E402
 
 _DEFAULTS_DIR = _CORE_SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
 DEFAULT_PROSE_PACK = _DEFAULTS_DIR / "prose_rules.json"
-DEFAULT_GLOSS_PACK = _DEFAULTS_DIR / "gloss_allowlist.json"
 
 # in-text parenthetical citation, e.g. "(김철수, 2020)" or "(Smith, 2019)".
 CITATION_PAREN_RE = re.compile(r"\([가-힣A-Za-z .]+,\s*\d{4}\)")
@@ -106,7 +105,15 @@ def metadata_title(md, additional_keys=None):
 
 
 def _default_gloss_terms():
-    pack = personalization_ctl.load_pack_file(DEFAULT_GLOSS_PACK)
+    # gloss_allowlist is a REPORT-module pack type (v0.16 W4.1 split), and
+    # check_style is STYLE-module payload that merely consumes it. With the
+    # report module enabled (it requires style, so this is the common pair)
+    # the public default resolves through the registry-aware personalization
+    # layer; style-without-report has no gloss pack type at all — absence is
+    # not failure, unit symbols from claim_extraction still exempt.
+    if "gloss_allowlist" not in personalization_ctl.known_pack_types():
+        return set()
+    pack = personalization_ctl.pack_default("gloss_allowlist")
     terms = pack.get("terms", []) if isinstance(pack, dict) else []
     return {term for term in terms if isinstance(term, str) and term}
 
