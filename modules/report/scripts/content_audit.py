@@ -31,6 +31,7 @@ it cannot pass silently. Findings are tagged with their source checker.
 Exit 0 = pass, 3 = HARD violation(s), 2 = a sub-checker usage error.
 """
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -51,15 +52,48 @@ import check_numbers  # noqa: E402
 import check_refs  # noqa: E402
 import check_saeteuk  # noqa: E402
 import check_sources  # noqa: E402
-import check_style  # noqa: E402
 import check_units  # noqa: E402
 import personalization_ctl  # noqa: E402
 import verify_content  # noqa: E402
 from checker_base import (  # noqa: E402
     _utf8_stdio,
     cli_main,
+    usage_error,
     verdict_skeleton,
 )
+
+
+def _resolve_check_style():
+    """Resolve the 'check_style' checker without a module->module import.
+
+    check_style is style-module payload (v0.16 W4.2) and module->module
+    imports are not in the distribution-module contract, so content_audit
+    looks the checker up through the registry (by checker name, never by
+    module name) and loads it from the registered script path. In a
+    flattened skill install (module scripts synced beside core scripts) the
+    plain sibling import works instead. Unresolvable = None; check() then
+    refuses loudly (exit 2) — this composite gate stays fail-closed, never
+    silently thinner.
+    """
+    try:
+        from module_registry import ModuleError, ModuleRegistry
+        for row in ModuleRegistry().enabled_checkers():
+            if row["name"] == "check_style":
+                spec = importlib.util.spec_from_file_location(
+                    "check_style", row["script"])
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    except (ModuleError, OSError, ImportError):
+        pass
+    try:
+        import check_style  # flattened install layout
+        return check_style
+    except ImportError:
+        return None
+
+
+check_style = _resolve_check_style()
 
 _VALIDATED_PACKS = tuple(personalization_ctl.PACK_TYPES)
 
@@ -212,6 +246,14 @@ def _validate_operator_packs(packs_dir):
 
 
 def check(ws, profile_root=None):
+    if check_style is None:
+        # Fail-closed: the composite audit is defined to include the prose
+        # style leg; running without it would be a silently thinner gate.
+        return usage_error(
+            ws, "content_audit",
+            "checker 'check_style' is not available: no enabled distribution "
+            "module provides it (enable the 'style' module, or install its "
+            "scripts beside core)")
     profile_root = _resolve_profile_root(profile_root)
     packs_dir = Path(profile_root) / "packs" if profile_root else None
     checker_names = (

@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).parents[2]
-FIDELITY_PATH = ROOT / "pipeline" / "scripts" / "prose_fidelity.py"
-HUMANIZE_PATH = ROOT / "pipeline" / "scripts" / "humanization_ctl.py"
+MODULE_ROOT = Path(__file__).parents[1]
+FIDELITY_PATH = MODULE_ROOT / "scripts" / "prose_fidelity.py"
+HUMANIZE_PATH = MODULE_ROOT / "scripts" / "humanization_ctl.py"
 SPEC = importlib.util.spec_from_file_location("prose_fidelity", FIDELITY_PATH)
 fidelity = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

@@ -100,7 +100,7 @@ are fixed strings — never renumber.
 | Stage 4↔5 interface | `pipeline/references/bundle_spec.md` |
 | Registry / stage graph | `pipeline/references/agents.yaml`, `stages.yaml` |
 | HWP/HWPX document stages | `engine/SKILL.md` (bundled engine, `engine/scripts`) |
-| Prose style rewrite | `adapters/claude-code/agent.humanizer.template.md` |
+| Prose style rewrite | `modules/style/references/agent.humanizer.template.md` |
 | Report methodology | `docs/report-method.md` |
 
 ## Operating constants

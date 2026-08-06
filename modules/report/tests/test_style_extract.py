@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 import sys
 
-SCRIPTS = Path(__file__).parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS))
+MODULE_SCRIPTS = Path(__file__).parents[1] / "scripts"
+CORE_SCRIPTS = Path(__file__).parents[3] / "pipeline" / "scripts"
+for _dir in (CORE_SCRIPTS, MODULE_SCRIPTS):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 
 import personalization_ctl  # noqa: E402
 import style_extract  # noqa: E402

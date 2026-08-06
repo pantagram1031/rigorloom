@@ -221,6 +221,53 @@ class TestAbsenceIsNotFailure:
 
 
 # ---------------------------------------------------------------------------
+# Selective enablement — real modules are independent (W4.2 acceptance)
+# ---------------------------------------------------------------------------
+
+class TestSelectiveEnablementIndependence:
+    """The committed distribution modules enable independently: style loads
+    without report and report loads without style. Registry-level proof over
+    the REAL modules/ tree (a temp enabled.yaml, never the repo's)."""
+
+    @pytest.mark.parametrize("only, other", [
+        ("style", "report"),
+        ("report", "style"),
+    ])
+    def test_real_module_enables_without_the_other(self, tmp_path, only, other):
+        enabled = tmp_path / "enabled.yaml"
+        enabled.write_text(
+            "schema: rigorloom-enabled-modules/v1\n"
+            f"enabled: [{only}]\n",
+            encoding="utf-8",
+        )
+        registry = ModuleRegistry(
+            REPO_ROOT / "modules", enabled_file=enabled)
+        assert {only, other} <= set(registry.discover())
+        assert [spec.name for spec in registry.enabled_modules()] == [only]
+        checkers = registry.enabled_checkers()
+        assert checkers, f"module {only!r} must surface at least one checker"
+        contributions = (
+            checkers + registry.enabled_cli() + registry.enabled_run_modes()
+            + registry.enabled_gate_kinds() + registry.enabled_studio_panels()
+            + registry.enabled_preflight() + registry.enabled_playbooks())
+        assert all(row["module"] == only for row in contributions)
+
+    def test_style_contributions_surface_without_report(self, tmp_path):
+        enabled = tmp_path / "enabled.yaml"
+        enabled.write_text(
+            "schema: rigorloom-enabled-modules/v1\nenabled: [style]\n",
+            encoding="utf-8",
+        )
+        registry = ModuleRegistry(
+            REPO_ROOT / "modules", enabled_file=enabled)
+        assert {row["name"] for row in registry.enabled_checkers()} == {
+            "check_style"}
+        assert {row["command"] for row in registry.enabled_cli()} == {
+            "humanize"}
+        assert registry.enabled_pack_types() == []
+
+
+# ---------------------------------------------------------------------------
 # Invalid declarations are loud
 # ---------------------------------------------------------------------------
 

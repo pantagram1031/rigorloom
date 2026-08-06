@@ -13,10 +13,10 @@ place private examples or identity data in repository-tracked files.
 ## Stage 4 commands
 
 ```sh
-python pipeline/scripts/humanization_ctl.py prepare <WS>
+python modules/style/scripts/humanization_ctl.py prepare <WS>
 # Spawn a local advisory reviewer. PASS writes an empty skipped proposal.
 # On REWORK, spawn a separate local rewriter, then independent reviewers.
-python pipeline/scripts/humanization_ctl.py apply <WS> \
+python modules/style/scripts/humanization_ctl.py apply <WS> \
   --changes <WS>/work/stage-4/scratch/humanization_changes.json
 ```
 
@@ -34,8 +34,8 @@ Round 3 with unresolved paragraphs returns `hold_and_report`.
 Manual validation and rollback are also available:
 
 ```sh
-python pipeline/scripts/humanization_ctl.py validate <WS>
-python pipeline/scripts/humanization_ctl.py rollback <WS>
+python modules/style/scripts/humanization_ctl.py validate <WS>
+python modules/style/scripts/humanization_ctl.py rollback <WS>
 ```
 
 Canonical reports are `bundle/ai_tell_review.json`,
