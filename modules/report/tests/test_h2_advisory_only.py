@@ -19,15 +19,13 @@ state so a future change is a conscious decision, not drift:
    test asserting the reference cannot reach a gate verdict.
 3. The humanization prepare contract must keep declaring the detector
    advisory (policy.detector_is_advisory), so downstream workers inherit
-   the rule.
+   the rule. That pin lives with the style module since W4.2:
+   modules/style/tests/test_h2_advisory_style.py.
 """
 from __future__ import annotations
 
-import json
 import re
-import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,7 +36,6 @@ import pipeline_ctl as ctl  # noqa: E402
 
 ROOT = Path(__file__).parents[3]
 SCRIPTS_DIR = ROOT / "pipeline" / "scripts"
-HUMANIZE = SCRIPTS_DIR / "humanization_ctl.py"
 
 DETECTOR_TOKEN_RE = re.compile(r"score_ai_tells|interference_index")
 
@@ -66,10 +63,11 @@ class CheckRegistryHasNoDetectorTrigger(unittest.TestCase):
 
     def test_no_pipeline_script_references_detector_score_apis(self):
         offenders = []
-        # The H2-advisory policy governs core pipeline scripts AND the report
-        # module payload (this test lives with the stage machine since
-        # W3-S2b, but the scan stays a repo-policy scan over both dirs).
-        scan_dirs = (SCRIPTS_DIR, MODULE_SCRIPTS)
+        # The H2-advisory policy governs core pipeline scripts AND every
+        # distribution module's payload (this test lives with the stage
+        # machine since W3-S2b, but the scan stays a repo-policy scan — a
+        # filesystem sweep, no module imports and no module names).
+        scan_dirs = (SCRIPTS_DIR, *sorted((ROOT / "modules").glob("*/scripts")))
         for scan_dir in scan_dirs:
             for script in sorted(scan_dir.glob("*.py")):
                 if script.name in ALLOWED_REFERENCES:
@@ -84,25 +82,9 @@ class CheckRegistryHasNoDetectorTrigger(unittest.TestCase):
         )
 
 
-class HumanizationContractStaysAdvisory(unittest.TestCase):
-    def test_prepare_declares_detector_is_advisory(self):
-        with tempfile.TemporaryDirectory() as td:
-            ws = Path(td) / "report-demo"
-            (ws / "bundle").mkdir(parents=True)
-            (ws / "bundle" / "content.md").write_text(
-                "# 결론\n\n측정 결과를 서술한다.\n", encoding="utf-8"
-            )
-            proc = subprocess.run(
-                [sys.executable, str(HUMANIZE), "prepare", str(ws)],
-                capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            payload = json.loads(
-                (ws / "bundle" / "humanization_report.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-        self.assertIs(payload["policy"]["detector_is_advisory"], True)
+# HumanizationContractStaysAdvisory moved to
+# modules/style/tests/test_h2_advisory_style.py (v0.16 W4.2): the prepare
+# contract under test is the style module's humanization controller.
 
 
 if __name__ == "__main__":

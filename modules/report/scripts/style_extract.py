@@ -9,10 +9,19 @@ import json
 from pathlib import Path
 import re
 import statistics
+import sys
 
-from checker_base import EXIT_HARD, EXIT_PASS, cli_main, usage_error, verdict_skeleton
-from claim_extraction import find_body
-from personalization_ctl import pack_schema, validate_instance
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_CORE_SCRIPTS_DIR = _SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (_CORE_SCRIPTS_DIR, _SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
+
+from checker_base import EXIT_HARD, EXIT_PASS, cli_main, usage_error, verdict_skeleton  # noqa: E402
+from claim_extraction import find_body  # noqa: E402
+from personalization_ctl import pack_schema, validate_instance  # noqa: E402
 
 
 PROFILE_SCHEMA = "report-pipeline/personalization-v1"

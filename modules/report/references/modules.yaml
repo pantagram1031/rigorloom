@@ -24,5 +24,5 @@ modules:
   - {id: form_extract, consumes: [form_instances], produces: [form_template], stage: pipeline/scripts/form_extract.py, gates: [skeleton_hash_sanity], os: any, status: active}
   # content.md has no trustworthy visual-style evidence; output is DRAFT only
   # and style_extract refuses profile-root destinations.
-  - {id: style_extract, consumes: [corpus], produces: [pack_draft], stage: pipeline/scripts/style_extract.py, gates: [schema_validation], os: any, status: active}
+  - {id: style_extract, consumes: [corpus], produces: [pack_draft], stage: modules/report/scripts/style_extract.py, gates: [schema_validation], os: any, status: active}
   - {id: edit, consumes: [report, edit_request], produces: [edited_report, hwpx, verdict_6], stage: 2, graph: edit, gates: [edit_spec, content_audit, edit_verify, edit_accept, submission_preflight], os: tiered, status: active}

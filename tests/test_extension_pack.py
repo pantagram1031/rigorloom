@@ -21,13 +21,12 @@ personalization = _load(
     "personalization_ctl_for_extension_tests",
     REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py",
 )
-humanization = _load(
-    "humanization_ctl_for_extension_tests",
-    REPO_ROOT / "pipeline" / "scripts" / "humanization_ctl.py",
-)
 # The content_audit fail-closed integration test moved to
 # modules/report/tests/test_content_audit.py (v0.16 W3-S3): the behavior
-# under test is content_audit's, which is report-module payload.
+# under test is content_audit's, which is report-module payload. The
+# humanization-consumes-extensions test moved to
+# modules/style/tests/test_extension_pack_style.py (v0.16 W4.2): the
+# controller under test is style-module payload.
 
 
 def _prose_pack(name: str, marker: str) -> dict:
@@ -408,17 +407,6 @@ def test_extension_precedence_is_default_then_priority_then_global(tmp_path: Pat
     )
     assert content["name"] == "global-profile"
     assert metadata["source"] == "global"
-
-
-def test_humanization_consumes_the_canonical_extension_resolution(tmp_path: Path) -> None:
-    profile = tmp_path / "profile"
-    source = _extension(tmp_path / "source", marker="HUMANIZE_EXTENSION_MARKER")
-    extension_pack.install_pack(source, profile)
-
-    resolved = humanization._merged_pack(profile, "prose_rules")
-
-    assert resolved["name"] == "example.report-style"
-    assert resolved["banned_patterns"][0]["regex"] == "HUMANIZE_EXTENSION_MARKER"
 
 
 def test_activate_switches_versions_without_deleting_previous_install(tmp_path: Path) -> None:

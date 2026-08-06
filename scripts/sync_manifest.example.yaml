@@ -35,6 +35,13 @@ source_map:
     to: "scripts"
   - from: "modules/report/references"
     to: "references"
+  # Style distribution-module payload (v0.16 W4.2: humanization_ctl,
+  # prose_fidelity, check_style; references/ carries the humanizer worker
+  # template). Same flattening rule as the report module.
+  - from: "modules/style/scripts"
+    to: "scripts"
+  - from: "modules/style/references"
+    to: "references"
   # Tests are optional in the install; uncomment to ship them too.
   # - from: "pipeline/tests"
   #   to: "tests"

@@ -82,7 +82,7 @@ Those installed locations are just `source_map` `to` paths under each target's
 | Repo file (`from`) | Target `install_root` | `to` |
 |---|---|---|
 | `adapters/claude-code/SKILL.report-pipeline.md` | `<SKILLS_ROOT>/report-pipeline` | `SKILL.md` |
-| `adapters/claude-code/agent.humanizer.template.md` | `<agents-dir>` (a `repo_targets` entry) | `humanizer.md` (overlay voice pack layered on top) |
+| `modules/style/references/agent.humanizer.template.md` | `<agents-dir>` (a `repo_targets` entry) | `humanizer.md` (overlay voice pack layered on top) |
 
 After install, the router skill's `pipeline_ctl.py` commands still run from
 `<CHECKOUT>` root, and every `<WS>` argument is an absolute workspace path.
