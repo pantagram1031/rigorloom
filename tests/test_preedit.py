@@ -11,6 +11,7 @@
   - 멱등성: 자기 출력에 재적용해도 content-identical.
 """
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -40,7 +41,8 @@ CP_NAVY = '<hh:charPr id="6" height="1000" textColor="#1F3F9F"/>'  # 파랑 계�
 
 def make_header(charprs, item_cnt=None):
     cnt = item_cnt if item_cnt is not None else len(charprs)
-    return ('<hh:head><hh:refList>'
+    return ('<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">'
+            '<hh:refList>'
             f'<hh:charProperties itemCnt="{cnt}">' + "".join(charprs)
             + '</hh:charProperties>'
             '<hh:paraProperties itemCnt="1">'
@@ -65,7 +67,11 @@ def TBL_P(cell_paras):
 
 
 def SEC(*paras):
-    return '<hs:sec>' + "".join(paras) + '</hs:sec>'
+    # 실제 hwpx처럼 네임스페이스를 선언한다 — 사후 well-formed 불변식이
+    # 수정된 섹션을 ET로 파싱하므로 픽스처도 파싱 가능해야 한다.
+    return ('<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+            ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+            + "".join(paras) + '</hs:sec>')
 
 
 def make_hwpx(tmp_path, header_xml, section_xml, name="fixture.hwpx"):
@@ -364,3 +370,83 @@ class TestNormalizeClones:
             repoints=[("5", "9", None)])
         assert result["repointed"][0]["count"] == 2  # byline + 초록 전부
         assert 'charPrIDRef="5"' not in section_xml(out)
+
+
+# ---------------------------------------------------------------------------
+# 4) 자기닫힘 <hp:t/> 사고 + 사후 well-formed 불변식
+# ---------------------------------------------------------------------------
+
+class TestSelfClosedTAndInvariant:
+    def test_incident_chain_selfclosed_t(self, tmp_path):
+        """failing-before(실사격 사고, 2026 공식 양식): ctrl 보호 문단 안의
+        자기닫힘 <hp:t/>(가이드 charPr) 뒤에 자리표시자 런 — 구버전 치환은
+        <hp:t/>를 여는 태그로 오인해 다음 요소의 진짜 여는 태그를 집어삼켜
+        '<hp:t/>제목…</hp:t>'(짝 없는 닫는 태그)를 만들었고, 한컴은 문서
+        전체를 백지로 렌더했다. delete-guides → replace 체인 재현."""
+        title = "가중 그래프 최단경로 알고리즘을 이용한 경로 설계"
+        para = ('<hp:p paraPrIDRef="34">'
+                '<hp:run charPrIDRef="5"><hp:ctrl>'
+                '<hp:colPr type="NEWSPAPER" colCount="1"/></hp:ctrl></hp:run>'
+                '<hp:run charPrIDRef="5"><hp:t/></hp:run>'
+                '<hp:run charPrIDRef="0"><hp:t>제목</hp:t></hp:run></hp:p>')
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE]), SEC(para))
+        mid = tmp_path / "mid.hwpx"
+        out = tmp_path / "out.hwpx"
+
+        r_del = delete_guide_paragraphs(src, mid, color="#0000FF")
+        # ctrl 문단은 보호(T18) — 빈 <hp:t/> 런도 그대로 살아있어야 사고 조건
+        assert r_del["protected_skipped"] == 1
+        assert "<hp:t/>" in section_xml(mid)
+
+        r_rep = replace_placeholders(mid, out, {"제목": title})
+        assert r_rep["hits"] == {"제목": 1}
+        sec = section_xml(out)
+        ET.fromstring(sec)  # well-formed — 사고에서는 여기서 mismatched tag
+        assert f"<hp:t>{title}</hp:t>" in sec       # 제대로 된 짝 태그에 삽입
+        assert f"<hp:t/>{title}" not in sec          # 사고 패턴 부재
+        assert "<hp:t/>" in sec                      # 빈 런은 불가침
+
+    def test_selfclosed_t_space_variant_untouched(self, tmp_path):
+        """'<hp:t />'(공백+자기닫힘) 변형도 여는 태그로 오인되지 않는다."""
+        para = ('<hp:p paraPrIDRef="34">'
+                '<hp:run charPrIDRef="0"><hp:t /></hp:run>'
+                + R(0, "키") + '</hp:p>')
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]), SEC(para))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"키": "값"})
+        assert result["hits"] == {"키": 1}
+        sec = section_xml(out)
+        ET.fromstring(sec)
+        assert "<hp:t />" in sec
+        assert "<hp:t>값</hp:t>" in sec
+
+    def test_invariant_blocks_corrupting_writer_replace(self, monkeypatch,
+                                                        tmp_path):
+        """고의로 손상시키는 가짜 writer 경로(치환 값이 깨진 마크업)를 사후
+        불변식이 출력 전에 잡는다 — 출력 파일 미생성."""
+        monkeypatch.setattr(preedit, "escape", lambda s: "<hp:broken>")
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(P(R(0, "제목"))))
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="well-formed"):
+            replace_placeholders(src, out, {"제목": "x"})
+        assert not out.exists()
+
+    def test_invariant_blocks_corrupting_writer_normalize(self, monkeypatch,
+                                                          tmp_path):
+        """normalize_clones의 writer 경로(_tag_set_attr)가 손상을 내면
+        well-formed 불변식이 T22 검사보다 먼저 잡는다."""
+        monkeypatch.setattr(preedit, "_tag_set_attr",
+                            lambda tag, name, value: "<hh:broken>")
+        src = _clone_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="well-formed"):
+            normalize_clones(src, out, [("5", "9")])
+        assert not out.exists()
+
+    def test_invariant_helper_direct(self):
+        preedit._assert_members_well_formed(
+            {"x.xml": b"<a><b/></a>"}, {"x.xml"})  # 정상 — 예외 없음
+        with pytest.raises(PreeditError, match="x.xml"):
+            preedit._assert_members_well_formed(
+                {"x.xml": b"<a><b></a>"}, {"x.xml"})

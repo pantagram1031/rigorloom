@@ -21,6 +21,12 @@
 replace_placeholders는 2회차에 자리표시자가 이미 소진되므로
 on_zero_hits="ignore"로 재실행할 때의 계약이다.
 
+사후 불변식(모든 오퍼레이션 공통): 수정된 XML 멤버는 출력 zip에 쓰기 전
+전부 xml.etree 파싱(well-formed 검증)을 통과해야 한다 — 실패 시
+PreeditError, 아무것도 쓰지 않는다. 실전 사고(2026 공식 양식): 자기닫힘
+<hp:t/>를 여는 태그로 오인한 치환이 짝 없는 닫는 태그를 만들었고 한컴은
+문서 전체를 백지로 렌더했다 — 손상 출력은 구조적으로 불가능해야 한다.
+
 CLI(얇은 래퍼):
     python preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
     python preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue]
@@ -36,6 +42,7 @@ import re
 import shutil
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -45,7 +52,13 @@ import guards
 # tidy_hwpx와 동일 관용구: 접두사(hp:/hs:/hh:)는 가변이므로 로컬네임 매칭.
 NS = r'[A-Za-z0-9]+'
 SECTION_RE = re.compile(r"Contents/section\d+\.xml")
-T_FULL_RE = re.compile(r'(<' + NS + r':t\b[^>]*>)(.*?)(</' + NS + r':t>)', re.S)
+# 여는 태그의 (?<!/) — 자기닫힘 <hp:t/>(빈 텍스트 런, 한컴이 흔히 이렇게
+# 직렬화)를 여는 태그로 오인하면 안 된다. 실전 사고(2026 공식 양식):
+# <hp:t/>를 opener로 잡은 치환이 다음 요소의 진짜 여는 태그까지 group(2)로
+# 집어삼켜 '<hp:t/>제목…</hp:t>'(짝 없는 닫는 태그)를 만들었고, 한컴은
+# 문서 전체를 백지로 렌더했다. <hp:t />(공백+자기닫힘)도 매칭 불가.
+T_FULL_RE = re.compile(
+    r'(<' + NS + r':t\b[^>]*(?<!/)>)(.*?)(</' + NS + r':t>)', re.S)
 RUN_RE = re.compile(r'<(' + NS + r'):run\b([^>]*?)(?:/>|>(.*?)</\1:run>)', re.S)
 CHARPR_OPEN_RE = re.compile(r'<' + NS + r':charPr\b')
 CHARPROPERTIES_RE = re.compile(r'<' + NS + r':charProperties\b[^>]*>')
@@ -98,6 +111,23 @@ def _header_name(contents):
     raise PreeditError("hwpx에 header.xml 멤버 없음 — 구조 이상")
 
 
+def _assert_members_well_formed(contents, member_names):
+    """수정된 XML 멤버 전부를 ET.fromstring으로 검증 — 실패 시 PreeditError.
+
+    사후 불변식(모든 오퍼레이션 공통): 구조가 깨진 XML은 출력 zip에 절대
+    쓰지 않는다. failing-before(실전 사고, 2026 공식 양식): 자기닫힘
+    <hp:t/> 오인 치환이 '<hp:t/>제목…</hp:t>'(짝 없는 닫는 태그)를 만들어
+    ET ParseError(mismatched tag) — 한컴은 문서 전체를 백지로 렌더했다.
+    """
+    for name in sorted(member_names):
+        try:
+            ET.fromstring(contents[name])
+        except ET.ParseError as exc:
+            raise PreeditError(
+                f"산출 XML이 well-formed 아님({name}): {exc}"
+                " — 손상 출력 차단, 아무것도 쓰지 않음") from exc
+
+
 def content_fingerprint(path):
     """zip 멤버 내용 지문 {name: sha256} — 타임스탬프 등 메타는 무시.
 
@@ -134,6 +164,14 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
     않는다(sim의 무보고 no-op가 바로 이 결함이었다). "ignore"면 0으로 보고만
     한다(멱등 재실행용).
 
+    주의: 치환된 텍스트는 그 런의 원래 charPr을 그대로 상속한다 — 가이드
+    색(파랑 등)일 수 있다. 색 전환(예: 저자명 파랑→검정)은 이 함수의 일이
+    아니라 normalize_clones의 소관이다.
+
+    자기닫힘 <hp:t/>는 여는 태그로 매칭되지 않는다(실전 사고 수정 — 위
+    T_FULL_RE 주석). 사후 불변식: 수정된 모든 XML 멤버는 쓰기 전에
+    well-formed 검증을 통과해야 한다(실패 시 PreeditError, 출력 미작성).
+
     반환: {"ok": True, "hits": {key: n}}
     """
     if on_zero_hits not in ("error", "ignore"):
@@ -144,9 +182,11 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
 
     infos, contents = _read_zip(hwpx_in)
     hits = {key: 0 for key in mapping}
+    modified = set()
 
     for sname in _section_names(contents):
-        xml = contents[sname].decode("utf-8")
+        original = contents[sname]
+        xml = original.decode("utf-8")
         for key, value in mapping.items():
             key_stripped = str(key).strip()
             value_esc = escape(str(value))
@@ -167,7 +207,10 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
                 if n:
                     hits[key] += n
                     xml = xml.replace(needle, value_esc)
-        contents[sname] = xml.encode("utf-8")
+        data = xml.encode("utf-8")
+        if data != original:
+            contents[sname] = data
+            modified.add(sname)
 
     zero = [k for k, n in hits.items() if n == 0]
     if zero and on_zero_hits == "error":
@@ -175,6 +218,7 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
             f"자리표시자 {len(zero)}개가 어느 섹션에서도 발견되지 않음"
             f" (무보고 no-op 금지): {zero}")
 
+    _assert_members_well_formed(contents, modified)
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "hits": hits}
 
@@ -240,6 +284,11 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
     표 셀 내부 문단은 top-level이 아니므로 구조적으로 후보에서 제외
     (초록 표 등 양식 구조 보존 — sim의 in_tbl 배제와 동등).
 
+    이 함수는 <hp:t>를 재작성하지 않는다 — 런 전체 스팬만 제거하므로
+    자기닫힘 <hp:t/>를 새로 만들지 않는다(양식 원본에 이미 있는 <hp:t/>는
+    유효한 XML이며 그대로 통과). 사후 불변식: 수정된 XML 멤버는 쓰기 전
+    well-formed 검증 통과(실패 시 PreeditError, 출력 미작성).
+
     반환: {"ok": True, "deleted": n, "protected_skipped": n,
            "mixed_runs_removed": n, "guide_charpr_ids": [...]}
     """
@@ -251,9 +300,11 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
     guide = _guide_charpr_ids(header_xml, color=color, charpr_ids=charpr_ids)
 
     deleted = protected_skipped = mixed_runs_removed = 0
+    modified = set()
 
     for sname in _section_names(contents):
-        xml = contents[sname].decode("utf-8")
+        original = contents[sname]
+        xml = original.decode("utf-8")
         paras = _find_paragraphs(xml)
         # 뒤에서부터 편집해야 앞쪽 스팬 오프셋이 안 흔들린다.
         for start, end, p_xml in reversed(paras):
@@ -284,8 +335,12 @@ def delete_guide_paragraphs(hwpx_in, hwpx_out, *, color=None, charpr_ids=None):
                 if removed_here:
                     xml = xml[:start] + new_p + xml[end:]
                     mixed_runs_removed += removed_here
-        contents[sname] = xml.encode("utf-8")
+        data = xml.encode("utf-8")
+        if data != original:
+            contents[sname] = data
+            modified.add(sname)
 
+    _assert_members_well_formed(contents, modified)
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "deleted": deleted,
             "protected_skipped": protected_skipped,
@@ -342,8 +397,12 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
          strip-비교로 text와 같은 것을 to_id로 재지정(text=None이면 전부).
          whitespace-tolerant — trailing/leading 공백이 있어도 매칭(결함 클래스
          수정). 0건이어도 오류 아님(2회차 실행에서 이미 재지정된 상태가 정상).
-      5) 내장 사후검사: 모든 섹션에 guards.assert_no_dangling_charpr (T22) —
-         실패 시 AssertionError, 출력 파일은 쓰지 않는다.
+      5) 내장 사후검사 2종 — 실패 시 출력 파일은 쓰지 않는다:
+         (a) 수정된 XML 멤버 전부 well-formed(_assert_members_well_formed,
+             실패 시 PreeditError — 실전 사고: 자기닫힘 <hp:t/> 손상 →
+             한컴 백지 렌더),
+         (b) 모든 섹션에 guards.assert_no_dangling_charpr (T22, 실패 시
+             AssertionError).
 
     clones: [(src_id, new_id)] / clone_attrs: 클론 여는 태그에 적용할 속성
     dict(예: {"textColor": "#000000"}) / repoints: [(from_id, to_id, text|None)].
@@ -402,6 +461,7 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
     # 4) 본문 런 재지정 (strip-비교, whitespace-tolerant)
     repointed = []
     section_names = _section_names(contents)
+    orig_sections = {n: contents[n] for n in section_names}
     for from_id, to_id, text in repoints:
         want = text.strip() if text is not None else None
         count = 0
@@ -432,12 +492,16 @@ def normalize_clones(hwpx_in, hwpx_out, clones, *, clone_attrs=None,
         repointed.append({"from": from_id, "to": to_id,
                           "text": text, "count": count})
 
-    # 5) 내장 사후검사 (T22) — 실패 시 출력 미작성
+    # 5) 내장 사후검사 — 실패 시 출력 미작성:
+    #    (a) 수정 멤버 well-formed, (b) 공중 charPr 참조 없음(T22)
+    contents[header_name] = header.encode("utf-8")
+    modified = {header_name} | {n for n in section_names
+                                if contents[n] != orig_sections[n]}
+    _assert_members_well_formed(contents, modified)
     for sname in section_names:
         guards.assert_no_dangling_charpr(
             contents[sname].decode("utf-8"), header)
 
-    contents[header_name] = header.encode("utf-8")
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "stale_clones_removed": stale_removed,
             "clones": [list(c) for c in clones], "item_cnt": item_cnt,
