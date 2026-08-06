@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="studio-editor-token" content="__STUDIO_EDITOR_TOKEN__">
+  <title>Rigorloom Studio Editor Spike</title>
+  <style>
+    :root { color-scheme: light; --ink:#17211d; --muted:#66726c; --line:#d8dedb; --paper:#f6f7f4; --panel:#fff; --accent:#235c45; --warn:#8a4b14; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 ui-sans-serif,system-ui,sans-serif; }
+    header { display:flex; align-items:center; gap:16px; padding:16px 22px; border-bottom:1px solid var(--line); background:var(--panel); }
+    header strong { font-size:18px; }
+    header span { color:var(--muted); }
+    header button { margin-left:auto; }
+    main { display:grid; grid-template-columns:minmax(420px,1fr) minmax(360px,0.9fr); gap:18px; padding:18px; max-width:1500px; margin:auto; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+    h2 { margin:0 0 4px; font-size:16px; }
+    p.note { margin:0 0 14px; color:var(--muted); }
+    .paragraph { border-top:1px solid var(--line); padding:12px 0; }
+    .paragraph:first-child { border-top:0; }
+    .meta { display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px; margin-bottom:6px; }
+    .badge { border:1px solid var(--line); border-radius:999px; padding:1px 7px; }
+    .badge.safe { color:var(--accent); border-color:#91b4a5; }
+    .badge.warn { color:var(--warn); border-color:#d8ad85; }
+    textarea { width:100%; min-height:76px; resize:vertical; padding:9px; border:1px solid var(--line); border-radius:7px; font:inherit; }
+    textarea:disabled { background:#f2f1ed; color:#5f625f; }
+    button { border:1px solid #9ca9a2; border-radius:7px; background:#fff; color:var(--ink); padding:7px 11px; cursor:pointer; }
+    button.primary { background:var(--accent); color:white; border-color:var(--accent); margin-top:7px; }
+    button:disabled { cursor:not-allowed; opacity:.45; }
+    #status { white-space:pre-wrap; padding:10px; background:#eef1ee; border-radius:7px; min-height:44px; }
+    #preview { width:100%; border:1px solid var(--line); margin-top:12px; background:white; }
+    .hazard { border-left:4px solid #c8813f; padding:9px 11px; margin-top:9px; background:#fff8ef; }
+    code { font:12px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header><strong>Studio Editor — Phase 1</strong><span>structured paragraph PoC · localhost only · no model calls</span><button id="undo" type="button">Undo</button></header>
+  <main>
+    <section>
+      <h2>Document paragraphs</h2>
+      <p class="note">Only one plain text payload is editable. Formatting and XML structure stay server-owned.</p>
+      <div id="paragraphs"></div>
+    </section>
+    <div>
+      <section>
+        <h2>Rendered preview</h2>
+        <p class="note">LibreOffice conversion followed by PyMuPDF rasterization.</p>
+        <div id="status">Loading…</div>
+        <img id="preview" alt="First rendered page" hidden>
+      </section>
+      <section style="margin-top:18px">
+        <h2>Equation hazard fixture</h2>
+        <p class="note">Equation runs are discovered but never exposed as editable text in this slice.</p>
+        <div id="hazards"></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const token=document.querySelector('meta[name="studio-editor-token"]').content;
+    const paragraphs=document.getElementById('paragraphs');
+    const hazards=document.getElementById('hazards');
+    const preview=document.getElementById('preview');
+    const status=document.getElementById('status');
+    const undo=document.getElementById('undo');
+    let state=null;
+
+    function node(tag, text, cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
+    async function api(path, options={}){const response=await fetch(path,options);const payload=await response.json().catch(()=>({detail:response.statusText}));if(!response.ok)throw new Error(payload.detail||JSON.stringify(payload));return payload;}
+    async function setPreview(info, started, timings){
+      if(!info?.available){preview.hidden=true;status.textContent=`Preview unavailable: ${info?.error||'renderer unavailable'}`;return;}
+      await new Promise(resolve=>{preview.onload=resolve;preview.onerror=resolve;preview.src=`${info.image_url}?v=${info.revision}`;preview.hidden=false;});
+      const clientMs=started===undefined?null:performance.now()-started;
+      const browserOverhead=clientMs===null||!timings?null:clientMs-timings.server_cycle_ms;
+      status.textContent=`revision ${info.revision} · ${info.renderer}\nrender ${info.render_ms.toFixed(1)} ms · raster ${info.raster_ms.toFixed(1)} ms${timings?` · server cycle ${timings.server_cycle_ms.toFixed(1)} ms`:''}${clientMs===null?'':` · browser cycle ${clientMs.toFixed(1)} ms`}${browserOverhead===null?'':` · browser refresh ${browserOverhead.toFixed(1)} ms`}`;
+    }
+    function renderParagraphs(){
+      paragraphs.replaceChildren();
+      state.paragraphs.filter(p=>p.display_text.trim()||p.has_equation).forEach(p=>{
+        const wrap=node('div',undefined,'paragraph');
+        const meta=node('div',undefined,'meta');meta.append(node('code',p.id),node('span',p.editable?'editable':'protected',`badge ${p.editable?'safe':'warn'}`));wrap.append(meta);
+        const input=node('textarea');input.value=p.display_text;input.disabled=!p.editable;wrap.append(input);
+        const save=node('button','Apply paragraph edit','primary');save.disabled=!p.editable;
+        save.onclick=async()=>{const started=performance.now();save.disabled=true;status.textContent='Applying byte-local patch and rendering…';try{const result=await api(`/api/paragraphs/${encodeURIComponent(p.id)}`,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Editor-Token':token},body:JSON.stringify({text:input.value,expected_revision:state.revision})});state.revision=result.revision;status.textContent=`fidelity: ${result.fidelity.limited_to_text_payload?'target text only':'FAILED'}`;await setPreview(result.preview,started,result.timings);await loadState(false);}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};
+        wrap.append(save);paragraphs.append(wrap);
+      });
+    }
+    function renderHazards(){hazards.replaceChildren();state.equation_hazards.forEach(p=>{const box=node('div',undefined,'hazard');box.append(node('code',p.id),node('div',p.display_text),node('small',`protected runs: ${p.protected_run_count}; hazards: ${p.hazards.join(', ')}`));hazards.append(box);});}
+    async function loadState(updatePreview=true){state=await api('/api/state');renderParagraphs();renderHazards();if(updatePreview)await setPreview(state.preview);}
+    undo.onclick=async()=>{const started=performance.now();try{const result=await api('/api/undo',{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Editor-Token':token},body:JSON.stringify({expected_revision:state.revision})});state.revision=result.revision;await setPreview(result.preview,started,result.timings);await loadState(false);}catch(error){status.textContent=error.message;}};
+    loadState();
+  </script>
+</body>
+</html>

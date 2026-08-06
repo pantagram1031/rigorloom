@@ -1,0 +1,173 @@
+{
+  "command": "python -m studio.editor.benchmark --iterations 5 --warmup 1",
+  "environment": {
+    "platform": "win32",
+    "python": "3.11.9",
+    "pymupdf": "1.27.2.3",
+    "renderer": "soffice_wsl",
+    "renderer_argv": [
+      "wsl",
+      "-e",
+      "bash",
+      "-lc",
+      "exec soffice --headless -env:UserInstallation=file:///tmp/lo-profile --convert-to pdf:writer_pdf_Export --outdir \"$(wslpath -a \"$1\")\" \"$(wslpath -a \"$2\")\"",
+      "render_probe",
+      "{outdir}",
+      "{in}"
+    ],
+    "soffice_version": "LibreOffice 24.2.7.2 420(Build:2)",
+    "document": "studio/editor/sample_data/sanitized-editable.hwpx",
+    "document_bytes": 23164,
+    "document_sha256": "d6a45aba5e734f198f0b7f210b35afded132e9219b890064da4d87b413c17ba9",
+    "capability_probe": {
+      "ok": true,
+      "selected": "soffice_wsl",
+      "probe": {
+        "capabilities": {
+          "hancom_com": true,
+          "soffice_path": null,
+          "soffice_wsl": true,
+          "h2orestart": "yes",
+          "rhwp_path": null,
+          "rhwp_wsl": false,
+          "rhwp_version": null,
+          "rhwp_reason": "not_found"
+        },
+        "renderers": [
+          {
+            "name": "hancom",
+            "wsl": false,
+            "argv": null
+          },
+          {
+            "name": "soffice_wsl",
+            "wsl": true,
+            "argv": [
+              "wsl",
+              "-e",
+              "bash",
+              "-lc",
+              "exec soffice --headless -env:UserInstallation=file:///tmp/lo-profile --convert-to pdf:writer_pdf_Export --outdir \"$(wslpath -a \"$1\")\" \"$(wslpath -a \"$2\")\"",
+              "render_probe",
+              "{outdir}",
+              "{in}"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "warmup_runs": 1,
+  "measured_runs": 5,
+  "runs": [
+    {
+      "run": 1,
+      "warmup": true,
+      "revision": 1,
+      "edit_ms": 21.72,
+      "render_ms": 24371.546,
+      "raster_ms": 374.538,
+      "cycle_ms": 24770.378,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    },
+    {
+      "run": 2,
+      "warmup": false,
+      "revision": 2,
+      "edit_ms": 31.242,
+      "render_ms": 1963.767,
+      "raster_ms": 39.531,
+      "cycle_ms": 2036.572,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    },
+    {
+      "run": 3,
+      "warmup": false,
+      "revision": 3,
+      "edit_ms": 33.851,
+      "render_ms": 1985.608,
+      "raster_ms": 42.487,
+      "cycle_ms": 2066.594,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    },
+    {
+      "run": 4,
+      "warmup": false,
+      "revision": 4,
+      "edit_ms": 34.85,
+      "render_ms": 2502.414,
+      "raster_ms": 45.119,
+      "cycle_ms": 2585.504,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    },
+    {
+      "run": 5,
+      "warmup": false,
+      "revision": 5,
+      "edit_ms": 36.739,
+      "render_ms": 1865.618,
+      "raster_ms": 35.373,
+      "cycle_ms": 1942.574,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    },
+    {
+      "run": 6,
+      "warmup": false,
+      "revision": 6,
+      "edit_ms": 30.553,
+      "render_ms": 1630.803,
+      "raster_ms": 43.927,
+      "cycle_ms": 1709.05,
+      "fidelity_ok": true,
+      "changed_members": [
+        "Contents/section0.xml"
+      ]
+    }
+  ],
+  "summary_ms": {
+    "edit_ms": {
+      "min": 30.553,
+      "median": 33.851,
+      "mean": 33.447,
+      "p95_nearest_rank": 36.739,
+      "max": 36.739
+    },
+    "render_ms": {
+      "min": 1630.803,
+      "median": 1963.767,
+      "mean": 1989.642,
+      "p95_nearest_rank": 2502.414,
+      "max": 2502.414
+    },
+    "raster_ms": {
+      "min": 35.373,
+      "median": 42.487,
+      "mean": 41.287,
+      "p95_nearest_rank": 45.119,
+      "max": 45.119
+    },
+    "cycle_ms": {
+      "min": 1709.05,
+      "median": 2036.572,
+      "mean": 2068.059,
+      "p95_nearest_rank": 2585.504,
+      "max": 2585.504
+    }
+  },
+  "under_3s_count": 5
+}
