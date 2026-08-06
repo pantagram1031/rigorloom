@@ -25,6 +25,12 @@
         }
       }
     },
+    "requires_modules": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+      "uniqueItems": true,
+      "description": "Inter-module dependencies: distribution-module names that must ALSO be enabled for this module to load. Enforced at ENABLEMENT time by module_registry.py — enabling a module whose requires_modules are not all enabled is a loud registry error naming the missing modules (same style as the requires.rigorloom version-gate refusal). A dependency that is present on disk but not listed in enabled.yaml is still an error. A module may not depend on itself."
+    },
     "provides": {
       "type": "object",
       "additionalProperties": false,

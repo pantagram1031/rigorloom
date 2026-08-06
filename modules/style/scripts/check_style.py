@@ -27,10 +27,17 @@ WARN rules:
 import sys, os, re, json, argparse
 from pathlib import Path
 
+# Module-script import mechanism (see modules/README.md): sibling scripts via
+# the module scripts dir, core helpers via the core pipeline/scripts dir.
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-import personalization_ctl  # noqa: E402  (stdlib-only sibling module)
+_CORE_SCRIPTS_DIR = _SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+if not _CORE_SCRIPTS_DIR.is_dir():
+    # Flattened skill install: module scripts land beside the core scripts.
+    _CORE_SCRIPTS_DIR = _SCRIPTS_DIR
+for _dir in (_CORE_SCRIPTS_DIR, _SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
+import personalization_ctl  # noqa: E402  (stdlib-only core module)
 import claim_extraction  # noqa: E402
 from checker_base import (  # noqa: E402
     _utf8_stdio,
@@ -40,7 +47,7 @@ from checker_base import (  # noqa: E402
     verdict_skeleton,
 )
 
-_DEFAULTS_DIR = _SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
+_DEFAULTS_DIR = _CORE_SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
 DEFAULT_PROSE_PACK = _DEFAULTS_DIR / "prose_rules.json"
 DEFAULT_GLOSS_PACK = _DEFAULTS_DIR / "gloss_allowlist.json"
 

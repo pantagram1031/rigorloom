@@ -16,8 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parents[2]
-HUMANIZE = ROOT / "pipeline" / "scripts" / "humanization_ctl.py"
+MODULE_ROOT = Path(__file__).parents[1]
+HUMANIZE = MODULE_ROOT / "scripts" / "humanization_ctl.py"
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
