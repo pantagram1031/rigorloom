@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "description": "Blank-form corpus for W5.2 eval scenarios and W6 per-family benchmarks (docs/research/hwp-usage-landscape.md). Official blank templates only; hwp kept as-found (hwp→hwpx conversion fidelity is a W6 measurement).",
+  "documents": [
+    {
+      "slug": "jumin-deungchobon-sinchengseo",
+      "family": "petition",
+      "path": "petition/jumin-deungchobon-sinchengseo.hwp",
+      "format": "hwp",
+      "bytes": 62976,
+      "sha256": "f386eca6c327a37a2fd965a56efacc50d51e3cec178313364e184656443570c3",
+      "retrieved_at": "2026-08-06T21:32:11Z",
+      "title": "주민등록표 열람 또는 등ㆍ초본 교부 신청서 (주민등록법 시행규칙 별지 제7호서식, 개정 2024-12-20)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=163808565",
+      "source_page": "https://law.go.kr/LSW/lsBylSc.do (open API DRF lawSearch target=licbyl)",
+      "license": "Statutory annex form (법령 별지서식) — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "Family-① canonical dense-grid citizen form; 3 pages incl. 유의사항; checkbox glyphs as text."
+    },
+    {
+      "slug": "jeongbo-gonggae-cheongguseo",
+      "family": "petition",
+      "path": "petition/jeongbo-gonggae-cheongguseo.hwp",
+      "format": "hwp",
+      "bytes": 130048,
+      "sha256": "666152d1a3bc1988d289a73f72a4bb7f6f5b65dfce425fa8cfd56110a3d523f6",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "정보공개 청구서 (공공기관의 정보공개에 관한 법률 시행규칙 별지 제1호의2서식, 개정 2024-09-13)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=156406327",
+      "source_page": "https://law.go.kr/LSW/lsBylSc.do (open API DRF lawSearch target=licbyl)",
+      "license": "Statutory annex form — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "Shaded staff-only cells (\"색상이 어두운 칸은 신청인이 작성하지 않습니다\") — fill-boundary detection case."
+    },
+    {
+      "slug": "saeopja-deungnok-sinchengseo",
+      "family": "petition",
+      "path": "petition/saeopja-deungnok-sinchengseo.hwp",
+      "format": "hwp",
+      "bytes": 99840,
+      "sha256": "e6347307442ab8364afdecd2e009977a4cf6a1dba9c2dfa607b86fc717f4383b",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "사업자등록 신청서(개인사업자용) (부가가치세법 시행규칙 별지 제4호서식, 개정 2026-03-20)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=162619635",
+      "source_page": "https://law.go.kr/LSW/lsBylSc.do (open API DRF lawSearch target=licbyl)",
+      "license": "Statutory annex form — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "Multi-page composite form (신청서+공동사업자 명세+별지들); densest grid in the corpus."
+    },
+    {
+      "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
+      "family": "petition",
+      "path": "petition/admrul-gajokdolbom-hyuga-sinchengseo.hwp",
+      "format": "hwp",
+      "bytes": 34816,
+      "sha256": "4d6e39fc6b99a3063a2a7fea33295587365e6dd6f9de10fa02d635dc66b7f2ea",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "(가족돌봄 휴직, 가족돌봄 휴가) 신청서 (국립중앙과학관 공무직 근로자 운영에 관한 규정 별지 제13호, 발령 2021-11-02)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=109440745",
+      "source_page": "https://www.law.go.kr/admRulBylSc.do (open API DRF lawSearch target=admbyl)",
+      "license": "Administrative-rule annex form — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "행정규칙 layer variant (landscape candidate #2) — less disciplined layout than statutory forms."
+    },
+    {
+      "slug": "gianmun-byeolji-1ho",
+      "family": "gongmun",
+      "path": "gongmun/gianmun-byeolji-1ho.hwp",
+      "format": "hwp",
+      "bytes": 32768,
+      "sha256": "d0498884d4422c02663945a5008ce0aa62e83372f467399bd75de8497c779e1d",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "기안문 (행정업무의 운영 및 혁신에 관한 규정 시행규칙 별지 제1호서식, 개정 2016-07-11)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=137303605",
+      "source_page": "https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=119635 (open API DRF lawSearch target=licbyl, query 기안문)",
+      "license": "Statutory annex form — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "공문 ground truth: 두문/본문/결문, 결재란, 직인 placement, 210x297 prescribed."
+    },
+    {
+      "slug": "gianmun-byeolji-2ho",
+      "family": "gongmun",
+      "path": "gongmun/gianmun-byeolji-2ho.hwp",
+      "format": "hwp",
+      "bytes": 30208,
+      "sha256": "99675d9f56fbce112acb6519bc3b35c9f9dad116c8729029274ed84def7ffac7",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "기안문 (행정업무의 운영 및 혁신에 관한 규정 시행규칙 별지 제2호서식, 개정 2016-07-11)",
+      "source_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=137303609",
+      "source_page": "https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=119635 (open API DRF lawSearch target=licbyl, query 기안문)",
+      "license": "Statutory annex form — 저작권법 제7조 비보호 저작물; served by 국가법령정보센터",
+      "notes": "보고서형 기안문 variant: 생산등록번호/등록일/결재일 grid header."
+    },
+    {
+      "slug": "nrf-gyeolgwa-bogoseo-yangsik",
+      "family": "research",
+      "path": "research/nrf-gyeolgwa-bogoseo-yangsik.hwp",
+      "format": "hwp",
+      "bytes": 18944,
+      "sha256": "2b4d4f88f82f20025bdeed4cc4537fc6a648a0939806346001af0e3cd33b7ac1",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "결과보고서 양식 (한국연구재단 공지 붙임2)",
+      "source_url": "https://www.nrf.re.kr/download/post/loading/89324",
+      "source_page": "https://www.nrf.re.kr/biz/notice/view?menu_no=44&nts_no=114828",
+      "license": "NRF public notice attachment; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
+      "notes": "Family-④ external anchor beyond in-house school templates."
+    },
+    {
+      "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+      "family": "grant",
+      "path": "grant/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwp",
+      "format": "hwp",
+      "bytes": 86016,
+      "sha256": "3a872338539786c04bae0fa042d04d6dd99a014a550cd9ab08ac364fcaa65751",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "2026년 맞춤형예비창업가발굴육성사업 기술이전 예비창업가 지원 사업 신청서 및 사업계획서(양식)",
+      "source_url": "https://www.k-startup.go.kr/afile/fileDownload/khQLn",
+      "source_page": "k-startup.go.kr 공고 attachment (표준사업계획서 proper unreachable: attachSn=211973 → 404; same-domain official blank substituted)",
+      "license": "K-Startup(창업진흥원) 공고 attachment; 공공누리(KOGL) marking not verified on retrieval path — verify before redistribution",
+      "notes": "Family-⑥ hybrid: fixed front grid (신청인 정보, 예산표) + flowing 사업계획서 body."
+    },
+    {
+      "slug": "pps-hyeopeop-seungin-sinchengseo",
+      "family": "grant",
+      "path": "grant/pps-hyeopeop-seungin-sinchengseo.hwpx",
+      "format": "hwpx",
+      "bytes": 11973,
+      "sha256": "7f0cd8e7c504abc5ef2bee662fb375bd692ea16c5d9d7b741d7cf95bd1751cb3",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "협업 승인 신청서 (조달청 우수조달물품 지정관리 규정 별지 제2호의7서식)",
+      "source_url": "https://www.pps.go.kr/common/simpledown.do?site=kor&type=sub03&file=14-18.hwpx (session-bound)",
+      "source_page": "https://www.pps.go.kr/kor/content.do?key=00302",
+      "license": "조달청 서식자료 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
+      "notes": "Native .hwpx from an official source — probe-able without conversion. Procurement variant of ⑥."
+    },
+    {
+      "slug": "pps-jeongbogonggae-donguiseo",
+      "family": "grant",
+      "path": "grant/pps-jeongbogonggae-donguiseo.hwpx",
+      "format": "hwpx",
+      "bytes": 13325,
+      "sha256": "3909b83dd37987ce26778ca126ea5ace1275d2d1514d38ede60f9f79010462e0",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "정보공개동의서 / 개인정보 수집ㆍ이용 및 제3자 제공 동의서 (조달청 별지 제1호의2서식)",
+      "source_url": "https://www.pps.go.kr/common/simpledown.do?site=kor&type=sub03&file=14-55.hwpx (session-bound)",
+      "source_page": "https://www.pps.go.kr/kor/content.do?key=00302",
+      "license": "조달청 서식자료 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
+      "notes": "Native .hwpx; consent form with signature block and 동의여부 checkbox rows."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2013",
+      "family": "hr",
+      "path": "hr/moel-pyojun-geunrogyeyakseo-2013.hwp",
+      "format": "hwp",
+      "bytes": 30720,
+      "sha256": "da767823475fe28569fe576791b808e764c36309dd3f5b70c7d295a0c1fe9ad9",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "표준근로계약서 (고용노동부 서식 pack)",
+      "source_url": "https://www.moel.go.kr/common/downloadFile.do?file_seq=21171218552&bbs_seq=1358755286341&bbs_id=29&file_ext=hwp",
+      "source_page": "https://www.moel.go.kr/info/etc/dataroom/view.do?bbs_seq=1358755286341",
+      "license": "고용노동부 자료실 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
+      "notes": "Simplest family: numbered clauses + underline blanks, two-party signature block."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2025",
+      "family": "hr",
+      "path": "hr/moel-pyojun-geunrogyeyakseo-2025.hwp",
+      "format": "hwp",
+      "bytes": 69120,
+      "sha256": "8acbe67ba95fd53432b80cbdbc82e9cb118534775ada58b832437eae2b4ea99c",
+      "retrieved_at": "2026-08-06T21:32:12Z",
+      "title": "표준근로계약서 (2025년 개정, 붙임)",
+      "source_url": "https://www.moel.go.kr/common/downloadFile.do?file_seq=20250800411&bbs_seq=20250300356&bbs_id=29&file_ext=hwp",
+      "source_page": "https://www.moel.go.kr/policy/policydata/view.do?bbs_seq=20250300356",
+      "license": "고용노동부 정책자료 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
+      "notes": "2025 revision of the same form — versioned pair with the 2013 entry (template-identity scenarios)."
+    }
+  ],
+  "skipped": [
+    {
+      "candidate": "#4 교외체험학습 신청서·결과보고서·결석계 (maji.es.kr board post)",
+      "family": "school",
+      "source_url": "https://www.maji.es.kr/wah/main/bbs/board/view.htm?menuCode=50&domain.dataNo=15481",
+      "reason": "dead URL — connection timeout on https and http (2026-08-07); no substitution per corpus policy (official listed sources only)"
+    },
+    {
+      "candidate": "#5 가정통신문 양식 (school.use.go.kr file)",
+      "family": "school",
+      "source_url": "https://school.use.go.kr/_cmm/fileDownload/hamwol-h/M010302/5aa5f94cb8721999c8b21f4e8da4cce9",
+      "reason": "downloaded and inspected offline (PrvText): file is an ISSUED 가정통신문 (real notice with school contact block), not a blank template — rejected as a filled document; family ③ is a recorded corpus gap"
+    },
+    {
+      "candidate": "#7 창업사업화 표준사업계획서 (창업진흥원)",
+      "family": "grant",
+      "source_url": "http://k-startup.go.kr/common/attachFileView.do?attachSn=211973",
+      "reason": "URL rotted (404, legacy attachSn endpoint) as the landscape doc predicted; replaced by an official blank 지원신청서+사업계획서(양식) from the same k-startup.go.kr domain (see grant/kstartup-* entry)"
+    },
+    {
+      "candidate": "#10 품의서/지출결의서 (third-party blog)",
+      "family": "corp",
+      "source_url": "https://blog.storybadaboa-laria.kr/품의서-양식/",
+      "reason": "non-official source — excluded by the corpus safety boundary (official government/public-institution sources only); family ⑤ has no official source (that is itself the 5.1 finding) and is a recorded corpus gap"
+    },
+    {
+      "candidate": "표준취업규칙 (moel 2025 붙임, file_seq=20250800410)",
+      "family": "hr",
+      "reason": "downloaded alongside the 2025 표준근로계약서 but excluded: it is a model rulebook document, not a fillable form"
+    }
+  ],
+  "privacy": {
+    "scanned_at": "2026-08-07",
+    "privacy_scan": "pipeline/scripts/privacy_scan.py reports 12 HARD findings, ALL rule=binary_document_ext (categorical: any .hwp/.hwpx is flagged because binaries cannot be content-scanned). Zero content findings. This is a policy collision between the repo-wide binary ban and an intentional binary corpus - decision needed: allowlist tests/corpus/forms/ (manifest-pinned sha256) in privacy_scan, or keep the corpus HARD-flagged and exclude it from release bundles (bundles must stay HARD-clean per v0.16 plan 6.3).",
+    "content_check": "Offline scan (PrvText for .hwp via olefile, all XML/text parts for .hwpx): zero RRN patterns, zero filled phone numbers, zero email addresses in any file. All files verified blank templates via preview text.",
+    "metadata_note": "Several .hwp files carry issuing-agency author names in HwpSummaryInformation as published by the government source (e.g. 법령정보센터 clerk names). Kept as-is to preserve byte-exact provenance (sha256 above matches the official download); if this is judged unacceptable, strip DocSummary on the operator machine during XC-1 conversion and record new hashes for the converted siblings only."
+  }
+}
