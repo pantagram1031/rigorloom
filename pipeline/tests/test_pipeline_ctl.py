@@ -3,6 +3,7 @@ or `pytest test_pipeline_ctl.py`. Uses tmp dirs only; no network.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -1649,3 +1651,433 @@ def test_resume_staleness_check_is_noop_when_inputs_absent(
     payload = _direct_resume_payload(monkeypatch, ws)
 
     assert 'warnings' not in payload
+
+
+# ── reopen / amend-close (post-done amendment transitions, design slice 1) ──
+
+
+class AmendmentTestCase(PipelineCtlTestCase):
+    """Shared fixture: a private profile root with an operator receipt key,
+    plus header-fabrication helpers (tests fabricate done states directly —
+    walking every real gate is the gates' own tests' job)."""
+
+    def setUp(self):
+        super().setUp()
+        self.profile_root = self.root / "profile"
+        (self.profile_root / "keys").mkdir(parents=True)
+        self.key_path = self.profile_root / "keys" / "render_cert.key"
+        self.key_path.write_bytes(b"test-amendment-receipt-key-32byt")
+        os.chmod(self.key_path, 0o600)
+        self._environment = mock.patch.dict(
+            os.environ, {"RIGORLOOM_PROFILE_ROOT": str(self.profile_root)})
+        self._environment.start()
+
+    def tearDown(self):
+        self._environment.stop()
+        super().tearDown()
+
+    def _hdr(self) -> dict:
+        return ctl.load_header(self.ws)[3]
+
+    def _edit(self, fn) -> None:
+        text, start, end, hdr = ctl.load_header(self.ws)
+        fn(hdr)
+        ctl.save_header(self.ws, text, start, end, hdr)
+
+    def _mark_done(self, stage, gate_at="2026-08-01T00:00:00"):
+        def fn(hdr):
+            st = hdr["stages"][stage]
+            st["status"] = "done"
+            if st.get("gate"):
+                st["gate"].update(state="auto_approved", by="script", at=gate_at)
+        self._edit(fn)
+
+    def _mark_all_done(self):
+        def fn(hdr):
+            for st in hdr["stages"].values():
+                st["status"] = "done"
+                if st.get("gate"):
+                    st["gate"].update(
+                        state="auto_approved", by="script",
+                        at="2026-08-01T00:00:00")
+        self._edit(fn)
+
+    def _set_canonical(self, rel="output/final.hwpx", content=b"final v1"):
+        target = self.ws / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        self._edit(lambda hdr: hdr.__setitem__("canonical_output", rel))
+        return target
+
+    def _write_sim_gate(self, exit_code=0):
+        gates = self.ws / "sim" / "gates.py"
+        gates.parent.mkdir(parents=True, exist_ok=True)
+        gates.write_text(
+            "import json, sys\n"
+            "print(json.dumps({'ok': True, 'hard': [], 'warn': []}))\n"
+            f"sys.exit({exit_code})\n",
+            encoding="utf-8",
+        )
+
+    def _reopen(self, stage="3", reason="operator: sim rework"):
+        return run("reopen", str(self.ws), stage, "--reason", reason)
+
+    def _open_receipt_paths(self, amend_id="A1"):
+        return sorted((self.ws / ".pipeline" / "receipts").glob(
+            f"amendment-{amend_id}-open-*.json"))
+
+
+class TestReopen(AmendmentTestCase):
+    def test_reopen_done_stage_opens_amendment_and_invalidates_pointer(self):
+        self.init_ws()
+        self._mark_done("3")
+        self._set_canonical(content=b"final v1")
+        payload, code = self._reopen()
+        self.assertEqual(code, 0, payload)
+        amend = payload["amendment"]
+        self.assertEqual(amend["id"], "A1")
+        self.assertEqual(amend["scope"], ["3"])
+        self.assertEqual(amend["status"], "open")
+        self.assertIsNone(amend["closed_at"])
+        self.assertIsNone(amend["artifact_after"])
+        self.assertEqual(amend["gates_rerun"], [])
+        self.assertEqual(amend["artifact_before"],
+                         hashlib.sha256(b"final v1").hexdigest())
+        self.assertTrue(payload["canonical_invalidated"])
+
+        hdr = self._hdr()
+        self.assertEqual(hdr["stages"]["3"]["status"], "amending")
+        self.assertEqual(hdr["stages"]["3"]["gate"]["state"], "pending")
+        # append-only honesty: pointer value preserved, marker added
+        self.assertEqual(hdr["canonical_output"], "output/final.hwpx")
+        self.assertEqual(hdr["canonical_invalidated_by"], "A1")
+        self.assertEqual(len(hdr["amendments"]), 1)
+        self.assertEqual(hdr["amendments"][0]["reason"], "operator: sim rework")
+
+        receipts = self._open_receipt_paths()
+        self.assertEqual(len(receipts), 1)
+        receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+        ok, why = ctl.verify_amendment_receipt(receipt)
+        self.assertTrue(ok, why)
+
+    def test_reopen_without_canonical_pointer_skips_invalidation(self):
+        self.init_ws()
+        self._mark_done("3")
+        payload, code = self._reopen()
+        self.assertEqual(code, 0, payload)
+        self.assertFalse(payload["canonical_invalidated"])
+        self.assertIsNone(payload["amendment"]["artifact_before"])
+        self.assertNotIn("canonical_invalidated_by", self._hdr())
+
+    def test_reopen_non_done_stage_is_usage_error(self):
+        self.init_ws()
+        payload, code = self._reopen("1")
+        self.assertEqual(code, 2)
+        self.assertIn("only done", payload["error"])
+
+    def test_reopen_unknown_stage_is_usage_error(self):
+        self.init_ws()
+        payload, code = self._reopen("99")
+        self.assertEqual(code, 2)
+
+    def test_reopen_blank_reason_is_usage_error(self):
+        self.init_ws()
+        self._mark_done("3")
+        payload, code = run("reopen", str(self.ws), "3", "--reason", "   ")
+        self.assertEqual(code, 2)
+        self.assertEqual(self._hdr()["stages"]["3"]["status"], "done")
+
+    def test_reopen_double_open_on_same_stage_refused(self):
+        self.init_ws()
+        self._mark_done("3")
+        _, code = self._reopen()
+        self.assertEqual(code, 0)
+        payload, code = self._reopen()
+        self.assertEqual(code, 2)
+        self.assertEqual(len(self._hdr()["amendments"]), 1)
+
+    def test_reopen_ids_increment_across_amendments(self):
+        self.init_ws()
+        self._mark_done("3")
+        self._mark_done("2.5")
+        p1, c1 = self._reopen("3")
+        p2, c2 = run("reopen", str(self.ws), "2.5", "--reason", "layout rework")
+        self.assertEqual((c1, c2), (0, 0), (p1, p2))
+        self.assertEqual(p1["amendment"]["id"], "A1")
+        self.assertEqual(p2["amendment"]["id"], "A2")
+        hdr = self._hdr()
+        self.assertEqual([a["id"] for a in hdr["amendments"]], ["A1", "A2"])
+        self.assertEqual(hdr["stages"]["2.5"]["status"], "amending")
+
+    def test_reopen_without_key_mutates_nothing(self):
+        self.init_ws()
+        self._mark_done("3")
+        with mock.patch.dict(os.environ):
+            del os.environ["RIGORLOOM_PROFILE_ROOT"]
+            payload, code = self._reopen()
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        hdr = self._hdr()
+        self.assertEqual(hdr["stages"]["3"]["status"], "done")
+        self.assertNotIn("amendments", hdr)
+        self.assertEqual(self._open_receipt_paths(), [])
+
+
+class TestAmendClose(AmendmentTestCase):
+    def _reopen_stage3_with_canonical(self):
+        self.init_ws()
+        self._mark_done("3")
+        target = self._set_canonical(content=b"final v1")
+        payload, code = self._reopen()
+        self.assertEqual(code, 0, payload)
+        return target
+
+    def _rerun_sane_green(self):
+        self._write_sim_gate(0)
+        payload, code = run("check", str(self.ws), "sane")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "auto_approved")
+
+    def test_full_lifecycle_reopen_rerun_close(self):
+        target = self._reopen_stage3_with_canonical()
+        # rework: artifact changes, then the reopened stage's gate re-runs green
+        target.write_bytes(b"final v2 reworked")
+        self._rerun_sane_green()
+
+        payload, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 0, payload)
+        closed = payload["amendment"]
+        self.assertEqual(closed["status"], "closed")
+        self.assertIsNotNone(closed["closed_at"])
+        self.assertEqual(closed["gates_rerun"], ["sane"])
+        self.assertEqual(closed["artifact_after"],
+                         hashlib.sha256(b"final v2 reworked").hexdigest())
+        self.assertNotEqual(closed["artifact_after"], closed["artifact_before"])
+
+        hdr = self._hdr()
+        self.assertEqual(hdr["stages"]["3"]["status"], "done")
+        self.assertNotIn("canonical_invalidated_by", hdr)
+        self.assertEqual(hdr["amendments"][0]["status"], "closed")
+        close_receipts = sorted((self.ws / ".pipeline" / "receipts").glob(
+            "amendment-A1-close-*.json"))
+        self.assertEqual(len(close_receipts), 1)
+        receipt = json.loads(close_receipts[0].read_text(encoding="utf-8"))
+        ok, why = ctl.verify_amendment_receipt(receipt)
+        self.assertTrue(ok, why)
+
+        # closing an already-closed amendment is a usage error
+        payload, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 2)
+        self.assertIn("already closed", payload["error"])
+
+    def test_amend_close_unknown_id_is_usage_error(self):
+        self.init_ws()
+        payload, code = run("amend-close", str(self.ws), "A9")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown amendment", payload["error"])
+
+    def test_amend_close_refuses_until_gates_rerun_green(self):
+        self._reopen_stage3_with_canonical()
+        payload, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("sane" in f for f in payload["failures"]), payload)
+        self.assertEqual(self._hdr()["amendments"][0]["status"], "open")
+
+    def test_amend_close_refuses_green_recorded_before_reopen(self):
+        self._reopen_stage3_with_canonical()
+
+        def stale_green(hdr):
+            hdr["stages"]["3"]["gate"].update(
+                state="auto_approved", by="script", at="2020-01-01T00:00:00")
+        self._edit(stale_green)
+        payload, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertTrue(
+            any("before the amendment opened" in f for f in payload["failures"]),
+            payload)
+
+    def test_amend_close_refuses_tampered_receipt(self):
+        self._reopen_stage3_with_canonical()
+        receipt_path = self._open_receipt_paths()[0]
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        payload["amendment"]["reason"] = "benign-looking edit"
+        receipt_path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("failed verification", result["error"])
+
+    def test_amend_close_refuses_missing_receipt(self):
+        self._reopen_stage3_with_canonical()
+        self._open_receipt_paths()[0].unlink()
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("no signed open receipt", result["error"])
+
+    def test_amend_close_refuses_postdated_header_amendment(self):
+        self._reopen_stage3_with_canonical()
+
+        def postdate(hdr):
+            hdr["amendments"][0]["opened_at"] = "2030-01-01T00:00:00"
+        self._edit(postdate)
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("does not match its signed open receipt", result["error"])
+
+    def test_amend_close_requires_redesignated_pointer(self):
+        self._reopen_stage3_with_canonical()
+        self._rerun_sane_green()
+        self._edit(lambda hdr: hdr.__setitem__("canonical_output", None))
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("re-designated", result["error"])
+
+    def test_amend_close_refuses_missing_canonical_target(self):
+        target = self._reopen_stage3_with_canonical()
+        self._rerun_sane_green()
+        target.unlink()
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("check_canonical", result["error"])
+
+    def test_amend_close_refuses_contradictory_assembly_verdict(self):
+        self._reopen_stage3_with_canonical()
+        self._rerun_sane_green()
+        verdict = self.ws / "output" / "verdict_v06.json"
+        verdict.write_text(
+            json.dumps({"converged": True, "status": "escalate_human"}),
+            encoding="utf-8")
+        result, code = run("amend-close", str(self.ws), "A1")
+        self.assertEqual(code, 1)
+        self.assertIn("verdict_schema", result["error"])
+
+
+class TestAmendmentStateMachineInteractions(AmendmentTestCase):
+    def test_resume_blocked_by_open_amendment(self):
+        self.init_ws()
+        self._mark_all_done()
+        payload, code = self._reopen()
+        self.assertEqual(code, 0, payload)
+        resumed, code = run("resume", str(self.ws))
+        self.assertEqual(code, 0, resumed)
+        self.assertIsNone(resumed["next_stage"])
+        self.assertTrue(resumed["blocked"])
+        self.assertEqual(resumed["open_amendments"], ["A1"])
+
+    def test_advance_refuses_amending_stage(self):
+        self.init_ws()
+        self._mark_done("3")
+        self._reopen()
+        payload, code = run("advance", str(self.ws), "3", "--status", "done")
+        self.assertEqual(code, 1)
+        self.assertIn("illegal transition", payload["error"])
+
+    def test_invalidate_refuses_open_amendment_scope(self):
+        self.init_ws()
+        self._mark_done("3")
+        self._reopen()
+        payload, code = run("invalidate", str(self.ws), "--from", "2")
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["open_amendments"], ["A1"])
+        # invalidating strictly LATER stages (not covering "3") is still fine
+        payload, code = run("invalidate", str(self.ws), "--from", "4")
+        self.assertEqual(code, 0, payload)
+
+
+class TestAmendmentSchemaUnit(unittest.TestCase):
+    def test_amendment_yaml_round_trip(self):
+        hdr = {
+            "slug": "x", "mode": "night",
+            "stages": {"0": {"status": "done", "gate": None}},
+            "amendments": [
+                {"id": "A1", "opened_at": "2026-08-06T01:00:00",
+                 "reason": 'operator: subhead, "density" 재작업',
+                 "scope": ["5"], "status": "open", "closed_at": None,
+                 "artifact_before": "ab" * 32, "artifact_after": None,
+                 "gates_rerun": []},
+                {"id": "A2", "opened_at": "2026-08-06T02:00:00",
+                 "reason": "figure restyle", "scope": ["2.5"],
+                 "status": "closed", "closed_at": "2026-08-06T03:00:00",
+                 "artifact_before": None, "artifact_after": "cd" * 32,
+                 "gates_rerun": ["layout"]},
+            ],
+        }
+        body = ctl.render_yaml_body(hdr, ctl._BUILD_GRAPH)
+        parsed = ctl.parse_yaml_header(body)
+        self.assertEqual(parsed["amendments"], hdr["amendments"])
+        # and a second round trip is stable
+        body2 = ctl.render_yaml_body(parsed, ctl._BUILD_GRAPH)
+        self.assertEqual(body, body2)
+
+    def test_header_without_amendments_has_no_amendments_key(self):
+        hdr = {"slug": "x", "mode": "night",
+               "stages": {"0": {"status": "pending", "gate": None}}}
+        body = ctl.render_yaml_body(hdr, ctl._BUILD_GRAPH)
+        self.assertNotIn("amendments", body)
+        self.assertNotIn("amendments", ctl.parse_yaml_header(body))
+
+    def test_unknown_amendment_status_coerces_to_open(self):
+        # fail-closed: a mangled status must block (open), never read closed
+        body = ("# pipeline-state: v0.4\nslug: x\nstages:\n"
+                '  "0":   {status: done, gate: null}\n'
+                "amendments:\n"
+                '  - {id: A1, opened_at: "t", reason: "r", scope: ["0"], '
+                "status: garbled, closed_at: null, artifact_before: null, "
+                "artifact_after: null, gates_rerun: []}\n")
+        parsed = ctl.parse_yaml_header(body)
+        self.assertEqual(parsed["amendments"][0]["status"], "open")
+
+
+class TestAmendmentReceiptUnit(unittest.TestCase):
+    KEY = b"0123456789abcdef0123456789abcdef"
+
+    def _signed(self):
+        payload = {
+            "schema": ctl.AMENDMENT_RECEIPT_SCHEMA,
+            "transition": "open",
+            "workspace_slug": "test-slug",
+            "amendment": {"id": "A1", "opened_at": "2026-08-06T01:00:00",
+                          "reason": "r", "scope": ["3"], "status": "open",
+                          "closed_at": None, "artifact_before": None,
+                          "artifact_after": None, "gates_rerun": []},
+            "recorded_at": "2026-08-06T01:00:00",
+        }
+        return ctl.sign_amendment_receipt(payload, self.KEY)
+
+    def test_signed_receipt_verifies(self):
+        ok, why = ctl.verify_amendment_receipt(self._signed(), key=self.KEY)
+        self.assertTrue(ok, why)
+
+    def test_tampered_payload_fails_digest(self):
+        receipt = self._signed()
+        receipt["amendment"]["opened_at"] = "2030-01-01T00:00:00"
+        ok, why = ctl.verify_amendment_receipt(receipt, key=self.KEY)
+        self.assertFalse(ok)
+        self.assertIn("digest", why)
+
+    def test_digest_refix_without_key_fails_hmac(self):
+        receipt_sign = ctl._sibling("receipt_sign")
+        receipt = self._signed()
+        receipt["amendment"]["opened_at"] = "2030-01-01T00:00:00"
+        receipt[ctl.AMENDMENT_RECEIPT_DIGEST_FIELD] = hashlib.sha256(
+            receipt_sign.canonical_json_bytes(
+                receipt,
+                omit_fields=(ctl.AMENDMENT_RECEIPT_DIGEST_FIELD,
+                             ctl.AMENDMENT_RECEIPT_HMAC_FIELD))
+        ).hexdigest()
+        ok, why = ctl.verify_amendment_receipt(receipt, key=self.KEY)
+        self.assertFalse(ok)
+        self.assertIn("HMAC", why)
+
+    def test_wrong_key_fails_hmac(self):
+        ok, why = ctl.verify_amendment_receipt(
+            self._signed(), key=b"another-key-entirely-32-bytes!!!")
+        self.assertFalse(ok)
+        self.assertIn("HMAC", why)
+
+    def test_wrong_schema_rejected(self):
+        receipt = self._signed()
+        receipt["schema"] = "something-else/v9"
+        ok, why = ctl.verify_amendment_receipt(receipt, key=self.KEY)
+        self.assertFalse(ok)
+        self.assertIn("schema", why)
