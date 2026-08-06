@@ -47,6 +47,6 @@ notes specific to Codex-style sandboxed harnesses.
 - Provider-neutral master workflow: `docs/pipeline-master-v0.6.md`
 - Unattended-run playbook (ordering rule, verification stack): 
   `docs/autonomous-orchestration.md`
-- Stage procedures: `pipeline/references/playbooks/stage-<n>.md`
+- Stage procedures: `modules/report/references/playbooks/stage-<n>.md`
 - Backend/role registry: `pipeline/references/agents.yaml`,
-  `pipeline/references/stages.yaml`
+  `modules/report/references/stages.yaml`

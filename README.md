@@ -162,7 +162,7 @@ python3 scripts/bootstrap.py   # PowerShell: python scripts\bootstrap.py
 
 python scripts/new_report.py --slug demo --subject math \
   --topic "A testable question" --form /absolute/path/to/form.hwpx
-python pipeline/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
 `bootstrap.py` verifies the interpreter, provisions a private profile, and

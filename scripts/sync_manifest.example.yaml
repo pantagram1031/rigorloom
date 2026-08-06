@@ -25,7 +25,16 @@ source_map:
   - from: "pipeline/scripts"
     to: "scripts"
   - from: "pipeline/references"
-    to: "references"          # includes playbooks/ and prompts/
+    to: "references"          # prompts/, packs, contracts
+  # Report distribution-module payload (v0.16 W3-S2b: the stage machine,
+  # report checkers, stage graphs, and playbooks live in modules/report/).
+  # A report-pipeline skill install flattens them beside core: module
+  # scripts land in scripts/, module references (stage graphs, playbooks)
+  # in references/.
+  - from: "modules/report/scripts"
+    to: "scripts"
+  - from: "modules/report/references"
+    to: "references"
   # Tests are optional in the install; uncomment to ship them too.
   # - from: "pipeline/tests"
   #   to: "tests"

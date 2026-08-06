@@ -15,9 +15,15 @@ Form baselines in ``form_baseline.json`` or ``build.yaml`` are trusted-on-record
 not cryptographically proven: recording a baseline after a mutation cannot
 detect that mutation. A signed external baseline is deferred.
 
-The registered Stage 6 command also composes check_saeteuk.py. Its findings are
-source-tagged and merged here so a provable saeteuk contradiction rejects this
-gate while unsupported anchors remain advisory.
+Core checks here are artifact/proof checks only (P1 artifact selection, P2
+filename pattern, P3 reopen/size, P5 proof grade, form-structure hash,
+verdict_schema composition). Everything workspace-vocabulary — P0 request.yaml
+validation, P4 identity fields, saeteuk composition — is contributed by
+enabled distribution modules through the registry's ``preflight`` hook: each
+enabled module's declared contribution script is subprocess-composed and its
+JSON findings merged source-tagged, exactly like the former in-process
+check_saeteuk merge. No modules enabled = those checks simply absent (absence
+is not failure).
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import fnmatch
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -33,7 +40,7 @@ from xml.etree import ElementTree
 
 import render_probe
 import render_cert
-import check_saeteuk
+import module_registry
 import verdict_schema
 
 
@@ -417,6 +424,109 @@ def _form_baseline_sha256(ws: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _compose_module_contributions(
+    ws: Path, hard: list[dict], warn: list[dict],
+) -> tuple[list[dict], int]:
+    """Run every enabled module's declared ``preflight`` contribution and
+    merge its JSON findings source-tagged — the same semantics the former
+    in-process check_saeteuk merge had, now registry-driven (v0.16 W3-S2b):
+
+    - each contribution script is invoked ``python <script> <workspace>`` and
+      must honour the checker_base contract (JSON verdict on stdout,
+      exit 0/2/3);
+    - child hard/warn findings merge source-tagged (an inner ``source`` set
+      by the child wins; the contribution name is the fallback tag);
+    - a child usage error (exit 2) becomes a source-tagged USAGE hard marker;
+    - a child whose exit code contradicts its JSON verdict, or whose output
+      is not a JSON verdict at all, is itself a hard finding — a broken
+      contribution can never pass silently.
+
+    Returns ``(contribution records, worst child exit)``. No modules enabled
+    means no contributions: those checks are simply absent (absence is not
+    failure)."""
+    records: list[dict] = []
+    worst = 0
+    try:
+        contributions = module_registry.ModuleRegistry().enabled_preflight()
+    except module_registry.ModuleError as exc:
+        hard.append({
+            "code": "preflight_registry_error",
+            "msg": str(exc),
+            "at": "modules/enabled.yaml",
+        })
+        return records, 3
+    for row in contributions:
+        source = row["name"]
+        proc = subprocess.run(
+            [sys.executable, str(row["script"]), str(ws)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace",
+        )
+        raw_exit = proc.returncode
+        child_exit = raw_exit
+        try:
+            payload = json.loads(proc.stdout)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+        valid_object = isinstance(payload, dict)
+        if not valid_object:
+            payload = {}
+        if child_exit not in {0, 2, 3}:
+            child_exit = 3
+            hard.append({
+                "source": source,
+                "code": "preflight_contribution_failure",
+                "msg": "preflight contribution returned an unexpected exit code",
+                "child_exit": raw_exit,
+            })
+        expected_child_state = {
+            0: (True, "pass"),
+            2: (False, "usage_error"),
+            3: (False, "fail"),
+        }.get(child_exit)
+        child_hard = payload.get("hard")
+        child_warn = payload.get("warn")
+        child_inconsistent = (
+            not valid_object
+            or expected_child_state is None
+            or payload.get("ok") is not expected_child_state[0]
+            or payload.get("verdict") != expected_child_state[1]
+            or not isinstance(child_hard, list)
+            or not isinstance(child_warn, list)
+            or (child_exit == 0 and bool(child_hard))
+        )
+        if child_inconsistent:
+            child_exit = 3 if child_exit == 0 else child_exit
+            hard.append({
+                "source": source,
+                "code": "preflight_contribution_inconsistent",
+                "msg": ("preflight contribution exit is inconsistent with "
+                        "its JSON verdict"),
+                "child_exit": raw_exit,
+            })
+        for finding in child_hard if isinstance(child_hard, list) else []:
+            hard.append({"source": source, **finding})
+        for finding in child_warn if isinstance(child_warn, list) else []:
+            warn.append({"source": source, **finding})
+        if child_exit == 2:
+            hard.append({
+                "source": source,
+                "code": "USAGE",
+                "msg": payload.get(
+                    "error", "preflight contribution input error"),
+            })
+        if child_exit == 3:
+            worst = 3
+        elif child_exit == 2 and worst != 3:
+            worst = 2
+        records.append({
+            "name": source,
+            "module": row["module"],
+            "exit": child_exit,
+        })
+    return records, worst
+
+
 def check(
     workspace: str | Path,
     *,
@@ -441,69 +551,18 @@ def check(
     hard: list[dict] = []
     warn: list[dict] = []
     notes: list[str] = []
-    saeteuk_verdict, saeteuk_code = check_saeteuk.check(ws)
-    raw_saeteuk_code = saeteuk_code
-    valid_saeteuk_object = isinstance(saeteuk_verdict, dict)
-    if not valid_saeteuk_object:
-        saeteuk_verdict = {}
-    if (
-        not isinstance(saeteuk_code, int)
-        or isinstance(saeteuk_code, bool)
-        or saeteuk_code not in {0, 2, 3}
-    ):
-        saeteuk_code = 3
-        hard.append({
-            'source': 'check_saeteuk',
-            'code': 'saeteuk_checker_failure',
-            'msg': 'saeteuk sub-checker returned an unexpected exit code',
-        })
-    expected_child_state = {
-        0: (True, 'pass'),
-        2: (False, 'usage_error'),
-        3: (False, 'fail'),
-    }.get(saeteuk_code)
-    child_hard = saeteuk_verdict.get('hard')
-    child_warn = saeteuk_verdict.get('warn')
-    child_inconsistent = (
-        not valid_saeteuk_object
-        or expected_child_state is None
-        or saeteuk_verdict.get('ok') is not expected_child_state[0]
-        or saeteuk_verdict.get('verdict') != expected_child_state[1]
-        or not isinstance(child_hard, list)
-        or not isinstance(child_warn, list)
-        or (saeteuk_code == 0 and bool(child_hard))
-    )
-    if child_inconsistent:
-        hard.append({
-            'source': 'check_saeteuk',
-            'code': 'saeteuk_checker_inconsistent',
-            'msg': (
-                'saeteuk child exit is inconsistent with its JSON verdict'
-            ),
-            'child_exit': raw_saeteuk_code,
-        })
-    for finding in child_hard if isinstance(child_hard, list) else []:
-        hard.append({'source': 'check_saeteuk', **finding})
-    for finding in child_warn if isinstance(child_warn, list) else []:
-        warn.append({'source': 'check_saeteuk', **finding})
-    if saeteuk_code == 2:
-        hard.append({
-            'source': 'check_saeteuk',
-            'code': 'USAGE',
-            'msg': saeteuk_verdict.get('error', 'saeteuk sub-checker input error'),
-        })
-    scalars, required_fields, request_error = _scan_request(ws / "request.yaml")
-    if request_error:
-        hard.append({
-            "code": "P0",
-            "msg": request_error,
-            "at": "request.yaml",
-        })
+    contributions, worst_child_exit = _compose_module_contributions(
+        ws, hard, warn)
+    # request.yaml is workspace vocabulary: its *validation* (P0) and the
+    # identity checks (P4) are module contributions now. Core still reads the
+    # optional output_filename scalar to drive artifact selection/P2.
+    scalars, _required_fields, request_error = _scan_request(ws / "request.yaml")
     pattern = scalars.get("output_filename")
-    if not request_error and not pattern:
+    if request_error:
+        notes.append(
+            f"request.yaml unusable ({request_error}); filename match skipped")
+    elif not pattern:
         notes.append("request.yaml output_filename absent; filename match skipped")
-    if not request_error and required_fields is None:
-        notes.append("request.yaml required_fields absent; identity checks skipped")
 
     artifact, artifact_rel = _select_artifact(ws, pattern)
     extracted_text = ""
@@ -587,15 +646,6 @@ def check(
                         "expected": baseline_sha256,
                         "actual": form_structure_sha256,
                     })
-
-    if required_fields is not None:
-        rendered = _normalized(extracted_text)
-        for field in required_fields:
-            expected = scalars.get(field, "").strip()
-            placeholder = expected.casefold() in {"", "null", "none", "todo", "tbd", "~"}
-            if placeholder or _normalized(expected) not in rendered:
-                hard.append({"code": "P4", "msg": f"required identity field not filled: {field}",
-                             "at": artifact_rel or "request.yaml"})
 
     grade, grade_source = _proof_grade(ws)
     # Shared-miss #5: the external proof-loop writer can emit converged:true
@@ -736,14 +786,16 @@ def check(
             notes.append(
                 "draft explicitly accepts advisory proof (--allow-advisory)")
 
+    # A child usage error surfaces as a source-tagged USAGE marker; every
+    # other hard finding is a rule failure. Same combination the in-process
+    # saeteuk merge used, generalized over all module contributions.
     has_rule_hard = any(
-        not (finding.get('source') == 'check_saeteuk'
-             and finding.get('code') == 'USAGE')
+        not (finding.get('source') and finding.get('code') == 'USAGE')
         for finding in hard
     )
     code = (
-        3 if saeteuk_code == 3 or has_rule_hard
-        else (2 if saeteuk_code == 2 else 0)
+        3 if worst_child_exit == 3 or has_rule_hard
+        else (2 if worst_child_exit == 2 else 0)
     )
     verdict = {
         "ok": code == 0,
@@ -759,8 +811,7 @@ def check(
         "form_baseline_sha256": baseline_sha256,
         "form_baseline_source": baseline_source,
         "advisory_reason": advisory_reason if allow_advisory else None,
-        "saeteuk_exit": saeteuk_code,
-        "saeteuk_files": saeteuk_verdict.get('saeteuk_files', []),
+        "preflight_contributions": contributions,
         "notes": notes,
         "hard": hard,
         "warn": warn,

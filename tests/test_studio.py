@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from _module_gating import core_only, requires_report_module
+
 
 MODULE_PATH = Path(__file__).parents[1] / "studio" / "main.py"
 SPEC = importlib.util.spec_from_file_location("studio_main", MODULE_PATH)
@@ -141,13 +143,13 @@ def test_readiness_and_yourmove_follow_handoff_contract(tmp_path: Path, monkeypa
         "next_stage": "5.5",
         "next_status": "awaiting_gate",
         "next_gate": {"name": "understand", "state": "pending"},
-        "playbook": "pipeline/references/playbooks/stage-5.5.md",
+        "playbook": "modules/report/references/playbooks/stage-5.5.md",
         "work_dir": "work/stage-5.5",
         "required_inputs": ["output/out.pdf"],
         "expected_outputs": ["UNDERSTANDING.md"],
         "missing_inputs": ["output/out.pdf"],
         "missing_outputs": ["UNDERSTANDING.md"],
-        "resume_command": 'python pipeline/scripts/pipeline_ctl.py resume "C:/safe/report-demo"',
+        "resume_command": 'python modules/report/scripts/pipeline_ctl.py resume "C:/safe/report-demo"',
         "personalization_lock": ".pipeline/personalization.lock.json",
         "generated_at": "2026-07-11T12:00:00+09:00",
         "archived": ["archive/stages/stage-5/scratch.txt"],
@@ -272,6 +274,38 @@ def test_action_post_is_forbidden_by_default(tmp_path: Path, monkeypatch):
     assert exc.value.status_code == 403
 
 
+@core_only
+def test_gate_action_without_stage_machine_module_is_clear_503(
+        tmp_path: Path, monkeypatch):
+    """Core-only: a gate action must refuse with the module message (503),
+    never crash on a dangling pipeline_ctl path (v0.16 W3-S2b decision 6).
+    The env-override graph keeps gate membership valid so the refusal under
+    test is the module one."""
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    (ws / "PIPELINE.md").write_text(_pipeline_text(), encoding="utf-8")
+    fake_graph = tmp_path / "fake-stages.yaml"
+    fake_graph.write_text(
+        '- {id: "2.5", name: "layout_plan", gate: {name: "layout", type: "script"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setenv("STUDIO_STAGES_YAML", str(fake_graph))
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action(
+            "report-demo", "check-gate", "layout",
+            x_studio_token="test-token", host="127.0.0.1",
+        )
+
+    assert exc.value.status_code == 503
+    assert "distribution module" in exc.value.detail
+
+
+@requires_report_module
 def test_check_gate_action_uses_argv_when_enabled(tmp_path: Path, monkeypatch):
     root = tmp_path / "workspaces"
     ws = root / "report-demo"
