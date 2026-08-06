@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,26 @@ SPEC = importlib.util.spec_from_file_location("personalization_ctl", MODULE_PATH
 personalization = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(personalization)
+
+
+@pytest.fixture
+def report_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the report distribution module ENABLED for this test, regardless of
+    which CI matrix point (core-only / all-modules) is running. The env
+    override is read per call by personalization_ctl and inherited by any
+    subprocess it spawns."""
+    enabled = tmp_path / "enabled-for-test.yaml"
+    enabled.write_text(
+        "schema: rigorloom-enabled-modules/v1\nenabled: [report, style]\n",
+        encoding="utf-8")
+    monkeypatch.setenv("RIGORLOOM_ENABLED_FILE", str(enabled))
+
+
+@pytest.fixture
+def core_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a core-only view (no distribution modules enabled)."""
+    monkeypatch.setenv(
+        "RIGORLOOM_ENABLED_FILE", str(tmp_path / "enabled-absent.yaml"))
 
 
 def _write(path: Path, value: Any) -> Path:
@@ -98,7 +119,7 @@ def test_register_pack_validates_and_stores(tmp_path: Path) -> None:
     assert result["sha256"] == personalization.sha256_bytes(personalization.canonical_bytes(stored))
 
 
-def test_global_gloss_pack_adds_terms_without_removing_public_defaults(tmp_path: Path) -> None:
+def test_global_gloss_pack_adds_terms_without_removing_public_defaults(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     default_terms = personalization.pack_default("gloss_allowlist")["terms"]
     operator_pack = {
@@ -118,7 +139,7 @@ def test_global_gloss_pack_adds_terms_without_removing_public_defaults(tmp_path:
     assert "ENSO" in resolved["terms"]
 
 
-def test_global_constants_pack_adds_entries_without_removing_public_defaults(tmp_path: Path) -> None:
+def test_global_constants_pack_adds_entries_without_removing_public_defaults(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     defaults = personalization.pack_default("constants_allowlist")
     operator_entry = {"value": 42, "unit": "answer", "label": "synthetic constant"}
@@ -134,7 +155,7 @@ def test_global_constants_pack_adds_entries_without_removing_public_defaults(tmp
     assert operator_entry in resolved
 
 
-def test_invalid_pack_rejected(tmp_path: Path) -> None:
+def test_invalid_pack_rejected(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     personalization.init(root)
     # missing required 'terms', and a bad enum value for good measure
@@ -154,7 +175,7 @@ def test_pack_type_mismatch_rejected(tmp_path: Path) -> None:
         personalization.register_pack(root, "figure_style", pack_file)
 
 
-def test_constants_allowlist_is_a_validated_list_pack(tmp_path: Path) -> None:
+def test_constants_allowlist_is_a_validated_list_pack(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     personalization.init(root)
     constants = [
@@ -176,7 +197,7 @@ def test_constants_allowlist_is_a_validated_list_pack(tmp_path: Path) -> None:
     ) == []
 
 
-def test_constants_allowlist_rejects_missing_label(tmp_path: Path) -> None:
+def test_constants_allowlist_rejects_missing_label(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     personalization.init(root)
 
@@ -209,7 +230,7 @@ def test_resolve_lock_is_hash_only(tmp_path: Path) -> None:
     assert set(prose_record) == {"pack_type", "source", "name", "version", "sha256"}
 
 
-def test_floor_override_is_refused_and_warned(tmp_path: Path) -> None:
+def test_floor_override_is_refused_and_warned(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -236,7 +257,7 @@ def test_floor_override_is_refused_and_warned(tmp_path: Path) -> None:
     assert "floor-override-warning" in events
 
 
-def test_lock_carries_no_effective_content_and_redacts_floor_values(tmp_path: Path) -> None:
+def test_lock_carries_no_effective_content_and_redacts_floor_values(tmp_path: Path, report_module) -> None:
     root = tmp_path / "profile"
     workspace = tmp_path / "ws-redact"
     workspace.mkdir()
@@ -321,3 +342,233 @@ def test_yaml_subset_reader_roundtrip(tmp_path: Path) -> None:
     path.write_text(yaml_text, encoding="utf-8")
     loaded = personalization.load_pack_file(path)
     assert loaded == pack
+
+
+# --- v0.16 W4.1: general/report pack-type split ------------------------------
+
+def test_core_only_pack_types_are_general(core_only) -> None:
+    assert personalization.PACK_TYPES == list(personalization.CORE_PACK_TYPES)
+    assert personalization.PACK_TYPES == [
+        "prose_rules", "figure_style", "backends", "policy_floors"]
+    assert personalization.DATA_EXTENSION_PACK_TYPES == (
+        "prose_rules", "figure_style")
+
+
+def test_enabled_report_module_extends_pack_types(report_module) -> None:
+    types = personalization.PACK_TYPES
+    assert set(types) == {
+        "prose_rules", "figure_style", "backends", "policy_floors",
+        "saeteuk", "report_structure", "gloss_allowlist",
+        "constants_allowlist", "tone_rules"}
+    data_ext = personalization.DATA_EXTENSION_PACK_TYPES
+    # trust-sensitive types never become extension-installable (tone_rules
+    # included per the W4.1 ruling: it configures thresholds/severities of a
+    # deterministic checker, the constants_allowlist relaxation-vector class)
+    for trust_sensitive in personalization.TRUST_SENSITIVE_PACK_TYPES:
+        assert trust_sensitive not in data_ext
+    assert set(data_ext) == {
+        "prose_rules", "figure_style", "saeteuk", "report_structure",
+        "gloss_allowlist"}
+
+
+def test_report_pack_type_on_core_only_names_missing_module(
+        tmp_path: Path, core_only) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    pack_file = _write(tmp_path / "sae.json", {"pack_type": "saeteuk"})
+    for operation in (
+            lambda: personalization.register_pack(root, "saeteuk", pack_file),
+            lambda: personalization.show_pack(root, "saeteuk"),
+            lambda: personalization.resolve_pack_content(root, "saeteuk"),
+            lambda: personalization.pack_schema("saeteuk"),
+            lambda: personalization.pack_default("saeteuk")):
+        with pytest.raises(ValueError) as caught:
+            operation()
+        message = str(caught.value)
+        assert "'report'" in message and "not enabled" in message
+
+
+def test_unknown_pack_type_lists_known_types(tmp_path: Path, core_only) -> None:
+    with pytest.raises(ValueError) as caught:
+        personalization.register_pack(
+            tmp_path / "profile", "no_such_pack",
+            _write(tmp_path / "x.json", {}))
+    message = str(caught.value)
+    assert "unknown pack type" in message and "prose_rules" in message
+
+
+def test_resolve_lock_omits_module_pack_types_on_core_only(
+        tmp_path: Path, core_only) -> None:
+    root = tmp_path / "profile"
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    personalization.init(root)
+    result = personalization.resolve(root, workspace, None, None, None, None)
+    lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
+    assert [row["pack_type"] for row in lock["packs"]] == list(
+        personalization.CORE_PACK_TYPES)
+
+
+# --- v0.16 W4.1: schema rename with read-compat ------------------------------
+
+def test_init_writes_current_schema_and_lock_schema(tmp_path: Path) -> None:
+    root = tmp_path / "profile"
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    personalization.init(root)
+    manifest = personalization.read_json(root / "manifest.json", {})
+    assert manifest["schema"] == "rigorloom/personalization-v1"
+    result = personalization.resolve(root, workspace, None, None, None, None)
+    lock = json.loads(Path(result["lock"]).read_text(encoding="utf-8"))
+    assert lock["schema"] == "rigorloom/personalization-lock-v1"
+    assert lock["profile_schema"] == "rigorloom/personalization-v1"
+
+
+def test_legacy_profile_schema_accepted_with_single_warning(
+        tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    root = tmp_path / "profile"
+    personalization.init(root)
+    manifest = personalization.read_json(root / "manifest.json", {})
+    manifest["schema"] = "report-pipeline/personalization-v1"
+    personalization.write_json(root / "manifest.json", manifest)
+    personalization._WARNED_ONCE.clear()
+
+    first = personalization.export_store(root, tmp_path / "one.zip")
+    second = personalization.export_store(root, tmp_path / "two.zip")
+    assert first["ok"] and second["ok"]
+
+    err = capsys.readouterr().err
+    assert err.count("legacy personalization schema") == 1
+    assert "report-pipeline/personalization-v1" in err
+
+
+def test_lock_schema_read_compat() -> None:
+    personalization._WARNED_ONCE.clear()
+    assert personalization.accept_lock_schema(
+        "rigorloom/personalization-lock-v1", "t") is True
+    assert personalization.accept_lock_schema(
+        "report-pipeline/personalization-lock-v1", "t") is True
+    assert personalization.accept_lock_schema("something/else", "t") is False
+
+
+# --- v0.16 W4.1: store portability (export / import) -------------------------
+
+def _populated_store(tmp_path: Path) -> Path:
+    root = tmp_path / "store"
+    personalization.init(root)
+    personalization.register_pack(
+        root, "prose_rules", _write(tmp_path / "prose.json", _valid_prose_pack()))
+    (root / personalization.DENYLIST_FILENAME).write_text(
+        "SECRET-NAME\n", encoding="utf-8")
+    return root
+
+
+def test_export_import_round_trip_excludes_denylist(tmp_path: Path) -> None:
+    root = _populated_store(tmp_path)
+    archive = tmp_path / "store.zip"
+    result = personalization.export_store(root, archive)
+    assert result["ok"] and result["denylist_excluded"] is True
+
+    with zipfile.ZipFile(archive) as handle:
+        names = set(handle.namelist())
+        blob = b"".join(handle.read(name) for name in names)
+    assert personalization.EXPORT_MANIFEST_NAME in names
+    assert not any(
+        Path(name).name == personalization.DENYLIST_FILENAME for name in names)
+    # denylist CONTENT never travels either
+    assert b"SECRET-NAME" not in blob
+
+    target = tmp_path / "machine-b" / "store"
+    imported = personalization.import_store(target, archive)
+    assert imported["ok"] and imported["files"] == result["files"]
+    # identical pack content and identical file trees (minus the denylist)
+    assert (personalization.stored_pack(target, "prose_rules")
+            == personalization.stored_pack(root, "prose_rules"))
+    source_files = {
+        p.relative_to(root).as_posix() for p in root.rglob("*")
+        if p.is_file() and p.name != personalization.DENYLIST_FILENAME}
+    target_files = {
+        p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file()}
+    assert target_files == source_files
+    assert personalization.list_packs(target) == personalization.list_packs(root)
+
+
+def test_import_refuses_non_empty_target(tmp_path: Path) -> None:
+    root = _populated_store(tmp_path)
+    archive = tmp_path / "store.zip"
+    personalization.export_store(root, archive)
+    target = tmp_path / "occupied"
+    target.mkdir()
+    (target / "existing.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="non-empty profile root"):
+        personalization.import_store(target, archive)
+    # target untouched
+    assert (target / "existing.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_import_refuses_tampered_archive(tmp_path: Path) -> None:
+    root = _populated_store(tmp_path)
+    archive = tmp_path / "store.zip"
+    personalization.export_store(root, archive)
+
+    # tamper 1: modify a manifested file's bytes
+    tampered = tmp_path / "tampered.zip"
+    with zipfile.ZipFile(archive) as src, zipfile.ZipFile(tampered, "w") as dst:
+        for name in src.namelist():
+            data = src.read(name)
+            if name == "packs/prose_rules.json":
+                data = data.replace(b"test-prose", b"evil-prose")
+            dst.writestr(name, data)
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        personalization.import_store(tmp_path / "t1", tampered)
+    assert not (tmp_path / "t1").exists()
+
+    # tamper 2: smuggle an extra file the manifest never listed
+    extra = tmp_path / "extra.zip"
+    with zipfile.ZipFile(archive) as src, zipfile.ZipFile(extra, "w") as dst:
+        for name in src.namelist():
+            dst.writestr(name, src.read(name))
+        dst.writestr("packs/smuggled.json", "{}")
+    with pytest.raises(ValueError, match="absent from"):
+        personalization.import_store(tmp_path / "t2", extra)
+
+    # tamper 3: an archive claiming to carry a denylist is refused
+    with_denylist = tmp_path / "denylist.zip"
+    with zipfile.ZipFile(archive) as src, zipfile.ZipFile(with_denylist, "w") as dst:
+        manifest = json.loads(src.read(personalization.EXPORT_MANIFEST_NAME))
+        denylist_body = b"SECRET-NAME\n"
+        manifest["files"][personalization.DENYLIST_FILENAME] = (
+            personalization.sha256_bytes(denylist_body))
+        dst.writestr(personalization.EXPORT_MANIFEST_NAME,
+                     json.dumps(manifest))
+        for name in src.namelist():
+            if name != personalization.EXPORT_MANIFEST_NAME:
+                dst.writestr(name, src.read(name))
+        dst.writestr(personalization.DENYLIST_FILENAME, denylist_body)
+    with pytest.raises(ValueError, match="denylist"):
+        personalization.import_store(tmp_path / "t3", with_denylist)
+
+
+def test_export_refuses_uninitialized_root(tmp_path: Path) -> None:
+    empty = tmp_path / "not-a-store"
+    empty.mkdir()
+    with pytest.raises(ValueError, match="manifest.json"):
+        personalization.export_store(empty, tmp_path / "out.zip")
+
+
+def test_import_refuses_zip_slip_member(tmp_path: Path) -> None:
+    evil = tmp_path / "evil.zip"
+    body = b"owned"
+    manifest = {
+        "schema": personalization.EXPORT_SCHEMA,
+        "exported_at": "2026-08-07T00:00:00+00:00",
+        "profile_schema": personalization.SCHEMA,
+        "excluded": [],
+        "files": {"../escape.txt": personalization.sha256_bytes(body)},
+    }
+    with zipfile.ZipFile(evil, "w") as dst:
+        dst.writestr(personalization.EXPORT_MANIFEST_NAME, json.dumps(manifest))
+        dst.writestr("../escape.txt", body)
+    with pytest.raises(ValueError, match="escapes the profile root"):
+        personalization.import_store(tmp_path / "victim", evil)
+    assert not (tmp_path / "escape.txt").exists()

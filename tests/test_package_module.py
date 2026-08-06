@@ -167,6 +167,23 @@ class TestModuleBundle:
         assert not list((tmp_path / "dist").glob("*.zip")) \
             if (tmp_path / "dist").exists() else True
 
+    def test_profile_store_content_in_payload_refuses_the_build(
+            self, tmp_path: Path):
+        # v0.16 W4.1 artifact leak gate: personalization-store content in a
+        # staged bundle (here a store manifest.json) is a privacy_scan HARD
+        # finding (profile_store_content) — the build refuses, exit 3.
+        module = make_module(tmp_path / "modules")
+        (module / "references" / "leaked-profile.json").write_text(
+            json.dumps({"schema": "rigorloom/personalization-v1",
+                        "version": 1, "redact_logs": True}),
+            encoding="utf-8")
+        with pytest.raises(package_module.PackageError) as ctx:
+            build(tmp_path)
+        assert ctx.value.exit_code == 3
+        assert "privacy_scan" in str(ctx.value)
+        assert not list((tmp_path / "dist").glob("*.zip")) \
+            if (tmp_path / "dist").exists() else True
+
 
 class TestCoreBundle:
     def test_core_bundle_contains_core_surface_and_no_module_payloads(

@@ -87,7 +87,12 @@ from checker_base import (  # noqa: E402
 
 CHECKER = "check_tone_rules"
 PACK_TYPE = "tone_rules"
-DEFAULT_TONE_PACK = personalization_ctl.PACK_DEFAULTS_DIR / "tone_rules.json"
+# tone_rules is a report-module pack type (v0.16 W4.1 split); its public
+# default ships as module payload, so the default path is module-relative.
+DEFAULT_TONE_PACK = (
+    SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
+    / "tone_rules.json"
+)
 
 RULE_KINDS = ("hedge_on_measured_value", "conclusion_pivot_density")
 

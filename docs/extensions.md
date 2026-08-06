@@ -30,7 +30,17 @@ They need a separate capability and trust model and are not part of v1.
 `constants_allowlist` is also rejected (v0.13.1 policy boundary): it relaxes the
 deterministic numeric checker (`check_numbers`), so it remains a profile-level
 pack managed through `personalization_ctl` and is never installable from an
-extension pack.
+extension pack. `tone_rules` is rejected for the same reason (v0.16 W4.1
+ruling): it configures the thresholds and severities of the deterministic
+tone checker (`check_tone_rules`) — the same relaxation-vector class, so it
+too stays profile-level only.
+
+The allowed set is computed, not hardcoded (v0.16 W4.1 pack split): every
+pack type known to the install — core's general types plus enabled
+distribution modules' declared types — minus the trust-sensitive set
+(`backends`, `policy_floors`, `constants_allowlist`, `tone_rules`). A pack
+type whose declaring module is not enabled is likewise refused, at both
+install and resolve time.
 
 ## Commands
 

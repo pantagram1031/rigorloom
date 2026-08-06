@@ -1,43 +1,229 @@
 #!/usr/bin/env python3
-"""Manage a private, auditable personalization store for report-pipeline.
+"""Manage a private, auditable personalization store for rigorloom.
 
 This controller deliberately uses only the Python standard library.  Profile
 roots are local state: they are never a required part of a report workspace or
 of the public repository.
+
+Pack-type split (v0.16 W4.1): core declares only GENERAL pack types
+(writing-voice, figure style, backends, policy floors).  Report-flavored pack
+types (saeteuk, report_structure, gloss_allowlist, constants_allowlist,
+tone_rules) are declared by the report distribution module through its
+``module.yaml`` ``pack_types`` and their schema/default files live inside the
+module directory.  ``PACK_TYPES`` and ``DATA_EXTENSION_PACK_TYPES`` are
+computed at access time (PEP 562 module ``__getattr__``) from the core
+built-ins plus ``ModuleRegistry.enabled_pack_types()``.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-SCHEMA = "report-pipeline/personalization-v1"
-DEFAULT_ROOT = Path(__file__).resolve().parents[2] / ".local" / "personalization"
+
+# Schema rename (v0.16 W4.1): the store is engine-level, not report-flavored.
+# The legacy string is still ACCEPTED on read (warned once per process) so
+# existing stores keep working; new writes always use the current string.
+SCHEMA = "rigorloom/personalization-v1"
+LEGACY_SCHEMAS = ("report-pipeline/personalization-v1",)
+PROFILE_SCHEMAS = (SCHEMA, *LEGACY_SCHEMAS)
+LOCK_SCHEMA = "rigorloom/personalization-lock-v1"
+LEGACY_LOCK_SCHEMAS = ("report-pipeline/personalization-lock-v1",)
+LOCK_SCHEMAS = (LOCK_SCHEMA, *LEGACY_LOCK_SCHEMAS)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ROOT = REPO_ROOT / ".local" / "personalization"
+DEFAULT_MODULES_ROOT = REPO_ROOT / "modules"
 
 PACK_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "references" / "preference_packs"
 PACK_DEFAULTS_DIR = PACK_SCHEMA_DIR / "defaults"
-PACK_TYPES = ["prose_rules", "figure_style", "report_structure", "saeteuk",
-              "gloss_allowlist", "constants_allowlist", "backends",
-              "policy_floors", "tone_rules"]
-# v0.13.1 policy boundary: constants_allowlist stays a profile-level pack but
-# is NOT installable via extension packs — it is a confirmed relaxation vector
-# for the deterministic numeric checker (check_numbers._constant_matches).
-DATA_EXTENSION_PACK_TYPES = (
-    "prose_rules", "figure_style", "report_structure", "saeteuk",
-    "gloss_allowlist",
-)
+
+# Core built-in (GENERAL) pack types: writing voice, figure look, worker
+# backends, policy floors.  Everything report-flavored is module-declared.
+CORE_PACK_TYPES = ("prose_rules", "figure_style", "backends", "policy_floors")
+# Trust boundary for data-only extension packs: backends and policy_floors
+# require a separate trust model; constants_allowlist (v0.13.1) is a
+# confirmed relaxation vector for the deterministic numeric checker
+# (check_numbers._constant_matches); tone_rules (W4.1 ruling) configures the
+# thresholds/severities of a deterministic checker (check_tone_rules) — the
+# same relaxation-vector class. All four are profile-level only, never
+# extension-installable.
+TRUST_SENSITIVE_PACK_TYPES = (
+    "backends", "policy_floors", "constants_allowlist", "tone_rules")
+# Module payload convention for module-declared pack types: schemas at
+# modules/<name>/references/preference_packs/<type>.schema.json and defaults
+# at .../preference_packs/defaults/<type>.json.
+MODULE_PACK_SUBDIR = ("references", "preference_packs")
+
 EXTENSION_REGISTRY_SCHEMA = "rigorloom/extension-registry-v1"
 EXTENSION_RECEIPT_SCHEMA = "rigorloom/extension-receipt-v1"
 _EXTENSION_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
 _EXTENSION_VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+EXPORT_SCHEMA = "rigorloom/personalization-export-v1"
+EXPORT_MANIFEST_NAME = "export_manifest.json"
+# The operator's privacy denylist holds their real sensitive literals; it is
+# NEVER included in a portability export.
+DENYLIST_FILENAME = "privacy_denylist.txt"
+
+_WARNED_ONCE: set[str] = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    if key in _WARNED_ONCE:
+        return
+    _WARNED_ONCE.add(key)
+    print(f"WARNING: {message}", file=sys.stderr)
+
+
+def accept_profile_schema(value: Any, where: str) -> bool:
+    """True if `value` is the current or a legacy personalization schema.
+
+    Legacy strings are accepted with a once-per-process warning (read-compat
+    for stores created before the rigorloom/* rename)."""
+    if value == SCHEMA:
+        return True
+    if value in LEGACY_SCHEMAS:
+        _warn_once(
+            f"legacy-profile-schema:{value}",
+            f"{where}: legacy personalization schema {value!r} accepted; "
+            f"the current schema is {SCHEMA!r}")
+        return True
+    return False
+
+
+def accept_lock_schema(value: Any, where: str) -> bool:
+    """Read-compat twin of accept_profile_schema for the workspace lock."""
+    if value == LOCK_SCHEMA:
+        return True
+    if value in LEGACY_LOCK_SCHEMAS:
+        _warn_once(
+            f"legacy-lock-schema:{value}",
+            f"{where}: legacy personalization lock schema {value!r} accepted; "
+            f"the current schema is {LOCK_SCHEMA!r}")
+        return True
+    return False
+
+
+# --- Registry-aware pack-type table ------------------------------------------
+# Core consumes distribution modules ONLY through module_registry's typed
+# accessors; the env overrides exist so tests (and subprocesses they spawn)
+# can pin enablement deterministically on both CI matrix points.
+
+def _module_registry():
+    import module_registry  # local sibling; lazy so import stays light
+    modules_root = os.environ.get("RIGORLOOM_MODULES_ROOT") or DEFAULT_MODULES_ROOT
+    enabled_file = os.environ.get("RIGORLOOM_ENABLED_FILE")
+    if enabled_file:
+        return module_registry.ModuleRegistry(modules_root, enabled_file=enabled_file)
+    return module_registry.ModuleRegistry(modules_root)
+
+
+def _module_pack_entries() -> dict[str, dict[str, Any]]:
+    """pack_type -> {schema_path, default_path, module} for enabled modules."""
+    registry = _module_registry()
+    entries: dict[str, dict[str, Any]] = {}
+    for spec in registry.enabled_modules():
+        base = spec.root.joinpath(*MODULE_PACK_SUBDIR)
+        for pack_type in spec.provides.get("pack_types", []):
+            if pack_type in CORE_PACK_TYPES:
+                raise ValueError(
+                    f"distribution module '{spec.name}' declares pack type "
+                    f"'{pack_type}', which collides with a core built-in "
+                    f"pack type")
+            entries[pack_type] = {
+                "schema_path": base / f"{pack_type}.schema.json",
+                "default_path": base / "defaults" / f"{pack_type}.json",
+                "module": spec.name,
+            }
+    return entries
+
+
+def _pack_entries() -> dict[str, dict[str, Any]]:
+    entries: dict[str, dict[str, Any]] = {
+        pack_type: {
+            "schema_path": PACK_SCHEMA_DIR / f"{pack_type}.schema.json",
+            "default_path": PACK_DEFAULTS_DIR / f"{pack_type}.json",
+            "module": None,
+        }
+        for pack_type in CORE_PACK_TYPES
+    }
+    entries.update(_module_pack_entries())
+    return entries
+
+
+def known_pack_types() -> list[str]:
+    """Core built-ins + pack types of enabled distribution modules."""
+    return list(_pack_entries())
+
+
+def default_pack_files() -> dict[str, Path]:
+    """pack_type -> public default file, core + enabled modules (for
+    installers that seed a profile with every known default)."""
+    return {pack_type: entry["default_path"]
+            for pack_type, entry in _pack_entries().items()}
+
+
+def data_extension_pack_types() -> tuple[str, ...]:
+    """Pack types installable via data-only extension packs: every known
+    pack type minus the trust-sensitive set (v0.13.1 boundary)."""
+    return tuple(
+        pack_type for pack_type in known_pack_types()
+        if pack_type not in TRUST_SENSITIVE_PACK_TYPES)
+
+
+def _pack_entry(pack_type: str) -> dict[str, Any]:
+    """Resolve a pack type to its schema/default files or fail loudly.
+
+    A pack type declared by a discovered-but-disabled distribution module is
+    a distinct, actionable error naming that module — never a silent skip."""
+    entries = _pack_entries()
+    if pack_type in entries:
+        return entries[pack_type]
+    import module_registry
+    owner = None
+    try:
+        for name, spec in sorted(_module_registry().discover().items()):
+            if pack_type in spec.provides.get("pack_types", []):
+                owner = name
+                break
+    except module_registry.ModuleError:
+        owner = None
+    if owner:
+        raise ValueError(
+            f"pack type '{pack_type}' is declared by distribution module "
+            f"'{owner}', which is not enabled; enable it first (e.g. "
+            f"`python pipeline/scripts/module_registry.py write-enabled "
+            f"--all`, or list '{owner}' in modules/enabled.yaml)")
+    raise ValueError(
+        f"unknown pack type: {pack_type} "
+        f"(known: {', '.join(known_pack_types())})")
+
+
+def __getattr__(name: str) -> Any:  # PEP 562
+    """Registry-aware module attributes.
+
+    ``PACK_TYPES`` and ``DATA_EXTENSION_PACK_TYPES`` used to be hardcoded
+    constants; they are now computed per access from the core built-ins plus
+    the enabled distribution modules' declared pack types."""
+    if name == "PACK_TYPES":
+        return known_pack_types()
+    if name == "DATA_EXTENSION_PACK_TYPES":
+        return data_extension_pack_types()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def now() -> str:
@@ -204,11 +390,19 @@ def validate_instance(instance: Any, schema: dict[str, Any], where: str = "$") -
 
 
 def pack_schema(pack_type: str) -> dict[str, Any]:
-    return json.loads((PACK_SCHEMA_DIR / f"{pack_type}.schema.json").read_text(encoding="utf-8"))
+    entry = _pack_entry(pack_type)
+    path = entry["schema_path"]
+    if not path.is_file():
+        raise ValueError(f"pack schema file is missing for '{pack_type}': {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def pack_default(pack_type: str) -> Any:
-    return json.loads((PACK_DEFAULTS_DIR / f"{pack_type}.json").read_text(encoding="utf-8"))
+    entry = _pack_entry(pack_type)
+    path = entry["default_path"]
+    if not path.is_file():
+        raise ValueError(f"pack default file is missing for '{pack_type}': {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def deep_merge(base: Any, over: Any) -> Any:
@@ -279,8 +473,7 @@ def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
 
 
 def register_pack(root: Path, pack_type: str, file: Path) -> dict[str, Any]:
-    if pack_type not in PACK_TYPES:
-        raise ValueError(f"unknown pack type: {pack_type} (known: {', '.join(PACK_TYPES)})")
+    _pack_entry(pack_type)  # loud error for unknown / module-not-enabled types
     content = load_pack_file(file)
     if not isinstance(content, (dict, list)):
         raise ValueError(f"pack file did not parse to a mapping or list: {file}")
@@ -306,8 +499,7 @@ def stored_pack(root: Path, pack_type: str) -> Any | None:
 
 
 def show_pack(root: Path, pack_type: str) -> dict[str, Any]:
-    if pack_type not in PACK_TYPES:
-        raise ValueError(f"unknown pack type: {pack_type}")
+    _pack_entry(pack_type)
     content = stored_pack(root, pack_type)
     source = "profile"
     if content is None:
@@ -319,7 +511,7 @@ def show_pack(root: Path, pack_type: str) -> dict[str, Any]:
 
 def list_packs(root: Path) -> dict[str, Any]:
     rows = []
-    for pack_type in PACK_TYPES:
+    for pack_type in known_pack_types():
         content = stored_pack(root, pack_type)
         if content is None:
             content = pack_default(pack_type)
@@ -407,11 +599,15 @@ def _active_extension_layers(root: Path) -> list[dict[str, Any]]:
             if not isinstance(row, dict):
                 raise ValueError(f"active extension pack receipt is invalid: {extension_id}@{version}")
             pack_type = row.get("pack_type")
-            if pack_type not in DATA_EXTENSION_PACK_TYPES:
+            # Runtime re-enforcement of the extension trust boundary: the
+            # allowed set is registry-aware, so a pack type whose declaring
+            # module is disabled is refused here too.
+            if pack_type not in data_extension_pack_types():
                 raise ValueError(
                     f"pack type is not allowed in a data-only extension: {pack_type}; "
                     "backends and policy_floors require a separate trust model, and "
-                    "constants_allowlist relaxes deterministic checks (profile-level only)"
+                    "constants_allowlist/tone_rules relax deterministic checks "
+                    "(profile-level only)"
                 )
             path = _contained_file(target, row.get("path", ""))
             content = load_pack_file(path)
@@ -435,7 +631,7 @@ def resolve_pack_set(root: Path, subject: str | None = None,
     layers = _active_extension_layers(root)
     resolved: dict[str, Any] = {}
     sources: dict[str, str] = {}
-    for pack_type in PACK_TYPES:
+    for pack_type in known_pack_types():
         merged = pack_default(pack_type)
         src = "public-default"
         for layer in layers:
@@ -486,8 +682,7 @@ def resolve_pack_set(root: Path, subject: str | None = None,
 
 def resolve_pack_content(root: Path, pack_type: str, subject: str | None = None,
                          form_digest: str | None = None) -> tuple[Any, dict[str, Any]]:
-    if pack_type not in PACK_TYPES:
-        raise ValueError(f"unknown pack type: {pack_type}")
+    _pack_entry(pack_type)
     result = resolve_pack_set(root, subject, form_digest)
     return result["contents"][pack_type], {
         "source": result["sources"][pack_type],
@@ -503,7 +698,7 @@ def resolve_packs(root: Path, subject: str | None, form_digest: str | None) -> d
     floor-warning list. Resolved rule CONTENT is never returned to the lock."""
     result = resolve_pack_set(root, subject, form_digest)
     records = []
-    for pack_type in PACK_TYPES:
+    for pack_type in known_pack_types():
         content = result["contents"][pack_type]
         name, version = _pack_metadata(content)
         records.append({"pack_type": pack_type, "source": result["sources"][pack_type],
@@ -617,7 +812,7 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
     # effective document, while the workspace lock receives hashes/provenance only.
     effective["packs"] = resolved_pack_set["contents"]
     pack_records = []
-    for pack_type in PACK_TYPES:
+    for pack_type in known_pack_types():
         content = resolved_pack_set["contents"][pack_type]
         name, version = _pack_metadata(content)
         pack_records.append({
@@ -658,7 +853,7 @@ def resolve(root: Path, workspace: Path, form: Path | None, subject: str | None,
         for w in pack_resolution["floor_warnings"]
     ]
 
-    lock = {"schema": "report-pipeline/personalization-lock-v1", "lock_version": 4, "generated_at": now(),
+    lock = {"schema": LOCK_SCHEMA, "lock_version": 5, "generated_at": now(),
             "profile_schema": SCHEMA, "profile_root_hint": root.name, "form_sha256": form_digest,
             "subject": subject, "identity_enabled": bool(read_json(paths["identity"], {}).get("enabled")),
             "effective_sha256": effective_sha256,
@@ -754,6 +949,124 @@ def backup(root: Path, output: Path) -> dict[str, Any]:
     return {"ok": True, "backup": str(output.resolve())}
 
 
+# --- Store portability (v0.16 W4.1): export / import ------------------------
+# `export` produces a machine-portable zip of the profile root with a hash
+# manifest; the privacy denylist file is NEVER included.  `import` verifies
+# the manifest byte-for-byte, refuses tamper, and refuses a non-empty target.
+
+def _safe_export_member(relative: str) -> Path:
+    rel = Path(relative)
+    if rel.is_absolute() or rel.drive or ".." in rel.parts or not relative.strip():
+        raise ValueError(f"export member path escapes the profile root: {relative!r}")
+    return rel
+
+
+def export_store(root: Path, output: Path) -> dict[str, Any]:
+    root = Path(root).resolve()
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(
+            f"profile root is not an initialized personalization store "
+            f"(missing manifest.json): {root}")
+    profile_manifest = read_json(manifest_path, {})
+    schema_value = profile_manifest.get("schema") if isinstance(profile_manifest, dict) else None
+    if not accept_profile_schema(schema_value, str(manifest_path)):
+        raise ValueError(
+            f"not a personalization store (manifest schema {schema_value!r}): {root}")
+    files: dict[str, str] = {}
+    excluded: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if path.name == DENYLIST_FILENAME:
+            excluded.append(rel)  # names only; denylist CONTENT never travels
+            continue
+        files[rel] = sha256(path)
+    export_manifest = {
+        "schema": EXPORT_SCHEMA,
+        "exported_at": now(),
+        "profile_schema": schema_value,
+        "excluded": sorted(excluded),
+        "files": files,
+    }
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            EXPORT_MANIFEST_NAME,
+            json.dumps(export_manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+        for rel in files:
+            archive.write(root / rel, rel)
+    return {"ok": True, "export": str(output.resolve()), "files": len(files),
+            "denylist_excluded": bool(excluded),
+            "manifest_sha256": sha256_bytes(canonical_bytes(export_manifest))}
+
+
+def import_store(root: Path, archive_path: Path) -> dict[str, Any]:
+    root = Path(root)
+    if root.exists() and any(root.iterdir()):
+        raise ValueError(
+            f"refusing to import into a non-empty profile root: {root} "
+            f"(import targets a new or empty directory only)")
+    with zipfile.ZipFile(archive_path) as archive:
+        names = [name for name in archive.namelist() if not name.endswith("/")]
+        if EXPORT_MANIFEST_NAME not in names:
+            raise ValueError(
+                f"not a personalization export (missing {EXPORT_MANIFEST_NAME}): "
+                f"{archive_path}")
+        manifest = json.loads(archive.read(EXPORT_MANIFEST_NAME).decode("utf-8"))
+        if not isinstance(manifest, dict) or manifest.get("schema") != EXPORT_SCHEMA:
+            raise ValueError(
+                f"invalid export manifest schema: "
+                f"{manifest.get('schema') if isinstance(manifest, dict) else manifest!r}")
+        if not accept_profile_schema(
+                manifest.get("profile_schema"), f"{archive_path}:{EXPORT_MANIFEST_NAME}"):
+            raise ValueError(
+                f"unsupported profile schema in export: {manifest.get('profile_schema')!r}")
+        files = manifest.get("files")
+        if not isinstance(files, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+            raise ValueError("invalid export manifest: files must map path -> sha256")
+        members = set(names) - {EXPORT_MANIFEST_NAME}
+        extra = sorted(members - set(files))
+        missing = sorted(set(files) - members)
+        if extra:
+            raise ValueError(
+                "refusing tampered export: archive contains files absent from "
+                "its manifest: " + ", ".join(extra[:5]))
+        if missing:
+            raise ValueError(
+                "refusing tampered export: manifested files missing from "
+                "archive: " + ", ".join(missing[:5]))
+        if any(Path(rel).name == DENYLIST_FILENAME for rel in files):
+            raise ValueError(
+                "refusing export containing a privacy denylist file; "
+                "denylists are never exported")
+        root.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".importing-", dir=str(root.parent)))
+        try:
+            for rel, expected in sorted(files.items()):
+                rel_path = _safe_export_member(rel)
+                target = staging / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(rel) as src, target.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                actual = sha256(target)
+                if actual != expected:
+                    raise ValueError(
+                        f"refusing tampered export: sha256 mismatch for {rel} "
+                        f"(manifest {expected}, archive {actual})")
+            if root.exists():
+                root.rmdir()  # verified empty above
+            staging.replace(root)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+    return {"ok": True, "profile_root": str(root.resolve()),
+            "files": len(files), "profile_schema": manifest.get("profile_schema")}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile-root", type=Path, default=DEFAULT_ROOT)
@@ -761,8 +1074,11 @@ def main() -> int:
     sub.add_parser("init")
     p = sub.add_parser("register-form"); p.add_argument("--form", required=True, type=Path); p.add_argument("--form-profile", type=Path); p.add_argument("--subject")
     p = sub.add_parser("resolve"); p.add_argument("--workspace", required=True, type=Path); p.add_argument("--form", type=Path); p.add_argument("--subject"); p.add_argument("--request", type=Path); p.add_argument("--form-profile", type=Path)
-    p = sub.add_parser("register-pack"); p.add_argument("--type", required=True, choices=PACK_TYPES); p.add_argument("--file", required=True, type=Path)
-    p = sub.add_parser("show-pack"); p.add_argument("--type", required=True, choices=PACK_TYPES)
+    # No argparse `choices` for --type: pack-type validation happens in
+    # register_pack/show_pack so a report-flavored type on a core-only install
+    # gets the actionable module-not-enabled error, not an argparse refusal.
+    p = sub.add_parser("register-pack"); p.add_argument("--type", required=True); p.add_argument("--file", required=True, type=Path)
+    p = sub.add_parser("show-pack"); p.add_argument("--type", required=True)
     sub.add_parser("list-packs")
     p = sub.add_parser("import-legacy"); p.add_argument("--legacy-root", required=True, type=Path)
     p = sub.add_parser("collect-feedback"); p.add_argument("--workspace", required=True, type=Path)
@@ -771,8 +1087,19 @@ def main() -> int:
     p = sub.add_parser("reject"); p.add_argument("--id", required=True)
     p = sub.add_parser("export-backup"); p.add_argument("--output", required=True, type=Path)
     p = sub.add_parser("restore-backup"); p.add_argument("--input", required=True, type=Path)
+    p = sub.add_parser("export"); p.add_argument("--output", required=True, type=Path)
+    p = sub.add_parser("import"); p.add_argument("--input", required=True, type=Path)
     sub.add_parser("doctor")
     args = parser.parse_args(); root = args.profile_root.expanduser().resolve()
+    try:
+        return _dispatch(args, root)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False),
+              file=sys.stderr)
+        return 2
+
+
+def _dispatch(args: argparse.Namespace, root: Path) -> int:
     if args.command == "init": result = init(root)
     elif args.command == "register-form": result = form_record(root, args.form, args.form_profile, args.subject)
     elif args.command == "resolve": result = resolve(root, args.workspace, args.form, args.subject, args.request, args.form_profile)
@@ -785,6 +1112,8 @@ def main() -> int:
     elif args.command == "approve": result = decide(root, args.id, "approved")
     elif args.command == "reject": result = decide(root, args.id, "rejected")
     elif args.command == "export-backup": result = backup(root, args.output)
+    elif args.command == "export": result = export_store(root, args.output)
+    elif args.command == "import": result = import_store(root, args.input)
     elif args.command == "restore-backup":
         init(root)
         with zipfile.ZipFile(args.input) as archive: archive.extractall(root)

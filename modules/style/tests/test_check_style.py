@@ -8,6 +8,7 @@ the default prose pack load, planted banned regex (HARD), signature over cap
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,31 @@ class CheckStyleTestCase(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def _pin_enabled_file(self, path: Path) -> None:
+        previous = os.environ.get("RIGORLOOM_ENABLED_FILE")
+
+        def _restore():
+            if previous is None:
+                os.environ.pop("RIGORLOOM_ENABLED_FILE", None)
+            else:
+                os.environ["RIGORLOOM_ENABLED_FILE"] = previous
+
+        self.addCleanup(_restore)
+        os.environ["RIGORLOOM_ENABLED_FILE"] = str(path)
+
+    def enable_report_module(self):
+        """Pin the report module ENABLED (its gloss_allowlist default is
+        module payload since the v0.16 W4.1 split), independent of the CI
+        matrix point. Style is listed too: report requires_modules style."""
+        enabled = Path(self._tmp.name) / "enabled-for-test.yaml"
+        enabled.write_text(
+            "schema: rigorloom-enabled-modules/v1\nenabled: [report, style]\n",
+            encoding="utf-8")
+        self._pin_enabled_file(enabled)
+
+    def disable_all_modules(self):
+        self._pin_enabled_file(Path(self._tmp.name) / "enabled-absent.yaml")
 
     def write_content(self, text: str):
         (self.ws / "bundle" / "content.md").write_text(text, encoding="utf-8")
@@ -109,6 +135,7 @@ class TestGlossCalibration(CheckStyleTestCase):
     }
 
     def test_claim_unit_symbols_and_default_software_names_are_exempt(self):
+        self.enable_report_module()
         self.write_content(
             "거리(AU), 온도(K), 계산(SymPy)은 합법적인 전문 표기다.\n"
         )
@@ -121,6 +148,7 @@ class TestGlossCalibration(CheckStyleTestCase):
         ), verdict)
 
     def test_operator_terms_extend_default_software_names(self):
+        self.enable_report_module()
         self.write_content("계산(SymPy)과 모형(TopicCalc)을 사용했다.\n")
 
         verdict, code = check_style.check(
@@ -130,6 +158,21 @@ class TestGlossCalibration(CheckStyleTestCase):
         )
 
         self.assertEqual(code, 0, verdict)
+
+    def test_style_without_report_keeps_unit_exemptions_only(self):
+        # check_style is style-module payload; gloss_allowlist belongs to the
+        # report module. Without report there are no gloss default terms
+        # (SymPy exemptions), but unit symbols from claim_extraction still
+        # exempt — absence weakens nothing and invents nothing.
+        self.disable_all_modules()
+        self.write_content("거리(AU)와 계산(SymPy)을 사용했다.\n")
+
+        verdict, code = self.check(prose=self.GLOSS_PACK)
+
+        self.assertEqual(code, 3, verdict)
+        snippets = [item["at"] for item in verdict["hard"]]
+        self.assertTrue(any("SymPy" in at for at in snippets), verdict)
+        self.assertFalse(any("AU" in at for at in snippets), verdict)
 
     def test_unknown_gloss_still_triggers_hard_ban(self):
         self.write_content("계산(Fictronix)을 사용했다.\n")

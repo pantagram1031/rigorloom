@@ -193,7 +193,7 @@ def test_invalid_preference_pack_is_rejected_before_install(tmp_path: Path) -> N
         extension_pack.validate_pack(source)
 
 
-@pytest.mark.parametrize("pack_type", ["backends", "policy_floors", "constants_allowlist"])
+@pytest.mark.parametrize("pack_type", ["backends", "policy_floors", "constants_allowlist", "tone_rules"])
 def test_manifest_refuses_trust_sensitive_pack_types(
     tmp_path: Path, pack_type: str
 ) -> None:
@@ -209,7 +209,7 @@ def test_manifest_refuses_trust_sensitive_pack_types(
         extension_pack.validate_pack(source)
 
 
-@pytest.mark.parametrize("pack_type", ["backends", "policy_floors", "constants_allowlist"])
+@pytest.mark.parametrize("pack_type", ["backends", "policy_floors", "constants_allowlist", "tone_rules"])
 def test_install_refuses_trust_sensitive_pack_types(
     tmp_path: Path, pack_type: str
 ) -> None:
@@ -287,7 +287,7 @@ def test_runtime_rejects_registry_path_traversal(tmp_path: Path) -> None:
         personalization.resolve_pack_content(profile, "prose_rules")
 
 
-@pytest.mark.parametrize("pack_type", ["policy_floors", "constants_allowlist"])
+@pytest.mark.parametrize("pack_type", ["policy_floors", "constants_allowlist", "tone_rules"])
 def test_runtime_rejects_trust_sensitive_pack_even_with_forged_registry(
     tmp_path: Path, pack_type: str
 ) -> None:
@@ -296,7 +296,19 @@ def test_runtime_rejects_trust_sensitive_pack_even_with_forged_registry(
     pack_relative = f"packs/{pack_type}.json"
     pack_path = target / "packs" / f"{pack_type}.json"
     pack_path.parent.mkdir(parents=True)
-    forged_pack = personalization.pack_default(pack_type)
+    # Literal forged content (not pack_default): constants_allowlist and
+    # tone_rules defaults are report-module payload (v0.16 W4.1), and this
+    # refusal must hold on a core-only install too. The refusal fires on pack
+    # TYPE, before content is even looked at.
+    forged_contents = {
+        "constants_allowlist": [
+            {"value": 9.81, "unit": "m/s^2", "label": "forged constant"}],
+        "tone_rules": {"pack_type": "tone_rules", "name": "forged",
+                       "version": 1, "rules": []},
+    }
+    forged_pack = forged_contents.get(pack_type)
+    if forged_pack is None:
+        forged_pack = personalization.pack_default(pack_type)
     pack_path.write_text(json.dumps(forged_pack), encoding="utf-8")
     manifest_path = target / "manifest.json"
     manifest_path.write_text("{}", encoding="utf-8")

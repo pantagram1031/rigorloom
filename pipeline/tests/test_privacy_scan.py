@@ -276,3 +276,103 @@ def test_default_excludes_git_and_node_modules(tmp_path: Path):
 
     assert code == 0
     assert payload["findings"] == []
+
+
+# --- v0.16 W4.1: profile-store leak markers ----------------------------------
+
+def test_profile_store_manifest_json_is_hard(tmp_path: Path):
+    (tmp_path / "leaked.json").write_text(
+        '{"schema": "rigorloom/personalization-v1", "version": 1}',
+        encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "profile_store_content" in rules(payload)
+
+
+def test_legacy_profile_store_manifest_is_hard(tmp_path: Path):
+    (tmp_path / "manifest.json").write_text(
+        '{"schema": "report-pipeline/personalization-v1", "version": 1}',
+        encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "profile_store_content" in rules(payload)
+
+
+def test_extension_pack_registry_id_is_hard(tmp_path: Path):
+    (tmp_path / "registry.json").write_text(
+        '{"schema": "rigorloom/extension-registry-v1", "api": 1, "extensions": {}}',
+        encoding="utf-8")
+    (tmp_path / "receipt.json").write_text(
+        '{"schema": "rigorloom/extension-receipt-v1", "id": "x", "version": "1.0.0"}',
+        encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert rules(payload).count("profile_store_content") == 2
+
+
+def test_profile_store_jsonl_feedback_log_is_hard(tmp_path: Path):
+    (tmp_path / "events.jsonl").write_text(
+        '{"schema": "report-pipeline/feedback-event-v1", "at": "t"}\n'
+        '{"schema": "report-pipeline/feedback-candidate-v1", "at": "t"}\n',
+        encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "profile_store_content" in rules(payload)
+
+
+def test_profile_store_path_layout_is_hard_even_with_clean_content(tmp_path: Path):
+    nested = tmp_path / "artifact" / ".local" / "personalization" / "packs"
+    nested.mkdir(parents=True)
+    (nested / "innocuous.json").write_text('{"terms": []}', encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "profile_store_path" in rules(payload)
+
+
+def test_store_schema_string_in_source_code_is_not_a_marker(tmp_path: Path):
+    # Structural, not substring: naming the schema in code/docs stays clean.
+    (tmp_path / "ctl.py").write_text(
+        'SCHEMA = "rigorloom/personalization-v1"' + chr(10), encoding="utf-8")
+    (tmp_path / "notes.md").write_text(
+        "the store lives at `.local/personalization` and uses "
+        "rigorloom/personalization-v1" + chr(10), encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert payload["findings"] == []
+
+
+def test_public_preference_pack_default_is_not_a_marker(tmp_path: Path):
+    (tmp_path / "prose_rules.json").write_text(
+        '{"schema": "report-pipeline/preference-pack/prose_rules-v1", '
+        '"pack_type": "prose_rules", "name": "neutral-default", "version": 1}',
+        encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert payload["findings"] == []
+
+
+def test_large_jsonl_store_log_is_still_detected(tmp_path: Path):
+    line = ('{"schema": "report-pipeline/feedback-event-v1", "at": "t", '
+            '"pad": "%s"}' + chr(10))
+    body = "".join(line % ("x" * 200) for _ in range(8000))
+    assert len(body.encode("utf-8")) > 1024 * 1024
+    (tmp_path / "events.jsonl").write_text(body, encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "profile_store_content" in rules(payload)

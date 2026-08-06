@@ -132,7 +132,13 @@ def _merged_pack(root: Path, pack_type: str, subject: str | None = None) -> dict
     Never writes pack content into the workspace; the caller decides where the
     resolved content lands (private sidecar) and what (hash/pointer) the
     workspace payload carries.
+
+    A pack type this install does not know (e.g. report_structure without the
+    report distribution module) resolves to an empty pack — absence is not
+    failure, and the corresponding directives are simply absent.
     """
+    if pack_type not in pctl.known_pack_types():
+        return {}
     merged, _metadata = pctl.resolve_pack_content(root, pack_type, subject)
     return merged if isinstance(merged, dict) else {}
 

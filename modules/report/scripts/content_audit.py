@@ -99,6 +99,14 @@ check_style = _resolve_check_style()
 
 _VALIDATED_PACKS = tuple(personalization_ctl.PACK_TYPES)
 
+# gloss_allowlist is report-module payload since the v0.16 W4.1 pack split;
+# the no-profile fallback default is module-relative (was check_style's
+# DEFAULT_GLOSS_PACK when the default still lived in pipeline/references).
+DEFAULT_GLOSS_PACK = (
+    _SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
+    / "gloss_allowlist.json"
+)
+
 
 def _resolve_profile_root(profile_root):
     """Prefer an explicit root; otherwise accept a valid environment root."""
@@ -301,7 +309,7 @@ def check(ws, profile_root=None):
         )
     else:
         verify_gloss_terms, style_gloss_terms = _gloss_terms(
-            check_style.DEFAULT_GLOSS_PACK
+            DEFAULT_GLOSS_PACK
         )
 
     def run_style():
