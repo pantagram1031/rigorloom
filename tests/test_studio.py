@@ -225,6 +225,110 @@ def test_studio_shell_uses_rigorloom_and_safe_dom_bindings():
     assert "function buildYaml(" not in html
 
 
+def test_shell_renders_module_panels_and_has_no_report_ui(tmp_path: Path):
+    """Core studio shell: the module-panel mechanism is present, the
+    report-flavored content-audit action is NOT (v0.16 W3-S3 §3.4 — that
+    button is report-module panel payload now)."""
+    html = (MODULE_PATH.parent / "index.html").read_text(encoding="utf-8")
+    assert "/api/panels" in html
+    assert "RigorloomStudio" in html
+    assert "run-content-audit" not in html
+    assert "content_audit" not in html
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    assert "modules" + "/report" not in source.replace("\\", "/")
+
+
+@core_only
+def test_api_panels_is_empty_core_only():
+    """Core-only: no enabled modules, no panels — an empty list, not an
+    error and not a 503 (absence is not failure)."""
+    assert studio.api_panels() == {"panels": []}
+
+
+@requires_report_module
+def test_api_panels_lists_module_panels_and_serves_entries():
+    payload = studio.api_panels()
+    panels = payload["panels"]
+    assert panels, "report module must contribute at least one studio panel"
+    for panel in panels:
+        assert set(panel) == {"id", "title", "entry", "module"}
+        assert panel["entry"] == f"/api/panels/{panel['id']}/entry"
+        response = studio.api_panel_entry(panel["id"])
+        assert response.status_code == 200
+    tools = next(p for p in panels if p["id"] == "report-tools")
+    assert tools["title"]
+    entry = studio.api_panel_entry("report-tools")
+    body = Path(entry.path).read_text(encoding="utf-8")
+    assert "RigorloomStudio.register" in body
+    assert "content_audit" in body  # the seam lives in module payload now
+
+
+def test_api_panel_entry_unknown_or_bad_id():
+    assert studio.api_panel_entry("no-such-panel").status_code == 404
+    assert studio.api_panel_entry("Bad/../Id").status_code == 400
+
+
+@requires_report_module
+def test_run_checker_action_resolves_module_checker(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    ws = root / "report-demo"
+    ws.mkdir(parents=True)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="audited", stderr="")
+
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+
+    result = studio.workspace_action(
+        "report-demo", "run-checker", checker="content_audit",
+        x_studio_token="test-token", host="127.0.0.1",
+    )
+
+    assert result["argv"][0] == studio.sys.executable
+    assert result["argv"][1].replace("\\", "/").endswith("content_audit.py")
+    assert result["argv"][2] == str(ws.resolve())
+    assert result["exit_code"] == 0
+    assert "shell" not in calls[0][1]
+
+
+def test_run_checker_unknown_checker_is_404(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    (root / "report-demo").mkdir(parents=True)
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    with pytest.raises(HTTPException) as exc:
+        studio.workspace_action(
+            "report-demo", "run-checker", checker="definitely_missing_checker",
+            x_studio_token="test-token", host="127.0.0.1",
+        )
+
+    assert exc.value.status_code == 404
+    assert "definitely_missing_checker" in exc.value.detail
+
+
+def test_run_checker_requires_valid_checker_name(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    (root / "report-demo").mkdir(parents=True)
+    monkeypatch.setenv("STUDIO_ALLOW_ACTIONS", "1")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+
+    for bad in (None, "", "../evil", "Nope"):
+        with pytest.raises(HTTPException) as exc:
+            studio.workspace_action(
+                "report-demo", "run-checker", checker=bad,
+                x_studio_token="test-token", host="127.0.0.1",
+            )
+        assert exc.value.status_code == 400
+
+
 def test_dashboard_lists_all_workspaces(tmp_path: Path, monkeypatch):
     root = tmp_path / "workspaces"
     for slug in ("report-alpha", "report-beta"):

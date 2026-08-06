@@ -513,5 +513,112 @@ class TestUsage(ContentAuditTestCase):
 
 
 
+class ContentAuditUnitsMergeTests(unittest.TestCase):
+    """check_units merge behavior (moved from pipeline/tests/test_check_units.py
+    in v0.16 W3-S3: it exercises content_audit's composition, which is
+    report-module payload — the core check_units suite stays core)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env_patch = mock.patch.dict(os.environ, clear=False)
+        self._env_patch.start()
+        os.environ.pop("RIGORLOOM_PROFILE_ROOT", None)
+        os.environ.pop("RIGORLOOM_REQUIRE_LEDGER", None)
+        self.ws = Path(self._tmp.name) / "report-synthetic"
+        (self.ws / "bundle").mkdir(parents=True)
+
+    def tearDown(self):
+        self._env_patch.stop()
+        self._tmp.cleanup()
+
+    def test_content_audit_merges_warn_and_keeps_exit_zero(self):
+        # "distance = 8.0 s." — an impossible quantity/unit pairing that
+        # check_units flags as a warn (never a hard)
+        (self.ws / "bundle" / "content.md").write_text(
+            "# Results\ndistance = 8.0 s.\n", encoding="utf-8")
+        (self.ws / "sim").mkdir()
+        (self.ws / "sim" / "results.json").write_text(
+            json.dumps({"seed": 31, "distance": 8.0}, ensure_ascii=False),
+            encoding="utf-8")
+
+        verdict, code = content_audit.check(str(self.ws))
+
+        self.assertEqual(code, 0, verdict)
+        self.assertTrue(verdict["ok"])
+        self.assertEqual(verdict["sub_exit"]["check_units"], 0)
+        self.assertEqual(verdict["hard"], [])
+        self.assertTrue(any(
+            item.get("source") == "check_units"
+            and item.get("code") == "unit_impossible"
+            for item in verdict["warn"]
+        ), verdict)
+
+
+class ContentAuditExtensionFailClosedTests(unittest.TestCase):
+    """Extension-pack fail-closed integration (moved from
+    tests/test_extension_pack.py in v0.16 W3-S3: the behavior under test is
+    content_audit's, which is report-module payload; extension_pack itself
+    stays core and keeps its own core suite)."""
+
+    @staticmethod
+    def _extension(root: Path) -> Path:
+        packs = root / "packs"
+        packs.mkdir(parents=True)
+        (packs / "prose_rules.json").write_text(json.dumps({
+            "schema": "report-pipeline/preference-pack/prose_rules-v1",
+            "pack_type": "prose_rules",
+            "name": "example.report-style",
+            "version": 1,
+            "banned_patterns": [{
+                "id": "marker-example.report-style",
+                "regex": "EXTENSION_MARKER",
+                "severity": "hard",
+                "description": "synthetic extension marker",
+            }],
+        }, ensure_ascii=False), encoding="utf-8")
+        (root / "manifest.json").write_text(json.dumps({
+            "schema": "rigorloom/extension-pack-v1",
+            "id": "example.report-style",
+            "version": "1.0.0",
+            "kind": "data-pack",
+            "rigorloom_api": 1,
+            "priority": 100,
+            "description": "synthetic test extension",
+            "packs": {"prose_rules": "packs/prose_rules.json"},
+        }, ensure_ascii=False), encoding="utf-8")
+        return root
+
+    def test_content_audit_fails_closed_on_corrupt_active_extension(self):
+        extension_pack = _load_core_script("extension_pack")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            profile = tmp_path / "profile"
+            result = extension_pack.install_pack(
+                self._extension(tmp_path / "source"), profile)
+            installed = Path(result["installed"])
+            (installed / "packs" / "prose_rules.json").write_text(
+                "{}", encoding="utf-8")
+
+            verdict, code = content_audit.check(
+                tmp_path / "unused-workspace", profile)
+
+        self.assertEqual(code, 3)
+        self.assertTrue(any(
+            item["code"] == "extension_pack_invalid"
+            for item in verdict["hard"]
+        ), verdict)
+
+
+def _load_core_script(name: str):
+    """Load a core top-level script (repo scripts/) the module-test way:
+    modules import core freely; core never imports modules."""
+    path = Path(__file__).parents[3] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(
+        f"{name}_for_report_module_tests", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 if __name__ == "__main__":
     unittest.main()

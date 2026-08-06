@@ -17,21 +17,38 @@ REPO_ROOT = Path(__file__).parent.parent
 _CORE_SCRIPTS = REPO_ROOT / "pipeline" / "scripts"
 
 
-def _stage_machine_cli() -> Path | None:
-    """Path of the stage-machine CLI (declared CLI command 'pipeline')
-    provided by an enabled distribution module, or None when no enabled
-    module provides it (v0.16 W3-S2b: the stage machine is module payload).
-    Studio resolves by declared command through the registry — it never
-    learns a module's name."""
+def _registry_rows(accessor: str) -> list:
+    """Rows from one typed accessor of the distribution-module registry.
+    Studio consumes modules exclusively through these accessors — it never
+    learns a module's name. An unreadable registry yields an empty list:
+    the dashboard must stay usable, and absence is not failure."""
     if str(_CORE_SCRIPTS) not in sys.path:
         sys.path.insert(0, str(_CORE_SCRIPTS))
     try:
         from module_registry import ModuleRegistry
-        for row in ModuleRegistry().enabled_cli():
-            if row["command"] == "pipeline":
-                return Path(row["script"])
+        return list(getattr(ModuleRegistry(), accessor)())
     except Exception:
-        return None
+        return []
+
+
+def _stage_machine_cli() -> Path | None:
+    """Path of the stage-machine CLI (declared CLI command 'pipeline')
+    provided by an enabled distribution module, or None when no enabled
+    module provides it (v0.16 W3-S2b: the stage machine is module payload).
+    Studio resolves by declared command through the registry."""
+    for row in _registry_rows("enabled_cli"):
+        if row["command"] == "pipeline":
+            return Path(row["script"])
+    return None
+
+
+def _module_checker_script(name: str) -> Path | None:
+    """Script path of a registry-declared checker, or None when no enabled
+    distribution module provides it. Resolution is by declared checker name
+    only (v0.16 W3-S3: module UI actions run module checkers this way)."""
+    for row in _registry_rows("enabled_checkers"):
+        if row["name"] == name:
+            return Path(row["script"])
     return None
 
 
@@ -54,9 +71,10 @@ _LINT_CACHE_LOCKS_GUARD = threading.Lock()
 _CAPABILITY_CACHE: dict | None = None
 _CAPABILITY_CACHE_LOCK = threading.Lock()
 _ACTION_KINDS = {
-    "check-gate", "approve-human-gate", "run-content-audit", "build-bundle",
+    "check-gate", "approve-human-gate", "run-checker", "build-bundle",
     "build-hwpx",
 }
+_CHECKER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 # CSRF guard for action-mode POSTs (contract §8b): a hostile web page browsed
 # on the operator's machine could otherwise POST to this localhost server
@@ -895,6 +913,52 @@ def capabilities():
     return _capability_status()
 
 
+# ── module studio panels (plan §3.4) ─────────────────────────────────
+# Studio stays the core base surface (open doc / structure / fillable /
+# render preview / verdicts). Enabled distribution modules extend it
+# declaratively through their `studio_panels` contributions; the frontend
+# renders whatever this endpoint reports. Core-only install: empty list.
+
+_PANEL_ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+_PANEL_MEDIA_TYPES = {
+    ".js": "text/javascript", ".mjs": "text/javascript",
+    ".html": "text/html", ".css": "text/css",
+}
+
+
+@app.get("/api/panels")
+def api_panels():
+    """Declared studio panels of enabled distribution modules.
+
+    Entries are rewritten to studio-served URLs so the frontend never sees
+    a filesystem path; `module` is display metadata only — studio behavior
+    never branches on it."""
+    return {"panels": [
+        {"id": row["id"], "title": row["title"],
+         "entry": f"/api/panels/{row['id']}/entry", "module": row["module"]}
+        for row in _registry_rows("enabled_studio_panels")
+    ]}
+
+
+@app.get("/api/panels/{panel_id}/entry")
+def api_panel_entry(panel_id: str):
+    """Serve one enabled panel's entry fragment (HTML/JS from the module
+    payload dir). Path containment is enforced by the registry's
+    payload_path resolution; a vanished payload file is a 404, never a 500."""
+    if not _PANEL_ID_RE.fullmatch(panel_id):
+        return Response(status_code=400)
+    for row in _registry_rows("enabled_studio_panels"):
+        if row["id"] != panel_id:
+            continue
+        entry = Path(row["entry"])
+        if not entry.is_file():
+            return Response(status_code=404)
+        media = _PANEL_MEDIA_TYPES.get(entry.suffix.lower(), "text/plain")
+        return FileResponse(entry, media_type=media,
+                            headers={"Cache-Control": "no-cache"})
+    return Response(status_code=404)
+
+
 @app.get("/workspace/{slug}/verdict")
 def workspace_verdict(slug: str):
     return _workspace_verdict(safe_workspace(slug))
@@ -1132,7 +1196,7 @@ def _output_tail(value, limit: int = 4000) -> str:
 
 @app.post("/action/{slug}/{kind}")
 def workspace_action(
-    slug: str, kind: str, gate: str | None = None,
+    slug: str, kind: str, gate: str | None = None, checker: str | None = None,
     x_studio_token: str | None = Header(default=None, alias="X-Studio-Token"),
     host: str | None = Header(default=None),
 ):
@@ -1159,13 +1223,21 @@ def workspace_action(
             stream.write(line + "\n")
         argv = [sys.executable, str(pipeline_ctl), "gate", str(base.resolve()), gate,
                 "--mode", "supervised"]
-    elif kind == "run-content-audit":
-        # TRANSITIONAL (v0.16 W3.3): content_audit now lives in the report
-        # distribution module; this direct path becomes a declarative
-        # studio_panels/registry dispatch in W3.4.
-        argv = [sys.executable, str(REPO_ROOT / "modules" / "report" /
-                                    "scripts" / "content_audit.py"),
-                str(base.resolve())]
+    elif kind == "run-checker":
+        # Module-panel action (plan §3.4): a panel contributed by an enabled
+        # distribution module may run one of the registry's declared
+        # checkers against the workspace. Studio resolves by checker name
+        # through the registry only — no module name, no module path.
+        if not checker or not _CHECKER_NAME_RE.fullmatch(checker):
+            raise HTTPException(
+                status_code=400, detail="missing or invalid checker name")
+        script = _module_checker_script(checker)
+        if script is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no enabled distribution module provides checker "
+                       f"'{checker}'")
+        argv = [sys.executable, str(script), str(base.resolve())]
     elif kind == "build-bundle":
         argv = [sys.executable, str(REPO_ROOT / "pipeline" / "scripts" /
                                     "doc_backend.py"), str(base.resolve()),
@@ -1573,11 +1645,28 @@ def workspace_draft(slug: str):
     return {"content": content, "profile": profile}
 
 
+def _stage_playbook_hint(stage: str | None) -> str | None:
+    """Display hint for the next stage's playbook: the stage-machine
+    module's references dir when one is enabled, else the bare playbook
+    filename (studio never spells a module's path itself)."""
+    if not stage:
+        return None
+    name = f"playbooks/stage-{stage}.md"
+    refs = _stage_machine_references_dir()
+    return str(refs / "playbooks" / f"stage-{stage}.md") if refs else name
+
+
 def _resume_command(base: Path) -> str:
     command = _read_json_dict(base / ".pipeline" / "handoff.json").get("resume_command")
     if command:
         return command
-    return f'python modules/report/scripts/pipeline_ctl.py resume "{base.resolve()}"'
+    # Resolve the stage-machine CLI through the registry (declared command
+    # 'pipeline'); fall back to the declared-command vocabulary so studio
+    # never spells a module's path itself.
+    cli = _stage_machine_cli()
+    if cli is not None:
+        return f'python "{cli}" resume "{base.resolve()}"'
+    return f'pipeline resume "{base.resolve()}"'
 
 
 @app.get("/workspace/{slug}/readiness")
@@ -1597,8 +1686,7 @@ def workspace_readiness(slug: str):
             "next_gate": ({"name": next_record.get("gate_name"),
                            "state": next_record.get("gate_state")}
                           if next_record.get("gate") else None),
-            "playbook": (f"modules/report/references/playbooks/stage-{next_stage}.md"
-                         if next_stage else None),
+            "playbook": _stage_playbook_hint(next_stage),
             "work_dir": (f"work/stage-{next_stage}" if next_stage else None),
             "missing_inputs": [], "missing_outputs": [],
             "expected_outputs": [], "resume_command": _resume_command(base),
@@ -1665,7 +1753,9 @@ def workspace_yourmove(slug: str):
     if gate_stage and pipeline["mode"] == "supervised":
         gate_name = gate_stage.get("gate_name") or gate_stage["label"]
         approval_line = f"{gate_name}: approved by=<name> at={_now_iso()}"
-        gate_command = (f'python modules/report/scripts/pipeline_ctl.py gate "{base.resolve()}" '
+        cli = _stage_machine_cli()
+        gate_prefix = f'python "{cli}"' if cli is not None else "pipeline"
+        gate_command = (f'{gate_prefix} gate "{base.resolve()}" '
                         f'"{gate_name}" --mode {pipeline["mode"]}')
         return {"kind": "gate_wait", "gate": gate_name, "approval_line": approval_line,
                 "reason": f"Stage {gate_stage['num']} ({gate_stage['label']}) 게이트 승인 대기 중.",
