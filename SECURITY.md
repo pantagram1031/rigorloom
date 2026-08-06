@@ -41,8 +41,8 @@ content through logs, generated artifacts, or the Studio.
   example, LibreOffice/H2Orestart equation rendering, or the
   `experimental-rhwp` render path — see the "Project status" section of
   [README.md](README.md) and [docs/plans/p0-parity-report.md](docs/plans/p0-parity-report.md)).
-- Issues in the separate [hwp-master](https://github.com/pantagram1031/hwp-master)
-  project — report those in that repository.
+- Issues in the archived standalone hwp-master repository — its engine now
+  lives at `engine/` in this repo (Wave 2 absorb); report engine issues here.
 
 ## Response
 

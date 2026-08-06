@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """check_layout.py — stage 2.5 layout gate delegate.
 
-The cast-off checker (layout_plan_check.py) ships with the external
-hwp-master project, so stages.yaml cannot reference it portably (checker
-argv placeholders are limited to {WS}/{PIPELINE_SCRIPTS}). This thin
-delegate locates it via the HWP_MASTER_SCRIPTS environment variable —
-the same contract doc_backend uses for the hwpx XML engine — runs it on
-the workspace's bundle/layout_plan.json + form_profile.json, and passes
-the verdict through unchanged.
+The cast-off checker (layout_plan_check.py) ships bundled with the engine
+at <repo>/engine/scripts (in-repo since the Wave 2 absorb, v0.16), but
+stages.yaml cannot reference it portably (checker argv placeholders are
+limited to {WS}/{PIPELINE_SCRIPTS}). This thin delegate resolves it —
+bundled engine by default, with HWP_MASTER_SCRIPTS still honored as an
+explicit override for external engine checkouts (deprecated; same
+contract doc_backend uses for the hwpx XML engine) — runs it on the
+workspace's bundle/layout_plan.json + form_profile.json, and passes the
+verdict through unchanged.
 
 Exit 0 = plan fits, 3 = plan violates cast-off constraints, 2 = usage
-(missing HWP_MASTER_SCRIPTS, missing plan/profile, or delegate crash).
+(unresolvable checker, missing plan/profile, or delegate crash).
 """
 import os
 import subprocess
@@ -22,16 +24,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 from checker_base import cli_main, usage_error  # noqa: E402
 
+_ENGINE_SCRIPTS = _SCRIPTS_DIR.parent.parent / "engine" / "scripts"
+
 
 def _locate_delegate():
     root = os.environ.get("HWP_MASTER_SCRIPTS")
-    if not root:
-        return None, ("HWP_MASTER_SCRIPTS is not set — point it at the "
-                      "hwp-master scripts directory containing "
-                      "layout_plan_check.py")
-    candidate = Path(root).expanduser() / "layout_plan_check.py"
+    base = Path(root).expanduser() if root else _ENGINE_SCRIPTS
+    candidate = base / "layout_plan_check.py"
     if not candidate.is_file():
-        return None, f"layout_plan_check.py not found under: {root}"
+        if root:
+            return None, f"layout_plan_check.py not found under: {root}"
+        return None, ("layout_plan_check.py not found in the bundled engine "
+                      f"({_ENGINE_SCRIPTS}) — corrupted install, or set "
+                      "HWP_MASTER_SCRIPTS to an external engine checkout")
     return candidate, None
 
 

@@ -46,12 +46,23 @@ class CheckLayoutTest(unittest.TestCase):
         (self.delegate_dir / "layout_plan_check.py").write_text(
             body, encoding="utf-8")
 
-    def test_missing_env_is_usage_error(self):
+    def test_no_env_resolves_to_bundled_engine(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("HWP_MASTER_SCRIPTS", None)
+            delegate, err = check_layout._locate_delegate()
+        self.assertIsNone(err)
+        self.assertEqual(delegate,
+                         check_layout._ENGINE_SCRIPTS / "layout_plan_check.py")
+        self.assertTrue(delegate.is_file())
+
+    def test_invalid_override_is_usage_error(self):
+        empty = Path(self._tmp.name) / "not-an-engine"
+        empty.mkdir()
+        with mock.patch.dict(
+                os.environ, {"HWP_MASTER_SCRIPTS": str(empty)}):
             verdict, code = check_layout.check(str(self.ws))
         self.assertEqual(code, 2)
-        self.assertIn("HWP_MASTER_SCRIPTS", verdict["error"])
+        self.assertIn("layout_plan_check.py not found", verdict["error"])
 
     def test_missing_plan_is_usage_error(self):
         (self.ws / "bundle" / "layout_plan.json").unlink()

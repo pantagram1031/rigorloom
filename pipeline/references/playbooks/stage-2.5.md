@@ -37,7 +37,7 @@ Budgeting rules:
 VALIDATE (the Stage 2.5 SCRIPT GATE):
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python <HWP_MASTER_ROOT>/scripts/layout_plan_check.py \
+python engine/scripts/layout_plan_check.py \
   <WS>/bundle/layout_plan.json \
   --form-profile <WS>/form_profile.json
 # exit 0 = pass (Σ budgets fit target_pages; table cols sane) → advance
@@ -50,11 +50,9 @@ mech-worker = agent.worker/medium may run layout_plan_check.
 
 EXIT + gate: `layout_plan_check.py` exit 0. **Script gate `layout`, not
 human.** The gate is resolved by the `check` subcommand, which RUNS the bound
-checker itself (never a hand-supplied exit code). `layout`'s checker lives in
-hwp-master (`layout_plan_check.py`), so it is bound `checker: null` in
-`stages.yaml` by default — register it locally (point the gate's `checker` argv
-at your `layout_plan_check.py` with `--form-profile`) before running `check`,
-THEN advance:
+checker itself (never a hand-supplied exit code). `layout`'s checker (`layout_plan_check.py`) is bundled at
+`engine/scripts` and reached through the `check_layout.py` delegate bound in
+`stages.yaml`, so `check` runs it directly; THEN advance:
 ```
 python pipeline/scripts/pipeline_ctl.py check <WS> layout
 python pipeline/scripts/pipeline_ctl.py advance <WS> 2.5 --status done

@@ -189,7 +189,7 @@ application installed locally. The pipeline does not bundle Hancom Office.
 Before Stage 0, verify the separate adapter checkout with:
 
 ```powershell
-python <HWP_MASTER_ROOT>/scripts/doctor.py --require-com --require-proof `
+python engine/scripts/doctor.py --require-com --require-proof `
   --report-pipeline <REPORT_PIPELINE_ROOT>
 ```
 
@@ -198,7 +198,7 @@ pipeline stages or supported non-COM HWPX/XML operations until a Windows HWP hos
 is available.
 
 ```sh
-python <HWP_MASTER_ROOT>/scripts/form_inspect.py <form> \
+python engine/scripts/form_inspect.py <form> \
   --out <WS>/form_profile.json --base-pt 10 --line-spacing 180 \
   --baseline <WS>/form_baseline.json
 ```
@@ -263,8 +263,8 @@ dispatched by `python pipeline/scripts/doc_backend.py <WS>`. Four shipped tiers:
 |---|---|---|
 | `bundle` (default) | none — stdlib only | frozen bundle + single-file `preview.html` |
 | `docx` | `pip install python-docx` | styled `output/out.docx` |
-| `hwpx` | hwp-master XML engine (any OS) | COM-free `output/out.hwpx` + advisory PDF proof |
-| `hwp` | Windows + Hancom + hwp-master | assembled `out.hwpx` + proof PDF |
+| `hwpx` | bundled XML engine (engine/scripts, any OS) | COM-free `output/out.hwpx` + advisory PDF proof |
+| `hwp` | Windows + Hancom (engine/scripts) | assembled `out.hwpx` + proof PDF |
 
 The `bundle` backend is the any-machine floor: it needs no HWP and no network,
 so the pipeline runs to a real deliverable from a plain clone on any OS; the
@@ -275,7 +275,7 @@ describes the `hwp` proof loop.
 For HWP, use the single assembly loop from the separate adapter:
 
 ```sh
-python <HWP_MASTER_ROOT>/scripts/fill_report.py --loop \
+python engine/scripts/fill_report.py --loop \
   --form <WS>/output/form_copy.hwpx \
   --content <WS>/bundle/content.md --out-dir <WS>/output \
   --build-yaml <WS>/build.yaml --baseline <WS>/form_baseline.json \

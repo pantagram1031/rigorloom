@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.hwp
+*.hwpx
+*.pdf
+ops.json
+verify*.pdf

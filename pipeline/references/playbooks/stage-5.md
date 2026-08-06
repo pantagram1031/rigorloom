@@ -9,8 +9,8 @@ chosen in `build.yaml` (`doc_backend:`) and dispatched by
 |---|---|---|---|
 | `bundle` (default) | none (stdlib) | frozen bundle + `preview.html` | §BUNDLE |
 | `docx` | `pip install python-docx` | `output/out.docx` | §DOCX |
-| `hwpx` | hwp-master XML engine (any OS) | `output/out.hwpx` | §HWPX (advisory proof) |
-| `hwp` | Windows + Hancom + hwp-master | `out.hwpx`/PDF | §HWP (full loop) |
+| `hwpx` | bundled XML engine (engine/scripts, any OS) | `output/out.hwpx` | §HWPX (advisory proof) |
+| `hwp` | Windows + Hancom (engine/scripts) | `out.hwpx`/PDF | §HWP (full loop) |
 
 Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
 `bundle`. ENTRY REQUIREMENT IS THE SAME FOR ALL BACKENDS: Stage 4 done (gate
@@ -88,8 +88,9 @@ mutation cannot detect that mutation. A signed external baseline is deferred.
 
 ## §HWPX — COM-free form fill (any OS; advisory proof only)
 
-Selected when `doc_backend: hwpx`. Set `HWP_MASTER_SCRIPTS` to the external
-hwp-master `scripts/` directory, then run:
+Selected when `doc_backend: hwpx`. The XML engine ships bundled at
+`engine/scripts` — no external checkout or env var needed
+(`HWP_MASTER_SCRIPTS` remains an optional, deprecated override). Run:
 
 ```
 python pipeline/scripts/doc_backend.py <WS> --backend hwpx
@@ -144,7 +145,7 @@ condition leaves the existing advisory/experimental/none behavior unchanged.
 
 ---
 
-## §HWP — assemble on a form copy (Windows + Hancom + hwp-master)
+## §HWP — assemble on a form copy (Windows + Hancom; engine bundled at engine/scripts)
 
 Selected when `doc_backend: hwp`. Semantics unchanged from prior versions.
 
@@ -170,7 +171,7 @@ that duplicates/undoes the loop and can reassemble from a pristine form.
 EXACT commands (verify flags against `fill_report.py --help` if drifted):
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python <HWP_MASTER_ROOT>/scripts/fill_report.py --loop \
+python engine/scripts/fill_report.py --loop \
   --form <WS>/output/form_copy.hwpx \
   --content <WS>/bundle/content.md \
   --out-dir <WS>/output \

@@ -37,8 +37,8 @@ not requirements.
   documents without Hancom — and the ladder is cross-checked against what
   this machine can actually render, not trusted blindly.
 - **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
-  XML directly through the external hwp-master engine, without Hancom or COM,
-  on any OS.
+  XML directly through the bundled engine (`engine/scripts`), without Hancom
+  or COM, on any OS.
 - **Agent-neutral.** The stage machine drives entirely through CLIs; any
   coding-capable agent can orchestrate it, and provider roles are assigned by
   capability, not by vendor name (see [AGENTS.md](AGENTS.md)).
@@ -83,10 +83,9 @@ for the full stage graph and gate contracts.
   triggering gates/builds from the UI.
 - A robust workspace scaffolder and a `sync_local` base+overlay installer for
   shipping this pipeline as a Claude-style skill directory.
-- An optional adapter for the separate
-  [hwp-master](https://github.com/pantagram1031/hwp-master) project, which
-  supplies both the Hancom-COM assembly loop and the Hancom-free HWPX XML
-  engine.
+- The document engine at `engine/` (absorbed from the former hwp-master
+  project, Wave 2 / v0.16), which supplies both the Hancom-COM assembly loop
+  and the Hancom-free HWPX XML engine.
 
 Personal reports, student data, private templates, local logs, credentials,
 and model-account configuration are intentionally excluded.
@@ -102,8 +101,8 @@ Only `bundle` is required — the other three are optional extras dispatched by
 |---|---|---|---|---|
 | `bundle` | none (stdlib) | any OS, no Hancom | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview | none — advisory artifact only; cannot satisfy the Stage 5.3 format gate (`output/out.hwpx` required) |
 | `docx` | `pip install .[docx]` | any OS, no Hancom | styled `.docx` (headings, figures, tables; equations render as literal text, not OMML; PDF conversion left to LibreOffice) | none — same reason as `bundle` |
-| `hwpx` | external [hwp-master](https://github.com/pantagram1031/hwp-master) XML engine, `HWP_MASTER_SCRIPTS` set | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` by default — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own; otherwise proof grade is `none`. Opt into `certified` (submission-grade, ranks between `advisory` and `hancom`) by setting `certified_render: true` and `render_certificate: <path>` in `build.yaml` once an operator has issued an HMAC-signed certificate (`render_cert.py measure`/`certify`) — the certificate is independently re-verified at submission time |
-| `hwp` | Windows + Hancom + [hwp-master](https://github.com/pantagram1031/hwp-master) COM loop | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
+| `hwpx` | bundled XML engine (`engine/scripts`; `HWP_MASTER_SCRIPTS` optional override) | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` by default — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own; otherwise proof grade is `none`. Opt into `certified` (submission-grade, ranks between `advisory` and `hancom`) by setting `certified_render: true` and `render_certificate: <path>` in `build.yaml` once an operator has issued an HMAC-signed certificate (`render_cert.py measure`/`certify`) — the certificate is independently re-verified at submission time |
+| `hwp` | Windows + Hancom + bundled COM loop (`engine/scripts`) | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
 
 The `bundle` backend is the any-machine floor: it runs anywhere Python runs,
 with zero dependencies, but it is a preview/review artifact, not a graded
@@ -174,17 +173,15 @@ full stage-by-stage walkthrough to a graded artifact, see
 ### Windows + Hancom
 
 The full `.hwp` document workflow additionally needs Windows, a licensed
-Hancom Office HWP install, and the separate
-[hwp-master](https://github.com/pantagram1031/hwp-master) checkout with its
-`[windows]`/`[proof]` extras. Verify the machine before starting an HWP
-report:
+Hancom Office HWP install, and the engine's `[windows]`/`[proof]` extras
+(the engine itself is bundled at `engine/` — no external checkout needed).
+Verify the machine before starting an HWP report:
 
 ```powershell
-cd ..\hwp-master
-python scripts/doctor.py --require-com --require-proof --report-pipeline ..\rigorloom
+python engine\scripts\doctor.py --require-com --require-proof --report-pipeline .
 ```
 
-Installing these repositories does not install Hancom Office. Web Hancom
+Installing this repository does not install Hancom Office. Web Hancom
 Docs, Linux, and macOS cannot run the local COM editing backend; they can
 still run the pipeline and non-COM HWPX/XML stages.
 
@@ -251,7 +248,7 @@ workspaces/  local run data; ignored by Git
   content sub-checkers, `submission_preflight`'s form-hash and proof-grade
   checks, and the read-only Studio.
 - **Optional, well-exercised**: the `docx` backend, and the `hwpx` XML engine
-  path (Hancom-free, cross-OS) via the external hwp-master project.
+  path (Hancom-free, cross-OS) via the bundled engine at `engine/scripts`.
 - **Advisory only**: LibreOffice/H2Orestart PDF rendering is used as a
   render-capability probe and an advisory proof source — it is never treated
   as submission-grade proof, and it is skipped entirely for equation-bearing

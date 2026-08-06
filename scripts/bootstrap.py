@@ -184,7 +184,7 @@ def optional_extras() -> list[tuple[str, str, bool, str]]:
          "pip install .[docx]"),
         ("studio", "local read-only workspace viewer (FastAPI + PyMuPDF)",
          _has("fastapi") and _has("fitz"), "pip install .[studio]"),
-        ("hwp", "native .hwp output (Windows + Hancom + hwp-master)", False,
+        ("hwp", "native .hwp output (Windows + Hancom; engine bundled at engine/scripts)", False,
          "see README > HWP/HWPX output requirements"),
     ]
 

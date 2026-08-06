@@ -22,8 +22,8 @@ Excluded:
 - private writing corpora and voice profiles.
 
 The original working directories remain untouched. This public repository is
-safe to clone independently and depends on `hwp-master` only when HWP/HWPX
-document assembly is required.
+safe to clone independently; the HWP/HWPX engine is bundled at `engine/`
+(absorbed from the former hwp-master repo in Wave 2 / v0.16).
 
 ## Second wave (v0.7 convergence)
 

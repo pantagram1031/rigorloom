@@ -99,7 +99,7 @@ are fixed strings — never renumber.
 | Composition rubric | `pipeline/references/playbooks/rubric-composition.md` |
 | Stage 4↔5 interface | `pipeline/references/bundle_spec.md` |
 | Registry / stage graph | `pipeline/references/agents.yaml`, `stages.yaml` |
-| HWP/HWPX document stages | `adapters/claude-code/SKILL.hwp-master.pointer.md` |
+| HWP/HWPX document stages | `engine/SKILL.md` (bundled engine, `engine/scripts`) |
 | Prose style rewrite | `adapters/claude-code/agent.humanizer.template.md` |
 | Report methodology | `docs/report-method.md` |
 

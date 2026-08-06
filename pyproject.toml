@@ -11,5 +11,5 @@ studio = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pymupdf>=1.23"]
 test = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["pipeline/tests", "tests"]
+testpaths = ["pipeline/tests", "tests", "engine/tests"]
 addopts = "-ra"

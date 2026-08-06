@@ -165,7 +165,7 @@ A document backend must provide equivalent operations for:
 inspect → assemble → tidy → measure → proof-render
 ```
 
-HWP/HWPX uses the separate `hwp-master` repository. Other formats may implement
+HWP/HWPX uses the engine bundled at `engine/`. Other formats may implement
 the same behavior. Capability gaps must be declared rather than silently
 degrading the deliverable.
 

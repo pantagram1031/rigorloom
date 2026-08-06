@@ -117,8 +117,8 @@ Stage 5 assembly is pluggable by capability, not by requiring one product:
 - Optional richer backends (e.g. a `.docx` writer, or an HWP/Hancom backend on
   Windows) may be selected in a workspace's `build.yaml` when their extra
   dependencies are installed.
-- The HWP backend specifically requires Windows, a locally installed Hancom
-  Office, and the separate `hwp-master` adapter checkout (see
+- The HWP backend specifically requires Windows and a locally installed
+  Hancom Office (the engine itself is bundled at `engine/scripts`; see
   `adapters/hwp/README.md`); it is never required to run the pipeline.
 
 Consult the current stage-5 playbook for the exact backend selection and

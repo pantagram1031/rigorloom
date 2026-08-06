@@ -7,17 +7,11 @@ HWP is now one of **three** Stage 5 document backends, selected in `build.yaml`
 The pipeline runs end-to-end WITHOUT this adapter via the `bundle` backend; use
 `hwp` only when a native HWP deliverable is required.
 
-HWP/HWPX assembly is intentionally maintained in the separate public
-[hwp-master](https://github.com/pantagram1031/hwp-master) repository.
-
-Clone it beside this repository or set `HWP_MASTER_ROOT`:
-
-```sh
-git clone https://github.com/pantagram1031/hwp-master.git ../hwp-master
-export HWP_MASTER_ROOT="$(cd ../hwp-master && pwd)"
-```
-
-Stage playbooks use `<HWP_MASTER_ROOT>/scripts/...` placeholders. Any other
+HWP/HWPX assembly is handled by the engine bundled at `engine/` in this
+repository (absorbed from the former external hwp-master project in Wave 2 /
+v0.16; its history is preserved in this repo). No external checkout or
+environment variable is needed — stage playbooks reference
+`engine/scripts/...` directly. Any other
 document backend may be substituted if it implements inspect, assemble, tidy,
 measure, and proof-render operations described by the v0.6 contract.
 
