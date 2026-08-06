@@ -28,6 +28,7 @@ Counts describe this one corpus and are not population estimates.
 | references_unparsed | check_sources | WARN | 7 false positives on numbered or SECTION-prefixed bibliography headings | Recognize the observed structural prefixes while retaining the citation-like-content warning for unknown headings. |
 | TITLE | check_style | WARN | 4 false positives where title lived in an activity-topic metadata line | Public recognition is limited to documented front-matter keys (`title:` / `제목:`). Corpus-specific formats extend those defaults through `report_structure.title_metadata_keys`; mismatching recognized metadata still warns. |
 | BAN:ai-stock-phrase-soft | check_style | WARN | 5 hits | Keep unchanged as an intentional flag-not-block policy. |
+| binary_document_ext | privacy_scan | HARD | 12 of 12 W5.2 corpus blanks flagged by the categorical extension rule; zero content findings | Relaxed via the sha256-pinned allowlist (`tests/corpus/forms/manifest.json`; path AND hash must both match). Still-catches #1: any unlisted binary, or a listed file whose hash drifted, stays HARD (tamper/substitution). Still-catches #2: allowlisted binaries are content-scanned (RRN, filled phone, email, user-path, denylist) so a filled document can never hide behind the allowlist. Bundles never apply the allowlist. |
 
 ## C5 equation investigation
 

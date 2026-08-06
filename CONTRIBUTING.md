@@ -61,6 +61,12 @@ shapes how changes get reviewed:
   python pipeline/scripts/privacy_scan.py .
   ```
 
+  Binary corpus templates under `tests/corpus/forms/` pass only through the
+  sha256-pinned allowlist auto-detected at `tests/corpus/forms/manifest.json`
+  (`--binary-allowlist` to point elsewhere). Adding or changing a corpus file
+  means re-pinning its hash in that manifest; allowlisted files are still
+  content-scanned for PII, and bundles never apply the allowlist.
+
 - **Docs updated.** If behavior, a gate contract, or a CLI flag changes,
   update the relevant doc under `docs/` (and `CHANGELOG.md`) in the same PR.
 

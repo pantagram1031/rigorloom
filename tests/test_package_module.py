@@ -209,3 +209,61 @@ class TestCoreBundle:
 
         report, code = package_module.verify_bundle(bundle)
         assert code == 0, report
+
+
+class TestCorpusNeverShips:
+    """W5.2 privacy ruling #4: tests/corpus/forms is repo-only material.
+
+    The corpus binaries pass privacy_scan only through the sha256-pinned
+    allowlist; a bundle is a distribution artifact where no allowlist applies,
+    so no corpus member may ever be staged into any bundle. Module bundles
+    include their OWN tests only.
+    """
+
+    def test_no_corpus_member_in_core_or_any_real_module_bundle(
+            self, tmp_path: Path):
+        corpus_dir = REPO_ROOT / "tests" / "corpus" / "forms"
+        corpus_members = {
+            p.name for p in corpus_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in (".hwp", ".hwpx")
+        }
+        assert corpus_members, "corpus must exist for this test to bite"
+
+        registry_names = sorted(
+            p.parent.name
+            for p in (REPO_ROOT / "modules").glob("*/module.yaml"))
+        assert registry_names, "repo must declare distribution modules"
+
+        for name in ["core", *registry_names]:
+            bundle = package_module.build_bundle(
+                name, tmp_path / "dist", version="0.16.0")
+            with zipfile.ZipFile(bundle) as archive:
+                names = archive.namelist()
+            assert not any("tests/corpus/forms" in n for n in names), name
+            assert not any(
+                n.rsplit(".", 1)[-1].lower() in ("hwp", "hwpx")
+                for n in names), name
+            assert not any(Path(n).name in corpus_members for n in names), name
+            if name != "core":
+                # module bundles carry only their own directory (+ metadata)
+                payload = [n for n in names
+                           if n not in ("MANIFEST.json", "INSTALL.md")]
+                assert all(n.startswith(f"modules/{name}/") for n in payload), name
+
+    def test_module_bundle_keeps_own_tests_only(self, tmp_path: Path):
+        module = make_module(tmp_path / "modules")
+        (module / "tests").mkdir()
+        (module / "tests" / "test_own.py").write_text(
+            "def test_ok():\n    assert True\n", encoding="utf-8")
+        # a repo-level corpus next to modules/ must never be picked up
+        stray = tmp_path / "tests" / "corpus" / "forms" / "fam"
+        stray.mkdir(parents=True)
+        (stray / "blank.hwpx").write_bytes(b"PK\x03\x04corpus")
+
+        bundle = build(tmp_path)
+        with zipfile.ZipFile(bundle) as archive:
+            names = archive.namelist()
+
+        assert "modules/throwaway/tests/test_own.py" in names
+        assert not any("corpus" in n for n in names)
+        assert not any(n.endswith(".hwpx") for n in names)

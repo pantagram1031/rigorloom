@@ -6,8 +6,15 @@ repo: binary office documents, denylisted strings, Windows user-profile
 paths, email addresses, and (as a heuristic warning) Korean student-record
 look-alikes. Stdlib only.
 
+Binary documents are categorically HARD except through the sha256-pinned
+corpus allowlist (``--binary-allowlist``, auto-detected at
+``tests/corpus/forms/manifest.json``): a listed, hash-verified blank template
+passes the extension rule but its extracted text is still content-scanned
+(RRN / filled phone / email / user-path / denylist all HARD) — see the
+"Corpus binary allowlist" section below.
+
 CLI:
-    privacy_scan.py <root> [--denylist <path>] [--json]
+    privacy_scan.py <root> [--denylist <path>] [--binary-allowlist <manifest.json>] [--json]
 
 Exit codes:
     0  clean (or WARN-only findings)
@@ -98,6 +105,29 @@ RE_USER_PATH = re.compile(r'C:\\Users\\([^\\/\s"\']+)')
 RE_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 RE_DIGIT5 = re.compile(r"(?<!\d)\d{5}(?!\d)")
 RE_HANGUL = re.compile(r"(?<![가-힣])[가-힣]{2,4}(?![가-힣])")
+
+# --- Corpus binary allowlist (W5.2 privacy ruling) ---------------------------
+# A binary document may pass the categorical `binary_document_ext` rule ONLY
+# when BOTH hold:
+#   (a) its path is listed in a manifest given via --binary-allowlist (or the
+#       auto-detected corpus manifest, see CORPUS_MANIFEST_RELPATH), AND
+#   (b) its current sha256 equals the manifest-pinned hash.
+# Still-catches #1: any unlisted binary anywhere, or a listed file whose hash
+# drifted, is HARD exactly as before (tamper/substitution stays detected).
+# Still-catches #2: an allowlisted binary is NOT exempt from content scanning —
+# its text is extracted (hwpx zip parts; hwp UTF-16 run harvest) and scanned
+# with the PII patterns below plus the existing email/user-path/denylist rules.
+# A filled document can never hide behind the allowlist.
+CORPUS_MANIFEST_RELPATH = Path("tests") / "corpus" / "forms" / "manifest.json"
+# Korean resident registration number: 6-digit birth + 7-digit tail whose
+# first digit is 1-4 (5-8 are foreigner codes pre-2020; kept out to limit
+# false positives on arbitrary 13-digit spans — the manifest pin, not this
+# net, is the primary gate).
+RE_RRN = re.compile(r"(?<!\d)\d{6}\s*-\s*[1-4]\d{6}(?!\d)")
+# A *filled* Korean mobile number (blank forms carry only labels/placeholders).
+RE_PHONE_FILLED = re.compile(r"(?<!\d)01[016789]\s*-\s*\d{3,4}\s*-\s*\d{4}(?!\d)")
+# hwpx zip members whose text is worth scanning.
+_HWPX_TEXT_SUFFIXES = (".xml", ".txt", ".hpf", ".rdf")
 
 _ASCII_UPPER = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -355,7 +385,125 @@ def _profile_store_path_finding(rel: str, parts: tuple[str, ...]) -> dict | None
     return None
 
 
-def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
+def _sha256_file(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_binary_allowlist(manifest_path: Path) -> dict[Path, str]:
+    """{resolved file path: pinned sha256} from a corpus manifest.
+
+    The manifest is the corpus index (tests/corpus/forms/manifest.json style):
+    a top-level ``documents`` list whose entries carry ``path`` (relative to
+    the manifest's own directory) and ``sha256``. A malformed manifest or an
+    entry without both fields is a loud refusal (ValueError) — a broken
+    allowlist must never silently degrade into "everything passes" or
+    "nothing is listed".
+    """
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read binary allowlist manifest: {manifest_path}: {exc}")
+    documents = data.get("documents") if isinstance(data, dict) else None
+    if not isinstance(documents, list):
+        raise ValueError(f"binary allowlist manifest has no documents[] list: {manifest_path}")
+    base = manifest_path.resolve().parent
+    allowlist: dict[Path, str] = {}
+    for entry in documents:
+        rel = entry.get("path") if isinstance(entry, dict) else None
+        sha = entry.get("sha256") if isinstance(entry, dict) else None
+        if not rel or not isinstance(sha, str) or len(sha) != 64:
+            raise ValueError(
+                f"binary allowlist entry needs path + 64-hex sha256: {entry!r}")
+        allowlist[(base / rel).resolve()] = sha.lower()
+    return allowlist
+
+
+def _hwpx_text(path: Path) -> str | None:
+    """Concatenated text of an hwpx (zip) package's XML/text parts, or None
+    when the file is not a readable zip."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as archive:
+            parts = []
+            for name in archive.namelist():
+                if name.lower().endswith(_HWPX_TEXT_SUFFIXES):
+                    parts.append(archive.read(name).decode("utf-8", "replace"))
+            return "\n".join(parts)
+    except (OSError, zipfile.BadZipFile, RuntimeError):
+        return None
+
+
+def _hwp_utf16_harvest(path: Path) -> str:
+    """UTF-16LE decode of a binary .hwp (CFB) at both byte alignments.
+
+    Stdlib-only stand-in for a CFB parser: the uncompressed streams that can
+    carry text (PrvText preview, SummaryInformation author metadata) are
+    stored as UTF-16LE and surface as decodable runs; compressed body text
+    does not decode into anything pattern-shaped. Sector boundaries can split
+    a run — this net is heuristic; the manifest sha256 pin is the primary
+    gate and this scan is the filled-document backstop on top of it.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    texts = []
+    for offset in (0, 1):
+        texts.append(data[offset:].decode("utf-16-le", errors="ignore"))
+    return "\n".join(texts)
+
+
+def _scan_allowlisted_binary(rel: str, path: Path, suffix: str,
+                             denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
+    """Content scan for a hash-verified allowlisted binary (still-catches #2).
+
+    Extracted text runs through the PII nets (RRN, filled mobile number) plus
+    the existing email/user-path regexes and the denylist. Any hit is HARD:
+    the allowlist admits *blank* templates only.
+    """
+    findings: list[dict] = []
+    if suffix == ".hwpx":
+        text = _hwpx_text(path)
+        if text is None:
+            # Hash matched the manifest yet the package is unreadable: the
+            # reviewed bytes are intact, but the content backstop cannot run.
+            findings.append(_finding(
+                rel, None, "binary_extract_failed", "WARN",
+                "allowlisted hwpx is not a readable zip; content backstop skipped"))
+            return findings
+    else:
+        text = _hwp_utf16_harvest(path)
+
+    seen: set[tuple[str, str]] = set()
+
+    def add(rule: str, snippet: str) -> None:
+        key = (rule, snippet)
+        if key not in seen:
+            seen.add(key)
+            findings.append(_finding(rel, None, rule, "HARD", snippet))
+
+    for match in RE_RRN.finditer(text):
+        add("binary_pii_rrn", match.group(0))
+    for match in RE_PHONE_FILLED.finditer(text):
+        add("binary_pii_phone", match.group(0))
+    if denylist_terms:
+        text_lower = _ascii_lower(text)
+        for term, term_lower in denylist_terms:
+            if term_lower in text_lower:
+                add("denylist_content", term)
+    for line in text.splitlines():
+        for rule, matched in _regex_line_findings(line):
+            add(rule, matched)
+    return findings
+
+
+def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | None,
+               binary_allowlist: dict[Path, str] | None = None) -> list[dict]:
     findings: list[dict] = []
     relative = path.relative_to(root)
     rel = relative.as_posix()
@@ -367,7 +515,18 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         findings.append(store_path_finding)
 
     if suffix in BINARY_EXTS:
-        findings.append(_finding(rel, None, "binary_document_ext", "HARD", name))
+        pinned = binary_allowlist.get(path.resolve()) if binary_allowlist else None
+        if pinned is None:
+            # Unlisted binary anywhere: HARD exactly as before.
+            findings.append(_finding(rel, None, "binary_document_ext", "HARD", name))
+        elif _sha256_file(path) != pinned:
+            # Listed but drifted: tamper/substitution, HARD (still-catches #1).
+            findings.append(_finding(
+                rel, None, "binary_allowlist_hash_mismatch", "HARD", name))
+        else:
+            # Listed + hash-verified: content backstop instead of a free pass.
+            findings.extend(
+                _scan_allowlisted_binary(rel, path, suffix, denylist_terms))
 
     if denylist_terms:
         name_lower = _ascii_lower(name)
@@ -443,7 +602,8 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
     return findings
 
 
-def scan_tree(root: Path, denylist_terms: list[tuple[str, str]] | None) -> list[dict]:
+def scan_tree(root: Path, denylist_terms: list[tuple[str, str]] | None,
+              binary_allowlist: dict[Path, str] | None = None) -> list[dict]:
     findings: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(
@@ -456,7 +616,8 @@ def scan_tree(root: Path, denylist_terms: list[tuple[str, str]] | None) -> list[
             findings.extend(_scan_dir_name(root, dp, denylist_terms))
 
         for fname in filenames:
-            findings.extend(_scan_file(root, dp / fname, denylist_terms))
+            findings.extend(_scan_file(root, dp / fname, denylist_terms,
+                                       binary_allowlist))
     return findings
 
 
@@ -489,6 +650,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("root", help="Root directory to scan")
     parser.add_argument(
         "--denylist", help="Path to a denylist file (one literal string per line, # comments allowed)"
+    )
+    parser.add_argument(
+        "--binary-allowlist",
+        help="Corpus manifest.json whose sha256-pinned documents[] may pass the "
+             "binary_document_ext rule (content scan still applies). When omitted, "
+             "<root>/tests/corpus/forms/manifest.json is auto-detected.",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON output")
     return parser
@@ -526,7 +693,35 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
 
-    findings = scan_tree(root, denylist_terms)
+    binary_allowlist = None
+    allowlist_path: Path | None = None
+    if args.binary_allowlist:
+        allowlist_path = Path(args.binary_allowlist)
+        if not allowlist_path.is_file():
+            print(f"error: binary allowlist manifest not found: {allowlist_path}",
+                  file=sys.stderr)
+            return 2
+    else:
+        # Auto-detect the repo corpus manifest: scanning the repo root picks
+        # it up at tests/corpus/forms/manifest.json; scanning the corpus dir
+        # itself picks up its own manifest.json.
+        for candidate in (root / CORPUS_MANIFEST_RELPATH,
+                          root / "manifest.json"
+                          if root.parts[-3:] == ("tests", "corpus", "forms")
+                          else None):
+            if candidate is not None and candidate.is_file():
+                allowlist_path = candidate
+                break
+    if allowlist_path is not None:
+        try:
+            binary_allowlist = load_binary_allowlist(allowlist_path)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"binary allowlist: {allowlist_path} "
+              f"({len(binary_allowlist)} sha256-pinned entries)", file=sys.stderr)
+
+    findings = scan_tree(root, denylist_terms, binary_allowlist)
     _print_report(root, findings, args.json)
 
     hard_count = sum(1 for f in findings if f["severity"] == "HARD")
