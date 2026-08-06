@@ -34,6 +34,7 @@ from xml.etree import ElementTree
 import render_probe
 import render_cert
 import check_saeteuk
+import verdict_schema
 
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
@@ -597,6 +598,12 @@ def check(
                              "at": artifact_rel or "request.yaml"})
 
     grade, grade_source = _proof_grade(ws)
+    # Shared-miss #5: the external proof-loop writer can emit converged:true
+    # together with status:escalate_human. Reject the contradictory pair at
+    # read time — a self-contradictory assembly verdict fails this gate.
+    hard.extend(verdict_schema.validate_verdict_file(
+        ws / ASSEMBLY_VERDICT_REL, at=ASSEMBLY_VERDICT_REL.as_posix(),
+    ))
     delivery_capabilities = None
     render_certificate_rel = None
     render_certificate_verification = None
