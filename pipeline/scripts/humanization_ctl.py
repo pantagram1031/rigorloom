@@ -120,20 +120,13 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 # --- v3 pack-driven voice + deterministic pre-pass -------------------------
 def _merged_pack(root: Path, pack_type: str, subject: str | None = None) -> dict[str, object]:
-    """Resolve a pack at RUNTIME by precedence (default < global < subject).
+    """Resolve a pack through the canonical personalization layer.
 
     Never writes pack content into the workspace; the caller decides where the
     resolved content lands (private sidecar) and what (hash/pointer) the
     workspace payload carries.
     """
-    merged = pctl.pack_default(pack_type)
-    glob = pctl.stored_pack(root, pack_type)
-    if glob is not None:
-        merged = pctl.deep_merge(merged, glob)
-    if subject:
-        sub = root / "academics" / "subjects" / subject / "packs" / f"{pack_type}.json"
-        if sub.exists():
-            merged = pctl.deep_merge(merged, json.loads(sub.read_text(encoding="utf-8")))
+    merged, _metadata = pctl.resolve_pack_content(root, pack_type, subject)
     return merged if isinstance(merged, dict) else {}
 
 
