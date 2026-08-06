@@ -73,7 +73,9 @@ def _resolve_check_style():
     flattened skill install (module scripts synced beside core scripts) the
     plain sibling import works instead. Unresolvable = None; check() then
     refuses loudly (exit 2) — this composite gate stays fail-closed, never
-    silently thinner.
+    silently thinner. Normally unreachable: report declares
+    requires_modules: [style], so enablement enforcement is primary and this
+    is defense-in-depth only.
     """
     try:
         from module_registry import ModuleError, ModuleRegistry

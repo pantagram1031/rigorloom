@@ -8,6 +8,10 @@
 schema: rigorloom-module/v1
 name: report
 requires: {rigorloom: ">=0.16"}
+# content_audit composes the style module's check_style checker (via registry
+# lookup, W4.2) — the dependency is real, so it is declared and enforced at
+# enablement: report cannot be enabled without style.
+requires_modules: [style]
 provides:
   checkers:
     - {name: check_scorecard, script: scripts/check_scorecard.py}

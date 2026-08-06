@@ -21,6 +21,10 @@ Contract rules enforced here:
   ``ModuleError`` naming the module — never a silent skip.
 - Version gate: ``requires.rigorloom`` is checked against the project version
   from ``pyproject.toml``; an unsatisfied range is a load refusal.
+- Inter-module dependency gate: ``requires_modules`` names distribution
+  modules that must ALSO be enabled; enabling a module whose dependencies are
+  not all enabled is a loud refusal naming the missing modules — a dependency
+  present on disk but not listed in enabled.yaml is still an error.
 
 Stdlib-only by design (a core-only install carries no extra dependencies);
 ``module.yaml`` is parsed with a strict pure-literal YAML subset documented in
@@ -358,7 +362,8 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
     """Validate a parsed module.yaml; return it normalized. Loud on any flaw."""
     if not isinstance(payload, dict):
         _fail(module, "module.yaml root must be a mapping")
-    unknown = sorted(set(payload) - {"schema", "name", "requires", "provides"})
+    unknown = sorted(
+        set(payload) - {"schema", "name", "requires", "requires_modules", "provides"})
     if unknown:
         _fail(module, f"unknown top-level keys {unknown}")
     for required in ("schema", "name", "requires", "provides"):
@@ -376,6 +381,17 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
     # Parse eagerly so a bad range is a validation error, not a gate-time one.
     version_satisfies("0.0.0", range_spec, f"module '{module}' requires.rigorloom")
 
+    requires_modules = payload.get("requires_modules", [])
+    if not isinstance(requires_modules, list):
+        _fail(module, "requires_modules must be a list of distribution-module names")
+    requires_modules = [
+        _require_str(module, item, f"requires_modules[{idx}]", _NAME_RE)
+        for idx, item in enumerate(requires_modules)]
+    if len(requires_modules) != len(set(requires_modules)):
+        _fail(module, "requires_modules has duplicates")
+    if name in requires_modules:
+        _fail(module, "requires_modules must not name the module itself")
+
     provides = payload["provides"]
     if provides is None:
         provides = {}
@@ -388,7 +404,8 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
 
     normalized: dict[str, Any] = {
         "schema": MODULE_SCHEMA, "name": name,
-        "requires": {"rigorloom": range_spec}, "provides": {},
+        "requires": {"rigorloom": range_spec},
+        "requires_modules": requires_modules, "provides": {},
     }
     out = normalized["provides"]
     if "checkers" in provides:
@@ -459,6 +476,7 @@ class ModuleSpec:
     root: Path
     requires: str
     provides: dict = field(compare=False)
+    requires_modules: tuple[str, ...] = ()
 
     def payload_path(self, relative: str) -> Path:
         resolved = (self.root / relative).resolve()
@@ -516,6 +534,7 @@ class ModuleRegistry:
                     root=manifest.parent,
                     requires=declaration["requires"]["rigorloom"],
                     provides=declaration["provides"],
+                    requires_modules=tuple(declaration["requires_modules"]),
                 )
         self._discovered = found
         return found
@@ -568,10 +587,29 @@ class ModuleRegistry:
                     f"{self.version} (from {self._pyproject})")
             self._check_payload_paths(spec)
             specs.append(spec)
+        self._check_requires_modules(specs)
         self._check_collisions(specs)
         self._check_gate_kind_bindings(specs)
         self._enabled = specs
         return specs
+
+    @staticmethod
+    def _check_requires_modules(specs: list[ModuleSpec]) -> None:
+        """Inter-module dependency gate (enforced at ENABLEMENT): every name a
+        module lists in requires_modules must itself be enabled. A dependency
+        that is present on disk but not listed in enabled.yaml is still a
+        refusal — same style as the requires.rigorloom version gate."""
+        enabled_names = {spec.name for spec in specs}
+        for spec in specs:
+            missing = [dep for dep in spec.requires_modules
+                       if dep not in enabled_names]
+            if missing:
+                raise ModuleError(
+                    f"refusing to load distribution module '{spec.name}': it "
+                    f"requires distribution module(s) {missing} which are not "
+                    f"enabled (enabled: {sorted(enabled_names)}); a "
+                    "dependency present on disk but not listed in "
+                    "enabled.yaml is still missing - enable it too")
 
     def _check_payload_paths(self, spec: ModuleSpec) -> None:
         for relative in _declared_paths(spec.provides):
@@ -705,6 +743,8 @@ class ModuleRegistry:
             "modules_root": str(self.modules_root),
             "discovered": sorted(discovered),
             "enabled": [spec.name for spec in enabled],
+            "requires_modules": {
+                spec.name: list(spec.requires_modules) for spec in enabled},
             "checkers": self.enabled_checkers(),
             "cli": self.enabled_cli(),
             "pack_types": self.enabled_pack_types(),

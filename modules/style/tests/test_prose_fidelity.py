@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 
+ROOT = Path(__file__).parents[3]
 MODULE_ROOT = Path(__file__).parents[1]
 FIDELITY_PATH = MODULE_ROOT / "scripts" / "prose_fidelity.py"
 HUMANIZE_PATH = MODULE_ROOT / "scripts" / "humanization_ctl.py"

@@ -225,46 +225,82 @@ class TestAbsenceIsNotFailure:
 # ---------------------------------------------------------------------------
 
 class TestSelectiveEnablementIndependence:
-    """The committed distribution modules enable independently: style loads
-    without report and report loads without style. Registry-level proof over
-    the REAL modules/ tree (a temp enabled.yaml, never the repo's)."""
+    """Selective enablement over the REAL modules/ tree (a temp enabled.yaml,
+    never the repo's). style requires nothing and enables alone; report
+    declares requires_modules: [style], so report-without-style is a loud
+    enablement refusal — the dependency is real (content_audit composes
+    check_style) and now visible in the contract."""
 
-    @pytest.mark.parametrize("only, other", [
-        ("style", "report"),
-        ("report", "style"),
-    ])
-    def test_real_module_enables_without_the_other(self, tmp_path, only, other):
+    def _registry(self, tmp_path, names):
         enabled = tmp_path / "enabled.yaml"
         enabled.write_text(
             "schema: rigorloom-enabled-modules/v1\n"
-            f"enabled: [{only}]\n",
+            f"enabled: [{', '.join(names)}]\n",
             encoding="utf-8",
         )
-        registry = ModuleRegistry(
-            REPO_ROOT / "modules", enabled_file=enabled)
-        assert {only, other} <= set(registry.discover())
-        assert [spec.name for spec in registry.enabled_modules()] == [only]
+        return ModuleRegistry(REPO_ROOT / "modules", enabled_file=enabled)
+
+    def test_style_enables_alone(self, tmp_path):
+        registry = self._registry(tmp_path, ["style"])
+        assert {"style", "report"} <= set(registry.discover())
+        assert [spec.name for spec in registry.enabled_modules()] == ["style"]
         checkers = registry.enabled_checkers()
-        assert checkers, f"module {only!r} must surface at least one checker"
+        assert {row["name"] for row in checkers} == {"check_style"}
+        assert {row["command"] for row in registry.enabled_cli()} == {
+            "humanize"}
+        assert registry.enabled_pack_types() == []
         contributions = (
             checkers + registry.enabled_cli() + registry.enabled_run_modes()
             + registry.enabled_gate_kinds() + registry.enabled_studio_panels()
             + registry.enabled_preflight() + registry.enabled_playbooks())
-        assert all(row["module"] == only for row in contributions)
+        assert all(row["module"] == "style" for row in contributions)
 
-    def test_style_contributions_surface_without_report(self, tmp_path):
-        enabled = tmp_path / "enabled.yaml"
-        enabled.write_text(
-            "schema: rigorloom-enabled-modules/v1\nenabled: [style]\n",
-            encoding="utf-8",
-        )
-        registry = ModuleRegistry(
-            REPO_ROOT / "modules", enabled_file=enabled)
-        assert {row["name"] for row in registry.enabled_checkers()} == {
-            "check_style"}
-        assert {row["command"] for row in registry.enabled_cli()} == {
-            "humanize"}
-        assert registry.enabled_pack_types() == []
+    def test_report_without_style_is_a_loud_refusal(self, tmp_path):
+        # style is present on disk but not enabled — still a refusal.
+        registry = self._registry(tmp_path, ["report"])
+        with pytest.raises(ModuleError, match=r"'report'.*\['style'\]"):
+            registry.enabled_modules()
+
+    def test_report_with_style_enables_both(self, tmp_path):
+        registry = self._registry(tmp_path, ["report", "style"])
+        specs = registry.enabled_modules()
+        assert {spec.name for spec in specs} == {"report", "style"}
+        by_name = {row["name"]: row["module"]
+                   for row in registry.enabled_checkers()}
+        assert by_name["check_style"] == "style"
+        assert by_name["content_audit"] == "report"
+        summary = registry.summary()
+        assert summary["requires_modules"] == {
+            "report": ["style"], "style": []}
+
+
+class TestRequiresModulesValidation:
+    def _declaration(self, requires_modules):
+        return {
+            "schema": "rigorloom-module/v1",
+            "name": "demo",
+            "requires": {"rigorloom": ">=0.1"},
+            "requires_modules": requires_modules,
+            "provides": {},
+        }
+
+    def test_normalizes_and_defaults_to_empty(self):
+        normalized = validate_declaration("demo", self._declaration(["style"]))
+        assert normalized["requires_modules"] == ["style"]
+        without = validate_declaration("demo", {
+            "schema": "rigorloom-module/v1", "name": "demo",
+            "requires": {"rigorloom": ">=0.1"}, "provides": {}})
+        assert without["requires_modules"] == []
+
+    @pytest.mark.parametrize("bad, fragment", [
+        ("style", "must be a list"),
+        (["style", "style"], "duplicates"),
+        (["demo"], "must not name the module itself"),
+        (["Bad_Name"], "does not match"),
+    ])
+    def test_invalid_requires_modules_is_loud(self, bad, fragment):
+        with pytest.raises(ModuleError, match=fragment):
+            validate_declaration("demo", self._declaration(bad))
 
 
 # ---------------------------------------------------------------------------

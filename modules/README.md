@@ -44,6 +44,8 @@ includes, no environment interpolation.
 schema: rigorloom-module/v1
 name: report                      # kebab-case; MUST equal the directory name
 requires: { rigorloom: ">=0.16" } # version range checked against pyproject
+requires_modules: [style]         # optional: other distribution modules that
+                                  # must ALSO be enabled (see Enablement model)
 provides:
   checkers:                       # registered into the check registry
     - { name: check_saeteuk, script: scripts/check_saeteuk.py }
@@ -119,6 +121,16 @@ enablement error, not a silent skip.
 - Enabling a module whose `requires.rigorloom` range does not admit the
   project version (from `pyproject.toml`) is a **load refusal** with a message
   naming the module, the required range, and the actual version.
+- **Inter-module dependencies** are declared with the optional top-level
+  `requires_modules: [names]` key and enforced at **enablement**: enabling a
+  module whose `requires_modules` are not all enabled is a loud registry
+  error naming the missing modules (same style as the version-gate refusal).
+  A dependency that is present on disk but not listed in `enabled.yaml` is
+  still an error — disabled means missing. A module may not depend on itself;
+  dependencies are names only (no version ranges — all modules ship at the
+  core version). Module payloads may additionally fail closed at run time
+  when a dependency's contribution is absent (defense-in-depth), but the
+  enablement check is the primary enforcement.
 - Two enabled modules may not both provide the same checker `name`, CLI
   `command`, `pack_type`, run-mode `name`, or panel `id` — collisions are loud
   enablement errors.
