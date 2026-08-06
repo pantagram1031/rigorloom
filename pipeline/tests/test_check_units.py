@@ -21,7 +21,15 @@ def _load(name):
 
 
 check_units = _load("check_units")
-content_audit = _load("content_audit")
+# TRANSITIONAL (v0.16 W3.3): content_audit moved into the report distribution
+# module; the merge-behavior integration test below loads it from the module
+# payload until that test follows content_audit into modules/report/tests.
+_spec_ca = importlib.util.spec_from_file_location(
+    "content_audit",
+    Path(__file__).parents[2] / "modules" / "report" / "scripts" / "content_audit.py",
+)
+content_audit = importlib.util.module_from_spec(_spec_ca)
+_spec_ca.loader.exec_module(content_audit)
 
 
 class CheckUnitsTests(unittest.TestCase):

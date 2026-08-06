@@ -2,7 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Branch pushes with an open PR were double-running the whole matrix
+# (12+ concurrent jobs after the module-set dimension) and starving the
+# hosted-runner queue ("not acquired by Runner"). One run per ref, newest wins.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -37,7 +45,7 @@ jobs:
       - run: python -m pytest -q
       # bash so the *.py globs expand on the Windows runner too (pwsh passes
       # them through literally and py_compile fails on the literal pattern)
-      - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py
+      - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py modules/report/scripts/*.py
         shell: bash
       - name: Compose smoke
         shell: bash

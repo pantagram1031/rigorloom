@@ -89,7 +89,7 @@ enablement error, not a silent skip.
 | `checkers` | list of `{name, script}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. |
 | `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
 | `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
-| `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless`; `gates` lists checker/gate names the mode enforces. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
+| `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by core's `check_canonical`); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
 | `studio_panels` | list of `{id, title, entry}` | Declarative studio contributions (plan §3.4). Studio renders enabled panels by `entry` path; absent module, absent panel; studio never learns a module's name. |
 | `skill` | `{fragment, references}` | One SKILL fragment plus its reference files, merged into the distribution bundle's router SKILL.md by the installer. A core-only install never sees the fragment's vocabulary. |
 | `playbooks` | list of paths | Stage/task playbooks the module contributes (merged alongside `pipeline/references/playbooks/`). |
@@ -123,3 +123,28 @@ Core code consumes modules exclusively through the typed accessors on
 `pipeline/scripts/module_registry.py` (`enabled_checkers()`,
 `enabled_pack_types()`, `enabled_run_modes()`, …). If a core change needs a
 module's *name* to work, the change is wrong — that is the contract leaking.
+
+## How module scripts import (the one mechanism)
+
+Module payload scripts are plain files, not a package. A script in
+`modules/<name>/scripts/` that needs a sibling script or a core helper
+(`checker_base.py`, `personalization_ctl.py`, …) uses exactly this header —
+the same cross-directory pattern `engine/tests` uses to reach
+`engine/scripts`:
+
+```python
+SCRIPTS_DIR = Path(__file__).resolve().parent
+CORE_SCRIPTS_DIR = SCRIPTS_DIR.parents[2] / "pipeline" / "scripts"
+for _dir in (CORE_SCRIPTS_DIR, SCRIPTS_DIR):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
+```
+
+The module scripts dir ends up *ahead* of core on `sys.path`, so sibling
+imports win by position while core helpers resolve normally. The dependency
+still points one way: module scripts import core freely; no core script ever
+imports from a `modules/` directory. Module tests use the same idea —
+`Path(__file__).parents[1] / "scripts"` for the module payload plus the core
+`pipeline/scripts` dir when they need core helpers — and
+`modules/<name>/tests/conftest.py` marks the whole directory skipped unless
+the module is enabled, so a core-only run collects-and-skips cleanly.
