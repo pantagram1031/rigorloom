@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Verdict-contradiction rejection (shared-miss #5).
 
-The proof-loop verdict writer lives in the external hwp-master repo
-(``scripts/fill_report.py``): after phase-1 converges it merges the proof
-fragment into the same object (``out_obj.update(proof_frag)``), so a proof
-exhaust yields ``converged: true`` together with ``status: escalate_human``
-in one verdict file. rigorloom does not own that writer, so the fix is
-read-time rejection: ``verdict_schema`` flags the pair and Stage 6
+The proof-loop verdict writer (``engine/scripts/fill_report.py``,
+absorbed from hwp-master in Wave 2): after phase-1 converges it merges the
+proof fragment into the same object (``out_obj.update(proof_frag)``), so a
+proof exhaust could yield ``converged: true`` together with
+``status: escalate_human`` in one verdict file. Read-time rejection stays as
+defense in depth: ``verdict_schema`` flags the pair and Stage 6
 ``submission_preflight`` HARD-fails on it.
 
 The integration test below is the originally-failing reproduction: before

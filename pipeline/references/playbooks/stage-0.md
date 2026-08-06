@@ -15,7 +15,7 @@ human.
 EXACT commands (form_inspect v2, CONTRACT §E amended / §T inspect):
 ```
 # cd <REPO_ROOT>/ (all paths below are relative to this, repository-root CWD)
-python <HWP_MASTER_ROOT>/scripts/form_inspect.py <ABSOLUTE_FORM_PATH> \
+python engine/scripts/form_inspect.py <ABSOLUTE_FORM_PATH> \
   --out <WS>/form_profile.json \
   --base-pt 10 --line-spacing 180 \
   [--baseline <WS>/form_baseline.json]

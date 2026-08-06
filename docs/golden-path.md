@@ -24,12 +24,12 @@ Two things this doc is honest about up front:
 
 - Python 3.10+, standard library only, for everything except the `hwpx`/`hwp`
   backends.
-- For the Hancom-free `hwpx` path: a checkout of the separate
-  [hwp-master](https://github.com/pantagram1031/hwp-master) project, which
-  supplies `fill_report.py`, `eqn.py`, `xml_backend.py`, and `form_inspect.py`.
-  None of these require Hancom or Windows for the XML engine path.
+- For the Hancom-free `hwpx` path: nothing extra — the engine is bundled at
+  `engine/scripts` (`fill_report.py`, `eqn.py`, `xml_backend.py`,
+  `form_inspect.py`). None of these require Hancom or Windows for the XML
+  engine path.
 - For the full `hwp` path (native Hancom proof): Windows + a licensed Hancom
-  Office HWP install, plus hwp-master's optional `[windows]`/`[proof]` extras.
+  Office HWP install, plus the engine's optional `[windows]`/`[proof]` extras.
   This doc calls out each place that path diverges.
 
 ## 1. Clone and bootstrap
@@ -47,18 +47,12 @@ default preference packs, and runs an end-to-end smoke test (`new_report` →
 idempotent. This step alone proves the kernel is wired correctly; it does not
 produce a real document.
 
-Optionally, for the Hancom-free path, clone hwp-master beside this repo and
-point at its `scripts/` directory:
-
-```sh
-git clone https://github.com/pantagram1031/hwp-master.git ../hwp-master
-export HWP_MASTER_SCRIPTS="$(cd ../hwp-master/scripts && pwd)"
-export HWP_MASTER_ROOT="$(cd ../hwp-master && pwd)"
-```
-
-`HWP_MASTER_SCRIPTS` is what `doc_backend.py --backend hwpx` reads; the
-dispatcher checks that `fill_report.py`, `eqn.py`, and `xml_backend.py` all
-exist under it before invoking anything (`pipeline/scripts/doc_backend.py`).
+The Hancom-free XML engine is bundled at `engine/scripts` — no external
+checkout or environment variable needed. `doc_backend.py --backend hwpx`
+resolves it there by default and checks that `fill_report.py`, `eqn.py`, and
+`xml_backend.py` all exist before invoking anything
+(`pipeline/scripts/doc_backend.py`). Operators with an external engine
+checkout may still set `HWP_MASTER_SCRIPTS` as an override (deprecated).
 
 ## 2. Create an example workspace
 
@@ -94,7 +88,7 @@ are declared in `pipeline/references/stages.yaml`:
 
 | Stage | Name | Gate kind | Resolve with |
 |---|---|---|---|
-| 0 | form_intake | none | `pipeline_ctl.py advance <WS> 0 --status done` (after `form_inspect.py`, hwp-master) |
+| 0 | form_intake | none | `pipeline_ctl.py advance <WS> 0 --status done` (after `engine/scripts/form_inspect.py`) |
 | 1 | research | none | `pipeline_ctl.py advance <WS> 1 --status done` |
 | 2 | design | human | `pipeline_ctl.py gate <WS> design --mode night` |
 | 2.5 | layout_plan | script (external checker) | registered per-workspace; see `playbooks/stage-2.5.md` |
@@ -148,10 +142,11 @@ python pipeline/scripts/doc_backend.py <WS> --backend hwpx
 
 (`ws_snapshot.py snapshot` is the pre-assembly restore point the stage-5
 playbook recommends before any assembly attempt.) The dispatcher invokes
-hwp-master's `fill_report.py --engine xml` against `<WS>/output/form_copy.hwpx`
+the engine's `fill_report.py --engine xml` against `<WS>/output/form_copy.hwpx`
 and `<WS>/bundle/content.md`, filling `output/out.hwpx` without Hancom or COM
-on any OS. If `HWP_MASTER_SCRIPTS` is unset or incomplete, the dispatcher
-exits 4 and prints the exact fix instead of guessing.
+on any OS. If the engine cannot be resolved (corrupted install, or an invalid
+`HWP_MASTER_SCRIPTS` override), the dispatcher exits 4 and prints the exact
+fix instead of guessing.
 
 **Where the proof grade comes from:** `doc_backend.py` probes this machine's
 render capabilities (`render_probe.py`: Hancom COM, `soffice` local/WSL,
@@ -171,7 +166,7 @@ H2Orestart) and picks a renderer:
 - No usable renderer at all → `proof_grade: none`.
 
 This decision is echoed in the dispatcher's own JSON output and is expected
-to land in `<WS>/output/verdict_v06.json` (written by the hwp-master assembly
+to land in `<WS>/output/verdict_v06.json` (written by the engine assembly
 loop itself) as the `proof_grade` field — that is exactly what Stage 6
 `submission_preflight.py` reads later.
 
@@ -244,11 +239,11 @@ python pipeline/scripts/pipeline_ctl.py check <WS> submission_preflight
 ## Windows + Hancom alternative
 
 Everything from step 4B onward has a Hancom/COM equivalent: set
-`doc_backend: hwp`, ensure hwp-master's `.[windows]`/`.[proof]` extras and a
+`doc_backend: hwp`, ensure the engine's `.[windows]`/`.[proof]` extras and a
 licensed Hancom install are present, and run
-`<HWP_MASTER_ROOT>/scripts/fill_report.py --loop --proof ...` per
+`engine/scripts/fill_report.py --loop --proof ...` per
 `pipeline/references/playbooks/stage-5.md`'s §HWP section instead of
 `doc_backend.py --backend hwpx`. That path reaches `proof_grade: hancom`
-directly and includes hwp-master's own render-measured fill/tidy/typeset
+directly and includes the engine's own render-measured fill/tidy/typeset
 loop, which the XML engine only gained (optionally, when a renderer is
 configured) in the v0.10 wave.

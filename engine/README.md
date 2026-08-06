@@ -1,3 +1,5 @@
+> Absorbed into rigorloom as core engine (Wave 2, 2026-08-06); history preserved.
+
 # hwp-master
 
 > 한글(HWP/HWPX) 문서를 AI 에이전트가 "사람처럼" 편집하게 하는 듀얼 백엔드 Agent Skill.

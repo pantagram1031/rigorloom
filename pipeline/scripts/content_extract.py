@@ -66,7 +66,7 @@ def text_hash(chunks: list[str]) -> str:
 
 
 def _brace_equation_scripts(script: str) -> str:
-    """Canonicalize bare HwpEqn ^x/_x atoms like hwp-master's eqn fill path."""
+    """Canonicalize bare HwpEqn ^x/_x atoms like the engine's eqn fill path (engine/scripts/eqn.py)."""
     out: list[str] = []
     index, size = 0, len(script)
     while index < size:

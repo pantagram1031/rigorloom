@@ -16,7 +16,8 @@ and every action POST returns HTTP 403 unless `STUDIO_ALLOW_ACTIONS=1` is set.
 Action mode can append an operator approval and invoke repository pipeline
 commands, including the bundle and COM-free HWPX document backends, so enable
 it only for a workspace you intend to operate. The HWPX button is disabled
-unless the capability probe reports a renderer or `HWP_MASTER_SCRIPTS` is set.
+unless the bundled engine (`engine/scripts`) is resolvable or the capability
+probe reports a renderer.
 
 ### Render capabilities and proof grades
 

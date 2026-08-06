@@ -67,6 +67,20 @@ def _slugs():
     )
 
 
+def _hwpx_engine_available() -> bool:
+    """True when the hwpx XML engine is resolvable.
+
+    Mirrors doc_backend._resolve_hwpx_fill_report: bundled engine at
+    <repo>/engine/scripts by default, HWP_MASTER_SCRIPTS as an optional
+    (deprecated) override for external checkouts.
+    """
+    override = os.environ.get("HWP_MASTER_SCRIPTS", "").strip()
+    base = (Path(override).expanduser() if override
+            else REPO_ROOT / "engine" / "scripts")
+    return all((base / marker).is_file()
+               for marker in ("fill_report.py", "eqn.py", "xml_backend.py"))
+
+
 def _probe_capability_status() -> dict:
     """Probe render capabilities once per Studio process.
 
@@ -77,7 +91,7 @@ def _probe_capability_status() -> dict:
         "available": False,
         "chips": [{"key": "probe", "label": "probe n/a", "available": False}],
         "renderers": [],
-        "hwpx_available": bool(os.environ.get("HWP_MASTER_SCRIPTS", "").strip()),
+        "hwpx_available": _hwpx_engine_available(),
     }
     script = REPO_ROOT / "pipeline" / "scripts" / "render_probe.py"
     if not script.is_file():
@@ -119,9 +133,8 @@ def _probe_capability_status() -> dict:
             "available": True,
             "chips": chips,
             "renderers": normalized_renderers,
-            "hwpx_available": bool(normalized_renderers) or bool(
-                os.environ.get("HWP_MASTER_SCRIPTS", "").strip()
-            ),
+            "hwpx_available": bool(normalized_renderers)
+            or _hwpx_engine_available(),
         }
     except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
         return unavailable

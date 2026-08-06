@@ -15,10 +15,13 @@ Backends:
             Always available. Dispatches to pipeline/adapters_impl/bundle_backend.
     docx    optional python-docx render (`pip install python-docx`).
             Dispatches to pipeline/adapters_impl/docx_backend.
-    hwpx    EXTERNAL adapter (hwp-master XML engine, any OS). Resolved through
-            HWP_MASTER_SCRIPTS and dispatched to fill_report.py --engine xml.
-    hwp     EXTERNAL adapter (hwp-master, Windows + Hancom). Not implemented
-            here — prints the pointer instruction and exits 4.
+    hwpx    bundled engine (engine/scripts XML engine, any OS). Resolved to
+            <repo>/engine/scripts by default and dispatched to
+            fill_report.py --engine xml. HWP_MASTER_SCRIPTS is honored as an
+            optional override for operators with an external engine checkout
+            (deprecated: the engine ships in-repo since Wave 2 / v0.16).
+    hwp     COM adapter (Windows + Hancom, bundled at engine/scripts). Not
+            dispatched here — prints the assembly-loop instruction and exits 4.
 
 Exit codes:
     0  success
@@ -52,25 +55,26 @@ import rhwp_proof  # noqa: E402
 import render_cert  # noqa: E402
 
 _HWP_POINTER = (
-    "hwp backend is an EXTERNAL adapter (Windows + Hancom + hwp-master).\n"
-    "It is not implemented in this repo. Run the hwp-master assembly loop:\n"
-    "  python <HWP_MASTER_ROOT>/scripts/fill_report.py --loop \\\n"
+    "hwp backend is the COM assembly loop (Windows + Hancom), bundled at\n"
+    "engine/scripts. It is not dispatched by this command. Run:\n"
+    "  python <repo>/engine/scripts/fill_report.py --loop \\\n"
     "    --form <WS>/output/form_copy.hwpx \\\n"
     "    --content <WS>/bundle/content.md --out-dir <WS>/output \\\n"
     "    --build-yaml <WS>/build.yaml --baseline <WS>/form_baseline.json \\\n"
     "    --form-profile <WS>/form_profile.json --proof --max-proof-iters 3\n"
-    "See adapters/hwp/README.md (clone hwp-master beside this repo or set "
-    "HWP_MASTER_ROOT)."
+    "See adapters/hwp/README.md."
 )
 
 _HWPX_POINTER = (
-    "hwpx backend is an EXTERNAL adapter (hwp-master XML engine; no Hancom/COM).\n"
-    "Set HWP_MASTER_SCRIPTS to the hwp-master scripts directory containing\n"
-    "fill_report.py, eqn.py, and xml_backend.py, then rerun this command.\n"
-    "(All three files must be present — this is a misconfiguration guard, not\n"
-    "a security check; HWP_MASTER_SCRIPTS is operator-trusted config.)\n"
+    "hwpx backend (XML engine; no Hancom/COM) could not be resolved.\n"
+    "The engine ships bundled at <repo>/engine/scripts and should always be\n"
+    "found there; this error means either a corrupted install (engine/scripts\n"
+    "is missing fill_report.py, eqn.py, or xml_backend.py) or an invalid\n"
+    "HWP_MASTER_SCRIPTS override pointing at a directory without those files.\n"
+    "(The marker check is a misconfiguration guard, not a security check;\n"
+    "HWP_MASTER_SCRIPTS is operator-trusted config.)\n"
     "The dispatcher will invoke:\n"
-    "  python <HWP_MASTER_SCRIPTS>/fill_report.py --engine xml \\\n"
+    "  python <engine-scripts>/fill_report.py --engine xml \\\n"
     "    --form <WS>/output/form_copy.hwpx \\\n"
     "    --content <WS>/bundle/content.md --out-dir <WS>/output"
 )
@@ -79,15 +83,23 @@ _HWPX_POINTER = (
 # marker check just catches misconfiguration (e.g. the env var pointing at
 # the wrong directory) — it is not a security boundary.
 _HWP_MASTER_MARKERS = ("fill_report.py", "eqn.py", "xml_backend.py")
+_ENGINE_SCRIPTS = os.path.join(os.path.dirname(_PIPELINE_DIR), "engine", "scripts")
 _CONTENT_EQ_RE = re.compile(r"\[\[\s*EQ\b", re.IGNORECASE)
 _XML_EQ_RE = re.compile(br"<(?:[A-Za-z_][\w.-]*:)?equation\b", re.IGNORECASE)
 
 
 def _resolve_hwpx_fill_report() -> str | None:
+    """Resolve the XML engine's fill_report.py.
+
+    Default: the bundled engine at <repo>/engine/scripts (in-repo since the
+    Wave 2 absorb, v0.16). HWP_MASTER_SCRIPTS is still honored as an explicit
+    override for operators running an external engine checkout — deprecated;
+    it will be removed once no external checkouts remain. A set-but-invalid
+    override fails loudly (returns None) instead of silently falling back.
+    """
     scripts = os.environ.get("HWP_MASTER_SCRIPTS", "").strip()
-    if not scripts:
-        return None
-    base = os.path.abspath(os.path.expanduser(scripts))
+    base = (os.path.abspath(os.path.expanduser(scripts)) if scripts
+            else _ENGINE_SCRIPTS)
     if not all(os.path.isfile(os.path.join(base, marker))
                for marker in _HWP_MASTER_MARKERS):
         return None
@@ -454,7 +466,7 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     if fill_report is None:
         print(_HWPX_POINTER, file=sys.stderr)
         print(json.dumps({"ok": False, "backend": "hwpx", "external": True,
-                          "reason": "hwp-master XML adapter unavailable"}))
+                          "reason": "XML engine unavailable"}))
         return 4
 
     command = [
@@ -491,9 +503,9 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
         completed = subprocess.run(command, capture_output=True, text=True,
                                    encoding="utf-8", errors="replace")
     except OSError as exc:
-        print(f"failed to launch hwp-master XML adapter: {exc}", file=sys.stderr)
+        print(f"failed to launch XML engine adapter: {exc}", file=sys.stderr)
         print(json.dumps({"ok": False, "backend": "hwpx", "external": True,
-                          "reason": "failed to launch hwp-master XML adapter"}))
+                          "reason": "failed to launch XML engine adapter"}))
         return 4
     if completed.stderr:
         sys.stderr.write(completed.stderr)
@@ -587,7 +599,7 @@ def main(argv=None):
     if backend == "hwp":
         print(_HWP_POINTER, file=sys.stderr)
         print(json.dumps({"ok": False, "backend": "hwp", "external": True,
-                          "reason": "hwp is an external adapter (hwp-master)"}))
+                          "reason": "hwp is the COM assembly loop (engine/scripts); run it directly"}))
         return 4
 
     if backend == "hwpx":

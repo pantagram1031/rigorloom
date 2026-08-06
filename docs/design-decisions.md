@@ -37,6 +37,7 @@ later agent can detect drift.
 ## DD-007 — Document engines are adapters
 
 The pipeline can run without HWP. Full `.hwp` editing is delegated to
-`hwp-master` on a Windows host with locally installed Hancom Office. Other
+the bundled engine (`engine/scripts`) on a Windows host with locally
+installed Hancom Office. Other
 document engines can implement the same inspect, assemble, measure, proof, and
 finalize responsibilities.

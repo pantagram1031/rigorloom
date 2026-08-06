@@ -55,8 +55,6 @@ source_map:
     to: "references"
   - from: "adapters/claude-code/SKILL.report-pipeline.md"   # router skill entry
     to: "SKILL.md"
-  - from: "adapters/claude-code/SKILL.hwp-master.pointer.md"
-    to: "references/hwp-master-pointer.md"
 
 exclude:
   - "__pycache__"
@@ -84,13 +82,12 @@ Those installed locations are just `source_map` `to` paths under each target's
 | Repo file (`from`) | Target `install_root` | `to` |
 |---|---|---|
 | `adapters/claude-code/SKILL.report-pipeline.md` | `<SKILLS_ROOT>/report-pipeline` | `SKILL.md` |
-| `adapters/claude-code/SKILL.hwp-master.pointer.md` | `<SKILLS_ROOT>/report-pipeline` | `references/hwp-master-pointer.md` |
 | `adapters/claude-code/agent.humanizer.template.md` | `<agents-dir>` (a `repo_targets` entry) | `humanizer.md` (overlay voice pack layered on top) |
 
 After install, the router skill's `pipeline_ctl.py` commands still run from
 `<CHECKOUT>` root, and every `<WS>` argument is an absolute workspace path.
-The separate `hwp-master` project is installed independently — see
-`adapters/claude-code/SKILL.hwp-master.pointer.md`.
+The HWP/HWPX engine is bundled at `engine/` in this repo (absorbed from the
+former external hwp-master project in Wave 2) — no separate install needed.
 
 ## Non-Claude orchestrators
 
