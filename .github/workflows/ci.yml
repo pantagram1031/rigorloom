@@ -78,8 +78,14 @@ jobs:
                   "submit_verify",
               ],
           }
-          ctl = Path("pipeline/scripts/pipeline_ctl.py").resolve()
-          compose = Path("pipeline/scripts/compose.py").resolve()
+          # S2b moved the stage machine into the report distribution module;
+          # the smoke enables modules and resolves payload paths there.
+          subprocess.run([
+              sys.executable, "pipeline/scripts/module_registry.py",
+              "write-enabled", "--all",
+          ], check=True, capture_output=True, text=True, encoding="utf-8")
+          ctl = Path("modules/report/scripts/pipeline_ctl.py").resolve()
+          compose = Path("modules/report/scripts/compose.py").resolve()
           with tempfile.TemporaryDirectory() as temporary:
               ws = Path(temporary) / "report-compose-smoke"
               (ws / "refs").mkdir(parents=True)
