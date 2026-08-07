@@ -32,8 +32,21 @@ stale-lineseg(P0, 실사격 후속 사고): 문단 텍스트를 바꾸면서 한
 overprint). 텍스트가 바뀐 '그' 문단의 linesegarray만 제거한다 — 한컴은
 없으면 열 때 재계산하고, 바뀌지 않은 문단은 바이트 그대로 보존한다.
 
+T30 사전 점검(fill-cells): "런의 charPr을 보존한다"는 계약은 그 런의 charPr이
+본문과 같은 서식일 때만 안전하다. PPS 양식의 (10,2) 셀은 빈 런이 본문과
+동일한 charPr + <hh:supscript/>를 지고 있었고, 올바르게 보이는 채우기가
+~6.35pt 올려찍힘으로 렌더됐다(nominal height는 그대로이므로 charpr_check도
+style_diff도 통과). 그래서 fill-cells는 재지정 id 없이 script_anomaly 런을
+채우기를 **거부**한다(exit 3, 셀 주소·이상 charPr·권장 id·넘겨야 할 플래그를
+전부 이름 붙여서). 사전에 어느 셀인지 보려면 form_inspect의 table_map
+fill_target 셀에 붙는 charpr/script_anomaly/charpr_suggested를 읽으면 된다.
+
 CLI(얇은 래퍼):
     python preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
+    python preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0]
+                      --cell 'ROW,COL=TEXT' ... [--map CELLS.json] [--overwrite]
+                      [--charpr ID]                # 배치 전체(T32)
+                      [--charpr-per-cell ROW,COL=ID ...]   # 셀 단위(우선)
     python preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue]
                       [--charpr-ids 5,6]
     python preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW ...
@@ -52,7 +65,10 @@ import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-import guards
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+import guards  # noqa: E402
 
 # tidy_hwpx와 동일 관용구: 접두사(hp:/hs:/hh:)는 가변이므로 로컬네임 매칭.
 NS = r'[A-Za-z0-9]+'
@@ -81,10 +97,54 @@ CHARPROPERTIES_RE = re.compile(r'<' + NS + r':charProperties\b[^>]*>')
 # 삭제 후보에서 구조적으로 제외된다 = sim의 in_tbl 배제와 동등).
 from tidy_hwpx import OBJECT_TAG_RE, _find_paragraphs, _para_text  # noqa: E402
 from hwpx_tables import find_cell, scan_tables  # noqa: E402
+# T30 어휘(script/scale/offset 프로파일·본문 baseline·차이 판정)는
+# form_inspect(사전 점검)·visual_verify(사후 검출)와 **같은 모듈**을 쓴다.
+import charpr_script  # noqa: E402
 
 
 class PreeditError(RuntimeError):
     """선처리 계약 위반(0-hit 키, src charPr 부재 등) — 출력을 쓰기 전에 터진다."""
+
+
+class ScriptAnomalyError(PreeditError):
+    """T30 사전 점검 거부 — 대상 셀의 런 charPr이 본문 baseline과 다르다.
+
+    ``anomalies``: [{addr, charpr, differing, charpr_suggested, …}] — 어느
+    셀인지, 어떤 charPr인지, 무엇을 대신 써야 하는지가 전부 들어 있다.
+    exit code 3(= '발견', 사용법 오류 아님).
+    """
+
+    exit_code = 3
+
+    def __init__(self, anomalies):
+        self.anomalies = list(anomalies)
+        lines, flags = [], []
+        for a in self.anomalies:
+            addr = f"{a['addr'][0]},{a['addr'][1]}"
+            rendered = a.get("rendered_pt_estimate")
+            rendered_note = (f", 렌더 추정 ~{rendered}pt"
+                             if rendered is not None else "")
+            # nominal height는 baseline과 나란히 보여준다 — 코퍼스 실측에서
+            # 이상 대상의 런이 1~2pt 간격용 런인 경우가 있었다(본문 10pt).
+            # 그건 T30(높이로는 안 보이는 차이)이 아니라 그냥 잘못된 대상이고,
+            # 나란히 찍어주지 않으면 "nominal 2.0pt"만 보고는 알 수 없다.
+            lines.append(
+                f"셀 ({addr}): 런 charPr={a['charpr']}이 본문 baseline"
+                f" charPr={a['charpr_suggested']}과"
+                f" {'/'.join(a['differing'])}에서 다름"
+                f"(nominal {a.get('nominal_height_pt')}pt vs baseline"
+                f" {a.get('baseline_height_pt')}pt{rendered_note})")
+            flags += ["--charpr-per-cell", f"{addr}={a['charpr_suggested']}"]
+        # 그대로 붙여넣을 수 있는 플래그 목록 — 코퍼스 실측으로 이상 대상이 한
+        # 양식에 18개까지 나온다(jeongbo-gonggae-cheongguseo). 셀별 문구를 읽고
+        # 손으로 플래그를 조립하게 만들면 사전 점검이 아니라 숙제다.
+        self.suggested_flags = flags
+        super().__init__(
+            "T30 사전 점검 거부: charPr 보존이 곧 '작게/좁게 찍기'인 대상 셀이"
+            f" {len(self.anomalies)}개다 — " + " | ".join(lines)
+            + ". baseline 서식으로 채우려면 그대로 붙여넣을 것: "
+            + " ".join(flags)
+            + " (그 셀이 의도적으로 다른 서식이라면 원하는 id를 직접 지정한다)")
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +535,52 @@ def _blank_paragraph_text(p_xml):
     return T_FULL_RE.sub(_sub, p_xml), changed
 
 
+def _body_charpr_weights(contents, section_names):
+    """charPr id -> 본문 텍스트 글자수. 본문 baseline 선정의 가중치.
+
+    visual_verify가 T30 사후 검출에서 쓰는 것과 **같은 가중치**다
+    (charpr_script.iter_runs + 공백 제거 길이) — 채우기 전 양식에는 fill 값이
+    아직 없으므로 모든 텍스트 런이 본문이다.
+    """
+    weights = {}
+    for sname in section_names:
+        xml = contents[sname].decode("utf-8")
+        for cid, text in charpr_script.iter_runs(xml):
+            weights[cid] = weights.get(cid, 0) + len(charpr_script.norm(text))
+    return weights
+
+
+def _fill_target_paragraph_index(paras):
+    """fill_cells가 쓸 문단의 색인(중첩 표를 담지 않은 첫 문단). 없으면 None."""
+    return next((i for i, (_s, _e, p) in enumerate(paras)
+                 if not TBL_TAG_RE.search(p)), None)
+
+
+def fill_target_run_charpr(body):
+    """이 셀을 채울 때 텍스트가 **실제로 상속할** charPrIDRef. 없으면 None.
+
+    "런의 charPr을 보존한다"는 계약이 구체적으로 어느 런을 뜻하는지가 T30의
+    핵심이다 — 빈 셀의 자기닫힘 런 <hp:run charPrIDRef="7"/>이 본문과 같은
+    charPr에 <hh:supscript/>만 붙은 클론이면, 올바르게 보이는 채우기가 6.35pt
+    올려찍힘으로 렌더된다. form_inspect(사전 점검)는 이 함수를 import해서
+    같은 런을 본다 — 두 도구가 '어느 런인가'에서 어긋날 수 없게 하기 위함.
+
+    body: hp:tc의 자식 스팬(중첩 표 제거 전 원본 — 문단 색인이 fill_cells와
+    같아야 한다).
+    """
+    paras = _find_paragraphs(body)
+    if not paras:
+        return None
+    target = _fill_target_paragraph_index(paras)
+    if target is None:
+        return None
+    m = RUN_RE.search(paras[target][2])
+    if m is None:
+        return None
+    cm = re.search(r'\bcharPrIDRef="(\d+)"', m.group(2) or "")
+    return cm.group(1) if cm else None
+
+
 def _fill_cell_body(body, text, *, overwrite, charpr):
     """셀 몸통(hp:tc의 자식 스팬)에 텍스트를 쓴 새 몸통을 만든다.
 
@@ -490,8 +596,7 @@ def _fill_cell_body(body, text, *, overwrite, charpr):
     paras = _find_paragraphs(body)
     if not paras:
         raise PreeditError("셀에 문단(hp:p)이 없음 — 쓸 자리 없음")
-    target = next((i for i, (_s, _e, p) in enumerate(paras)
-                   if not TBL_TAG_RE.search(p)), None)
+    target = _fill_target_paragraph_index(paras)
     if target is None:
         raise PreeditError("셀의 모든 문단이 중첩 표를 담고 있음 — 쓸 자리 없음")
 
@@ -516,7 +621,7 @@ def _fill_cell_body(body, text, *, overwrite, charpr):
 
 
 def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
-               charpr=None):
+               charpr=None, charpr_per_cell=None):
     """표 셀을 cellAddr(row, col)로 직접 채운다 — 텍스트 키 없이(오프라인).
 
     fills: [(row, col, text), ...] — row/col은 `<hp:cellAddr rowAddr colAddr>`
@@ -528,20 +633,31 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
     자기 색인을 갖고, 바깥 표가 항상 먼저다(form_inspect table_map과 동일
     규약 — 같은 스캐너를 쓴다).
 
+    charpr: **배치 전체**에 적용되는 charPrIDRef 재지정이다(모든 대상 셀이
+    같은 charPr을 공유할 때만 안전 — T32). 셀마다 다른 id가 필요하면
+    charpr_per_cell을 쓴다.
+
+    charpr_per_cell: {(row, col): id} — 그 셀에만 적용되는 재지정. charpr보다
+    우선한다.
+
     계약:
       - 대상 셀이 비어 있지 않으면 거부(PreeditError). --overwrite에서만 덮어씀.
       - 빈 셀의 표준형 자기닫힘 런 <hp:run charPrIDRef="7"/> 안에 <hp:t>를
-        만든다. 런의 charPr은 보존(charpr 인자를 주면 그 id로 덮어씀).
+        만든다. 런의 charPr은 보존(charpr/charpr_per_cell을 주면 그 id로 덮어씀).
+      - **T30 사전 점검**: 재지정 id가 주어지지 않은 대상 셀의 런이
+        script_anomaly(본문 baseline과 supscript/subscript/ratio/relSz/offset이
+        다름)를 지고 있으면 ScriptAnomalyError로 거부한다 — '보존'이 6.35pt
+        올려찍힘을 뜻하는 셀을 조용히 채우는 것이 T30 사고 그 자체였다.
       - 텍스트가 바뀐 문단의 <hp:linesegarray>는 제거(T24).
       - 쓰기 전 수정 멤버 well-formed 검증(실패 시 아무것도 쓰지 않음),
-        charpr 재지정 시 T22 dangling-charPr 사후검사.
+        charPr 재지정 시 T22 dangling-charPr 사후검사.
       - 같은 주소를 두 번 지정하면 오류(조용한 마지막-승리 금지).
 
     멱등성: 같은 값으로 --overwrite 재실행하면 content-identical.
 
     반환: {"ok": True, "table": n, "filled": n, "cells":
            [{"addr": [r, c], "hits": 1, "action": "filled"|"overwritten",
-             "previous": "…"}, ...]}
+             "previous": "…", "charpr": "9"|None}, ...]}
     """
     fills = [(int(r), int(c), "" if t is None else str(t)) for r, c, t in fills]
     if not fills:
@@ -551,6 +667,13 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         if (row, col) in seen:
             raise PreeditError(f"같은 셀 주소가 중복 지정됨: {row},{col}")
         seen.add((row, col))
+    per_cell = {(int(r), int(c)): str(v)
+                for (r, c), v in (charpr_per_cell or {}).items()}
+    unknown = sorted(addr for addr in per_cell if addr not in seen)
+    if unknown:
+        raise PreeditError(
+            f"--charpr-per-cell 주소가 채울 셀 목록에 없음: {unknown}"
+            " — 오타이거나 --cell/--map을 빠뜨렸다")
 
     infos, contents = _read_zip(hwpx_in)
     section_names = _section_names(contents)
@@ -573,22 +696,61 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
 
     xml, _tables = parsed[target_section]
     known = sorted(c["addr"] for c in target_table["cells"] if c["addr"])
-    edits, report = [], []
-    for row, col, text in fills:
+
+    # T30 사전 점검용 재료 — header의 charPr script 프로파일과 본문 baseline.
+    # 대상 셀을 하나도 손대기 전에 전부 모아서 한 번에 판정한다(부분 편집 후
+    # 중간에 터지는 일이 없게).
+    header_xml = contents[_header_name(contents)].decode("utf-8")
+    script_profiles = charpr_script.profiles_from_header(header_xml)
+    baseline_id = charpr_script.body_baseline_id(
+        _body_charpr_weights(contents, section_names))
+    baseline_profile = script_profiles.get(baseline_id)
+
+    resolved, anomalies = {}, []
+    for row, col, _text in fills:
         cell = find_cell(target_table, row, col)
         if cell is None:
             raise PreeditError(
                 f"표 {table}에 cellAddr ({row},{col}) 없음 — 병합 셀이 덮은"
                 f" 좌표이거나 오타. 실제 주소 {len(known)}개: {known[:20]}")
+        explicit = per_cell.get((row, col), charpr)
+        resolved[(row, col)] = explicit
+        if explicit is not None or baseline_profile is None:
+            continue
+        run_charpr = fill_target_run_charpr(
+            xml[cell["body_start"]:cell["body_end"]])
+        profile = script_profiles.get(run_charpr)
+        if run_charpr is None or profile is None:
+            continue
+        differing = charpr_script.differing_keys(profile, baseline_profile)
+        if differing:
+            anomalies.append({
+                "addr": [row, col],
+                "charpr": run_charpr,
+                "differing": differing,
+                "charpr_suggested": baseline_id,
+                "nominal_height_pt": profile.get("height_pt"),
+                "baseline_height_pt": baseline_profile.get("height_pt"),
+                "rendered_pt_estimate":
+                    charpr_script.rendered_pt_estimate(profile),
+            })
+    if anomalies:
+        raise ScriptAnomalyError(anomalies)
+
+    edits, report = [], []
+    for row, col, text in fills:
+        cell = find_cell(target_table, row, col)
+        cell_charpr = resolved[(row, col)]
         body = xml[cell["body_start"]:cell["body_end"]]
         new_body, previous = _fill_cell_body(
-            body, text, overwrite=overwrite, charpr=charpr)
+            body, text, overwrite=overwrite, charpr=cell_charpr)
         edits.append((cell["body_start"], cell["body_end"], new_body))
         report.append({
             "addr": [row, col],
             "hits": 0 if new_body == body else 1,
             "action": "overwritten" if previous.strip() else "filled",
             "previous": previous.strip()[:30],
+            "charpr": cell_charpr,
         })
 
     for start, end, new_body in sorted(edits, reverse=True):
@@ -601,14 +763,15 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         modified.add(target_section)
 
     _assert_members_well_formed(contents, modified)
-    if charpr is not None:
+    if any(v is not None for v in resolved.values()):
         header = contents[_header_name(contents)].decode("utf-8")
         for sname in section_names:
             guards.assert_no_dangling_charpr(
                 contents[sname].decode("utf-8"), header)
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "table": table, "tables_total": total,
-            "filled": sum(c["hits"] for c in report), "cells": report}
+            "filled": sum(c["hits"] for c in report), "cells": report,
+            "body_baseline_charpr_id": baseline_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1070,10 +1233,11 @@ def normalize_clones(hwpx_in, hwpx_out, clones=None, *, clone_attrs=None,
 # CLI — 얇은 래퍼 (원본 비파괴 원칙: --out 필수)
 # ---------------------------------------------------------------------------
 
-def _die(msg, code=1):
+def _die(msg, code=1, **extra):
+    payload = {"ok": False, "error": msg}
+    payload.update(extra)
     sys.stdout.buffer.write(
-        (json.dumps({"ok": False, "error": msg}, ensure_ascii=False) + "\n")
-        .encode("utf-8"))
+        (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
     sys.exit(code)
 
 
@@ -1110,7 +1274,13 @@ def main(argv=None):
     p_fc.add_argument("--overwrite", action="store_true",
                       help="비어 있지 않은 셀도 덮어씀(기본은 거부)")
     p_fc.add_argument("--charpr",
-                      help="쓰는 런의 charPrIDRef를 이 id로 덮어씀(기본: 보존)")
+                      help="쓰는 런의 charPrIDRef를 이 id로 덮어씀(기본: 보존)."
+                           " **배치 전체**에 적용된다 — 대상 셀들이 서로 다른"
+                           " charPr을 필요로 하면 --charpr-per-cell을 쓸 것(T32)")
+    p_fc.add_argument("--charpr-per-cell", action="append", default=[],
+                      metavar="ROW,COL=ID",
+                      help="그 셀에만 적용되는 charPrIDRef 재지정(반복 가능)."
+                           " --charpr보다 우선한다")
 
     p_del = sub.add_parser("delete-guides", help="가이드 charPr 문단 삭제(T18 가드)")
     p_del.add_argument("file")
@@ -1172,8 +1342,24 @@ def main(argv=None):
                         _die(f"--map 키의 ROW/COL은 정수: {addr!r}", code=2)
             if not fills:
                 _die("--cell 또는 --map 중 최소 하나 필요", code=2)
+            per_cell = {}
+            for spec in args.charpr_per_cell:
+                addr, sep, cpr = spec.partition("=")
+                row, comma, col = addr.partition(",")
+                if not sep or not comma or not cpr.strip():
+                    _die(f"--charpr-per-cell 형식은 ROW,COL=ID: {spec!r}",
+                         code=2)
+                try:
+                    key = (int(row.strip()), int(col.strip()))
+                except ValueError:
+                    _die(f"--charpr-per-cell의 ROW/COL은 정수: {spec!r}", code=2)
+                if key in per_cell:
+                    _die("--charpr-per-cell 주소가 중복 지정됨: "
+                         f"{key[0]},{key[1]}", code=2)
+                per_cell[key] = cpr.strip()
             result = fill_cells(args.file, args.out, fills, table=args.table,
-                                overwrite=args.overwrite, charpr=args.charpr)
+                                overwrite=args.overwrite, charpr=args.charpr,
+                                charpr_per_cell=per_cell)
         elif args.cmd == "delete-guides":
             ids = ([i.strip() for i in args.charpr_ids.split(",") if i.strip()]
                    if args.charpr_ids else None)
@@ -1210,6 +1396,14 @@ def main(argv=None):
             result = normalize_clones(args.file, args.out, clones,
                                       clone_attrs=attrs, repoints=repoints,
                                       scope_repoints=scope_repoints)
+    except ScriptAnomalyError as exc:
+        # exit 3 = '발견'. 거부 메시지에 셀 주소·이상 charPr·권장 id·정확히
+        # 넘겨야 하는 플래그가 다 들어 있어야 한다 — 이 거부를 읽고 header.xml을
+        # 손으로 뒤져야 한다면 사전 점검이 아니다.
+        _die(str(exc), code=exc.exit_code,
+             code_name="fill_charpr_script_anomaly",
+             anomalies=exc.anomalies,
+             suggested_flags=exc.suggested_flags)
     except (PreeditError, ValueError, AssertionError) as exc:
         _die(str(exc))
     except json.JSONDecodeError as exc:

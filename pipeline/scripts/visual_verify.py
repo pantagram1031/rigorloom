@@ -61,6 +61,7 @@ for _dir in (_SCRIPTS_DIR, _ENGINE_SCRIPTS):
     if str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
 
+import charpr_script  # noqa: E402  (engine/scripts — shared T30 vocabulary)
 import check_residue  # noqa: E402
 from checker_base import (  # noqa: E402
     EXIT_HARD, EXIT_PASS, _utf8_stdio, emit_verdict, usage_error,
@@ -798,21 +799,17 @@ def check_fill_map(records, expectations):
 # T30 — script/scale/offset inheritance on fill-modified runs
 # --------------------------------------------------------------------------
 
-#: OWPML ``hh:charPr`` children that move or resize a run WITHOUT changing its
-#: nominal ``height``. ``supscript``/``subscript`` are presence-only flags;
-#: ``ratio``/``relSz``/``offset`` carry per-language percentages/offsets. A run
-#: that inherits any of these differently from body text renders at a
-#: different size or baseline while every height-based proof still passes.
-_SCRIPT_FLAG_TAGS = ("supscript", "subscript")
-_SCRIPT_SCALE_TAGS = ("ratio", "relSz", "offset")
-
-#: Hancom renders a supscript/subscript run at roughly this fraction of the
-#: nominal height. Reported as evidence, never used as a threshold.
-_SCRIPT_RENDER_FACTOR = 0.635
-
-
-def _localname(tag):
-    return tag.rsplit("}", 1)[-1]
+#: The profile extraction, the signature, the baseline choice and the
+#: difference test are SHARED with the pre-flight half of T30
+#: (``form_inspect``'s ``script_anomaly``) via ``engine/scripts/
+#: charpr_script.py`` — a pre-flight that disagreed with this detector would
+#: be worse than no pre-flight at all. Nothing about the trap is redefined
+#: here; only the artifact plumbing (zip, hwpx-only scope) lives in this file.
+_SCRIPT_FLAG_TAGS = charpr_script.SCRIPT_FLAG_TAGS
+_SCRIPT_SCALE_TAGS = charpr_script.SCRIPT_SCALE_TAGS
+_SCRIPT_RENDER_FACTOR = charpr_script.SCRIPT_RENDER_FACTOR
+_localname = charpr_script.localname
+_script_signature = charpr_script.signature
 
 
 def charpr_script_profiles(artifact):
@@ -828,35 +825,10 @@ def charpr_script_profiles(artifact):
         with zipfile.ZipFile(path) as archive:
             if "Contents/header.xml" not in archive.namelist():
                 return {}
-            root = ET.fromstring(archive.read("Contents/header.xml"))
-    except (OSError, zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError):
+            header = archive.read("Contents/header.xml")
+    except (OSError, zipfile.BadZipFile):
         return {}
-    profiles = {}
-    for node in root.iter():
-        if _localname(node.tag) != "charPr":
-            continue
-        cid = node.get("id")
-        if cid is None:
-            continue
-        profile = {tag: False for tag in _SCRIPT_FLAG_TAGS}
-        for tag in _SCRIPT_SCALE_TAGS:
-            profile[tag] = None
-        height = node.get("height")
-        profile["height_pt"] = (
-            int(height) / 100.0 if height and height.isdigit() else None)
-        for child in node:
-            name = _localname(child.tag)
-            if name in _SCRIPT_FLAG_TAGS:
-                profile[name] = True
-            elif name in _SCRIPT_SCALE_TAGS:
-                profile[name] = {k: v for k, v in sorted(child.attrib.items())}
-        profiles[cid] = profile
-    return profiles
-
-
-_RUN_RE = re.compile(
-    r"<hp:run\b[^>]*\bcharPrIDRef=\"(\d+)\"[^>]*>(.*?)</hp:run>", re.S)
-_RUN_TEXT_RE = re.compile(r"<hp:t\b[^>]*>(.*?)</hp:t>", re.S)
+    return charpr_script.profiles_from_header(header)
 
 
 def _hwpx_runs(artifact):
@@ -871,19 +843,10 @@ def _hwpx_runs(artifact):
                            if re.match(r"Contents/section\d+\.xml$", n))
             for name in names:
                 xml = archive.read(name).decode("utf-8", "replace")
-                for cid, body in _RUN_RE.findall(xml):
-                    text = "".join(_RUN_TEXT_RE.findall(body))
-                    text = re.sub(r"<[^>]+>", "", text)
-                    if text.strip():
-                        out.append((cid, text))
+                out.extend(charpr_script.iter_runs(xml))
     except (OSError, zipfile.BadZipFile):
         return []
     return out
-
-
-def _script_signature(profile):
-    return {key: profile.get(key)
-            for key in (*_SCRIPT_FLAG_TAGS, *_SCRIPT_SCALE_TAGS)}
 
 
 def check_fill_charpr_script(artifact, expectations):
@@ -928,9 +891,7 @@ def check_fill_charpr_script(artifact, expectations):
     if not filled or not body_weight:
         return [], None
 
-    top = max(body_weight.values())
-    baseline_cid = min(cid for cid, weight in body_weight.items()
-                       if weight == top)
+    baseline_cid = charpr_script.body_baseline_id(body_weight)
     baseline = profiles.get(baseline_cid)
     if baseline is None:
         return [], None
@@ -946,8 +907,7 @@ def check_fill_charpr_script(artifact, expectations):
         if profile is None:
             continue
         signature = _script_signature(profile)
-        differing = sorted(key for key, value in signature.items()
-                           if value != baseline_signature.get(key))
+        differing = charpr_script.differing_keys(profile, baseline)
         if not differing or (cid, label) in seen:
             continue
         seen.add((cid, label))
@@ -965,10 +925,9 @@ def check_fill_charpr_script(artifact, expectations):
                     "document body does not use; nominal height is unchanged "
                     "so charpr_check and style_diff cannot see it (T30)",
         }
-        if (profile.get("supscript") or profile.get("subscript")) and \
-                profile.get("height_pt"):
-            evidence["rendered_pt_estimate"] = round(
-                profile["height_pt"] * _SCRIPT_RENDER_FACTOR, 2)
+        rendered = charpr_script.rendered_pt_estimate(profile)
+        if rendered is not None:
+            evidence["rendered_pt_estimate"] = rendered
         out.append(finding(
             "fill_charpr_script_mismatch", "hard",
             cls="format_noncompliance",
