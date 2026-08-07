@@ -681,7 +681,7 @@ def test_form_fill_without_a_keep_list_cannot_pass(tmp_path):
     assert "[별지 제2호의 8서식]" in surviving  # survives a legitimate fill
     assert verdict["deterministic"]["residue_keep"] == {
         "explicit_keep": [], "keep_pattern": None, "derived_keep": [],
-        "consumed": [], "fill_map": None, "keep_total": 0}
+        "consumed": [], "unfilled": [], "fill_map": None, "keep_total": 0}
 
 
 def test_form_fill_passes_with_the_derived_keep_list(tmp_path):
@@ -752,11 +752,13 @@ def test_explicit_keep_and_keep_pattern_are_forwarded(tmp_path):
 
 
 def test_keep_derivation_unit(tmp_path):
-    keep, consumed = visual_verify.derive_form_keep(FORM_PROFILE, _FILL_MAP)
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        FORM_PROFILE, _FILL_MAP)
     assert consumed == ["20101"]
+    assert unfilled == []
     assert keep == ["협업제품명", "신청인", "I.  서론", "[별지 제2호의 8서식]"]
     # whitespace-normalized substring match, in both directions
-    keep2, consumed2 = visual_verify.derive_form_keep(
+    keep2, consumed2, _ = visual_verify.derive_form_keep(
         FORM_PROFILE, {"작성자 신청인 성명": "홍길동"})
     assert consumed2 == ["신청인"]
     assert "신청인" not in keep2
@@ -793,6 +795,189 @@ def test_unreadable_fill_map_is_a_usage_error(tmp_path):
                            "--png-dir", tmp_path / "png")
     assert code == 2, verdict
     assert "--fill-map" in verdict["error"]
+
+
+# --------------------------------------------------------------------------
+# (g) T31 — a prefix-preserving fill is the NORMAL shape of a labeled field
+#
+# Filling a labeled field semantically means keeping the label as a prefix:
+# a URL field goes " http://" -> " http://host", a zip field keeps its
+# " 우(     -     )" skeleton and appends the address. The first derivation
+# assumed the key TEXT VANISHES, so the surviving prefix read as form_residue
+# and a CORRECT fill could not pass — the second clean-room run lost a retry
+# to it and hand-built --keep instead.
+# --------------------------------------------------------------------------
+
+_URL_KEY = " http://"
+_URL_VALUE = " http://hanbit-precision.example.kr"
+_ZIP_KEY = " 우(     -     )"
+_ZIP_VALUE = " 우(     -     ) 서울특별시 중구 세종대로 110"
+
+LABELED_PROFILE = {
+    "form_hash": "sha256:synthetic-labeled",
+    "anchors": ["기관명", "I.  서론"],
+    "guide_text": ["여기에 입력하세요"],
+    "placeholders": [_URL_KEY, _ZIP_KEY],
+}
+_LABELED_MAP = {_URL_KEY: _URL_VALUE, _ZIP_KEY: _ZIP_VALUE}
+
+
+def make_labeled_form_hwpx(path: Path, *, url: str = _URL_VALUE,
+                           zip_line: str = _ZIP_VALUE,
+                           trailing: tuple[str, ...] = ()) -> Path:
+    """A filled labeled-field form: label-prefixed values, then body prose.
+
+    ``trailing`` paragraphs land AFTER the body block on purpose — a second
+    occurrence of a key has to be far enough from the filled one that the
+    reported context cannot be confused for it.
+    """
+    body = " ".join(f"본문 문장 {i} 은 표준 서식으로 작성한 일반 서술 문단입니다."
+                    for i in range(6))
+    paragraphs = [
+        _run(0, "I.  서론"),
+        _run(0, "기관명") + _run(0, " 한빛정밀"),
+        _run(0, "누리집") + _run(0, url),
+        _run(0, "주소") + _run(0, zip_line),
+        _run(0, body),
+        *[_run(0, text) for text in trailing],
+    ]
+    section = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+        ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+        + "".join(f'<hp:p id="{i + 1}">{p}</hp:p>'
+                  for i, p in enumerate(paragraphs))
+        + '</hs:sec>'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/hwp+zip")
+        zf.writestr("settings.xml", _settings(0))
+        zf.writestr("Contents/header.xml", _FORM_HEADER)
+        zf.writestr("Contents/section0.xml", section)
+    return path
+
+
+def _labeled(tmp_path: Path, *, mapping=None, **kwargs):
+    """(artifact, pdf, profile, fill_map) for one labeled-form run."""
+    artifact = make_labeled_form_hwpx(tmp_path / "labeled.hwpx", **kwargs)
+    pdf = make_pdf(tmp_path / "labeled.pdf", [_body_page(n_lines=8)])
+    profile = tmp_path / "labeled_profile.json"
+    profile.write_text(json.dumps(LABELED_PROFILE, ensure_ascii=False),
+                       encoding="utf-8")
+    fill_map = tmp_path / "labeled_map.json"
+    fill_map.write_text(
+        json.dumps(_LABELED_MAP if mapping is None else mapping,
+                   ensure_ascii=False), encoding="utf-8")
+    return artifact, pdf, profile, fill_map
+
+
+def _residue_hard(verdict, code="form_residue"):
+    return [row for row in _residue_delegate(verdict)["hard"]
+            if row["code"] == code]
+
+
+def test_t31_prefix_preserving_fill_passes_with_only_a_fill_map(tmp_path):
+    """The regression: no manual --keep, and a correct fill must pass."""
+    artifact, pdf, profile, fill_map = _labeled(tmp_path)
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["hard"] == []
+    assert _residue_delegate(verdict)["exit"] == 0
+    keep = verdict["deterministic"]["residue_keep"]
+    # the labels the fill targeted are CONSUMED (their values landed), not
+    # keep-listed — the surviving prefix is attributed to the value's span
+    assert keep["consumed"] == [_URL_KEY, _ZIP_KEY]
+    assert keep["unfilled"] == []
+    assert set(keep["derived_keep"]) == {"기관명", "I.  서론"}
+
+
+def test_t31_still_catches_a_key_that_was_never_filled(tmp_path):
+    """Still-catches: the SAME map, but the zip field kept its bare skeleton
+    and its value is nowhere in the document."""
+    artifact, pdf, profile, fill_map = _labeled(tmp_path, zip_line=_ZIP_KEY)
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert _residue_delegate(verdict)["exit"] == 3
+    assert {row["at"] for row in _residue_hard(verdict)} == {_ZIP_KEY}
+    keep = verdict["deterministic"]["residue_keep"]
+    assert keep["unfilled"] == [_ZIP_KEY]
+    assert keep["consumed"] == [_URL_KEY]
+
+
+def test_t31_still_catches_a_second_unfilled_occurrence(tmp_path):
+    """Still-catches, the one a global keep-string would swallow: the URL
+    value landed once, and the same key ALSO sits at a second, untouched
+    field. Attribution is per occurrence, so that location must flag."""
+    artifact, pdf, profile, fill_map = _labeled(
+        tmp_path, trailing=(f"보조 누리집{_URL_KEY}",))
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    rows = _residue_hard(verdict)
+    assert [row["at"] for row in rows] == [_URL_KEY]
+    row = rows[0]
+    assert len(row["at_offsets"]) == 1
+    assert "1 of 2" in row["msg"]
+    # the finding names the UNFILLED location, not the filled one
+    assert "보조 누리집" in row["context"]
+    assert "hanbit-precision" not in row["context"]
+    # the derivation still reports the fill as consumed — it did land once
+    assert verdict["deterministic"]["residue_keep"]["consumed"] == [
+        _URL_KEY, _ZIP_KEY]
+
+
+def test_t31_whitespace_normalization_boundary(tmp_path):
+    """The skeleton's internal spacing in the document is not the spacing the
+    map declares (5 spaces in the form, 2 in the reflowed document): matching
+    is whitespace-normalized on BOTH sides, so this is still a consumed fill.
+    A raw substring comparison flags it."""
+    reflowed = " 우(  -  ) 서울특별시 중구 세종대로 110"
+    assert _ZIP_KEY not in reflowed, "the raw prefix must NOT survive verbatim"
+    artifact, pdf, profile, fill_map = _labeled(tmp_path, zip_line=reflowed)
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert _residue_delegate(verdict)["exit"] == 0
+    assert verdict["deterministic"]["residue_keep"]["unfilled"] == []
+
+
+def test_t31_whitespace_boundary_still_catches_an_unfilled_skeleton(tmp_path):
+    """The same reflowed spacing, with nothing appended: still residue."""
+    artifact, pdf, profile, fill_map = _labeled(
+        tmp_path, zip_line=" 우(  -  )")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert {row["at"] for row in _residue_hard(verdict)} == {_ZIP_KEY}
+
+
+def test_t31_derivation_unit_falls_back_to_key_absence(tmp_path):
+    """No value anywhere and the key gone too: consumed, nothing to flag.
+    The same map with the key still present: unfilled, so the gate flags it."""
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        LABELED_PROFILE, _LABELED_MAP, "기관명 한빛정밀 I.  서론 본문")
+    assert consumed == [_URL_KEY, _ZIP_KEY]     # both keys are simply gone
+    assert unfilled == []
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        LABELED_PROFILE, _LABELED_MAP, "기관명 http:// 본문")
+    assert consumed == [_ZIP_KEY]
+    assert unfilled == [_URL_KEY]
+    assert "기관명" in keep
 
 
 # --------------------------------------------------------------------------

@@ -13,6 +13,18 @@ Placeholder names/ids from the form (e.g. the 20101/김선덕 family) are part o
 the anchor inventory and therefore count as residue when they survive into a
 final.
 
+``--fill-map`` covers the shape a keep-list cannot express. Filling a labeled
+field semantically means keeping the label as a prefix — a URL field goes
+``" http://"`` -> ``" http://hanbit.example.kr"``, a zip field keeps its
+``" 우(     -     )"`` skeleton and appends the address — so the key text
+SURVIVES inside the value by construction. With the fill map declared, every
+occurrence of a forbidden string that lies wholly inside an occurrence of a
+declared value is attributed to that value's span instead of counted as
+residue. Attribution is per-occurrence, never a global suppression of the
+string: a second, genuinely unfilled occurrence of the same key elsewhere
+still HARDs, and its offset plus surrounding context is reported. Guide text
+is never attributable — instruction prose is not something a fill keeps.
+
 Loud-failure contract (shared-miss #4): a missing pinned artifact is a HARD
 error (exit 3, finding ``pinned_target_missing``), never a silent pass. A
 missing or unparsable form profile is a usage error (exit 2).
@@ -72,6 +84,12 @@ def _normalize(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+#: Public alias. Anything that decides what this gate will flag — notably
+#: ``visual_verify``'s ``--fill-map`` keep derivation — must normalize text
+#: EXACTLY the way the gate does, or the two disagree about presence.
+normalize_text = _normalize
+
+
 def _profile_inventory(profile: dict) -> list[dict]:
     """Flatten the form scan into (text, source) rows, in scan order."""
     rows: list[dict] = []
@@ -122,6 +140,118 @@ def derive_forbidden(
             "source": row["source"],
         })
     return forbidden, kept
+
+
+def load_fill_map(path: str | Path) -> tuple[dict | None, str | None]:
+    """``{key: value}`` from a fill map, an expectations file, or either shape.
+
+    Returns (mapping, error). Accepts a flat ``{"key": "value"}`` object (the
+    ``preedit replace --map`` shape) or any object carrying a ``fill_map``
+    member, so a caller can pass the file it already has. One loader, shared
+    with ``visual_verify``, so both halves read the same file the same way.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        return None, f"--fill-map unreadable: {exc}"
+    if isinstance(payload, dict) and isinstance(payload.get("fill_map"), dict):
+        payload = payload["fill_map"]
+    if not isinstance(payload, dict):
+        return None, ("--fill-map must be a JSON object of {key: value} (or "
+                      "an object with a 'fill_map' member)")
+    return payload, None
+
+
+def _occurrences(haystack: str, needle: str) -> list[int]:
+    """Every start offset of ``needle`` in ``haystack``, overlaps included."""
+    if not needle:
+        return []
+    out: list[int] = []
+    start = haystack.find(needle)
+    while start >= 0:
+        out.append(start)
+        start = haystack.find(needle, start + 1)
+    return out
+
+
+def value_spans(haystack: str, fill_map) -> list[dict]:
+    """``[{key, value, start, end}]`` — where each declared value landed.
+
+    A span is text the operator declared they WROTE. Anything wholly inside
+    one is authored content by that declaration, so it is not residue even
+    when it repeats a form label; anything outside every span is untouched
+    form text. Overlapping/repeated values each get their own span.
+    """
+    spans: list[dict] = []
+    for key, value in sorted((fill_map or {}).items(), key=lambda kv: str(kv[0])):
+        needle = _normalize(str(value if value is not None else ""))
+        if not needle:
+            continue
+        for start in _occurrences(haystack, needle):
+            spans.append({"key": str(key), "value": needle,
+                          "start": start, "end": start + len(needle)})
+    return spans
+
+
+def _attributed(start: int, end: int, spans: list[dict]) -> dict | None:
+    """The declared-value span that wholly contains ``[start, end)``."""
+    for span in spans:
+        if span["start"] <= start and end <= span["end"]:
+            return span
+    return None
+
+
+def _context(haystack: str, start: int, end: int, width: int = 40) -> str:
+    """The residue occurrence with its neighbours, so the report names a
+    LOCATION and not just a string that appears somewhere."""
+    left = max(0, start - width)
+    prefix = "…" if left > 0 else ""
+    suffix = "…" if end + width < len(haystack) else ""
+    return f"{prefix}{haystack[left:end + width]}{suffix}"
+
+
+def scan_residue(
+    forbidden: list[dict],
+    haystack: str,
+    spans: list[dict] = (),
+) -> tuple[list[dict], dict]:
+    """(residue rows, tally) — occurrences minus the attributable ones.
+
+    Without ``spans`` this reduces exactly to "is the forbidden string
+    present at all", the pre-``--fill-map`` behavior. ``tally`` counts every
+    forbidden-string occurrence, including those of rows that were fully
+    attributed and therefore produced no finding.
+    """
+    rows: list[dict] = []
+    tally = {"occurrences": 0, "attributed": 0, "unattributed": 0}
+    for row in forbidden:
+        needle = row["normalized"]
+        hits = _occurrences(haystack, needle)
+        if not hits:
+            continue
+        # Guide text is never attributable, the same reason it is never
+        # keepable: a correct fill REPLACES instruction prose, it never keeps
+        # it as a prefix, so a declared value containing guide text is a leak.
+        usable = list(spans) if row["source"] != "guide_text" else []
+        unattributed = [
+            start for start in hits
+            if _attributed(start, start + len(needle), usable) is None
+        ]
+        tally["occurrences"] += len(hits)
+        tally["attributed"] += len(hits) - len(unattributed)
+        tally["unattributed"] += len(unattributed)
+        if not unattributed:
+            continue
+        rows.append({
+            "text": row["text"],
+            "source": row["source"],
+            "occurrences": len(hits),
+            "attributed": len(hits) - len(unattributed),
+            "at_offsets": unattributed,
+            "context": [_context(haystack, start, start + len(needle))
+                        for start in unattributed[:3]],
+        })
+    return rows, tally
 
 
 def _xml_entry_text(payload: bytes) -> str:
@@ -183,6 +313,7 @@ def check(
     *,
     keep_pattern: str = DEFAULT_KEEP_PATTERN,
     keep: tuple[str, ...] | list[str] = (),
+    fill_map: dict | None = None,
 ) -> tuple[dict, int]:
     profile_path = Path(form_profile)
     artifact_path = Path(artifact)
@@ -288,24 +419,37 @@ def check(
             f"artifact unreadable: {exc}",
         )
 
-    residue: list[dict] = []
-    for row in forbidden:
-        if row["normalized"] in haystack:
-            residue.append({"text": row["text"], "source": row["source"]})
-            hard.append({
-                "code": "form_residue",
-                "msg": f"form {row['source']} text survives in the final artifact",
-                "at": row["text"],
-            })
+    spans = value_spans(haystack, fill_map) if fill_map else []
+    residue, tally = scan_residue(forbidden, haystack, spans)
+    for row in residue:
+        detail = ""
+        if row["attributed"]:
+            detail = (f" — {len(row['at_offsets'])} of {row['occurrences']} "
+                      "occurrence(s) lie outside every declared fill value")
+        hard.append({
+            "code": "form_residue",
+            "msg": (f"form {row['source']} text survives in the final "
+                    f"artifact{detail}"),
+            "at": row["text"],
+            "at_offsets": row["at_offsets"],
+            "context": row["context"][0] if row["context"] else None,
+        })
 
+    extra = {
+        "form_hash": profile.get("form_hash"),
+        "artifact": str(artifact_path),
+        "residue": residue,
+    }
+    if fill_map is not None:
+        extra["fill_attribution"] = {
+            "keys": sorted(str(key) for key in fill_map),
+            "value_spans": len(spans),
+            **tally,
+        }
     verdict = verdict_skeleton(
         str(artifact_path), CHECKER,
         hard=hard, warn=warn,
-        extra={
-            "form_hash": profile.get("form_hash"),
-            "artifact": str(artifact_path),
-            "residue": residue,
-        },
+        extra=extra,
         counts={
             "hard": len(hard), "warn": len(warn),
             "forbidden": len(forbidden), "kept": len(kept),
@@ -337,16 +481,29 @@ def main(argv=None) -> int:
         "--keep", action="append", default=[],
         help="exact anchor text to keep (repeatable)",
     )
-    return cli_main(
-        parser,
-        lambda args: check(
+    parser.add_argument(
+        "--fill-map", default=None,
+        help="fill map JSON ({key: value}, or an object with a 'fill_map' "
+             "member) -> occurrences of a forbidden string INSIDE a declared "
+             "value are attributed to that value (prefix-preserving fills), "
+             "occurrences outside every value still HARD",
+    )
+
+    def _invoke(args):
+        fill_map = None
+        if args.fill_map:
+            fill_map, error = load_fill_map(args.fill_map)
+            if error:
+                return usage_error(args.artifact, CHECKER, error)
+        return check(
             args.form_profile,
             args.artifact,
             keep_pattern=args.keep_pattern,
             keep=tuple(args.keep),
-        ),
-        argv,
-    )
+            fill_map=fill_map,
+        )
+
+    return cli_main(parser, _invoke, argv)
 
 
 if __name__ == "__main__":

@@ -113,7 +113,7 @@ content-identical (zip member contents; timestamps ignored). `replace` needs
 
 ```
 python pipeline/scripts/check_residue.py --form-profile profile.json --artifact OUT.hwpx
-    [--keep-pattern REGEX] [--keep "exact anchor"]... [--out verdict.json]
+    [--keep-pattern REGEX] [--keep "exact anchor"]... [--fill-map MAP.json] [--out verdict.json]
 ```
 
 The form scan's anchor+guide inventory IS the forbidden list. Exit 0 clean,
@@ -130,6 +130,20 @@ Keep-list semantics by document family:
   consumed). With `guide_text: 0` forms the gate then only proves consumed
   placeholders are gone — state that honestly; do not blanket-keep with a
   match-all pattern.
+- **Prefix-preserving fills** need `--fill-map MAP.json`, not `--keep`
+  (T31). Filling a labeled field keeps the label as a prefix, so the key text
+  survives INSIDE the value: `" http://"` → `" http://hanbit.example.kr"`,
+  `" 우(     -     )"` → the same skeleton plus the address. With the map
+  declared, an occurrence of a forbidden string that lies wholly inside an
+  occurrence of a declared value is attributed to that value's span; an
+  occurrence anywhere else still HARDs. `--keep " http://"` cannot express
+  that — it suppresses the string document-wide, including a second field you
+  never filled. Guide text is never attributable (same reason it is never
+  keepable). Matching is whitespace-normalized on both sides, so the form's
+  skeleton spacing need not survive verbatim. The verdict carries
+  `fill_attribution {keys, value_spans, occurrences, attributed,
+  unattributed}` and every residue row carries `occurrences`, `attributed`,
+  `at_offsets` and a `context` snippet per unattributed hit.
 
 ## 5. charpr_check / style_diff
 
@@ -260,12 +274,31 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   `--keep TEXT` (repeatable) and `--keep-pattern REGEX` go straight to
   `check_residue`, and `--fill-map MAP.json` derives the standard form-fill
   keep list for you — `(anchors ∪ placeholders)` minus the entries the fill
-  mapping consumed (whitespace-normalized substring match, either direction).
+  mapping targeted (whitespace-normalized substring match, either direction).
   `MAP.json` is the `preedit replace --map` file, or any JSON object with a
   `fill_map` member. Guide text is never keepable. The derivation is recorded
-  under `deterministic.residue_keep` (`derived_keep`, `consumed`,
+  under `deterministic.residue_keep` (`derived_keep`, `consumed`, `unfilled`,
   `explicit_keep`, `keep_pattern`, `keep_total`) so the invocation is
   auditable. These flags without `--form-profile` are a usage error.
+- **A correct fill KEEPS the label — that is the normal shape, not an edge
+  case** (T31). Filling a labeled field means keeping the label as a prefix:
+  a URL field goes `" http://"` → `" http://hanbit.example.kr"`, a zip field
+  keeps its `" 우(     -     )"` skeleton and appends the address. The key
+  text therefore survives by construction, and a derivation that assumes it
+  VANISHED fails a correct fill (second clean-room run: a lost retry and a
+  hand-built `--keep`). So the derivation is artifact-aware and the map is
+  forwarded to the delegate:
+  - a key is **consumed** when its mapped VALUE is present in the document
+    (whitespace-normalized), and falls back to key-absence when the value is
+    not found — no value and the key gone too is equally nothing to flag;
+  - a key whose value is absent while the key text is still there is
+    **unfilled**: neither kept nor consumed, so it HARDs. That is the point;
+  - surviving key text inside a value is attributed to that value's SPAN, per
+    occurrence — never suppressed document-wide, so a second, genuinely
+    unfilled occurrence of the same key still HARDs and the finding reports
+    its offset and surrounding context.
+  Do not hand-build `--keep` for a prefix-preserving fill: `--keep " http://"`
+  blinds the gate to every unfilled URL field in the document.
 - **T30, the invisible superscript.** With an `expectations.fill_map`, every
   run whose text carries a declared value is compared against the document's
   body-baseline charPr on `supscript`/`subscript`/`ratio`/`relSz`/`offset`. A
