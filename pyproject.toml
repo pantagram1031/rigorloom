@@ -12,12 +12,23 @@ engine = ["pillow>=10", "pymupdf>=1.23", "pyyaml>=6"]
 test = ["pytest>=8"]
 
 [tool.pytest.ini_options]
+# MODULE-AGNOSTIC by contract (modules/README.md rule 4: "adding a module
+# later requires no core change"). The previous hardcoded per-module list
+# meant every new distribution module needed an edit here — a core change,
+# which is exactly what the rule forbids. pytest expands each testpaths entry
+# with ``glob.iglob`` (Config._decide_args), so ``modules/*/tests`` picks up
+# any module's suite without naming it. Entries that match nothing are simply
+# dropped, so a core-only checkout (no module payloads) is fine too.
+#
+# Proven by pipeline/tests/test_module_registry.py::TestHarnessIsModuleAgnostic,
+# which drops a brand-new module into a synthetic root carrying THIS ini block
+# verbatim and asserts pytest collects its tests — so a pytest that did NOT
+# glob testpaths would fail the suite loudly instead of silently skipping
+# every module test.
 testpaths = [
-    "pipeline/tests",
     "tests",
+    "pipeline/tests",
     "engine/tests",
-    "modules/report/tests",
-    "modules/style/tests",
-    "modules/gongmun/tests",
+    "modules/*/tests",
 ]
 addopts = "-ra"

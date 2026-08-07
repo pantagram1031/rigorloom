@@ -98,6 +98,46 @@ class TestDeclaration:
         for reference in skill.get("references", []):
             assert spec.payload_path(reference).is_file()
 
+    def test_the_checker_declares_that_it_wants_the_blank_baseline(
+            self, tmp_path):
+        """v0.17 G3: four rules (dumun_label_missing, seal_slot_removed,
+        rank_not_in_pack, seat_emptied) only fire with --baseline. The
+        declaration says so, so a runner supplies the blank form instead of the
+        caller having to know — and the CLI flag it is supplied through must
+        exist."""
+        registry = registry_with(tmp_path, ["gongmun"])
+        row = next(entry for entry in registry.enabled_checkers()
+                   if entry["name"] == "check_gongmun")
+        assert row["wants"] == ["baseline"]
+        source = (_MODULE_ROOT / "scripts" / "check_gongmun.py").read_text(
+            encoding="utf-8")
+        assert '"--baseline"' in source
+
+    def test_the_declaration_matches_what_a_baseline_actually_changes(
+            self, tmp_path):
+        """The declaration is only honest if it tracks behaviour. Without a
+        baseline some rules self-skip for ``no_baseline``; supplying one makes
+        every one of them decidable. If a baseline stopped changing anything,
+        ``wants: [baseline]`` would be a lie — and this fails.
+
+        (Which rule needs it, one by one, is ``test_check_gongmun.py``'s job.)
+        """
+        import gongmun_fixtures as fx  # noqa: PLC0415 — module-local fixture
+
+        document = fx.write_gongmun(tmp_path / "finished.hwpx", fx.FINISHED)
+        blank = fx.write_gongmun(tmp_path / "blank.hwpx", fx.BLANK)
+
+        without, _ = check_gongmun.check(document)
+        undecided = {row["rule"] for row in without["skipped"]
+                     if row["reason"] == "no_baseline"}
+        assert undecided, "no rule reports no_baseline — wants: [baseline] " \
+                          "would be declaring a need that does not exist"
+
+        with_baseline, _ = check_gongmun.check(document, baseline=blank)
+        still_undecided = {row["rule"] for row in with_baseline["skipped"]
+                           if row["reason"] == "no_baseline"}
+        assert still_undecided == set(), still_undecided
+
     def test_pack_type_ships_its_schema_and_default(self, tmp_path):
         """A module-declared pack type resolves through the core convention."""
         packs = _MODULE_ROOT / "references" / "preference_packs"

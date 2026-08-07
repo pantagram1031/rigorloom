@@ -18,9 +18,15 @@
 schema: rigorloom-module/v1
 name: gongmun
 requires: {rigorloom: ">=0.16"}
+#
+# wants: [baseline] — R1 dumun_label_missing, R5 seal_slot_removed, R9
+# rank_not_in_pack and R10 seat_emptied only fire when the BLANK form is
+# supplied as --baseline; without it they report skipped:no_baseline and the
+# checker still exits 0. Declaring the need lets a runner supply the blank form
+# instead of every caller having to know (modules/README.md, checkers[].wants).
 provides:
   checkers:
-    - {name: check_gongmun, script: scripts/check_gongmun.py}
+    - {name: check_gongmun, script: scripts/check_gongmun.py, wants: [baseline]}
   pack_types: [gongmun_org]
   skill:
     fragment: skill/FRAGMENT.md

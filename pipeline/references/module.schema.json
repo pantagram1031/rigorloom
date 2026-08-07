@@ -43,7 +43,14 @@
             "required": ["name", "script"],
             "properties": {
               "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-              "script": {"type": "string", "minLength": 1, "description": "Module-relative path to a checker script honouring the checker_base.py contract (JSON verdict on stdout, exit 0/2/3)."}
+              "script": {"type": "string", "minLength": 1, "description": "Module-relative path to a checker script honouring the checker_base.py contract (JSON verdict on stdout, exit 0/2/3)."},
+              "wants": {
+                "type": "array",
+                "items": {"enum": ["baseline"]},
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "Extra inputs this checker DECLARES it needs so a runner can supply them, instead of every caller having to know. Closed vocabulary. 'baseline' = the blank/unfilled form the artifact was produced from; the checker accepts it as `--baseline <path>` and its baseline-only rules report skipped:no_baseline without it. A runner that honours wants supplies the declared baseline; where none is declared the check is skipped-with-reason, never a silent pass. Consumer: the evals harness (evals/README.md)."
+              }
             }
           }
         },

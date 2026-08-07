@@ -349,9 +349,12 @@ boundaries are stated per form family in
 
 ```sh
 python -m pytest -q
-python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py \
-  modules/report/scripts/*.py modules/style/scripts/*.py
+python scripts/py_compile_sweep.py
 ```
+
+Both are module-agnostic: `testpaths` globs `modules/*/tests` and the compile
+sweep globs `modules/*/scripts/*.py`, so a new distribution module needs no
+edit to either (`modules/README.md`, rule 4).
 
 CI runs the suite at two module-set matrix points — core-only (every
 distribution module disabled) and all-modules — so "absence is not

@@ -150,6 +150,51 @@ alone.
   under `PYTHONIOENCODING=cp949`, asserting exit 0 with no traceback — so the
   whole class cannot be reintroduced by the next docstring.
 
+### Module contract — the three gaps gongmun exposed
+
+Shipping gongmun as the first module nobody had planned for disproved one of
+the four contract rules and left two harness gaps. All three are closed.
+
+- **Rule 4 was false for the test harness.** "Adding a module later requires no
+  core change" held for the registry and not for the suite: pyproject's
+  `testpaths` and CI's `py_compile` invocation were both hardcoded per-module
+  lists. `testpaths` is now one glob (`modules/*/tests`), and the compile step
+  is `scripts/py_compile_sweep.py`, whose pattern set includes
+  `modules/*/scripts/*.py` and names no module (it also exits 2 rather than
+  passing vacuously when nothing matches, and no longer needs `shell: bash` to
+  get globs expanded on Windows). The W3-S1 acceptance test now proves the
+  property instead of the mechanism: a brand-new module dropped into a
+  synthetic checkout that carries the repo's real pytest ini block *verbatim*
+  has its tests collected and its scripts compiled, with `pyproject.toml` as
+  the only file outside `modules/` — plus a negative control (a broken script
+  in the new module must fail the sweep) and guards against either
+  configuration naming a module again.
+- **Eval machine checks gained a per-module gate.** `machine_checks[]` accepts
+  `requires_module: NAME`; where the sandbox's enabled set lacks it the check
+  is skipped with a recorded reason instead of failing, with `blocked_on`'s
+  semantics exactly (counted in `counts.skipped`, never in `counts.pass`, so
+  neither `check`'s exit code nor `score.py` can read a skip as a pass). The
+  enabled set is asked of the *sandbox's own* shipped registry CLI and recorded
+  in `checks.json` as `enabled_modules`. Before this, a core-only sandbox
+  *failed* G1's two gongmun checks — a red finding about a configuration the
+  contract explicitly supports.
+- **A checker can declare that it needs the blank baseline.**
+  `provides.checkers[].wants: [baseline]` (closed vocabulary; schema, README,
+  validator and `enabled_checkers()` accessor) says out loud what gongmun's
+  `dumun_label_missing` / `seal_slot_removed` / `rank_not_in_pack` /
+  `seat_emptied` rules only imply — they need the unfilled form, and without it
+  they self-skip while the checker still exits 0. The clean-room eval harness is
+  the wired consumer: a task declares `baseline: <input basename>`, and `check`
+  resolves each `python` check's `argv[0]` by path against the sandbox registry
+  and appends `--baseline <path>` for a declaring checker. A baseline already in
+  the argv (explicit, or because the check targets the blank form itself — a
+  document is never its own baseline) is left alone; a declaring checker in a
+  task with *no* baseline is skipped with a reason rather than run for a silent
+  pass. `declared_gates.py` is deliberately not wired: it only reaches checkers
+  bound to a `gate_kind`, every input a delegated gate needs is already a
+  declared value in the workspace's `gates.yaml`, and no module registers a gate
+  kind whose checker wants a baseline.
+
 ## v0.16.0 — unified core and modules
 
 The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):

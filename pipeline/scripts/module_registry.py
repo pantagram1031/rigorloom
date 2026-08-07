@@ -53,6 +53,10 @@ _CHECKER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _PACK_TYPE_RE = _CHECKER_NAME_RE
 _STATE_POLICIES = (
     "stage_machine", "receipts", "stateless", "stateless_final_pointer")
+# Closed vocabulary of extra inputs a checker may DECLARE that it needs, so a
+# runner can supply them instead of every caller having to know (v0.17 G3).
+# ``baseline`` = the blank/unfilled form the artifact was produced from.
+_CHECKER_WANTS = ("baseline",)
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes", "gate_kinds",
     "studio_panels", "skill", "playbooks", "preflight",
@@ -318,7 +322,9 @@ def _require_str(module: str, value: Any, where: str, pattern: re.Pattern | None
 
 def _require_entry_list(
     module: str, value: Any, where: str, fields: dict[str, Any],
+    *, optional: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    optional = optional or {}
     if not isinstance(value, list):
         _fail(module, f"provides.{where} must be a list, got {type(value).__name__}")
     entries = []
@@ -326,14 +332,26 @@ def _require_entry_list(
         spot = f"provides.{where}[{index}]"
         if not isinstance(item, dict):
             _fail(module, f"{spot} must be a mapping, got {item!r}")
-        unknown = sorted(set(item) - set(fields))
+        unknown = sorted(set(item) - set(fields) - set(optional))
         if unknown:
             _fail(module, f"{spot} has unknown keys {unknown}")
         entry = {}
-        for name, rule in fields.items():
+        for name, rule in {**fields, **optional}.items():
             if name not in item:
+                if name in optional:
+                    continue
                 _fail(module, f"{spot} is missing required key '{name}'")
-            if rule == "gates":
+            if rule == "wants":
+                wants = item[name]
+                if (not isinstance(wants, list) or not wants
+                        or not all(w in _CHECKER_WANTS for w in wants)):
+                    _fail(module,
+                          f"{spot}.{name} must be a non-empty list drawn from "
+                          f"{list(_CHECKER_WANTS)}, got {wants!r}")
+                if len(wants) != len(set(wants)):
+                    _fail(module, f"{spot}.{name} has duplicates")
+                entry[name] = list(wants)
+            elif rule == "gates":
                 gates = item[name]
                 if isinstance(gates, str) and gates:
                     # Gate-source reference: 'declared' or a stage-graph
@@ -411,7 +429,8 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
     if "checkers" in provides:
         out["checkers"] = _require_entry_list(
             module, provides["checkers"], "checkers",
-            {"name": _CHECKER_NAME_RE, "script": None})
+            {"name": _CHECKER_NAME_RE, "script": None},
+            optional={"wants": "wants"})
     if "cli" in provides:
         out["cli"] = _require_entry_list(
             module, provides["cli"], "cli",
@@ -673,8 +692,16 @@ class ModuleRegistry:
         return rows
 
     def enabled_checkers(self) -> list[dict[str, Any]]:
-        """[{name, script(abs path), module}] across all enabled modules."""
-        return self._entries("checkers", ("script",))
+        """[{name, script(abs path), wants, module}] across all enabled modules.
+
+        ``wants`` is always present (``[]`` when the declaration omits it), so a
+        runner can branch on the declared needs without knowing which modules
+        bothered to declare any. See ``modules/README.md`` (checkers row).
+        """
+        rows = self._entries("checkers", ("script",))
+        for row in rows:
+            row.setdefault("wants", [])
+        return rows
 
     def enabled_cli(self) -> list[dict[str, Any]]:
         """[{command, script(abs path), module}]."""
