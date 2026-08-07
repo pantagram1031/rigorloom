@@ -38,7 +38,9 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
-| fill placeholders / put values into a form copy | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json` | LOW |
+| fill an **empty** form cell (`table_map` says `fill_target`) | `python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx --cell ROW,COL=값` (ROW,COL = the cellAddr `table_map` reports) | LOW |
+| replace a literal placeholder string that exists in the document | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json` | LOW |
+| write one cell of a `.hwp` (Windows+Hancom, one session per cell) | `python engine/scripts/com_backend.py set-cell --file F.hwp --addr ROW,COL --text 값 --expect-empty --save-as OUT.hwpx` | LOW |
 | delete guide text (colored 안내문) | `python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx --color ...` | LOW |
 | normalize charPr clones (postedit) | `python engine/scripts/preedit.py normalize-clones ...` | LOW |
 | residue gate on a filled artifact | `python pipeline/scripts/check_residue.py --form-profile profile.json --artifact OUT.hwpx` | LOW |
@@ -82,9 +84,20 @@ script escalate instead of letting you grind.
 
 - `inspect`/`form_inspect` return **structure only, never body text** — do
   not dump full document text into context.
+- An empty form cell has **no text to key on** — it is a self-closing
+  `<hp:run charPrIDRef="N"/>` with no `<hp:t>` (19 of 19 empty cells on the
+  PPS form). `preedit replace` is text-keyed and cannot reach it; that is what
+  `preedit fill-cells` is for (T27). Routing an empty cell to `replace` is the
+  defect that pushed two clean-room agents onto the COM path and into T28.
+- Cell addresses are **`cellAddr`** (`table_map`'s `addr`), never keypress
+  counts. Merged cells own their top-left coordinate only, so addresses are
+  not contiguous. `com_backend`'s legacy `row`/`col` keypress mode is opt-in
+  (`raw_traversal`) and wrong on any form with a rowspan label column (T28).
 - Fill is **idempotent**: re-running the same `preedit replace` on its own
-  output (with `--allow-missing`) is content-identical. A second run that
-  changes bytes is a bug.
+  output (with `--allow-missing`) — or the same `fill-cells` with
+  `--overwrite` — is content-identical. A second run that changes bytes is a
+  bug. A `replace` value that contains its own key is applied exactly once
+  (T26), not appended twice.
 - A fill must not change table geometry: cell count, merges, borderFill,
   page count identical before/after — only text runs differ. Verify via
   `form_inspect` table_map diff when it matters.

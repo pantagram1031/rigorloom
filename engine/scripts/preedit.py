@@ -80,6 +80,7 @@ CHARPROPERTIES_RE = re.compile(r'<' + NS + r':charProperties\b[^>]*>')
 # (스택 기반 top-level 판정 — 표 셀 안 문단은 top-level이 아니므로
 # 삭제 후보에서 구조적으로 제외된다 = sim의 in_tbl 배제와 동등).
 from tidy_hwpx import OBJECT_TAG_RE, _find_paragraphs, _para_text  # noqa: E402
+from hwpx_tables import find_cell, scan_tables  # noqa: E402
 
 
 class PreeditError(RuntimeError):
@@ -159,26 +160,112 @@ def _strip_tags(xml_text):
 # 1) replace_placeholders — dict 기반 치환, whitespace-tolerant, 0-hit=ERROR
 # ---------------------------------------------------------------------------
 
+def _overlaps(start, end, spans):
+    """[start, end) 가 spans 중 하나라도 겹치면 True."""
+    return any(start < s_end and s_start < end for s_start, s_end in spans)
+
+
+def _apply_edits(text, edits, protected):
+    """정렬·비중첩 edits [(start, end, replacement)] 를 한 번에 적용.
+
+    protected 스팬(이미 '쓴' 값의 위치)은 어떤 edit과도 겹치지 않는다는 게
+    호출자 계약이므로, 새 좌표로 평행이동만 하면 된다. 삽입된 replacement의
+    스팬도 protected에 추가해 돌려준다 — 그래야 다음 tier/다음 키가 방금 쓴
+    값을 다시 건드리지 않는다(D1 double-apply의 근본 차단).
+
+    반환: (new_text, new_protected)
+    """
+    if not edits:
+        return text, protected
+    edits = sorted(edits)
+    out, cursor, shift = [], 0, 0
+    written = []
+    shifts = []  # (old_pos, delta_before_this_pos) — protected 재매핑용
+    for start, end, repl in edits:
+        out.append(text[cursor:start])
+        new_start = start + shift
+        out.append(repl)
+        shift += len(repl) - (end - start)
+        written.append((new_start, new_start + len(repl)))
+        shifts.append((end, shift))
+        cursor = end
+    out.append(text[cursor:])
+
+    def _shift_at(pos):
+        d = 0
+        for edit_end, delta in shifts:
+            if edit_end <= pos:
+                d = delta
+            else:
+                break
+        return d
+
+    remapped = [(s + _shift_at(s), e + _shift_at(s)) for s, e in protected]
+    return "".join(out), sorted(remapped + written)
+
+
 def _apply_tiers(text, mapping, hits):
     """치환 2단(tier A: 런 strip-비교 / tier B: raw 부분문자열)을 문자열
-    조각에 적용하고 새 문자열을 돌려준다. hit는 hits dict에 누적."""
+    조각에 적용하고 새 문자열을 돌려준다. hit는 hits dict에 누적.
+
+    D1(값이 키를 포함하면 이중 적용): tier B는 tier A가 이미 다시 쓴 스팬 위를
+    또 훑었다. operations.md가 스스로 문서화한 예제
+    `{" http://": " http://example.kr"}` 가 실측으로 `" http://example.krexample.kr"`
+    (hits=2)를 만들었다 — 문서대로 따라 하면 셀이 망가진다. 이제 '이미 쓴 값'의
+    스팬을 protected로 추적하고, 어떤 tier·어떤 키도 그 위를 다시 치환하지
+    않는다. 한 번 쓴 값은 최종값이다(single-pass 치환 시맨틱).
+    """
+    protected = []
     for key, value in mapping.items():
         key_stripped = str(key).strip()
         value_esc = escape(str(value))
+        needles = [n for n in dict.fromkeys([str(key), escape(str(key))]) if n]
 
-        def _sub_t(m, _k=key_stripped, _v=value_esc, _key=key):
+        # 값이 키를 품는 매핑(" http://" → " http://example.kr")은 재실행
+        # 멱등성도 깨뜨렸다 — 2회차에는 tier A 재작성이 없고, 이미 최종값인
+        # 셀 안의 키를 tier B가 또 잡아 값을 한 번 더 이어붙인다. 그래서
+        # '이미 최종값인 스팬'을 먼저 protected로 올린다. 한 번 값이 된
+        # 텍스트는 다시 치환 대상이 아니다.
+        if any(n != value_esc and n in value_esc for n in needles):
+            pos = 0
+            while True:
+                i = text.find(value_esc, pos)
+                if i < 0:
+                    break
+                protected.append((i, i + len(value_esc)))
+                pos = i + len(value_esc)
+            protected.sort()
+
+        # tier A — 런 텍스트 strip-비교(whole-run). 이미 쓴 스팬과 겹치는
+        # 런은 건너뛴다(그 런의 내용은 앞선 키가 확정한 값이다).
+        edits = []
+        for m in T_FULL_RE.finditer(text):
             inner = m.group(2)
-            if _strip_tags(inner).strip() == _k and inner != _v:
-                hits[_key] += 1
-                return m.group(1) + _v + m.group(3)
-            return m.group(0)
+            if _strip_tags(inner).strip() != key_stripped or inner == value_esc:
+                continue
+            if _overlaps(m.start(2), m.end(2), protected):
+                continue
+            edits.append((m.start(2), m.end(2), value_esc))
+        if edits:
+            hits[key] += len(edits)
+            text, protected = _apply_edits(text, edits, protected)
 
-        text = T_FULL_RE.sub(_sub_t, text)
-        for needle in dict.fromkeys([str(key), escape(str(key))]):
-            n = text.count(needle)
-            if n:
-                hits[key] += n
-                text = text.replace(needle, value_esc)
+        # tier B — raw 부분문자열. protected 스팬(방금 쓴 값 포함)은 불가침.
+        for needle in needles:
+            edits, pos = [], 0
+            while True:
+                i = text.find(needle, pos)
+                if i < 0:
+                    break
+                j = i + len(needle)
+                if _overlaps(i, j, protected):
+                    pos = i + 1
+                    continue
+                edits.append((i, j, value_esc))
+                pos = j
+            if edits:
+                hits[key] += len(edits)
+                text, protected = _apply_edits(text, edits, protected)
     return text
 
 
@@ -293,6 +380,235 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
     _assert_members_well_formed(contents, modified)
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "hits": hits}
+
+
+# ---------------------------------------------------------------------------
+# 1b) fill_cells — cellAddr로 '진짜 빈' 표 셀 채우기 (오프라인)
+#
+# T27(첫 클린룸 교차모델 런): 양식의 빈 셀은 텍스트가 '비어 있는' 게 아니라
+# <hp:t>가 아예 없다 — <hp:run charPrIDRef="7"/> 자기닫힘 런 하나뿐이다.
+# PPS 협업승인신청서 실측: 빈 셀 19/19가 전부 이 모양. replace는 텍스트
+# 키 기반이라 잡을 문자열 자체가 없어 구조적으로 도달 불가인데도 SKILL.md는
+# 양식 채우기를 replace로 안내했다 — 그래서 두 에이전트 모두 COM으로
+# 넘어갔고 거기서 D3(셀 주소 오류)에 걸려 라벨 셀을 파괴했다.
+# 오프라인으로 빈 셀에 도달하는 경로가 이 오퍼레이션이다.
+# ---------------------------------------------------------------------------
+
+T_SELFCLOSE_RE = re.compile(r'<(' + NS + r'):t\b[^>]*/>')
+RUN_OPEN_RE = re.compile(r'<' + NS + r':run\b[^>]*?/?>')
+TBL_TAG_RE = re.compile(r'<' + NS + r':tbl\b')
+
+
+def _strip_nested_tbls(fragment):
+    """조각에서 표(hp:tbl) 스팬을 통째로 제거 — '이 셀 자신의' 텍스트만 남긴다.
+
+    중첩 표(코퍼스 12개 양식 중 6개에서 실측)가 있는 셀에서 안쪽 표의 텍스트를
+    바깥 셀의 내용으로 오독하면 '비었는지' 판정이 통째로 뒤집힌다.
+    """
+    if not TBL_TAG_RE.search(fragment):
+        return fragment
+    spans = [(t["start"], t["end"]) for t in scan_tables(fragment)
+             if t["depth"] == 0]
+    out, cur = [], 0
+    for s, e in spans:
+        out.append(fragment[cur:s])
+        cur = e
+    out.append(fragment[cur:])
+    return "".join(out)
+
+
+def _fragment_text(fragment):
+    """조각의 자기 텍스트(중첩 표 제외, hp:t 내용 이어붙임)."""
+    own = _strip_nested_tbls(fragment)
+    return _strip_tags("".join(t for _o, t, _c in T_FULL_RE.findall(own)))
+
+
+def _write_text_into_paragraph(p_xml, text_esc, charpr):
+    """문단의 '첫 런'에 텍스트를 쓴다 — 런의 charPr은 charpr가 없으면 보존.
+
+    빈 셀의 표준형 <hp:run charPrIDRef="7"/>(자기닫힘, hp:t 없음)를 열린 런 +
+    <hp:t>로 확장하는 것이 이 함수의 핵심 동작이다. 새로 만드는 <hp:t>는 항상
+    짝 있는 태그다(자기닫힘 <hp:t/>는 만들지 않는다 — 그게 한컴 백지 렌더
+    사고의 원인이었다).
+    """
+    m = RUN_RE.search(p_xml)
+    if m is None:
+        raise PreeditError("셀 문단에 hp:run이 없음 — 쓸 자리 없음")
+    prefix = m.group(1)
+    open_m = RUN_OPEN_RE.match(m.group(0))
+    open_tag = open_m.group(0)
+    if charpr is not None:
+        open_tag = _tag_set_attr(open_tag, "charPrIDRef", str(charpr))
+    t_new = f'<{prefix}:t>{text_esc}</{prefix}:t>'
+
+    if m.group(3) is None:                       # 자기닫힘 런 — 확장한다
+        open_tag = (open_tag[:-2] + '>') if open_tag.endswith('/>') else open_tag
+        new_run = f'{open_tag}{t_new}</{prefix}:run>'
+    else:
+        body = m.group(3)
+        tm = T_FULL_RE.search(body)
+        if tm is not None:                        # 기존 hp:t 내용만 교체
+            new_body = body[:tm.start(2)] + text_esc + body[tm.end(2):]
+        else:
+            scm = T_SELFCLOSE_RE.search(body)
+            if scm is not None:                   # <hp:t/> → 짝 있는 태그로
+                new_body = body[:scm.start()] + t_new + body[scm.end():]
+            else:                                 # hp:t 자체가 없음 → 추가
+                new_body = body + t_new
+        new_run = f'{open_tag}{new_body}</{prefix}:run>'
+    return p_xml[:m.start()] + new_run + p_xml[m.end():]
+
+
+def _blank_paragraph_text(p_xml):
+    """문단의 자기 hp:t 내용을 전부 비운다(overwrite 시 잔여 텍스트 제거)."""
+    changed = False
+
+    def _sub(m):
+        nonlocal changed
+        if m.group(2) == "":
+            return m.group(0)
+        changed = True
+        return m.group(1) + m.group(3)
+
+    if TBL_TAG_RE.search(p_xml):     # 중첩 표를 품은 문단은 건드리지 않는다
+        return p_xml, False
+    return T_FULL_RE.sub(_sub, p_xml), changed
+
+
+def _fill_cell_body(body, text, *, overwrite, charpr):
+    """셀 몸통(hp:tc의 자식 스팬)에 텍스트를 쓴 새 몸통을 만든다.
+
+    반환: (new_body, current_text). 비어 있지 않은데 overwrite가 아니면
+    PreeditError — 라벨 셀 덮어쓰기는 이 엔진에서 사고이지 기능이 아니다.
+    """
+    current = _fragment_text(body)
+    if current.strip() and not overwrite:
+        raise PreeditError(
+            f"셀이 비어 있지 않음(현재 {current.strip()[:30]!r})"
+            " — 덮어쓰려면 --overwrite")
+
+    paras = _find_paragraphs(body)
+    if not paras:
+        raise PreeditError("셀에 문단(hp:p)이 없음 — 쓸 자리 없음")
+    target = next((i for i, (_s, _e, p) in enumerate(paras)
+                   if not TBL_TAG_RE.search(p)), None)
+    if target is None:
+        raise PreeditError("셀의 모든 문단이 중첩 표를 담고 있음 — 쓸 자리 없음")
+
+    text_esc = escape(str(text))
+    out, last = [], 0
+    for i, (start, end, p_xml) in enumerate(paras):
+        out.append(body[last:start])
+        if i == target:
+            new_p = _write_text_into_paragraph(p_xml, text_esc, charpr)
+            changed = True
+        else:
+            new_p, changed = _blank_paragraph_text(p_xml)
+        if changed:
+            # T24 stale-lineseg: 텍스트가 바뀐 문단의 캐시 레이아웃은 제거한다.
+            # 남기면 한컴이 옛 좌표에 그려 겹쳐 찍힌다(빈 셀의 lineseg는
+            # '빈 줄' 좌표라 새 텍스트가 통째로 어긋난다).
+            new_p = LINESEG_RE.sub("", new_p)
+        out.append(new_p)
+        last = end
+    out.append(body[last:])
+    return "".join(out), current
+
+
+def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
+               charpr=None):
+    """표 셀을 cellAddr(row, col)로 직접 채운다 — 텍스트 키 없이(오프라인).
+
+    fills: [(row, col, text), ...] — row/col은 `<hp:cellAddr rowAddr colAddr>`
+    그대로, 즉 `form_inspect`의 `table_map[...]["cells"][...]["addr"]`가
+    보고하는 값이다. 병합 셀의 주소는 좌상단 격자 좌표이며, rowSpan/colSpan이
+    덮는 좌표에는 셀이 존재하지 않는다(주소는 연속이 아니다).
+
+    table: 문서 전체 표를 '여는 태그 문서 순서'로 센 색인(기본 0). 중첩 표도
+    자기 색인을 갖고, 바깥 표가 항상 먼저다(form_inspect table_map과 동일
+    규약 — 같은 스캐너를 쓴다).
+
+    계약:
+      - 대상 셀이 비어 있지 않으면 거부(PreeditError). --overwrite에서만 덮어씀.
+      - 빈 셀의 표준형 자기닫힘 런 <hp:run charPrIDRef="7"/> 안에 <hp:t>를
+        만든다. 런의 charPr은 보존(charpr 인자를 주면 그 id로 덮어씀).
+      - 텍스트가 바뀐 문단의 <hp:linesegarray>는 제거(T24).
+      - 쓰기 전 수정 멤버 well-formed 검증(실패 시 아무것도 쓰지 않음),
+        charpr 재지정 시 T22 dangling-charPr 사후검사.
+      - 같은 주소를 두 번 지정하면 오류(조용한 마지막-승리 금지).
+
+    멱등성: 같은 값으로 --overwrite 재실행하면 content-identical.
+
+    반환: {"ok": True, "table": n, "filled": n, "cells":
+           [{"addr": [r, c], "hits": 1, "action": "filled"|"overwritten",
+             "previous": "…"}, ...]}
+    """
+    fills = [(int(r), int(c), "" if t is None else str(t)) for r, c, t in fills]
+    if not fills:
+        raise ValueError("채울 셀이 하나도 없음")
+    seen = set()
+    for row, col, _t in fills:
+        if (row, col) in seen:
+            raise PreeditError(f"같은 셀 주소가 중복 지정됨: {row},{col}")
+        seen.add((row, col))
+
+    infos, contents = _read_zip(hwpx_in)
+    section_names = _section_names(contents)
+
+    index, target_section, target_table, total = 0, None, None, 0
+    parsed = {}
+    for sname in section_names:
+        xml = contents[sname].decode("utf-8")
+        tables = scan_tables(xml)
+        parsed[sname] = (xml, tables)
+        for tbl in tables:
+            if index == table:
+                target_section, target_table = sname, tbl
+            index += 1
+    total = index
+    if target_table is None:
+        raise PreeditError(
+            f"표 index={table} 없음 — 문서 전체 표는 {total}개"
+            " (form_inspect table_map의 index와 같은 규약)")
+
+    xml, _tables = parsed[target_section]
+    known = sorted(c["addr"] for c in target_table["cells"] if c["addr"])
+    edits, report = [], []
+    for row, col, text in fills:
+        cell = find_cell(target_table, row, col)
+        if cell is None:
+            raise PreeditError(
+                f"표 {table}에 cellAddr ({row},{col}) 없음 — 병합 셀이 덮은"
+                f" 좌표이거나 오타. 실제 주소 {len(known)}개: {known[:20]}")
+        body = xml[cell["body_start"]:cell["body_end"]]
+        new_body, previous = _fill_cell_body(
+            body, text, overwrite=overwrite, charpr=charpr)
+        edits.append((cell["body_start"], cell["body_end"], new_body))
+        report.append({
+            "addr": [row, col],
+            "hits": 0 if new_body == body else 1,
+            "action": "overwritten" if previous.strip() else "filled",
+            "previous": previous.strip()[:30],
+        })
+
+    for start, end, new_body in sorted(edits, reverse=True):
+        xml = xml[:start] + new_body + xml[end:]
+
+    data = xml.encode("utf-8")
+    modified = set()
+    if data != contents[target_section]:
+        contents[target_section] = data
+        modified.add(target_section)
+
+    _assert_members_well_formed(contents, modified)
+    if charpr is not None:
+        header = contents[_header_name(contents)].decode("utf-8")
+        for sname in section_names:
+            guards.assert_no_dangling_charpr(
+                contents[sname].decode("utf-8"), header)
+    _write_zip(hwpx_out, infos, contents)
+    return {"ok": True, "table": table, "tables_total": total,
+            "filled": sum(c["hits"] for c in report), "cells": report}
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +1096,22 @@ def main(argv=None):
     p_rep.add_argument("--allow-missing", action="store_true",
                        help="0-hit 키를 오류 대신 0으로 보고(멱등 재실행용)")
 
+    p_fc = sub.add_parser("fill-cells",
+                          help="cellAddr(row,col)로 표 셀 채우기(빈 셀 도달 경로)")
+    p_fc.add_argument("file")
+    p_fc.add_argument("--out", required=True)
+    p_fc.add_argument("--table", type=int, default=0,
+                      help="표 색인(문서 순서, form_inspect table_map과 동일). 기본 0")
+    p_fc.add_argument("--cell", action="append", default=[],
+                      metavar="ROW,COL=TEXT",
+                      help="채울 셀(반복 가능). ROW/COL은 cellAddr 값")
+    p_fc.add_argument("--map",
+                      help='셀 JSON 파일({"2,3": "값", ...}) — --cell과 병용 가능')
+    p_fc.add_argument("--overwrite", action="store_true",
+                      help="비어 있지 않은 셀도 덮어씀(기본은 거부)")
+    p_fc.add_argument("--charpr",
+                      help="쓰는 런의 charPrIDRef를 이 id로 덮어씀(기본: 보존)")
+
     p_del = sub.add_parser("delete-guides", help="가이드 charPr 문단 삭제(T18 가드)")
     p_del.add_argument("file")
     p_del.add_argument("--out", required=True)
@@ -814,6 +1146,34 @@ def main(argv=None):
             result = replace_placeholders(
                 args.file, args.out, mapping,
                 on_zero_hits="ignore" if args.allow_missing else "error")
+        elif args.cmd == "fill-cells":
+            fills = []
+            for spec in args.cell:
+                addr, sep, value = spec.partition("=")
+                row, comma, col = addr.partition(",")
+                if not sep or not comma:
+                    _die(f"--cell 형식은 ROW,COL=TEXT: {spec!r}", code=2)
+                try:
+                    fills.append((int(row.strip()), int(col.strip()), value))
+                except ValueError:
+                    _die(f"--cell의 ROW/COL은 정수: {spec!r}", code=2)
+            if args.map:
+                cell_map = json.loads(
+                    Path(args.map).read_text(encoding="utf-8"))
+                if not isinstance(cell_map, dict):
+                    _die("--map JSON은 {\"ROW,COL\": \"값\"} 객체여야 함", code=2)
+                for addr, value in cell_map.items():
+                    row, comma, col = str(addr).partition(",")
+                    if not comma:
+                        _die(f"--map 키 형식은 \"ROW,COL\": {addr!r}", code=2)
+                    try:
+                        fills.append((int(row.strip()), int(col.strip()), value))
+                    except ValueError:
+                        _die(f"--map 키의 ROW/COL은 정수: {addr!r}", code=2)
+            if not fills:
+                _die("--cell 또는 --map 중 최소 하나 필요", code=2)
+            result = fill_cells(args.file, args.out, fills, table=args.table,
+                                overwrite=args.overwrite, charpr=args.charpr)
         elif args.cmd == "delete-guides":
             ids = ([i.strip() for i in args.charpr_ids.split(",") if i.strip()]
                    if args.charpr_ids else None)

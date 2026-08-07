@@ -21,8 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import preedit  # noqa: E402
+from hwpx_tables import find_cell, scan_tables  # noqa: E402
 from preedit import (  # noqa: E402
     PreeditError,
+    fill_cells,
     content_fingerprint,
     delete_guide_paragraphs,
     normalize_clones,
@@ -37,6 +39,7 @@ from preedit import (  # noqa: E402
 CP_BLACK = '<hh:charPr id="0" height="1000" textColor="#000000"/>'
 CP_BLUE = '<hh:charPr id="5" height="1000" textColor="#0000FF"/>'
 CP_NAVY = '<hh:charPr id="6" height="1000" textColor="#1F3F9F"/>'  # 파랑 계열
+CP_CELL = '<hh:charPr id="7" height="1000" textColor="#000000"/>'  # 빈 셀 런
 
 
 def make_header(charprs, item_cnt=None):
@@ -653,4 +656,262 @@ class TestScopedRepoint:
         assert result["clones"] == []
         assert result["scope_repointed"][0]["runs"] == 2
         assert '<hp:run charPrIDRef="0"><hp:t>이하율</hp:t></hp:run>' \
+            in section_xml(out)
+
+
+# ---------------------------------------------------------------------------
+# 4) D1 — 값이 키를 포함하면 tier B가 tier A 결과 위에 또 치환(double-apply)
+#
+# 첫 클린룸 교차모델 런(Sonnet·Opus 독립 재현). operations.md가 스스로 문서화한
+# 예제를 그대로 따라 하면 셀이 망가졌다:
+#   {" http://": " http://example.kr"}  ->  " http://example.krexample.kr"
+#   (hits=2 — tier A 1 + tier B 1)
+# ---------------------------------------------------------------------------
+
+CELL_HTTP = " http://"
+
+
+class TestValueContainsKeyDoubleApply:
+    def test_documented_http_example_applies_once(self, tmp_path):
+        """failing-before: hits=2 + ' http://example.krexample.kr'."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(TBL_P(P(R(0, CELL_HTTP)))))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(
+            src, out, {CELL_HTTP: " http://example.kr"})
+        assert result["hits"] == {CELL_HTTP: 1}
+        xml = section_xml(out)
+        assert "<hp:t> http://example.kr</hp:t>" in xml
+        assert "example.krexample" not in xml
+
+    def test_value_contains_key_in_table_cell(self, tmp_path):
+        """표 셀 안 부분문자열 키 — 값이 키를 품어도 정확히 한 번."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(TBL_P(P(R(0, "담당자: 홍길동 (내선)")))))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"홍길동": "홍길동 외 2인"})
+        assert result["hits"] == {"홍길동": 1}
+        xml = section_xml(out)
+        assert "담당자: 홍길동 외 2인 (내선)" in xml
+        assert "홍길동 외 2인 외 2인" not in xml
+
+    def test_rerun_is_content_identical(self, tmp_path):
+        """멱등성 계약: 값이 키를 품어도 재실행이 바이트를 바꾸면 안 된다.
+
+        failing-before: 2회차에 tier B가 최종값 안의 키를 또 잡아
+        ' http://example.krexample.kr'로 자랐다."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(TBL_P(P(R(0, CELL_HTTP)))))
+        first = tmp_path / "a.hwpx"
+        second = tmp_path / "b.hwpx"
+        replace_placeholders(src, first, {CELL_HTTP: " http://example.kr"})
+        again = replace_placeholders(
+            first, second, {CELL_HTTP: " http://example.kr"},
+            on_zero_hits="ignore")
+        assert again["hits"] == {CELL_HTTP: 0}
+        assert content_fingerprint(first) == content_fingerprint(second)
+
+    def test_independent_occurrences_still_both_replaced(self, tmp_path):
+        """과잉 보호 방지: 겹치지 않는 두 occurrence는 여전히 둘 다 바뀐다."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(P(R(0, "코드 AB 그리고 코드 AB 끝"))))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"AB": "AB-99"})
+        assert result["hits"] == {"AB": 2}
+        assert "코드 AB-99 그리고 코드 AB-99 끝" in section_xml(out)
+
+    def test_later_key_does_not_eat_earlier_value(self, tmp_path):
+        """키 사이 연쇄 치환 금지 — 앞 키가 쓴 값은 뒤 키의 대상이 아니다."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(P(R(0, "X")), P(R(0, "Y 자리"))))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"X": "Y", "Y": "Z"})
+        assert result["hits"] == {"X": 1, "Y": 1}
+        xml = section_xml(out)
+        assert "<hp:t>Y</hp:t>" in xml       # X->Y 가 다시 Z가 되지 않는다
+        assert "<hp:t>Z 자리</hp:t>" in xml   # 원래의 Y는 정상 치환
+
+
+# ---------------------------------------------------------------------------
+# 5) D2 — fill_cells: cellAddr로 '진짜 빈' 셀 채우기 (T27)
+# ---------------------------------------------------------------------------
+
+def TC(row, col, inner, *, row_span=1, col_span=1, bf="5"):
+    return (f'<hp:tc borderFillIDRef="{bf}"><hp:subList>{inner}</hp:subList>'
+            f'<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
+            f'<hp:cellSpan colSpan="{col_span}" rowSpan="{row_span}"/>'
+            f'<hp:cellSz width="1000" height="500"/></hp:tc>')
+
+
+LINESEG = ('<hp:linesegarray><hp:lineseg textpos="0" vertpos="0"'
+           ' horzsize="12980"/></hp:linesegarray>')
+
+
+def EMPTY_P(cid=7):
+    """양식의 '진짜 빈 셀' 표준형 — hp:t가 아예 없는 자기닫힘 런 하나."""
+    return (f'<hp:p paraPrIDRef="34"><hp:run charPrIDRef="{cid}"/>'
+            f'{LINESEG}</hp:p>')
+
+
+def TBL(cells, *, tid="9", rows=3, cols=3):
+    return (f'<hp:tbl id="{tid}" rowCnt="{rows}" colCnt="{cols}"><hp:tr>'
+            + "".join(cells) + '</hp:tr></hp:tbl>')
+
+
+def TBL_WRAP(tbl):
+    return f'<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">{tbl}</hp:run></hp:p>'
+
+
+def _form_fixture(tmp_path, name="form.hwpx"):
+    """rowspan 라벨 열 + 빈 셀(자기닫힘 런) — 정부 양식의 표준 형태."""
+    tbl = TBL([
+        TC(0, 0, P(R(0, "신 청 인")), row_span=2),
+        TC(0, 1, P(R(0, "성 명"))),
+        TC(0, 2, EMPTY_P()),
+        TC(1, 1, P(R(0, "생년월일"))),
+        TC(1, 2, EMPTY_P()),
+        TC(2, 0, P(R(0, "주 소"))),
+        TC(2, 1, EMPTY_P(), col_span=2),
+    ])
+    return make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE, CP_CELL]),
+                     SEC(TBL_WRAP(tbl)), name=name)
+
+
+class TestFillCells:
+    def test_fills_empty_selfclosing_run(self, tmp_path):
+        """failing-before(T27): 빈 셀에는 hp:t가 없어 replace가 도달 불가."""
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 2, "이하율")])
+        assert result["filled"] == 1
+        assert result["cells"][0]["addr"] == [0, 2]
+        assert result["cells"][0]["hits"] == 1
+        xml = section_xml(out)
+        # charPr 보존 + 짝 있는 hp:t 생성(자기닫힘 <hp:t/>는 만들지 않는다)
+        assert '<hp:run charPrIDRef="7"><hp:t>이하율</hp:t></hp:run>' in xml
+        assert "<hp:t/>" not in xml
+        ET.fromstring(xml)
+
+    def test_empty_cell_is_unreachable_by_replace(self, tmp_path):
+        """T27의 근거: 빈 셀에는 키로 삼을 텍스트가 아예 없다."""
+        src = _form_fixture(tmp_path)
+        xml = section_xml(src)
+        assert '<hp:run charPrIDRef="7"/>' in xml   # hp:t 없음
+        with pytest.raises(PreeditError):            # 잡을 문자열이 없다
+            replace_placeholders(src, tmp_path / "no.hwpx", {"[성명]": "이하율"})
+
+    def test_refuses_non_empty_cell_and_writes_nothing(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="비어 있지 않음"):
+            fill_cells(src, out, [(0, 1, "덮어쓰기")])
+        assert not out.exists()
+
+    def test_overwrite_flag_replaces_label_text(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 1, "이름")], overwrite=True)
+        assert result["cells"][0]["action"] == "overwritten"
+        assert result["cells"][0]["previous"] == "성 명"
+        assert "<hp:t>이름</hp:t>" in section_xml(out)
+
+    def test_batch_write_is_atomic_on_refusal(self, tmp_path):
+        """한 셀이라도 거부되면 배치 전체가 쓰이지 않는다(부분 편집 금지)."""
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError):
+            fill_cells(src, out, [(0, 2, "정상"), (2, 0, "라벨파괴")])
+        assert not out.exists()
+
+    def test_strips_stale_linesegarray(self, tmp_path):
+        """T24: 텍스트가 바뀐 문단의 캐시 레이아웃은 제거 — 아니면 overprint."""
+        src = _form_fixture(tmp_path)
+        assert "linesegarray" in section_xml(src)
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 2, "값"), (1, 2, "값2"), (2, 1, "값3")])
+        assert "linesegarray" not in section_xml(out)
+
+    def test_untouched_cells_keep_their_linesegarray(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 2, "값")])
+        # 나머지 두 빈 셀의 lineseg는 바이트 그대로(byte-fidelity)
+        assert section_xml(out).count("<hp:linesegarray>") == 2
+
+    def test_idempotent_under_overwrite(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        first, second = tmp_path / "a.hwpx", tmp_path / "b.hwpx"
+        fill_cells(src, first, [(0, 2, "이하율")])
+        again = fill_cells(first, second, [(0, 2, "이하율")], overwrite=True)
+        assert again["filled"] == 0
+        assert content_fingerprint(first) == content_fingerprint(second)
+
+    def test_rowspan_addressing_skips_covered_coordinates(self, tmp_path):
+        """병합이 덮은 좌표(1,0)에는 셀이 없다 — 조용한 오작성 대신 오류."""
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="cellAddr"):
+            fill_cells(src, out, [(1, 0, "값")])
+        assert not out.exists()
+
+    def test_duplicate_address_rejected(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="중복"):
+            fill_cells(src, tmp_path / "o.hwpx", [(0, 2, "a"), (0, 2, "b")])
+
+    def test_missing_table_index_reports_total(self, tmp_path):
+        src = _form_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="표는 1개"):
+            fill_cells(src, tmp_path / "o.hwpx", [(0, 2, "값")], table=3)
+
+    def test_charpr_override_and_no_dangling_ref(self, tmp_path):
+        """charPr 재지정 시 T22 사후검사가 함께 돈다."""
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 2, "값")], charpr="5")
+        assert '<hp:run charPrIDRef="5"><hp:t>값</hp:t></hp:run>' \
+            in section_xml(out)
+        with pytest.raises(AssertionError):
+            fill_cells(src, tmp_path / "bad.hwpx", [(0, 2, "값")], charpr="99")
+
+    def test_nested_table_has_its_own_index_and_cells(self, tmp_path):
+        """중첩 표는 자기 index를 갖고, 바깥 셀의 '빈 여부'를 오염시키지 않는다.
+
+        failing-before(옛 비탐욕 정규식): 바깥 표의 여는 태그가 안쪽 표의 닫는
+        태그와 짝지어져 표 수·셀 수가 틀렸다(코퍼스 12개 중 6개에서 실측)."""
+        inner = TBL([TC(0, 0, P(R(0, "안쪽"))), TC(0, 1, EMPTY_P())],
+                    tid="20", rows=1, cols=2)
+        outer = TBL([
+            TC(0, 0, P(R(0, "바깥 라벨"))),
+            TC(0, 1, TBL_WRAP(inner)),
+            TC(1, 0, EMPTY_P()),
+            TC(1, 1, EMPTY_P()),
+        ], tid="10", rows=2, cols=2)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE, CP_CELL]),
+                        SEC(TBL_WRAP(outer)))
+        tables = scan_tables(section_xml(src))
+        assert [t["depth"] for t in tables] == [0, 1]
+        assert len(tables[0]["cells"]) == 4 and len(tables[1]["cells"]) == 2
+        # 바깥 표의 (1,1)과 안쪽 표의 (0,1)은 서로 다른 셀 — 색인으로 구분된다
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(1, 1, "바깥값")], table=0)
+        inner_out = tmp_path / "inner.hwpx"
+        fill_cells(out, inner_out, [(0, 1, "안쪽값")], table=1)
+        xml = section_xml(inner_out)
+        assert "바깥값" in xml and "안쪽값" in xml
+        tables2 = scan_tables(xml)
+        assert find_cell(tables2[0], 1, 1) is not None
+        # 중첩 표를 품은 바깥 셀 (0,1)의 '자기 텍스트'는 비어 있다
+        cell = find_cell(tables2[0], 0, 1)
+        own = preedit._fragment_text(xml[cell["body_start"]:cell["body_end"]])
+        assert own.strip() == ""
+
+    def test_writes_into_cell_that_has_empty_paired_t(self, tmp_path):
+        """비어 있지만 <hp:t></hp:t>가 이미 있는 셀도 같은 경로로 채운다."""
+        tbl = TBL([TC(0, 0, P(R(7, "")))], tid="9", rows=1, cols=1)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_BLUE, CP_CELL]),
+                        SEC(TBL_WRAP(tbl)))
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 0, "값")])
+        assert '<hp:run charPrIDRef="7"><hp:t>값</hp:t></hp:run>' \
             in section_xml(out)

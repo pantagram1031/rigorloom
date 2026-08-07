@@ -19,7 +19,7 @@
 | `edit_equation` | | index, hwpeqn | 기존 수식 편집 |
 | `insert_table` | data | treat_as_char, caption, col_ratios, font_pt | 표 삽입(data=행렬 리스트). col_ratios=정규화 비율 리스트(합=1.0, len==열개수) — HTableCreation WidthType=2 직접 경로. font_pt=셀 텍스트 크기(insert-then-select) |
 | `insert_picture` | path | width_mm, own_paragraph | 그림 삽입 |
-| `set_cell` | | row, col, text | 표 셀 값 |
+| `set_cell` | text | **addr=[row,col]**, table, expect_empty, expect, (레거시) raw_traversal+row+col | 표 셀 값. `addr`은 **cellAddr**(form_inspect table_map의 addr) — 이동은 걸음마다 `get_cell_addr()`로 검증하고 어긋나면 쓰지 않는다. `expect_empty`/`expect`는 선행조건 가드(권장). `row`/`col`은 **키 입력 횟수**이지 주소가 아니다(T28) → `raw_traversal: true` 없이는 거부 |
 | `set_char_color` | | color(기본 0=검정), all(기본 true) | 글자색. **all:true는 하이퍼링크도 덮음** — 링크 삽입 후 실행 금지 |
 | `delete_ctrls` | | types, index | 컨트롤(표/그림/수식) 삭제 |
 | `collapse_empty_paragraphs` | | | 연속 빈 문단 축소. **제목 글자크기 오염 위험** — 자동 사용 금지 |
