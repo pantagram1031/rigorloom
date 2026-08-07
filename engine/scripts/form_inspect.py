@@ -32,6 +32,9 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hwpx_tables import scan_tables  # noqa: E402
+
 NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
 
@@ -428,37 +431,53 @@ def _borderfill_shaded(header_xml):
     return out
 
 
+def _own_cell_body(xml, cell, tables):
+    """셀 몸통에서 중첩 표 스팬을 제거한 '이 셀 자신의' XML."""
+    lo, hi = cell["body_start"], cell["body_end"]
+    spans = sorted((t["start"], t["end"]) for t in tables
+                   if t["start"] >= lo and t["end"] <= hi)
+    out, cur = [], lo
+    for s, e in spans:
+        if s < cur:
+            continue
+        out.append(xml[cur:s])
+        cur = e
+    out.append(xml[cur:hi])
+    return "".join(out)
+
+
 def _table_map(section_names, z, defs, borderfill_shaded):
     """모든 section의 모든 hp:tbl -> table_map 엔트리 리스트.
 
     cell 분류(guide/fill_target/static)는 _classify_guide/_looks_like_anchor와
     동일 휴리스틱을 재사용한다(새 규칙 도입 안 함).
+
+    표 스캔은 `hwpx_tables.scan_tables`(태그 스택, 중첩 안전)에 위임한다 —
+    `preedit fill-cells`가 `--table N`으로 가리키는 색인과 **같은 규약**이어야
+    하기 때문이다. 옛 비탐욕 정규식 `<hp:tbl>(.*?)</hp:tbl>` 은 바깥 표의 여는
+    태그를 안쪽 표의 닫는 태그와 짝지어, 코퍼스 12개 양식 중 6개에서 표 수와
+    셀 수를 틀렸다(gianmun-byeolji-1ho: 표 3→2, 셀 34→6). 중첩 표는 자기
+    색인을 갖고(depth로 구분), 셀 텍스트에는 중첩 표의 내용이 섞이지 않는다.
     """
     tables = []
     idx = 0
     for sname in section_names:
         xml = z.read(sname).decode("utf-8")
-        for tm in re.finditer(r'<' + NS + r':tbl\b([^>]*)>(.*?)</' + NS + r':tbl>', xml, re.S):
-            t_attrs = tm.group(1)
-            t_body = tm.group(2)
+        scanned = scan_tables(xml)
+        for tbl in scanned:
+            t_attrs = tbl["attrs"]
             row_cnt = _attr(t_attrs, "rowCnt")
             col_cnt = _attr(t_attrs, "colCnt")
             page_break = _attr(t_attrs, "pageBreak")
             repeat_header = _attr(t_attrs, "repeatHeader")
 
             cells = []
-            for tcm in re.finditer(
-                    r'<' + NS + r':tc\b([^>]*)>(.*?)</' + NS + r':tc>', t_body, re.S):
-                tc_attrs = tcm.group(1)
-                tc_body = tcm.group(2)
+            for cell in tbl["cells"]:
+                tc_attrs = cell["attrs"]
+                tc_body = _own_cell_body(xml, cell, scanned)
                 bfid = _attr(tc_attrs, "borderFillIDRef")
-                addr = None
-                am = re.search(r'<' + NS + r':cellAddr\b([^/>]*)/?>', tc_body)
-                if am:
-                    col_addr = _attr(am.group(1), "colAddr")
-                    row_addr = _attr(am.group(1), "rowAddr")
-                    if col_addr is not None and row_addr is not None:
-                        addr = {"row": int(row_addr), "col": int(col_addr)}
+                addr = ({"row": cell["addr"][0], "col": cell["addr"][1]}
+                        if cell["addr"] else None)
                 width = height = None
                 szm = re.search(r'<' + NS + r':cellSz\b([^/>]*)/?>', tc_body)
                 if szm:
@@ -485,6 +504,7 @@ def _table_map(section_names, z, defs, borderfill_shaded):
 
                 cells.append({
                     "addr": addr,
+                    "span": {"row": cell["span"][0], "col": cell["span"][1]},
                     "width": width,
                     "height": height,
                     "borderFillIDRef": bfid,
@@ -496,6 +516,7 @@ def _table_map(section_names, z, defs, borderfill_shaded):
             tables.append({
                 "index": idx,
                 "section": sname,
+                "depth": tbl["depth"],
                 "rowCnt": int(row_cnt) if row_cnt is not None else None,
                 "colCnt": int(col_cnt) if col_cnt is not None else None,
                 "pageBreak": page_break,

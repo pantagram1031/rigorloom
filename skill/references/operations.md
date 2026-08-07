@@ -8,7 +8,7 @@ convention where noted: 0 = pass/clean, 2 = usage/config error, 3 = finding.
 
 1. [probe](#1-probe) — capability probe
 2. [form_inspect](#2-form_inspect) — offline form profiling
-3. [preedit](#3-preedit) — replace / delete-guides / normalize-clones
+3. [preedit](#3-preedit) — replace / fill-cells / delete-guides / normalize-clones
 4. [check_residue](#4-check_residue) — scan-derived residue gate
 5. [charpr_check / style_diff](#5-charpr_check--style_diff) — format proofs
 6. [layout_qa / fill_report](#6-layout_qa--fill_report) — PDF measurement
@@ -39,8 +39,9 @@ Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
 `anchors` (headings/labels, in scan order), `placeholders`, `guide_text`,
 `constraints` (base_pt / line_spacing_pct / max_pages — 0 detected on
 fixed-grid forms; the fill gate there is layout immutability, not budget),
-`page_metrics`, `table_map` (per-cell addr/size/borderFill/shading),
-`break_audit`. `--baseline` additionally writes the font/size/color/spacing
+`page_metrics`, `table_map` (per-table `index`/`depth`, per-cell
+`addr`/`span`/size/borderFill/shading/classification), `break_audit`.
+`--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
 
@@ -49,7 +50,7 @@ the document body. Do not dump section XML into context.
 
 ## 3. preedit
 
-Three offline operations; all validate every modified XML member is
+Four offline operations; all validate every modified XML member is
 well-formed BEFORE writing (a malformed member renders the whole document
 blank in Hancom — structurally impossible here), and all strip the cached
 `<hp:linesegarray>` of any paragraph whose text changed (stale linesegs
@@ -57,9 +58,17 @@ overprint at old coordinates).
 
 ```
 python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
+python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--map CELLS.json] [--overwrite] [--charpr ID]
 python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue] [--charpr-ids 5,6]
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
+
+**Which one fills a form.** Look at `table_map` first. A cell whose
+`classification` is `fill_target` is *genuinely empty* — in real forms it is
+`<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (measured: 19 of 19 empty
+cells on the PPS 협업승인신청서). There is no string to key on, so `replace`
+cannot reach it: use **`fill-cells`** (T27). Use `replace` only where a
+literal placeholder string exists in the document.
 
 - `replace`: MAP.json is `{"placeholder text": "value", ...}`. Two tiers per
   key: (A) run-text strip-compare (whole-run match, whitespace-tolerant),
@@ -72,6 +81,23 @@ python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone
   (`--allow-missing` reports 0 instead — idempotent re-run mode). Replaced
   text inherits the run's original charPr (possibly guide-colored) — color
   normalization is `normalize-clones`' job, not `replace`'s.
+  **Each span is written once** (T26): a value that contains its own key
+  (`{" http://": " http://example.kr"}`) is applied exactly once and re-runs
+  are no-ops — tier B never rewrites what tier A (or an earlier key, or an
+  earlier run of the same command) already wrote.
+- `fill-cells`: addresses cells by the `cellAddr` **`table_map` reports** —
+  `--cell ROW,COL=TEXT` (repeatable) or `--map` `{"2,3": "값"}`. `--table N`
+  (default 0) indexes tables in document order, nested tables included and
+  counted separately (outer first; `table_map` carries the same `index` and
+  a `depth`). Merged cells own the top-left coordinate only, so addresses are
+  not contiguous — a coordinate a rowSpan/colSpan covers has no cell and is a
+  hard error listing the real addresses. Creates the `<hp:t>` inside the empty
+  run and **preserves that run's charPr** (`--charpr ID` overrides, and then
+  the T22 dangling-charPr assertion runs too). A non-empty target is refused
+  unless `--overwrite`; a refusal anywhere in the batch writes nothing at all.
+  Output JSON: `{"ok": true, "table": n, "tables_total": n, "filled": n,
+  "cells": [{"addr": [r, c], "hits": 1, "action": "filled"|"overwritten",
+  "previous": "…"}]}`.
 - `delete-guides`: deletes paragraphs referencing guide charPr (by color or
   explicit ids) with the T18 guard built in: table/secPr/ctrl/object
   paragraphs are never deleted.
@@ -79,8 +105,9 @@ python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone
   spec, recomputes `itemCnt` from actuals, then asserts no dangling charPr
   (T22) before writing.
 
-Idempotence contract (all three): applying an operation to its own output is
-content-identical (zip member contents; timestamps ignored).
+Idempotence contract (all four): applying an operation to its own output is
+content-identical (zip member contents; timestamps ignored). `replace` needs
+`--allow-missing` for the second run, `fill-cells` needs `--overwrite`.
 
 ## 4. check_residue
 
@@ -150,11 +177,28 @@ CLIs, not auto-fired.
 ```
 python engine/scripts/com_backend.py inspect --file FORM.hwp
 python engine/scripts/com_backend.py edit --file FORM.hwp --ops ops.json --save-as OUT.hwpx --export-pdf verify.pdf
+python engine/scripts/com_backend.py set-cell --file FORM.hwp --addr ROW,COL --text "값" [--table 0] --save-as OUT.hwpx [--expect-empty | --expect TEXT]
 python engine/scripts/build_report.py --content bundle/content.md --form FORM.hwp > ops.json   # --dry-run: no Hancom
 ```
 
 `inspect` first, always (anchors must exist before `goto_text`). Ops in
-batches of 5–8 with verification between batches. `build_report` refuses on
+batches of 5–8 with verification between batches.
+
+**Cell addressing (T28).** `set_cell`'s `addr: [row, col]` is the `cellAddr`
+`table_map` reports; the op walks to it and verifies with `get_cell_addr()`
+after every move, aborting without writing on any mismatch. The old
+`row`/`col` were **keypress counts** (`TableLowerCell` × row, then
+`TableRightCell` × col) — `TableRightCell` wraps across rows and
+`TableLowerCell` jumps over rowSpans, so on the PPS form targeting cellAddr
+(2,3) landed on (2,6), the `법인등록번호` label cell. That mode still exists
+behind an explicit `"raw_traversal": true`; the validator rejects bare
+`row`/`col` before Hancom starts. Always pass `expect_empty` (or
+`expect: "current text"`) so a wrong landing refuses instead of overwriting.
+`get_into_nth_table(n)` drifts across repeated calls inside one Hancom
+session, so prefer the `set-cell` subcommand: **one invocation = one session =
+one cell**, run serially, never `--kill-stale` (T21). The walk itself is
+entry-point independent (it wraps), so drift cannot silently retarget it.
+For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
 any SECTION-anchor mismatch (fix content.md, never bypass). ops JSON schema:
 `engine/references/ops_schema.md`; equation syntax:
 `engine/references/hwpeqn_cheatsheet.md` (brace every script: `x^{2}`, T13).

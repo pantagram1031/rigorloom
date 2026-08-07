@@ -6,6 +6,56 @@ stages.yaml`'s `version: "0.6"`) has not changed since v0.7 — these releases
 add gates, backends, and tooling on top of a stable kernel, they do not change
 the kernel's contract shape.
 
+## Unreleased
+
+### Engine — fill defects found by the first clean-room cross-model run
+
+Two independent clean-room agents (Sonnet and Opus) hit all three of these on
+the same procurement form, so each is reproduced before it is fixed and
+locked by a failing-before test.
+
+- **T26 — `preedit replace` double-applied a value containing its own key.**
+  Tier B (raw substring) ran over the span tier A (whole-run) had just
+  rewritten. Measured with `operations.md`'s OWN documented example:
+  `{" http://": " http://example.kr"}` produced
+  `" http://example.krexample.kr"` with `hits: 2` — following the shipped
+  docs corrupted the cell. Replacement is now single-pass: every span a tier
+  writes is protected for the rest of the call, and spans already equal to
+  the value are protected before any tier runs. This also restores re-run
+  idempotence for such mappings and stops a later key from rewriting an
+  earlier key's value.
+- **T27 — new `preedit fill-cells`, the offline path to a genuinely empty
+  cell.** A form's empty cell is `<hp:run charPrIDRef="N"/>` with no `<hp:t>`
+  at all (19 of 19 empty cells on the PPS 협업승인신청서), so the text-keyed
+  `replace` could never reach it even though the skill routed form-filling
+  there. `fill-cells` addresses cells by the `cellAddr` that `form_inspect`'s
+  `table_map` reports (`--cell ROW,COL=TEXT` / `--map`, `--table N`), creates
+  the `<hp:t>` inside the empty run preserving its charPr (`--charpr`
+  overrides and then asserts no dangling charPr, T22), refuses a non-empty
+  target unless `--overwrite`, strips the modified paragraph's stale
+  linesegarray (T24), validates well-formedness before writing, and reports
+  per-cell hits. Table scanning moved to a shared tag-stack scanner
+  (`engine/scripts/hwpx_tables.py`) so `--table N` and `table_map[N]` are the
+  same table: the old non-greedy `<hp:tbl>(.*?)</hp:tbl>` mis-paired nested
+  tables and got the table/cell counts wrong on 6 of the 12 corpus forms
+  (gianmun-byeolji-1ho: 3 tables/34 cells reported as 2/6). `table_map` cells
+  now also carry `span`, and tables carry `depth`.
+- **T28 — `com_backend set_cell` addressed cells by keypress count.**
+  `TableRightCell` wraps across rows and `TableLowerCell` jumps over
+  rowSpans, so on any form with a rowspan label column (the norm in
+  government forms) the old `row`/`col` wrote to the wrong cell — targeting
+  cellAddr (2,3) on the PPS form landed on (2,6), the `법인등록번호` label.
+  `addr: [row, col]` now means cellAddr and is translated by a wrapping
+  `TableRightCell` walk that verifies `get_cell_addr()` after every move and
+  aborts without writing on any mismatch; `expect_empty` / `expect TEXT`
+  refuse when the target's current content disagrees; the legacy keypress
+  mode survives only behind an explicit `raw_traversal: true` and the
+  validator rejects bare `row`/`col` before Hancom starts. A new
+  `com_backend.py set-cell --addr ROW,COL` subcommand is one session per cell
+  — the documented mitigation for the observed `get_into_nth_table(n)` drift
+  across repeated calls in a single Hancom session. COM-verified on the PPS
+  form: (2,3) reached in 4 steps from entry `A1`, label cells untouched.
+
 ## v0.16.0 — unified core and modules
 
 The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):

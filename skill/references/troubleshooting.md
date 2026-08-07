@@ -1,8 +1,9 @@
 # Troubleshooting — engine-relevant trouble-table distillate
 
 Symptom → cause → fix, engine scope only (assembly/COM/XML/layout/equation).
-Full table with origins: `docs/trouble-table.md` (T1–T14) and the Lane-F rows
-in `docs/plans/v0.16-unified-core-and-modules.md` (T16–T22). Report-pipeline
+Full table with origins: `docs/trouble-table.md` (T1–T14, T26–T28) and the
+Lane-F rows in `docs/plans/v0.16-unified-core-and-modules.md` (T16–T22).
+Report-pipeline
 rows (T2 dataset downloads, T20 bundle figures) live in the report module
 fragment, not here.
 
@@ -23,6 +24,9 @@ fragment, not here.
 | — | document renders BLANK in Hancom after a text replacement | a self-closing `<hp:t/>` mistaken for an opening tag produced unbalanced XML → preedit validates well-formedness of every modified member before writing; if you bypassed preedit, that is the defect |
 | — | replaced text overprints at old coordinates (74-char title on top of placeholder layout) | Hancom's cached `<hp:linesegarray>` survived a text change → preedit strips the lineseg of changed paragraphs only; Hancom recomputes on open |
 | — | placeholder silently not replaced (no error, no change) | old exact `">key<"` matching failed on leading/trailing run whitespace → preedit tier-A strip-compare fixes this; 0-hit keys are a hard error unless `--allow-missing` |
+| T26 | replaced cell shows the value twice, concatenated (`" http://example.krexample.kr"`, hits=2); re-running grows it again | tier B (raw substring) ran over the span tier A had just rewritten, so a value containing its own key was applied twice → `preedit replace` now protects every written span for the rest of the call; one value is written once and re-runs report 0 hits |
+| T27 | every fill target reports 0 hits — an empty form cell cannot be reached by `preedit replace` | an empty cell is `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all, so there is no string to key on (19/19 empty cells on the PPS form) → use `preedit fill-cells --cell ROW,COL=값` with the cellAddr `form_inspect` table_map reports; it creates the `<hp:t>`, preserves the run's charPr, and refuses a non-empty cell without `--overwrite` |
+| — | `table_map` reports fewer tables/cells than the form visibly has | tables nest (6 of 12 corpus forms, depth 2) and the old non-greedy `<hp:tbl>(.*?)</hp:tbl>` paired an outer opening tag with an inner closing tag → the scanner is tag-stack based and shared with `fill-cells`, so `--table N` and `table_map[N]` are the same table |
 | — | Hancom shows "복구" (recovery) warning on open | DOM re-serialization somewhere in the path → only byte-preserving string surgery on the original bytes is allowed |
 | T7 | blank-paragraph cleanup near headings reassigns heading charPr (16pt→10pt) or merges paragraphs | COM delete across a paragraph boundary inherits pending charShape → blanks are cleaned OFFLINE with `tidy_hwpx` anchored to explicit paragraphs, never via COM find/delete |
 
@@ -34,6 +38,7 @@ fragment, not here.
 | T6 | `goto_text` fails on an anchor that is visibly there | anchor spans two character runs; COM find matches within a single run → use a single-run substring, verify uniqueness in form AND content |
 | T8/T10 | body text lands INSIDE an in-table label paragraph / renders center-aligned | next-paragraph move no-ops in a single-paragraph cell; the split paragraph inherits the label's centered shape → runtime guard inserts a break and applies justify (in com_backend) |
 | T11 | heading pulled onto the previous page after guide-table deletion | the form used blank-paragraph stacks as page pushers → page-break-before op on the heading anchor; exclude it from tidy |
+| T28 | `set_cell` destroyed a label cell; `get_into_nth_table(0)` lands elsewhere on repeated calls in one session | `row`/`col` were keypress counts, not cellAddr — `TableRightCell` wraps rows and `TableLowerCell` skips rowSpans, so on a rowspan-label form (2,3) became (2,6) → pass `addr: [row, col]` (cellAddr), which walks with `TableRightCell` and verifies `get_cell_addr()` at every step, aborting without writing; add `expect_empty`/`expect`; legacy mode needs `raw_traversal: true`. For the drift: `com_backend.py set-cell` = one session per cell, serial, never `--kill-stale` |
 | T12 | table caption orphaned at page bottom | caption paragraph lacks keep-with-next → keep-with-next block list in build config |
 | T16 | body top position double-counted | Hancom stacks body top = top margin + header height; feeding a measured print-face position straight into `top` double-counts → subtract header height |
 | T17 | numeric layout value learned on one template is wrong on its own published compilation (170mm declared vs 163mm printed) | templates do not reproduce their compilations → layout values are per-form-family only; never transfer numbers across families |
