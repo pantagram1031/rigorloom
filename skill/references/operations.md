@@ -219,13 +219,15 @@ sha256-pinned corpus allowlist (`tests/corpus/forms/manifest.json`).
 
 The autonomous render→judge loop. Two halves: this script is the
 deterministic one (never skippable, never calls a model), and the vision one
-is you, reading page PNGs against `docs/research/visual-rubric.md`.
+is you, reading page PNGs against `references/visual-rubric.md`.
 
 ```
 # pass 1 — machine half + vision task
 python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
     [--pdf verify.pdf] [--expectations exp.json] [--png-dir DIR] [--dpi 130] \
-    [--baseline BASE.pdf|DIR] [--form-profile profile.json] \
+    [--baseline BASE.pdf|DIR] \
+    [--form-profile profile.json [--fill-map MAP.json] \
+                    [--keep TEXT ...] [--keep-pattern REGEX]] \
     [--content bundle/content.md] [--vision-scope all|targeted] \
     [--attempt M --max-fix-attempts N] --out visual_verdict.json
 
@@ -246,19 +248,39 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   and zero-content page (T25 `blank_render`); stored `PrintInfo/PrintMethod`
   plus `pages_document` vs `pages_pdf` (W6.2 `imposition_mismatch`); declared
   page budget; declared `base_pt` / `line_spacing_pct` / `margins_mm`;
-  declared `fill_map` values present in the render; `forbidden_text`;
-  `layout_qa` (mapped onto rubric classes, unmapped findings preserved
-  verbatim); `check_residue` with `--form-profile`; `check_density` with
-  `--content`; pixel diff with `--baseline` (changed-region bboxes per page,
-  so a caller can assert unchanged regions stayed unchanged).
+  declared `fill_map` values present in the render; script/scale/offset
+  inheritance on fill-modified runs (T30 `fill_charpr_script_mismatch`);
+  `forbidden_text`; `layout_qa` (mapped onto rubric classes, unmapped findings
+  preserved verbatim); `check_residue` with `--form-profile`; `check_density`
+  with `--content`; pixel diff with `--baseline` (changed-region bboxes per
+  page, so a caller can assert unchanged regions stayed unchanged).
+- **Residue on a FORM FILL needs a keep list.** The residue gate's forbidden
+  list is auto-derived from the form scan, so on a fill every surviving label
+  reads as residue and the delegate can never return 0. Forward one:
+  `--keep TEXT` (repeatable) and `--keep-pattern REGEX` go straight to
+  `check_residue`, and `--fill-map MAP.json` derives the standard form-fill
+  keep list for you — `(anchors ∪ placeholders)` minus the entries the fill
+  mapping consumed (whitespace-normalized substring match, either direction).
+  `MAP.json` is the `preedit replace --map` file, or any JSON object with a
+  `fill_map` member. Guide text is never keepable. The derivation is recorded
+  under `deterministic.residue_keep` (`derived_keep`, `consumed`,
+  `explicit_keep`, `keep_pattern`, `keep_total`) so the invocation is
+  auditable. These flags without `--form-profile` are a usage error.
+- **T30, the invisible superscript.** With an `expectations.fill_map`, every
+  run whose text carries a declared value is compared against the document's
+  body-baseline charPr on `supscript`/`subscript`/`ratio`/`relSz`/`offset`. A
+  difference is HARD `fill_charpr_script_mismatch` (class
+  `format_noncompliance`): nominal height is unchanged in this trap, so
+  `charpr_check` and `style_diff` cannot see it. Only fill-modified runs are
+  in scope, so intentional superscripts are never flagged.
 - **`expectations.json`** keys: `pages_document`, `page_budget {min,max}` or
   `max_pages`, `base_pt`, `line_spacing_pct`, `margins_mm {top,bottom,left,
   right}`, `fill_map {label: value}`, `intentionally_blank [label]`,
   `blank_pages [n]`, `forbidden_text [str]`. Everything absent is listed
   under `deterministic.skipped` — the verdict says what it could NOT check.
 - **`vision_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
-  rubric, acceptance, pages[], deterministic{}, vision{}, vision_required[],
-  loop{}, hard[], warn[], counts, verdict}`. `verdict` is one of `pass`,
+  rubric, rubric_path, acceptance, pages[], deterministic{}, vision{},
+  vision_required[], loop{}, hard[], warn[], counts, verdict}`. `verdict` is one of `pass`,
   `fail`, `vision_pending`, `deterministic_pass`.
 - **The vision handback** (`--vision-verdict`) is
   `{"schema": "rigorloom/visual-vision-verdict/v1", "pages_reviewed": [...],

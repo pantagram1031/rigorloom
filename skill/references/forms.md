@@ -1,7 +1,7 @@
 # Form families — recognition notes and per-family gotchas
 
-Distilled from the W5.1 usage landscape (`docs/research/hwp-usage-landscape.md`)
-and Bench-0 (`tests/corpus/forms/probe_results.json`). Corpus:
+Distilled from the W5.1 usage-landscape study and the Bench-0 probe results
+(both kept in the rigorloom repository, not in this bundle). Corpus:
 `tests/corpus/forms/` — 12 official blank templates, sha256-pinned in
 `manifest.json`; corpus files are immutable inputs (fill copies only).
 
@@ -46,7 +46,8 @@ admrul). W6.2 generalized the detector with mechanism-level pattern classes
   (descriptive 기재된/기재되어 excluded — that is report body prose).
 
 Result: 11/12 forms now detect guide text (pps-hyeopeop 1, pps-jeongbogonggae
-5, moel-2025 16; full table in `docs/research/xc1-conversion-bench.md` §9.1).
+5, moel-2025 16; the full per-form table is in the repository's XC-1
+conversion bench, §9.1).
 
 **Documented bound — admrul-gajokdolbom-hyuga-sinchengseo stays 0, and 0 is
 correct**: that form has no removable guide text at all (only labels,
