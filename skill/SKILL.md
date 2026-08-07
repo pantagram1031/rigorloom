@@ -45,10 +45,25 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 | verify formats offline (pt/color invariants) | `python engine/scripts/charpr_check.py --file OUT.hwpx --base-pt N` | LOW |
 | style drift vs form baseline | `python engine/scripts/style_diff.py OUT.hwpx --baseline baseline.json` | LOW |
 | measure PDF layout (whitespace/gaps) | `python engine/scripts/layout_qa.py --file verify.pdf` | LOW |
+| **verify a rendered artifact (render→judge loop)** | `python pipeline/scripts/visual_verify.py --artifact OUT.hwpx [--pdf verify.pdf] [--expectations exp.json]` then read the `vision_required` PNGs against `docs/research/visual-rubric.md` and re-run with `--vision-verdict vision.json` | LOW (script) + HIGH (reading the pages) |
 | tidy blank paragraphs near anchors | `python engine/scripts/tidy_hwpx.py FILE.hwpx --before "앵커" --out OUT.hwpx` | LOW |
 | COM edit / assemble / export PDF (Windows+Hancom) | `python engine/scripts/com_backend.py inspect|edit --file ... --ops ops.json --save-as ... --export-pdf ...` | LOW |
 | decide WHAT to fill, which cells are staff-only, what the form means | read the profile + document text, judge | HIGH |
 | layout judgment (is this gap designed or a defect?) | layout_qa numbers first, then judge; form families differ | HIGH |
+
+### The verify step is two halves, and neither is optional
+
+`visual_verify.py` is the deterministic half: it renders the pages, runs the
+backstops (XML validity, blank render, page parity/imposition, budget,
+declared format, fill map, layout_qa, residue/density, pixel diff) and
+prepares the vision task. It **never** calls a model and it **never** reports
+acceptance on its own — with no `--vision-verdict` the verdict is
+`vision_pending` and the exit code is 3. You close the loop by opening the
+listed PNGs, judging them against `docs/research/visual-rubric.md` (a closed
+class vocabulary — an invented class is a usage error), writing the vision
+verdict JSON, and re-running. `--deterministic-only` is a smoke check, not an
+acceptance. On repeated failure, `--attempt M --max-fix-attempts N` makes the
+script escalate instead of letting you grind.
 
 ## Freedom map
 
@@ -106,6 +121,8 @@ Do not auto-start them from a casual mention of a file.
   floors, per-family gotchas.
 - `references/troubleshooting.md` — trouble-table distillate (T-rows) for
   symptom → cause → fix matching.
+- `../docs/research/visual-rubric.md` — the defect classes you apply when
+  READING a rendered page image (the vision half of the verify step).
 
 Module skill fragments (report pipeline, style/humanize) are appended below
 by the installer when their distribution modules are enabled.
