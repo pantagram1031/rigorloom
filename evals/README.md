@@ -125,15 +125,22 @@ in `install_report.json` as a product finding. Known ids:
 | `skill_surface_not_bundled` | no `SKILL.md` and/or no `scripts/sync_local.py` in the bundle set, so the skill surface cannot be installed from dist zips alone |
 | `no_module_bundles` | deliberate core-only install |
 
-> **Open finding as of v0.16.0:** `skill_surface_not_bundled` reproduces on the
-> real bundles. `package_module.py`'s core component list ships `engine/`,
+> **Closed (post-v0.16.0 packaging fix):** `skill_surface_not_bundled` was a
+> real finding of this harness — the v0.16.0 core bundle shipped `engine/`,
 > `pipeline/{scripts,references}`, `studio/`, `modules/README.md`,
-> `pyproject.toml` and `LICENSE` — but neither `skill/` nor
-> `scripts/sync_local.py`. The skill-install step in `cleanroom.py` is written
-> against the bundle tree and will start working the moment those are packaged;
-> until then every clean-room run must pass
-> `--allow-gap skill_surface_not_bundled`, and that acknowledgement is the
-> honest statement that a buyer gets the engine but not the skill surface.
+> `pyproject.toml` and `LICENSE`, but neither `skill/` nor
+> `scripts/sync_local.py`, so a buyer received the engine and no skill
+> surface. The core bundle now ships `skill/SKILL.md`, `skill/references/`,
+> `scripts/sync_local.py` and `scripts/sync_manifest.example.yaml`, and
+> `package_module.py` refuses to build a core bundle that lacks any of them.
+> **A current bundle set therefore installs with zero `--allow-gap`
+> arguments.** The gap id is kept — it is a live check, not a historical note,
+> and `tests/test_cleanroom_evals.py` proves both halves: a current bundle set
+> trips nothing, and stripping the surface out of a prepared install brings
+> the gap straight back.
+>
+> The only gap a healthy run still reports is `no_module_bundles`, and only
+> when you deliberately install core alone.
 
 **Task** (`check`, exit 0 required): every non-skipped machine check passes.
 Skipped checks carry a `blocked_on` reason and are counted separately — a
@@ -246,16 +253,19 @@ python evals/cleanroom.py prepare \
     --bundle dist/rigorloom-core-0.16.0.zip \
     --bundle dist/rigorloom-report-0.16.0.zip \
     --bundle dist/rigorloom-style-0.16.0.zip \
-    --root /tmp/rigorloom-cleanroom \
-    --allow-gap skill_surface_not_bundled
+    --root /tmp/rigorloom-cleanroom
 ```
+
+No `--allow-gap` — a full bundle set has none. The run installs the router
+skill into `<root>/skills/rigorloom-hwp/` with each enabled module's fragment
+merged into `SKILL.md`.
 
 Core-only ("absence is not failure") install:
 
 ```sh
 python evals/cleanroom.py prepare --bundle dist/rigorloom-core-0.16.0.zip \
     --root /tmp/rigorloom-core-only --enable none \
-    --allow-gap no_module_bundles --allow-gap skill_surface_not_bundled
+    --allow-gap no_module_bundles
 ```
 
 One task, end to end:

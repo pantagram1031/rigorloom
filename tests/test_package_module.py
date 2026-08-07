@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import types
 import zipfile
 from pathlib import Path
 
@@ -209,6 +210,163 @@ class TestCoreBundle:
 
         report, code = package_module.verify_bundle(bundle)
         assert code == 0, report
+
+
+class TestCoreBundleShipsTheSkillSurface:
+    """v0.17 regression: the clean-room harness found that the core bundle
+    shipped the engine and no skill surface at all — no ``SKILL.md``, no
+    references, no installer. A buyer got tooling they could not route.
+
+    These assertions run against the real bundle so the gap cannot come back
+    through an edit to ``_CORE_COMPONENTS`` or to the staging code.
+    """
+
+    @pytest.fixture(scope="class")
+    def core_names(self, tmp_path_factory) -> list[str]:
+        bundle = package_module.build_bundle(
+            "core", tmp_path_factory.mktemp("dist"), version="0.16.0")
+        with zipfile.ZipFile(bundle) as archive:
+            return archive.namelist()
+
+    def test_router_skill_and_references_are_in_the_bundle(self, core_names):
+        assert "skill/SKILL.md" in core_names
+        references = [n for n in core_names
+                      if n.startswith("skill/references/") and n.endswith(".md")]
+        assert references, core_names
+        # every reference the repo carries ships; none is left behind
+        expected = sorted(
+            f"skill/references/{p.name}"
+            for p in (REPO_ROOT / "skill" / "references").glob("*.md"))
+        assert sorted(references) == expected
+
+    def test_the_skill_installer_and_its_manifest_example_ship(self, core_names):
+        assert "scripts/sync_local.py" in core_names
+        assert "scripts/sync_manifest.example.yaml" in core_names
+        # the verifier still ships too (it did before; nothing regressed)
+        assert "scripts/package_module.py" in core_names
+
+    def test_sync_local_needs_nothing_from_scripts_beyond_itself(self):
+        """sync_local imports stdlib only, plus ``module_registry`` loaded by
+        path from ``pipeline/scripts`` (already core). If that ever changes,
+        the new dependency has to be added to ``_CORE_COMPONENTS`` — this test
+        is the tripwire."""
+        source = (REPO_ROOT / "scripts" / "sync_local.py").read_text(
+            encoding="utf-8")
+        sibling_scripts = {
+            p.stem for p in (REPO_ROOT / "scripts").glob("*.py")
+            if p.name != "sync_local.py"
+        }
+        for name in sibling_scripts:
+            assert f"import {name}" not in source, (
+                f"sync_local.py now imports scripts/{name}.py — ship it in "
+                "_CORE_COMPONENTS or the installer breaks for a buyer")
+        assert "import module_registry" in source
+        # module_registry is resolved out of pipeline/scripts, which is core
+        assert (REPO_ROOT / "pipeline" / "scripts"
+                / "module_registry.py").is_file()
+
+    def test_install_md_documents_the_skill_install_step(self, tmp_path: Path):
+        bundle = package_module.build_bundle(
+            "core", tmp_path / "dist", version="0.16.0")
+        with zipfile.ZipFile(bundle) as archive:
+            install_md = archive.read("INSTALL.md").decode("utf-8")
+        assert "scripts/sync_local.py" in install_md
+        assert "sync_manifest.example.yaml" in install_md
+        assert "merge_skill_fragments: true" in install_md
+        assert "--checkout-root" in install_md
+        # says where the skill lands
+        assert "<install_root>/SKILL.md" in install_md
+
+    def test_dropping_the_skill_surface_from_the_components_is_refused(
+            self, tmp_path: Path, monkeypatch):
+        """The structural half: even if someone edits the component list back
+        to the v0.16 contents, packaging refuses instead of shipping."""
+        monkeypatch.setattr(
+            package_module, "_CORE_COMPONENTS",
+            tuple(c for c in package_module._CORE_COMPONENTS
+                  if not c.startswith("skill")
+                  and c != "scripts/sync_local.py"))
+        with pytest.raises(package_module.PackageError) as ctx:
+            package_module.build_bundle(
+                "core", tmp_path / "dist", version="0.16.0")
+        assert ctx.value.exit_code == 3
+        assert "skill surface" in str(ctx.value)
+        assert not list((tmp_path / "dist").glob("*.zip")) \
+            if (tmp_path / "dist").exists() else True
+
+
+class TestModuleSkillFragmentsShip:
+    """A module that declares ``provides.skill`` must carry the fragment and
+    its references in its own bundle — otherwise the installer's skill merge
+    fails on a file the buyer never received."""
+
+    def test_every_declaring_module_ships_its_fragment_and_references(
+            self, tmp_path: Path):
+        declaring = []
+        for manifest_path in sorted((REPO_ROOT / "modules").glob("*/module.yaml")):
+            spec = package_module.module_registry.ModuleRegistry(
+                REPO_ROOT / "modules").discover()[manifest_path.parent.name]
+            if spec.provides.get("skill"):
+                declaring.append(spec)
+        assert declaring, "repo must have at least one skill-declaring module"
+
+        for spec in declaring:
+            bundle = package_module.build_bundle(
+                spec.name, tmp_path / "dist", version="0.16.0")
+            with zipfile.ZipFile(bundle) as archive:
+                names = set(archive.namelist())
+                manifest = json.loads(archive.read("MANIFEST.json"))
+            skill = spec.provides["skill"]
+            wanted = [skill["fragment"], *skill.get("references", [])]
+            for relative in wanted:
+                assert f"modules/{spec.name}/{relative}" in names, (
+                    spec.name, relative)
+            assert manifest["provides"]["skill"] is True
+
+    def test_declared_fragment_absent_from_the_payload_is_a_hard_refusal(
+            self, tmp_path: Path):
+        """Direct test of the packaging assertion: a staged payload that lacks
+        a declared fragment must be a loud exit-3 refusal, not a silent ship."""
+        staging = tmp_path / "staging"
+        (staging / "modules" / "ghost" / "skill").mkdir(parents=True)
+        spec = types.SimpleNamespace(
+            name="ghost",
+            provides={"skill": {"fragment": "skill/FRAGMENT.md",
+                                "references": ["skill/references/g.md"]}})
+        with pytest.raises(package_module.PackageError) as ctx:
+            package_module._assert_module_skill_shipped("ghost", spec, staging)
+        assert ctx.value.exit_code == 3
+        assert "skill/FRAGMENT.md" in str(ctx.value)
+
+        (staging / "modules" / "ghost" / "skill" / "FRAGMENT.md").write_text(
+            "frag\n", encoding="utf-8")
+        with pytest.raises(package_module.PackageError,
+                           match="skill/references/g.md"):
+            package_module._assert_module_skill_shipped("ghost", spec, staging)
+
+        refs = staging / "modules" / "ghost" / "skill" / "references"
+        refs.mkdir()
+        (refs / "g.md").write_text("ref\n", encoding="utf-8")
+        package_module._assert_module_skill_shipped("ghost", spec, staging)
+
+    def test_a_module_without_a_skill_declaration_is_unaffected(
+            self, tmp_path: Path):
+        make_module(tmp_path / "modules")  # MANIFEST declares no skill
+        bundle = build(tmp_path)
+        with zipfile.ZipFile(bundle) as archive:
+            manifest = json.loads(archive.read("MANIFEST.json"))
+            install_md = archive.read("INSTALL.md").decode("utf-8")
+        assert "skill" not in manifest["provides"]
+        assert "sync_local.py" not in install_md
+
+    def test_a_declaring_module_install_md_says_to_resync_the_skill(
+            self, tmp_path: Path):
+        bundle = package_module.build_bundle(
+            "style", tmp_path / "dist", version="0.16.0")
+        with zipfile.ZipFile(bundle) as archive:
+            install_md = archive.read("INSTALL.md").decode("utf-8")
+        assert "scripts/sync_local.py" in install_md
+        assert "## Module: style" in install_md
 
 
 class TestCorpusNeverShips:
