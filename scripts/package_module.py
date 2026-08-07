@@ -22,7 +22,11 @@ Validation before anything is written:
 - every declared payload file must exist (dangling path = refusal, exit 2);
 - ``privacy_scan`` runs over the staged bundle and any HARD finding refuses
   the build (exit 3) — a bundle is a distribution artifact, repo hygiene
-  applies with no exceptions.
+  applies with no exceptions;
+- every doc path the shipped skill surface (``SKILL.md`` / ``FRAGMENT.md`` +
+  ``references/*.md``) names must resolve INSIDE the staged bundle — a
+  dangling reference is exit 3. Derived, not a filename list: the next one is
+  caught without anyone updating this file.
 
 ``--verify <bundle>`` re-hashes a built bundle (zip or extracted directory)
 against its MANIFEST.json: any mismatch, missing, or unlisted file is a
@@ -36,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -97,6 +102,92 @@ _CORE_REQUIRED_FILES = (
 _CORE_REQUIRED_GLOBS = (
     ("skill/references", "*.md"),
 )
+
+# ── shipped-surface reference integrity ──────────────────────────────
+#
+# A skill surface that points at a document the bundle does not carry is the
+# same defect class as shipping no skill at all: the reader is told to open a
+# file they never received. The v0.17 clean-room run hit it on the visual
+# rubric (both agents had to reverse-engineer the class vocabulary from
+# source), so the guard below is DERIVED, not a filename list — every doc path
+# the shipped surface mentions must resolve inside the staged bundle, so the
+# next dangling reference fails the build without anyone remembering to add it.
+#
+# Matches an .md path inside an inline code span or a markdown link target.
+_DOC_REF_RE = re.compile(r"`([^`\s]+\.md)`|\]\(\s*([^)\s#]+\.md)[^)]*\)")
+
+
+def _referenced_doc_paths(text: str) -> list[str]:
+    """Doc paths a markdown document tells its reader to open.
+
+    Only *paths* count: a bare filename with no separator (``PIPELINE.md``,
+    ``content.md``) names a workspace artifact the reader creates, not a file
+    the bundle owes them. URLs and absolute paths are out of scope too.
+    """
+    found: list[str] = []
+    for match in _DOC_REF_RE.finditer(text):
+        ref = (match.group(1) or match.group(2) or "").strip()
+        if "/" not in ref or "://" in ref or ref.startswith(("/", "<")):
+            continue
+        if ref not in found:
+            found.append(ref)
+    return found
+
+
+def _surface_docs(staging: Path, skill_root: Path) -> list[Path]:
+    """The shipped skill surface: SKILL.md/FRAGMENT.md + references/*.md."""
+    root = staging / skill_root
+    if not root.is_dir():
+        return []
+    docs = sorted(p for p in root.glob("*.md") if p.is_file())
+    docs += sorted(p for p in (root / "references").glob("*.md")
+                   if p.is_file())
+    return docs
+
+
+def _resolves_in_bundle(staging: Path, skill_root: Path, owner: Path,
+                        ref: str) -> bool:
+    """Can a reader of ``owner`` open ``ref`` from inside this bundle?
+
+    Three legitimate spellings, because the surface is read from two places:
+    relative to the installed skill root (``references/forms.md``), relative
+    to the referring file, and relative to the bundle root
+    (``engine/references/ops_schema.md``).
+    """
+    bases = (staging / skill_root, owner.parent, staging)
+    for base in bases:
+        try:
+            candidate = (base / ref).resolve()
+            candidate.relative_to(staging.resolve())
+        except (OSError, ValueError):
+            continue
+        if candidate.is_file():
+            return True
+    return False
+
+
+def _assert_skill_surface_references(staging: Path, skill_root: Path,
+                                     label: str) -> None:
+    """Every doc path the shipped skill surface names must be IN the bundle."""
+    dangling: list[str] = []
+    for doc in _surface_docs(staging, skill_root):
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise PackageError(
+                f"{label}: unreadable skill-surface document "
+                f"{doc.relative_to(staging).as_posix()}: {exc}", exit_code=3)
+        for ref in _referenced_doc_paths(text):
+            if not _resolves_in_bundle(staging, skill_root, doc, ref):
+                dangling.append(
+                    f"{doc.relative_to(staging).as_posix()} -> {ref}")
+    if dangling:
+        listed = "\n".join(f"  {row}" for row in dangling)
+        raise PackageError(
+            f"{label}: the shipped skill surface references "
+            f"{len(dangling)} document(s) the bundle does not carry:\n"
+            f"{listed}\nShip the file as part of the skill surface, or stop "
+            "naming a path the reader cannot open.", exit_code=3)
 
 
 class PackageError(Exception):
@@ -363,6 +454,14 @@ def _stage_module(name: str, staging: Path,
                 f"missing: {relative}")
     _copy_tree(spec.root, staging / "modules" / name, _JUNK_DIRS)
     _assert_module_skill_shipped(name, spec, staging)
+    declared_skill = spec.provides.get("skill")
+    if declared_skill:
+        # The fragment's own directory is the module's skill root — derived
+        # from the declaration, never assumed to be called "skill/".
+        _assert_skill_surface_references(
+            staging,
+            Path("modules") / name / Path(declared_skill["fragment"]).parent,
+            f"distribution module '{name}'")
     return {
         "requires": {"rigorloom": spec.requires},
         "provides": _provides_summary(spec.provides),
@@ -389,6 +488,7 @@ def _stage_core(staging: Path, repo_root: Path, version: str) -> dict:
     scripts_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(__file__).resolve(), scripts_dir / "package_module.py")
     _assert_core_skill_surface(staging)
+    _assert_skill_surface_references(staging, Path("skill"), "core bundle")
     return {
         "requires": None,
         "provides": {"core_components": list(_CORE_COMPONENTS),

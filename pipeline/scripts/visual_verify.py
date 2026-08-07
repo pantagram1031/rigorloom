@@ -5,7 +5,7 @@ Renders an artifact's pages, runs every DETERMINISTIC backstop over them,
 prepares the vision task the rubric describes, and consumes the vision
 verdict when it is handed back. The script NEVER calls a model: it is the
 half that must never be skippable, and the vision half is the half a model
-performs against ``docs/research/visual-rubric.md``.
+performs against ``skill/references/visual-rubric.md``.
 
     # 1. machine half + vision task preparation
     python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
@@ -68,7 +68,24 @@ from checker_base import (  # noqa: E402
 
 SCHEMA = "rigorloom/visual-verdict/v1"
 VISION_SCHEMA = "rigorloom/visual-vision-verdict/v1"
-RUBRIC_POINTER = "docs/research/visual-rubric.md"
+#: The rubric ships INSIDE the skill surface (v0.17: it was in docs/research/
+#: and therefore in no bundle at all — the mandatory vision half arrived
+#: undocumented). In an installed skill the same file is ``references/
+#: visual-rubric.md`` relative to the skill root; ``resolve_rubric`` finds
+#: whichever spelling exists so the verdict can carry a real path.
+RUBRIC_POINTER = "skill/references/visual-rubric.md"
+RUBRIC_CANDIDATES = (
+    _REPO_ROOT / "skill" / "references" / "visual-rubric.md",
+    _REPO_ROOT / "references" / "visual-rubric.md",
+)
+
+
+def resolve_rubric():
+    """Absolute path of the shipped rubric, or None if this tree lacks it."""
+    for candidate in RUBRIC_CANDIDATES:
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 #: Closed class vocabulary — the rubric's §1 table. An agent-supplied finding
 #: whose class is not in here is a usage error, not a finding.
@@ -474,6 +491,90 @@ def run_layout_qa(pdf_path, guide_strings=None):
     return raw, findings, summary
 
 
+def load_fill_map(path):
+    """``{key: value}`` from a fill map, an expectations file, or either shape.
+
+    Returns (mapping, error). Accepts a flat ``{"key": "value"}`` object (the
+    ``preedit replace --map`` shape) or any object carrying a ``fill_map``
+    key, so a caller can pass the file it already has.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"--fill-map unreadable: {exc}"
+    if isinstance(payload, dict) and isinstance(payload.get("fill_map"), dict):
+        payload = payload["fill_map"]
+    if not isinstance(payload, dict):
+        return None, ("--fill-map must be a JSON object of {key: value} (or "
+                      "an object with a 'fill_map' member)")
+    return payload, None
+
+
+def derive_form_keep(profile, fill_map):
+    """Form-fill keep list: ``(anchors ∪ placeholders) − consumed``.
+
+    The residue gate's forbidden list is auto-derived from the form scan, and
+    on a FILL the form's own labels legitimately survive — so without a keep
+    list every surviving anchor reads as residue and the delegate can never
+    return pass (v0.17 clean-room finding, both agents). ``consumed`` is the
+    inventory entries the fill mapping targeted, matched on whitespace-
+    normalized substring in either direction (form-eval-scenarios protocol
+    note 1). Guide text is deliberately NOT keepable: instruction prose must
+    never survive a fill.
+    """
+    keys = [_norm(str(key)) for key in (fill_map or {}) if str(key).strip()]
+    keep, consumed, seen = [], [], set()
+    for field in ("anchors", "placeholders"):
+        for entry in profile.get(field) or []:
+            text = entry if isinstance(entry, str) else (
+                entry.get("text") if isinstance(entry, dict) else None)
+            if not isinstance(text, str):
+                continue
+            normalized = _norm(text)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            if any(normalized in key or key in normalized for key in keys):
+                consumed.append(text)
+            else:
+                keep.append(text)
+    return keep, consumed
+
+
+def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
+                       fill_map=None):
+    """``check_residue`` argv plus the keep report the verdict records.
+
+    Returns (argv, report, error).
+    """
+    argv = ["--form-profile", str(form_profile), "--artifact", str(artifact)]
+    report = {"explicit_keep": list(keep), "keep_pattern": keep_pattern,
+              "derived_keep": [], "consumed": [], "fill_map": None}
+    derived = []
+    if fill_map is not None:
+        try:
+            profile = json.loads(
+                Path(form_profile).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return None, report, f"form profile unreadable: {exc}"
+        if not isinstance(profile, dict):
+            return None, report, "form profile must be a JSON object"
+        derived, consumed = derive_form_keep(profile, fill_map)
+        report.update(derived_keep=derived, consumed=consumed,
+                      fill_map=sorted(fill_map))
+    ordered, seen = [], set()
+    for entry in (*keep, *derived):
+        if entry not in seen:
+            seen.add(entry)
+            ordered.append(entry)
+    for entry in ordered:
+        argv += ["--keep", entry]
+    if keep_pattern is not None:
+        argv += ["--keep-pattern", keep_pattern]
+    report["keep_total"] = len(ordered)
+    return argv, report, None
+
+
 def _delegate(script, argv, label):
     proc = subprocess.run(
         [sys.executable, str(script), *argv],
@@ -641,6 +742,190 @@ def check_fill_map(records, expectations):
                           "declared_value": str(value)[:80],
                           "note": "declared value not present in the render"}))
     return out
+
+
+# --------------------------------------------------------------------------
+# T30 — script/scale/offset inheritance on fill-modified runs
+# --------------------------------------------------------------------------
+
+#: OWPML ``hh:charPr`` children that move or resize a run WITHOUT changing its
+#: nominal ``height``. ``supscript``/``subscript`` are presence-only flags;
+#: ``ratio``/``relSz``/``offset`` carry per-language percentages/offsets. A run
+#: that inherits any of these differently from body text renders at a
+#: different size or baseline while every height-based proof still passes.
+_SCRIPT_FLAG_TAGS = ("supscript", "subscript")
+_SCRIPT_SCALE_TAGS = ("ratio", "relSz", "offset")
+
+#: Hancom renders a supscript/subscript run at roughly this fraction of the
+#: nominal height. Reported as evidence, never used as a threshold.
+_SCRIPT_RENDER_FACTOR = 0.635
+
+
+def _localname(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def charpr_script_profiles(artifact):
+    """``charPr id -> script/scale/offset profile`` from Contents/header.xml.
+
+    Returns ``{}`` for anything that is not a readable hwpx — this check is
+    scoped to the offline XML engine's own format.
+    """
+    path = Path(artifact)
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return {}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if "Contents/header.xml" not in archive.namelist():
+                return {}
+            root = ET.fromstring(archive.read("Contents/header.xml"))
+    except (OSError, zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError):
+        return {}
+    profiles = {}
+    for node in root.iter():
+        if _localname(node.tag) != "charPr":
+            continue
+        cid = node.get("id")
+        if cid is None:
+            continue
+        profile = {tag: False for tag in _SCRIPT_FLAG_TAGS}
+        for tag in _SCRIPT_SCALE_TAGS:
+            profile[tag] = None
+        height = node.get("height")
+        profile["height_pt"] = (
+            int(height) / 100.0 if height and height.isdigit() else None)
+        for child in node:
+            name = _localname(child.tag)
+            if name in _SCRIPT_FLAG_TAGS:
+                profile[name] = True
+            elif name in _SCRIPT_SCALE_TAGS:
+                profile[name] = {k: v for k, v in sorted(child.attrib.items())}
+        profiles[cid] = profile
+    return profiles
+
+
+_RUN_RE = re.compile(
+    r"<hp:run\b[^>]*\bcharPrIDRef=\"(\d+)\"[^>]*>(.*?)</hp:run>", re.S)
+_RUN_TEXT_RE = re.compile(r"<hp:t\b[^>]*>(.*?)</hp:t>", re.S)
+
+
+def _hwpx_runs(artifact):
+    """``[(charPrIDRef, text)]`` over every section, in document order."""
+    path = Path(artifact)
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return []
+    out = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = sorted(n for n in archive.namelist()
+                           if re.match(r"Contents/section\d+\.xml$", n))
+            for name in names:
+                xml = archive.read(name).decode("utf-8", "replace")
+                for cid, body in _RUN_RE.findall(xml):
+                    text = "".join(_RUN_TEXT_RE.findall(body))
+                    text = re.sub(r"<[^>]+>", "", text)
+                    if text.strip():
+                        out.append((cid, text))
+    except (OSError, zipfile.BadZipFile):
+        return []
+    return out
+
+
+def _script_signature(profile):
+    return {key: profile.get(key)
+            for key in (*_SCRIPT_FLAG_TAGS, *_SCRIPT_SCALE_TAGS)}
+
+
+def check_fill_charpr_script(artifact, expectations):
+    """T30: a filled value inherited a charPr that is body text PLUS a script.
+
+    The live incident: the PPS 협업제품명 cell's filled value carried a charPr
+    identical to body except for a trailing ``<hh:supscript/>``. Nominal
+    height stayed 10pt, so ``charpr_check --base-pt 10`` and ``style_diff``
+    both passed it while Hancom rendered the value at ~6.35pt raised off the
+    baseline; only the render caught it.
+
+    SCOPE — fill-modified runs only. A run is fill-modified when its text
+    carries one of the declared ``expectations.fill_map`` values. That is the
+    false-positive guard: an intentionally superscripted footnote marker,
+    ordinal or unit exponent is not a fill value, so it is never compared.
+
+    The baseline is the document's own body charPr: the script profile of the
+    charPr carrying the most non-fill text. Comparison is relative, so a
+    document whose body is legitimately scaled is not flagged wholesale.
+    """
+    fill_map = expectations.get("fill_map") or {}
+    values = [str(v) for v in fill_map.values() if v not in (None, "")]
+    if not values:
+        return [], None
+    profiles = charpr_script_profiles(artifact)
+    runs = _hwpx_runs(artifact)
+    if not profiles or not runs:
+        return [], None
+
+    normalized_values = [(label, _norm(str(value)))
+                         for label, value in sorted(fill_map.items())
+                         if value not in (None, "")]
+    filled, body_weight = [], collections.Counter()
+    for cid, text in runs:
+        normalized = _norm(text)
+        hit = next((label for label, value in normalized_values
+                    if value and value in normalized), None)
+        if hit is not None:
+            filled.append((cid, text, hit))
+        else:
+            body_weight[cid] += len(normalized)
+    if not filled or not body_weight:
+        return [], None
+
+    top = max(body_weight.values())
+    baseline_cid = min(cid for cid, weight in body_weight.items()
+                       if weight == top)
+    baseline = profiles.get(baseline_cid)
+    if baseline is None:
+        return [], None
+    baseline_signature = _script_signature(baseline)
+    report = {"baseline_charpr_id": baseline_cid,
+              "baseline": baseline_signature,
+              "baseline_height_pt": baseline.get("height_pt"),
+              "fill_modified_runs": len(filled)}
+
+    out, seen = [], set()
+    for cid, text, label in filled:
+        profile = profiles.get(cid)
+        if profile is None:
+            continue
+        signature = _script_signature(profile)
+        differing = sorted(key for key, value in signature.items()
+                           if value != baseline_signature.get(key))
+        if not differing or (cid, label) in seen:
+            continue
+        seen.add((cid, label))
+        evidence = {
+            "label": label,
+            "charpr_id": cid,
+            "baseline_charpr_id": baseline_cid,
+            "differing": differing,
+            "run": {key: signature[key] for key in differing},
+            "baseline_values": {key: baseline_signature.get(key)
+                                for key in differing},
+            "nominal_height_pt": profile.get("height_pt"),
+            "text": text.strip()[:60],
+            "note": "fill-modified run inherits a script/scale/offset the "
+                    "document body does not use; nominal height is unchanged "
+                    "so charpr_check and style_diff cannot see it (T30)",
+        }
+        if (profile.get("supscript") or profile.get("subscript")) and \
+                profile.get("height_pt"):
+            evidence["rendered_pt_estimate"] = round(
+                profile["height_pt"] * _SCRIPT_RENDER_FACTOR, 2)
+        out.append(finding(
+            "fill_charpr_script_mismatch", "hard",
+            cls="format_noncompliance",
+            detector="visual_verify.fill_charpr_script",
+            evidence=evidence))
+    report["findings"] = len(out)
+    return out, report
 
 
 def check_forbidden_text(records, expectations):
@@ -822,6 +1107,9 @@ def verify(args):
     det += check_page_budget(expectations, page_count)
     det += check_format(records, expectations)
     det += check_fill_map(records, expectations)
+    script_findings, script_report = check_fill_charpr_script(
+        artifact, expectations)
+    det += script_findings
     det += check_forbidden_text(records, expectations)
 
     guide_strings = expectations.get("forbidden_text") or None
@@ -830,11 +1118,25 @@ def verify(args):
     det += layout_findings
 
     delegates = []
+    residue_keep = None
     if args.form_profile:
+        fill_map_arg = None
+        if args.fill_map:
+            fill_map_arg, error = load_fill_map(args.fill_map)
+            if error:
+                return usage_error(str(artifact), "visual_verify", error)
+        residue_argv, residue_keep, error = build_residue_argv(
+            args.form_profile, artifact, keep=args.keep,
+            keep_pattern=args.keep_pattern, fill_map=fill_map_arg)
+        if error:
+            return usage_error(str(artifact), "visual_verify", error)
         delegates.append(_delegate(
-            _SCRIPTS_DIR / "check_residue.py",
-            ["--form-profile", str(args.form_profile),
-             "--artifact", str(artifact)], "check_residue"))
+            _SCRIPTS_DIR / "check_residue.py", residue_argv, "check_residue"))
+    elif args.fill_map or args.keep or args.keep_pattern is not None:
+        return usage_error(
+            str(artifact), "visual_verify",
+            "--keep / --keep-pattern / --fill-map only apply to the "
+            "check_residue delegate; pass --form-profile too")
     if args.content:
         delegates.append(_delegate(
             _SCRIPTS_DIR / "check_density.py",
@@ -953,6 +1255,7 @@ def verify(args):
             "dpi": args.dpi,
             "png_dir": str(png_dir),
             "rubric": RUBRIC_POINTER,
+            "rubric_path": resolve_rubric(),
             "acceptance": accepted,
             "pages": [{k: v for k, v in r.items() if k != "_text"}
                       for r in records],
@@ -963,9 +1266,12 @@ def verify(args):
                 "pages_pdf": pages_pdf,
                 "conversion": conversion,
                 "layout_qa": layout_summary,
+                "fill_charpr_script": script_report,
+                "residue_keep": residue_keep,
                 "delegates": delegates,
                 "baseline_diff": baseline_report,
-                "skipped": _skipped(expectations, pages_document, layout_raw),
+                "skipped": _skipped(expectations, pages_document, layout_raw,
+                                    script_report),
             },
             "vision": vision,
             "vision_required": vision_required,
@@ -974,9 +1280,13 @@ def verify(args):
     return verdict, code
 
 
-def _skipped(expectations, pages_document, layout_raw):
+def _skipped(expectations, pages_document, layout_raw, script_report=None):
     """What the machine half could NOT check, stated out loud."""
     out = []
+    if expectations.get("fill_map") and script_report is None:
+        out.append("fill_charpr_script_mismatch: charPr definitions were not "
+                   "readable (not an .hwpx, or no run carries a declared "
+                   "fill value) — the T30 trap is unchecked on this run")
     if pages_document is None:
         out.append("page_parity: pages_document unknown (no conversion JSON "
                    "and no expectations.pages_document)")
@@ -988,6 +1298,8 @@ def _skipped(expectations, pages_document, layout_raw):
         out.append("format_noncompliance/margins: not declared")
     if not expectations.get("fill_map"):
         out.append("empty_cell_expected_fill: no fill_map declared")
+        out.append("fill_charpr_script_mismatch: no fill_map declared, so no "
+                   "run is known to be fill-modified (T30)")
     if not (expectations.get("page_budget") or expectations.get("max_pages")):
         out.append("page_budget_violation: no budget declared")
     if layout_raw is None:
@@ -999,7 +1311,8 @@ def main(argv=None):
     _utf8_stdio()
     parser = argparse.ArgumentParser(
         description="render->judge loop driver: deterministic backstops + "
-                    "vision task preparation for docs/research/visual-rubric.md")
+                    "vision task preparation for "
+                    "skill/references/visual-rubric.md")
     parser.add_argument("--artifact", required=True,
                         help=".hwpx/.hwp artifact, or a .pdf to judge directly")
     parser.add_argument("--pdf", default=None,
@@ -1020,6 +1333,19 @@ def main(argv=None):
                              "caller can assert unchanged regions stayed so")
     parser.add_argument("--form-profile", default=None,
                         help="form_profile.json -> also run check_residue")
+    parser.add_argument("--keep", action="append", default=[],
+                        help="exact anchor text check_residue must keep "
+                             "(repeatable); forwarded verbatim")
+    parser.add_argument("--keep-pattern", default=None,
+                        help="regex for anchors that legitimately remain; "
+                             "forwarded to check_residue --keep-pattern "
+                             "(omitted = the checker's own default)")
+    parser.add_argument("--fill-map", default=None,
+                        help="JSON fill mapping ({key: value}, or an object "
+                             "with a 'fill_map' member) -> derive the "
+                             "form-fill keep list (anchors ∪ placeholders "
+                             "minus the entries the fill consumed) instead of "
+                             "hand-building repeated --keep")
     parser.add_argument("--content", default=None,
                         help="bundle/content.md -> also run check_density")
     parser.add_argument("--vision-verdict", default=None,

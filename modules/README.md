@@ -103,7 +103,7 @@ enablement error, not a silent skip.
 ### Modules may contribute visual-verify expectations
 
 `pipeline/scripts/visual_verify.py` (the render→judge loop; see
-`skill/references/operations.md` §10 and `docs/research/visual-rubric.md`)
+`skill/references/operations.md` §10 and `skill/references/visual-rubric.md`)
 takes an optional `--expectations <json>` declaring what the render is
 supposed to look like: `pages_document`, `page_budget`, `base_pt`,
 `line_spacing_pct`, `margins_mm`, `fill_map`, `intentionally_blank`,
