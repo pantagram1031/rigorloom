@@ -28,9 +28,14 @@ are still mostly `.hwp`. Expect: blank arrives as `.hwp`, deliverable must be
 | file | anchors | tables | cells | guide_text |
 |---|---|---|---|---|
 | grant/pps-hyeopeop-seungin-sinchengseo.hwpx | 29 | 1 | 45 | 1 (W6.2, was 0) |
-| grant/pps-jeongbogonggae-donguiseo.hwpx | 28 | 3 | 16 | 5 (W6.2, was 0) |
+| grant/pps-jeongbogonggae-donguiseo.hwpx | 28 | 4 | 17 | 5 (W6.2, was 0) |
 
 A `form_inspect` run below these floors is a regression, not noise.
+
+Table/cell floors were re-derived 2026-08-07 after a scanner fix: nested
+tables were previously mis-paired, so 7 of 12 corpus forms reported low
+counts (donguiseo 3/16 -> 4/17 here). Anchor and guide_text floors were
+unaffected.
 
 ## Guide-text detector: coverage after W6.2 + one bound
 

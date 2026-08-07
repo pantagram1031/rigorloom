@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "Bench-0 descriptive baseline, extended in W6.1 (XC-1) and re-probed in W6.2 after the guide-text detector generalization (note_prefix/example-mark/instruction pattern classes — engine/scripts/form_inspect.py): offline XML probe over every corpus member available as .hwpx (2 native + 10 XC-1-converted). Not a pass/fail gate. admrul guide_text=0 is a documented bound (no removable guide text exists in that form), not a detector miss.",
+ "description": "Bench-0 descriptive baseline, extended in W6.1 (XC-1) and re-probed in W6.2 after the guide-text detector generalization (note_prefix/example-mark/instruction pattern classes — engine/scripts/form_inspect.py): offline XML probe over every corpus member available as .hwpx (2 native + 10 XC-1-converted). Not a pass/fail gate. admrul guide_text=0 is a documented bound (no removable guide text exists in that form), not a detector miss. Table/cell counts re-derived 2026-08-07 after the PR #60 scanner fix; superseded values retained per form under superseded_pre_pr60.",
  "tool": "engine/scripts/form_inspect.py",
  "results": [
   {
@@ -19,7 +19,11 @@
    },
    "tables": 3,
    "table_cells": 85,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "table_depths": [
+    0
+   ],
+   "merged_cells": 76
   },
   {
    "slug": "jeongbo-gonggae-cheongguseo",
@@ -35,9 +39,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 1,
-   "table_cells": 66,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 2,
+   "table_cells": 70,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 1,
+    "table_cells": 66,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 63
   },
   {
    "slug": "saeopja-deungnok-sinchengseo",
@@ -53,9 +67,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 6,
-   "table_cells": 782,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 7,
+   "table_cells": 784,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 6,
+    "table_cells": 782,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 613
   },
   {
    "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
@@ -73,7 +97,11 @@
    },
    "tables": 2,
    "table_cells": 16,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "table_depths": [
+    0
+   ],
+   "merged_cells": 5
   },
   {
    "slug": "gianmun-byeolji-1ho",
@@ -89,9 +117,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 2,
-   "table_cells": 5,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 3,
+   "table_cells": 34,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 2,
+    "table_cells": 5,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 23
   },
   {
    "slug": "gianmun-byeolji-2ho",
@@ -107,9 +145,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 1,
-   "table_cells": 48,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 2,
+   "table_cells": 51,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 1,
+    "table_cells": 48,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 34
   },
   {
    "slug": "nrf-gyeolgwa-bogoseo-yangsik",
@@ -127,7 +175,11 @@
    },
    "tables": 3,
    "table_cells": 32,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "table_depths": [
+    0
+   ],
+   "merged_cells": 7
   },
   {
    "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
@@ -143,9 +195,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 39,
-   "table_cells": 362,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 42,
+   "table_cells": 366,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 39,
+    "table_cells": 362,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 95
   },
   {
    "slug": "pps-hyeopeop-seungin-sinchengseo",
@@ -162,7 +224,11 @@
     "min_pages": null
    },
    "tables": 1,
-   "table_cells": 45
+   "table_cells": 45,
+   "table_depths": [
+    0
+   ],
+   "merged_cells": 31
   },
   {
    "slug": "pps-jeongbogonggae-donguiseo",
@@ -178,8 +244,18 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 3,
-   "table_cells": 16
+   "tables": 4,
+   "table_cells": 17,
+   "superseded_pre_pr60": {
+    "tables": 3,
+    "table_cells": 16,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 0
   },
   {
    "slug": "moel-pyojun-geunrogyeyakseo-2013",
@@ -197,7 +273,11 @@
    },
    "tables": 7,
    "table_cells": 69,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "table_depths": [
+    0
+   ],
+   "merged_cells": 47
   },
   {
    "slug": "moel-pyojun-geunrogyeyakseo-2025",
@@ -213,9 +293,19 @@
     "max_pages": null,
     "min_pages": null
    },
-   "tables": 9,
-   "table_cells": 101,
-   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+   "tables": 10,
+   "table_cells": 102,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[].",
+   "superseded_pre_pr60": {
+    "tables": 9,
+    "table_cells": 101,
+    "reason": "form_inspect._table_map used non-greedy <hp:tbl> matching and mis-paired nested tables; corrected by PR #60 (shared tag-stack scanner in engine/scripts/hwpx_tables.py)"
+   },
+   "table_depths": [
+    0,
+    1
+   ],
+   "merged_cells": 0
   }
  ]
 }

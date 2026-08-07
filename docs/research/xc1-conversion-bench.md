@@ -115,15 +115,37 @@ to **12/12 probed, 0 skipped**. Family ⑤ (corp) and the school gap have 0
 corpus members, so no probe exists for them — consistent with the
 documented corpus boundary, not a miss.
 
-| family | forms | anchors (range) | guide_text hits | fillable cells (range) |
-|---|---:|---|---|---|
-| petition | 4 | 16–646 | 3/4 (admrul=0) | 16–782 |
-| gongmun | 2 | 15–26 | 2/2 | 5–48 |
-| research | 1 | 72 | 1/1 (20 hits) | 32 |
-| grant | 3 | 28–357 | **1/3** (kstartup=152; both PPS procurement forms=0) | 16–362 |
-| hr | 2 | 159–203 | 1/2 (2025=0) | 69–101 |
-| school | 0 | — | — | — (corpus gap, unchanged) |
-| corp | 0 | — | — | — (documented boundary, unchanged) |
+| family | forms | anchors (range) | guide_text hits | tables (range) | cells (range) |
+|---|---:|---|---|---|---|
+| petition | 4 | 16–646 | 3/4 | 2–7 | 16–784 |
+| gongmun | 2 | 15–26 | 2/2 | 2–3 | 34–51 |
+| research | 1 | 72 | 1/1 | 3 | 32 |
+| grant | 3 | 28–357 | 3/3 | 1–42 | 17–366 |
+| hr | 2 | 159–203 | 2/2 | 7–10 | 69–102 |
+
+### Correction 2026-08-07 — table/cell counts re-derived
+
+The counts above are NOT the W6.1 figures. `form_inspect._table_map` used a
+non-greedy `<hp:tbl>` match that mis-paired nested tables; PR #60 replaced it
+with a shared tag-stack scanner (`engine/scripts/hwpx_tables.py`) because
+`preedit fill-cells` addresses cells by the `table_map` coordinates and the two
+tools must agree. Anchors and guide_text are unaffected — the defect was purely
+structural. 7 of 12 forms moved:
+
+| form | tables (was → now) | cells (was → now) |
+|---|---|---|
+| jeongbo-gonggae-cheongguseo | 1 → 2 | 66 → 70 |
+| saeopja-deungnok-sinchengseo | 6 → 7 | 782 → 784 |
+| gianmun-byeolji-1ho | 2 → 3 | 5 → 34 |
+| gianmun-byeolji-2ho | 1 → 2 | 48 → 51 |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | 39 → 42 | 362 → 366 |
+| pps-jeongbogonggae-donguiseo | 3 → 4 | 16 → 17 |
+| moel-pyojun-geunrogyeyakseo-2025 | 9 → 10 | 101 → 102 |
+
+Worst case was `gianmun-byeolji-1ho` (2 tables / 5 cells reported for a document
+that actually carries 3 tables / 34 cells). Superseded values are retained per
+form in `probe_results.json` under `superseded_pre_pr60`.
+
 
 Per-file detail (form_inspect, offline, no COM):
 
