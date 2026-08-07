@@ -1,5 +1,8 @@
 # Docs index
 
+- [release-v0.16.0.md](release-v0.16.0.md) — the v0.16.0 release record:
+  bundle inventory, suite matrix, privacy evidence, capability boundaries,
+  operator-run leftovers.
 - [golden-path.md](golden-path.md) — full clone-to-graded-artifact
   walkthrough, stage by stage, using the Hancom-free `hwpx` backend.
 - [pipeline-master-v0.6.md](pipeline-master-v0.6.md) — the stage graph and

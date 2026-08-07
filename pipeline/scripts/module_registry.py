@@ -794,6 +794,14 @@ def write_enabled(
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    # Korean module names / em-dashes must survive cp949 Windows consoles
+    # (found by the v0.16.0 release --help smoke: argparse help crashed
+    # with UnicodeEncodeError on a cp949 stdout).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(
         description="Distribution-module registry (list / write-enabled). "
                     "Not the v0.12 stage-contract catalog — that is compose.py.")

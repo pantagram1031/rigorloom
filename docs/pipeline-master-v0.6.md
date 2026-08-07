@@ -189,9 +189,10 @@ application installed locally. The pipeline does not bundle Hancom Office.
 Before Stage 0, verify the separate adapter checkout with:
 
 ```powershell
-python engine/scripts/doctor.py --require-com --require-proof `
-  --report-pipeline <REPORT_PIPELINE_ROOT>
+python engine/scripts/probe.py
 ```
+
+Require `"hancom_com": true` in the probe's `render` section.
 
 If this check fails, do not enter the COM assembly path. Use only provider-neutral
 pipeline stages or supported non-COM HWPX/XML operations until a Windows HWP host
