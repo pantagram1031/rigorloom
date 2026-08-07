@@ -2,7 +2,7 @@
 
 Symptom → cause → fix, engine scope only (assembly/COM/XML/layout/equation).
 This IS the shipped table; the rigorloom repository keeps the full
-trouble table with per-row origins (T1–T14, T26–T30) and the Lane-F
+trouble table with per-row origins (T1–T14, T26–T31) and the Lane-F
 unification rows (T16–T22) alongside the plan that produced them.
 Report-pipeline rows (T2 dataset downloads, T20 bundle figures) live in
 the report module fragment, not here.

@@ -312,6 +312,14 @@ Note: the two `□` glyphs in A2 are section-heading bullets ("□ 개인정보
    placeholders detected as residue). A1's second form label
    `[별지 제2호의 8서식]` is profile `placeholders`, survives a legitimate
    fill, and must be in the keep set.
+   *Refined by the second clean-room run (T31)*: "consumed" cannot mean "the
+   mapping named this key", because a correct fill of a labeled field KEEPS
+   the label as a prefix (`" http://"` → `" http://host"`) and the key text
+   survives inside the value. A key is consumed when its mapped VALUE is in
+   the document (key-absence as the fallback), and the surviving key
+   occurrence is attributed to the value's span by
+   `check_residue --fill-map` — per occurrence, so a second unfilled
+   occurrence of the same key still exits 3.
 2. **Generic replace keys are unsafe (new sharp edge, documented in
    skill/references/operations.md).** preedit tier B is a raw substring pass
    over section XML: the key `http://` scored 15 hits (14 of them inside

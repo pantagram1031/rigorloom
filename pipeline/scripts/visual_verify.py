@@ -61,6 +61,7 @@ for _dir in (_SCRIPTS_DIR, _ENGINE_SCRIPTS):
     if str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
 
+import check_residue  # noqa: E402
 from checker_base import (  # noqa: E402
     EXIT_HARD, EXIT_PASS, _utf8_stdio, emit_verdict, usage_error,
     verdict_skeleton,
@@ -491,39 +492,62 @@ def run_layout_qa(pdf_path, guide_strings=None):
     return raw, findings, summary
 
 
-def load_fill_map(path):
-    """``{key: value}`` from a fill map, an expectations file, or either shape.
+#: One loader, one normalization: the derivation below must agree with the
+#: gate about what the document contains, so it reads the map and the
+#: artifact text through ``check_residue`` itself rather than reimplementing
+#: either.
+load_fill_map = check_residue.load_fill_map
 
-    Returns (mapping, error). Accepts a flat ``{"key": "value"}`` object (the
-    ``preedit replace --map`` shape) or any object carrying a ``fill_map``
-    key, so a caller can pass the file it already has.
+
+def artifact_haystack(artifact):
+    """The gate's own normalized view of the artifact text, or None.
+
+    None means the artifact could not be read at all — the delegate reports
+    that loudly (``pinned_target_missing`` / ``artifact_malformed``), so the
+    derivation must not turn it into a verdict of its own.
     """
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return None, f"--fill-map unreadable: {exc}"
-    if isinstance(payload, dict) and isinstance(payload.get("fill_map"), dict):
-        payload = payload["fill_map"]
-    if not isinstance(payload, dict):
-        return None, ("--fill-map must be a JSON object of {key: value} (or "
-                      "an object with a 'fill_map' member)")
-    return payload, None
+        return check_residue.artifact_text(Path(artifact))
+    except (OSError, UnicodeError, zipfile.BadZipFile, ET.ParseError):
+        return None
 
 
-def derive_form_keep(profile, fill_map):
-    """Form-fill keep list: ``(anchors ∪ placeholders) − consumed``.
+def derive_form_keep(profile, fill_map, haystack=None):
+    """Form-fill keep list: ``(anchors ∪ placeholders) − targeted``.
 
     The residue gate's forbidden list is auto-derived from the form scan, and
     on a FILL the form's own labels legitimately survive — so without a keep
     list every surviving anchor reads as residue and the delegate can never
-    return pass (v0.17 clean-room finding, both agents). ``consumed`` is the
-    inventory entries the fill mapping targeted, matched on whitespace-
-    normalized substring in either direction (form-eval-scenarios protocol
-    note 1). Guide text is deliberately NOT keepable: instruction prose must
-    never survive a fill.
+    return pass (v0.17 clean-room finding, both agents). Entries no fill key
+    targeted are KEPT, matched on whitespace-normalized substring in either
+    direction (form-eval-scenarios protocol note 1). Guide text is
+    deliberately NOT keepable: instruction prose must never survive a fill.
+
+    A targeted entry is split three ways against the document, because the
+    first derivation assumed the key TEXT VANISHES and that is not what a
+    correct fill does (second clean-room run, T31). Filling a labeled field
+    keeps the label as a prefix — ``" http://"`` becomes
+    ``" http://hanbit.example.kr"`` — so the key survives by construction:
+
+    * ``consumed`` — the mapped VALUE is present in ``haystack``: the fill
+      happened. The entry is not keep-listed; any surviving occurrence of it
+      inside the value's span is attributed there by the gate's
+      ``--fill-map`` accounting, and an occurrence anywhere else still HARDs.
+    * ``consumed`` — no value found but the entry text is gone too: nothing
+      to flag either way (key-absence fallback).
+    * ``unfilled`` — no value found and the entry is still in the document:
+      neither kept nor consumed, so the gate flags it. That is the point.
+
+    With ``haystack=None`` (no document to probe) every targeted entry counts
+    as consumed, the pre-T31 behavior.
+
+    Returns (keep, consumed, unfilled).
     """
-    keys = [_norm(str(key)) for key in (fill_map or {}) if str(key).strip()]
-    keep, consumed, seen = [], [], set()
+    keys = {}
+    for key, value in (fill_map or {}).items():
+        if str(key).strip():
+            keys.setdefault(_norm(str(key)), []).append(value)
+    keep, consumed, unfilled, seen = [], [], [], set()
     for field in ("anchors", "placeholders"):
         for entry in profile.get(field) or []:
             text = entry if isinstance(entry, str) else (
@@ -534,24 +558,48 @@ def derive_form_keep(profile, fill_map):
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            if any(normalized in key or key in normalized for key in keys):
-                consumed.append(text)
-            else:
+            matched = [key for key in keys
+                       if normalized in key or key in normalized]
+            if not matched:
                 keep.append(text)
-    return keep, consumed
+            elif haystack is None or _fill_landed(keys, matched, haystack):
+                consumed.append(text)
+            elif check_residue.normalize_text(text) not in haystack:
+                consumed.append(text)          # key-absence fallback
+            else:
+                unfilled.append(text)
+    return keep, consumed, unfilled
+
+
+def _fill_landed(keys, matched, haystack):
+    """True when a mapped value for one of ``matched`` is in the document."""
+    for key in matched:
+        for value in keys[key]:
+            value = check_residue.normalize_text(str(value or ""))
+            if value and value in haystack:
+                return True
+    return False
 
 
 def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
                        fill_map=None):
     """``check_residue`` argv plus the keep report the verdict records.
 
+    ``fill_map`` is the PATH to the map file: the derived keep list and the
+    per-occurrence fill attribution are two halves of one mechanism, so the
+    delegate gets the map too (``--fill-map``).
+
     Returns (argv, report, error).
     """
     argv = ["--form-profile", str(form_profile), "--artifact", str(artifact)]
     report = {"explicit_keep": list(keep), "keep_pattern": keep_pattern,
-              "derived_keep": [], "consumed": [], "fill_map": None}
+              "derived_keep": [], "consumed": [], "unfilled": [],
+              "fill_map": None}
     derived = []
     if fill_map is not None:
+        mapping, error = load_fill_map(fill_map)
+        if error:
+            return None, report, error
         try:
             profile = json.loads(
                 Path(form_profile).read_text(encoding="utf-8"))
@@ -559,9 +607,11 @@ def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
             return None, report, f"form profile unreadable: {exc}"
         if not isinstance(profile, dict):
             return None, report, "form profile must be a JSON object"
-        derived, consumed = derive_form_keep(profile, fill_map)
+        derived, consumed, unfilled = derive_form_keep(
+            profile, mapping, artifact_haystack(artifact))
         report.update(derived_keep=derived, consumed=consumed,
-                      fill_map=sorted(fill_map))
+                      unfilled=unfilled, fill_map=sorted(mapping))
+        argv += ["--fill-map", str(fill_map)]
     ordered, seen = [], set()
     for entry in (*keep, *derived):
         if entry not in seen:
@@ -1120,14 +1170,9 @@ def verify(args):
     delegates = []
     residue_keep = None
     if args.form_profile:
-        fill_map_arg = None
-        if args.fill_map:
-            fill_map_arg, error = load_fill_map(args.fill_map)
-            if error:
-                return usage_error(str(artifact), "visual_verify", error)
         residue_argv, residue_keep, error = build_residue_argv(
             args.form_profile, artifact, keep=args.keep,
-            keep_pattern=args.keep_pattern, fill_map=fill_map_arg)
+            keep_pattern=args.keep_pattern, fill_map=args.fill_map)
         if error:
             return usage_error(str(artifact), "visual_verify", error)
         delegates.append(_delegate(
@@ -1344,8 +1389,10 @@ def main(argv=None):
                         help="JSON fill mapping ({key: value}, or an object "
                              "with a 'fill_map' member) -> derive the "
                              "form-fill keep list (anchors ∪ placeholders "
-                             "minus the entries the fill consumed) instead of "
-                             "hand-building repeated --keep")
+                             "minus the entries the fill targeted) instead of "
+                             "hand-building repeated --keep, and forward the "
+                             "map so a prefix-preserving fill (label kept "
+                             "inside the value) is not read as residue")
     parser.add_argument("--content", default=None,
                         help="bundle/content.md -> also run check_density")
     parser.add_argument("--vision-verdict", default=None,
