@@ -15,6 +15,7 @@ convention where noted: 0 = pass/clean, 2 = usage/config error, 3 = finding.
 7. [tidy_hwpx](#7-tidy_hwpx) — blank-paragraph cleanup
 8. [com_backend / build_report / xml_backend](#8-com_backend--build_report--xml_backend) — assembly
 9. [render_probe / privacy_scan](#9-render_probe--privacy_scan)
+10. [visual_verify](#10-visual_verify) — the render→judge loop
 
 ## 1. probe
 
@@ -169,3 +170,62 @@ python pipeline/scripts/privacy_scan.py DIR          # HARD-clean required befor
 
 `privacy_scan` exit 0 = clean; binary office documents pass only through the
 sha256-pinned corpus allowlist (`tests/corpus/forms/manifest.json`).
+
+## 10. visual_verify
+
+The autonomous render→judge loop. Two halves: this script is the
+deterministic one (never skippable, never calls a model), and the vision one
+is you, reading page PNGs against `docs/research/visual-rubric.md`.
+
+```
+# pass 1 — machine half + vision task
+python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
+    [--pdf verify.pdf] [--expectations exp.json] [--png-dir DIR] [--dpi 130] \
+    [--baseline BASE.pdf|DIR] [--form-profile profile.json] \
+    [--content bundle/content.md] [--vision-scope all|targeted] \
+    [--attempt M --max-fix-attempts N] --out visual_verdict.json
+
+# pass 2 — merge the vision verdict you wrote
+python pipeline/scripts/visual_verify.py --artifact OUT.hwpx --pdf verify.pdf \
+    --expectations exp.json --vision-verdict vision.json --out visual_verdict.json
+```
+
+Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
+
+- **Rendering.** `--pdf` if you have one; an `.hwpx` without one goes through
+  ONE serial `com_backend.py convert` (never `--kill-stale`). No Hancom and
+  no `--pdf` is a usage error, never a pass. Pages are rasterized to
+  `--png-dir` (default `<pdf>_pages/`) at `--dpi` (default 130). Equation
+  scope errors (T13) need a separate `--dpi 300` run on that page.
+- **Deterministic backstops**, all merged into one findings list: hwpx
+  section/header XML validity (T23 `artifact_malformed`); zero-text document
+  and zero-content page (T25 `blank_render`); stored `PrintInfo/PrintMethod`
+  plus `pages_document` vs `pages_pdf` (W6.2 `imposition_mismatch`); declared
+  page budget; declared `base_pt` / `line_spacing_pct` / `margins_mm`;
+  declared `fill_map` values present in the render; `forbidden_text`;
+  `layout_qa` (mapped onto rubric classes, unmapped findings preserved
+  verbatim); `check_residue` with `--form-profile`; `check_density` with
+  `--content`; pixel diff with `--baseline` (changed-region bboxes per page,
+  so a caller can assert unchanged regions stayed unchanged).
+- **`expectations.json`** keys: `pages_document`, `page_budget {min,max}` or
+  `max_pages`, `base_pt`, `line_spacing_pct`, `margins_mm {top,bottom,left,
+  right}`, `fill_map {label: value}`, `intentionally_blank [label]`,
+  `blank_pages [n]`, `forbidden_text [str]`. Everything absent is listed
+  under `deterministic.skipped` — the verdict says what it could NOT check.
+- **`vision_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
+  rubric, acceptance, pages[], deterministic{}, vision{}, vision_required[],
+  loop{}, hard[], warn[], counts, verdict}`. `verdict` is one of `pass`,
+  `fail`, `vision_pending`, `deterministic_pass`.
+- **The vision handback** (`--vision-verdict`) is
+  `{"schema": "rigorloom/visual-vision-verdict/v1", "pages_reviewed": [...],
+  "findings": [{"page", "class", "severity", "evidence"}]}`. `class` is
+  validated against the rubric's closed vocabulary — an unknown class or
+  severity, or an out-of-range page, is a **usage error (exit 2)**, not a
+  finding. Every page in `vision_required` must appear in `pages_reviewed`
+  or you get a HARD `vision_incomplete`.
+- **`--deterministic-only`** can exit 0 but sets `acceptance: false`. It is a
+  smoke check. Only a run with a complete vision verdict is an acceptance.
+- **`--max-fix-attempts N`** does not loop for you: the loop lives in the
+  caller (fix → re-render → re-run). Pass `--attempt M` and once `M >= N`
+  with the run still not accepted, the script adds a HARD `loop_exhausted`
+  and you escalate to a human instead of retrying.
