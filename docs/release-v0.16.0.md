@@ -32,6 +32,81 @@ All three `--verify` runs: `ok: true`, zero problems. Bundles live in
 to the exact artifacts built at this commit — rebuilding after any change
 produces different hashes and requires updating this table.
 
+> **Superseded by the post-release packaging fix below.** The core bundle's
+> 85-file count was wrong as a product statement: it was missing the skill
+> surface. See "Post-release fix" for the corrected inventory.
+
+## Post-release fix — core bundle ships the skill surface
+
+**Defect.** The v0.16.0 core bundle shipped no skill surface at all: no
+`skill/SKILL.md`, no `skill/references/`, and no `scripts/sync_local.py`
+installer. A buyer who installed `rigorloom-core-0.16.0.zip` got the
+document engine and had no way to install the router skill — the very
+surface an agent loads. The `skill:` fragments the `report` and `style`
+modules declare had nothing to merge into.
+
+**How it was found.** Not by the test suite — the suite runs against the
+checkout, where `skill/` and `scripts/sync_local.py` are simply *there*.
+It was found by the v0.17 clean-room harness (`evals/cleanroom.py`, #58),
+which installs from dist zips into a throwaway root and refuses to fall
+back to the checkout. Its skill-install step reported the gap
+`skill_surface_not_bundled`, and every clean-room run had to acknowledge it
+with `--allow-gap`. That acknowledgement was the finding.
+
+**Fix.** `_CORE_COMPONENTS` in `scripts/package_module.py` now includes
+`skill/`, `scripts/sync_local.py` and `scripts/sync_manifest.example.yaml`
+(the installer needs nothing else from `scripts/`: it is stdlib-only apart
+from `module_registry`, which it loads by path from `pipeline/scripts` —
+already core). Two packaging assertions run over the staged tree before
+anything is written, so the gap cannot return through an edit to the
+component list: a core bundle missing any part of the skill surface is an
+exit-3 refusal, and a module declaring `provides.skill` that does not ship
+its fragment and references is an exit-3 refusal. The core `INSTALL.md`
+now carries the exact skill-install command a buyer runs and states where
+the skill lands.
+
+**Corrected bundle inventory** (rebuilt and re-verified, `--verify`
+`ok: true`, zero problems for all three):
+
+| bundle | files | was | zip sha256 |
+|---|---:|---:|---|
+| `rigorloom-core-0.16.0.zip` | 92 | 86 | `deaf18dc63efb9bd957c2f1bacc4edecdfaf75591d65d1d12edbaf4bdea35660` |
+| `rigorloom-report-0.16.0.zip` | 87 | 87 | `0e28ef85796f4823f751a45ee2dc46393d3ba4d201fd9a15c3ada96482a1f920` |
+| `rigorloom-style-0.16.0.zip` | 14 | 14 | `8612409974c6e13e3226e928e8ba264cc2e4ecdf7197c55981da72e4404dd1d7` |
+
+The "was" column is the count at `main` @ `9c36a85`, the commit this fix
+branches from. It is 86, not the 85 in the table at the top of this record:
+core gained `pipeline/scripts/visual_verify.py` between the tag commit
+`630664b` and `9c36a85`. Both numbers were correct when written; only the
+core row is superseded.
+
+Core is 86 → 92, exactly six files, all of them the skill surface:
+
+```
+skill/SKILL.md
+skill/references/forms.md
+skill/references/operations.md
+skill/references/troubleshooting.md
+scripts/sync_local.py
+scripts/sync_manifest.example.yaml
+```
+
+`INSTALL.md` was rewritten, not added, so it does not move the count. The
+module bundles' payloads are unchanged (same counts, same module trees);
+their `INSTALL.md` gained a skill-resync note for modules that declare a
+fragment, and their zip hashes changed accordingly.
+
+**Verification.** A clean-room install of all three bundles now passes with
+**zero** allowed gaps: `gaps: []`, `contained: true`, `failures: []`, and
+`<root>/skills/rigorloom-hwp/SKILL.md` carries `## Module: report` and
+`## Module: style` with the report module's `report_pipeline.md` reference
+merged into `references/`. Core-only still reports `no_module_bundles`
+(deliberate) and nothing else. Regression tests live in
+`tests/test_package_module.py` (`TestCoreBundleShipsTheSkillSurface`,
+`TestModuleSkillFragmentsShip`) and `tests/test_cleanroom_evals.py`
+(`TestSkillInstallFromBundlesAlone`, plus a negative control that strips
+the surface out of a prepared install and asserts the gap comes back).
+
 ## Test suite (both CI matrix points, local Windows, Python 3.11)
 
 | matrix point | result |
