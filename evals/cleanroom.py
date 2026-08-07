@@ -295,6 +295,9 @@ def load_task(path: Path | str) -> dict[str, Any]:
 _CHECK_KINDS = {"python", "shell", "file", "geometry", "idempotence",
                 "residue", "text_present", "text_absent", "unmodified"}
 _FILE_MODES = {"exists", "absent", "nonempty"}
+# ``requires_module: NAME`` gates one machine_check on a distribution module
+# being enabled in the sandbox. Same name grammar as module_registry's _NAME_RE.
+_MODULE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
 
 def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
@@ -325,6 +328,19 @@ def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
                 or entry.startswith("..")):
             fail(f"input_files entry must be repo-relative: {entry!r}")
 
+    # ``baseline`` (optional): the blank form the produced artifact came from,
+    # named by input basename. Consumed by checkers declaring wants: [baseline]
+    # (v0.17 G3) and exposed to task authors as ``${BASELINE}``.
+    if "baseline" in task:
+        declared = task["baseline"]
+        if not isinstance(declared, str) or not declared.strip():
+            fail("baseline must be the basename of one of input_files")
+        basenames = {PurePosixPath(entry).name for entry in inputs
+                     if isinstance(entry, str)}
+        if declared not in basenames:
+            fail(f"baseline {declared!r} is not one of this task's inputs "
+                 f"({sorted(basenames)}) — the blank form must be a task input")
+
     behaviors = task.get("expected_behavior")
     if not isinstance(behaviors, list) or not behaviors:
         fail("expected_behavior must be a non-empty list of rubric strings")
@@ -349,6 +365,12 @@ def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
         if kind not in _CHECK_KINDS:
             fail(f"machine_check {cid!r}: kind must be one of "
                  f"{sorted(_CHECK_KINDS)} (got {kind!r})")
+        if "requires_module" in check:
+            required = check["requires_module"]
+            if not isinstance(required, str) or not _MODULE_NAME_RE.fullmatch(
+                    required):
+                fail(f"machine_check {cid!r}: requires_module must be a "
+                     f"kebab-case distribution-module name (got {required!r})")
         if kind == "python":
             argv = check.get("argv")
             if not isinstance(argv, list) or not argv:
@@ -1239,12 +1261,23 @@ def materialize_task(root: Path | str, task: dict[str, Any], *,
     )
     (work / "PROMPT.txt").write_text(rendered, encoding="utf-8")
 
+    baseline = None
+    if task.get("baseline"):
+        baseline = next(
+            (row["sandbox_path"] for row in copied
+             if Path(row["sandbox_path"]).name == task["baseline"]), None)
+        if baseline is None:  # pragma: no cover — validate_task rules it out
+            raise CleanroomError(
+                f"task {task['id']}: declared baseline {task['baseline']!r} "
+                "was not among the copied inputs", exit_code=2)
+
     payload = {
         "schema": TASK_SCHEMA,
         "id": task["id"],
         "family": task["family"],
         "source_scenario": task.get("source_scenario"),
         "blocked_on": task.get("blocked_on"),
+        "baseline": baseline,
         "prompt": prompt,
         "rendered_prompt": rendered,
         "work_dir": str(work),
@@ -1335,8 +1368,92 @@ def _zip_member_digest(path: Path) -> dict[str, str]:
                 for info in archive.infolist() if not info.is_dir()}
 
 
+def sandbox_modules(sandbox: Sandbox) -> dict[str, Any]:
+    """The sandbox's OWN answer to "which distribution modules are enabled and
+    what do they provide", asked of the SHIPPED registry CLI rather than read
+    out of ``install_report.json`` — so an enabled set changed after ``prepare``
+    (or a module disabled by hand) is still the truth the checks are gated on.
+
+    A root with no registry script is core-only, not an error: absence is not
+    failure (``modules/README.md``).
+    """
+    script = sandbox.install / "pipeline" / "scripts" / "module_registry.py"
+    if not script.is_file():
+        return {"available": False, "enabled": [], "checkers": []}
+    proc = sandbox.run_python(script, [
+        "--modules-root", str(sandbox.install / "modules"),
+        "--pyproject", str(sandbox.install / "pyproject.toml"), "list"])
+    if proc.returncode != 0:
+        raise CleanroomError(
+            f"the sandbox's distribution-module registry refused to answer "
+            f"(exit {proc.returncode}): "
+            f"{(proc.stdout or proc.stderr or '')[:400]}", exit_code=3)
+    try:
+        summary = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise CleanroomError(
+            f"the sandbox's registry emitted non-JSON: {exc}", exit_code=3)
+    return {"available": True,
+            "enabled": list(summary.get("enabled") or []),
+            "checkers": list(summary.get("checkers") or [])}
+
+
+def task_baseline(work: Path, task: dict[str, Any]) -> str | None:
+    """The sandbox path of the blank form this task declares, or None.
+
+    Read from the materialized ``task.json`` when present (that is where the
+    copied input path lives), falling back to resolving the declared basename
+    against ``<work>/inputs`` so a caller can gate checks before/without a
+    re-materialization.
+    """
+    declared = task.get("baseline")
+    if not declared:
+        return None
+    manifest = work / "task.json"
+    if manifest.is_file():
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        if payload.get("baseline"):
+            return str(payload["baseline"])
+        for row in payload.get("inputs") or []:
+            if Path(row.get("sandbox_path", "")).name == declared:
+                return str(row["sandbox_path"])
+    candidate = work / "inputs" / declared
+    return str(candidate) if candidate.is_file() else None
+
+
+def checker_wants(sandbox: Sandbox, script_ref: str,
+                  checkers: Iterable[dict[str, Any]]) -> list[str]:
+    """``wants`` declared by the enabled checker this argv[0] invokes, or [].
+
+    Resolution is by PATH, never by name or filename convention: the harness
+    matches the script the check runs against the scripts the sandbox's own
+    registry reports. An unknown script (a core CLI, an unenabled module's
+    payload) declares nothing and is left completely alone.
+    """
+    script = Path(script_ref)
+    if not script.is_absolute():
+        script = sandbox.install / script_ref
+    try:
+        script = script.resolve()
+    except OSError:  # pragma: no cover — defensive
+        return []
+    for row in checkers:
+        try:
+            if Path(row["script"]).resolve() == script:
+                return list(row.get("wants") or [])
+        except (OSError, KeyError):  # pragma: no cover — defensive
+            continue
+    return []
+
+
 def run_machine_check(sandbox: Sandbox, check: dict[str, Any],
-                      variables: dict[str, str]) -> dict[str, Any]:
+                      variables: dict[str, str], *,
+                      enabled_modules: Iterable[str] = (),
+                      checkers: Iterable[dict[str, Any]] = (),
+                      baseline: str | None = None) -> dict[str, Any]:
     cid = check["id"]
     result: dict[str, Any] = {"id": cid, "kind": check["kind"],
                               "description": check.get("description")}
@@ -1344,12 +1461,61 @@ def run_machine_check(sandbox: Sandbox, check: dict[str, Any],
         result.update({"status": "skipped", "reason": check["blocked_on"]})
         return result
 
+    # Per-module gate (v0.17 G2). A check that calls into a distribution
+    # module's payload cannot run in a sandbox where that module is disabled;
+    # before this gate it FAILED there, which is a false finding about the
+    # product. Semantics are ``blocked_on``'s, exactly: status "skipped" with a
+    # recorded reason, counted in ``counts.skipped``, never in ``counts.pass``
+    # — and score.py reads those counts, so a skip can never satisfy the
+    # "machine checks ran and all passed" condition either.
+    required_module = check.get("requires_module")
+    if required_module and required_module not in set(enabled_modules):
+        result.update({
+            "status": "skipped",
+            "reason": f"requires_module: distribution module "
+                      f"{required_module!r} is not enabled in this sandbox",
+            "requires_module": required_module,
+        })
+        return result
+
     kind = check["kind"]
     expect_exit = int(check.get("expect_exit", 0))
+
+    # Baseline provisioning (v0.17 G3). A checker whose module.yaml declares
+    # ``wants: [baseline]`` gets the task's blank form handed to it as
+    # ``--baseline <path>`` — the caller no longer has to know. Two honest
+    # edge cases:
+    #   * the baseline path is ALREADY in the argv — either as an explicit
+    #     --baseline value or because the check deliberately runs the checker
+    #     ON the blank form itself (a document is never its own baseline). The
+    #     harness supplies nothing and says so.
+    #   * the task declares NO baseline. Running anyway would hand back a
+    #     verdict whose baseline-only rules all self-skipped, exit 0 — a
+    #     silent pass. So the check is skipped WITH THE REASON instead,
+    #     mirroring blocked_on / requires_module.
+    argv: list[str] = []
+    if kind == "python":
+        argv = [_expand(str(entry), variables) for entry in check["argv"]]
+        wants = checker_wants(sandbox, argv[0], checkers)
+        if "baseline" in wants:
+            result["wants"] = wants
+            if not baseline:
+                result.update({
+                    "status": "skipped",
+                    "reason": "checker declares wants: [baseline] but the "
+                              "task declares no baseline form — its "
+                              "baseline-only rules would all self-skip",
+                })
+                return result
+            if baseline in argv:
+                result["baseline"] = "already-in-argv"
+            else:
+                argv += ["--baseline", baseline]
+                result["baseline"] = "supplied-by-harness"
+
     document: Any = None
     try:
         if kind == "python":
-            argv = [_expand(str(a), variables) for a in check["argv"]]
             script = Path(argv[0])
             if not script.is_absolute():
                 script = sandbox.install / argv[0]
@@ -1515,7 +1681,14 @@ def run_checks(root: Path | str, task: dict[str, Any], *,
         "INPUTS": str(work / "inputs"),
         "SKILLS": str(sandbox.skills),
     }
-    results = [run_machine_check(sandbox, check, variables)
+    modules = sandbox_modules(sandbox)
+    baseline = task_baseline(work, task)
+    if baseline:
+        variables["BASELINE"] = baseline
+    results = [run_machine_check(sandbox, check, variables,
+                                 enabled_modules=modules["enabled"],
+                                 checkers=modules["checkers"],
+                                 baseline=baseline)
                for check in task["machine_checks"]]
     passed = sum(1 for row in results if row["status"] == "pass")
     failed = sum(1 for row in results if row["status"] == "fail")
@@ -1525,6 +1698,8 @@ def run_checks(root: Path | str, task: dict[str, Any], *,
         "task_id": task["id"],
         "family": task["family"],
         "sandbox_root": str(sandbox.root),
+        "enabled_modules": modules["enabled"],
+        "baseline": baseline,
         "counts": {"pass": passed, "fail": failed, "skipped": skipped,
                    "total": len(results)},
         "ok": failed == 0,
