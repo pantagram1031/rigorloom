@@ -169,6 +169,206 @@
       "source_page": "https://www.moel.go.kr/policy/policydata/view.do?bbs_seq=20250300356",
       "license": "고용노동부 정책자료 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution",
       "notes": "2025 revision of the same form — versioned pair with the 2013 entry (template-identity scenarios)."
+    },
+    {
+      "slug": "jumin-deungchobon-sinchengseo",
+      "family": "petition",
+      "path": "converted/jumin-deungchobon-sinchengseo.hwpx",
+      "format": "hwpx",
+      "bytes": 65613,
+      "sha256": "eaeb8537bf6fd40c15ae925e94aa93a4da3c26df5d208475d8079f4150c38f93",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug jumin-deungchobon-sinchengseo via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "jeongbo-gonggae-cheongguseo",
+      "family": "petition",
+      "path": "converted/jeongbo-gonggae-cheongguseo.hwpx",
+      "format": "hwpx",
+      "bytes": 66424,
+      "sha256": "34d2c4811095fa2841b8878bdaea65b28a2cd62f8bd50fff625018092ce2e85f",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug jeongbo-gonggae-cheongguseo via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "saeopja-deungnok-sinchengseo",
+      "family": "petition",
+      "path": "converted/saeopja-deungnok-sinchengseo.hwpx",
+      "format": "hwpx",
+      "bytes": 110652,
+      "sha256": "367a894ed49ba72408d58567d287456211cfd680fd22d4b289fc9c22040fb41c",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug saeopja-deungnok-sinchengseo via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
+      "family": "petition",
+      "path": "converted/admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+      "format": "hwpx",
+      "bytes": 32521,
+      "sha256": "71c25fc6efc6f5b4ba97f101f7bb4d3c4d2c70b7d70648bec693f51236f50aea",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug admrul-gajokdolbom-hyuga-sinchengseo via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "gianmun-byeolji-1ho",
+      "family": "gongmun",
+      "path": "converted/gianmun-byeolji-1ho.hwpx",
+      "format": "hwpx",
+      "bytes": 30304,
+      "sha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug gianmun-byeolji-1ho via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "gianmun-byeolji-2ho",
+      "family": "gongmun",
+      "path": "converted/gianmun-byeolji-2ho.hwpx",
+      "format": "hwpx",
+      "bytes": 29451,
+      "sha256": "03bc49f20ec712c462c0efafa6747c4fc2d74abda29b66cb09f97f64afd8003e",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug gianmun-byeolji-2ho via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "nrf-gyeolgwa-bogoseo-yangsik",
+      "family": "research",
+      "path": "converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+      "format": "hwpx",
+      "bytes": 56694,
+      "sha256": "776b8ae8acc78653dcd87ec60eac6275daaa5250dfa44a48636e39a3ddbce445",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug nrf-gyeolgwa-bogoseo-yangsik via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+      "family": "grant",
+      "path": "converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+      "format": "hwpx",
+      "bytes": 105208,
+      "sha256": "8335dc716e7ff4908e3bae07e2a2512345353685fd40819b5429f542a8a80671",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug kstartup-jiwon-sincheongseo-saeopgyehoekseo via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2013",
+      "family": "hr",
+      "path": "converted/moel-pyojun-geunrogyeyakseo-2013.hwpx",
+      "format": "hwpx",
+      "bytes": 61302,
+      "sha256": "ecb76db1623f2f36bd6aa890c1d24b5c7f5f3b88f72861bb655581b460e8feb7",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug moel-pyojun-geunrogyeyakseo-2013 via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2025",
+      "family": "hr",
+      "path": "converted/moel-pyojun-geunrogyeyakseo-2025.hwpx",
+      "format": "hwpx",
+      "bytes": 71237,
+      "sha256": "a77afd823a5632deabd5365b59c3c3e8f2895c7f665c7024197130adbb36e26c",
+      "kind": "xc1_converted_hwpx",
+      "notes": "W6.1 XC-1 hwp->hwpx conversion output of documents[] slug moel-pyojun-geunrogyeyakseo-2025 via com_backend.py convert (Hancom 13.0.0.2986)."
+    },
+    {
+      "slug": "jumin-deungchobon-sinchengseo",
+      "family": "petition",
+      "path": "render/jumin-deungchobon-sinchengseo.pdf",
+      "format": "pdf",
+      "bytes": 125488,
+      "sha256": "58c5916ea6506ab41004a7438e961370a52311a3ac7ede8d8a7fd81a2bd1b21f",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/jumin-deungchobon-sinchengseo.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "jeongbo-gonggae-cheongguseo",
+      "family": "petition",
+      "path": "render/jeongbo-gonggae-cheongguseo.pdf",
+      "format": "pdf",
+      "bytes": 64905,
+      "sha256": "6499f964e8025a29f30e6a5a8fdbaf6db8c6e09aa19eefdbcb22108b1442d722",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/jeongbo-gonggae-cheongguseo.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "saeopja-deungnok-sinchengseo",
+      "family": "petition",
+      "path": "render/saeopja-deungnok-sinchengseo.pdf",
+      "format": "pdf",
+      "bytes": 163968,
+      "sha256": "fc848ff2391dbe63bd2882ac2f578be8cd8832cae33ec30866a060325fa613c0",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/saeopja-deungnok-sinchengseo.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
+      "family": "petition",
+      "path": "render/admrul-gajokdolbom-hyuga-sinchengseo.pdf",
+      "format": "pdf",
+      "bytes": 81439,
+      "sha256": "8179aedb89433c18ce1e739c4e4ee941355499be5bdab418214c99b615eccda9",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/admrul-gajokdolbom-hyuga-sinchengseo.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "gianmun-byeolji-1ho",
+      "family": "gongmun",
+      "path": "render/gianmun-byeolji-1ho.pdf",
+      "format": "pdf",
+      "bytes": 52401,
+      "sha256": "355c2cded1aaaee8e10ae519bb068364c7ed8f0baa81408965f76da1c9c31ad2",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-1ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "gianmun-byeolji-2ho",
+      "family": "gongmun",
+      "path": "render/gianmun-byeolji-2ho.pdf",
+      "format": "pdf",
+      "bytes": 41864,
+      "sha256": "000bb3605caba64f515458930fceb0aa69dd0b5e72e9aec0e10d28c7bc8f6cd9",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-2ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "nrf-gyeolgwa-bogoseo-yangsik",
+      "family": "research",
+      "path": "render/nrf-gyeolgwa-bogoseo-yangsik.pdf",
+      "format": "pdf",
+      "bytes": 119085,
+      "sha256": "d8d59382117a4202a1c559a88d73e59cd91b85b1f69aa90dcc5a03b904625dcf",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+      "family": "grant",
+      "path": "render/kstartup-jiwon-sincheongseo-saeopgyehoekseo.pdf",
+      "format": "pdf",
+      "bytes": 424101,
+      "sha256": "8409ecab1c2df5e6fe14fe75725d8e36e684349a156e71724e19d238e7b6419a",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2013",
+      "family": "hr",
+      "path": "render/moel-pyojun-geunrogyeyakseo-2013.pdf",
+      "format": "pdf",
+      "bytes": 599291,
+      "sha256": "95ad90cfbb72e2829c38f33f12510a6e11e901a149bb469ba7d6c0c4cfe9b927",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/moel-pyojun-geunrogyeyakseo-2013.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "moel-pyojun-geunrogyeyakseo-2025",
+      "family": "hr",
+      "path": "render/moel-pyojun-geunrogyeyakseo-2025.pdf",
+      "format": "pdf",
+      "bytes": 226721,
+      "sha256": "43d21f266ee6dffeb59acf24d20aaec43615c50ef1aded965e1050f81c72afa8",
+      "kind": "xc1_render_pdf",
+      "notes": "W6.1 XC-1 rendered PDF of converted/moel-pyojun-geunrogyeyakseo-2025.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
     }
   ],
   "skipped": [
@@ -207,5 +407,12 @@
     "ruling": "W5.2 coordinator ruling: privacy_scan gained a manifest-pinned binary allowlist (--binary-allowlist, auto-detected at this file). A binary passes the categorical binary_document_ext rule ONLY when its path is listed here AND its sha256 matches; any unlisted binary or hash drift stays HARD (still-catches #1). Allowlisted binaries are still content-scanned (RRN, filled phone, email, user-path, denylist over extracted hwp/hwpx text) - PII in an allowlisted blank is HARD (still-catches #2). Bundles never apply the allowlist: tests/test_package_module.py asserts no corpus member lands in any bundle. Recorded in docs/gate-calibration.md.",
     "content_check": "Offline scan (PrvText for .hwp, all XML/text parts for .hwpx): zero RRN patterns, zero filled phone numbers, zero email addresses in any file. All files verified blank templates via preview text. The same nets now run inside privacy_scan on every allowlisted member.",
     "metadata_note": "Several .hwp files carry issuing-agency author names in HwpSummaryInformation as published by the government source (e.g. 법령정보센터 clerk names). Kept as-is to preserve byte-exact provenance (sha256 above matches the official download); if this is judged unacceptable, strip DocSummary on the operator machine during XC-1 conversion and record new hashes for the converted siblings only."
+  },
+  "xc1_conversion_metadata": {
+    "description": "W6.1 XC-1 hwp->hwpx conversion outputs (engine/scripts/com_backend.py convert, Hancom COM, operator machine). Sources are the 10 .hwp `documents[]` entries above; outputs are additive siblings under converted/, not replacements — corpus .hwp originals stay byte-exact (sha256 unchanged from the `documents[]` entries).",
+    "tool": "engine/scripts/com_backend.py convert",
+    "hancom_version": "13.0.0.2986",
+    "converted_at": "2026-08-06T23:05:53Z",
+    "note_naming": "Flat converted/<slug>.hwpx layout per the W6.1 bench task spec, not the docs/research/form-eval-scenarios.md XC-1 aspirational <family>/<slug>.converted.hwpx colocated naming — documented deviation, not yet reconciled."
   }
 }
