@@ -180,8 +180,12 @@ class TestContainment:
         findings = [f for f in verdict["findings"]
                     if f["rule"] == "source_path_in_install"]
         assert findings, verdict["findings"]
-        assert findings[0]["file"].endswith("planted_note.md")
-        assert findings[0]["forbidden_root"] == str(REPO_ROOT)
+        # Scan order is filesystem-dependent (CI Linux vs Windows), so assert
+        # the planted file is AMONG the findings, not that it is first.
+        planted_hits = [f for f in findings
+                        if f["file"].endswith("planted_note.md")]
+        assert planted_hits, [f["file"] for f in findings]
+        assert planted_hits[0]["forbidden_root"] == str(REPO_ROOT)
 
     def test_planted_reference_is_caught_through_the_cli(self, tmp_path,
                                                          bundles, prepared):
