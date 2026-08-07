@@ -1,0 +1,75 @@
+schema: rigorloom-eval-task/v1
+id: A2-pps-consent-checkboxes
+family: grant
+title: 조달청 정보공개 동의서 동의 체크 및 날짜 기입
+source_scenario: A2-pps-consent-checkboxes (docs/research/form-eval-scenarios.md, family 6)
+
+prompt: |
+  첨부한 정보공개동의서에 전부 동의함으로 체크하고 날짜를 넣어줘.
+  - 본인 성명: 김도현
+  - 주소: 서울특별시 강남구 테헤란로 100
+  - 작성일: 2026년 8월 20일
+  결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/grant/pps-jeongbogonggae-donguiseo.hwpx
+
+expected_behavior:
+  - "[judgment] 채우기 전에 무엇에 동의하는 것인지(수집 항목, 목적, 보유기간, 제3자 제공 대상)를 먼저 요약해 준다. 동의서는 중립적인 표가 아니다."
+  - "[judgment] 동의 거부 권리 안내(※ 위의 개인정보 수집ㆍ이용에 대한 동의를 거부할 권리가 있습니다)를 지우지 않는다."
+  - "[judgment] 문서의 □ 두 개가 체크박스가 아니라 절 제목 불릿임을 알아보고 건드리지 않는다. 실제 동의 슬롯은 (예,  아니오) 텍스트 런이다."
+  - "[judgment] 서명란은 비워 두고 사람이 서명해야 함을 알린다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    description: 빈 양식 프로파일링 - Bench-0 고정 하한 (anchors 28, tables 3)
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/pps-jeongbogonggae-donguiseo.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 28", "len(table_map) == 3"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: pps-jeongbogonggae-donguiseo.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    description: 셀 수와 병합 지도가 그대로인가 (체크는 텍스트 런 편집이어야 한다)
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: residue_clean
+    kind: residue
+    profile: "${WORK}/blank.profile.json"
+    artifact: "${WORK}/filled.hwpx"
+    baseline: "${INPUTS}/pps-jeongbogonggae-donguiseo.hwpx"
+    expect_exit: 0
+    require_consumed: 1
+
+  - id: instruction_prose_protected
+    kind: text_present
+    description: 안내 문구는 guide_text 검출 여부와 무관하게 보호된다
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "내용을 자세히 읽으신 후 동의 여부를 결정하여 주십시오"
+      - "동의를 거부할 권리가 있습니다"
+      - "(서명 또는 인)"
+
+  - id: section_bullets_intact
+    kind: text_present
+    description: □ 는 체크박스가 아니라 절 제목 불릿이므로 원형 그대로 남아야 한다
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "□ 개인정보 수집ㆍ이용 내역"
+      - "□ 개인정보 3자 제공 내역"

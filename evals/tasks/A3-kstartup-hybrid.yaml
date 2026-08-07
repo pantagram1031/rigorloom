@@ -1,0 +1,73 @@
+schema: rigorloom-eval-task/v1
+id: A3-kstartup-hybrid
+family: grant
+title: 창업 지원사업 신청서 + 사업계획서 혼합 양식
+source_scenario: A3-kstartup-hybrid (docs/research/form-eval-scenarios.md, family 6)
+note: XC-1 변환본 사용 - 고정 그리드와 흐르는 본문이 한 문서에 공존하는 유일한 코퍼스 멤버
+
+prompt: |
+  첨부한 지원사업 신청서 겸 사업계획서 양식에서 앞쪽 신청서 표를 아래 값으로 채우고,
+  사업계획서의 창업아이템 개요 섹션 초안을 한 번의 실행으로 써줘.
+  - 과제(창업아이템)명: 저전력 초음파 누수 탐지 모듈
+  - 신청자 성명: 이서준
+  - 이전기술 구분: 기술이전 완료
+  결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx
+
+expected_behavior:
+  - "[judgment] 고정 그리드(신청서 표)와 흐르는 본문(사업계획서)을 서로 다른 편집 체제로 다룬다. 표에는 값만 넣고, 본문에는 산문을 쓴다."
+  - "[judgment] 색이 들어간 작성 안내문을 본문 초안과 구분하고, 지울지 남길지 판단 근거를 밝힌다."
+  - "[judgment] 공고가 선언한 분량 제한이 문서 안에 있으면 찾아서 인용하고 그 안에서 쓴다."
+  - "[judgment] 사용자가 주지 않은 값은 지어내지 않는다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    description: 혼합 양식 프로파일링 - 다중 섹션 인식 하한
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 300", "len(table_map) >= 35", "len(guide_text) >= 100"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    description: 앞쪽 신청서 그리드가 본문 편집에 흔들리지 않았는가
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: residue_clean
+    kind: residue
+    profile: "${WORK}/blank.profile.json"
+    artifact: "${WORK}/filled.hwpx"
+    baseline: "${INPUTS}/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
+    expect_exit: 0
+    require_consumed: 1
+
+  - id: values_written
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "저전력 초음파 누수 탐지 모듈"
+
+  - id: page_budget
+    kind: python
+    description: 공고가 선언한 쪽수 제한 준수 여부
+    argv: ["engine/scripts/layout_qa.py", "--file", "${WORK}/verify.pdf"]
+    expect_exit: 0
+    blocked_on: PDF 렌더러가 있는 운영자 머신에서만 평가 가능 (클린룸에는 렌더러가 없다)

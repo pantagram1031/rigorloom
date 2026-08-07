@@ -1,0 +1,77 @@
+schema: rigorloom-eval-task/v1
+id: H1-labor-contract-fill
+family: hr
+title: 표준근로계약서 채우기
+source_scenario: H1-labor-contract-fill (docs/research/form-eval-scenarios.md, family 7)
+note: XC-1 변환본 사용 - 원본은 .hwp. 기준선 계열이라 기계 검사 실패는 경계가 아니라 적신호다
+
+prompt: |
+  첨부한 표준근로계약서에서 기간의 정함이 없는 경우 계약서를 아래 값으로 채워줘.
+  - 사업주: 한빛정밀 주식회사, 대표 김도현
+  - 근로자: 이서준
+  - 근로개시일: 2026년 9월 1일
+  - 근무장소: 경기도 화성시 동탄산단로 15
+  - 업무의 내용: 정밀 이송 스테이지 조립 및 검사
+  - 월급: 2,800,000원
+  - 작성일: 2026년 8월 20일
+  결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/converted/moel-pyojun-geunrogyeyakseo-2025.hwpx
+
+expected_behavior:
+  - "[judgment] 여러 종류의 표준계약서가 한 문서에 들어 있음을 알아보고, 사용자가 지정한 기간의 정함이 없는 경우 계약서만 채운다."
+  - "[judgment] 상여금, 수당, 임금지급일처럼 사용자가 주지 않은 항목은 지어내지 않고 빈칸으로 두며 무엇이 비었는지 되돌려 알려준다."
+  - "[judgment] 사업주와 근로자 양쪽 서명란을 모두 비워 둔다."
+  - "[judgment] 조항 번호와 법령 참조 문구를 바꾸지 않는다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/moel-pyojun-geunrogyeyakseo-2025.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 200", "len(table_map) >= 9"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: moel-pyojun-geunrogyeyakseo-2025.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: residue_clean
+    kind: residue
+    profile: "${WORK}/blank.profile.json"
+    artifact: "${WORK}/filled.hwpx"
+    baseline: "${INPUTS}/moel-pyojun-geunrogyeyakseo-2025.hwpx"
+    expect_exit: 0
+    require_consumed: 1
+
+  - id: clause_text_intact
+    kind: text_present
+    description: 조항 문구와 법령 참조는 불변이다
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "연차유급휴가는 근로기준법에서 정하는 바에 따라 부여함"
+      - "이 계약에 정함이 없는 사항은 근로관계법령에 따름"
+      - "10. 근로계약, 취업규칙 등의 성실한 이행의무"
+
+  - id: values_written
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "정밀 이송 스테이지 조립 및 검사"
+      - "동탄산단로 15"

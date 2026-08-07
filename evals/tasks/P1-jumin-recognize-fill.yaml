@@ -1,0 +1,76 @@
+schema: rigorloom-eval-task/v1
+id: P1-jumin-recognize-fill
+family: petition
+title: 주민등록표 등초본 교부 신청서 인식 및 채우기
+source_scenario: P1-recognize-fill-jumin (docs/research/form-eval-scenarios.md, family 1)
+note: XC-1 변환본 사용 - 원본은 .hwp
+
+prompt: |
+  첨부한 주민등록표 등초본 교부 신청서를 열어서 신청인(개인) 칸에 채울 항목이 뭔지 알려주고,
+  아래 값으로 채워줘. 양식 모양은 절대 바뀌면 안 돼.
+  - 성명: 김도현
+  - 주소: 서울특별시 강남구 테헤란로 100
+  - 연락처: 010-0000-0000
+  - 신청 내용: 주민등록표 등본 1통, 용도는 은행 제출용
+  결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/converted/jumin-deungchobon-sinchengseo.hwpx
+
+expected_behavior:
+  - "[judgment] 접수번호, 접수일, 처리기간 같은 담당 공무원 전용 칸(음영 칸)을 알아보고 쓰지 않는다."
+  - "[judgment] 체크 표시는 [ ] 안에 √ 를 넣는 텍스트 토글로 처리한다. 폼 필드 객체로 바꾸지 않는다."
+  - "[judgment] 주민등록번호는 사용자가 주지 않았으므로 비워 두고, 필요하면 사용자에게 요청한다. 절대 임의 생성하지 않는다."
+  - "[judgment] 3쪽 유의 사항 안내문은 삭제하지 않는다."
+  - "[judgment] 서명란은 사람 몫으로 남긴다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    description: 조밀 그리드 인식 하한
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/jumin-deungchobon-sinchengseo.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 60", "len(table_map) >= 3", "len(table_map[0].cells) >= 30"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: jumin-deungchobon-sinchengseo.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: residue_clean
+    kind: residue
+    profile: "${WORK}/blank.profile.json"
+    artifact: "${WORK}/filled.hwpx"
+    baseline: "${INPUTS}/jumin-deungchobon-sinchengseo.hwpx"
+    expect_exit: 0
+    require_consumed: 1
+
+  - id: guidance_and_signature_protected
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "3쪽의 유의 사항을 읽고 작성하시기 바라며"
+      - "(서명 또는 인)"
+      - "주민등록표 열람 또는 등ㆍ초본 교부 신청서"
+
+  - id: values_written
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "김도현"
+      - "테헤란로 100"

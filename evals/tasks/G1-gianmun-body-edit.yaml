@@ -1,0 +1,75 @@
+schema: rigorloom-eval-task/v1
+id: G1-gianmun-body-edit
+family: gongmun
+title: 기안문 서식으로 공문 초안 작성
+source_scenario: G1-gianmun-body-edit (docs/research/form-eval-scenarios.md, family 2)
+note: XC-1 변환본 사용 - 원본은 .hwp. 본문 편집형 과제라 residue 소비 항목이 없어 residue 게이트 대신 보존 검사를 쓴다
+
+prompt: |
+  첨부한 기안문 서식으로 공문 초안을 만들어줘.
+  - 수신: 국가유산청장
+  - 제목: 자료 제출 협조 요청
+  - 본문 요지: 2026년도 지역 문화재 보수 실적 자료를 8월 31일까지 제출해 달라는 협조 요청
+  결재란과 발신명의는 그대로 둬. 결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx
+
+expected_behavior:
+  - "[judgment] 본문이 두문/본문/결문 구성과 서식이 이미 암시하는 항목 번호 체계(1. 가. 1))를 따른다."
+  - "[judgment] 비고 블록(이 난은 서식에 포함하지 아니한다)을 서식 안내로 인식하고 완성 공문에는 포함하지 않는다고 판단 근거와 함께 말한다."
+  - "[judgment] 직인 위치와 발신명의 칸을 건드리지 않는다."
+  - "[judgment] 수신자 표기 관례(수신자 뒤 경유 칸 처리)를 문서에서 읽어 따른다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/gianmun-byeolji-1ho.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 26", "len(table_map) >= 2"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: gianmun-byeolji-1ho.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    description: 결재란 표 기하가 본문 편집으로 흔들리지 않았는가
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: page_metrics_unchanged
+    kind: python
+    description: 용지 크기와 여백이 서식 그대로인가
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/filled.profile.json"
+    assert_json: ["page_metrics.width == 59528", "page_metrics.height == 84188", "page_metrics.margin.left == 5669"]
+
+  - id: form_furniture_intact
+    kind: text_present
+    description: 결재란/발신명의/직인 자리는 그대로 남아야 한다
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "발신명의"
+      - "직인"
+      - "행 정 기 관 명"
+      - "협조자"
+
+  - id: values_written
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "국가유산청장"
+      - "자료 제출 협조 요청"

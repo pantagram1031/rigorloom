@@ -1,0 +1,54 @@
+schema: rigorloom-eval-task/v1
+id: R1-nrf-profile
+family: research
+title: 연구재단 결과보고서 양식 구조 프로파일링
+source_scenario: R1-nrf-external-anchor (docs/research/form-eval-scenarios.md, family 4)
+note: XC-1 변환본 사용. 채우기가 아니라 프로파일링 과제 - 외부(비교내 양식) 앵커
+
+prompt: |
+  첨부한 연구 결과보고서 양식의 구조를 프로파일링해줘.
+  과제정보 표에 어떤 항목이 있는지, 섹션 목차가 어떻게 되는지, 분량 제약이 선언돼 있는지 정리해줘.
+  프로파일 JSON 은 작업 폴더에 profile.json 으로 저장해줘.
+
+input_files:
+  - tests/corpus/forms/converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx
+
+expected_behavior:
+  - "[judgment] 앞머리 고정 그리드(과제정보 표)와 흐르는 본문(섹션 목차)을 구분해서 설명한다. 한 문서 안의 1번 계열과 4번 계열 경계다."
+  - "[judgment] 분량 제약이 프로파일에서 검출되지 않았음을 사실대로 말한다. 없는 제약을 만들어내지 않는다."
+  - "[judgment] 삭제 대상으로 표시된 작성 안내 표(해당 표는 참고하신 후 반드시 삭제하시고 작성하십시오)를 안내문으로 인식하고 본문 구조와 분리해서 보고한다."
+  - "[judgment] 문서 본문 전체를 대화에 쏟아붓지 않는다. 구조 요약만 낸다."
+
+machine_checks:
+  - id: profile_produced
+    kind: file
+    description: 에이전트가 profile.json 을 남겼는가
+    path: "${WORK}/profile.json"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: nrf-gyeolgwa-bogoseo-yangsik.hwpx
+
+  - id: profile_reference
+    kind: python
+    description: 하네스가 직접 프로파일링해 인식 하한을 확인한다
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/nrf-gyeolgwa-bogoseo-yangsik.hwpx", "--out", "${WORK}/reference.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/reference.profile.json"
+    assert_json: ["len(anchors) >= 70", "len(table_map) >= 3", "len(guide_text) >= 20"]
+
+  - id: constraints_absent_is_the_truth
+    kind: python
+    description: 분량 제약은 실제로 선언돼 있지 않다 - 없는 것을 없다고 보고해야 한다
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/nrf-gyeolgwa-bogoseo-yangsik.hwpx", "--out", "${WORK}/reference.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/reference.profile.json"
+    assert_json: ["constraints.max_pages == null", "constraints.base_pt == null"]
+
+  - id: fill_report_dry_run
+    kind: python
+    description: 기존 보고서 파이프라인이 이 프로파일을 보고서 팩 가정 없이 받아들이는가
+    argv: ["modules/report/scripts/fill_report.py", "--help"]
+    expect_exit: 0
+    blocked_on: report 모듈 번들이 설치된 런에서만 평가한다
