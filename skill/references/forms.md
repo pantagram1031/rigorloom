@@ -27,20 +27,38 @@ are still mostly `.hwp`. Expect: blank arrives as `.hwp`, deliverable must be
 
 | file | anchors | tables | cells | guide_text |
 |---|---|---|---|---|
-| grant/pps-hyeopeop-seungin-sinchengseo.hwpx | 29 | 1 | 45 | 0 |
-| grant/pps-jeongbogonggae-donguiseo.hwpx | 28 | 3 | 16 | 0 |
+| grant/pps-hyeopeop-seungin-sinchengseo.hwpx | 29 | 1 | 45 | 1 (W6.2, was 0) |
+| grant/pps-jeongbogonggae-donguiseo.hwpx | 28 | 3 | 16 | 5 (W6.2, was 0) |
 
 A `form_inspect` run below these floors is a regression, not noise.
 
-## Known detector finding (open, W6 §6.2)
+## Guide-text detector: coverage after W6.2 + one bound
 
-`guide_text = 0` on both PPS forms despite real instructional prose ("내용을
-자세히 읽으신 후 …", 첨부서류 lists): the current heuristics (colored runs /
-작성예시 patterns learned on report templates) do not fire on procurement
-instruction text. Consequences:
+W6.1 (XC-1) found `guide_text = 0` on 4/12 forms (both PPS, moel-2025,
+admrul). W6.2 generalized the detector with mechanism-level pattern classes
+(`engine/scripts/form_inspect.py`, tests in
+`engine/tests/test_guide_text_patterns.py`):
+
+- `note_prefix`: paragraph starts with ※ ☞ ◁ ▷ ＊ * 주N) — the dominant
+  black-text guide convention in government forms.
+- `example`: mid-line `(예시①)`-style markers (old check was prefix-only).
+- `instruction`: -십시오 polite imperatives + instructional 기재
+  (descriptive 기재된/기재되어 excluded — that is report body prose).
+
+Result: 11/12 forms now detect guide text (pps-hyeopeop 1, pps-jeongbogonggae
+5, moel-2025 16; full table in `docs/research/xc1-conversion-bench.md` §9.1).
+
+**Documented bound — admrul-gajokdolbom-hyuga-sinchengseo stays 0, and 0 is
+correct**: that form has no removable guide text at all (only labels,
+checkbox fill-targets, and a ○○○ signature placeholder — all must survive
+assembly). A detector change that makes it non-zero has over-generalized
+into form content; a regression test locks the 0.
+
+Unchanged consequences:
 
 - Never treat "detector says 0" as "nothing to protect" — deletion
-  protection must not depend on the detector firing.
+  protection must not depend on the detector firing (admrul proves a real
+  0 exists).
 - On fixed-grid forms `constraints` also detects 0 (no base_pt/line-spacing/
   page-budget declarations): the fill gate is **layout immutability**, not
   prose-budget compliance.

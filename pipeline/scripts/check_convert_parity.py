@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
-"""Check that form conversion preserved extracted semantic content."""
+"""Check that form conversion preserved extracted semantic content.
+
+Two modes, routed on the A-side suffix:
+
+- A = content.md / extraction dir / .hwpx (original contract): full semantic
+  parity — normalized text hash, structural counts, equation scripts.
+- A = .hwp (W6.2, XC-1 §2 formalized): raw-format conversion parity. A .hwp
+  cannot be fingerprinted offline, so the source leg comes from COM
+  (engine/scripts/com_backend.py inspect — GetTextFile char total + native
+  control counts). Guarded: Windows + pyhwpx only; elsewhere the check SKIPS
+  loudly (verdict "skip"), it never silently passes. Structural counts
+  (tables / pictures / equations) must match the converted .hwpx exactly;
+  text char totals are ADVISORY only — the two extraction paths normalize
+  differently (COM GetTextFile includes field/UI chrome; the XML walk does
+  not), so char equality is not expected and not gated (XC-1 §2).
+"""
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
+import re
+import subprocess
+import sys
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -13,9 +32,116 @@ from content_extract import (
     MANIFEST_NAME,
     content_markdown_fingerprint,
     extract_document,
+    local,
+    section_names,
     semantic_fingerprint,
     sha_file,
 )
+
+ENGINE_COM_BACKEND = (
+    Path(__file__).resolve().parents[2] / "engine" / "scripts" / "com_backend.py"
+)
+
+
+def com_leg_available() -> bool:
+    """The .hwp source leg needs Windows + pyhwpx (Hancom COM)."""
+    return sys.platform == "win32" and importlib.util.find_spec("pyhwpx") is not None
+
+
+def _com_inspect(path: str | Path) -> dict:
+    """Run com_backend inspect on a .hwp and return its JSON payload."""
+    proc = subprocess.run(
+        [sys.executable, str(ENGINE_COM_BACKEND), "inspect",
+         "--file", str(path), "--preview-chars", "0"],
+        capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise ValueError(
+            f"COM inspect failed ({proc.returncode}): "
+            f"{proc.stderr.strip() or proc.stdout.strip()}")
+    payload = json.loads(proc.stdout)
+    if not payload.get("ok"):
+        raise ValueError(f"COM inspect not ok: {payload.get('error')}")
+    return payload
+
+
+def _hwpx_text_chars(path: str | Path) -> int:
+    """Whitespace-stripped char total of all <hp:t> text in a .hwpx."""
+    total = 0
+    with zipfile.ZipFile(path) as archive:
+        for name in section_names(archive.namelist()):
+            for node in ET.fromstring(archive.read(name)).iter():
+                if isinstance(node.tag, str) and local(node.tag) == "t":
+                    for chunk in node.itertext():
+                        total += len(re.sub(r"\s+", "", chunk))
+    return total
+
+
+def check_hwp_conversion(src_hwp: str | Path,
+                         converted_hwpx: str | Path) -> tuple[dict, int]:
+    """Structural parity for a raw .hwp -> .hwpx conversion (COM source leg)."""
+    src, dst = Path(src_hwp), Path(converted_hwpx)
+    if not src.is_file():
+        return usage_error(src, "check_convert_parity",
+                           "A-side .hwp source does not exist")
+    if dst.suffix.lower() != ".hwpx" or not dst.is_file():
+        return usage_error(dst, "check_convert_parity",
+                           "B-side must be the converted, existing .hwpx")
+    if not com_leg_available():
+        verdict = verdict_skeleton(
+            str(dst.resolve()), "check_convert_parity",
+            warn=[{
+                "code": "hwp_source_leg_unavailable",
+                "msg": ".hwp source leg needs Windows + pyhwpx (Hancom COM); "
+                       "skipping — this is NOT a pass",
+                "at": str(src.resolve()),
+            }],
+            extra={"mode": "hwp_conversion", "src_hwp": str(src.resolve())},
+            verdict="skip")
+        return verdict, EXIT_PASS
+    try:
+        com = _com_inspect(src)
+        hwpx = semantic_fingerprint(dst)
+        hwpx_chars = _hwpx_text_chars(dst)
+    except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError,
+            json.JSONDecodeError) as exc:
+        return usage_error(dst, "check_convert_parity",
+                           f"input could not be fingerprinted: {exc}")
+    src_counts = {
+        "tables": com.get("tables"),
+        "pictures": com.get("pictures"),
+        "equations": len(com.get("equations") or []),
+    }
+    dst_counts = {
+        "tables": hwpx["counts"]["tables"],
+        "pictures": hwpx["counts"]["pictures"],
+        "equations": hwpx["counts"]["equations"],
+    }
+    hard = []
+    if src_counts != dst_counts:
+        hard.append({
+            "code": "convert_structural_drift",
+            "msg": "native control counts differ between .hwp source (COM) "
+                   "and converted .hwpx (XML)",
+            "at": str(dst.resolve()),
+            "expected": src_counts,
+            "actual": dst_counts,
+        })
+    verdict = verdict_skeleton(
+        str(dst.resolve()), "check_convert_parity", hard=hard,
+        extra={
+            "mode": "hwp_conversion",
+            "src_hwp": str(src.resolve()),
+            "src_counts": src_counts,
+            "converted_counts": dst_counts,
+            "text_chars": {
+                "hwp_com_raw": com.get("text_chars_total"),
+                "hwpx_normalized": hwpx_chars,
+                "note": "advisory only — COM GetTextFile and the XML walk "
+                        "normalize differently (XC-1 §2); not gated",
+            },
+            "pages_document": com.get("pages"),
+        })
+    return verdict, EXIT_HARD if hard else EXIT_PASS
 
 
 def input_fingerprint(path: str | Path) -> dict:
@@ -64,6 +190,8 @@ def content_core(fingerprint: dict) -> dict:
 
 def check(extracted: str | Path, assembled: str | Path) -> tuple[dict, int]:
     extracted_path, assembled_path = Path(extracted), Path(assembled)
+    if extracted_path.suffix.lower() == ".hwp":
+        return check_hwp_conversion(extracted_path, assembled_path)
     if not extracted_path.exists():
         return usage_error(extracted_path, "check_convert_parity",
                            "A-extract input does not exist")
@@ -125,8 +253,12 @@ def check(extracted: str | Path, assembled: str | Path) -> tuple[dict, int]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="compare A-extract content with B-assembled HWPX semantics")
-    parser.add_argument("extracted", help="content.md or extraction directory")
-    parser.add_argument("assembled", help="assembled form-B .hwpx")
+    parser.add_argument(
+        "extracted",
+        help="content.md, extraction directory, .hwpx — or a source .hwp "
+             "for raw conversion parity (COM leg; Windows+pyhwpx, skips "
+             "cleanly elsewhere)")
+    parser.add_argument("assembled", help="assembled form-B / converted .hwpx")
     return parser
 
 

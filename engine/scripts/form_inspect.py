@@ -53,8 +53,31 @@ def _attr(tag_attrs, name):
 INSTRUCTION_KEYWORDS = (
     "작성하세요", "작성한다", "작성합니다", "입력", "지우고", "삭제",
     "기술합니다", "기술한다", "제시합니다", "표기합니다", "기록합니다",
+    # 존대 명령형(-십시오): 관공서 서식 안내문("…결정하여 주십시오",
+    # "…작성하십시오"). 보고서 본문(평서체)에는 나타나지 않는 어미.
+    # 동기 파일: pps-jeongbogonggae-donguiseo(W6.2).
+    "십시오",
 )
+# 지시형 "기재"(관공서 서식의 대표 지시어): "…만 기재", "등으로 기재",
+# "명확히 기재(…)" — 단, 서술형(기재된/기재되어)은 본문 인용체로 오탐이므로
+# 제외한다. 동기 파일: moel-pyojun-geunrogyeyakseo-2013/2025(W6.2).
+INSTRUCTION_RE = re.compile(r'기재(?![된되])')
 EXAMPLE_PREFIXES = ("예:", "예시", "(예")
+# 예시 마커가 문두가 아닌 위치에 오는 관공서 관례: "ㅇ (예시①) 주5일 …".
+# "(예외…)", "(예상…)" 같은 본문 괄호는 닫는 괄호 직전까지 숫자/원문자만
+# 허용하므로 매치되지 않는다. 동기 파일: moel-pyojun-geunrogyeyakseo-2025.
+EXAMPLE_MARK_RE = re.compile(r'\(예시?\s*[①-⑳0-9]*\)')
+# 주석/안내 접두 기호 관례(관공서 서식): ※·☞·◁·▷·＊·*·주N). 본문 산문이
+# 이 기호로 문단을 시작하는 일은 없다(보고서 corpus 스틸-캐치 픽스처로 고정).
+# 동기 파일: moel-2025(※/◁◁), pps-jeongbogonggae-donguiseo(※/☞),
+# pps-hyeopeop-seungin-sinchengseo(*).
+NOTE_PREFIX_RE = re.compile(r'^(?:※|☞|◁|▷|＊|\*|주\d{0,2}\))')
+
+
+def _has_instruction(text):
+    """지시어 포함 여부(키워드 + 지시형 '기재' 정규식)."""
+    return any(kw in text for kw in INSTRUCTION_KEYWORDS) or bool(
+        INSTRUCTION_RE.search(text))
 
 
 def die(msg, code=2):
@@ -254,13 +277,16 @@ def _looks_like_citation(text):
 
 
 def _classify_guide(text, colored):
-    """guide_text 분류 reason 우선순위: colored > example > instruction."""
+    """guide_text 분류 reason 우선순위: colored > note_prefix > example > instruction."""
     stripped = text.strip()
     if colored:
         return "colored"
-    if any(stripped.startswith(p) for p in EXAMPLE_PREFIXES) or "예:" in stripped:
+    if NOTE_PREFIX_RE.match(stripped):
+        return "note_prefix"
+    if any(stripped.startswith(p) for p in EXAMPLE_PREFIXES) or "예:" in stripped \
+            or EXAMPLE_MARK_RE.search(stripped):
         return "example"
-    if any(kw in stripped for kw in INSTRUCTION_KEYWORDS):
+    if _has_instruction(stripped):
         return "instruction"
     return None
 
@@ -623,7 +649,7 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
 
             reason = _classify_guide(text, colored) if text.strip() else None
             if reason:
-                instruction_kw = any(kw in text for kw in INSTRUCTION_KEYWORDS)
+                instruction_kw = _has_instruction(text)
                 excluded = is_anchor or is_heading_pattern or is_bracket_placeholder
                 if reason == "colored" and instruction_kw:
                     confidence = "high"

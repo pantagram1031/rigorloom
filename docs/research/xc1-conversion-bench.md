@@ -1,6 +1,7 @@
 # XC-1: hwp→hwpx conversion + per-family recognition bench (W6.1)
 
 Status: DONE (2026-08-06/07, operator machine, branch `w6-xc1-bench`).
+**W6.2 follow-up: every open finding below is now FIXED or BOUNDED — see §9.**
 Executes the `XC-1-convert-fidelity` scenario from
 `docs/research/form-eval-scenarios.md` §Cross-cutting and unblocks all 7
 XC-1-blocked scenarios in that doc for W6.2 onward.
@@ -101,6 +102,7 @@ parity check, not a text-identity check, and should not be read as either.
   `content_extract.py`'s picture detection — not investigated further here
   (out of this bench's scope; COM discipline budget was spent on the
   conversion+probe+render loop, not on this tool's internals).
+  **RESOLVED (W6.2, §9.2): the COM counter was wrong, not `content_extract`.**
 - **nrf pages: 4 (both source `.hwp` AND the freshly-converted `.hwpx`,
   confirmed by a direct COM `inspect` on `converted/nrf-...hwpx` — see §4)
   vs 2 in the exported PDF.** The hwp→hwpx *conversion* is not the problem;
@@ -164,7 +166,9 @@ The current heuristics (colored runs / 작성예시 patterns tuned on report
 templates) miss guide text on at least 4/12 forms across 3 different
 families (petition, hr, grant-procurement) — this is a detector-coverage
 gap, not a family-specific one. Feeds directly into the §6.2 fix-or-bound
-decision the scenario doc anticipated.
+decision the scenario doc anticipated. **RESOLVED (W6.2, §9.1): 3/4 fixed
+with mechanism-level pattern classes; admrul is a documented bound (its
+correct guide_text count is 0).**
 
 ### Table-count discrepancy: form_inspect vs content_extract
 
@@ -221,19 +225,24 @@ a conversion-step finding**: the hwp→hwpx conversion this bench measures
 passed; the hwpx→PDF render (used here only for the eyeball PNGs and the
 T25 floor, not for the corpus's certified `.hwpx` artifacts) undercounted
 pages on 1/10 files. Flagged for whoever next touches the PDF-export path
-in `com_backend.py`.
+in `com_backend.py`. **RESOLVED (W6.2, §9.3): root cause is a
+document-stored 2-up print setting, causally isolated and fixed — and the
+"mostly blank continuation sheets" inference above was WRONG; nothing was
+blank, the 4 pages were imposed 2-per-sheet.**
 
 ## 5. Per-family eyeball PNGs (fitz, 130 dpi, first form per family)
 
 Rendered from the PDFs in §4, page 1 only. Paths are inside the worktree's
 local scratch dir (not committed — `.scratch/` is untracked); the
-coordinator should open these directly on the operator machine:
+coordinator should open these directly on the operator machine
+(paths de-profiled in W6.2 for privacy_scan — the worktree root is the
+operator's local `rigorloom-w6-xc1` checkout):
 
-- petition: `C:\Users\SAMSUNG\dev\rigorloom-w6-xc1\.scratch\xc1-png\petition.png` (jumin-deungchobon-sinchengseo, p.1/3)
-- gongmun: `C:\Users\SAMSUNG\dev\rigorloom-w6-xc1\.scratch\xc1-png\gongmun.png` (gianmun-byeolji-1ho, p.1/1)
-- research: `C:\Users\SAMSUNG\dev\rigorloom-w6-xc1\.scratch\xc1-png\research.png` (nrf-gyeolgwa-bogoseo-yangsik, p.1/2 — see §4 caveat on this file's PDF page count)
-- grant: `C:\Users\SAMSUNG\dev\rigorloom-w6-xc1\.scratch\xc1-png\grant.png` (kstartup-jiwon-sincheongseo-saeopgyehoekseo, p.1/22)
-- hr: `C:\Users\SAMSUNG\dev\rigorloom-w6-xc1\.scratch\xc1-png\hr.png` (moel-pyojun-geunrogyeyakseo-2013, p.1/7)
+- petition: `<w6-xc1 worktree>\.scratch\xc1-png\petition.png` (jumin-deungchobon-sinchengseo, p.1/3)
+- gongmun: `<w6-xc1 worktree>\.scratch\xc1-png\gongmun.png` (gianmun-byeolji-1ho, p.1/1)
+- research: `<w6-xc1 worktree>\.scratch\xc1-png\research.png` (nrf-gyeolgwa-bogoseo-yangsik, p.1/2 — see §4 caveat on this file's PDF page count)
+- grant: `<w6-xc1 worktree>\.scratch\xc1-png\grant.png` (kstartup-jiwon-sincheongseo-saeopgyehoekseo, p.1/22)
+- hr: `<w6-xc1 worktree>\.scratch\xc1-png\hr.png` (moel-pyojun-geunrogyeyakseo-2013, p.1/7)
 
 school and corp have 0 corpus members — no PNG possible, consistent with
 the documented gap/boundary.
@@ -317,3 +326,141 @@ skips unrelated to this bench.
 - **Guide-text detector gap (§3) is now a 4/12 finding across 3 families**,
   up from Bench-0's "0/2 on procurement" — this materially widens the open
   6.2 item; not fixed here (out of scope for a conversion bench).
+
+## 9. W6.2 fix-or-bound follow-up (2026-08-07, branch `w6-fix-or-bound`)
+
+Every §2–§4 open finding got a mechanism fix with a regression test, or
+became a documented capability boundary. COM discipline held: strictly
+serial, no `--kill-stale`, `tasklist` checked for `Hwp.exe` before every
+call (8 COM calls total: 3 for the nrf isolation, 2 inspect verifications,
+1 fixed-path re-export, 2 live parity runs).
+
+### 9.1 Guide-text detector — generalized (3 fixed, 1 bounded)
+
+Per-miss diagnosis (run dump of paragraph texts + run colors): all four
+misses are **all-black** text, so the colored-run heuristic can never fire;
+what actually marks guide text there is structural convention:
+
+| miss | what marks its guide text | pattern class added |
+|---|---|---|
+| moel-2025 (hr) | `※ (참고) … 기재(…)` notes, `◁◁ … ▷▷` wrapper, `ㅇ (예시①) …` | note-prefix, example-mark, instructional 기재 |
+| pps-jeongbogonggae (grant) | `※ …` rights notes, `☞ … 동의하십니까?`, `…결정하여 주십시오` | note-prefix, -십시오 imperative |
+| pps-hyeopeop (grant) | `* 본 협업승인 신청서는 1차 심사 통과기업에 한해 제출` | note-prefix (`*`) |
+| admrul (petition) | **nothing** — see bound below | — |
+
+Mechanism-level classes added to `engine/scripts/form_inspect.py` (pattern
+classes, no per-file strings):
+
+- `note_prefix` (new reason): paragraph starts with `※ ☞ ◁ ▷ ＊ * 주N)`.
+- `example`: extended with mid-line `(예시①)`-style markers
+  (`EXAMPLE_MARK_RE`) — the old check was prefix-only.
+- `instruction`: `-십시오` polite imperatives + instructional `기재`
+  (regex-guarded to exclude descriptive `기재된/기재되어`, which is report
+  body prose).
+
+Every class has (a) a motivating hit asserted with the exact corpus string
+and (b) still-catches negatives (report-style body prose incl. `기재된`,
+`주요/주기…`, `(예상 …)`, mid-sentence `(*)`) in
+`engine/tests/test_guide_text_patterns.py`, plus corpus-integration floors
+(pps1>=1, pps2>=5, moel-2025>=16, moel-2013>=22). The 소논문 report-template
+fixture pins are unchanged (guide 16 / removal 11, all `colored`) — the new
+classes fire on zero report-template paragraphs.
+
+**Bound (documented, locked by test): admrul-gajokdolbom-hyuga-sinchengseo
+guide_text = 0 is CORRECT.** The form contains only field labels, checkbox
+fill-targets (`[  ]가족돌봄 휴직`) and a `○○○ (인)` signature placeholder —
+every candidate is fill/substitution material whose deletion would break
+the form; there is no removable instruction text. A detector that "fixes"
+this file has over-generalized (test_admrul_bound_locked_at_zero).
+
+Re-probed 12/12 (probe_results.json updated; only `guide_text` moved):
+
+| slug | family | guide_text W6.1 → W6.2 (reasons) |
+|---|---|---|
+| jumin-deungchobon-sinchengseo | petition | 5 → 14 (colored 1, note_prefix 9, instruction 4) |
+| jeongbo-gonggae-cheongguseo | petition | 2 → 5 (colored 2, note_prefix 3) |
+| saeopja-deungnok-sinchengseo | petition | 7 → 19 (colored 7, note_prefix 12) |
+| admrul-gajokdolbom-hyuga-sinchengseo | petition | 0 → 0 (**bound**, correct) |
+| gianmun-byeolji-1ho | gongmun | 1 → 1 (colored 1) |
+| gianmun-byeolji-2ho | gongmun | 1 → 2 (+note_prefix 1) |
+| nrf-gyeolgwa-bogoseo-yangsik | research | 20 → 22 (colored 18, instruction 3, note_prefix 1) |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | grant | 152 → 159 (colored 145, +14 structural) |
+| pps-hyeopeop-seungin-sinchengseo | grant | **0 → 1** (note_prefix 1) |
+| pps-jeongbogonggae-donguiseo | grant | **0 → 5** (note_prefix 4, instruction 1) |
+| moel-pyojun-geunrogyeyakseo-2013 | hr | 1 → 22 (note_prefix 19, instruction 2, colored 1) |
+| moel-pyojun-geunrogyeyakseo-2025 | hr | **0 → 16** (note_prefix 12, example 4) |
+
+`constraints_detected` stays 0 on all 12 — unchanged Bench-0 conclusion.
+
+### 9.2 kstartup picture count — COM counter was wrong, FIXED
+
+Ground truth from the converted hwpx XML: **zero `hp:pic` elements, zero
+`BinData/` members**; the five COM-visible "pictures" are five `hp:rect`
+drawing shapes. `com_backend.py inspect` counted every `gso` control as a
+picture, but `gso` is the shared CtrlID of *all* drawing objects.
+`content_extract`'s 0 was correct all along.
+
+Fix: `inspect()` now classifies `gso` by `UserDesc` — `그림/이미지` counts
+as picture, everything else lands in a new `shapes` field (information
+preserved, not discarded). COM-verified: kstartup pictures 5→**0**,
+shapes **5**; jumin (one real picture) stays pictures **1**. Offline
+regression: `engine/tests/test_com_backend_offline.py` (fake-Hwp ctrl
+chain). Limitation: `UserDesc` is UI-language-dependent (Korean install
+assumed — same assumption the rest of the backend already makes).
+
+### 9.3 NRF PDF page drop — document-stored 2-up print setting, FIXED
+
+Reproduced (COM, serial): document `PageCount = 4`, exported PDF = 2 pages
+— but the PDF pages are **841×595 landscape** (every other corpus render is
+595×841 portrait) and each contains two full source pages side by side.
+Nothing was dropped or blank: the export applied **2-up print imposition
+(모아찍기)**. The trigger is the document's own stored print settings —
+`settings.xml` → `PrintInfo` → `PrintMethod = 4` — which Hancom
+`SaveAs("PDF")` honors. Causal isolation: flipping only that value to 0 in
+a scratch copy and re-exporting yields a 4-page portrait PDF. (gianmun-1/2ho
+also carry PrintMethod=4 but are 1-page documents — nothing to pair, so
+their renders were unaffected; that is why the class only showed on nrf.)
+
+Fix in `com_backend.py convert` (→PDF):
+
+1. **Print-method normalization**: a `.hwpx` source with stored
+   `PrintMethod != 0` is staged to a temp copy with PrintMethod=0 before
+   export (original untouched); the output JSON reports
+   `print_method_normalized: {from: 4, to: 0}`.
+2. **Page-count parity backstop**: convert→PDF output now always reports
+   `pages_document` (COM PageCount) vs `pages_pdf` (fitz) and emits a loud
+   WARN (JSON `warn` + stderr) on mismatch — so the imposition/page-drop
+   class is DETECTED even where it cannot be normalized (`.hwp` sources are
+   not zips; their parity mismatch surfaces instead of vanishing).
+
+COM-verified on nrf: `{"print_method_normalized": {"from": 4, "to": 0},
+"pages_document": 4, "pages_pdf": 4}`, portrait. Offline regressions for
+the staging helper (byte-preservation, no-op paths, non-zip input) and the
+fitz counter in `engine/tests/test_com_backend_offline.py`.
+`tests/corpus/forms/render/nrf-….pdf` is left as the W6.1 artifact it is
+(manifest-pinned bench output, superseded by this analysis, not silently
+regenerated).
+
+### 9.4 check_convert_parity — .hwp source leg formalized
+
+The bench's §2 substitute method is now a first-class, guarded code path:
+`check_convert_parity.py A.hwp B.hwpx` runs conversion parity — source leg
+via COM (`com_backend.py inspect`: GetTextFile char total + native control
+counts), converted leg via offline XML (`semantic_fingerprint`). Structural
+counts (tables/pictures/equations) must match exactly (HARD
+`convert_structural_drift`); text char totals are recorded **advisory
+only** (the §2 normalization mismatch is a documented property, not a
+gate). On non-Windows / no-pyhwpx environments the check emits verdict
+`skip` with a `hwp_source_leg_unavailable` warn — a skip, never a silent
+pass. Tests: `pipeline/tests/test_check_convert_parity.py` (skip path,
+pass path, drift path — COM leg mocked). Live runs: jumin pair 3/1/0 ==
+3/1/0 pass; kstartup pair — the formerly divergent one — now 42/0/0 ==
+42/0/0 pass.
+
+### 9.5 CI compose smoke on PR events — already satisfied, verified
+
+`.github/workflows/ci.yml` `on:` is `push: branches [main]` **plus bare
+`pull_request:`**, and neither the `test` job (which contains the compose
+smoke step) nor any step carries an `event_name` condition — the smoke
+already runs in PR gates on both OSes and both module-set points. Verified
+by inspection; no change needed, nothing committed for this item.
