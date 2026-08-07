@@ -22,7 +22,7 @@ from pathlib import Path
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
-from checker_base import cli_main, usage_error  # noqa: E402
+from checker_base import _utf8_stdio, cli_main, usage_error  # noqa: E402
 
 _ENGINE_SCRIPTS = _SCRIPTS_DIR.parent.parent / "engine" / "scripts"
 
@@ -78,6 +78,8 @@ def check(ws, plan=None, form_profile=None):
 
 
 def main(argv=None):
+    # cp949-safe --help: reconfigure BEFORE parse_args (see cli_io.py).
+    _utf8_stdio()
     import argparse
     ap = argparse.ArgumentParser(description="stage 2.5 layout gate delegate")
     ap.add_argument("workspace")

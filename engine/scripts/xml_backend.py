@@ -16,6 +16,11 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
+
 
 SUPPORTED_OPS = {
     "goto_text", "insert_text", "insert_equation", "insert_table",
@@ -1120,6 +1125,8 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     try:
         args = parse_args(argv)
         source = Path(args.file)

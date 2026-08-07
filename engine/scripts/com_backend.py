@@ -61,6 +61,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from cli_io import utf8_stdio  # noqa: E402
 from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
 
 
@@ -1503,6 +1504,8 @@ def _validate_ops(payload):
 # ---------------------------------------------------------------------------
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

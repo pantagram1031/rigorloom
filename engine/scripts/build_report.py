@@ -27,6 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from cli_io import utf8_stdio  # noqa: E402
 from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
 
 TAG_LINE = re.compile(r"^\[\[(/?[A-Za-z]+)(.*?)\]\]\s*$")
@@ -719,6 +720,8 @@ def check_form_anchors(form, sections):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--content", required=True, help="bundle/content.md 경로")
     ap.add_argument("--form", help="양식 .hwp/.hwpx (inspect 앵커 대조용)")

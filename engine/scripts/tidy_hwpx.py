@@ -78,6 +78,11 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
+
 NS = r'[A-Za-z0-9]+'
 P_TAG_RE = re.compile(r'<(' + NS + r'):p\b[^>]*>.*?</\1:p>', re.S)
 P_OPEN_RE = re.compile(r'<(' + NS + r'):p\b([^>]*)>', re.S)
@@ -958,6 +963,8 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("file", help=".hwpx 경로")

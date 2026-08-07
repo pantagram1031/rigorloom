@@ -48,6 +48,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cli_io import utf8_stdio  # noqa: E402
 from hwpx_tables import scan_tables  # noqa: E402
 # T30 사전 점검 — script/scale/offset 어휘는 visual_verify(사후 검출)와 공유하고,
 # '어느 런을 채우는가'는 preedit(실제 채우는 쪽)에서 그대로 가져온다.
@@ -913,6 +914,8 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("form", help=".hwpx 양식 경로")

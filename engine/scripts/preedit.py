@@ -68,6 +68,7 @@ from xml.sax.saxutils import escape
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
 import guards  # noqa: E402
 
 # tidy_hwpx와 동일 관용구: 접두사(hp:/hs:/hh:)는 가변이므로 로컬네임 매칭.
@@ -1247,6 +1248,8 @@ def _emit(result):
 
 
 def main(argv=None):
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)

@@ -95,6 +95,61 @@ alone.
 - **Evals**: `G1-gianmun-body-edit` gained two `check_gongmun` machine checks
   (blank-form shape, produced-draft structure).
 
+### Engine — defects found by the second clean-room cross-model run (Opus)
+
+- **T30 becomes preventable: a charPr pre-flight for fill targets.** T30 was
+  detectable (`visual_verify`'s `fill_charpr_script_mismatch`) but not
+  avoidable: `fill-cells` "preserves the run's charPr" is documented as the
+  safe behavior, and on the PPS form cell (10,2)'s empty run carried a charPr
+  identical to body text plus `<hh:supscript/>` — a correct-looking fill
+  rendered at ~6.35pt raised, and finding the right `--charpr` id meant
+  reading `header.xml` by hand, which the shipped "structure only, never dump
+  body" contract actively discourages. Now: `form_inspect` reports
+  `body_baseline_charpr` once at the top level and, on every `fill_target`
+  cell, the `charpr` the fill would inherit, a `script_anomaly` flag, and
+  `charpr_suggested` (plus `script_anomaly_targets` for the anomalies alone);
+  `fill-cells` refuses an anomalous target that was given no explicit id
+  (exit 3, `code_name` `fill_charpr_script_anomaly`, naming the cell, the
+  anomalous charPr, the suggested id and the exact flag to pass) instead of
+  silently producing the 6pt fill. The comparison itself — profile
+  extraction, signature, body-baseline choice, difference test — moved to
+  `engine/scripts/charpr_script.py` and is imported by BOTH the pre-flight
+  and `visual_verify`, so the two halves cannot disagree; `preedit`'s
+  `fill_target_run_charpr` is likewise shared with `form_inspect` so they
+  cannot disagree about *which* run gets written. Non-target runs are never
+  compared, so an intentionally superscripted footnote marker stays out of
+  scope by construction. Corpus calibration (pinned by tests, not folklore):
+  6 of the 10 converted corpus forms carry at least one anomalous target and
+  `jeongbo-gonggae-cheongguseo` carries 18 of 19 — mostly a 2–5 pp `ratio`
+  delta that is the form's own typography. The refusal stands anyway, because
+  the post-flight gate compares the same five properties and would HARD on
+  those fills later; loosening the pre-flight alone would produce the worst
+  combination (pre-flight clean, gate refuses). To keep it workable the
+  refusal names every anomalous target at once and carries `suggested_flags`,
+  the ready-to-paste `--charpr-per-cell` argument list.
+- **T32 — `--charpr` is batch-wide; new `--charpr-per-cell`.** `--charpr`
+  applies to every target in the call, an undocumented constraint that is
+  only safe when all targets share a charPr — exactly what the T30 pre-flight
+  breaks. `--charpr-per-cell ROW,COL=ID` (repeatable) sets one target's id and
+  wins over `--charpr`; an address it names that is not in the fill list, or a
+  duplicate address, is a usage error rather than a silent no-op. The
+  batch-wide scope is now stated in the CLI help, the docstring and
+  `operations.md`.
+- **cp949-safe `--help` on every shipped entry point.** `com_backend.py
+  --help` died with `UnicodeEncodeError` (cp949, an em-dash in the top-level
+  parser description) on a Korean-locale Windows console — the platform the
+  COM path exists for. Subcommand help worked, which is why it went unnoticed:
+  only the top-level `--help` prints the parser description. The stdout/stderr
+  UTF-8 guard now runs at entry (before `parse_args`) in every shipped CLI —
+  12 in `engine/scripts` via the new `engine/scripts/cli_io.py`, and in
+  `pipeline/scripts` via `checker_base._utf8_stdio`, including inside
+  `checker_base.cli_main` so every checker routed through it is covered by
+  construction. 11 CLIs were broken and 8 more were latently unguarded. The
+  real deliverable is `tests/test_cli_cp949_help.py`: it DISCOVERS every
+  argparse entry point in both shipped trees and runs `--help` in a subprocess
+  under `PYTHONIOENCODING=cp949`, asserting exit 0 with no traceback — so the
+  whole class cannot be reintroduced by the next docstring.
+
 ## v0.16.0 — unified core and modules
 
 The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):
