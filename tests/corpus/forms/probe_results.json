@@ -1,221 +1,221 @@
 {
-  "schema_version": 1,
-  "description": "Bench-0 descriptive baseline, extended in W6.1 (XC-1): engine/scripts/form_inspect.py (offline XML) run over every corpus member now available as .hwpx — the 2 native hwpx plus all 10 XC-1-converted hwp->hwpx siblings (tests/corpus/forms/converted/). Not a pass/fail gate.",
-  "tool": "engine/scripts/form_inspect.py",
-  "results": [
-    {
-      "slug": "jumin-deungchobon-sinchengseo",
-      "family": "petition",
-      "path": "converted/jumin-deungchobon-sinchengseo.hwpx",
-      "status": "probed",
-      "anchors": 68,
-      "guide_text": 5,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 3,
-      "table_cells": 85,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "jeongbo-gonggae-cheongguseo",
-      "family": "petition",
-      "path": "converted/jeongbo-gonggae-cheongguseo.hwpx",
-      "status": "probed",
-      "anchors": 34,
-      "guide_text": 2,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 1,
-      "table_cells": 66,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "saeopja-deungnok-sinchengseo",
-      "family": "petition",
-      "path": "converted/saeopja-deungnok-sinchengseo.hwpx",
-      "status": "probed",
-      "anchors": 646,
-      "guide_text": 7,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 6,
-      "table_cells": 782,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
-      "family": "petition",
-      "path": "converted/admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
-      "status": "probed",
-      "anchors": 16,
-      "guide_text": 0,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 2,
-      "table_cells": 16,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "gianmun-byeolji-1ho",
-      "family": "gongmun",
-      "path": "converted/gianmun-byeolji-1ho.hwpx",
-      "status": "probed",
-      "anchors": 26,
-      "guide_text": 1,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 2,
-      "table_cells": 5,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "gianmun-byeolji-2ho",
-      "family": "gongmun",
-      "path": "converted/gianmun-byeolji-2ho.hwpx",
-      "status": "probed",
-      "anchors": 15,
-      "guide_text": 1,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 1,
-      "table_cells": 48,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "nrf-gyeolgwa-bogoseo-yangsik",
-      "family": "research",
-      "path": "converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx",
-      "status": "probed",
-      "anchors": 72,
-      "guide_text": 20,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 3,
-      "table_cells": 32,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
-      "family": "grant",
-      "path": "converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
-      "status": "probed",
-      "anchors": 357,
-      "guide_text": 152,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 39,
-      "table_cells": 362,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "pps-hyeopeop-seungin-sinchengseo",
-      "family": "grant",
-      "path": "grant/pps-hyeopeop-seungin-sinchengseo.hwpx",
-      "status": "probed",
-      "anchors": 29,
-      "guide_text": 0,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 1,
-      "table_cells": 45
-    },
-    {
-      "slug": "pps-jeongbogonggae-donguiseo",
-      "family": "grant",
-      "path": "grant/pps-jeongbogonggae-donguiseo.hwpx",
-      "status": "probed",
-      "anchors": 28,
-      "guide_text": 0,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 3,
-      "table_cells": 16
-    },
-    {
-      "slug": "moel-pyojun-geunrogyeyakseo-2013",
-      "family": "hr",
-      "path": "converted/moel-pyojun-geunrogyeyakseo-2013.hwpx",
-      "status": "probed",
-      "anchors": 159,
-      "guide_text": 1,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 7,
-      "table_cells": 69,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    },
-    {
-      "slug": "moel-pyojun-geunrogyeyakseo-2025",
-      "family": "hr",
-      "path": "converted/moel-pyojun-geunrogyeyakseo-2025.hwpx",
-      "status": "probed",
-      "anchors": 203,
-      "guide_text": 0,
-      "constraints_detected": 0,
-      "constraints": {
-        "base_pt": null,
-        "line_spacing_pct": null,
-        "max_pages": null,
-        "min_pages": null
-      },
-      "tables": 9,
-      "table_cells": 101,
-      "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
-    }
-  ]
+ "schema_version": 1,
+ "description": "Bench-0 descriptive baseline, extended in W6.1 (XC-1) and re-probed in W6.2 after the guide-text detector generalization (note_prefix/example-mark/instruction pattern classes — engine/scripts/form_inspect.py): offline XML probe over every corpus member available as .hwpx (2 native + 10 XC-1-converted). Not a pass/fail gate. admrul guide_text=0 is a documented bound (no removable guide text exists in that form), not a detector miss.",
+ "tool": "engine/scripts/form_inspect.py",
+ "results": [
+  {
+   "slug": "jumin-deungchobon-sinchengseo",
+   "family": "petition",
+   "path": "converted/jumin-deungchobon-sinchengseo.hwpx",
+   "status": "probed",
+   "anchors": 68,
+   "guide_text": 14,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 3,
+   "table_cells": 85,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "jeongbo-gonggae-cheongguseo",
+   "family": "petition",
+   "path": "converted/jeongbo-gonggae-cheongguseo.hwpx",
+   "status": "probed",
+   "anchors": 34,
+   "guide_text": 5,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 1,
+   "table_cells": 66,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "saeopja-deungnok-sinchengseo",
+   "family": "petition",
+   "path": "converted/saeopja-deungnok-sinchengseo.hwpx",
+   "status": "probed",
+   "anchors": 646,
+   "guide_text": 19,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 6,
+   "table_cells": 782,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "admrul-gajokdolbom-hyuga-sinchengseo",
+   "family": "petition",
+   "path": "converted/admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+   "status": "probed",
+   "anchors": 16,
+   "guide_text": 0,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 2,
+   "table_cells": 16,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "gianmun-byeolji-1ho",
+   "family": "gongmun",
+   "path": "converted/gianmun-byeolji-1ho.hwpx",
+   "status": "probed",
+   "anchors": 26,
+   "guide_text": 1,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 2,
+   "table_cells": 5,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "gianmun-byeolji-2ho",
+   "family": "gongmun",
+   "path": "converted/gianmun-byeolji-2ho.hwpx",
+   "status": "probed",
+   "anchors": 15,
+   "guide_text": 2,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 1,
+   "table_cells": 48,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "nrf-gyeolgwa-bogoseo-yangsik",
+   "family": "research",
+   "path": "converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+   "status": "probed",
+   "anchors": 72,
+   "guide_text": 22,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 3,
+   "table_cells": 32,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+   "family": "grant",
+   "path": "converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+   "status": "probed",
+   "anchors": 357,
+   "guide_text": 159,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 39,
+   "table_cells": 362,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "pps-hyeopeop-seungin-sinchengseo",
+   "family": "grant",
+   "path": "grant/pps-hyeopeop-seungin-sinchengseo.hwpx",
+   "status": "probed",
+   "anchors": 29,
+   "guide_text": 1,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 1,
+   "table_cells": 45
+  },
+  {
+   "slug": "pps-jeongbogonggae-donguiseo",
+   "family": "grant",
+   "path": "grant/pps-jeongbogonggae-donguiseo.hwpx",
+   "status": "probed",
+   "anchors": 28,
+   "guide_text": 5,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 3,
+   "table_cells": 16
+  },
+  {
+   "slug": "moel-pyojun-geunrogyeyakseo-2013",
+   "family": "hr",
+   "path": "converted/moel-pyojun-geunrogyeyakseo-2013.hwpx",
+   "status": "probed",
+   "anchors": 159,
+   "guide_text": 22,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 7,
+   "table_cells": 69,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  },
+  {
+   "slug": "moel-pyojun-geunrogyeyakseo-2025",
+   "family": "hr",
+   "path": "converted/moel-pyojun-geunrogyeyakseo-2025.hwpx",
+   "status": "probed",
+   "anchors": 203,
+   "guide_text": 16,
+   "constraints_detected": 0,
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "tables": 9,
+   "table_cells": 101,
+   "note": "W6.1 XC-1: probed on the converted .hwpx sibling (source was format=hwp, offline-unprobable before conversion). Source path retained in manifest.json documents[]."
+  }
+ ]
 }
