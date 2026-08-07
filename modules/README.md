@@ -100,6 +100,25 @@ enablement error, not a silent skip.
 | `playbooks` | list of paths | Stage/task playbooks the module contributes. |
 | `preflight` | list of `{name, script}` | Submission-preflight contributions. Core's `submission_preflight` (artifact/proof half: P1/P2/P3/P5, form-structure hash, verdict_schema) asks the registry for enabled modules' contributions via `enabled_preflight()` and subprocess-composes each script's JSON findings source-tagged into its own verdict — the same merge semantics the former in-process saeteuk composition had. `name` is unique across enabled modules; `script` honours the checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3) and is invoked as `python <script> <workspace>`. No modules enabled = those checks simply absent (absence is not failure). |
 
+### Modules may contribute visual-verify expectations
+
+`pipeline/scripts/visual_verify.py` (the render→judge loop; see
+`skill/references/operations.md` §10 and `docs/research/visual-rubric.md`)
+takes an optional `--expectations <json>` declaring what the render is
+supposed to look like: `pages_document`, `page_budget`, `base_pt`,
+`line_spacing_pct`, `margins_mm`, `fill_map`, `intentionally_blank`,
+`blank_pages`, `forbidden_text`. Anything not declared is not checked, and
+the verdict lists it under `deterministic.skipped`.
+
+A distribution module is the natural author of that file — a report module
+knows its own page budget and body point size; a form-family module knows
+which cells are staff-only. **There is no new `provides` key for this.** A
+module ships the expectations as ordinary payload (a `references/` JSON, or a
+playbook/CLI step that composes one from the workspace) and the caller passes
+the path. Core stays name-blind: `visual_verify` reads a JSON file, never a
+module registry entry, so a core-only install runs the same loop with fewer
+declarations and says so out loud in `skipped`.
+
 ## Enablement model
 
 - Enablement is **per install**, recorded in `modules/enabled.yaml`:
