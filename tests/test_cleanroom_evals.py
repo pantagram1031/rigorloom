@@ -699,6 +699,231 @@ class TestRequiresModuleGate:
 
 
 # --------------------------------------------------------------------------- #
+# 4c. checkers[].wants: [baseline] — the harness supplies the blank form (G3)
+# --------------------------------------------------------------------------- #
+# The checker under test records the argv it was given, so the tests can assert
+# what the HARNESS decided rather than trusting a verdict.
+ARGV_RECORDER = """\
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[0]).with_name("argv_seen.json")
+out.write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+print(json.dumps({"ok": True, "checker": "recorder", "hard": [], "warn": [],
+                  "counts": {"hard": 0, "warn": 0}}))
+"""
+
+
+def _baseline_task(*, declare_baseline: bool) -> dict:
+    task = {
+        "schema": cleanroom.TASK_SCHEMA,
+        "id": f"wants-{'with' if declare_baseline else 'without'}-baseline",
+        "family": "gongmun",
+        "prompt": "wants probe",
+        "input_files": [
+            "tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx"],
+        "expected_behavior": ["[judgment] n/a"],
+        "machine_checks": [{"id": "probe", "kind": "file",
+                            "path": "${WORK}/nothing", "mode": "absent"}],
+    }
+    if declare_baseline:
+        task["baseline"] = "gianmun-byeolji-1ho.hwpx"
+    return task
+
+
+class TestCheckerWantsBaseline:
+    """A checker DECLARES it needs the blank baseline; the harness supplies it.
+
+    The harness is the consumer that was wired (evals/README.md §"wants:
+    [baseline]"): it is the only runner that actually invokes gongmun's
+    check_gongmun, and its tasks are where the blank form is declared.
+    """
+
+    @pytest.fixture
+    def recorder(self, prepared):
+        """A checker script inside the sandbox, plus the registry row that
+        declares wants: [baseline] for it."""
+        work = prepared["root"] / "work" / "recorder"
+        work.mkdir(parents=True, exist_ok=True)
+        script = work / "recorder.py"
+        script.write_text(ARGV_RECORDER, encoding="utf-8")
+        seen = work / "argv_seen.json"
+        if seen.exists():
+            seen.unlink()
+        return {"script": script, "seen": seen, "work": work,
+                "sandbox": cleanroom.Sandbox(prepared["root"])}
+
+    @staticmethod
+    def _variables(recorder) -> dict[str, str]:
+        sandbox = recorder["sandbox"]
+        return {"WORK": str(recorder["work"]), "INSTALL": str(sandbox.install),
+                "SANDBOX": str(sandbox.root),
+                "INPUTS": str(recorder["work"] / "inputs"),
+                "SKILLS": str(sandbox.skills)}
+
+    def test_a_declaring_checker_receives_the_baseline(self, recorder, tmp_path):
+        blank = recorder["work"] / "blank.hwpx"
+        blank.write_bytes(b"blank form")
+        result = cleanroom.run_machine_check(
+            recorder["sandbox"],
+            {"id": "wants", "kind": "python",
+             "argv": [str(recorder["script"]), "${WORK}/filled.hwpx"]},
+            self._variables(recorder),
+            checkers=[{"name": "recorder", "script": str(recorder["script"]),
+                       "wants": ["baseline"]}],
+            baseline=str(blank))
+        assert result["status"] == "pass", result
+        assert result["baseline"] == "supplied-by-harness"
+        assert result["wants"] == ["baseline"]
+        argv = json.loads(recorder["seen"].read_text(encoding="utf-8"))
+        assert argv == [f"{recorder['work']}/filled.hwpx",
+                        "--baseline", str(blank)]
+
+    def test_without_a_declared_baseline_it_is_skipped_not_passed(
+            self, recorder):
+        result = cleanroom.run_machine_check(
+            recorder["sandbox"],
+            {"id": "wants", "kind": "python",
+             "argv": [str(recorder["script"]), "${WORK}/filled.hwpx"]},
+            self._variables(recorder),
+            checkers=[{"name": "recorder", "script": str(recorder["script"]),
+                       "wants": ["baseline"]}],
+            baseline=None)
+        assert result["status"] == "skipped"
+        assert "no baseline" in result["reason"]
+        assert "ok" not in result
+        # and it really did not run: a self-skipping verdict would have
+        # exited 0 and scored a pass
+        assert not recorder["seen"].exists()
+
+    def test_a_baseline_already_in_argv_is_not_supplied_twice(self, recorder):
+        """Explicit --baseline, and 'the target IS the baseline' (a document is
+        never its own baseline) — both leave the argv alone."""
+        blank = recorder["work"] / "blank.hwpx"
+        blank.write_bytes(b"blank form")
+        checkers = [{"name": "recorder", "script": str(recorder["script"]),
+                     "wants": ["baseline"]}]
+        explicit = cleanroom.run_machine_check(
+            recorder["sandbox"],
+            {"id": "explicit", "kind": "python",
+             "argv": [str(recorder["script"]), "${WORK}/filled.hwpx",
+                      "--baseline", str(blank)]},
+            self._variables(recorder), checkers=checkers, baseline=str(blank))
+        assert explicit["baseline"] == "already-in-argv"
+        assert json.loads(recorder["seen"].read_text(encoding="utf-8")).count(
+            "--baseline") == 1
+
+        recorder["seen"].unlink()
+        on_the_blank = cleanroom.run_machine_check(
+            recorder["sandbox"],
+            {"id": "self", "kind": "python",
+             "argv": [str(recorder["script"]), str(blank)]},
+            self._variables(recorder), checkers=checkers, baseline=str(blank))
+        assert on_the_blank["baseline"] == "already-in-argv"
+        assert json.loads(recorder["seen"].read_text(encoding="utf-8")) == [
+            str(blank)]
+
+    def test_a_non_declaring_checker_is_unaffected(self, recorder):
+        blank = recorder["work"] / "blank.hwpx"
+        blank.write_bytes(b"blank form")
+        result = cleanroom.run_machine_check(
+            recorder["sandbox"],
+            {"id": "plain", "kind": "python",
+             "argv": [str(recorder["script"]), "${WORK}/filled.hwpx"]},
+            self._variables(recorder),
+            checkers=[{"name": "recorder", "script": str(recorder["script"]),
+                       "wants": []}],
+            baseline=str(blank))
+        assert result["status"] == "pass", result
+        assert "baseline" not in result and "wants" not in result
+        assert json.loads(recorder["seen"].read_text(encoding="utf-8")) == [
+            f"{recorder['work']}/filled.hwpx"]
+
+    def test_an_unregistered_script_declares_nothing(self, recorder):
+        """Resolution is by path against the registry — a script the registry
+        never reported (core CLI, disabled module) is left alone."""
+        assert cleanroom.checker_wants(
+            recorder["sandbox"], str(recorder["script"]),
+            [{"name": "other", "script": str(recorder["work"] / "other.py"),
+              "wants": ["baseline"]}]) == []
+
+    def test_materialize_records_the_declared_baseline(self, prepared):
+        task = _baseline_task(declare_baseline=True)
+        payload = cleanroom.materialize_task(prepared["root"], task)
+        assert Path(payload["baseline"]).is_file()
+        assert Path(payload["baseline"]).name == task["baseline"]
+        on_disk = json.loads(
+            (Path(payload["work_dir"]) / "task.json").read_text(
+                encoding="utf-8"))
+        assert on_disk["baseline"] == payload["baseline"]
+
+        results = cleanroom.run_checks(prepared["root"], task)
+        assert results["baseline"] == payload["baseline"]
+
+    def test_no_declared_baseline_is_recorded_as_none(self, prepared):
+        task = _baseline_task(declare_baseline=False)
+        payload = cleanroom.materialize_task(prepared["root"], task)
+        assert payload["baseline"] is None
+        assert cleanroom.task_baseline(Path(payload["work_dir"]), task) is None
+
+    def test_a_baseline_that_is_not_an_input_is_refused(self, tmp_path):
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            GOOD_TASK + "baseline: not-an-input.hwpx\n", encoding="utf-8")
+        with pytest.raises(cleanroom.CleanroomError) as excinfo:
+            cleanroom.load_task(path)
+        assert "must be a task input" in str(excinfo.value)
+
+    def test_end_to_end_the_real_checker_gets_its_baseline(
+            self, tmp_path, tmp_path_factory):
+        """The whole G3 loop over real payload: gongmun's module.yaml declares
+        wants: [baseline], the G1 task declares the blank form, and the harness
+        hands it to the checker — proven from the checker's OWN verdict, whose
+        baseline-only rules must no longer report ``no_baseline``."""
+        out = tmp_path_factory.mktemp("dist_gongmun")
+        gongmun_bundles = [package_module.build_bundle(name, out)
+                           for name in ("core", "gongmun")]
+        report, code = cleanroom.prepare(
+            tmp_path / "gongmun", gongmun_bundles, enable="all")
+        assert code == 0, report["failures"]
+        root = Path(report["sandbox_root"])
+        assert report["registry"]["enabled"] == ["gongmun"]
+
+        task = cleanroom.load_task(G1_TASK)
+        payload = cleanroom.materialize_task(root, task)
+        work = Path(payload["work_dir"])
+        # stand in for the agent: a "draft" that is the form passed through
+        shutil.copy2(payload["baseline"], work / "filled.hwpx")
+
+        results = cleanroom.run_checks(root, task)
+        by_id = {row["id"]: row for row in results["checks"]}
+        assert by_id["gongmun_structure"]["baseline"] == "supplied-by-harness"
+        # the check deliberately targets the blank form itself: no self-baseline
+        assert by_id["gongmun_blank_form_shape"]["baseline"] == "already-in-argv"
+        assert by_id["gongmun_blank_form_shape"]["status"] == "pass"
+
+        verdict = json.loads(
+            (work / "gongmun_verdict.json").read_text(encoding="utf-8"))
+        assert [row for row in verdict["skipped"]
+                if row["reason"] == "no_baseline"] == [], (
+            "the checker still says no_baseline — the harness did not supply "
+            "the declared blank form")
+
+    def test_the_gongmun_task_declares_a_baseline_and_stops_hardcoding_it(self):
+        task = cleanroom.load_task(G1_TASK)
+        assert task["baseline"] == "gianmun-byeolji-1ho.hwpx"
+        structure = next(check for check in task["machine_checks"]
+                         if check["id"] == "gongmun_structure")
+        assert "--baseline" not in structure["argv"], (
+            "the task should no longer have to know; check_gongmun declares "
+            "wants: [baseline] and the harness supplies it")
+        blank_shape = next(check for check in task["machine_checks"]
+                           if check["id"] == "gongmun_blank_form_shape")
+        assert "${BASELINE}" in blank_shape["argv"]
+
+
+# --------------------------------------------------------------------------- #
 # 5. score.py
 # --------------------------------------------------------------------------- #
 def _run_record(**overrides) -> dict:

@@ -155,6 +155,25 @@ class TestThrowawayModuleProof:
         assert [Path(p["path"]).name for p in plays] == ["night.md"]
         assert all(p["module"] == "throwaway" for p in plays)
 
+    def test_a_checker_can_declare_the_inputs_it_wants(self, tmp_path):
+        """v0.17 G3: ``checkers[].wants`` lets a checker say it needs the blank
+        baseline, so a runner supplies it instead of every caller knowing.
+        ``wants`` is always present on the accessor rows (``[]`` when omitted),
+        so a consumer never has to guess whether a module bothered."""
+        make_module(tmp_path, "throwaway", manifest=f"""\
+schema: rigorloom-module/v1
+name: throwaway
+requires: {{ rigorloom: ">=0.1" }}
+provides:
+  checkers:
+    - {{ name: dummy_probe, script: scripts/check_dummy.py, wants: [baseline] }}
+    - {{ name: plain_probe, script: scripts/dummy_cli.py }}
+""")
+        write_enabled(tmp_path, ["throwaway"])
+        rows = {row["name"]: row for row in registry_for(tmp_path).enabled_checkers()}
+        assert rows["dummy_probe"]["wants"] == ["baseline"]
+        assert rows["plain_probe"]["wants"] == []
+
     def test_second_module_joins_without_touching_the_first(self, tmp_path):
         make_module(tmp_path, "throwaway")
         second = tmp_path / "extra"
@@ -513,6 +532,27 @@ class TestLoudValidation:
         ("schema: rigorloom-module/v1\nname: badmod\n"
          'requires: { rigorloom: ">=0.1" }\nprovides: {}\nextra: 1\n',
          "unknown top-level keys"),
+        # checkers[].wants is a CLOSED vocabulary (v0.17 G3)
+        ("schema: rigorloom-module/v1\nname: badmod\n"
+         'requires: { rigorloom: ">=0.1" }\n'
+         "provides:\n  checkers:\n"
+         "    - { name: p, script: s.py, wants: [telepathy] }\n",
+         "must be a non-empty list drawn from"),
+        ("schema: rigorloom-module/v1\nname: badmod\n"
+         'requires: { rigorloom: ">=0.1" }\n'
+         "provides:\n  checkers:\n"
+         "    - { name: p, script: s.py, wants: [] }\n",
+         "must be a non-empty list drawn from"),
+        ("schema: rigorloom-module/v1\nname: badmod\n"
+         'requires: { rigorloom: ">=0.1" }\n'
+         "provides:\n  checkers:\n"
+         "    - { name: p, script: s.py, wants: [baseline, baseline] }\n",
+         "duplicates"),
+        ("schema: rigorloom-module/v1\nname: badmod\n"
+         'requires: { rigorloom: ">=0.1" }\n'
+         "provides:\n  checkers:\n"
+         "    - { name: p, script: s.py, needs: [baseline] }\n",
+         "unknown keys"),
     ])
     def test_invalid_manifest_is_loud_and_names_the_module(
         self, tmp_path, mutation, fragment,

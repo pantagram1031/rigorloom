@@ -218,6 +218,9 @@ Each task carries:
 - `prompt` — what a user would actually type, in Korean, with concrete values
   so the rubric's "never invent unsupplied values" line is testable;
 - `input_files` — repo-relative corpus paths, copied into the sandbox;
+- `baseline` (optional) — the basename of the input that is the *blank form*,
+  handed to checkers declaring `wants: [baseline]` (below) and available to
+  task authors as `${BASELINE}`;
 - `expected_behavior[]` — `[judgment]` rubric lines for a human or LLM judge;
 - `machine_checks[]` — assertions runnable after the agent finishes.
 
@@ -277,6 +280,50 @@ about the product, since a disabled module is a supported configuration
 ("absence is not failure", `modules/README.md`). The gate is the honest form of
 that, and it does not soften anything: skipped is not passed, in `counts`, in
 `check`'s exit code, or in the scorecard.
+
+### `wants: [baseline]` — the harness supplies the blank form
+
+Some checkers have rules that only exist when they are also given the **blank
+form** the artifact came from. gongmun's `seat_emptied`, `seal_slot_removed`,
+`dumun_label_missing` and `rank_not_in_pack` are all of that shape: without
+`--baseline` they report `skipped: no_baseline` and the checker still exits 0.
+Correct, and a trap — the task author had to *know*, and a task that forgot got
+a thinner verdict that read as a pass.
+
+A checker declares the need in its `module.yaml`
+(`modules/README.md` §`checkers[].wants`):
+
+```yaml
+provides:
+  checkers:
+    - {name: check_gongmun, script: scripts/check_gongmun.py, wants: [baseline]}
+```
+
+and a task declares the form:
+
+```yaml
+input_files:
+  - tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx
+baseline: gianmun-byeolji-1ho.hwpx    # a basename from input_files
+```
+
+`task` records the copied sandbox path as `baseline` in `task.json` and exposes
+it as `${BASELINE}`. For every `python` check, `check` resolves `argv[0]`
+**by path** against the sandbox registry's checker list — never by name or
+filename convention — and if that checker declares `wants: [baseline]`:
+
+| situation | what `check` does | recorded |
+|---|---|---|
+| task declares a baseline, not present in argv | appends `--baseline <path>` | `"baseline": "supplied-by-harness"` |
+| the baseline path is already in argv — an explicit `--baseline`, or the check deliberately runs the checker **on** the blank form (a document is never its own baseline) | nothing | `"baseline": "already-in-argv"` |
+| task declares **no** baseline | **skips the check with a reason** | `status: "skipped"` |
+
+That last row is the point. Running anyway would produce exit 0 from a verdict
+whose baseline rules had all self-skipped — a silent pass. Skipping says so out
+loud, and (like `requires_module`) counts as a skip, never a pass.
+
+A checker that declares no `wants` is untouched: its argv is exactly what the
+task author wrote.
 
 ## 7. Recipes
 

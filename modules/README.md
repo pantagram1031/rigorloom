@@ -99,7 +99,7 @@ enablement error, not a silent skip.
 
 | key | shape | semantics |
 |---|---|---|
-| `checkers` | list of `{name, script}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. |
+| `checkers` | list of `{name, script, wants?}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. `wants` is the optional declaration of extra inputs the checker needs — see below. |
 | `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
 | `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
 | `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by the registry-declared `check_canonical` checker — report-module payload since W3-S2b); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
@@ -108,6 +108,39 @@ enablement error, not a silent skip.
 | `skill` | `{fragment, references}` | One SKILL fragment plus its reference files, merged into the distribution bundle's router SKILL.md by the installer. A core-only install never sees the fragment's vocabulary. |
 | `playbooks` | list of paths | Stage/task playbooks the module contributes. |
 | `preflight` | list of `{name, script}` | Submission-preflight contributions. Core's `submission_preflight` (artifact/proof half: P1/P2/P3/P5, form-structure hash, verdict_schema) asks the registry for enabled modules' contributions via `enabled_preflight()` and subprocess-composes each script's JSON findings source-tagged into its own verdict — the same merge semantics the former in-process saeteuk composition had. `name` is unique across enabled modules; `script` honours the checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3) and is invoked as `python <script> <workspace>`. No modules enabled = those checks simply absent (absence is not failure). |
+
+### `checkers[].wants` — a checker declares the inputs it needs
+
+Some rules only exist when the checker is given a second document. gongmun's
+`seat_emptied`, `seal_slot_removed`, `dumun_label_missing` and `rank_not_in_pack`
+compare the artifact against the **blank form** it came from; without
+`--baseline` they honestly report `skipped: no_baseline` and the checker still
+exits 0. That is correct behaviour and a bad contract: nothing in the
+declaration said the baseline mattered, so a caller who did not know silently
+got a thinner verdict that looked like a pass.
+
+```yaml
+provides:
+  checkers:
+    - {name: check_gongmun, script: scripts/check_gongmun.py, wants: [baseline]}
+```
+
+`wants` is a closed vocabulary — today exactly `baseline`, the blank/unfilled
+form the artifact was produced from, passed as `--baseline <path>`. It is a
+*declaration*, not a mechanism: the checker's CLI is unchanged, and a checker
+that declares nothing behaves exactly as before. `enabled_checkers()` always
+returns a `wants` list (`[]` when omitted), so a runner branches on the
+declaration without knowing module names.
+
+**A runner that honours `wants` must supply the input or skip loudly.** The
+first such consumer is the clean-room eval harness (`evals/README.md`
+§"`wants: [baseline]`"): it supplies the task-declared blank form, and where a
+task declares none it records the check as *skipped with a reason* rather than
+running a checker whose baseline rules would all silently self-skip. The
+declared-gate runner (`declared_gates.py`) is deliberately **not** wired yet —
+it only reaches checkers bound to a `gate_kind`, every input a delegated gate
+needs is already a declared value in the workspace's `gates.yaml`, and no
+module registers a gate kind whose checker wants a baseline.
 
 ### Modules may contribute visual-verify expectations
 
