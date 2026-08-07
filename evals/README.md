@@ -201,6 +201,11 @@ family plus the three grant-family scenarios:
 | `H1-labor-contract-fill` | hr | H1 | XC-1 converted |
 | `R1-nrf-profile` | research | R1 | XC-1 converted |
 
+`G1` additionally runs the gongmun distribution module's `check_gongmun` over
+the blank form and over the produced draft, so it needs the gongmun bundle
+installed. A core-only sandbox reports `no_module_bundles` first — module tasks
+are not runnable there by construction.
+
 Family ③ 학교 서식 has no task (corpus gap) and family ⑤ 기업 내부 문서 has no
 task (documented capability boundary) — both are statements in
 `docs/release-v0.16.0.md`, not omissions here.
@@ -245,14 +250,16 @@ idempotence needs a second-pass artifact).
 Build bundles, then a full clean-room install:
 
 ```sh
-python scripts/package_module.py --module core   --out dist
-python scripts/package_module.py --module report --out dist
-python scripts/package_module.py --module style  --out dist
+python scripts/package_module.py --module core    --out dist
+python scripts/package_module.py --module report  --out dist
+python scripts/package_module.py --module style   --out dist
+python scripts/package_module.py --module gongmun --out dist
 
 python evals/cleanroom.py prepare \
     --bundle dist/rigorloom-core-0.16.0.zip \
     --bundle dist/rigorloom-report-0.16.0.zip \
     --bundle dist/rigorloom-style-0.16.0.zip \
+    --bundle dist/rigorloom-gongmun-0.16.0.zip \
     --root /tmp/rigorloom-cleanroom
 ```
 

@@ -1,0 +1,28 @@
+# Gongmun distribution module — declaration (schema: pipeline/references/module.schema.json).
+#
+# The first WORK-TYPE module beyond report: 공문/기안문 (HWP usage landscape
+# family ②). It contributes one deterministic checker over a filled artifact,
+# the issuing-organization pack type its seats are filled from, and the skill
+# fragment that teaches the 공문 task flow.
+#
+# requires_modules is ABSENT on purpose: nothing in this module's payload
+# touches report or style. check_gongmun imports only core (checker_base,
+# check_residue, engine form_inspect/hwpx_tables), so gongmun enables alone —
+# asserted by tests/test_module_contract.py::test_gongmun_enables_without_report.
+#
+# No cli, run_modes, gate_kinds, studio_panels or preflight: a work-type module
+# earns those when it has something to run, not to look complete. The
+# visual_verify expectations it authors ship as ordinary payload
+# (references/visual_expectations/gongmun.json) — there is no provides key for
+# them, by contract (modules/README.md).
+schema: rigorloom-module/v1
+name: gongmun
+requires: {rigorloom: ">=0.16"}
+provides:
+  checkers:
+    - {name: check_gongmun, script: scripts/check_gongmun.py}
+  pack_types: [gongmun_org]
+  skill:
+    fragment: skill/FRAGMENT.md
+    references:
+      - skill/references/gongmun_flow.md

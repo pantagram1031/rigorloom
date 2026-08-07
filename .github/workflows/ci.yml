@@ -45,7 +45,7 @@ jobs:
       - run: python -m pytest -q
       # bash so the *.py globs expand on the Windows runner too (pwsh passes
       # them through literally and py_compile fails on the literal pattern)
-      - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py modules/report/scripts/*.py modules/style/scripts/*.py
+      - run: python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py modules/report/scripts/*.py modules/style/scripts/*.py modules/gongmun/scripts/*.py
         shell: bash
       - name: Compose smoke
         shell: bash

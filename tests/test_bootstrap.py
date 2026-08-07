@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -10,7 +11,16 @@ from _module_gating import requires_report_module
 from scripts import bootstrap
 
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "bootstrap.py"
+REPO_ROOT = Path(__file__).parents[1]
+SCRIPT = REPO_ROOT / "scripts" / "bootstrap.py"
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -38,14 +48,24 @@ def test_bootstrap_creates_smoke_artifacts(tmp_path: Path):
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
     # Profile: every public default pack registered into the private store.
+    # DERIVED from the pack-type registry, not a filename list: which pack
+    # types exist depends on which distribution modules are enabled, so a new
+    # work-type module must not require an edit here (modules/README.md's
+    # "adding a module later requires no core change").
+    personalization = _load(
+        "personalization_ctl_for_bootstrap_tests",
+        REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py",
+    )
+    expected = sorted(f"{pack_type}.json"
+                      for pack_type in personalization.default_pack_files())
+    # Non-vacuity: the core pack types are always among them.
+    assert {"backends.json", "figure_style.json", "policy_floors.json",
+            "prose_rules.json"} <= set(expected)
+
     packs = tmp_path / "prof" / "packs"
     assert packs.is_dir()
     names = sorted(p.name for p in packs.glob("*.json"))
-    assert names == [
-        "backends.json", "constants_allowlist.json", "figure_style.json",
-        "gloss_allowlist.json", "policy_floors.json", "prose_rules.json",
-        "report_structure.json", "saeteuk.json", "tone_rules.json",
-    ]
+    assert names == expected
 
     # Smoke workspace with the passing gate checker and the resolved gate.
     ws = tmp_path / "ws" / "report-bootstrap-smoke"

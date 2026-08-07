@@ -56,6 +56,45 @@ locked by a failing-before test.
   across repeated calls in a single Hancom session. COM-verified on the PPS
   form: (2,3) reached in 4 steps from entry `A1`, label cells untouched.
 
+### Modules — `gongmun`, the first work-type module beyond report
+
+`modules/gongmun/` ships the 공문/기안문 work type (HWP usage landscape family
+②) as its own distribution bundle: one deterministic checker
+(`check_gongmun`), the `gongmun_org` pack type its issuing-organization seats
+are filled from, and a skill fragment for the 공문 task flow. No
+`requires_modules` — nothing in the payload touches report or style, and
+`modules/gongmun/tests/test_module_contract.py` asserts the module enables
+alone.
+
+- **The rules come from the 서식, not from a string list.** 「행정업무의 운영 및
+  혁신에 관한 규정 시행규칙」별지 제1호·제2호서식 state their own rule in the
+  비고 block — the guide vocabulary (`행정기관명`, `발신명`, `기안자`, `직위(직급)
+  서명`, `처리과명-연도별 일련번호(시행일)`, …) must not be displayed, its content
+  must be. That is the residue class; the section labels (`수신` / `경유` /
+  `제목` / `협조자` / `시행` / `접수` / `직인`) are the keep-list. The checker
+  carries no Korean literal it matches on: the vocabulary is data
+  (`references/gongmun_vocabulary.json`) and each form's own 비고 block is
+  parsed at run time and unioned into the term list.
+- **Seat state is one mechanism, applied to 두문 / 결재란 / 결문 / 발신명의.**
+  `blank_by_design` / `filled` / `emptied` / `half_filled` from the seat's own
+  text; ○ runs and layout punctuation are stripped before "a value is present"
+  is decided. Half-filled — not "empty" — is the failure mode a 결재란 row must
+  never ship as, and the row check reads the table row rather than the seat
+  list so a filled sibling beside a blank one is visible.
+- **The 직인 slot is a placement, never a fill target.** The red-bordered 1×1
+  box must survive carrying nothing but its label (`seal_slot_overwritten`,
+  `seal_slot_removed`). Border colours are read only from borders whose `type`
+  is not `NONE` — the corpus 발신명의 box declares `color="#FF0000"` on an
+  undrawn border and a naive colour scan calls it a seal.
+- **A blank form is not a failed 공문.** Document state is classified from the
+  form's own evidence (비고 present + nothing written = `blank`), so both
+  corpus 기안문 forms pass in their untouched state and report the unfilled
+  shape. Rules that cannot be decided from the inputs given are listed under
+  `skipped` with a reason (`no_baseline`, `seat_absent`,
+  `pack_vocabulary_empty`) — never silently passed.
+- **Evals**: `G1-gianmun-body-edit` gained two `check_gongmun` machine checks
+  (blank-form shape, produced-draft structure).
+
 ## v0.16.0 — unified core and modules
 
 The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):

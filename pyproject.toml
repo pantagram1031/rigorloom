@@ -18,5 +18,6 @@ testpaths = [
     "engine/tests",
     "modules/report/tests",
     "modules/style/tests",
+    "modules/gongmun/tests",
 ]
 addopts = "-ra"
