@@ -7,6 +7,7 @@ through the typed accessors with ZERO changes to core files.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -173,6 +174,171 @@ class TestThrowawayModuleProof:
         assert sorted(registry.discover()) == ["extra", "throwaway"]
         assert {c["name"] for c in registry.enabled_checkers()} == {
             "dummy_probe", "extra_probe"}
+
+
+# ---------------------------------------------------------------------------
+# Rule 4, the other half: the TEST HARNESS must be module-agnostic too
+# ---------------------------------------------------------------------------
+#
+# The gongmun module (PR #65) disproved the registry-only reading of rule 4:
+# the registry needed nothing, but adding the module still required two core
+# edits — pyproject's ``testpaths`` (a hardcoded per-module list) and CI's
+# ``py_compile`` glob (likewise). Both are now module-agnostic, and the proof
+# below is a PROPERTY test, not a mechanism test: it drops a brand-new module
+# into a synthetic root that carries the repo's real pytest configuration
+# verbatim, and asserts (a) pytest collects the module's tests and (b) the
+# compile sweep compiles the module's scripts — with no file outside
+# ``modules/`` created, edited, or naming the module.
+
+PYPROJECT = REPO_ROOT / "pyproject.toml"
+SWEEP = REPO_ROOT / "scripts" / "py_compile_sweep.py"
+
+NEW_MODULE = "brandnew"
+
+NEW_MODULE_TEST = """\
+def test_the_brand_new_module_was_collected():
+    assert True
+"""
+
+NEW_MODULE_SCRIPT = """\
+def contribution():
+    return "brandnew"
+"""
+
+
+def _pytest_ini_block(text: str) -> str:
+    """The ``[tool.pytest.ini_options]`` table of a pyproject, verbatim."""
+    marker = "[tool.pytest.ini_options]"
+    start = text.index(marker)
+    rest = text[start + len(marker):]
+    end = rest.find("\n[")
+    return marker + (rest if end == -1 else rest[:end]) + "\n"
+
+
+def _configured_testpaths() -> list[str]:
+    """testpaths as declared in the repo's pyproject (no toml dependency:
+    the block is a literal list of quoted strings, by repo convention)."""
+    block = _pytest_ini_block(PYPROJECT.read_text(encoding="utf-8"))
+    body = block[block.index("testpaths"):]
+    body = body[body.index("["):body.index("]") + 1]
+    return re.findall(r'"([^"]+)"', body)
+
+
+def _synthetic_root(root: Path) -> Path:
+    """A minimal checkout carrying the repo's REAL pytest config plus one
+    brand-new distribution module — and nothing else."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "synthetic"\nversion = "0.16.0"\n\n'
+        + _pytest_ini_block(PYPROJECT.read_text(encoding="utf-8")),
+        encoding="utf-8")
+    module = root / "modules" / NEW_MODULE
+    (module / "tests").mkdir(parents=True)
+    (module / "scripts").mkdir(parents=True)
+    (module / "module.yaml").write_text(
+        "schema: rigorloom-module/v1\n"
+        f"name: {NEW_MODULE}\n"
+        'requires: { rigorloom: ">=0.16" }\n'
+        "provides:\n"
+        "  checkers:\n"
+        "    - { name: brandnew_probe, script: scripts/probe.py }\n",
+        encoding="utf-8")
+    (module / "scripts" / "probe.py").write_text(
+        NEW_MODULE_SCRIPT, encoding="utf-8")
+    (module / "tests" / "test_brandnew.py").write_text(
+        NEW_MODULE_TEST, encoding="utf-8")
+    return root
+
+
+class TestHarnessIsModuleAgnostic:
+    """Rule 4 for the test harness: a brand-new module's tests are COLLECTED
+    and its scripts are COMPILED with zero edits outside ``modules/``."""
+
+    def test_new_module_tests_are_collected_by_the_configured_testpaths(
+            self, tmp_path):
+        root = _synthetic_root(tmp_path / "checkout")
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             "-p", "no:cacheprovider"],
+            cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        collected = proc.stdout.replace("\\", "/")
+        assert (f"modules/{NEW_MODULE}/tests/test_brandnew.py::"
+                "test_the_brand_new_module_was_collected") in collected, (
+            "the configured testpaths did not pick up a brand-new module's "
+            f"tests — glob expansion of 'modules/*/tests' failed:\n{proc.stdout}")
+        # and it was testpaths that did it, not a recursive fallback scan
+        assert "Searching recursively from the current directory" not in (
+            proc.stdout + proc.stderr)
+
+    def test_new_module_scripts_are_covered_by_the_compile_sweep(self, tmp_path):
+        root = _synthetic_root(tmp_path / "checkout")
+        proc = subprocess.run(
+            [sys.executable, str(SWEEP), "--root", str(root), "--json"],
+            capture_output=True, text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        report = json.loads(proc.stdout)
+        assert f"modules/{NEW_MODULE}/scripts/probe.py" in report["compiled"]
+
+    def test_the_compile_sweep_actually_compiles_the_new_module(self, tmp_path):
+        """Negative control: coverage that cannot fail is not coverage."""
+        root = _synthetic_root(tmp_path / "checkout")
+        (root / "modules" / NEW_MODULE / "scripts" / "broken.py").write_text(
+            "def oops(:\n", encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(SWEEP), "--root", str(root), "--json"],
+            capture_output=True, text=True, encoding="utf-8")
+        assert proc.returncode == 3, proc.stdout
+        report = json.loads(proc.stdout)
+        assert [row["file"] for row in report["failures"]] == [
+            f"modules/{NEW_MODULE}/scripts/broken.py"]
+
+    def test_zero_edits_outside_modules_are_needed(self, tmp_path):
+        """The synthetic root's only non-``modules/`` file is the repo's own
+        pytest configuration, copied VERBATIM: nothing in it was written for
+        this module, and nothing in the harness configuration names a module.
+        """
+        root = _synthetic_root(tmp_path / "checkout")
+        outside = sorted(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and not path.as_posix().count("/modules/"))
+        assert outside == ["pyproject.toml"]
+        block = _pytest_ini_block(PYPROJECT.read_text(encoding="utf-8"))
+        assert block in (root / "pyproject.toml").read_text(encoding="utf-8")
+
+        on_disk = sorted(
+            path.name for path in (REPO_ROOT / "modules").iterdir()
+            if path.is_dir() and (path / "module.yaml").is_file())
+        assert on_disk, "no distribution modules on disk — nothing to prove"
+        # testpaths reaches every module through one glob, naming none.
+        testpaths = _configured_testpaths()
+        assert "modules/*/tests" in testpaths
+        for name in on_disk + [NEW_MODULE]:
+            assert not any(name in entry for entry in testpaths), (
+                f"testpaths names distribution module {name!r} — rule 4 says "
+                "adding a module must require no core change")
+        # the compile sweep does the same for scripts.
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import py_compile_sweep
+        finally:
+            sys.path.pop(0)
+        assert "modules/*/scripts/*.py" in py_compile_sweep.PATTERNS
+        for name in on_disk + [NEW_MODULE]:
+            assert not any(name in pattern
+                           for pattern in py_compile_sweep.PATTERNS), (
+                f"the compile sweep names distribution module {name!r}")
+
+    def test_ci_delegates_the_sweep_instead_of_inlining_module_globs(self):
+        """The workflow must not carry a per-module compile list again."""
+        workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8")
+        assert "scripts/py_compile_sweep.py" in workflow
+        compile_lines = [line for line in workflow.splitlines()
+                         if "py_compile " in line or "py_compile\t" in line]
+        assert compile_lines == [], compile_lines
 
 
 # ---------------------------------------------------------------------------

@@ -78,8 +78,17 @@ registry and CI enforce them.
   **before** anything moves.
 - **Presence is integration.** Enabling a module surfaces its checkers, CLI,
   panels, and modes with no further configuration.
-- **Adding a module later requires no core change.** Proven by a trivial
-  throwaway module in this wave.
+- **Adding a module later requires no core change.** This covers the *test
+  harness* as well as the runtime registry. Adding gongmun (PR #65) needed
+  nothing from the registry but still forced two core edits — pyproject's
+  `testpaths` and CI's `py_compile` glob were both hardcoded per-module lists.
+  Both are now module-agnostic (`modules/*/tests`, and
+  `scripts/py_compile_sweep.py`'s `modules/*/scripts/*.py`), and
+  `pipeline/tests/test_module_registry.py::TestHarnessIsModuleAgnostic` proves
+  the property: a brand-new module dropped into a synthetic checkout has its
+  tests collected and its scripts compiled with zero files created or edited
+  outside `modules/`. **If you find yourself adding a module's name to a file
+  outside `modules/`, that file is the bug.**
 
 ## Provides keys
 
