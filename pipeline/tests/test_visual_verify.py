@@ -11,6 +11,12 @@ only vision can see it:
   (b) T24  stale ``linesegarray`` + longer replaced text -> overprint
   (c) W6.2 stored 2-up ``PrintMethod`` -> imposition / page-count mismatch
   (d) T25  missing input -> Hancom opens an empty document -> blank render
+  (e) T30  a filled value inherits a charPr identical to body except for a
+           trailing ``<hh:supscript/>`` -> 10pt nominal, ~6.35pt raised
+
+plus the residue keep-list passthrough that lets a form fill reach a pass at
+all (``--keep`` / ``--keep-pattern`` / ``--fill-map``), with a still-catches
+control.
 
 ``INCIDENT_MATRIX`` at the bottom is the shipping gate: it records, per
 incident, whether the catch is deterministic or vision-required, and the test
@@ -36,7 +42,7 @@ fitz = pytest.importorskip("fitz")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "pipeline" / "scripts" / "visual_verify.py"
-RUBRIC = REPO_ROOT / "docs" / "research" / "visual-rubric.md"
+RUBRIC = REPO_ROOT / "skill" / "references" / "visual-rubric.md"
 
 sys.path.insert(0, str(REPO_ROOT / "pipeline" / "scripts"))
 import visual_verify  # noqa: E402
@@ -87,6 +93,112 @@ def make_hwpx(path: Path, *, malformed: bool = False,
         zf.writestr("Contents/header.xml", _HEADER_OK)
         zf.writestr("Contents/section0.xml",
                     _SECTION_MALFORMED if malformed else _SECTION_OK)
+    return path
+
+
+# -- the PPS 협업제품명 cell, reproduced -------------------------------------
+#
+# charPr 0 is body. charPr 7 is body PLUS a trailing <hh:supscript/> and
+# nothing else: same face, same colour, same nominal height="1000". That is
+# exactly the shape the live incident had, and why charpr_check --base-pt 10
+# and style_diff both passed it while Hancom drew the value at ~6.35pt raised.
+# charPr 8 is a legitimately superscripted footnote marker — same script flag,
+# but no fill ever touched it, so the detector must leave it alone.
+
+_CHARPR_BODY_ATTRS = (
+    ' height="1000" textColor="#000000" shadeColor="none"'
+    ' useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="0"'
+)
+_CHARPR_BODY_CHILDREN = (
+    '<hh:fontRef hangul="0" latin="0"/>'
+    '<hh:ratio hangul="100" latin="100"/>'
+    '<hh:spacing hangul="0" latin="0"/>'
+    '<hh:relSz hangul="100" latin="100"/>'
+    '<hh:offset hangul="0" latin="0"/>'
+)
+
+
+def _charpr(identifier: int, extra: str = "") -> str:
+    return (f'<hh:charPr id="{identifier}"{_CHARPR_BODY_ATTRS}>'
+            f'{_CHARPR_BODY_CHILDREN}{extra}</hh:charPr>')
+
+
+_FORM_HEADER = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" secCnt="1">'
+    '<hh:refList><hh:charProperties itemCnt="3">'
+    + _charpr(0)
+    + _charpr(7, "<hh:supscript/>")      # the trap
+    + _charpr(8, "<hh:supscript/>")      # a real footnote marker
+    + '</hh:charProperties></hh:refList></hh:head>'
+)
+
+
+def _run(charpr: int, text: str) -> str:
+    return f'<hp:run charPrIDRef="{charpr}"><hp:t>{text}</hp:t></hp:run>'
+
+
+def make_form_hwpx(path: Path, *, value_charpr: int = 0,
+                   value: str = "RIGORLOOM-A1",
+                   footnote: bool = True,
+                   residue: tuple[str, ...] = ()) -> Path:
+    """A filled PPS-shaped form: a label cell, a value cell, body prose.
+
+    ``value_charpr=7`` reproduces the incident (the value inherited the
+    superscript clone); ``0`` is the clean control. ``footnote`` adds a
+    genuinely superscripted marker that no fill produced.
+    """
+    body = " ".join(
+        f"본문 문장 {i} 은 표준 서식으로 작성한 일반 서술 문단입니다."
+        for i in range(6))
+    cells = (
+        '<hp:tbl id="20" rowCnt="1" colCnt="2">'
+        '<hp:tr><hp:tc><hp:subList><hp:p id="10">'
+        + _run(0, "협업제품명")
+        + '</hp:p></hp:subList></hp:tc>'
+        '<hp:tc><hp:subList><hp:p id="11">'
+        + _run(value_charpr, value)
+        + '</hp:p></hp:subList></hp:tc></hp:tr></hp:tbl>'
+    )
+    marker = (f'<hp:p id="12">{_run(0, "각주 대상 문구")}'
+              f'{_run(8, "1)")}</hp:p>') if footnote else ""
+    leftovers = "".join(f'<hp:p id="{20 + i}">{_run(0, text)}</hp:p>'
+                        for i, text in enumerate(residue))
+    section = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+        ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+        f'<hp:p id="1">{_run(0, "I.  서론")}</hp:p>'
+        f'<hp:p id="2">{_run(0, "신청인")}</hp:p>'
+        f'<hp:p id="3">{_run(0, "[별지 제2호의 8서식]")}</hp:p>'
+        f'<hp:p id="4">{cells}</hp:p>'
+        f'<hp:p id="5">{_run(0, body)}</hp:p>'
+        f'{marker}{leftovers}'
+        '</hs:sec>'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/hwp+zip")
+        zf.writestr("settings.xml", _settings(0))
+        zf.writestr("Contents/header.xml", _FORM_HEADER)
+        zf.writestr("Contents/section0.xml", section)
+    return path
+
+
+#: The form scan inventory the residue gate auto-derives its forbidden list
+#: from. ``20101`` is the placeholder the fill consumes; the bracketed 서식
+#: label is a placeholder that legitimately SURVIVES a fill (form-eval A1).
+FORM_PROFILE = {
+    "form_hash": "sha256:synthetic",
+    "anchors": ["협업제품명", "신청인", "I.  서론"],
+    "guide_text": ["여기에 입력하세요"],
+    "placeholders": ["[별지 제2호의 8서식]", "20101"],
+}
+
+
+def write_form_profile(path: Path) -> Path:
+    path.write_text(json.dumps(FORM_PROFILE, ensure_ascii=False),
+                    encoding="utf-8")
     return path
 
 
@@ -204,7 +316,7 @@ def test_incident_t24_overprint_is_vision_required_and_targeted(tmp_path):
     assert task[0]["page"] == 2
     assert "overprint_suspected" in task[0]["reasons"]
     assert Path(task[0]["png"]).is_file()
-    assert task[0]["rubric"] == "docs/research/visual-rubric.md"
+    assert task[0]["rubric"] == "skill/references/visual-rubric.md"
     # Clean pages carry no overprint suspicion.
     for entry in task[1:]:
         assert "overprint_suspected" not in entry["reasons"]
@@ -223,7 +335,7 @@ def test_incident_t24_recorded_vision_verdict_expresses_the_defect(tmp_path):
 
     recorded = {
         "schema": "rigorloom/visual-vision-verdict/v1",
-        "rubric": "docs/research/visual-rubric.md",
+        "rubric": "skill/references/visual-rubric.md",
         "pages_reviewed": [t["page"] for t in prepared["vision_required"]],
         "findings": [{
             "page": 2, "class": "overprint", "severity": "hard",
@@ -360,6 +472,10 @@ def test_page_budget_and_format_and_fill_map(tmp_path):
     labels = {f["evidence"]["label"] for f in verdict["hard"]
               if f["class"] == "empty_cell_expected_fill"}
     assert labels == {"applicant"}
+    # a fill_map was declared but this artifact carries no charPr table, so
+    # the T30 check could not run — and says so instead of reading as clean.
+    assert any("fill_charpr_script_mismatch" in row
+               for row in verdict["deterministic"]["skipped"])
 
 
 def test_forbidden_text_is_guide_text_visible(tmp_path):
@@ -407,6 +523,276 @@ def test_pixel_diff_identical_render_has_no_changed_regions(tmp_path):
     page = verdict["deterministic"]["baseline_diff"]["pages"][0]
     assert page["comparable"] is True
     assert page["changed_regions"] == []
+
+
+# --------------------------------------------------------------------------
+# (e) T30 — a fill-modified run inherits a script the body does not use
+# --------------------------------------------------------------------------
+
+_FILL_VALUE = "RIGORLOOM-A1"
+
+
+def _fill_pdf(path: Path) -> Path:
+    """A render carrying the declared value, so only the charPr check can
+    fire — the fill-map presence check must stay green."""
+    page = _body_page(n_lines=8)
+    page["lines"].append((72.0, 300.0, _FILL_VALUE, 10.0))
+    return make_pdf(path, [page])
+
+
+def _fill_expectations(path: Path) -> Path:
+    path.write_text(json.dumps({"fill_map": {"협업제품명": _FILL_VALUE}},
+                               ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_incident_t30_superscript_inheritance_is_deterministic(tmp_path):
+    """The live PPS trap: the filled 협업제품명 value inherited a charPr that
+    differs from body ONLY by a trailing <hh:supscript/>. Nominal height is
+    unchanged, so charpr_check/style_diff pass — this check must not."""
+    artifact = make_form_hwpx(tmp_path / "t30.hwpx", value_charpr=7)
+    pdf = _fill_pdf(tmp_path / "t30.pdf")
+    expectations = _fill_expectations(tmp_path / "exp.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    hits = [f for f in verdict["hard"]
+            if f["code"] == "fill_charpr_script_mismatch"]
+    assert len(hits) == 1, verdict["hard"]
+    hit = hits[0]
+    assert hit["class"] == "format_noncompliance"
+    assert hit["detector"] == "visual_verify.fill_charpr_script"
+    evidence = hit["evidence"]
+    assert evidence["label"] == "협업제품명"
+    assert evidence["charpr_id"] == "7"
+    assert evidence["baseline_charpr_id"] == "0"
+    assert evidence["differing"] == ["supscript"]
+    assert evidence["nominal_height_pt"] == 10.0
+    # the point of the incident: 10pt nominal, ~6.35pt rendered
+    assert evidence["rendered_pt_estimate"] == pytest.approx(6.35, abs=0.01)
+    # DETERMINISTIC: no vision verdict was supplied at all.
+    assert verdict["vision"]["supplied"] is False
+    # and the height-based proofs really do miss it
+    assert "format_noncompliance" not in {
+        f["class"] for f in verdict["hard"]
+        if f["detector"] == "visual_verify.base_pt"}
+
+
+def test_t30_false_positive_guard_intentional_superscript_footnote(tmp_path):
+    """Scope guard: the same document keeps a genuinely superscripted footnote
+    marker (charPr 8). No fill produced it, so it must NOT be flagged."""
+    artifact = make_form_hwpx(tmp_path / "clean.hwpx", value_charpr=0)
+    pdf = _fill_pdf(tmp_path / "clean.pdf")
+    expectations = _fill_expectations(tmp_path / "exp.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["hard"] == []
+    report = verdict["deterministic"]["fill_charpr_script"]
+    # the check actually ran, found the baseline, and cleared the document
+    assert report["baseline_charpr_id"] == "0"
+    assert report["fill_modified_runs"] == 1
+    assert report["findings"] == 0
+    assert report["baseline"]["supscript"] is False
+
+
+def test_t30_scaling_and_offset_inheritance_also_count(tmp_path):
+    """The trap is not superscript-specific: ratio/relSz/offset move or resize
+    a run with the nominal height untouched too."""
+    header = _FORM_HEADER.replace(
+        _charpr(7, "<hh:supscript/>"),
+        _charpr(7).replace('<hh:relSz hangul="100" latin="100"/>',
+                           '<hh:relSz hangul="65" latin="65"/>'))
+    artifact = make_form_hwpx(tmp_path / "scaled.hwpx", value_charpr=7)
+    with zipfile.ZipFile(artifact) as zf:
+        members = {n: zf.read(n) for n in zf.namelist()}
+    members["Contents/header.xml"] = header.encode("utf-8")
+    with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+    pdf = _fill_pdf(tmp_path / "scaled.pdf")
+    expectations = _fill_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    hits = [f for f in verdict["hard"]
+            if f["code"] == "fill_charpr_script_mismatch"]
+    assert len(hits) == 1
+    assert hits[0]["evidence"]["differing"] == ["relSz"]
+    assert hits[0]["evidence"]["run"]["relSz"] == {"hangul": "65",
+                                                   "latin": "65"}
+    # no script flag involved, so no rendered-pt estimate is claimed
+    assert "rendered_pt_estimate" not in hits[0]["evidence"]
+
+
+def test_t30_is_skipped_out_loud_without_a_fill_map(tmp_path):
+    artifact = make_form_hwpx(tmp_path / "nofill.hwpx", value_charpr=7)
+    pdf = _fill_pdf(tmp_path / "nofill.pdf")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["deterministic"]["fill_charpr_script"] is None
+    assert any("fill_charpr_script_mismatch" in row
+               for row in verdict["deterministic"]["skipped"])
+
+
+# --------------------------------------------------------------------------
+# (f) the residue keep-list passthrough — a form fill must be able to pass
+# --------------------------------------------------------------------------
+
+_FILL_MAP = {"20101": _FILL_VALUE}
+
+
+def _fill_map_file(path: Path) -> Path:
+    path.write_text(json.dumps(_FILL_MAP, ensure_ascii=False),
+                    encoding="utf-8")
+    return path
+
+
+def _residue_delegate(verdict):
+    return next(d for d in verdict["deterministic"]["delegates"]
+                if d["checker"] == "check_residue")
+
+
+def test_form_fill_without_a_keep_list_cannot_pass(tmp_path):
+    """The defect both clean-room agents hit: with no way to forward a keep
+    list, every surviving legitimate anchor reads as residue."""
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert "check_residue_hard" in codes(verdict)
+    residue = _residue_delegate(verdict)
+    assert residue["exit"] == 3
+    surviving = {row["at"] for row in residue["hard"]}
+    assert "협업제품명" in surviving          # a label, not residue
+    assert "[별지 제2호의 8서식]" in surviving  # survives a legitimate fill
+    assert verdict["deterministic"]["residue_keep"] == {
+        "explicit_keep": [], "keep_pattern": None, "derived_keep": [],
+        "consumed": [], "fill_map": None, "keep_total": 0}
+
+
+def test_form_fill_passes_with_the_derived_keep_list(tmp_path):
+    """--fill-map derives (anchors ∪ placeholders) − consumed for the caller."""
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+    fill_map = _fill_map_file(tmp_path / "map.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["hard"] == []
+    assert _residue_delegate(verdict)["exit"] == 0
+    keep = verdict["deterministic"]["residue_keep"]
+    assert keep["consumed"] == ["20101"]
+    assert set(keep["derived_keep"]) == {
+        "협업제품명", "신청인", "I.  서론", "[별지 제2호의 8서식]"}
+    # guide text is never keepable — instruction prose must not survive a fill
+    assert "여기에 입력하세요" not in keep["derived_keep"]
+
+
+def test_derived_keep_list_still_catches_real_residue(tmp_path):
+    """Still-catches: the same derived keep list must fail an artifact where
+    the consumed placeholder and the guide text survived."""
+    artifact = make_form_hwpx(
+        tmp_path / "bad.hwpx",
+        residue=("20101", "여기에 입력하세요"))
+    pdf = _fill_pdf(tmp_path / "bad.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+    fill_map = _fill_map_file(tmp_path / "map.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    residue = _residue_delegate(verdict)
+    assert residue["exit"] == 3
+    assert {row["at"] for row in residue["hard"]} == {
+        "20101", "여기에 입력하세요"}
+
+
+def test_explicit_keep_and_keep_pattern_are_forwarded(tmp_path):
+    """The hand-built path stays available and composes with the derivation."""
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile,
+                           "--keep", "협업제품명",
+                           "--keep", "신청인",
+                           "--keep", "[별지 제2호의 8서식]",
+                           "--keep", "20101",
+                           "--keep-pattern", r"^[IVX]+\.",
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    keep = verdict["deterministic"]["residue_keep"]
+    assert keep["keep_pattern"] == r"^[IVX]+\."
+    assert keep["keep_total"] == 4
+    assert keep["derived_keep"] == []
+    assert _residue_delegate(verdict)["exit"] == 0
+
+
+def test_keep_derivation_unit(tmp_path):
+    keep, consumed = visual_verify.derive_form_keep(FORM_PROFILE, _FILL_MAP)
+    assert consumed == ["20101"]
+    assert keep == ["협업제품명", "신청인", "I.  서론", "[별지 제2호의 8서식]"]
+    # whitespace-normalized substring match, in both directions
+    keep2, consumed2 = visual_verify.derive_form_keep(
+        FORM_PROFILE, {"작성자 신청인 성명": "홍길동"})
+    assert consumed2 == ["신청인"]
+    assert "신청인" not in keep2
+
+
+def test_fill_map_accepts_an_expectations_shaped_file(tmp_path):
+    path = tmp_path / "exp.json"
+    path.write_text(json.dumps({"fill_map": _FILL_MAP, "base_pt": 10},
+                               ensure_ascii=False), encoding="utf-8")
+    mapping, error = visual_verify.load_fill_map(path)
+    assert error is None
+    assert mapping == _FILL_MAP
+
+
+def test_keep_flags_without_a_form_profile_are_a_usage_error(tmp_path):
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--keep", "협업제품명",
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert verdict["verdict"] == "usage_error"
+    assert "--form-profile" in verdict["error"]
+
+
+def test_unreadable_fill_map_is_a_usage_error(tmp_path):
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text("[1, 2, 3]", encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", bad,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "--fill-map" in verdict["error"]
 
 
 # --------------------------------------------------------------------------
@@ -545,6 +931,7 @@ def test_no_pdf_and_no_renderer_is_usage_error_not_a_pass(tmp_path, monkeypatch)
         "png_dir": str(tmp_path / "png"), "dpi": 130, "baseline": None,
         "form_profile": None, "content": None, "vision_verdict": None,
         "vision_scope": "all", "deterministic_only": False,
+        "keep": [], "keep_pattern": None, "fill_map": None,
         "attempt": None, "max_fix_attempts": None, "out": None})()
     verdict, code = visual_verify.verify(args)
     assert code == 2
@@ -564,6 +951,8 @@ INCIDENT_MATRIX = {
     "T24_stale_lineseg_overprint": ("overprint", "vision"),
     "W62_2up_imposition": ("imposition_mismatch", "deterministic"),
     "T25_missing_input_blank": ("blank_render", "deterministic"),
+    "T30_fill_superscript_inheritance": ("format_noncompliance",
+                                         "deterministic"),
 }
 
 

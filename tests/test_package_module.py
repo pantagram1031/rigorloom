@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import types
 import zipfile
 from pathlib import Path
@@ -367,6 +368,169 @@ class TestModuleSkillFragmentsShip:
             install_md = archive.read("INSTALL.md").decode("utf-8")
         assert "scripts/sync_local.py" in install_md
         assert "## Module: style" in install_md
+
+
+MANIFEST_WITH_SKILL = """\
+schema: rigorloom-module/v1
+name: throwaway
+requires: { rigorloom: ">=0.1" }
+provides:
+  checkers:
+    - { name: dummy_probe, script: scripts/check_dummy.py }
+  skill:
+    fragment: skill/FRAGMENT.md
+    references: [skill/references/play.md]
+"""
+
+
+def make_skill_module(root: Path, fragment_body: str,
+                      reference_body: str = "reference body\n") -> Path:
+    module = make_module(root, manifest=MANIFEST_WITH_SKILL)
+    (module / "skill" / "references").mkdir(parents=True)
+    (module / "skill" / "FRAGMENT.md").write_text(
+        fragment_body, encoding="utf-8")
+    (module / "skill" / "references" / "play.md").write_text(
+        reference_body, encoding="utf-8")
+    return module
+
+
+class TestShippedSurfaceReferencesResolve:
+    """v0.17 clean-room defect #2 (trouble-table T29): the shipped skill
+    referenced ``docs/research/visual-rubric.md``, which was in no bundle, so
+    the mandatory vision half of the verify loop reached a buyer with no class
+    definitions — both clean-room agents had to recover the vocabulary from
+    ``RUBRIC_CLASSES`` in source.
+
+    The guard is DERIVED from the surface's own text, not a filename list: any
+    future dangling reference fails the build with nobody updating a constant.
+    """
+
+    @pytest.fixture(scope="class")
+    def core_tree(self, tmp_path_factory) -> Path:
+        """The real core bundle, extracted — byte-identical to the staged tree
+        the guard runs over during a build."""
+        bundle = package_module.build_bundle(
+            "core", tmp_path_factory.mktemp("dist"), version="0.16.0")
+        extracted = tmp_path_factory.mktemp("core-tree")
+        with zipfile.ZipFile(bundle) as archive:
+            archive.extractall(extracted)
+        return extracted
+
+    def test_the_shipped_rubric_is_in_the_bundle_and_has_the_classes(
+            self, core_tree: Path):
+        rubric = core_tree / "skill" / "references" / "visual-rubric.md"
+        assert rubric.is_file(), "the vision half must ship with the skill"
+        text = rubric.read_text(encoding="utf-8")
+        assert "## 1. Class table" in text
+        assert "`overprint`" in text and "`text_clipped`" in text
+
+    def test_the_real_core_surface_has_no_dangling_reference(
+            self, core_tree: Path):
+        package_module._assert_skill_surface_references(
+            core_tree, Path("skill"), "core bundle")
+
+    def test_a_planted_dangling_reference_is_exit_3(self, core_tree: Path,
+                                                    tmp_path: Path):
+        """The deliberate plant: add a pointer to a doc the bundle does not
+        carry and the guard must refuse, naming both ends."""
+        planted = tmp_path / "planted"
+        shutil.copytree(core_tree, planted)
+        target = planted / "skill" / "references" / "operations.md"
+        target.write_text(
+            target.read_text(encoding="utf-8")
+            + "\nSee `docs/research/not-shipped-anywhere.md` for details.\n",
+            encoding="utf-8")
+        with pytest.raises(package_module.PackageError) as ctx:
+            package_module._assert_skill_surface_references(
+                planted, Path("skill"), "core bundle")
+        assert ctx.value.exit_code == 3
+        message = str(ctx.value)
+        assert "docs/research/not-shipped-anywhere.md" in message
+        assert "skill/references/operations.md" in message
+
+    def test_moving_the_rubric_back_out_of_the_surface_is_caught(
+            self, core_tree: Path, tmp_path: Path):
+        """The exact v0.17 regression, replayed: delete the shipped rubric and
+        the references that point at it become dangling."""
+        stripped = tmp_path / "stripped"
+        shutil.copytree(core_tree, stripped)
+        (stripped / "skill" / "references" / "visual-rubric.md").unlink()
+        with pytest.raises(package_module.PackageError) as ctx:
+            package_module._assert_skill_surface_references(
+                stripped, Path("skill"), "core bundle")
+        assert ctx.value.exit_code == 3
+        assert "visual-rubric.md" in str(ctx.value)
+        # SKILL.md AND operations.md both point at it; both are reported.
+        assert "skill/SKILL.md" in str(ctx.value)
+        assert "skill/references/operations.md" in str(ctx.value)
+
+    @pytest.mark.parametrize("spelling", [
+        "references/forms.md",            # skill-root relative (installed)
+        "engine/references/ops_schema.md",  # bundle-root relative
+    ])
+    def test_every_legitimate_spelling_resolves(self, core_tree: Path,
+                                                tmp_path: Path, spelling: str):
+        """Both ways a shipped doc is legitimately addressed must pass, or the
+        guard would force churn instead of catching real gaps."""
+        probed = tmp_path / f"probe-{abs(hash(spelling))}"
+        shutil.copytree(core_tree, probed)
+        target = probed / "skill" / "references" / "forms.md"
+        target.write_text(
+            target.read_text(encoding="utf-8") + f"\nSee `{spelling}`.\n",
+            encoding="utf-8")
+        package_module._assert_skill_surface_references(
+            probed, Path("skill"), "core bundle")
+
+    @pytest.mark.parametrize("ignored", [
+        "PIPELINE.md",                      # workspace artifact, not a path
+        "https://example.invalid/spec.md",  # a URL is not a bundle path
+    ])
+    def test_non_paths_are_not_treated_as_bundle_references(self, ignored: str):
+        assert package_module._referenced_doc_paths(
+            f"read `{ignored}` first") == []
+
+    def test_module_bundle_with_a_dangling_fragment_reference_is_refused(
+            self, tmp_path: Path):
+        """Full build path, module side: the same guard runs over a
+        distribution module's declared skill surface."""
+        make_skill_module(
+            tmp_path / "modules",
+            "## Module: throwaway\n\nSee `references/nowhere.md`.\n")
+        with pytest.raises(package_module.PackageError) as ctx:
+            build(tmp_path)
+        assert ctx.value.exit_code == 3
+        assert "references/nowhere.md" in str(ctx.value)
+
+    def test_module_bundle_with_resolving_references_builds(
+            self, tmp_path: Path):
+        make_skill_module(
+            tmp_path / "modules",
+            "## Module: throwaway\n\nSee `references/play.md`.\n")
+        bundle = build(tmp_path)
+        with zipfile.ZipFile(bundle) as archive:
+            names = set(archive.namelist())
+        assert "modules/throwaway/skill/references/play.md" in names
+
+
+class TestRubricHasOneHome:
+    """One rubric, one home. ``docs/research/visual-rubric.md`` is a pointer;
+    if it ever grows back into a copy the two can drift, which is how the
+    class table and ``RUBRIC_CLASSES`` diverge silently."""
+
+    SHIPPED = REPO_ROOT / "skill" / "references" / "visual-rubric.md"
+    POINTER = REPO_ROOT / "docs" / "research" / "visual-rubric.md"
+
+    def test_the_rubric_lives_in_the_skill_surface(self):
+        assert self.SHIPPED.is_file()
+        assert "## 1. Class table" in self.SHIPPED.read_text(encoding="utf-8")
+
+    def test_the_docs_path_is_a_pointer_not_a_second_copy(self):
+        text = self.POINTER.read_text(encoding="utf-8")
+        assert "skill/references/visual-rubric.md" in text
+        assert "## 1. Class table" not in text, (
+            "docs/research/visual-rubric.md grew a class table again — there "
+            "must be exactly one rubric, or the two copies will drift")
+        assert len(text) < len(self.SHIPPED.read_text(encoding="utf-8")) / 4
 
 
 class TestCorpusNeverShips:

@@ -1,11 +1,11 @@
 # Troubleshooting — engine-relevant trouble-table distillate
 
 Symptom → cause → fix, engine scope only (assembly/COM/XML/layout/equation).
-Full table with origins: `docs/trouble-table.md` (T1–T14, T26–T28) and the
-Lane-F rows in `docs/plans/v0.16-unified-core-and-modules.md` (T16–T22).
-Report-pipeline
-rows (T2 dataset downloads, T20 bundle figures) live in the report module
-fragment, not here.
+This IS the shipped table; the rigorloom repository keeps the full
+trouble table with per-row origins (T1–T14, T26–T30) and the Lane-F
+unification rows (T16–T22) alongside the plan that produced them.
+Report-pipeline rows (T2 dataset downloads, T20 bundle figures) live in
+the report module fragment, not here.
 
 ## TOC
 
@@ -29,6 +29,7 @@ fragment, not here.
 | — | `table_map` reports fewer tables/cells than the form visibly has | tables nest (6 of 12 corpus forms, depth 2) and the old non-greedy `<hp:tbl>(.*?)</hp:tbl>` paired an outer opening tag with an inner closing tag → the scanner is tag-stack based and shared with `fill-cells`, so `--table N` and `table_map[N]` are the same table |
 | — | Hancom shows "복구" (recovery) warning on open | DOM re-serialization somewhere in the path → only byte-preserving string surgery on the original bytes is allowed |
 | T7 | blank-paragraph cleanup near headings reassigns heading charPr (16pt→10pt) or merges paragraphs | COM delete across a paragraph boundary inherits pending charShape → blanks are cleaned OFFLINE with `tidy_hwpx` anchored to explicit paragraphs, never via COM find/delete |
+| T30 | a filled value renders small and raised (~6.35pt against 10pt body) but `charpr_check --base-pt 10` and `style_diff` both pass | the fill inherited a charPr clone that is body text PLUS a trailing `<hh:supscript/>` (or a shrunken `<hh:ratio>`/`<hh:relSz>`/`<hh:offset>`) — nominal `height` never changes, so height-based proofs cannot see it → `visual_verify` with an `expectations.fill_map` compares fill-modified runs' script/scale/offset against the body baseline and HARDs `fill_charpr_script_mismatch`. Genuinely superscripted footnote markers are out of scope by construction |
 
 ## COM editing and assembly
 
