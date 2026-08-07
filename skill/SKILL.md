@@ -152,5 +152,5 @@ Do not auto-start them from a casual mention of a file.
 - `references/visual-rubric.md` — the defect classes you apply when
   READING a rendered page image (the vision half of the verify step).
 
-Module skill fragments (report pipeline, style/humanize) are appended below
-by the installer when their distribution modules are enabled.
+Module skill fragments (report pipeline, style/humanize, gongmun/공문) are
+appended below by the installer when their distribution modules are enabled.

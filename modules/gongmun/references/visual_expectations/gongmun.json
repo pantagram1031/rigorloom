@@ -1,0 +1,23 @@
+{
+  "_note": "visual_verify expectations for a finished 공문 (pipeline/scripts/visual_verify.py --expectations). Modules are the natural author of this file and there is no provides key for it: it is ordinary payload the caller passes. forbidden_text is the regulation's guide vocabulary — the render must not SHOW a term the 별지서식 비고 says to replace, which is the visual twin of check_gongmun's guide_vocabulary_residue rule. intentionally_blank names the seats a human completes by hand, so a fill_map the caller composes per document does not have to claim them. Page geometry is NOT declared here: the 별지서식 prescribes 210x297 but a 공문 body may run to several pages, so page_budget stays the caller's call and visual_verify lists it under deterministic.skipped.",
+  "forbidden_text": [
+    "행정기관명",
+    "발신명의",
+    "발신명",
+    "기안자",
+    "검토자",
+    "결재권자",
+    "직위(직급) 서명",
+    "처리과명-연도별 일련번호(시행일)",
+    "처리과명-연도별 일련번호(접수일)",
+    "도로명주소",
+    "홈페이지 주소",
+    "공무원의 전자우편주소",
+    "공개 구분",
+    "이 난은 서식에 포함하지 아니한다"
+  ],
+  "intentionally_blank": [
+    "직인",
+    "서명"
+  ]
+}

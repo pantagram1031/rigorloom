@@ -1,0 +1,93 @@
+{
+  "schema": "rigorloom-gongmun-vocabulary/v1",
+  "regulation": "행정업무의 운영 및 혁신에 관한 규정 시행규칙 별지 제1호서식·제2호서식",
+  "description": "Structural vocabulary of the 공문/기안문 document family, as data. check_gongmun.py carries no Korean literals: every term below is regulation-level (it appears in every 기안문, not in one file), never a per-file string. 'labels' are section markers that legitimately remain in a finished document — the gongmun keep-list; 'placeholders' are the guide terms the 별지서식 비고 block declares must NOT be displayed ('그 용어는 표시하지 아니하고 그 내용을 적는다'), i.e. the residue class. Each form's own 비고 block is parsed at run time too (bigo_quoted_term_re), so a 서식 naming a term this table misses is still covered. Term matching is whitespace-insensitive because the 서식 letter-spaces its labels ('행 정 기 관 명', '( 제    목 )').",
+  "sections": {
+    "dumun": {
+      "labels": [
+        "수신",
+        "경유",
+        "제목"
+      ],
+      "required_labels": [
+        "수신",
+        "제목"
+      ],
+      "placeholders": [
+        "행정기관명"
+      ]
+    },
+    "gyeoljae": {
+      "labels": [
+        "협조자"
+      ],
+      "approver_roles": [
+        "기안자",
+        "검토자",
+        "결재권자"
+      ],
+      "rank_term": "직위(직급)",
+      "signature_term": "서명",
+      "placeholders": [
+        "기안자",
+        "검토자",
+        "결재권자",
+        "직위(직급) 서명"
+      ]
+    },
+    "gyeolmun": {
+      "labels": [
+        "시행",
+        "접수",
+        "우",
+        "전화번호",
+        "팩스번호",
+        "생산등록번호",
+        "등록일",
+        "결재일"
+      ],
+      "issue_labels": [
+        "시행",
+        "접수"
+      ],
+      "placeholders": [
+        "처리과명-연도별 일련번호(시행일)",
+        "처리과명-연도별 일련번호(접수일)",
+        "도로명주소",
+        "홈페이지 주소",
+        "공무원의 전자우편주소",
+        "공개 구분"
+      ]
+    },
+    "balsin": {
+      "labels": [],
+      "placeholders": [
+        "발신명의",
+        "발신명"
+      ]
+    },
+    "seal": {
+      "labels": [
+        "직인",
+        "관인"
+      ],
+      "placeholders": []
+    }
+  },
+  "family_minimum": 2,
+  "human_completed_terms": [
+    "처리과명-연도별 일련번호(접수일)",
+    "직인",
+    "관인"
+  ],
+  "bigo_marker": "이 난은 서식에 포함하지 아니한다",
+  "bigo_quoted_term_re": "[\"“「]([^\"”」]{2,40})[\"”」]",
+  "placeholder_glyph_re": "[○●◯]{2,}",
+  "issue_number_re": "^[^-]{1,40}-\\s*\\d+\\s*\\([^()]{1,40}\\)$",
+  "seal_border_colors": [
+    "#FF0000",
+    "#FF5200",
+    "#E00000"
+  ],
+  "noise_re": "[\\s()\\[\\]/,.:;·―–—_【】※■□☑○●◯-]+"
+}
