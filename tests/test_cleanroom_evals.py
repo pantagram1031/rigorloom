@@ -60,11 +60,14 @@ def bundles(tmp_path_factory) -> list[Path]:
 
 @pytest.fixture(scope="module")
 def prepared(tmp_path_factory, bundles) -> dict:
-    """One clean-room install, shared by the tests that only read it."""
+    """One clean-room install, shared by the tests that only read it.
+
+    No ``allow_gaps``: as of v0.17 a healthy bundle set installs with ZERO
+    acknowledged gaps. If this fixture starts needing one again, something
+    stopped shipping.
+    """
     root = tmp_path_factory.mktemp("cleanroom") / "sandbox"
-    report, code = cleanroom.prepare(
-        root, bundles, enable="all",
-        allow_gaps=["skill_surface_not_bundled"])
+    report, code = cleanroom.prepare(root, bundles, enable="all")
     return {"root": Path(report["sandbox_root"]), "report": report,
             "code": code, "bundles": bundles}
 
@@ -78,6 +81,14 @@ class TestCleanroomPrepare:
         assert code == 0, report["failures"]
         assert report["ok"] is True
         assert report["failures"] == []
+
+    def test_a_current_bundle_set_installs_with_zero_allowed_gaps(
+            self, prepared):
+        """The v0.17 packaging fix, stated as a product property: nothing has
+        to be acknowledged for a healthy install."""
+        report = prepared["report"]
+        assert report["gaps"] == []
+        assert report["gaps_acknowledged"] == []
 
     def test_bundles_verify_through_the_shipped_verifier(self, prepared):
         report = prepared["report"]
@@ -115,31 +126,53 @@ class TestCleanroomPrepare:
         for name in prepared["report"]["bundles"]:
             assert os.sep not in name and "/" not in name
 
-    def test_skill_surface_gap_is_reported_not_papered_over(self, prepared):
-        gaps = {gap["id"]: gap for gap in prepared["report"]["gaps"]}
-        assert "skill_surface_not_bundled" in gaps, (
-            "if this fails the skill surface is now bundled — delete the "
-            "acknowledgement from the fixture and README §4")
-        assert gaps["skill_surface_not_bundled"]["severity"] == "HARD"
-        assert set(prepared["report"]["skill"]["missing"]) == {
-            "scripts/sync_local.py", "SKILL.md"}
+    def test_skill_surface_gap_is_not_reported_because_it_is_bundled(
+            self, prepared):
+        """The gap CODE stays (it is a real check); what changed is that a
+        current bundle no longer trips it."""
+        assert "skill_surface_not_bundled" in cleanroom._ALLOWED_GAPS
+        assert "skill_surface_not_bundled" not in {
+            gap["id"] for gap in prepared["report"]["gaps"]}
+        assert prepared["report"]["skill"].get("gap") is None
+        assert prepared["report"]["skill"]["ok"] is True
+
+    def test_the_gap_check_still_bites_when_the_surface_is_absent(
+            self, tmp_path, bundles):
+        """Negative control: strip the bundled skill surface out of a prepared
+        install and the harness must report the gap again. Otherwise 'no gap'
+        would only prove the check went quiet."""
+        report, _code = cleanroom.prepare(
+            tmp_path / "stripped", bundles, enable="all", skip_skill=True)
+        install = Path(report["sandbox_root"]) / "install"
+        shutil.rmtree(install / "skill")
+        (install / "scripts" / "sync_local.py").unlink()
+        sandbox = cleanroom.Sandbox(report["sandbox_root"])
+        result = cleanroom.install_skill(sandbox)
+        assert result["gap"] == "skill_surface_not_bundled"
+        assert set(result["missing"]) == {"scripts/sync_local.py", "SKILL.md"}
 
     def test_unacknowledged_gap_fails_the_run(self, tmp_path, bundles):
+        """A core-only install still reports ``no_module_bundles``; without an
+        acknowledgement the run fails. The gap machinery is intact."""
         report, code = cleanroom.prepare(
-            tmp_path / "unack", bundles, enable="all")
+            tmp_path / "unack", [bundles[0]], enable="none")
         assert code == 3
         assert report["ok"] is False
-        assert any("skill_surface_not_bundled" in failure
+        assert any("no_module_bundles" in failure
                    for failure in report["failures"])
 
     def test_core_only_install(self, tmp_path, bundles):
         report, code = cleanroom.prepare(
             tmp_path / "coreonly", [bundles[0]], enable="none",
-            allow_gaps=["no_module_bundles", "skill_surface_not_bundled"])
+            allow_gaps=["no_module_bundles"])
         assert code == 0, report["failures"]
         assert report["registry"]["enabled"] == []
-        assert {gap["id"] for gap in report["gaps"]} == {
-            "no_module_bundles", "skill_surface_not_bundled"}
+        assert {gap["id"] for gap in report["gaps"]} == {"no_module_bundles"}
+        # core alone still carries a usable skill surface
+        assert report["skill"]["ok"] is True
+        installed = Path(report["skill"]["install_root"]) / "SKILL.md"
+        assert installed.is_file()
+        assert "## Module:" not in installed.read_text(encoding="utf-8")
 
     def test_refuses_a_non_empty_root(self, tmp_path, bundles):
         root = tmp_path / "dirty"
@@ -163,9 +196,7 @@ class TestContainment:
         """The whole point of the harness: an install that reaches back into
         the checkout must fail loudly, even though everything else is green."""
         root = tmp_path / "planted"
-        report, code = cleanroom.prepare(
-            root, bundles, enable="all",
-            allow_gaps=["skill_surface_not_bundled"])
+        report, code = cleanroom.prepare(root, bundles, enable="all")
         assert code == 0 and report["containment"]["contained"] is True
 
         planted = (Path(report["sandbox_root"]) / "install" / "pipeline"
@@ -265,38 +296,63 @@ class TestContainment:
             probe["privacy_scan"], prepared["root"] / "install")
 
 
-class TestSkillInstallSeam:
-    """The skill-install step is written against the BUNDLE tree and is
-    dormant only because ``package_module`` does not yet ship ``skill/`` or
-    ``scripts/sync_local.py``. Stage those two into an install and the step
-    must work — otherwise closing the gap would land on untested code."""
+class TestSkillInstallFromBundlesAlone:
+    """The buyer's skill install, end to end, out of the bundles and nothing
+    else. Before v0.17 this could only be simulated by copying ``skill/`` and
+    ``scripts/sync_local.py`` out of the checkout — the copying is gone, which
+    is the point of the fix."""
 
-    def test_skill_installs_from_the_sandbox_tree(self, tmp_path, bundles):
-        report, code = cleanroom.prepare(
-            tmp_path / "skillseam", bundles, enable="all", skip_skill=True,
-            allow_gaps=["skill_surface_not_bundled"])
-        assert code == 0, report["failures"]
-        install = Path(report["sandbox_root"]) / "install"
-
-        # simulate a future core bundle that carries the skill surface
-        shutil.copytree(REPO_ROOT / "skill", install / "skill")
-        shutil.copy2(REPO_ROOT / "scripts" / "sync_local.py",
-                     install / "scripts" / "sync_local.py")
-
-        sandbox = cleanroom.Sandbox(report["sandbox_root"])
-        surface = cleanroom.locate_skill_surface(install)
+    def test_the_surface_is_located_inside_the_installed_tree(self, prepared):
+        surface = cleanroom.locate_skill_surface(prepared["root"] / "install")
         assert surface == {"present": True, "skill_md": "skill/SKILL.md",
                            "references": "skill/references"}
 
-        result = cleanroom.install_skill(sandbox)
+    def test_prepare_installed_the_skill_with_module_fragments_merged(
+            self, prepared):
+        result = prepared["report"]["skill"]
         assert result["ok"] is True, result
+        assert result["skill_md_installed"] is True
         installed = Path(result["install_root"]) / "SKILL.md"
-        assert installed.is_file()
         body = installed.read_text(encoding="utf-8")
         assert "rigorloom-hwp" in body
-        # merge_skill_fragments pulled the enabled module's fragment in
+        # merge_skill_fragments pulled every enabled module's fragment in
+        for name in prepared["report"]["registry"]["enabled"]:
+            assert f"## Module: {name}" in body
         assert "## Module: style" in body
-        assert cleanroom._is_within(result["install_root"], sandbox.root)
+        assert cleanroom._is_within(result["install_root"], prepared["root"])
+        # core references travelled with the skill
+        references = Path(result["install_root"]) / "references"
+        assert {"operations.md", "forms.md", "troubleshooting.md"} <= {
+            path.name for path in references.glob("*.md")}
+
+    def test_a_module_skill_reference_lands_beside_the_installed_skill(
+            self, tmp_path, tmp_path_factory):
+        """The report module declares `skill.references`; installing its bundle
+        must put that file into the installed skill's references/."""
+        out = tmp_path_factory.mktemp("dist_report")
+        report_bundles = [package_module.build_bundle(name, out)
+                          for name in ("core", "style", "report")]
+        report, code = cleanroom.prepare(
+            tmp_path / "withreport", report_bundles, enable="all")
+        assert code == 0, report["failures"]
+        install_root = Path(report["skill"]["install_root"])
+        body = (install_root / "SKILL.md").read_text(encoding="utf-8")
+        assert "## Module: report" in body
+        names = {path.name for path in (install_root / "references").glob("*.md")}
+        assert "report_pipeline.md" in names
+
+    def test_installing_twice_is_idempotent(self, tmp_path, bundles):
+        """A buyer re-runs the installer after enabling another module; the
+        second run must not be refused as drift."""
+        report, code = cleanroom.prepare(
+            tmp_path / "twice", bundles, enable="all")
+        assert code == 0, report["failures"]
+        sandbox = cleanroom.Sandbox(report["sandbox_root"])
+        again = cleanroom.install_skill(sandbox)
+        assert again["ok"] is True, again
+        body = (Path(again["install_root"]) / "SKILL.md").read_text(
+            encoding="utf-8")
+        assert body.count("## Module: style") == 1
 
 
 # --------------------------------------------------------------------------- #

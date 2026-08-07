@@ -9,8 +9,10 @@ per-file sha256, provides summary) and an ``INSTALL.md`` (drop into
 ``modules/<name>/``, enable via the module_registry CLI).
 
 ``--module core`` emits the core bundle: ``engine/`` + the pipeline core
-(``pipeline/scripts``, ``pipeline/references``) + ``studio/`` +
-``modules/README.md`` (the distribution-module contract; no module
+(``pipeline/scripts``, ``pipeline/references``) + ``studio/`` + the router
+skill surface (``skill/SKILL.md`` + ``skill/references/``) + the skill
+installer (``scripts/sync_local.py`` + ``scripts/sync_manifest.example.yaml``)
++ ``modules/README.md`` (the distribution-module contract; no module
 payloads) + ``pyproject.toml``/``LICENSE``.
 
 Validation before anything is written:
@@ -60,16 +62,41 @@ _JUNK_SUFFIXES = {".pyc", ".pyo"}
 
 # Core bundle contents (--module core): general document-engine surface
 # only — no distribution-module payloads, no test suites.
+#
+# ``skill/`` + ``scripts/sync_local.py`` + the manifest example are the
+# *skill surface*: without all three a buyer installs the engine and has no
+# way to install the router skill (the defect the v0.17 clean-room harness
+# reported as ``skill_surface_not_bundled``). They are part of the product,
+# not of the build tree.
 _CORE_COMPONENTS = (
     "engine",
     "pipeline/scripts",
     "pipeline/references",
     "studio",
+    "skill",
+    "scripts/sync_local.py",
+    "scripts/sync_manifest.example.yaml",
     "modules/README.md",
     "pyproject.toml",
     "LICENSE",
 )
 _CORE_EXCLUDED_DIRS = _JUNK_DIRS | {"tests"}
+
+# Every core bundle must carry these, whatever else changes about the
+# component list. Asserted against the staged tree before the manifest is
+# written, so a component-list edit can never silently drop the skill
+# surface again.
+_CORE_REQUIRED_FILES = (
+    "skill/SKILL.md",
+    "scripts/sync_local.py",
+    "scripts/sync_manifest.example.yaml",
+    "scripts/package_module.py",
+    "pipeline/scripts/module_registry.py",
+    "engine/scripts/probe.py",
+)
+_CORE_REQUIRED_GLOBS = (
+    ("skill/references", "*.md"),
+)
 
 
 class PackageError(Exception):
@@ -146,7 +173,24 @@ def _run_privacy_gate(staging: Path) -> None:
             f"bundle — refusing to package:\n{lines}", exit_code=3)
 
 
-def _module_install_md(name: str, version: str, requires: str) -> str:
+_SKILL_RESYNC_NOTE = """
+This module declares a skill fragment (`provides.skill`). It is merged into
+the router skill only when the skill installer runs, so re-run it after
+enabling this module — see "Install the skill surface" in the core bundle's
+`INSTALL.md`:
+
+```sh
+python scripts/sync_local.py --manifest my-skill-manifest.yaml \\
+    --checkout-root .
+```
+
+The fragment appears in the installed `SKILL.md` under `## Module: {name}`.
+"""
+
+
+def _module_install_md(name: str, version: str, requires: str,
+                       has_skill: bool = False) -> str:
+    skill_note = _SKILL_RESYNC_NOTE.format(name=name) if has_skill else ""
     return f"""# rigorloom-{name} {version} — distribution module bundle
 
 Standalone installable bundle for the `{name}` distribution module
@@ -169,6 +213,7 @@ Standalone installable bundle for the `{name}` distribution module
 
 Presence is integration: enabling the module surfaces its checkers, CLI,
 run modes, gate kinds, and studio panels with no further configuration.
+{skill_note}
 Verify bundle integrity any time with
 `python scripts/package_module.py --verify <this bundle>`.
 """
@@ -178,23 +223,127 @@ def _core_install_md(version: str) -> str:
     return f"""# rigorloom-core {version} — core bundle
 
 The core document engine: `engine/`, the pipeline core
-(`pipeline/scripts`, `pipeline/references`), `studio/`, and the
+(`pipeline/scripts`, `pipeline/references`), `studio/`, the router skill
+surface (`skill/SKILL.md` + `skill/references/`), the skill installer
+(`scripts/sync_local.py` + `scripts/sync_manifest.example.yaml`), and the
 distribution-module contract (`modules/README.md`). No distribution-module
 payloads are included — core ships alone and runs green alone (absence is
 not failure).
 
 ## Install
 
-1. Extract this bundle into an empty directory.
+1. Extract this bundle into an empty directory. That directory is your
+   INSTALL ROOT; every command below is run from it.
 2. Install runtime dependencies as needed (`studio/requirements.txt` for
    the studio dashboard).
-3. Add capability bundles later by installing distribution modules
+3. Add capability bundles by installing distribution modules
    (`rigorloom-<name>-<version>.zip`) into `modules/` and enabling them via
    `python pipeline/scripts/module_registry.py write-enabled`.
+
+## Install the skill surface
+
+The router skill (`rigorloom-hwp`) is what an agent loads; it is installed
+OUT of this tree and INTO your agent's skills directory. Do it after
+enabling modules, so their skill fragments are merged in.
+
+1. Copy the bundled manifest example and edit it:
+
+   ```sh
+   cp scripts/sync_manifest.example.yaml my-skill-manifest.yaml
+   ```
+
+   Keep only the router-skill target. The whole file is:
+
+   ```yaml
+   install_root: "<YOUR SKILLS DIR>/rigorloom-hwp"
+   merge_skill_fragments: true
+   source_map:
+     - from: "skill/SKILL.md"
+       to: "SKILL.md"
+     - from: "skill/references"
+       to: "references"
+     - from: "engine/scripts"
+       to: "engine/scripts"
+     - from: "pipeline/scripts"
+       to: "pipeline/scripts"
+   exclude:
+     - "__pycache__"
+     - "*.pyc"
+     - ".sync*"
+   ```
+
+   `install_root` must be ABSOLUTE — e.g.
+   `~/.claude/skills/rigorloom-hwp`, or on Windows
+   `C:\\\\Users\\\\<you>\\\\.claude\\\\skills\\\\rigorloom-hwp`.
+
+2. Run the bundled installer, pointing `--checkout-root` at THIS install
+   root (the `from:` paths above are resolved against it):
+
+   ```sh
+   python scripts/sync_local.py --manifest my-skill-manifest.yaml \\
+       --checkout-root . --dry-run
+   python scripts/sync_local.py --manifest my-skill-manifest.yaml \\
+       --checkout-root .
+   ```
+
+3. Where it lands: `<install_root>/SKILL.md` (the router skill, with each
+   enabled module's fragment appended under a `## Module: <name>` heading),
+   `<install_root>/references/` (core references plus every enabled
+   module's skill references), and the script trees the manifest maps.
+   The previous install is archived to `<install_root>.bak-<timestamp>`.
+
+`merge_skill_fragments: true` reads enablement from this install's
+`modules/enabled.yaml`, so re-run the installer after enabling or disabling
+a module.
 
 Verify bundle integrity any time with
 `python scripts/package_module.py --verify <this bundle>`.
 """
+
+
+def _assert_module_skill_shipped(name: str, spec: Any, staging: Path) -> None:
+    """A module that declares ``provides.skill`` must SHIP that fragment and
+    its references inside the staged payload.
+
+    The declaration is what the installer merges into the router SKILL.md; a
+    bundle that declares a fragment it does not carry produces an install
+    whose skill merge fails on a file the buyer never received. Payload
+    existence is checked upstream against the checkout — this checks the
+    *bundle*, which is the artifact that actually leaves the building.
+    """
+    skill = spec.provides.get("skill")
+    if not skill:
+        return
+    wanted = [skill["fragment"], *skill.get("references", [])]
+    missing = [relative for relative in wanted
+               if not (staging / "modules" / name / relative).is_file()]
+    if missing:
+        raise PackageError(
+            f"distribution module '{name}' declares provides.skill but the "
+            f"staged bundle does not carry: {missing} — a declared skill "
+            "fragment must ship with the module that declares it",
+            exit_code=3)
+
+
+def _assert_core_skill_surface(staging: Path) -> None:
+    """The core bundle must carry the whole skill surface.
+
+    Found by the v0.17 clean-room harness: the core bundle shipped the engine
+    with no ``SKILL.md``, no references and no installer, so a buyer could not
+    install the skill at all. This assertion runs over the *staged tree*, so
+    the gap cannot reappear through an edit to ``_CORE_COMPONENTS``.
+    """
+    missing = [relative for relative in _CORE_REQUIRED_FILES
+               if not (staging / relative).is_file()]
+    for directory, pattern in _CORE_REQUIRED_GLOBS:
+        if not sorted((staging / directory).glob(pattern)):
+            missing.append(f"{directory}/{pattern}")
+    if missing:
+        raise PackageError(
+            f"core bundle is missing required file(s): {missing} — the core "
+            "bundle must ship the skill surface (SKILL.md, references, and "
+            "the sync_local installer) or a buyer gets an engine with no "
+            "skill", exit_code=3)
 
 
 def _stage_module(name: str, staging: Path,
@@ -213,11 +362,13 @@ def _stage_module(name: str, staging: Path,
                 f"distribution module '{name}': declared payload file is "
                 f"missing: {relative}")
     _copy_tree(spec.root, staging / "modules" / name, _JUNK_DIRS)
+    _assert_module_skill_shipped(name, spec, staging)
     return {
         "requires": {"rigorloom": spec.requires},
         "provides": _provides_summary(spec.provides),
         "install_md": _module_install_md(
-            name, registry.version, spec.requires),
+            name, registry.version, spec.requires,
+            has_skill=bool(spec.provides.get("skill"))),
     }
 
 
@@ -237,9 +388,11 @@ def _stage_core(staging: Path, repo_root: Path, version: str) -> dict:
     scripts_dir = staging / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(__file__).resolve(), scripts_dir / "package_module.py")
+    _assert_core_skill_surface(staging)
     return {
         "requires": None,
-        "provides": {"core_components": list(_CORE_COMPONENTS)},
+        "provides": {"core_components": list(_CORE_COMPONENTS),
+                     "skill": True},
         "install_md": _core_install_md(version),
     }
 
