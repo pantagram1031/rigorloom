@@ -51,6 +51,11 @@ def _candidate_script_dirs() -> list[Path]:
 for _dir in _candidate_script_dirs():
     if str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
+if str(_HERE) not in sys.path:               # engine's own dir, always
+    sys.path.insert(0, str(_HERE))
+
+#: One definition of the cp949 stdio guard for the whole engine tree.
+from cli_io import utf8_stdio as _utf8_stdio  # noqa: E402
 
 
 def _render_summary() -> dict:
@@ -132,6 +137,9 @@ def probe(backends_config: str | None = None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # cp949-safe --help: the guard belongs BEFORE parse_args, not only in the
+    # __main__ block, so an in-process caller gets it too (see cli_io.py).
+    _utf8_stdio()
     ap = argparse.ArgumentParser(
         description="rigorloom-hwp capability probe (render + modules + backends)")
     ap.add_argument("--json", action="store_true",
@@ -150,14 +158,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _utf8_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
-
-
 if __name__ == "__main__":
-    _utf8_stdio()
     sys.exit(main())

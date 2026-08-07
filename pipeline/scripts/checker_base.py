@@ -124,7 +124,16 @@ def cli_main(
     add_out: bool = True,
     create_out_parent: bool = False,
 ) -> int:
-    """Parse arguments, invoke a checker adapter, and emit its strict JSON."""
+    """Parse arguments, invoke a checker adapter, and emit its strict JSON.
+
+    The cp949 guard runs HERE, before ``parse_args``, because ``parse_args``
+    is where ``--help`` prints and exits: an em-dash in a parser description
+    killed ``--help`` with ``UnicodeEncodeError`` on a Korean-locale Windows
+    console. Every checker that routes through ``cli_main`` is covered by
+    construction; the ones with a hand-rolled main call ``_utf8_stdio()``
+    themselves (swept and pinned by ``tests/test_cli_cp949_help.py``).
+    """
+    _utf8_stdio()
     if add_out and not any(action.dest == "out" for action in parser._actions):
         parser.add_argument("--out", default=None, help="write verdict JSON here")
     args = parser.parse_args(argv)

@@ -16,11 +16,17 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 import unicodedata
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from checker_base import _utf8_stdio  # noqa: E402
 
 
 _LINESEGARRAY_RE = re.compile(
@@ -215,6 +221,8 @@ def create_render_surrogate(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # cp949-safe --help: reconfigure BEFORE parse_args (see cli_io.py).
+    _utf8_stdio()
     parser = argparse.ArgumentParser(description="create render-only HWPX surrogate")
     parser.add_argument("canonical")
     parser.add_argument("surrogate")

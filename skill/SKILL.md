@@ -104,6 +104,13 @@ path, that is a surface defect to report, not a reason to escalate.
   PPS form). `preedit replace` is text-keyed and cannot reach it; that is what
   `preedit fill-cells` is for (T27). Routing an empty cell to `replace` is the
   defect that pushed two clean-room agents onto the COM path and into T28.
+- "Preserves the run's charPr" is only safe when that charPr *is* body
+  formatting. Run the pre-flight: `form_inspect` flags every `fill_target`
+  whose run carries a `script_anomaly` and names the `charpr_suggested` to use
+  — pass it as `fill-cells --charpr-per-cell ROW,COL=ID`. Skipping it is not
+  silent: `fill-cells` refuses (exit 3) instead of producing a ~6.35pt raised
+  fill that every height-based proof passes (T30). Never read `header.xml` to
+  find the id — that is what `charpr_suggested` is for.
 - Cell addresses are **`cellAddr`** (`table_map`'s `addr`), never keypress
   counts. Merged cells own their top-left coordinate only, so addresses are
   not contiguous. `com_backend`'s legacy `row`/`col` keypress mode is opt-in

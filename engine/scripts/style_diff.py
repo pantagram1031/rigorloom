@@ -20,6 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from cli_io import utf8_stdio  # noqa: E402
 from build_report import parse_build_yaml  # noqa: E402
 from form_inspect import (  # noqa: E402
     _charpr_defs, _fontfaces, _paraprops, _paragraphs, font_face, NS,
@@ -367,6 +368,8 @@ def check_para_formats(form_path, out_path):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out_file", help="조립된 .hwpx 경로")

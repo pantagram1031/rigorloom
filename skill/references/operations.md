@@ -40,8 +40,10 @@ Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
 `constraints` (base_pt / line_spacing_pct / max_pages — 0 detected on
 fixed-grid forms; the fill gate there is layout immutability, not budget),
 `page_metrics`, `table_map` (per-table `index`/`depth`, per-cell
-`addr`/`span`/size/borderFill/shading/classification), `break_audit`.
-`--baseline` additionally writes the font/size/color/spacing
+`addr`/`span`/size/borderFill/shading/classification — plus the T30
+pre-flight fields `charpr`/`script_anomaly`/`charpr_suggested` on
+`fill_target` cells), `body_baseline_charpr`, `script_anomaly_targets`,
+`break_audit`. `--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
 
@@ -58,7 +60,7 @@ overprint at old coordinates).
 
 ```
 python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
-python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--map CELLS.json] [--overwrite] [--charpr ID]
+python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--map CELLS.json] [--overwrite] [--charpr ID] [--charpr-per-cell ROW,COL=ID ...]
 python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue] [--charpr-ids 5,6]
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
@@ -96,8 +98,57 @@ literal placeholder string exists in the document.
   the T22 dangling-charPr assertion runs too). A non-empty target is refused
   unless `--overwrite`; a refusal anywhere in the batch writes nothing at all.
   Output JSON: `{"ok": true, "table": n, "tables_total": n, "filled": n,
-  "cells": [{"addr": [r, c], "hits": 1, "action": "filled"|"overwritten",
-  "previous": "…"}]}`.
+  "body_baseline_charpr_id": "0", "cells": [{"addr": [r, c], "hits": 1,
+  "action": "filled"|"overwritten", "previous": "…", "charpr": "0"|null}]}`.
+  **`--charpr` applies to the whole batch** (T32) — it is only safe when every
+  target shares a charPr. Per-cell ids need `--charpr-per-cell ROW,COL=ID`
+  (repeatable, wins over `--charpr`); an address it names that is not in the
+  fill list is a usage error, not a silent no-op.
+
+### The charPr pre-flight before any fill (T30)
+
+"Preserves that run's charPr" is only safe when that run's charPr *is* body
+formatting. On the PPS form, cell (10,2)'s empty run carried a charPr
+identical to body text **plus** `<hh:supscript/>`: a correct-looking fill
+rendered at ~6.35pt raised off the baseline, and because nominal `height`
+never changed, `charpr_check --base-pt 10` and `style_diff` both passed it.
+So run the pre-flight — never guess the id, and never read `header.xml` by
+hand (the structure-only contract above forbids exactly that):
+
+1. **Inspect.** `form_inspect FORM.hwpx --out profile.json` reports
+   `body_baseline_charpr` (`{id, height_pt, signature}` — the document's own
+   body charPr) once at the top level, and per `fill_target` cell:
+   `charpr` (the id the fill would inherit), `script_anomaly`
+   (`true` when that charPr differs from the baseline on any of
+   `supscript`/`subscript`/`ratio`/`relSz`/`offset`; `false` = checked and
+   clean; `null` = could not be judged), and `charpr_suggested` (the baseline
+   id to use instead). `script_anomaly_targets` lists just the anomalies.
+2. **Check.** `script_anomaly_targets == []` → fill normally, nothing to do.
+3. **Fill with the suggested id.** For each anomalous target pass
+   `--charpr-per-cell ROW,COL=<charpr_suggested>`.
+
+If you skip step 1, `fill-cells` refuses (exit 3, `code_name`
+`fill_charpr_script_anomaly`) rather than silently producing a 6pt raised
+fill. The refusal names **every** anomalous target in one shot and carries
+`suggested_flags` — the ready-to-paste `--charpr-per-cell` argument list — so
+the loop closes without ever opening the header. Non-target runs are never
+compared, so a genuinely superscripted footnote marker, ordinal or unit
+exponent is out of scope by construction.
+`visual_verify`'s `fill_charpr_script_mismatch` (T30) is the post-flight half
+of the same comparison — both halves share one implementation
+(`engine/scripts/charpr_script.py`) so they cannot disagree, which is the
+whole point: anything the pre-flight lets through, the gate lets through.
+
+**Expect anomalies to be common, and decide per cell.** Measured over the 10
+converted corpus forms: 6 forms have at least one anomalous target and
+`jeongbo-gonggae-cheongguseo` has 18 of 19. Most are a 2–5 percentage-point
+`ratio` (character-width) delta — the form's own typography, not the
+superscript trap. The refusal is still correct, because the post-flight gate
+compares the same five properties and would HARD on those fills afterwards; a
+pre-flight that passed what the gate rejects is the worst of both. So treat it
+as a decision, not a rubber stamp: `suggested_flags` normalizes the cell to
+body formatting, and if the cell is *meant* to carry a different style, pass
+that style's id instead.
 - `delete-guides`: deletes paragraphs referencing guide charPr (by color or
   explicit ids) with the T18 guard built in: table/secPr/ctrl/object
   paragraphs are never deleted.
@@ -305,7 +356,10 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   difference is HARD `fill_charpr_script_mismatch` (class
   `format_noncompliance`): nominal height is unchanged in this trap, so
   `charpr_check` and `style_diff` cannot see it. Only fill-modified runs are
-  in scope, so intentional superscripts are never flagged.
+  in scope, so intentional superscripts are never flagged. This is the
+  POST-flight half; the pre-flight (`form_inspect` `script_anomaly` →
+  `fill-cells --charpr-per-cell`) is under §3 and shares this comparison
+  code, so a fill that passed the pre-flight cannot fail here for this reason.
 - **`expectations.json`** keys: `pages_document`, `page_budget {min,max}` or
   `max_pages`, `base_pt`, `line_spacing_pct`, `margins_mm {top,bottom,left,
   right}`, `fill_map {label: value}`, `intentionally_blank [label]`,

@@ -88,6 +88,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from cli_io import utf8_stdio  # noqa: E402
 import layout_qa  # noqa: E402
 import build_report  # noqa: E402
 import tidy_hwpx  # noqa: E402
@@ -1507,6 +1508,8 @@ def mode_assemble(args):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--measure", action="store_true", help="측정 모드(오프라인)")

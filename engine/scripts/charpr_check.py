@@ -16,8 +16,15 @@ charPrIDRef 분포를 대조한다. PDF를 눈으로 보지 않고도 "본문 10
 import argparse
 import json
 import re
+import sys
 import zipfile
 from collections import Counter
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
 
 RUN_RE = re.compile(r'charPrIDRef="(\d+)"(.*?)>(.*?)</hp:run>', re.S)
 T_RE = re.compile(r'<hp:t>(.*?)</hp:t>', re.S)
@@ -96,6 +103,8 @@ def analyze(hwpx, base_pt=10.0, caption_pt=9.0):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--file", required=True, help=".hwpx 경로")
     ap.add_argument("--base-pt", type=float, default=10.0)

@@ -20,6 +20,7 @@ from pathlib import Path
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+from checker_base import _utf8_stdio  # noqa: E402
 
 _DEFAULTS_DIR = _SCRIPTS_DIR.parent / "references" / "preference_packs" / "defaults"
 DEFAULT_FIGURE_PACK = _DEFAULTS_DIR / "figure_style.json"
@@ -135,6 +136,8 @@ def legend_out(ax, **kwargs):
 
 
 def main():
+    # cp949-safe --help: reconfigure BEFORE parse_args (see cli_io.py).
+    _utf8_stdio()
     ap = argparse.ArgumentParser(description="figure_style pack -> matplotlib rcParams")
     ap.add_argument("--dump", action="store_true", help="print resolved rcParams as JSON (no matplotlib)")
     ap.add_argument("--pack", default=None, help="figure_style pack file (default = public default)")

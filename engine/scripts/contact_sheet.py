@@ -27,6 +27,11 @@ from pathlib import Path
 import fitz  # pymupdf
 from PIL import Image, ImageDraw, ImageFont
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
+
 BORDER_COLOR = (160, 160, 160)
 BORDER_WIDTH = 1
 LABEL_COLOR = (220, 0, 0)
@@ -148,6 +153,8 @@ def make_contact_sheets(pdf_path, out_dir, dpi=70, per_sheet=6, max_width=1600,
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pdf", required=True, help="입력 PDF 경로")
