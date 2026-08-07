@@ -244,6 +244,86 @@ class CheckResidueTests(unittest.TestCase):
             item["code"] == "artifact_malformed" for item in verdict["hard"]
         ), verdict)
 
+    # ── prefix-preserving fills: per-occurrence attribution (T31) ────
+    def write_profile(self, **fields) -> Path:
+        target = self.base / "labeled_profile.json"
+        target.write_text(json.dumps(fields, ensure_ascii=False),
+                          encoding="utf-8")
+        return target
+
+    def test_prefix_preserving_fill_is_attributed_not_residue(self):
+        """Filling a labeled field keeps the label as a prefix, so the key
+        text survives inside the value. That occurrence belongs to the
+        value's span."""
+        profile = self.write_profile(placeholders=[" http://"])
+        artifact = self.write_hwpx(
+            "url.hwpx", "누리집 http://hanbit.example.kr 본문")
+        verdict, code = check_residue.check(profile, artifact)
+        self.assertEqual(code, 3, verdict)          # without the map: residue
+        verdict, code = check_residue.check(
+            profile, artifact,
+            fill_map={" http://": " http://hanbit.example.kr"})
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["counts"]["residue"], 0)
+        self.assertEqual(verdict["fill_attribution"]["attributed"], 1)
+        self.assertEqual(verdict["fill_attribution"]["unattributed"], 0)
+
+    def test_second_unfilled_occurrence_of_the_same_key_still_flags(self):
+        """Attribution is per occurrence, never a global suppression."""
+        profile = self.write_profile(placeholders=[" http://"])
+        artifact = self.write_hwpx(
+            "two.hwpx",
+            "누리집 http://hanbit.example.kr 본문 문단이 아주 길게 이어지면서 "
+            "표를 지나 다음 항목까지 계속 흘러가는 서술이 이어진다 그리고 "
+            "보조 누리집 http://")
+        verdict, code = check_residue.check(
+            profile, artifact,
+            fill_map={" http://": " http://hanbit.example.kr"})
+        self.assertEqual(code, 3, verdict)
+        row = verdict["residue"][0]
+        self.assertEqual(row["occurrences"], 2)
+        self.assertEqual(row["attributed"], 1)
+        self.assertEqual(len(row["at_offsets"]), 1)
+        self.assertIn("보조 누리집", row["context"][0])
+        self.assertNotIn("hanbit", row["context"][0])
+
+    def test_guide_text_inside_a_declared_value_is_never_attributed(self):
+        """Instruction prose is not something a correct fill KEEPS, the same
+        reason guide text is never keepable."""
+        profile = self.write_profile(
+            guide_text=["여기에 입력하세요"], placeholders=[])
+        artifact = self.write_hwpx(
+            "guide.hwpx", "비고 여기에 입력하세요 라고 적혀 있다")
+        verdict, code = check_residue.check(
+            profile, artifact,
+            fill_map={"비고": "비고 여기에 입력하세요 라고 적혀 있다"})
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["residue"][0]["attributed"], 0)
+
+    def test_value_spans_are_whitespace_normalized_on_both_sides(self):
+        haystack = check_residue.normalize_text("가  우(  -  )   나")
+        spans = check_residue.value_spans(
+            haystack, {" 우(     -     )": " 우(     -     )"})
+        self.assertEqual(len(spans), 1)
+        start, end = spans[0]["start"], spans[0]["end"]
+        self.assertEqual(haystack[start:end], "우( - )")
+
+    def test_fill_map_file_accepts_both_shapes(self):
+        flat = self.base / "flat.json"
+        flat.write_text(json.dumps({"a": "b"}), encoding="utf-8")
+        wrapped = self.base / "wrapped.json"
+        wrapped.write_text(json.dumps({"fill_map": {"a": "b"}, "base_pt": 10}),
+                           encoding="utf-8")
+        for path in (flat, wrapped):
+            mapping, error = check_residue.load_fill_map(path)
+            self.assertIsNone(error)
+            self.assertEqual(mapping, {"a": "b"})
+        bad = self.base / "bad.json"
+        bad.write_text("[1, 2]", encoding="utf-8")
+        mapping, error = check_residue.load_fill_map(bad)
+        self.assertIsNone(mapping)
+        self.assertIn("--fill-map", error)
+
     def test_verdict_carries_form_hash_and_counts(self):
         artifact = self.write_hwpx("clean.hwpx", "본문만 있다")
         verdict, code = self.run_check(artifact)
