@@ -87,3 +87,75 @@ def test_convert_parity_also_uses_independent_hwpx_fingerprints(
     assert verdict["hard"][0]["code"] == "convert_content_drift"
     assert verdict["source_before"]["counts"]["pictures"] == 2
     assert verdict["source_after"]["counts"]["pictures"] == 1
+
+
+# ---------------------------------------------------------------------------
+# W6.2 (XC-1 §2 formalized): .hwp source leg — raw conversion parity via COM
+# ---------------------------------------------------------------------------
+
+def _fake_hwp(tmp_path: Path) -> Path:
+    src = tmp_path / "form.hwp"
+    src.write_bytes(b"\xd0\xcf\x11\xe0 synthetic OLE stand-in")
+    return src
+
+
+def test_hwp_leg_skips_cleanly_without_com(tmp_path: Path, monkeypatch) -> None:
+    src = _fake_hwp(tmp_path)
+    assembled = write_hwpx(tmp_path / "converted.hwpx")
+    monkeypatch.setattr(check_convert_parity, "com_leg_available", lambda: False)
+
+    verdict, code = check_convert_parity.check(src, assembled)
+
+    assert code == 0
+    assert verdict["verdict"] == "skip"
+    assert verdict["warn"][0]["code"] == "hwp_source_leg_unavailable"
+
+
+def test_hwp_leg_passes_on_matching_structural_counts(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    src = _fake_hwp(tmp_path)
+    assembled = write_hwpx(tmp_path / "converted.hwpx")
+    counts = content_extract.semantic_fingerprint(assembled)["counts"]
+    fake_com = {
+        "ok": True,
+        "text_chars_total": 999,  # advisory only — must not gate
+        "tables": counts["tables"],
+        "pictures": counts["pictures"],
+        "equations": [{"index": i} for i in range(counts["equations"])],
+        "pages": 1,
+    }
+    monkeypatch.setattr(check_convert_parity, "com_leg_available", lambda: True)
+    monkeypatch.setattr(check_convert_parity, "_com_inspect", lambda _p: fake_com)
+
+    verdict, code = check_convert_parity.check(src, assembled)
+
+    assert code == 0, verdict
+    assert verdict["mode"] == "hwp_conversion"
+    assert verdict["src_counts"] == verdict["converted_counts"]
+    # text-char divergence is recorded but never a finding (XC-1 §2)
+    assert verdict["text_chars"]["hwp_com_raw"] == 999
+    assert verdict["hard"] == []
+
+
+def test_hwp_leg_hard_fails_structural_drift(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    src = _fake_hwp(tmp_path)
+    assembled = write_hwpx(tmp_path / "converted.hwpx")
+    counts = content_extract.semantic_fingerprint(assembled)["counts"]
+    fake_com = {
+        "ok": True,
+        "text_chars_total": 0,
+        "tables": counts["tables"] + 1,  # one table lost in conversion
+        "pictures": counts["pictures"],
+        "equations": [{"index": i} for i in range(counts["equations"])],
+        "pages": 1,
+    }
+    monkeypatch.setattr(check_convert_parity, "com_leg_available", lambda: True)
+    monkeypatch.setattr(check_convert_parity, "_com_inspect", lambda _p: fake_com)
+
+    verdict, code = check_convert_parity.check(src, assembled)
+
+    assert code == 3
+    assert verdict["hard"][0]["code"] == "convert_structural_drift"

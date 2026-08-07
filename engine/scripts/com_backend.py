@@ -134,8 +134,8 @@ def inspect(hwp, text_chars=600):
     except Exception:
         info["fields"] = []
 
-    # 컨트롤 인벤토리 (표 / 수식 / 그림)
-    tables, equations, pictures = 0, [], 0
+    # 컨트롤 인벤토리 (표 / 수식 / 그림 / 그리기 개체)
+    tables, equations, pictures, shapes = 0, [], 0, 0
     try:
         ctrl = hwp.HeadCtrl
         while ctrl:
@@ -150,19 +150,86 @@ def inspect(hwp, text_chars=600):
                     script = None
                 equations.append({"index": len(equations), "script": script})
             elif cid in ("gso",) or desc in ("그림",):
-                pictures += 1
+                # W6.2(XC-1 §2): CtrlID "gso"는 모든 그리기 개체(사각형·선·
+                # 글상자 포함)의 공용 ID — gso를 전부 그림으로 세면 이미지가
+                # 0장인 문서도 pictures>0으로 나온다(kstartup: hp:rect 5개가
+                # pictures=5로 보고되던 버그). 그림 여부는 UserDesc("그림")로
+                # 판정하고 나머지 gso는 shapes로 분리 집계한다.
+                # (한계: UserDesc는 한컴 UI 언어 의존 — 한국어 설치 전제.)
+                if desc in ("그림", "이미지"):
+                    pictures += 1
+                else:
+                    shapes += 1
             ctrl = ctrl.Next
     except Exception as e:
         info["ctrl_scan_error"] = str(e)
     info["tables"] = tables
     info["equations"] = equations
     info["pictures"] = pictures
+    info["shapes"] = shapes
 
     try:
         info["pages"] = hwp.PageCount
     except Exception:
         pass
     return info
+
+
+# ---------------------------------------------------------------------------
+# PDF 변환 보조 — 인쇄방식 표준화 + 페이지 수 패리티 (W6.2, XC-1 §4)
+# ---------------------------------------------------------------------------
+
+PRINT_METHOD_RE = re.compile(r'(name="PrintMethod"\s+type="short">)(\d+)(<)')
+
+
+def _stage_print_normalized_hwpx(src, tmp_dir):
+    """hwpx의 settings.xml에 저장된 PrintMethod가 0(일반)이 아니면 0으로 바꾼
+    임시 사본을 만들어 (사본경로, 원래값)을 돌려준다. 바꿀 게 없으면 (None, None).
+
+    근거(XC-1 §4 재현·인과 검증, 2026-08-07): nrf 양식은 문서 자체에
+    PrintMethod=4(2쪽 모아찍기)가 저장돼 있고, 한컴 SaveAs("PDF")가 이 인쇄
+    imposition을 그대로 적용해 4쪽 문서가 가로 2-up 2쪽 PDF로 나왔다.
+    같은 문서에서 PrintMethod만 0으로 바꾸면 세로 4쪽 PDF가 나온다(인과 확인).
+    PDF *변환*은 문서의 논리 페이지를 원하므로 변환 전에 인쇄방식만 표준화한다.
+    원본은 불변 — 임시 사본에서만 고친다. (.hwp 입력은 zip이 아니라 여기서
+    고칠 수 없음 — 아래 페이지 패리티 검사가 그 클래스를 소리나게 잡는다.)
+    """
+    import zipfile
+    src = Path(src)
+    try:
+        with zipfile.ZipFile(src) as zin:
+            if "settings.xml" not in zin.namelist():
+                return None, None
+            settings = zin.read("settings.xml").decode("utf-8")
+            m = PRINT_METHOD_RE.search(settings)
+            if not m or m.group(2) == "0":
+                return None, None
+            original = int(m.group(2))
+            staged = Path(tmp_dir) / (src.stem + ".print-normalized.hwpx")
+            with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "settings.xml":
+                        data = PRINT_METHOD_RE.sub(
+                            r'\g<1>0\g<3>', settings, count=1).encode("utf-8")
+                    zout.writestr(item, data)
+            return str(staged), original
+    except (OSError, zipfile.BadZipFile):
+        return None, None
+
+
+def _pdf_page_count(path):
+    """PDF 페이지 수(pymupdf). 미설치/실패 시 None(패리티 검사 생략 사실은
+    출력 JSON의 pages_pdf=null로 드러난다 — 조용한 통과 아님)."""
+    try:
+        import fitz
+    except ImportError:
+        return None
+    try:
+        with fitz.open(str(path)) as doc:
+            return doc.page_count
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1206,6 +1273,7 @@ def main():
 
     args = ap.parse_args()
     hwp = None
+    tmp_ctx = None  # convert(PDF)용 인쇄방식-표준화 임시 사본 디렉터리
     try:
         if args.cmd == "inspect":
             hwp = open_hwp(args.file)
@@ -1249,13 +1317,41 @@ def main():
             # 원본 비파괴(감사 BUG2): --to가 입력과 같으면 원본을 덮어쓴다.
             if Path(args.to).resolve() == Path(args.file).resolve():
                 _die("원본 덮어쓰기 금지: --to가 입력 --file과 같음")
-            hwp = open_hwp(args.file)
             dst = str(Path(args.to).resolve())
             fmt = {"pdf": "PDF", "hwpx": "HWPX", "hwp": "HWP"}.get(
                 Path(dst).suffix.lower().lstrip("."), None)
+            src = args.file
+            out = {"ok": True, "converted": dst}
+            if fmt == "PDF" and Path(src).suffix.lower() == ".hwpx":
+                # 문서 저장 인쇄방식(모아찍기 등)이 PDF에 imposition으로 적용
+                # 되는 것을 차단 — helper docstring(XC-1 §4) 참조.
+                import tempfile
+                tmp_ctx = tempfile.TemporaryDirectory()
+                staged, original = _stage_print_normalized_hwpx(
+                    src, tmp_ctx.name)
+                if staged:
+                    src = staged
+                    out["print_method_normalized"] = {
+                        "from": original, "to": 0}
+            hwp = open_hwp(src)
             hwp.save_as(dst, fmt) if fmt else hwp.save_as(dst)
-            print(json.dumps({"ok": True, "converted": dst},
-                             ensure_ascii=False))
+            if fmt == "PDF":
+                # 페이지 수 패리티(XC-1 §4 백스톱): 변환 PDF 페이지 수는 문서
+                # 페이지 수와 같아야 한다. 다르면 imposition/페이지 드랍
+                # 클래스가 남아 있다는 뜻 — 고치지 못한 곳에서도 탐지는 된다.
+                try:
+                    out["pages_document"] = hwp.PageCount
+                except Exception:
+                    out["pages_document"] = None
+                out["pages_pdf"] = _pdf_page_count(dst)
+                if (out["pages_document"] and out["pages_pdf"]
+                        and out["pages_document"] != out["pages_pdf"]):
+                    warn = (f"page-count parity mismatch: document="
+                            f"{out['pages_document']} pdf={out['pages_pdf']}"
+                            " (print imposition or export page drop)")
+                    out["warn"] = [warn]
+                    print(f"WARN: {warn}", file=sys.stderr)
+            print(json.dumps(out, ensure_ascii=False))
 
     except SystemExit:
         raise
@@ -1268,6 +1364,13 @@ def main():
             try:
                 hwp.quit()
             except Exception:
+                pass
+        if tmp_ctx is not None:
+            # quit 이후에만 지운다 — Hwp가 임시 사본을 잡고 있는 동안의
+            # cleanup은 Windows에서 PermissionError로 실패한다.
+            try:
+                tmp_ctx.cleanup()
+            except OSError:
                 pass
 
 
