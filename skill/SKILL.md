@@ -81,6 +81,20 @@ script escalate instead of letting you grind.
   own "색상이 어두운 칸은 작성하지 않습니다" line defines the fill boundary),
   not from priors.
 
+## Model tier
+
+Measured from clean-room installs on this skill (`references/model-routing.md`):
+
+| task class | tier |
+|---|---|
+| inspect · fill · verify/judge | **Sonnet is sufficient** — measured, identical machine-verified result to Opus at ~1/5 the price |
+| diagnosis (why is an output wrong, unfamiliar form family, unattributable failure) | **Opus** — measured advantage in causal explanation |
+| assemble · prose/humanize | not measured — no claim |
+
+Run the cheap tier by default. Escalate when the job is *understanding*
+rather than *executing*. If the cheap tier struggles on a documented CLI
+path, that is a surface defect to report, not a reason to escalate.
+
 ## Contracts (violations are defects)
 
 - `inspect`/`form_inspect` return **structure only, never body text** — do
