@@ -28,7 +28,10 @@ ops.json 형식 (순서대로 실행):
   {"op": "insert_table", "data": [["a","b","c"]], "col_ratios": [0.2,0.3,0.5], "font_pt": 9},
   {"op": "insert_picture", "path": "C:/img/그래프.png", "width_mm": 80}, // 높이 자동
   {"op": "edit_equation", "index": 0, "latex": "E=mc^2"},     // n번째 기존 수식 교체
-  {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값"},
+  {"op": "set_cell", "table": 0, "addr": [1, 2], "text": "값",          // addr = cellAddr(form_inspect table_map)
+   "expect_empty": true},                                              // 선행조건 가드(권장). "expect":"기존값"도 가능
+  // 레거시(T28 위험): row/col은 '키 입력 횟수'이지 cellAddr이 아니다 — rowSpan 양식에서 엉뚱한 셀에 쓴다
+  {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값", "raw_traversal": true},
   {"op": "set_char_color", "color": "#000000"},     // 문서 전체 글자색(기본 all)
   {"op": "delete_ctrls", "types": ["tbl", "gso"]},  // 표/그림 삭제(캡션 텍스트는 유지)
   {"op": "collapse_empty_paragraphs"},              // 연속 빈 문단 -> 1빈줄(^n^n^n->^n^n)
@@ -1002,17 +1005,237 @@ def op_delete_ctrls(hwp, o):
     return {"deleted": n, "types": types}
 
 
+# ---------------------------------------------------------------------------
+# 셀 주소(cellAddr) ↔ 셀 이동(traversal) 변환 — T28
+#
+# 옛 op_set_cell의 row/col은 **키 입력 횟수**였다: TableLowerCell을 row번,
+# TableRightCell을 col번. 그런데
+#   - TableRightCell은 행 끝에서 다음 행으로 '넘어간다'(줄바꿈),
+#   - TableLowerCell은 rowSpan을 통째로 건너뛴다,
+#   - 병합 셀이 덮은 좌표에는 셀이 아예 없다(주소가 연속이 아니다)
+# 이므로 왼쪽 열에 rowspan 라벨이 있는 양식 — 정부 양식의 표준형 — 에서는
+# 키 입력 횟수가 cellAddr과 전혀 다른 곳을 가리킨다. 첫 클린룸 교차모델 런에서
+# 두 에이전트 모두 첫 시도에 라벨 셀을 파괴했다(PPS 양식 (2,3)을 노리고
+# 라벨 셀 (2,6) '법인등록번호'에 썼다).
+#
+# 근본 수정: 주소는 cellAddr로 받고, 이동은 한 걸음마다 get_cell_addr()로
+# 검증한다. 목표에 못 닿으면 **쓰지 않고** 소리나게 죽는다.
+# ---------------------------------------------------------------------------
+
+_EXCEL_ADDR_RE = re.compile(r'^\(?\s*([A-Za-z]+)\s*(\d+)\s*\)?$')
+
+
+def parse_cell_addr(raw):
+    """한글이 보고하는 셀 주소 문자열("A1", "(B3)")을 0-based (row, col)로.
+
+    한글의 셀 주소는 병합 셀의 **좌상단 격자 좌표**를 가리킨다 — 즉 hwpx의
+    `<hp:cellAddr rowAddr colAddr>`, `form_inspect` table_map의 addr와 같은
+    값이다. 그래서 이 한 줄이 COM 경로와 오프라인 경로를 같은 좌표계로 묶는다.
+
+    모르는 형태는 조용히 추측하지 않고 ValueError — 잘못 해석한 주소는 곧바로
+    엉뚱한 셀 덮어쓰기다.
+    """
+    if isinstance(raw, (tuple, list)):
+        raise ValueError(
+            f"셀 주소가 예상 밖 형태(tuple/list): {raw!r} — (row,col)/(col,row)"
+            " 순서를 추측하지 않는다. 문자열 주소를 주는 API를 쓸 것")
+    text = str(raw).strip()
+    m = _EXCEL_ADDR_RE.match(text)
+    if not m:
+        raise ValueError(f"셀 주소를 해석할 수 없음: {raw!r}")
+    letters, digits = m.group(1).upper(), m.group(2)
+    col = 0
+    for ch in letters:
+        col = col * 26 + (ord(ch) - ord("A") + 1)
+    return int(digits) - 1, col - 1
+
+
+def read_cell_addr(hwp):
+    """현재 커서가 있는 셀의 (row, col). 표 밖이면 ValueError."""
+    raw = None
+    getter = getattr(hwp, "get_cell_addr", None)
+    if callable(getter):
+        try:
+            raw = getter()
+        except TypeError:
+            raw = getter("str")
+    if raw is None:
+        ki = getattr(hwp, "KeyIndicator", None)
+        if callable(ki):
+            info = ki()
+            raw = info[-1] if isinstance(info, (tuple, list)) else info
+    if raw in (None, "", ()):
+        raise ValueError("셀 주소를 읽을 수 없음 — 커서가 표 안이 아닐 수 있다")
+    return parse_cell_addr(raw)
+
+
+def walk_to_cell_addr(cursor, target, *, max_steps=2000):
+    """'오른쪽 셀로' 이동만으로 cellAddr `target`에 도달한다(한 걸음마다 검증).
+
+    TableRightCell은 행 끝에서 다음 행으로 넘어가므로 반복하면 표의 모든 셀을
+    행우선으로 정확히 한 번씩 방문한다 — rowSpan을 건너뛰는 TableLowerCell과
+    달리 병합에 면역이다. 그래서 진입 셀이 어디든(= nth-table 진입점이 흔들려도)
+    같은 목적지에 닿는다.
+
+    cursor 프로토콜: `.addr() -> (row, col)`, `.right() -> None`.
+    시작 주소로 한 바퀴 돌아오면 '그 표에 없는 주소' — RuntimeError.
+    커서가 움직이지 않으면 RuntimeError(무한 루프 대신 즉시 중단).
+
+    반환: (steps, visited) — visited는 방문한 주소 목록(진단용).
+    """
+    start = cursor.addr()
+    visited = [start]
+    if start == target:
+        return 0, visited
+    for step in range(1, max_steps + 1):
+        cursor.right()
+        addr = cursor.addr()
+        if addr == target:
+            visited.append(addr)
+            return step, visited
+        if addr == visited[-1]:
+            raise RuntimeError(
+                f"셀 이동이 진행되지 않음(주소 {addr} 고정) — 표 밖이거나"
+                " TableRightCell 사용 불가. 아무것도 쓰지 않음")
+        visited.append(addr)
+        if addr == start:
+            raise RuntimeError(
+                f"표를 한 바퀴 돌았지만 cellAddr {target} 없음"
+                f" — 방문한 주소 {len(visited) - 1}개, 예: {visited[:12]}."
+                " 병합 셀이 덮은 좌표이거나 오타. 아무것도 쓰지 않음")
+    raise RuntimeError(
+        f"cellAddr {target} 도달 실패: {max_steps}걸음 초과. 아무것도 쓰지 않음")
+
+
+def legacy_traversal_addr(cursor, row, col):
+    """옛 set_cell의 키 입력 해석을 그대로 재현(TableLowerCell×row + Right×col).
+
+    경고: 이 좌표는 cellAddr이 **아니다**. rowSpan 라벨 열이 있는 양식에서는
+    전혀 다른 셀에 도달한다(T28). `raw_traversal`을 명시했을 때만 쓰인다.
+    """
+    for _ in range(row):
+        cursor.down()
+    for _ in range(col):
+        cursor.right()
+    return cursor.addr()
+
+
+class _HwpCursor:
+    """walk_to_cell_addr가 쓰는 커서 — 한글 COM 위의 얇은 어댑터."""
+
+    def __init__(self, hwp):
+        self.hwp = hwp
+
+    def addr(self):
+        return read_cell_addr(self.hwp)
+
+    def right(self):
+        self.hwp.TableRightCell()
+
+    def down(self):
+        self.hwp.TableLowerCell()
+
+
+def read_cell_text(hwp):
+    """현재 셀의 텍스트. 읽을 수 없으면 None(호출자가 소리나게 처리)."""
+    getter = getattr(hwp, "get_cell_text", None)
+    if callable(getter):
+        try:
+            return str(getter())
+        except Exception:
+            pass
+    selector = getattr(hwp, "get_selected_text", None)
+    if callable(selector):
+        try:
+            hwp.SelectAll()          # 표 안에서는 셀 범위 선택
+            text = selector()
+            try:
+                hwp.Cancel()
+            except Exception:
+                pass
+            return "" if text is None else str(text)
+        except Exception:
+            return None
+    return None
+
+
 def op_set_cell(hwp, o):
-    hwp.get_into_nth_table(o["table"])
-    for _ in range(o["row"]):
-        hwp.TableLowerCell()
-    for _ in range(o["col"]):
-        hwp.TableRightCell()
+    """표 셀에 값을 쓴다. 주소는 cellAddr(`addr: [row, col]`)이 기본.
+
+      {"op": "set_cell", "table": 0, "addr": [2, 3], "text": "값",
+       "expect_empty": true}
+      {"op": "set_cell", "table": 0, "addr": [2, 3], "text": "값",
+       "expect": "덮어쓸 기존 값"}
+
+    `addr`는 `form_inspect`의 table_map이 보고하는 cellAddr 그대로다. 이동은
+    한 걸음마다 `get_cell_addr()`로 검증하고, 목표에 닿지 못하면 아무것도 쓰지
+    않고 예외를 던진다.
+
+    선행조건 가드(선택, 강력 권장): `expect_empty: true`면 대상 셀이 비어
+    있을 때만 쓰고, `expect: "..."`면 현재 내용이 그 값일 때만 쓴다. 어긋나면
+    쓰지 않고 예외 — 라벨 셀 파괴는 조용히 일어나서는 안 된다.
+
+    레거시(T28, 위험): `raw_traversal: true` + `row`/`col`은 **키 입력 횟수**
+    해석을 그대로 재현한다. rowSpan 라벨 열이 있는 양식에서는 엉뚱한 셀에
+    쓴다 — 옛 ops.json 재현 목적으로만 남겨둔다. 새 배치에서는 쓰지 말 것.
+
+    nth-table drift: 한 한글 세션 안에서 `get_into_nth_table(0)`을 반복 호출하면
+    진입 셀이 흔들린다(실측). 이 함수는 진입 주소를 결과에 기록하고, 이동
+    자체가 진입점에 무관하도록 wrap 순회로 목적지를 찾는다. 그래도 여러 셀을
+    채울 때는 셀당 한 세션(`com_backend.py set-cell` 1회 = 1셀)이 안전하다.
+    """
+    table = int(o.get("table", 0))
+    hwp.get_into_nth_table(table)
+    cursor = _HwpCursor(hwp)
+    entry = cursor.addr()
+
+    if o.get("raw_traversal"):
+        if "row" not in o or "col" not in o:
+            raise RuntimeError("raw_traversal에는 row/col이 필요")
+        landed = legacy_traversal_addr(cursor, int(o["row"]), int(o["col"]))
+        requested = [int(o["row"]), int(o["col"])]
+        mode = "raw_traversal"
+    else:
+        if "addr" not in o:
+            raise RuntimeError(
+                "set_cell에는 addr:[row,col](cellAddr)이 필요."
+                " 옛 row/col(키 입력 횟수)은 raw_traversal:true를 명시할 것 — T28")
+        row, col = (int(v) for v in o["addr"])
+        steps, _visited = walk_to_cell_addr(cursor, (row, col))
+        landed = cursor.addr()
+        if landed != (row, col):
+            raise RuntimeError(
+                f"셀 주소 검증 실패: 목표 {(row, col)} 도착 {landed}"
+                " — 아무것도 쓰지 않음")
+        requested = [row, col]
+        mode = f"cellAddr(steps={steps})"
+
+    expect_empty = bool(o.get("expect_empty"))
+    expect = o.get("expect")
+    result_current = None
+    if expect_empty or expect is not None:
+        current = read_cell_text(hwp)
+        if current is None:
+            raise RuntimeError(
+                "선행조건 검사 불가: 셀 텍스트를 읽을 수 없음 — 아무것도 쓰지 않음")
+        result_current = current.strip()
+        if expect_empty and result_current:
+            raise RuntimeError(
+                f"셀 {list(landed)}이 비어 있지 않음({result_current[:30]!r})"
+                " — expect_empty 위반, 아무것도 쓰지 않음")
+        if expect is not None and result_current != str(expect).strip():
+            raise RuntimeError(
+                f"셀 {list(landed)}의 현재 값이 기대와 다름"
+                f"(실제 {result_current[:30]!r} ≠ 기대 {str(expect)[:30]!r})"
+                " — 아무것도 쓰지 않음")
+
     hwp.SelectAll()  # 셀 내 전체 선택 (표 안에서는 셀 범위)
     hwp.Delete()
     hwp.insert_text(str(o["text"]))
     hwp.MoveDocEnd()
-    return {"cell": [o["table"], o["row"], o["col"]]}
+    return {"cell": [table, list(landed)], "requested": requested,
+            "mode": mode, "entry_addr": list(entry),
+            "previous": result_current}
 
 
 def op_insert_blank_before(hwp, o):
@@ -1217,7 +1440,34 @@ OP_REQUIRED_KEYS = {
     "delete_blank_before": ("text",),
     "insert_blank_before": ("text",),
     "page_break_before": ("text",),
+    "set_cell": ("text",),
 }
+
+
+def _validate_set_cell(index, o):
+    """set_cell의 주소 스키마 검증 — 한글 기동 전에(T28).
+
+    cellAddr 모드가 기본이고 `addr: [row, col]`을 요구한다. 옛 키 입력 횟수
+    해석은 `raw_traversal: true`를 명시해야만 쓸 수 있다 — 조용한 오작성
+    (라벨 셀 파괴)의 원인이었으므로 실수로 흘러들 수 없게 막는다.
+    """
+    if o.get("raw_traversal"):
+        for key in ("row", "col"):
+            if key not in o:
+                _die(f"ops[{index}] (set_cell): raw_traversal에는 {key!r} 필요")
+        return
+    if "addr" not in o:
+        if "row" in o or "col" in o:
+            _die(f"ops[{index}] (set_cell): row/col은 cellAddr이 아니라 키 입력"
+                 " 횟수다(T28) — addr:[row,col]을 쓰거나 raw_traversal:true를"
+                 " 명시할 것")
+        _die(f"ops[{index}] (set_cell): 필수 키 'addr' 없음")
+    addr = o["addr"]
+    if (not isinstance(addr, (list, tuple)) or len(addr) != 2
+            or not all(isinstance(v, int) and v >= 0 for v in addr)):
+        _die(f"ops[{index}] (set_cell): addr은 [row, col] 비음수 정수 2개")
+    if "expect_empty" in o and "expect" in o:
+        _die(f"ops[{index}] (set_cell): expect_empty와 expect는 배타적")
 
 
 def _validate_ops(payload):
@@ -1243,6 +1493,8 @@ def _validate_ops(payload):
         for k in OP_REQUIRED_KEYS.get(name, ()):
             if k not in o:
                 _die(f"ops[{i}] ({name}): 필수 키 {k!r} 없음")
+        if name == "set_cell":
+            _validate_set_cell(i, o)
     return ops
 
 
@@ -1266,6 +1518,25 @@ def main():
     p_ed.add_argument("--visible", action="store_true", help="한글 창 표시")
     p_ed.add_argument("--kill-stale", action="store_true",
                       help="시작 전 잔존 Hwp.exe 강제 종료(파괴적, 명시할 때만)")
+
+    p_sc = sub.add_parser(
+        "set-cell",
+        help="표 셀 하나에 값 쓰기(cellAddr 주소, 호출 1회 = 세션 1개 = 셀 1개)")
+    p_sc.add_argument("--file", required=True)
+    p_sc.add_argument("--addr", required=True, metavar="ROW,COL",
+                      help="cellAddr 주소(form_inspect table_map의 addr)")
+    p_sc.add_argument("--text", required=True)
+    p_sc.add_argument("--table", type=int, default=0)
+    p_sc.add_argument("--save-as", required=True)
+    p_sc.add_argument("--export-pdf")
+    p_sc.add_argument("--expect-empty", action="store_true",
+                      help="대상 셀이 비어 있을 때만 쓴다(선행조건 가드)")
+    p_sc.add_argument("--expect", metavar="TEXT",
+                      help="대상 셀의 현재 값이 TEXT일 때만 쓴다")
+    p_sc.add_argument("--raw-traversal", action="store_true",
+                      help="레거시: --addr을 cellAddr이 아니라 키 입력 횟수로"
+                           " 해석(T28, rowSpan 양식에서 엉뚱한 셀에 쓴다)")
+    p_sc.add_argument("--visible", action="store_true")
 
     p_cv = sub.add_parser("convert", help="형식 변환 (hwp<->hwpx, ->pdf)")
     p_cv.add_argument("--file", required=True)
@@ -1311,6 +1582,46 @@ def main():
             print(json.dumps({"ok": True, "results": results,
                               "saved": saved, "pdf": pdf,
                               "post_inspect": inspect(hwp, 200)},
+                             ensure_ascii=False, indent=2))
+
+        elif args.cmd == "set-cell":
+            # 셀 하나 = 세션 하나. get_into_nth_table은 같은 세션 안에서 반복
+            # 호출하면 진입 셀이 흔들린다(T28) — 셀마다 새 세션이 그 드리프트를
+            # 구조적으로 없앤다. 여러 셀은 이 명령을 직렬로 반복 실행할 것
+            # (병렬 금지, --kill-stale 금지 — T21).
+            if Path(args.save_as).resolve() == Path(args.file).resolve():
+                _die("원본 덮어쓰기 금지: --save-as가 입력 --file과 같음")
+            if args.expect_empty and args.expect is not None:
+                _die("--expect-empty와 --expect는 배타적")
+            try:
+                row_s, _, col_s = args.addr.partition(",")
+                addr = [int(row_s.strip()), int(col_s.strip())]
+            except ValueError:
+                _die(f"--addr 형식은 ROW,COL(정수): {args.addr!r}")
+            op = {"op": "set_cell", "table": args.table, "text": args.text}
+            if args.raw_traversal:
+                op.update({"raw_traversal": True,
+                           "row": addr[0], "col": addr[1]})
+            else:
+                op["addr"] = addr
+            if args.expect_empty:
+                op["expect_empty"] = True
+            if args.expect is not None:
+                op["expect"] = args.expect
+            _validate_set_cell(0, op)
+            hwp = open_hwp(args.file, visible=args.visible)
+            result = op_set_cell(hwp, op)
+            hwp.save_as(str(Path(args.save_as).resolve()))
+            pdf = None
+            if args.export_pdf:
+                p = str(Path(args.export_pdf).resolve())
+                try:
+                    hwp.save_as(p, "PDF")
+                except Exception:
+                    hwp.SaveAs(p, "PDF")
+                pdf = args.export_pdf
+            print(json.dumps({"ok": True, "result": result,
+                              "saved": args.save_as, "pdf": pdf},
                              ensure_ascii=False, indent=2))
 
         elif args.cmd == "convert":
