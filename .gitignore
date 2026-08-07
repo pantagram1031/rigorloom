@@ -16,3 +16,5 @@ private/
 studio/studio.log
 .DS_Store
 Thumbs.db
+# Release bundles built by scripts/package_module.py; never committed.
+dist/
