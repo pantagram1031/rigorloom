@@ -1,7 +1,8 @@
 # Rigorloom
 
-**A verifiable report pipeline for HWPX documents — deterministic gates,
-graded render proof, Hancom-free by default.**
+**A general HWP/HWPX document engine with deterministic gates, graded
+render proof, and installable capability modules — Hancom-free by
+default.**
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -9,20 +10,39 @@ graded render proof, Hancom-free by default.**
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![OS: Windows | Linux](https://img.shields.io/badge/os-Windows%20%7C%20Linux-lightgrey.svg)](docs/golden-path.md)
 
-Rigorloom is an agent-neutral, resumable workflow for weaving evidence,
-personalization, document forms, verification, and delivery into one report
-run. Current release: **v0.15.0-alpha** (tag). `main` is ahead of the tag
-with post-tag hardening — feature-classification fail-open fixes, the
-variant-audit decision matrix, v0.13 data-only extension packs (landed under
-v0.13.1 policy conditions), and new content-integrity checkers — see
-[CHANGELOG.md](CHANGELOG.md) for the version history and
+Rigorloom is an agent-neutral document engine for Korean HWP/HWPX forms —
+recognition, fill, assembly, verification, and delivery — with an optional,
+resumable report pipeline on top. Current release: **v0.16.0** (pending
+tag). See [CHANGELOG.md](CHANGELOG.md) for the version history and
 [docs/golden-path.md](docs/golden-path.md) for an end-to-end, Hancom-free
 walkthrough.
+
+**One core, N modules.** Since v0.16 the repo is a monorepo with a single
+general-purpose core (the `engine/` document backends, form recognition,
+render proof ladder, privacy scan, module registry, base Studio) and
+capability that ships as separately installable **distribution modules**
+behind one contract (`modules/README.md`): `report` (stage machine, report
+checkers, compose resolver, playbooks), `style` (translationese removal and
+voice consistency — never AI-detection evasion), and general
+personalization pack types in core with report-flavored packs supplied by
+the report module. Core never imports a module; absence is not failure (the
+suite is green with every module disabled); bundles are built per module by
+`scripts/package_module.py` at the same version.
+
+Since 2026-05-18, Korean government systems accept HWPX-only attachments
+while published blanks are still mostly `.hwp` — rigorloom's hwp→hwpx
+conversion path is verified 10/10 on the official blank-form corpus
+(`docs/research/xc1-conversion-bench.md`), with per-family capability
+boundaries stated honestly in
+[skill/references/forms.md](skill/references/forms.md).
 
 The state machine is deterministic and provider-independent. Claude, Codex,
 Gemini, local models, human operators, or any other capable agent can act as
 the orchestrator or worker. Model names in examples are optional adapters,
-not requirements.
+not requirements. For agent use, a router skill surface ships at
+[skill/SKILL.md](skill/SKILL.md) — a compact task router with a dynamic
+capability probe (`engine/scripts/probe.py`); enabled modules merge their
+own skill fragments at install time via `scripts/sync_local.py`.
 
 ## Why rigorloom
 
@@ -51,14 +71,14 @@ flowchart LR
     B --> C[data / sim]
     C --> D[write]
     D --> E[humanize]
-    E --> F["content audit\n(stage 4.5, 7 checkers)"]
+    E --> F["content audit\n(stage 4.5, 9 checkers)"]
     F --> G["assemble\n(backend tiers)"]
     G --> H[render proof]
     H --> I["submission preflight\n(stage 6)"]
 ```
 
-Stage 4.5 `content_audit` runs seven deterministic sub-checkers as
-subprocesses before assembly is allowed to start; any sub-checker's HARD
+Stage 4.5 `content_audit` (report module) runs nine deterministic
+sub-checkers before assembly is allowed to start; any sub-checker's HARD
 finding fails the whole gate. Stage 6 `submission_preflight` grades the
 finished artifact and requires a render `proof_grade` of `hancom`,
 `certified`, or `advisory`. See
@@ -69,10 +89,16 @@ for the full stage graph and gate contracts.
 
 - A config-driven pipeline kernel (stage schema version `0.6`, unchanged
   since v0.7) with hard and human gates. The kernel is stable; everything
-  below has been layered on top of it through the v0.7–v0.15 waves.
-- A stage 4.5 **content audit** gate that runs seven deterministic
-  sub-checkers before assembly ever starts, and a stage 6 **submission
-  preflight** gate that grades the finished artifact before delivery.
+  below has been layered on top of it through the v0.7–v0.16 waves.
+- A distribution-module contract (`modules/README.md`): modules declare
+  checkers, CLI commands, pack types, run modes, gate kinds, studio
+  panels, and skill fragments in `module.yaml`; the registry enforces
+  version and inter-module (`requires_modules`) gates at enablement, and
+  adding a module later requires no core change.
+- A stage 4.5 **content audit** gate (report module) that runs nine
+  deterministic sub-checkers before assembly ever starts, and a stage 6
+  **submission preflight** gate that grades the finished artifact before
+  delivery.
 - Four pluggable Stage 5 document backends — `bundle`, `docx`, `hwpx`, `hwp`
   — so the pipeline runs end to end without Hancom.
 - Stage playbooks and a single master workflow document.
@@ -114,16 +140,20 @@ a `docx` or `bundle`-only run never reaches that state.
 
 Two composite gates guard delivery, both fail-closed:
 
-- **Stage 4.5 `content_audit`** (`modules/report/scripts/content_audit.py`, report distribution module) runs
-  seven deterministic sub-checkers as subprocesses and merges their verdicts
-  before assembly is allowed to start: `verify_content.py` (web-citation /
-  polite-ending / figure / leak), `check_style.py` (banned prose patterns,
-  signature caps), `check_numbers.py` (body numerals / RNG provenance),
-  `check_refs.py` (figure/table numbering and cross-refs), `check_figdata.py`
-  (referenced PNG checksum integrity), `check_sources.py` (offline
-  citation-reality verification against a local cache), and `check_units.py`
-  (unit/dimension consistency). Any sub-checker's HARD finding fails the
-  whole gate; the worst exit code wins.
+- **Stage 4.5 `content_audit`** (`modules/report/scripts/content_audit.py`,
+  report distribution module) runs nine deterministic sub-checkers
+  in-process and merges their verdicts before assembly is allowed to
+  start: `verify_content.py` (web-citation / polite-ending / figure /
+  leak), `check_style.py` (banned prose patterns, signature caps —
+  resolved through the module registry from the **style** module, which
+  the report module declares via `requires_modules`), `check_numbers.py`
+  (body numerals / RNG provenance), `check_refs.py` (figure/table
+  numbering and cross-refs), `check_figdata.py` (referenced PNG checksum
+  integrity), `check_sources.py` (offline citation-reality verification
+  against a local cache), `check_units.py` (unit/dimension consistency),
+  `check_saeteuk.py` (advisory early consistency mirror), and
+  `check_claims.py` (claim-ledger evidence traceability). Any sub-checker's
+  HARD finding fails the whole gate; the worst exit code wins.
 - **Stage 6 `submission_preflight`** (`pipeline/scripts/submission_preflight.py`)
   grades the finished artifact: it composes `check_saeteuk.py` (saeteuk/report
   numeric-and-entity consistency), `verdict_schema.py` (rejects a
@@ -138,17 +168,19 @@ Two composite gates guard delivery, both fail-closed:
   cryptographically proven: a baseline recorded after a mutation cannot
   detect that mutation, and full artifact-bound proof receipts are deferred
   to later attestation work.
-- **Post-v0.15.0-alpha, not yet composed into a gate**
-  (`pipeline/scripts/`): `check_residue.py` (auto-derives its forbidden
-  residue list from the form scan's anchor inventory instead of a
-  hand-written vocabulary, and HARD-fails on malformed section XML before it
-  scans any text), `check_density.py` (H5 structural gate — bold-subhead
-  density per 10k bytes of `content.md`), and `check_canonical.py` (the
-  workspace's declared canonical/`FINAL` pointer must exist and resolve).
-  Each ships with tests and a documented regression case, but none is wired
-  into `content_audit` or `submission_preflight` yet; that is a pending Wave 1
-  Lane V gate-architecture decision — see
-  [docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md).
+- **Declared per-workspace gates** (the hybrid gate architecture's second
+  half, v0.16): a workspace may declare value-pinned gates that the
+  declared-values runner executes with canonical binding — a missing
+  pinned target is HARD `target_missing`, never a silent pass — and whose
+  kinds delegate to registry mechanisms: `check_residue.py` (forbidden
+  residue list auto-derived from the form scan's anchor inventory;
+  HARD-fails on malformed section XML before scanning any text) and
+  `check_density.py` (H5 structural gate — bold-subhead density per 10k
+  bytes of `content.md`) are core; `canonical` (the workspace's declared
+  canonical/`FINAL` pointer must exist and resolve) is provided by the
+  report module through `gate_kinds`. Additional gate kinds are
+  registry-declared by modules; a kind with no enabled provider is a loud
+  config refusal.
 
 ## Quick start
 
@@ -158,6 +190,11 @@ Hancom, no Windows, and no model account for the `bundle` backend.
 ```sh
 git clone https://github.com/pantagram1031/rigorloom.git
 cd rigorloom
+
+# A fresh clone is core-only. The report pipeline lives in distribution
+# modules — enable everything present in modules/ first:
+python pipeline/scripts/module_registry.py write-enabled --all
+
 python3 scripts/bootstrap.py   # PowerShell: python scripts\bootstrap.py
 
 python scripts/new_report.py --slug demo --subject math \
@@ -166,20 +203,27 @@ python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
 `bootstrap.py` verifies the interpreter, provisions a private profile, and
-runs an end-to-end smoke test, so a fresh clone is proven working. For the
-full stage-by-stage walkthrough to a graded artifact, see
-[docs/golden-path.md](docs/golden-path.md).
+runs an end-to-end smoke test, so a fresh clone is proven working (on a
+core-only install, pass `--skip-smoke` — the smoke drives the report
+pipeline). For the full stage-by-stage walkthrough to a graded artifact,
+see [docs/golden-path.md](docs/golden-path.md).
 
 ### Windows + Hancom
 
 The full `.hwp` document workflow additionally needs Windows, a licensed
-Hancom Office HWP install, and the engine's `[windows]`/`[proof]` extras
-(the engine itself is bundled at `engine/` — no external checkout needed).
-Verify the machine before starting an HWP report:
+Hancom Office HWP install, the COM bridge (`pip install pyhwpx pywin32` —
+see [engine/INSTALL.md](engine/INSTALL.md)), and the engine extra
+(`pip install .[engine]`). The engine itself is bundled at `engine/` — no
+external checkout needed. Verify the machine before starting an HWP
+report:
 
 ```powershell
-python engine\scripts\doctor.py --require-com --require-proof --report-pipeline .
+python engine\scripts\probe.py
 ```
+
+The probe reports render capability (`hancom_com`), available renderers,
+and enabled modules as one JSON object; require `"hancom_com": true`
+before entering the COM assembly path.
 
 Installing this repository does not install Hancom Office. Web Hancom
 Docs, Linux, and macOS cannot run the local COM editing backend; they can
@@ -232,19 +276,24 @@ Studio has two modes (`studio/main.py`):
 ## Repository map
 
 ```text
-pipeline/    state machine, contracts, stage playbooks, tests
-studio/      optional read-only local viewer
-scripts/     portable workspace and maintenance commands
+engine/      HWP/HWPX document engine (COM + XML backends, form inspect,
+             layout QA, eqn converter; absorbed from hwp-master in v0.16)
+pipeline/    core contracts, checkers, registry, render proof, tests
+modules/     distribution modules behind one contract (report, style)
+skill/       router skill surface (SKILL.md + references incl. forms.md)
+studio/      optional read-only local viewer, extended by module panels
+scripts/     bootstrap, scaffolder, installer, packaging (package_module)
 adapters/    optional document/backend integrations
 examples/    generic, non-personal examples
+tests/       cross-cutting tests + blank-form corpus (tests/corpus/forms)
 archive/     superseded public contracts kept for history
-docs/        current architecture and operating documentation
+docs/        current architecture, research, and operating documentation
 workspaces/  local run data; ignored by Git
 ```
 
 ## Project status
 
-- **Stable**: the stage state machine, the `bundle` backend, the seven
+- **Stable**: the stage state machine, the `bundle` backend, the nine
   content sub-checkers, `submission_preflight`'s form-hash and proof-grade
   checks, and the read-only Studio.
 - **Optional, well-exercised**: the `docx` backend, and the `hwpx` XML engine
@@ -269,10 +318,14 @@ workspaces/  local run data; ignored by Git
   without Hancom present on the build machine itself.
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
-Rigorloom is under active development past the v0.15.0-alpha tag, converging
-toward v0.16 (engine absorption, personalization/style as separate modules —
-see [docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md)).
-See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
+v0.16.0 completes the unified-core-and-modules program (engine absorption,
+the distribution-module contract, report/style as modules, the blank-form
+corpus and skill surface, and the XC-1 conversion bench — see
+[docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md)
+and [docs/release-v0.16.0.md](docs/release-v0.16.0.md)). Known capability
+boundaries are stated per form family in
+[skill/references/forms.md](skill/references/forms.md). See
+[CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
 [docs/plans/](docs/plans/) for the design history behind each wave.
 
 ## Docs
@@ -296,8 +349,13 @@ See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
 
 ```sh
 python -m pytest -q
-python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py
+python -m py_compile pipeline/scripts/*.py scripts/*.py studio/main.py \
+  modules/report/scripts/*.py modules/style/scripts/*.py
 ```
+
+CI runs the suite at two module-set matrix points — core-only (every
+distribution module disabled) and all-modules — so "absence is not
+failure" is continuously proven.
 
 ## Contributing
 

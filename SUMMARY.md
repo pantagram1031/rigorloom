@@ -108,34 +108,26 @@ Hancom, or LibreOffice.
 
 No extension-pack files were touched.
 
-## Post-v0.15.0-alpha additions (main, unreleased)
+## Post-v0.15.0-alpha additions (released in v0.16.0)
 
-Landed after this tag; see `CHANGELOG.md`'s "Unreleased (main,
-post-v0.15.0-alpha)" section for the full per-PR breakdown (#29–#34).
+Everything after this tag shipped as **v0.16.0** — see `CHANGELOG.md`'s
+"v0.16.0 — unified core and modules" section for the full per-PR breakdown
+(#29–#55) and `docs/release-v0.16.0.md` for the release record (bundle
+inventory, suite matrix, privacy evidence, capability boundaries).
 
-- **New gates/checkers** — `verdict_schema.py` (rejects a `converged: true`
-  + `status: escalate_human` contradiction) is wired into
-  `submission_preflight`. `check_residue.py` (form-scan-derived residue,
-  HARD on malformed artifact XML), `check_density.py` (H5 subhead-density
-  structural gate), and `check_canonical.py` (canonical/`FINAL` pointer
-  resolution) are standalone, tested scripts, each shipped with a
-  documented shared-miss regression case — **none of the three is composed
-  into `content_audit` or `submission_preflight` yet**; that is a pending
-  Wave 1 Lane V gate-architecture decision (registry vs declarative
-  `gates.yaml` vs hybrid).
-- **Declared personalization change** — v0.13 data-only extension packs
-  landed (`scripts/extension_pack.py`, `docs/extensions.md`) under a
-  v0.13.1 policy boundary: `constants_allowlist` was removed from
-  `DATA_EXTENSION_PACK_TYPES` in `personalization_ctl.py`. It stays a
-  profile-level personalization pack (installable only through
-  `personalization_ctl`), but it is **not installable via extension
-  packs** — it is a confirmed relaxation vector for `check_numbers`'
-  deterministic numeric checker, so an installable pack must not be able
-  to touch it.
-- **v0.16 plan pointer** — the next wave is
-  `docs/plans/v0.16-unified-core-and-modules.md` (engine absorption,
-  personalization/style as separate distribution modules) with its Phase 0
-  companion `docs/plans/v0.16-prep-variant-audit.md`. This file's own task,
-  F3 "Version-drift reconciliation" (README/CHANGELOG/SUMMARY/capability
-  matrix vs tag `v0.15.0-alpha`), is defined in the master plan's Wave 1
-  Lane F.
+- **Gate architecture resolved (hybrid)** — `verdict_schema.py` is wired
+  into `submission_preflight`; `check_residue.py`, `check_density.py`, and
+  `check_canonical.py` are reachable through the declared-values gate
+  runner (#36), whose kinds delegate to registry mechanisms (`canonical`
+  is declared by the report module via `gate_kinds`). The Wave 1 Lane V
+  registry-vs-declarative question this file used to flag is closed:
+  registry mechanisms, declared values.
+- **Distribution modules** — the engine was absorbed at `engine/` (W2),
+  and report/style capability moved behind the module contract
+  (`modules/README.md`) with per-module bundles built by
+  `scripts/package_module.py`. `constants_allowlist` remains never
+  extension-installable (v0.13.1 boundary), now enforced from the
+  registry-computed pack-type sets.
+- **This file's own task closed** — F3 version-drift reconciliation and
+  the final v0.16.0 reality pass are done; README/CHANGELOG/SUMMARY and
+  the capability matrix describe the same repo.

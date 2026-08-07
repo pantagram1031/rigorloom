@@ -42,7 +42,8 @@ or writing any file.
 
 ## HWP stages are unavailable
 
-Run the engine doctor (`python engine/scripts/doctor.py`). Full COM editing requires Windows, locally installed
+Run the capability probe (`python engine/scripts/probe.py`) and check
+`render.hancom_com`. Full COM editing requires Windows, locally installed
 desktop Hancom Office HWP, and the optional Python COM packages. Continue only
 with provider-neutral or non-COM stages when that host is unavailable.
 
