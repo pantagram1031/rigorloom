@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "rigorloom-eval-run/v1",
+  "title": "Clean-room eval run record",
+  "description": "What ONE agent run against ONE task in ONE prepared clean-room sandbox produced. The harness does not write this file: whoever launches the agent does, from the launcher's own transcript metadata. evals/score.py consumes it together with the machine-check results that cleanroom.py check emitted.",
+  "type": "object",
+  "required": ["schema", "run_id", "task_id", "tier", "launcher", "outcome", "transcript"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {"const": "rigorloom-eval-run/v1"},
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Unique within a comparison set, e.g. A1-opus-2026-08-08-01."
+    },
+    "task_id": {"type": "string", "description": "Must match the task definition's id."},
+    "tier": {
+      "type": "object",
+      "required": ["label"],
+      "properties": {
+        "label": {"type": "string", "description": "Short routing label used as the comparison column header (opus / sonnet / haiku / operator)."},
+        "model": {"type": "string", "description": "Exact model id, when known."},
+        "harness": {"type": "string", "description": "Claude Code, SDK, API loop, human."},
+        "notes": {"type": "string"}
+      }
+    },
+    "launcher": {
+      "type": "object",
+      "required": ["kind"],
+      "description": "HOW the agent was started. The harness never launches an agent; this field is the record of what did.",
+      "properties": {
+        "kind": {"enum": ["task-tool", "cli", "sdk", "operator", "other"]},
+        "detail": {"type": "string"},
+        "skill_loaded": {"type": "boolean", "description": "false marks a no-skill baseline run (skill-efficiency-gen5.md section 5: baseline first)."}
+      }
+    },
+    "sandbox_root": {"type": "string"},
+    "install_report": {"type": "string", "description": "Path to the install_report.json of the sandbox this run used."},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "outcome": {
+      "type": "object",
+      "required": ["completed"],
+      "properties": {
+        "completed": {"type": "boolean", "description": "Did the agent finish the task on its own?"},
+        "operator_intervened": {"type": "boolean", "description": "true invalidates the run as a clean-room result; keep it and say so."},
+        "intervention_notes": {"type": "string"},
+        "refused": {"type": "boolean"}
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "description": "Efficiency metrics from the launcher. Every field is optional except steps: a launcher that cannot report tokens leaves them null rather than guessing.",
+      "required": ["steps"],
+      "properties": {
+        "steps": {"type": "integer", "minimum": 0, "description": "Assistant turns."},
+        "tool_calls": {"type": ["integer", "null"], "minimum": 0},
+        "retries": {"type": ["integer", "null"], "minimum": 0, "description": "Times the agent re-ran a failed command or redid a step."},
+        "wall_seconds": {"type": ["number", "null"], "minimum": 0},
+        "tokens": {
+          "type": ["object", "null"],
+          "properties": {
+            "input": {"type": ["integer", "null"]},
+            "output": {"type": ["integer", "null"]},
+            "total": {"type": ["integer", "null"]},
+            "skill_loaded": {"type": ["integer", "null"], "description": "Tokens the loaded SKILL.md itself occupies (the W5.3 acceptance's loaded-token footprint)."}
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {"type": "string"},
+          "role": {"type": "string", "description": "filled_form / profile / report / other"},
+          "sha256": {"type": "string"}
+        }
+      }
+    },
+    "judgment": {
+      "type": "array",
+      "description": "Human or LLM-judge verdicts against the task's expected_behavior[] rubric, in the same order.",
+      "items": {
+        "type": "object",
+        "required": ["verdict"],
+        "properties": {
+          "rubric": {"type": "string"},
+          "verdict": {"enum": ["pass", "fail", "unclear"]},
+          "judge": {"type": "string"},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "failure_mode": {
+      "type": ["string", "null"],
+      "description": "One short phrase naming HOW it failed, for the routing table's last column: e.g. 'edited original in place', 'invented unsupplied values', 'reimplemented preedit inline', 'gave up after residue exit 3'."
+    },
+    "notes": {"type": "string"}
+  }
+}
