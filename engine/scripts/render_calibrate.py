@@ -27,6 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from cli_io import utf8_stdio  # noqa: E402
 
 import layout_qa  # noqa: E402
 
@@ -278,6 +279,8 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     args = parse_args(argv)
 
     if not wsl_soffice_available():

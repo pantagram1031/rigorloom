@@ -20,6 +20,21 @@ v2 추가 섹션(form_profile.json):
   table_map    — 모든 hp:tbl의 셀 단위 지도(addr/size/borderFill/음영/분류).
   break_audit  — header.xml paraPr들의 hh:breakSetting 플래그 집계.
 
+T30 사전 점검(fill 대상 charPr):
+  body_baseline_charpr    — 문서 자신의 본문 baseline charPr(id/height_pt/
+                            script signature). 상단에 한 번 보고한다.
+  table_map[*].cells[*]   — classification=="fill_target" 셀에만:
+      charpr             채우기가 **상속할** 런의 charPrIDRef
+      script_anomaly     그 charPr이 baseline과 supscript/subscript/ratio/
+                         relSz/offset 중 하나라도 다른가(True/False,
+                         판정 불가면 None)
+      charpr_suggested   대신 써야 할 id(= baseline id)
+  script_anomaly_targets  — script_anomaly인 대상 셀만 모은 목록(빠른 확인용).
+
+  절차: form_inspect로 뽑고 → script_anomaly를 보고 → `preedit fill-cells`에
+  `--charpr-per-cell ROW,COL=<charpr_suggested>`로 넘긴다. 넘기지 않으면
+  fill-cells가 exit 3으로 거부한다(조용히 ~6.35pt 올려찍는 대신).
+
 exit 0: 정상. exit 1: anomaly 없음(항상 0, 이 스크립트는 진단 전용).
 exit 2: 사용법/파일 오류.
 """
@@ -33,7 +48,13 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cli_io import utf8_stdio  # noqa: E402
 from hwpx_tables import scan_tables  # noqa: E402
+# T30 사전 점검 — script/scale/offset 어휘는 visual_verify(사후 검출)와 공유하고,
+# '어느 런을 채우는가'는 preedit(실제 채우는 쪽)에서 그대로 가져온다.
+# 두 도구가 어긋날 수 있으면 사전 점검은 없는 것보다 나쁘다.
+import charpr_script  # noqa: E402
+from preedit import fill_target_run_charpr  # noqa: E402
 
 NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
@@ -446,11 +467,60 @@ def _own_cell_body(xml, cell, tables):
     return "".join(out)
 
 
-def _table_map(section_names, z, defs, borderfill_shaded):
+def _body_charpr_weights(section_names, z):
+    """charPr id -> 본문 텍스트 글자수(본문 baseline 선정 가중치).
+
+    visual_verify의 T30 사후 검출이 쓰는 것과 **같은 가중치·같은 스캐너**다
+    (charpr_script.iter_runs + 공백 제거 길이). 채우기 전 양식에는 fill 값이
+    아직 없으니 텍스트가 있는 모든 런이 본문이다 — 빈 셀의 텍스트 없는 런은
+    iter_runs가 애초에 세지 않으므로 양식의 빈칸이 본문을 이길 수 없다.
+    """
+    weights = {}
+    for sname in section_names:
+        xml = z.read(sname).decode("utf-8")
+        for cid, text in charpr_script.iter_runs(xml):
+            weights[cid] = weights.get(cid, 0) + len(charpr_script.norm(text))
+    return weights
+
+
+def _fill_preflight(raw_body, script_profiles, baseline_id):
+    """fill_target 셀 하나의 T30 사전 점검 필드.
+
+    charpr가 안 잡히거나(쓸 런이 없다 — fill-cells도 거부한다) baseline/프로파일이
+    없으면 script_anomaly는 **판정하지 않은 것**을 뜻하는 None이다. False(=검사했고
+    깨끗하다)와 구별된다 — 못 본 것을 깨끗하다고 보고하면 사전 점검이 아니다.
+    """
+    run_charpr = fill_target_run_charpr(raw_body)
+    profile = script_profiles.get(run_charpr)
+    baseline_profile = script_profiles.get(baseline_id)
+    out = {"charpr": run_charpr,
+           "script_anomaly": None,
+           "charpr_suggested": baseline_id}
+    if run_charpr is None or profile is None or baseline_profile is None:
+        return out
+    differing = charpr_script.differing_keys(profile, baseline_profile)
+    out["script_anomaly"] = bool(differing)
+    if differing:
+        out["script_differing"] = differing
+        out["nominal_height_pt"] = profile.get("height_pt")
+        rendered = charpr_script.rendered_pt_estimate(profile)
+        if rendered is not None:
+            out["rendered_pt_estimate"] = rendered
+    return out
+
+
+def _table_map(section_names, z, defs, borderfill_shaded,
+               script_profiles=None, baseline_id=None):
     """모든 section의 모든 hp:tbl -> table_map 엔트리 리스트.
 
     cell 분류(guide/fill_target/static)는 _classify_guide/_looks_like_anchor와
     동일 휴리스틱을 재사용한다(새 규칙 도입 안 함).
+
+    fill_target 셀에는 T30 사전 점검 필드가 붙는다(그 외 분류에는 붙지 않는다 —
+    의도적으로 위첨자인 각주 표식 같은 **비대상** 런은 애초에 비교 대상이
+    아니다): charpr(채우기가 상속할 런의 id), script_anomaly(본문 baseline과
+    supscript/subscript/ratio/relSz/offset 중 하나라도 다름),
+    charpr_suggested(본문 baseline id).
 
     표 스캔은 `hwpx_tables.scan_tables`(태그 스택, 중첩 안전)에 위임한다 —
     `preedit fill-cells`가 `--table N`으로 가리키는 색인과 **같은 규약**이어야
@@ -502,7 +572,7 @@ def _table_map(section_names, z, defs, borderfill_shaded):
 
                 shaded = borderfill_shaded.get(bfid, False) if bfid is not None else False
 
-                cells.append({
+                entry = {
                     "addr": addr,
                     "span": {"row": cell["span"][0], "col": cell["span"][1]},
                     "width": width,
@@ -511,7 +581,14 @@ def _table_map(section_names, z, defs, borderfill_shaded):
                     "shaded": shaded,
                     "text_preview": text[:30],
                     "classification": classification,
-                })
+                }
+                if classification == "fill_target":
+                    # 원본 몸통(중첩 표 제거 전)을 넘긴다 — preedit의 문단 색인과
+                    # 같아야 하므로 _own_cell_body 결과를 쓰면 안 된다.
+                    raw_body = xml[cell["body_start"]:cell["body_end"]]
+                    entry.update(_fill_preflight(
+                        raw_body, script_profiles or {}, baseline_id))
+                cells.append(entry)
 
             tables.append({
                 "index": idx,
@@ -632,7 +709,23 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
 
     section0_xml = z.read(section_names[0]).decode("utf-8") if section_names else ""
     page_metrics = _page_metrics(section0_xml, base_pt=base_pt, line_spacing_pct=line_spacing_pct)
-    table_map = _table_map(section_names, z, defs, borderfill_shaded)
+
+    # T30 사전 점검의 기준선 — 문서 자신의 본문 charPr. table_map보다 먼저
+    # 구해야 한다(fill_target 셀마다 이 id와 비교하므로).
+    script_profiles = charpr_script.profiles_from_header(header_xml)
+    script_baseline_id = charpr_script.body_baseline_id(
+        _body_charpr_weights(section_names, z))
+    baseline_profile = script_profiles.get(script_baseline_id)
+    body_baseline_charpr = {
+        "id": script_baseline_id,
+        "height_pt": (baseline_profile or {}).get("height_pt"),
+        "signature": (charpr_script.signature(baseline_profile)
+                      if baseline_profile else None),
+    }
+
+    table_map = _table_map(section_names, z, defs, borderfill_shaded,
+                           script_profiles=script_profiles,
+                           baseline_id=script_baseline_id)
 
     anchors, placeholders, guide_text, para_formats = [], [], [], []
     anchor_para_idx = set()
@@ -765,7 +858,14 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
         "removal_targets": removal_targets,
         "removal_policy": removal_policy,
         "page_metrics": page_metrics,
+        "body_baseline_charpr": body_baseline_charpr,
         "table_map": table_map,
+        "script_anomaly_targets": [
+            {"table": t["index"], "addr": c["addr"], "charpr": c["charpr"],
+             "charpr_suggested": c["charpr_suggested"],
+             "differing": c.get("script_differing", [])}
+            for t in table_map for c in t["cells"]
+            if c.get("script_anomaly")],
         "break_audit": break_audit,
     }
 
@@ -814,6 +914,8 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("form", help=".hwpx 양식 경로")
@@ -842,7 +944,10 @@ def main():
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}: anchors={len(profile['anchors'])} "
               f"guide_text={len(profile['guide_text'])} "
-              f"constraints={profile['constraints']}")
+              f"constraints={profile['constraints']} "
+              f"body_baseline_charpr={profile['body_baseline_charpr']['id']} "
+              f"script_anomaly_targets="
+              f"{len(profile['script_anomaly_targets'])}")
     else:
         sys.stdout.buffer.write(text.encode("utf-8"))
 

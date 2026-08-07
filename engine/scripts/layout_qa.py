@@ -25,6 +25,11 @@ from pathlib import Path
 
 import fitz  # pymupdf
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from cli_io import utf8_stdio  # noqa: E402
+
 CAPTION_RE = re.compile(r"^\s*(\[?그림|Fig)", re.IGNORECASE)
 # 캡션 뒤 빈 줄 면제용 — 표/그림 캡션 줄 판정("표 1.", "[그림 2]", "그림 3" 등).
 OBJECT_CAPTION_RE = re.compile(r"^\s*(표\s*\d|\[?그림\s*\d|Fig)", re.IGNORECASE)
@@ -575,6 +580,8 @@ def parse_skip_pages(s):
 
 
 def main():
+    # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
+    utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--file", required=True)
     ap.add_argument("--bottom", type=float, default=25.0,

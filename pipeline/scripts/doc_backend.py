@@ -51,6 +51,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from adapters_impl import read_build_yaml_key  # noqa: E402
+from checker_base import _utf8_stdio  # noqa: E402
 import rhwp_proof  # noqa: E402
 import render_cert  # noqa: E402
 
@@ -564,6 +565,8 @@ def resolve_backend(ws: str, flag: str | None) -> str:
 
 
 def main(argv=None):
+    # cp949-safe --help: reconfigure BEFORE parse_args (see cli_io.py).
+    _utf8_stdio()
     ap = argparse.ArgumentParser(description="pluggable document-backend dispatcher")
     ap.add_argument("workspace", help="report workspace dir (…/workspaces/report-<slug>)")
     ap.add_argument("--backend", choices=["bundle", "docx", "hwpx", "hwp"], default=None,
