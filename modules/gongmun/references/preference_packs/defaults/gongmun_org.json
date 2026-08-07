@@ -1,0 +1,10 @@
+{
+  "schema": "rigorloom-gongmun/preference-pack/gongmun_org-v1",
+  "pack_type": "gongmun_org",
+  "name": "neutral-default",
+  "version": 1,
+  "description": "Empty by design. An issuing organization chart is per-installation and personal data; the repository ships no agency, department or rank. check_gongmun reports the pack rules as skipped (pack_vocabulary_empty) until an operator writes a real instance.",
+  "organizations": [],
+  "departments": [],
+  "ranks": []
+}

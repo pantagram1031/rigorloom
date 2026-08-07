@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rigorloom-gongmun/preference-pack/gongmun_org-v1",
+  "title": "Issuing-organization pack (공문 발신 기관 vocabulary)",
+  "description": "The 기관명/부서/직위 vocabulary a 공문's 두문 (행정기관명), 발신명의, 결문 (처리과명) and 결재란 (직위) seats are filled from. It is a PACK, never hardcoded: which agency issues a document, which departments exist and which ranks sign are per-installation facts, and a real organization chart is personal data that must not live in this repository. The shipped default instance is therefore deliberately empty — check_gongmun skips the pack rules and says so (skipped: pack_vocabulary_empty) rather than inventing an organization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_type", "name", "version"],
+  "properties": {
+    "schema": {"type": "string"},
+    "pack_type": {"type": "string", "enum": ["gongmun_org"]},
+    "name": {"type": "string"},
+    "version": {"type": "integer"},
+    "draft": {"type": "boolean"},
+    "description": {"type": "string"},
+    "organizations": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "행정기관명 / 발신명의 values this installation may issue under (e.g. a ministry or school name)."
+    },
+    "departments": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "처리과명 values: the departments that may appear in 시행/접수 numbering and in the 발신명의 line."
+    },
+    "ranks": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "직위(직급) values the 결재란 seats may name."
+    }
+  }
+}
