@@ -295,6 +295,9 @@ def load_task(path: Path | str) -> dict[str, Any]:
 _CHECK_KINDS = {"python", "shell", "file", "geometry", "idempotence",
                 "residue", "text_present", "text_absent", "unmodified"}
 _FILE_MODES = {"exists", "absent", "nonempty"}
+# ``requires_module: NAME`` gates one machine_check on a distribution module
+# being enabled in the sandbox. Same name grammar as module_registry's _NAME_RE.
+_MODULE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
 
 def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
@@ -349,6 +352,12 @@ def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
         if kind not in _CHECK_KINDS:
             fail(f"machine_check {cid!r}: kind must be one of "
                  f"{sorted(_CHECK_KINDS)} (got {kind!r})")
+        if "requires_module" in check:
+            required = check["requires_module"]
+            if not isinstance(required, str) or not _MODULE_NAME_RE.fullmatch(
+                    required):
+                fail(f"machine_check {cid!r}: requires_module must be a "
+                     f"kebab-case distribution-module name (got {required!r})")
         if kind == "python":
             argv = check.get("argv")
             if not isinstance(argv, list) or not argv:
@@ -1335,13 +1344,63 @@ def _zip_member_digest(path: Path) -> dict[str, str]:
                 for info in archive.infolist() if not info.is_dir()}
 
 
+def sandbox_modules(sandbox: Sandbox) -> dict[str, Any]:
+    """The sandbox's OWN answer to "which distribution modules are enabled and
+    what do they provide", asked of the SHIPPED registry CLI rather than read
+    out of ``install_report.json`` — so an enabled set changed after ``prepare``
+    (or a module disabled by hand) is still the truth the checks are gated on.
+
+    A root with no registry script is core-only, not an error: absence is not
+    failure (``modules/README.md``).
+    """
+    script = sandbox.install / "pipeline" / "scripts" / "module_registry.py"
+    if not script.is_file():
+        return {"available": False, "enabled": [], "checkers": []}
+    proc = sandbox.run_python(script, [
+        "--modules-root", str(sandbox.install / "modules"),
+        "--pyproject", str(sandbox.install / "pyproject.toml"), "list"])
+    if proc.returncode != 0:
+        raise CleanroomError(
+            f"the sandbox's distribution-module registry refused to answer "
+            f"(exit {proc.returncode}): "
+            f"{(proc.stdout or proc.stderr or '')[:400]}", exit_code=3)
+    try:
+        summary = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise CleanroomError(
+            f"the sandbox's registry emitted non-JSON: {exc}", exit_code=3)
+    return {"available": True,
+            "enabled": list(summary.get("enabled") or []),
+            "checkers": list(summary.get("checkers") or [])}
+
+
 def run_machine_check(sandbox: Sandbox, check: dict[str, Any],
-                      variables: dict[str, str]) -> dict[str, Any]:
+                      variables: dict[str, str], *,
+                      enabled_modules: Iterable[str] = (),
+                      checkers: Iterable[dict[str, Any]] = (),
+                      ) -> dict[str, Any]:
     cid = check["id"]
     result: dict[str, Any] = {"id": cid, "kind": check["kind"],
                               "description": check.get("description")}
     if check.get("blocked_on"):
         result.update({"status": "skipped", "reason": check["blocked_on"]})
+        return result
+
+    # Per-module gate (v0.17 G2). A check that calls into a distribution
+    # module's payload cannot run in a sandbox where that module is disabled;
+    # before this gate it FAILED there, which is a false finding about the
+    # product. Semantics are ``blocked_on``'s, exactly: status "skipped" with a
+    # recorded reason, counted in ``counts.skipped``, never in ``counts.pass``
+    # — and score.py reads those counts, so a skip can never satisfy the
+    # "machine checks ran and all passed" condition either.
+    required_module = check.get("requires_module")
+    if required_module and required_module not in set(enabled_modules):
+        result.update({
+            "status": "skipped",
+            "reason": f"requires_module: distribution module "
+                      f"{required_module!r} is not enabled in this sandbox",
+            "requires_module": required_module,
+        })
         return result
 
     kind = check["kind"]
@@ -1515,7 +1574,10 @@ def run_checks(root: Path | str, task: dict[str, Any], *,
         "INPUTS": str(work / "inputs"),
         "SKILLS": str(sandbox.skills),
     }
-    results = [run_machine_check(sandbox, check, variables)
+    modules = sandbox_modules(sandbox)
+    results = [run_machine_check(sandbox, check, variables,
+                                 enabled_modules=modules["enabled"],
+                                 checkers=modules["checkers"])
                for check in task["machine_checks"]]
     passed = sum(1 for row in results if row["status"] == "pass")
     failed = sum(1 for row in results if row["status"] == "fail")
@@ -1525,6 +1587,7 @@ def run_checks(root: Path | str, task: dict[str, Any], *,
         "task_id": task["id"],
         "family": task["family"],
         "sandbox_root": str(sandbox.root),
+        "enabled_modules": modules["enabled"],
         "counts": {"pass": passed, "fail": failed, "skipped": skipped,
                    "total": len(results)},
         "ok": failed == 0,

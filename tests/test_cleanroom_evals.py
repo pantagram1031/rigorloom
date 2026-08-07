@@ -579,6 +579,126 @@ class TestTaskRun:
 
 
 # --------------------------------------------------------------------------- #
+# 4b. requires_module — the per-module machine-check gate (v0.17 G2)
+# --------------------------------------------------------------------------- #
+G1_TASK = TASKS_DIR / "G1-gianmun-body-edit.yaml"
+
+
+def _module_gated_task(module: str) -> dict:
+    """A minimal task whose single check is gated on ``module``. The check is
+    `file`/`absent` on a path that cannot exist, so it PASSES whenever it is
+    allowed to run — the only thing under test is the gate."""
+    return {
+        "schema": cleanroom.TASK_SCHEMA,
+        "id": f"gate-{module}",
+        "family": "grant",
+        "prompt": "gate probe",
+        "input_files": [
+            "tests/corpus/forms/grant/pps-jeongbogonggae-donguiseo.hwpx"],
+        "expected_behavior": ["[judgment] n/a"],
+        "machine_checks": [
+            {"id": "ungated", "kind": "file",
+             "path": "${WORK}/nothing-here", "mode": "absent"},
+            {"id": "gated", "kind": "file", "requires_module": module,
+             "path": "${WORK}/nothing-here", "mode": "absent"},
+        ],
+    }
+
+
+class TestRequiresModuleGate:
+    def test_the_shipped_gongmun_checks_declare_the_gate(self):
+        task = cleanroom.load_task(G1_TASK)
+        gated = {check["id"]: check.get("requires_module")
+                 for check in task["machine_checks"]}
+        assert gated["gongmun_blank_form_shape"] == "gongmun"
+        assert gated["gongmun_structure"] == "gongmun"
+        # …and nothing else in the task is gated: the core checks must run
+        # everywhere, module or no module.
+        assert {cid for cid, module in gated.items() if module} == {
+            "gongmun_blank_form_shape", "gongmun_structure"}
+
+    def test_a_bad_requires_module_value_is_refused(self, tmp_path):
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            GOOD_TASK.replace("    kind: file\n",
+                              "    kind: file\n    requires_module: Not A Name\n"),
+            encoding="utf-8")
+        with pytest.raises(cleanroom.CleanroomError) as excinfo:
+            cleanroom.load_task(path)
+        assert "requires_module must be" in str(excinfo.value)
+
+    def test_gated_check_runs_where_the_module_is_enabled(self, prepared):
+        """``prepared`` installs core + style with ``--enable all``: style IS
+        enabled, so a check gated on it must actually run."""
+        assert prepared["report"]["registry"]["enabled"] == ["style"]
+        task = _module_gated_task("style")
+        cleanroom.materialize_task(prepared["root"], task)
+        results = cleanroom.run_checks(prepared["root"], task)
+        by_id = {row["id"]: row for row in results["checks"]}
+        assert by_id["gated"]["status"] == "pass"
+        assert by_id["ungated"]["status"] == "pass"
+        assert results["enabled_modules"] == ["style"]
+        assert results["counts"] == {"pass": 2, "fail": 0, "skipped": 0,
+                                     "total": 2}
+
+    def test_gated_check_skips_where_the_module_is_absent(self, prepared):
+        """Same sandbox, a module that is not installed: skipped with a reason,
+        NOT failed. Before the gate this was a red check about a product that
+        was working exactly as designed."""
+        task = _module_gated_task("gongmun")
+        cleanroom.materialize_task(prepared["root"], task)
+        results = cleanroom.run_checks(prepared["root"], task)
+        by_id = {row["id"]: row for row in results["checks"]}
+        assert by_id["gated"]["status"] == "skipped"
+        assert by_id["gated"]["requires_module"] == "gongmun"
+        assert "not enabled in this sandbox" in by_id["gated"]["reason"]
+        assert "ok" not in by_id["gated"]
+        # the ungated sibling still ran: the gate is per check, not per task
+        assert by_id["ungated"]["status"] == "pass"
+
+    def test_gated_check_skips_in_a_core_only_sandbox(self, tmp_path, bundles):
+        report, code = cleanroom.prepare(
+            tmp_path / "coreonly-gate", [bundles[0]], enable="none",
+            allow_gaps=["no_module_bundles"])
+        assert code == 0, report["failures"]
+        root = Path(report["sandbox_root"])
+        task = _module_gated_task("gongmun")
+        cleanroom.materialize_task(root, task)
+        results = cleanroom.run_checks(root, task)
+        by_id = {row["id"]: row for row in results["checks"]}
+        assert results["enabled_modules"] == []
+        assert by_id["gated"]["status"] == "skipped"
+        assert results["ok"] is True  # a skip is not a failure either
+
+    def test_a_skipped_gate_never_inflates_the_pass_count(self, prepared):
+        """The load-bearing property: counts.pass must not move when a gate
+        skips, and score.py (which reads counts) must not call the run green
+        on the strength of a skip."""
+        enabled = _module_gated_task("style")
+        absent = _module_gated_task("gongmun")
+        cleanroom.materialize_task(prepared["root"], enabled)
+        cleanroom.materialize_task(prepared["root"], absent)
+        ran = cleanroom.run_checks(prepared["root"], enabled)
+        skipped = cleanroom.run_checks(prepared["root"], absent)
+
+        assert ran["counts"]["pass"] == 2 and ran["counts"]["skipped"] == 0
+        assert skipped["counts"]["pass"] == 1, (
+            "a skipped gate was counted as a pass")
+        assert skipped["counts"]["skipped"] == 1
+        assert skipped["counts"]["total"] == ran["counts"]["total"]
+
+        card = score.score_run(
+            _run_record(task_id=absent["id"], judgment=[]),
+            {**skipped, "task_id": absent["id"]}, absent)
+        assert card["machine"]["pass"] == 1
+        assert card["machine"]["skipped"] == 1
+        assert card["machine"]["skipped_ids"] == ["gated"]
+        # the skip is visible, and it is not counted among the passes
+        assert card["machine"]["pass"] + card["machine"]["skipped"] == (
+            card["machine"]["total"])
+
+
+# --------------------------------------------------------------------------- #
 # 5. score.py
 # --------------------------------------------------------------------------- #
 def _run_record(**overrides) -> dict:
