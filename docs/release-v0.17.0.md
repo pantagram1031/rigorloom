@@ -50,13 +50,17 @@ unlisted file is exit 3).
 
 | bundle | files | zip sha256 |
 |---|---:|---|
-| `rigorloom-core-0.17.0.zip` | 98 | `f19f2216abcc5fc361010f976943a1a28ab6ddf28c71396c0679cf30e70137c7` |
-| `rigorloom-report-0.17.0.zip` | 87 | `85ed55ff9fca1fd14b236280f9255fe27377fa0f95694176f1ff5c9869584b62` |
-| `rigorloom-style-0.17.0.zip` | 14 | `fc05a42c1418e1da6d2e1a1fc328391cd5d44fdff3e02f7fbfec7a07fb433ca0` |
-| `rigorloom-gongmun-0.17.0.zip` | 14 | `1c81b890f80699d082f08614ed1306cb11587b800a79a3f1673c1d60a7248514` |
-| `rigorloom-minwon-0.17.0.zip` | 12 | `f226ab6273d486404717a4185292e2bae9198031f5cf3d80979945744c0ce86b` |
-| `rigorloom-hr-0.17.0.zip` | 12 | `f09c374109e40087e9c0e443a509b48683bb7f70dd7ba3fa07e91a401861b735` |
-| `rigorloom-grant-0.17.0.zip` | 12 | `54a1e37548ca8a1eed3adf37983399cbefcfaba3db7b0c7113fad0600e267b61` |
+| `rigorloom-core-0.17.0.zip` | 98 | `54952ab90581b60fdd64b37f986edd2e8a535c374da2507626860dbdd5a79f9f` |
+| `rigorloom-report-0.17.0.zip` | 87 | `2b9b35bc7000adfa1f5576fd3cdef0a513bd78ac41017f71bd1d678f15bbbd15` |
+| `rigorloom-style-0.17.0.zip` | 14 | `38d1628b7933da09c5ebc3cb7a3a5570b10a2f33882e97f03cfac72ea966a21b` |
+| `rigorloom-gongmun-0.17.0.zip` | 14 | `40a2d96418d726ea8172d3397b60cdf1a0961b139dce73106008b83d6fadf7fa` |
+| `rigorloom-minwon-0.17.0.zip` | 12 | `2e0674b12d3e99a2735b51adc6579aad656a9dba8d987fca5bb8000f7cd6d53d` |
+| `rigorloom-hr-0.17.0.zip` | 12 | `33d9e69a542694ba43ef9ad2d1d613b2a703b2d8479bcbc17cd4a86670d84629` |
+| `rigorloom-grant-0.17.0.zip` | 12 | `4f1ec801ce4d7a760bcc966b20160ac2c5c0b30021659951858dd709d116fb0c` |
+
+`files` is the MANIFEST.json payload count, matching what
+`package_module` prints; the zip carries one more entry (the manifest).
+
 
 All seven `--verify` runs: `ok: true`, zero problems. Bundles live in `dist/`
 (gitignored, never committed); the hashes above bind this record to the exact
