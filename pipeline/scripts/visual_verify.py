@@ -63,7 +63,11 @@ Rendering rules (non-negotiable):
   * ``--baseline`` names the BLANK FORM, so it takes one: an ``.hwpx``/``.hwp``
     baseline goes through the SAME serial conversion, and with no renderer the
     pixel diff is a skip-with-reason (``deterministic.skipped``) rather than a
-    failure — losing one check, not the run (T35).
+    failure — losing one check, not the run (T35). An ``.hwpx`` baseline is
+    read a SECOND way, offline and with no renderer needed: the T30 charPr
+    post-flight compares each filled seat against the same seat in the blank
+    form, so a signature the printed form always had is a named WARN instead
+    of a HARD blaming the fill for the form's own typography (T40).
 
 ``--max-fix-attempts N`` semantics for callers: this script does not loop.
 The loop lives in the skill/playbook, which re-runs the script after each
@@ -1318,8 +1322,12 @@ def charpr_script_profiles(artifact):
     return charpr_script.profiles_from_header(header)
 
 
-def _hwpx_runs(artifact):
-    """``[(charPrIDRef, text)]`` over every section, in document order."""
+def _hwpx_seat_runs(artifact):
+    """``[(seat, charPrIDRef, text)]`` over every section, in document order.
+
+    ``seat`` is the run's structural address (``charpr_script.iter_seat_runs``)
+    — the table cell it sits in, or ``()`` for a run outside every cell.
+    """
     path = Path(artifact)
     if path.suffix.lower() != ".hwpx" or not path.is_file():
         return []
@@ -1330,13 +1338,62 @@ def _hwpx_runs(artifact):
                            if re.match(r"Contents/section\d+\.xml$", n))
             for name in names:
                 xml = archive.read(name).decode("utf-8", "replace")
-                out.extend(charpr_script.iter_runs(xml))
+                out.extend(charpr_script.iter_seat_runs(xml, name))
     except (OSError, zipfile.BadZipFile):
         return []
     return out
 
 
-def check_fill_charpr_script(artifact, expectations):
+def _hwpx_runs(artifact):
+    """``[(charPrIDRef, text)]`` over every section, in document order."""
+    return [(cid, text) for _seat, cid, text in _hwpx_seat_runs(artifact)]
+
+
+def _hwpx_seats(artifact):
+    """Every table-cell seat in the document, text-carrying or not."""
+    path = Path(artifact)
+    seats = set()
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return seats
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name in sorted(n for n in archive.namelist()
+                               if re.match(r"Contents/section\d+\.xml$", n)):
+                xml = archive.read(name).decode("utf-8", "replace")
+                seats |= charpr_script.seat_addresses(xml, name)
+    except (OSError, zipfile.BadZipFile):
+        return set()
+    return seats
+
+
+#: ``--baseline`` takes four shapes (T35): the blank ``.hwpx``, a ``.hwp``, an
+#: already-rendered PDF, or a directory of page images. Only the first can be
+#: read as XML, and the seat comparison below needs XML — so this returns the
+#: path when there is one and, when there is not, the sentence the verdict
+#: publishes instead of a claim it did not earn.
+def seat_baseline_source(baseline):
+    """``(path, unavailable_reason)`` — the blank ``.hwpx`` seats can be read
+    from, or None plus why not. Exactly one of the two is ever set."""
+    if not baseline:
+        return None, ("no --baseline was given, so whether the blank form's "
+                      "own seat already carried this signature could not be "
+                      "checked")
+    path = Path(str(baseline)).expanduser()
+    if path.is_dir():
+        return None, ("--baseline is a directory of page images; the seat "
+                      "comparison needs the blank .hwpx, so whether the form "
+                      "already carried this signature could not be checked")
+    if path.suffix.lower() != ".hwpx":
+        return None, (f"--baseline is {path.suffix or 'not a document'}, which "
+                      f"carries no readable charPr definitions; the seat "
+                      f"comparison needs the blank .hwpx, so whether the form "
+                      f"already carried this signature could not be checked")
+    if not path.is_file():
+        return None, f"--baseline .hwpx is not a readable file: {path}"
+    return path, None
+
+
+def check_fill_charpr_script(artifact, expectations, baseline_form=None):
     """T30: a filled value inherited a charPr that is body text PLUS a script.
 
     The live incident: the PPS 협업제품명 cell's filled value carried a charPr
@@ -1350,16 +1407,49 @@ def check_fill_charpr_script(artifact, expectations):
     false-positive guard: an intentionally superscripted footnote marker,
     ordinal or unit exponent is not a fill value, so it is never compared.
 
-    The baseline is the document's own body charPr: the script profile of the
-    charPr carrying the most non-fill text. Comparison is relative, so a
-    document whose body is legitimately scaled is not flagged wholesale.
+    TWO baselines, and the difference is the whole of T40:
+
+    * the **document body baseline** — the charPr carrying the most non-fill
+      text. It answers "does this run differ from the prose around it", and on
+      a document that is mostly prose that is the right question.
+    * the **form seat baseline** — the charPr on the blank run named by the
+      fill-map key, inside the SAME SEAT (``baseline_form``, the ``.hwpx``
+      ``--baseline`` already names). It answers the question that actually
+      decides the finding: *did the fill introduce this signature?* Choosing
+      the seat's most common charPr would be unsafe in a multi-run cell: an
+      unrelated sibling could then excuse a real change to the filled run.
+
+    A seat is a structural address, not text: see the seat-matching rule in
+    ``engine/scripts/charpr_script.py`` (``iter_seat_runs``). Text cannot be
+    the key because an ``--at-cell-append`` fill keeps the printed label and
+    appends the value — the same seat reads "수신" in the blank and
+    "수신 국가유산청장" in the artifact (T31) — while an ``--at-cell`` fill
+    replaces the seat text outright. The table cell address survives both.
+
+    A run is HARD only when it differs from BOTH baselines. That ordering is
+    deliberate: the seat can only ever DOWNGRADE a finding, never create one,
+    so adopting a seat baseline cannot invent a HARD on any other family.
+
+      * differs from neither → clean, as before.
+      * differs from body, matches its own seat in the blank form → the
+        printed form was always like that and the fill introduced nothing:
+        WARN ``fill_charpr_script_inherited``, named and on the record. This
+        is why the whole 기안문 별지 gongmun family was unfillable — every
+        substantive seat on that form is ratio 97%% while the heaviest charPr
+        is the 비고 fine print at 100%%.
+      * differs from body and the blank form's same seat carries no text at
+        all (the genuinely empty run a ``fill-cells`` writes into) → HARD.
+        An empty seat has no typography to inherit, so nothing is excused.
+      * differs from body and no ``.hwpx`` baseline was available → HARD, and
+        the finding SAYS the inheritance question was not checked. The
+        detection stays, the claim does not exceed the evidence.
     """
     fill_map = expectations.get("fill_map") or {}
     values = [str(v) for v in fill_map.values() if v not in (None, "")]
     if not values:
         return [], None
     profiles = charpr_script_profiles(artifact)
-    runs = _hwpx_runs(artifact)
+    runs = _hwpx_seat_runs(artifact)
     if not profiles or not runs:
         return [], None
 
@@ -1367,12 +1457,12 @@ def check_fill_charpr_script(artifact, expectations):
                          for label, value in sorted(fill_map.items())
                          if value not in (None, "")]
     filled, body_weight = [], collections.Counter()
-    for cid, text in runs:
+    for seat, cid, text in runs:
         normalized = _norm(text)
         hit = next((label for label, value in normalized_values
                     if value and value in normalized), None)
         if hit is not None:
-            filled.append((cid, text, hit))
+            filled.append((seat, cid, text, hit))
         else:
             body_weight[cid] += len(normalized)
     if not filled or not body_weight:
@@ -1383,13 +1473,33 @@ def check_fill_charpr_script(artifact, expectations):
     if baseline is None:
         return [], None
     baseline_signature = _script_signature(baseline)
+
+    # -- the blank form's own seats, when one is readable -------------------
+    form_source, form_note = seat_baseline_source(baseline_form)
+    form_profiles, form_runs, form_addresses = {}, None, set()
+    if form_source is not None:
+        form_profiles = charpr_script_profiles(form_source)
+        baseline_runs = _hwpx_seat_runs(form_source)
+        if not form_profiles or not baseline_runs:
+            form_note = (f"--baseline {form_source.name} carries no readable "
+                         f"charPr definitions or no text runs, so whether the "
+                         f"form already carried this signature could not be "
+                         f"checked")
+        else:
+            form_runs = baseline_runs
+            form_addresses = _hwpx_seats(form_source)
+
     report = {"baseline_charpr_id": baseline_cid,
               "baseline": baseline_signature,
               "baseline_height_pt": baseline.get("height_pt"),
-              "fill_modified_runs": len(filled)}
+              "fill_modified_runs": len(filled),
+              "form_baseline": (str(form_source) if form_runs is not None
+                                 else None),
+              "form_baseline_note": form_note,
+              "inherited": 0}
 
     out, seen = [], set()
-    for cid, text, label in filled:
+    for seat, cid, text, label in filled:
         profile = profiles.get(cid)
         if profile is None:
             continue
@@ -1408,19 +1518,95 @@ def check_fill_charpr_script(artifact, expectations):
                                 for key in differing},
             "nominal_height_pt": profile.get("height_pt"),
             "text": text.strip()[:60],
-            "note": "fill-modified run inherits a script/scale/offset the "
-                    "document body does not use; nominal height is unchanged "
-                    "so charpr_check and style_diff cannot see it (T30)",
+            "seat": "/".join(seat) or None,
         }
         rendered = charpr_script.rendered_pt_estimate(profile)
         if rendered is not None:
             evidence["rendered_pt_estimate"] = rendered
+
+        # Was this seat already like this on the untouched form?
+        form_cid = form_seat_note = None
+        form_match = None
+        if form_runs is None:
+            form_seat_note = form_note
+        elif not seat:
+            form_seat_note = ("this run is not inside a table cell, so it has "
+                              "no seat address to look up in the blank form")
+        else:
+            candidates = charpr_script.seat_label_runs(form_runs, seat, label)
+            candidate_cids = sorted({candidate[0] for candidate in candidates})
+            if len(candidate_cids) == 1:
+                form_cid = candidate_cids[0]
+                form_match = "fill_map_key"
+            elif len(candidate_cids) > 1:
+                form_seat_note = (
+                    "the fill-map key matches several runs with different "
+                    "charPr ids in the blank form's same seat, so the exact "
+                    "baseline is ambiguous and nothing can be excused")
+                evidence["form_baseline_candidates"] = [
+                    {"charpr_id": candidate_cid, "text": candidate_text[:60]}
+                    for candidate_cid, candidate_text in candidates]
+            elif seat not in form_addresses:
+                form_seat_note = (
+                    "the blank form has no such seat, so the comparison could "
+                    "not be made")
+            elif not any(run_seat == seat for run_seat, _cid, _text in form_runs):
+                form_seat_note = (
+                    "the blank form's same seat carries no text at all (a "
+                    "genuinely empty run), so there was no typography to "
+                    "inherit — the fill introduced this signature")
+            else:
+                form_seat_note = (
+                    "the fill-map key does not match a text run in the blank "
+                    "form's same seat, so the exact pre-fill signature could "
+                    "not be identified and nothing can be excused")
+        evidence["form_baseline_charpr_id"] = form_cid
+        evidence["form_baseline_checked"] = form_runs is not None
+        evidence["form_baseline_match"] = form_match
+
+        if form_cid is not None:
+            form_profile = form_profiles.get(form_cid)
+            if form_profile is None:
+                form_seat_note = (
+                    f"the blank form's matched run refers to undefined charPr "
+                    f"{form_cid}, so its signature could not be checked and "
+                    f"nothing can be excused")
+            else:
+                form_differing = charpr_script.differing_keys(
+                    profile, form_profile)
+                evidence["form_baseline_values"] = {
+                    key: _script_signature(form_profile).get(key)
+                    for key in differing}
+                if not form_differing:
+                    evidence["note"] = (
+                        "the blank form's exact run in this seat already "
+                        "carries this script/scale/offset signature, so the "
+                        "fill introduced nothing — this is the form's "
+                        "typography, not a T30 trap. Reported rather than "
+                        "dropped: read the render to confirm the seat is "
+                        "legible (T40)")
+                    report["inherited"] += 1
+                    out.append(finding(
+                        "fill_charpr_script_inherited", "warn",
+                        cls="format_noncompliance",
+                        detector="visual_verify.fill_charpr_script",
+                        evidence=evidence))
+                    continue
+                evidence["form_baseline_differing"] = form_differing
+                form_seat_note = (
+                    "the blank form's exact run in the same seat carries a "
+                    "DIFFERENT signature, so the fill changed it")
+        evidence["form_baseline_note"] = form_seat_note
+        evidence["note"] = (
+            "fill-modified run inherits a script/scale/offset the document "
+            "body does not use; nominal height is unchanged so charpr_check "
+            "and style_diff cannot see it (T30)")
         out.append(finding(
             "fill_charpr_script_mismatch", "hard",
             cls="format_noncompliance",
             detector="visual_verify.fill_charpr_script",
             evidence=evidence))
-    report["findings"] = len(out)
+    report["findings"] = sum(1 for item in out if item["severity"] == "hard")
     return out, report
 
 
@@ -1682,8 +1868,13 @@ def verify(args):
     det += check_page_budget(expectations, page_count)
     det += check_format(records, expectations)
     det += check_fill_map(records, expectations, declared_blank)
+    # --baseline is the BLANK FORM. The pixel diff below converts it; the T30
+    # post-flight reads its XML, to tell a signature the fill INTRODUCED from
+    # one the printed form always had (T40). Passing the raw argument, not the
+    # converted PDF, is the point — and a --baseline that is a PDF or an image
+    # directory cannot answer the question, which the verdict then says.
     script_findings, script_report = check_fill_charpr_script(
-        artifact, expectations)
+        artifact, expectations, args.baseline)
     det += script_findings
     det += check_forbidden_text(records, expectations)
 
@@ -2007,7 +2198,11 @@ def main(argv=None):
                              "images; reports changed-region bboxes so a "
                              "caller can assert unchanged regions stayed so. "
                              "With no renderer available an .hwpx baseline is "
-                             "reported under deterministic.skipped, not failed")
+                             "reported under deterministic.skipped, not failed. "
+                             "An .hwpx baseline additionally supplies the T30 "
+                             "seat comparison (T40), which needs no renderer: "
+                             "a script/scale the blank form's own seat already "
+                             "carried is a WARN, not a HARD")
     parser.add_argument("--form-profile", default=None,
                         help="form_profile.json -> also run check_residue")
     parser.add_argument("--keep", action="append", default=[],

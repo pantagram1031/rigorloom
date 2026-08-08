@@ -27,6 +27,7 @@ Import direction: ``engine/scripts`` is self-contained (nothing here imports
 """
 from __future__ import annotations
 
+import bisect
 import re
 import xml.etree.ElementTree as ET
 
@@ -116,19 +117,12 @@ def iter_runs(section_xml: str):
     visible text, in document order. Text-less runs (the empty-cell
     self-closing run a fill writes into) are not body text and are excluded —
     weighting the baseline by them would let a form's blanks outvote its prose.
+
+    Delegates to ``iter_seat_runs`` and drops the seat, so the seat-aware and
+    seat-blind views of a document can never report different runs, different
+    text or a different order.
     """
-    out = []
-    for cid, body in _RUN_RE.findall(section_xml):
-        if not body:
-            # Self-closing run (``<hp:run charPrIDRef="..."/>``): no body,
-            # so by construction it carries no text — skip without even
-            # looking for ``hp:t`` children (there cannot be any).
-            continue
-        text = "".join(_RUN_TEXT_RE.findall(body))
-        text = re.sub(r"<[^>]+>", "", text)
-        if text.strip():
-            out.append((cid, text))
-    return out
+    return [(cid, text) for _, cid, text in iter_seat_runs(section_xml)]
 
 
 def signature(profile) -> dict:
@@ -167,3 +161,182 @@ def rendered_pt_estimate(profile):
     if not (profile.get("supscript") or profile.get("subscript")):
         return None
     return round(height * SCRIPT_RENDER_FACTOR, 2)
+
+
+# --------------------------------------------------------------------------
+# SEATS — the same field in two documents (T40)
+# --------------------------------------------------------------------------
+#
+# The document-wide body baseline above answers "does this run differ from the
+# prose around it". On a mostly-empty FORM that is the wrong question: the
+# heaviest charPr is boilerplate (the 기안문 별지's 비고 fine print), so every
+# real field differs from it and the comparison inverts.
+#
+# The right question is "did the FILL introduce this signature, or was the
+# printed form always like that", and answering it needs the same field
+# located in TWO documents — the blank form and the artifact. That is a seat.
+#
+# THE SEAT-MATCHING RULE, and why it is not text:
+#
+#   A seat is the run's STRUCTURAL address — the table cell it sits in,
+#   written as ``(<section member>, "t<table>/<row>,<col>", ...)``, outermost
+#   enclosing cell first so a nested table is addressed too.
+#
+# Text cannot be the key. An ``--at-cell-append`` fill deliberately keeps the
+# printed label and puts the value after it, so the SAME seat reads "수신" in
+# the blank and "수신 국가유산청장" in the artifact (T31); a ``--at-cell``
+# fill replaces the seat text outright and leaves nothing shared at all. The
+# structural address survives both, because a fill writes text into existing
+# runs and never touches the table geometry — ``form_inspect`` on a correct
+# fill reports every ``cellAddr``/span/width/height byte-identical to the
+# blank. Table ordinal is the count of ``tbl`` opens in that section in
+# document order, which is stable for the same reason.
+#
+# ``cellAddr`` is the primary key because it is what the fill CLIs address
+# (``--cell ROW,COL``, ``--at-cell ROW,COL``) — the same coordinate the
+# operator typed. A ``tc`` with no ``cellAddr`` child falls back to its
+# ordinal within its table so hand-built and minimal documents still address;
+# the choice is recorded in the seat string either way, and both documents are
+# read by this one function so they cannot disagree about which form was used.
+#
+# A run outside every table gets the empty seat: unaddressed, NOT "seat 0".
+# Prose paragraphs shift when a fill adds one, so there is no honest identity
+# to offer, and a caller must treat the empty seat as "no baseline available"
+# rather than as a match.
+
+#: ``tbl``/``tc`` boundaries and the ``cellAddr`` that names a cell. Kept as a
+#: separate scan (rather than a full parse) so seat text stays byte-identical
+#: to what ``iter_runs`` reports: an ElementTree walk would silently unescape
+#: entities and the two run lists would stop lining up. Arity is part of the
+#: interface (T37) — four groups, in this order.
+_SEAT_EVENT_RE = re.compile(
+    r"<(/?)" + _NS + r":(tbl|tc|cellAddr)\b([^>]*?)(/?)>", re.S)
+_SEAT_ADDR_RE = re.compile(r'\b(colAddr|rowAddr)="(\d+)"')
+
+
+def _seat_cells(section_xml: str):
+    """``[{start, end, label}]`` — every ``hp:tc`` span and its seat label.
+
+    TWO passes are required, not one: OWPML puts ``<hp:cellAddr>`` at the END
+    of ``<hp:tc>``, *after* the ``<hp:subList>`` that holds the paragraphs. A
+    single forward scan therefore reaches every run in a cell BEFORE it learns
+    that cell's address, and would label them all by fallback ordinal. So the
+    spans are collected first and the labels resolved against the whole span.
+    """
+    cells, stack, tables = [], [], 0
+    for match in _SEAT_EVENT_RE.finditer(section_xml):
+        closing, tag, attrs, selfclose = match.groups()
+        if tag == "cellAddr":
+            addr = dict(_SEAT_ADDR_RE.findall(attrs))
+            if "rowAddr" in addr and "colAddr" in addr:
+                for frame in reversed(stack):
+                    if frame["kind"] == "tc":
+                        frame["addr"] = "%s,%s" % (addr["rowAddr"],
+                                                   addr["colAddr"])
+                        break
+        elif closing:
+            for index in range(len(stack) - 1, -1, -1):
+                if stack[index]["kind"] != tag:
+                    continue
+                for frame in stack[index:]:
+                    if frame["kind"] == "tc":
+                        frame["end"] = match.start()
+                del stack[index:]
+                break
+        elif selfclose:
+            continue            # an empty <hp:tc/> holds no runs
+        elif tag == "tbl":
+            tables += 1
+            stack.append({"kind": "tbl", "table": tables, "cells": 0})
+        else:
+            table = index = 0
+            for frame in reversed(stack):
+                if frame["kind"] == "tbl":
+                    frame["cells"] += 1
+                    table, index = frame["table"], frame["cells"]
+                    break
+            frame = {"kind": "tc", "table": table, "index": index,
+                     "addr": None, "start": match.end(), "end": len(section_xml)}
+            stack.append(frame)
+            cells.append(frame)
+    return [{"start": cell["start"], "end": cell["end"],
+             "label": "t%d/%s" % (cell["table"],
+                                  cell["addr"] or "#%d" % cell["index"])}
+            for cell in cells]
+
+
+def _seat_timeline(section_xml: str):
+    """``[(offset, seat)]`` — the seat in effect from that byte offset on.
+
+    Sorted by offset, so a run's seat is one bisect away. Cells are properly
+    nested, so replaying their spans as open/close events (closes first at a
+    shared offset) reproduces the enclosing stack, outermost cell first.
+    """
+    cells = _seat_cells(section_xml)
+    events = sorted([(cell["end"], 0, index) for index, cell in enumerate(cells)]
+                    + [(cell["start"], 1, index)
+                       for index, cell in enumerate(cells)])
+    timeline, stack = [(0, ())], []
+    for offset, opening, index in events:
+        if opening:
+            stack.append(index)
+        elif index in stack:
+            del stack[stack.index(index):]
+        timeline.append((offset, tuple(cells[i]["label"] for i in stack)))
+    return timeline
+
+
+def iter_seat_runs(section_xml: str, member: str = ""):
+    """``[(seat, charPrIDRef, text)]`` — ``iter_runs`` plus each run's seat.
+
+    Same runs, same order and the same text as ``iter_runs`` (it delegates
+    here), so a caller may weight a document-wide baseline and look up a seat
+    from ONE traversal. ``seat`` is ``()`` for a run outside every table cell.
+    """
+    timeline = _seat_timeline(section_xml)
+    offsets = [offset for offset, _ in timeline]
+    out = []
+    for match in _RUN_RE.finditer(section_xml):
+        body = match.group(2)
+        if not body:
+            # Self-closing run: no body, so no text (see iter_runs).
+            continue
+        text = "".join(_RUN_TEXT_RE.findall(body))
+        text = re.sub(r"<[^>]+>", "", text)
+        if not text.strip():
+            continue
+        seat = timeline[bisect.bisect_right(offsets, match.start()) - 1][1]
+        out.append(((member, *seat) if seat else (), match.group(1), text))
+    return out
+
+
+def seat_addresses(section_xml: str, member: str = "") -> set:
+    """Every cell seat in ``section_xml``, whether it carries text or not.
+
+    ``iter_seat_runs`` only knows seats that hold text, so on its own it cannot
+    tell "this seat is not in the blank form" from "this seat IS in the blank
+    form and is a genuinely empty run". Those are different answers and a
+    caller must be able to say which — the second one is the T30 shape.
+    """
+    return {(member, *seat) for _offset, seat in _seat_timeline(section_xml)
+            if seat}
+
+
+def seat_label_runs(seat_runs, seat, label):
+    """Runs in ``seat`` that match the fill-map key ``label``.
+
+    The blank-form baseline must be the run the fill consumed, not whichever
+    unrelated sibling carries the most text in the same cell. Prefer an exact
+    whitespace-normalised match; only when none exists admit a containing run
+    (the fill-map key may intentionally be a unique substring). The caller
+    must refuse ambiguity when the returned runs do not share one charPr id.
+    """
+    key = norm(str(label))
+    if not seat or not key:
+        return []
+    in_seat = [(cid, text) for run_seat, cid, text in seat_runs
+               if run_seat == seat]
+    exact = [(cid, text) for cid, text in in_seat if norm(text) == key]
+    if exact:
+        return exact
+    return [(cid, text) for cid, text in in_seat if key in norm(text)]
