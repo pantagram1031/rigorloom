@@ -1067,6 +1067,42 @@ class TestCheckerWantsBaseline:
                            if check["id"] == "gongmun_blank_form_shape")
         assert "${BASELINE}" in blank_shape["argv"]
 
+    def test_g1_draft_intent_does_not_require_the_forbidden_bigo_block(self):
+        """T45: task intent and document evidence are separate inputs.
+
+        The prompt asks for a draft, while the form says its 비고 block is not
+        part of the form.  Encoding "draft" as auto-state forced an agent to
+        retain that block, making the machine task green and the mandatory
+        visual rubric red.  The task must force its requested state and also
+        prove the visible instruction is absent.
+        """
+        task = cleanroom.load_task(G1_TASK)
+        structure = next(check for check in task["machine_checks"]
+                         if check["id"] == "gongmun_structure")
+        assert structure["argv"][2:4] == ["--mode", "draft"]
+        assert 'document.state_used == "draft"' in structure["assert_json"]
+        assert 'document.state == "draft"' not in structure["assert_json"]
+
+        absence = next(check for check in task["machine_checks"]
+                       if check["id"] == "bigo_removed")
+        assert absence["kind"] == "text_absent"
+        assert absence["artifact"] == "${WORK}/filled.hwpx"
+        assert "이 난은 서식에 포함하지 아니한다" in absence["strings"]
+
+    def test_installed_recipe_pins_native_powershell_exit_capture(self,
+                                                                  prepared):
+        """T46: Codex's outer shell may display 1 for native exit 3.
+
+        The buyer-facing recipe must show how to capture the checker process'
+        own 0/2/3 result before a harness wrapper can normalize it.
+        """
+        recipe = (Path(prepared["report"]["skill"]["install_root"])
+                  / "references" / "fill-recipe.md").read_text(
+                      encoding="utf-8")
+        assert "$LASTEXITCODE" in recipe
+        assert "DIRECT_EXIT=$native" in recipe
+        assert "exit $native" in recipe
+
 
 # --------------------------------------------------------------------------- #
 # 5. score.py

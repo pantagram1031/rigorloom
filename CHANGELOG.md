@@ -128,6 +128,21 @@ the kernel's contract shape.
   compares the joined paragraphs, charPr verification checks every non-empty
   paragraph, and exact `ROW,COL` keys are scoped to that seat. Regressions pin
   array/newline inheritance and a changed-charPr multi-paragraph HARD.
+- **T45 — task intent no longer requires forbidden rendered evidence.** G1
+  asked for a 기안 초안 and asserted auto `document.state == "draft"`; auto
+  state uses the bottom 비고 block as its draft marker, while the visual rubric
+  correctly HARDs that out-of-form instruction as `guide_text_visible`. The
+  task could therefore be machine-green or visually acceptable, never both.
+  G1 now passes the checker's existing `--mode draft`, asserts
+  `document.state_used`, and independently requires the 비고 marker absent.
+  The generic checker and the visual severity are unchanged.
+- **T46 — PowerShell audits capture the native checker exit.** The Codex
+  desktop shell can display a generic outer exit 1 for a bare native non-zero
+  command even when `$LASTEXITCODE` is the checker's documented 2 or 3. The
+  installed recipe now captures `$LASTEXITCODE` immediately, prints
+  `DIRECT_EXIT`, and propagates it with `exit $native`; a clean-room install
+  regression pins that exact buyer-facing pattern. T36's product exit matrix
+  remains unchanged and green.
 
 ### Changed
 
