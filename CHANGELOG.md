@@ -8,6 +8,67 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Engine — the seat-text gap the third clean-room round left open (T34)
+
+Round 3 measured the already-fixed product and both tiers — Sonnet and Opus,
+independently — hit the same wall: a form's **printed seat** (a skeleton the
+form typeset for a value: `" 우(     -     )"`, `" http://"`,
+`"20   .    .    .  ~  20   .    .    .   (     개월)"`) could only be edited
+with a `replace` key reproducing the run's exact internal whitespace, and
+nothing shipped yielded that string. So both agents read
+`Contents/section0.xml` by hand — precisely the contact the shipped skill
+forbids. Opus hand-assembled two keys; the Sonnet tier's 30-char
+`text_preview` cut the 협업기간 skeleton right before its `(     개월)` blank
+and so HID it, costing a second replace pass.
+
+Fixed in three layers, most important first:
+
+- **`preedit replace --at-cell ROW,COL[#RUN]=TEXT`** and
+  **`--at-cell-append ROW,COL[#RUN]=TEXT`** (both repeatable, plus
+  `--at-cell-map JSON` whose values are a string or `{text, mode}`): an
+  address-keyed variant that removes the need for the exact string entirely.
+  The two modes are explicit, never inferred — `--at-cell` replaces the run's
+  whole text, `--at-cell-append` keeps the printed prefix and appends
+  (`" http://"` → `" http://host"`, the normal shape of a labeled field,
+  T31). A cell holding more than one text run **refuses** (exit 2,
+  `at_cell_run_ambiguous`) and the refusal lists every run index with its
+  exact text, so neither "first run wins" nor "flatten the cell" can silently
+  destroy content — PPS (15,0) carries the regulation sentence, the
+  `년 월 일` 신청일 line, `신청인`, `(서명 또는 인)` and `조달청장 귀하` as
+  separate runs. A cell with no text run at all routes to `fill-cells`, so the
+  two operations partition "already prints something" vs "genuinely empty"
+  (T27). Addressing reuses `hwpx_tables`' scanner, so `--table N` agrees with
+  `form_inspect` and `fill-cells`, and every guard is shared: stale-lineseg
+  strip on changed paragraphs only (T24), well-formedness of modified members
+  before writing, the T30 charPr pre-flight (its refusal names
+  `--at-cell-charpr ROW,COL#RUN=ID`, accepted even when the edit was written
+  without `#RUN` — a ready-to-paste flag that does not paste is worse than
+  none), and the T22 dangling-charPr assertion when a charPr is repointed.
+  `--at-cell-expect ROW,COL[#RUN]=SUBSTRING` is a pre-write precondition
+  compared with all whitespace removed on both sides, so an operator asserts
+  `우(-)` without counting spaces. Re-runs are no-ops in both modes, so append
+  never doubles. `--map` together with `--at-cell*` in one call is a usage
+  error. Geometry is byte-identical apart from the edited text and the touched
+  paragraphs' linesegarray, fixed by regression on the real PPS seats.
+- **`table_map[].text_preview` now reports `truncated`.** The failure was not
+  that the preview is short but that nothing said there was more, which is why
+  a competent agent concluded the skeleton ended at the cut.
+- **`form_inspect --full-text [TABLE:]ROW,COL`** (repeatable): the documented,
+  per-cell opt-in escape from the structure-only contract. It emits the exact
+  run text for the cells you name and no others — absent from the profile
+  unless requested, with no whole-body path — because a byte-exact string is
+  only needed for a `replace --map` key or a `check_residue --fill-map` entry.
+  Its `runs[].index` IS `--at-cell`'s `#RUN` (`form_inspect` imports
+  `preedit.cell_text_runs`), and the string round-trips: fed back as a
+  `replace` key it hits exactly once — the regression that proves the gap is
+  closed.
+
+Also: `--charpr-per-cell` is now documented in the **fill section** of
+`skill/references/operations.md` and in the SKILL.md routing row, not only
+inside the T30/T32 prose — round 3 found the fill path showing a bare
+`fill-cells --cell` call while the flag it actually needs lived three
+paragraphs away.
+
 ### Engine — fill defects found by the first clean-room cross-model run
 
 Two independent clean-room agents (Sonnet and Opus) hit all three of these on
