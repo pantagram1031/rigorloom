@@ -131,3 +131,53 @@ inventory, suite matrix, privacy evidence, capability boundaries).
 - **This file's own task closed** — F3 version-drift reconciliation and
   the final v0.16.0 reality pass are done; README/CHANGELOG/SUMMARY and
   the capability matrix describe the same repo.
+
+## Post-v0.16.0 additions (released in v0.17.0)
+
+Current version: **v0.17.0** (pending tag). Full per-PR breakdown in
+`CHANGELOG.md`'s "v0.17.0 — validated product" section (#57–#77); the evidence
+record — bundle inventory with hashes, the validation ledger, and the limits
+stated as limits — is `docs/release-v0.17.0.md`.
+
+v0.16.0 shipped as an alpha: written by its authors, run on the authors'
+machine, exercised on one form-family lineage, empty forms only. v0.17 is the
+release that validated it.
+
+- **Autonomous verification.** `pipeline/scripts/visual_verify.py` merges every
+  deterministic backstop into one findings list, then prepares a vision task
+  against a closed 12-class rubric (`skill/references/visual-rubric.md`) and
+  consumes the handback — it never calls a model itself, and an unknown rubric
+  class is a usage error rather than a finding (#57, #61). `SAFETY_CHECKS`
+  names in one place the five checks whose absence invalidates acceptance, so
+  `acceptance: true` over an unwaived skip is impossible; `--accept-without`
+  is per check and on the record; and the six-row exit-code contract is pinned
+  by `test_exit_code_matrix` with no path exiting 1 (#75).
+- **Clean-room validation.** `evals/` installs from dist zips into a throwaway
+  root, self-checks through the *packaged* verifier, and asserts containment on
+  five independent axes with no fallback to the checkout (#58). It immediately
+  found the v0.16.0 core bundle shipping no skill surface (#59). Three measured
+  cross-model rounds produced the shipped routing table at
+  `skill/references/model-routing.md` (#63, #72), and an independent Codex
+  harness across three tiers found the two acceptance/exit-code defects our own
+  harness could not see (#75).
+- **Six modules, seven bundles.** Four work-type modules added with zero core
+  edits: `gongmun` (#65), `minwon` (#68), `hr` (#69), `grant` (#70). The three
+  contract gaps the first unplanned module exposed are closed — the test
+  harness is module-agnostic by property, eval machine checks have a
+  `requires_module` gate, and a checker can declare `wants: [baseline]` (#67).
+- **The offline fill path is complete.** `preedit fill-cells` reaches a
+  genuinely empty cell (T27), `replace --at-cell`/`--at-cell-append` reach a
+  printed seat without its exact whitespace (T34), single-pass `replace` no
+  longer double-applies a value containing its own key (T26), COM `set_cell`
+  addresses real `cellAddr` (T28), and the charPr pre-flight refuses an
+  anomalous fill target instead of silently rendering it at ~6.35pt (T30/T32).
+  One `--fill-map` shape rule for every consumer (T35), and
+  `classification: spacer` stops reporting structural filler as a fill target
+  (#60, #62, #66, #73, #74, #76).
+- **Inventory pins are a defect class (T33).** A core test asserting `== N` on
+  something the repo grows blocked three modules; `tests/test_no_inventory_pins.py`
+  is the durable guard (#71).
+- **Honest limits carried forward.** School and corporate form families have no
+  corpus at all; the harness axis has exactly one non-Claude data point; no
+  fully independent party has run this; page-budget rules ship permanently
+  skipped with named reasons. All stated in `docs/release-v0.17.0.md`.
