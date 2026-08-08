@@ -6,6 +6,10 @@ suite matrix, privacy status, the **validation ledger** (who ran what, and the
 25 defects those runs found), and the honest list of limits. The tag itself is
 applied separately by the operator after reviewing this record.
 
+The bundle hash table below was regenerated on branch
+`v17-reproducible-bundles` (from `main` @ `199f20a`, #78) once bundle builds
+were made reproducible; every other section stands as prepared.
+
 ## What this release is
 
 v0.16.0 shipped as an **alpha**, and the word was accurate: it was written by
@@ -50,31 +54,54 @@ unlisted file is exit 3).
 
 | bundle | files | zip sha256 |
 |---|---:|---|
-| `rigorloom-core-0.17.0.zip` | 98 | `54952ab90581b60fdd64b37f986edd2e8a535c374da2507626860dbdd5a79f9f` |
-| `rigorloom-report-0.17.0.zip` | 87 | `2b9b35bc7000adfa1f5576fd3cdef0a513bd78ac41017f71bd1d678f15bbbd15` |
-| `rigorloom-style-0.17.0.zip` | 14 | `38d1628b7933da09c5ebc3cb7a3a5570b10a2f33882e97f03cfac72ea966a21b` |
-| `rigorloom-gongmun-0.17.0.zip` | 14 | `40a2d96418d726ea8172d3397b60cdf1a0961b139dce73106008b83d6fadf7fa` |
-| `rigorloom-minwon-0.17.0.zip` | 12 | `2e0674b12d3e99a2735b51adc6579aad656a9dba8d987fca5bb8000f7cd6d53d` |
-| `rigorloom-hr-0.17.0.zip` | 12 | `33d9e69a542694ba43ef9ad2d1d613b2a703b2d8479bcbc17cd4a86670d84629` |
-| `rigorloom-grant-0.17.0.zip` | 12 | `4f1ec801ce4d7a760bcc966b20160ac2c5c0b30021659951858dd709d116fb0c` |
+| `rigorloom-core-0.17.0.zip` | 98 | `23758a0f24981299fd16a1a95c88dd8a9ee16207551f291c1b2930e948d8c01b` |
+| `rigorloom-report-0.17.0.zip` | 87 | `03b8750fe7327b2173549b2049742b39d7b60998705cf0f35afd75d4ea98626c` |
+| `rigorloom-style-0.17.0.zip` | 14 | `8fe375a2f3b73ebaa850c3010eb1a2c27c473668fa771a482a3f9f7493bcb8ed` |
+| `rigorloom-gongmun-0.17.0.zip` | 14 | `199165c45de0321e98cecb3161e5cde5c471ddcef8e7018b79d08c91affc163a` |
+| `rigorloom-minwon-0.17.0.zip` | 12 | `be2fb5def31f2e7f4f613ff5506638679139aeffd583a2417f51c99263c47e2b` |
+| `rigorloom-hr-0.17.0.zip` | 12 | `360ac0c97eddf2b057c3b4317a286fe33408c7f36a2c99b7c7bb12d1d0172f36` |
+| `rigorloom-grant-0.17.0.zip` | 12 | `8ff20755f261760f73d490d430e41165ea74b14c237d9614dc42d0d85f42e08c` |
 
 `files` is the MANIFEST.json payload count, matching what
 `package_module` prints; the zip carries one more entry (the manifest).
 
-
 All seven `--verify` runs: `ok: true`, zero problems. Bundles live in `dist/`
-(gitignored, never committed); the hashes above bind this record to the exact
-artifacts built at this commit.
+(gitignored, never committed).
 
-**These are build hashes, not content hashes.** The packager writes zip members
-with their staging mtimes, so *any* rebuild produces a different zip sha256
-even with no source change at all — measured directly here: rebuilding after a
-one-file edit to `skill/references/model-routing.md` changed all seven hashes,
-including `style` and the three modules whose payloads were untouched. The
-content-addressed integrity check is per-file inside `MANIFEST.json`, which is
-what `--verify` compares; the zip hash identifies the artifact, not the
-content. If the operator rebuilds before tagging, this table must be
-regenerated even if nothing changed.
+**These builds are reproducible: the same tree produces the same bytes.** To
+check the table yourself, from a checkout of this commit:
+
+```sh
+python scripts/package_module.py --module core --out dist
+sha256sum dist/rigorloom-core-0.17.0.zip     # certutil -hashfile … SHA256 on Windows
+```
+
+Repeat per bundle (`core`, `report`, `style`, `gongmun`, `minwon`, `hr`,
+`grant`); each digest must equal the row above. You do not need this repo's git
+history, only its tree.
+
+This replaces what the earlier draft of this record said, which was accurate
+when it was written: the packager stamped zip members with their staging
+mtimes, so *any* rebuild — even a no-op — produced a different zip sha256, and
+a hash a reader cannot re-derive is not evidence. Building `core` twice from an
+unchanged tree was measured at `97092d2e…` then `71943ea9…`. Everything a zip
+member records other than its name and its content is now pinned: member
+timestamps to a fixed 1980-01-01 (a constant, deliberately not the commit date
+— a reader with the tree but not the history would derive a different one),
+permissions to 0o644, `create_system` to Unix, deflate level to 9, and member
+order to sorted-by-path. `MANIFEST.json` was audited for the same problem and
+carries no build time, absolute path, or iteration-order-dependent list.
+`tests/test_package_module.py::TestBundlesAreReproducible` builds every bundle
+twice per run and asserts byte-identity, including after an mtime-only change
+to the payload.
+
+One residual, stated rather than papered over: the compressed bytes come from
+whatever zlib the building Python links. Level 9 is pinned, and every CPython
+build tested here agrees, but a materially different deflate implementation
+(zlib-ng, say) could emit different compressed bytes for identical input and
+therefore a different zip hash. The per-file sha256 table in `MANIFEST.json`,
+which is what `--verify` compares, is unaffected by this and by all of the
+pinning above — it hashes member content, not the container.
 
 Core grew from 92 files (the v0.16.0 record's corrected inventory) to 98 here.
 Exactly six files, all v0.17 core surfaces:
@@ -162,7 +189,7 @@ module disabled, suite green, module entry points refuse loudly by design.
 - **Profile store**: `privacy_scan`'s `profile_store_content` /
   `profile_store_path` HARD markers make a bundle that stages personalization
   store content unbuildable.
-- **`py_compile_sweep`**: `python scripts/py_compile_sweep.py` — 64 files, 0 failures, exit 0.
+- **`py_compile_sweep`**: `python scripts/py_compile_sweep.py` — 83 files, 0 failures, exit 0.
 
 ## The validation ledger
 
@@ -454,5 +481,6 @@ listed under `skipped` with a reason rather than silently passed.
 - [ ] Review this record and the CHANGELOG v0.17.0 section.
 - [ ] `git tag v0.17.0 && git push origin v0.17.0` (the tag is NOT applied by
       the preparation branch).
-- [ ] If bundles are rebuilt after further commits, refresh the sha256 table
-      above first.
+- [ ] If any tracked source change lands after this commit, rebuild and
+      refresh the sha256 table above. A rebuild with no source change no
+      longer moves the hashes, so an unchanged tree needs no refresh.

@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import shutil
 import types
 import zipfile
@@ -646,3 +648,165 @@ class TestCorpusNeverShips:
         assert "modules/throwaway/tests/test_own.py" in names
         assert not any("corpus" in n for n in names)
         assert not any(n.endswith(".hwpx") for n in names)
+
+
+# ── reproducible builds ──────────────────────────────────────────────
+
+
+def _repo_bundle_names() -> list[str]:
+    """Every bundle this repo can build — DERIVED from module discovery, so a
+    new work-type module needs no edit here (modules/README.md contract 4)."""
+    return ["core", *sorted(p.parent.name
+                            for p in (REPO_ROOT / "modules").glob("*/module.yaml"))]
+
+
+BUNDLE_NAMES = _repo_bundle_names()
+REPRO_VERSION = "0.17.0"
+
+
+@pytest.fixture(scope="module")
+def twice_built(tmp_path_factory) -> dict[str, tuple[Path, Path]]:
+    """Every bundle built TWICE from the same unchanged tree, once per module
+    run: ``{name: (first, second)}``. A successful build is also the packaging
+    guards' receipt — privacy HARD, the core skill surface, shipped-surface
+    references and markdown tables all refuse the build before a zip exists."""
+    root = tmp_path_factory.mktemp("repro")
+    built: dict[str, tuple[Path, Path]] = {}
+    for name in BUNDLE_NAMES:
+        built[name] = (
+            package_module.build_bundle(name, root / "one",
+                                        version=REPRO_VERSION),
+            package_module.build_bundle(name, root / "two",
+                                        version=REPRO_VERSION),
+        )
+    return built
+
+
+class TestBundlesAreReproducible:
+    """v0.17.0 release blocker: the bundles were not reproducible.
+
+    Measured while preparing the tag — building ``core`` twice from an
+    unchanged tree gave two different zip sha256 values (``97092d2e…`` then
+    ``71943ea9…``), because ``ZipFile.write`` stamps each member with the
+    staging file's mtime and st_mode. A published hash a reader cannot
+    re-derive is not evidence, and the release record's whole job is evidence.
+
+    These tests are the property, not the fix: same tree in, same bytes out,
+    and content-identical-but-mtime-different is the same tree.
+    """
+
+    def test_there_are_bundles_to_reproduce(self):
+        # non-vacuity floor, not an inventory pin: core plus at least one
+        # distribution module, or every assertion below passes over nothing.
+        assert len(BUNDLE_NAMES) >= 2, BUNDLE_NAMES
+
+    @pytest.mark.parametrize("name", BUNDLE_NAMES)
+    def test_two_builds_of_the_same_tree_are_byte_identical(
+            self, name: str, twice_built):
+        first, second = twice_built[name]
+        assert first.name == second.name
+        digests = tuple(hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in (first, second))
+        assert digests[0] == digests[1], (
+            f"{name}: two builds of an unchanged tree produced different "
+            f"zips ({digests[0]} vs {digests[1]}) — a published hash table "
+            "cannot be reproduced")
+
+    @pytest.mark.parametrize("name", BUNDLE_NAMES)
+    def test_verify_still_passes_on_both_builds(self, name: str, twice_built):
+        """``--verify`` hashes member CONTENT, so pinning member METADATA must
+        leave it untouched. Both the API and the CLI path are exercised."""
+        for bundle in twice_built[name]:
+            report, code = package_module.verify_bundle(bundle)
+            assert code == 0 and report["ok"], (name, report)
+            assert report["files"] >= 1
+            assert package_module.main(["--verify", str(bundle)]) == 0
+
+    @pytest.mark.parametrize("name", BUNDLE_NAMES)
+    def test_every_member_carries_the_pinned_metadata(self, name: str,
+                                                      twice_built):
+        first, _ = twice_built[name]
+        with zipfile.ZipFile(first) as archive:
+            infos = archive.infolist()
+        assert infos, name
+        names = [info.filename for info in infos]
+        assert names == sorted(names), (
+            f"{name}: members must be written in a stable sorted order")
+        assert len(set(names)) == len(names)
+        for info in infos:
+            assert not info.is_dir()
+            assert info.date_time == package_module.ZIP_EPOCH, info.filename
+            assert info.external_attr == package_module._ZIP_EXTERNAL_ATTR, \
+                info.filename
+            assert info.create_system == package_module._ZIP_CREATE_SYSTEM, \
+                info.filename
+            assert info.compress_type == package_module._ZIP_COMPRESS_TYPE, \
+                info.filename
+
+    def test_touching_payload_mtimes_leaves_the_bytes_identical(
+            self, tmp_path: Path):
+        """The exact failure mode observed: content unchanged, mtimes moved,
+        hash must not move. Run over a COPY of a real module so the assertion
+        bites on real payload rather than on a two-file fixture."""
+        modules_root = tmp_path / "modules"
+        shutil.copytree(REPO_ROOT / "modules" / "style", modules_root / "style")
+
+        def build_style(out: str) -> bytes:
+            return package_module.build_bundle(
+                "style", tmp_path / out, modules_root=modules_root,
+                version=REPRO_VERSION).read_bytes()
+
+        before = build_style("one")
+        stamp = 1_000_000_000        # 2001-09-09, i.e. emphatically not "now"
+        touched = 0
+        for path in sorted(modules_root.rglob("*")):
+            if path.is_file():
+                os.utime(path, (stamp, stamp))
+                touched += 1
+        assert touched > 1, "nothing was touched — the test proves nothing"
+
+        after = build_style("two")
+        assert (hashlib.sha256(before).hexdigest()
+                == hashlib.sha256(after).hexdigest()), (
+            "an mtime-only change moved the bundle hash — zip members are "
+            "carrying staging mtimes again")
+
+    @pytest.mark.parametrize("name", BUNDLE_NAMES)
+    def test_manifest_carries_nothing_machine_specific(self, name: str,
+                                                       twice_built):
+        """MANIFEST.json is inside the zip, so any build-time or host-specific
+        value in it would defeat the pinned member metadata."""
+        first, _ = twice_built[name]
+        with zipfile.ZipFile(first) as archive:
+            raw = archive.read(package_module.MANIFEST_NAME).decode("utf-8")
+        manifest = json.loads(raw)
+
+        paths = [entry["path"] for entry in manifest["files"]]
+        assert paths == sorted(paths), f"{name}: manifest files must be sorted"
+        assert len(set(paths)) == len(paths)
+        for path in paths:
+            assert not path.startswith("/") and "\\" not in path, path
+
+        assert not re.search(r"\d{4}-\d{2}-\d{2}", raw), "date in the manifest"
+        assert not re.search(r"\d{2}:\d{2}:\d{2}", raw), "clock in the manifest"
+        assert not re.search(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]", raw), \
+            "drive-absolute path in the manifest"
+        assert str(REPO_ROOT) not in raw
+        assert str(first.parent) not in raw
+
+    def test_the_packager_reads_no_out_of_tree_state(self):
+        """The bundle timestamp is a constant on purpose. A commit-derived
+        stamp (``git log -1 --format=%ct``) is unreproducible for a reader who
+        has the tree but not the history — a source tarball, a ``git archive``
+        export, an unzipped bundle — which is exactly the reader the release
+        record asks to rebuild and compare."""
+        source = (REPO_ROOT / "scripts" / "package_module.py").read_text(
+            encoding="utf-8")
+        code = "\n".join(line for line in source.splitlines()
+                         if not line.lstrip().startswith("#"))
+        for forbidden in ("subprocess", "os.environ", "getenv", "time.time",
+                          "datetime"):
+            assert forbidden not in code, (
+                f"package_module.py reads out-of-tree state ({forbidden}) — "
+                "a bundle's bytes must be a function of the source tree alone")
+        assert package_module.ZIP_EPOCH == (1980, 1, 1, 0, 0, 0)

@@ -32,6 +32,11 @@ Validation before anything is written:
 against its MANIFEST.json: any mismatch, missing, or unlisted file is a
 loud failure (exit 3) — tamper detection, not a checksum suggestion.
 
+Builds are **reproducible**: the same tree produces the same bundle bytes,
+so a published zip sha256 is evidence a reader can re-derive rather than a
+number they must take on trust. See ``ZIP_EPOCH`` below for what is pinned
+and why.
+
 Exit codes follow the checker convention: 0 ok, 2 usage/config refusal,
 3 hard findings (privacy HARD / verification mismatch).
 """
@@ -64,6 +69,52 @@ CORE_NAME = "core"
 # Never staged into a bundle: caches and VCS state.
 _JUNK_DIRS = {"__pycache__", ".git", ".pytest_cache", "node_modules"}
 _JUNK_SUFFIXES = {".pyc", ".pyo"}
+
+# ── reproducible zip writing ─────────────────────────────────────────
+#
+# A published zip sha256 is only evidence if the reader can re-derive it.
+# Before this, `ZipFile.write(path, arcname)` stamped every member with the
+# STAGING file's mtime and st_mode, so building `core` twice from an
+# unchanged tree gave two different zip hashes (measured during v0.17.0
+# preparation: 97092d2e… then 71943ea9…). Everything a zip member records
+# other than its NAME and its CONTENT is pinned here.
+#
+# ── the timestamp: a fixed constant, deliberately NOT the commit date ──
+#
+# Deriving `date_time` from the source commit (`git log -1 --format=%ct`)
+# was considered and rejected. The bundle hash must be a function of the
+# TREE, and git history is not part of the tree:
+#
+#   * a buyer who has the tree but not the history — a source tarball, a
+#     `git archive` export, an unzipped bundle, a shallow clone — gets no
+#     `%ct` at all and would fall back to the constant, producing a hash
+#     that disagrees with the published one for byte-identical content.
+#     That reader is exactly who the release record asks to reproduce it,
+#     so a commit-derived stamp is non-reproducible where it matters most.
+#   * the same content can sit at different commits (rebase, cherry-pick,
+#     an unrelated docs commit), which would move the hash of a bundle
+#     whose files did not change.
+#
+# So: one constant, for everyone, always. 1980-01-01 00:00:00 is the
+# earliest instant the DOS date field inside a zip can represent, which
+# makes it the one value that needs no epoch, timezone, or locale
+# reasoning. There is deliberately no SOURCE_DATE_EPOCH override either:
+# an environment variable one builder exports and another does not is the
+# same reproducibility hole moved somewhere harder to see.
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+# Regular file, 0o644. Derived from st_mode otherwise, which is
+# umask-dependent on POSIX and 0o666 (or 0o444 read-only) on Windows.
+_ZIP_EXTERNAL_ATTR = 0o100644 << 16
+
+# 3 = Unix. `ZipInfo.__init__` picks 0 on Windows and 3 everywhere else, so
+# the build host's OS would otherwise leak into the archive bytes.
+_ZIP_CREATE_SYSTEM = 3
+
+# Pinned explicitly: the default (`compresslevel=None` -> zlib's own
+# default) is not a promise, and a level change would move every hash.
+_ZIP_COMPRESS_TYPE = zipfile.ZIP_DEFLATED
+_ZIP_COMPRESS_LEVEL = 9
 
 # Core bundle contents (--module core): general document-engine surface
 # only — no distribution-module payloads, no test suites.
@@ -340,12 +391,44 @@ def _provides_summary(provides: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _staged_files(staging: Path) -> list[Path]:
-    return sorted(
-        path for path in staging.rglob("*")
+def _staged_members(staging: Path) -> list[tuple[str, Path]]:
+    """``(posix relative path, absolute path)`` for every non-junk staged file.
+
+    Sorted by the POSIX relative path, not by ``Path``: ``PurePath`` ordering
+    is platform-dependent (Windows compares case-folded, POSIX does not), and
+    ``rglob`` order is filesystem order. Both the manifest's ``files`` list and
+    the zip's member order come from here, so neither can depend on the host.
+    """
+    members = [
+        (path.relative_to(staging).as_posix(), path)
+        for path in staging.rglob("*")
         if path.is_file() and not _is_junk(path.relative_to(staging))
-        and path.name != MANIFEST_NAME
-    )
+    ]
+    members.sort(key=lambda member: member[0])
+    return members
+
+
+def _staged_files(staging: Path) -> list[Path]:
+    return [path for _, path in _staged_members(staging)
+            if path.name != MANIFEST_NAME]
+
+
+def _write_bundle_zip(staging: Path, bundle: Path) -> None:
+    """Write the staged tree to ``bundle`` deterministically.
+
+    Same tree in, same bytes out: fixed member order, fixed timestamp, fixed
+    permissions, fixed create_system, fixed compression. Nothing here reads
+    the filesystem's metadata, only its content.
+    """
+    with zipfile.ZipFile(bundle, "w", _ZIP_COMPRESS_TYPE,
+                         compresslevel=_ZIP_COMPRESS_LEVEL) as archive:
+        for name, path in _staged_members(staging):
+            info = zipfile.ZipInfo(filename=name, date_time=ZIP_EPOCH)
+            info.compress_type = _ZIP_COMPRESS_TYPE
+            info.create_system = _ZIP_CREATE_SYSTEM
+            info.external_attr = _ZIP_EXTERNAL_ATTR
+            archive.writestr(info, path.read_bytes(),
+                             compresslevel=_ZIP_COMPRESS_LEVEL)
 
 
 def _run_privacy_gate(staging: Path) -> None:
@@ -633,6 +716,14 @@ def build_bundle(
              "sha256": _sha256_file(path)}
             for path in _staged_files(staging)
         ]
+        # Every value here is derived from tree CONTENT: no build time, no
+        # absolute path, no host name, no set/dict iteration order. ``files``
+        # is sorted by path (``_staged_members``); ``provides`` mirrors the
+        # declaration order of the module's own ``module.yaml`` (or the fixed
+        # ``_CORE_COMPONENTS`` tuple), which is content, not iteration order.
+        # ``json.dumps`` below is given an explicit indent and newline so the
+        # serialisation cannot drift either. A test asserts the absence of
+        # timestamps and absolute paths so this stays true.
         manifest = {
             "schema": MANIFEST_SCHEMA,
             "name": name,
@@ -647,10 +738,7 @@ def build_bundle(
 
         out_dir.mkdir(parents=True, exist_ok=True)
         bundle = out_dir / f"rigorloom-{name}-{bundle_version}.zip"
-        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(staging.rglob("*")):
-                if path.is_file():
-                    archive.write(path, path.relative_to(staging).as_posix())
+        _write_bundle_zip(staging, bundle)
     return bundle
 
 
