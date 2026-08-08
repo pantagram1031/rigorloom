@@ -1057,6 +1057,387 @@ def test_t30_is_skipped_out_loud_without_a_fill_map(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# (e2) T40 — the detector was baseline-BLIND, and inverted on forms
+#
+# The 기안문 별지 제1호서식 could not reach acceptance by any shipped path: its
+# heaviest charPr is the 비고 fine print (10pt, ratio 100%), so the document
+# body baseline IS the fine print and every substantive seat on the form —
+# 수신, (경유), 제목, 직인, 발신명의, all ratio 97% — differed from it and
+# HARDed. Two defects, one fix: nothing asked whether the BLANK form's same
+# seat already carried that signature, and a text-weight body baseline is the
+# wrong reference on a mostly-empty form.
+#
+# The fixture reproduces the inversion exactly: one labelled seat cell at
+# charPr 9 (ratio 97) and one fine-print cell at charPr 0 that outweighs it.
+# --------------------------------------------------------------------------
+
+_SEAT_HEADER = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" secCnt="1">'
+    '<hh:refList><hh:charProperties itemCnt="4">'
+    + _charpr(0)                            # body / the fine print
+    + _charpr(7, "<hh:supscript/>")          # the T30 trap
+    + _charpr(8, "<hh:supscript/>")          # a real footnote marker
+    + _charpr(9).replace('<hh:ratio hangul="100" latin="100"/>',
+                         '<hh:ratio hangul="97" latin="97"/>')
+    + '</hh:charProperties></hh:refList></hh:head>'
+)
+
+#: The seat's printed label. An --at-cell-append fill keeps it and puts the
+#: value after it (T31), so the SAME seat reads "Recipient" in the blank form
+#: and "Recipient RIGORLOOM-A1" in the artifact — which is exactly why the seat
+#: key cannot be the text.
+_SEAT_LABEL = "Recipient"
+_SEAT_FILLED = f"{_SEAT_LABEL} {_FILL_VALUE}"
+_SEAT_FINE_PRINT = " ".join(
+    f"Remark line {i}: this block is the form's own fine print."
+    for i in range(6))
+
+
+def make_seat_form_hwpx(path: Path, *, seat, seat_charpr: int = 9,
+                        seat_extra_run: tuple[int, str] | None = None) -> Path:
+    """A form with ONE labelled seat cell (0,0) and a fine-print cell (1,0).
+
+    ``seat`` is the seat cell's run text; ``None`` writes the genuinely empty
+    self-closing run a ``fill-cells`` target carries in a blank form. The
+    fine-print cell (charPr 0) holds most of the page's characters, so it wins
+    the document body-baseline weighting exactly as the 비고 block does on the
+    real 기안문 별지. ``<hp:cellAddr>`` sits after ``<hp:subList>``, as OWPML
+    writes it.
+    """
+    value_run = (_run(seat_charpr, seat) if seat is not None
+                 else f'<hp:run charPrIDRef="{seat_charpr}"/>')
+    if seat_extra_run is not None:
+        value_run += _run(*seat_extra_run)
+
+    def cell(row, body):
+        return ('<hp:tc name="" header="0"><hp:subList>' + body +
+                f'</hp:subList><hp:cellAddr colAddr="0" rowAddr="{row}"/>'
+                '<hp:cellSpan colSpan="1" rowSpan="1"/></hp:tc>')
+
+    section = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+        ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+        '<hp:p id="1"><hp:tbl id="20" rowCnt="2" colCnt="1">'
+        '<hp:tr>' + cell(0, f'<hp:p id="10">{value_run}</hp:p>') + '</hp:tr>'
+        '<hp:tr>' + cell(1, f'<hp:p id="11">{_run(0, _SEAT_FINE_PRINT)}</hp:p>')
+        + '</hp:tr></hp:tbl></hp:p>'
+        # a genuinely superscripted footnote marker no fill produced: the
+        # existing scope guard must keep ignoring it in this shape too
+        f'<hp:p id="12">{_run(0, "See the remark block.")}{_run(8, "1)")}'
+        '</hp:p>'
+        '</hs:sec>'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/hwp+zip")
+        zf.writestr("settings.xml", _settings(0))
+        zf.writestr("Contents/header.xml", _SEAT_HEADER)
+        zf.writestr("Contents/section0.xml", section)
+    return path
+
+
+def _seat_pdf(path: Path, *, value: str = _SEAT_FILLED) -> Path:
+    """A render carrying the seat's full text, so ``empty_cell_expected_fill``
+    stays green and only the charPr legs can speak."""
+    page = _body_page(n_lines=8)
+    page["lines"].append((72.0, 300.0, value, 10.0))
+    return make_pdf(path, [page])
+
+
+def _seat_expectations(path: Path, **extra) -> Path:
+    payload = {"fill_map": {_SEAT_LABEL: _SEAT_FILLED}}
+    payload.update(extra)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _seat_run(tmp_path, monkeypatch, *, artifact, baseline=None,
+              pdf_value=_SEAT_FILLED, **overrides):
+    """``verify()`` in-process, with the renderer denied.
+
+    ``--baseline`` on a document normally converts it through Hancom; denying
+    the renderer keeps the unit test offline AND proves the property that
+    matters operationally: the seat comparison reads the blank form's XML, so
+    it still runs on a machine that cannot render (the pixel diff is the only
+    thing lost, exactly as T35 decided).
+    """
+    monkeypatch.setattr(visual_verify, "render_capable", lambda: False)
+    args = _verify_args(artifact,
+                        pdf=str(_seat_pdf(tmp_path / "seat.pdf",
+                                          value=pdf_value)),
+                        png_dir=str(tmp_path / "png"),
+                        baseline=(str(baseline) if baseline else None),
+                        **overrides)
+    return visual_verify.verify(args)
+
+
+def _script_findings(verdict, bucket):
+    return [f for f in verdict[bucket]
+            if f["detector"] == "visual_verify.fill_charpr_script"]
+
+
+def test_t40_a_seat_signature_the_blank_form_already_had_is_a_named_warn(
+        tmp_path, monkeypatch):
+    """The blocker itself. The fill preserved the printed label's charPr — that
+    is what --at-cell-append is FOR — so it introduced nothing, and the form's
+    own 97% ratio must not be reported as a defect the fill caused. It is not
+    dropped either: a named WARN, on the record, with the seat named."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 0, verdict
+    assert _script_findings(verdict, "hard") == []
+    warns = _script_findings(verdict, "warn")
+    assert len(warns) == 1, verdict["warn"]
+    hit = warns[0]
+    assert hit["code"] == "fill_charpr_script_inherited"
+    assert hit["severity"] == "warn"
+    assert hit["class"] == "format_noncompliance"
+    evidence = hit["evidence"]
+    assert evidence["label"] == _SEAT_LABEL
+    assert evidence["seat"] == "Contents/section0.xml/t1/0,0"
+    assert evidence["differing"] == ["ratio"]          # vs the document body
+    assert evidence["form_baseline_checked"] is True
+    assert evidence["form_baseline_charpr_id"] == "9"
+    assert evidence["form_baseline_values"]["ratio"] == {"hangul": "97",
+                                                        "latin": "97"}
+    report = verdict["deterministic"]["fill_charpr_script"]
+    assert report["baseline_charpr_id"] == "0"         # the fine print
+    assert report["inherited"] == 1
+    assert report["findings"] == 0
+    assert report["form_baseline"] == str(blank)
+    assert report["form_baseline_note"] is None
+    # the SAFETY check RAN — a suppression is never a skip
+    assert "fill_charpr_script_mismatch" not in \
+        verdict["deterministic"]["skipped_checks"]
+
+
+def test_t40_the_same_fill_hards_without_the_seat_comparison(
+        tmp_path, monkeypatch):
+    """Control for the test above: identical artifact, no --baseline. The HARD
+    is exactly the pre-T40 behaviour, and the finding SAYS the inheritance
+    question was not checked rather than implying it was."""
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    evidence = hards[0]["evidence"]
+    assert evidence["form_baseline_checked"] is False
+    assert evidence["form_baseline_charpr_id"] is None
+    assert "--baseline" in evidence["form_baseline_note"]
+    assert verdict["deterministic"]["fill_charpr_script"]["inherited"] == 0
+
+
+def test_t40_a_pdf_baseline_cannot_answer_the_question_and_says_so(
+        tmp_path, monkeypatch):
+    """--baseline also takes a PDF or an image directory (T35). Neither carries
+    charPr definitions, so the verdict may not claim the seat was checked."""
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    base_pdf = make_pdf(tmp_path / "blank.pdf", [_body_page(n_lines=6)])
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=base_pdf,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert len(hards) == 1
+    note = hards[0]["evidence"]["form_baseline_note"]
+    assert ".pdf" in note and ".hwpx" in note
+    assert hards[0]["evidence"]["form_baseline_checked"] is False
+    assert verdict["deterministic"]["fill_charpr_script"]["form_baseline"] \
+        is None
+
+
+def test_t40_still_catches_a_script_written_into_a_genuinely_empty_seat(
+        tmp_path, monkeypatch):
+    """STILL-CATCHES, the one that matters. The blank form's seat holds the
+    self-closing empty run a ``fill-cells`` target has — it carries no text, so
+    there is no typography to inherit and nothing is excused. This is the live
+    T30 incident's own shape, now run WITH a baseline in hand."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=7)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
+                                   seat=_FILL_VALUE, seat_charpr=7)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": {"product": _FILL_VALUE}}),
+                            encoding="utf-8")
+    verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
+                              baseline=blank, pdf_value=_FILL_VALUE,
+                              expectations=str(expectations))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    evidence = hards[0]["evidence"]
+    assert evidence["differing"] == ["supscript"]
+    assert evidence["rendered_pt_estimate"] == pytest.approx(6.35, abs=0.01)
+    assert evidence["form_baseline_checked"] is True
+    assert evidence["form_baseline_charpr_id"] is None
+    assert "genuinely empty run" in evidence["form_baseline_note"]
+    assert _script_findings(verdict, "warn") == []
+
+
+def test_t40_a_baseline_that_is_not_this_form_excuses_nothing(
+        tmp_path, monkeypatch):
+    """The wrong blank must not become a free pass. Seats are addressed, so a
+    baseline that has no such seat cannot answer the question — HARD, saying
+    which."""
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    other = make_form_hwpx(tmp_path / "other.hwpx", value_charpr=0)
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=other,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    assert "no such seat" in hards[0]["evidence"]["form_baseline_note"]
+
+
+def test_t40_a_fill_that_changes_the_seats_own_signature_still_hards(
+        tmp_path, monkeypatch):
+    """The other still-catches direction: the seat DID carry a signature in the
+    blank form and the fill replaced it with a different one. Inheritance is
+    the excuse, not the presence of a baseline."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL,
+                                seat_charpr=9)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED,
+                                   seat_charpr=7)
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    evidence = hards[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] == "9"
+    assert evidence["form_baseline_differing"] == ["ratio", "supscript"]
+    assert "the fill changed it" in evidence["form_baseline_note"]
+
+
+def test_t40_an_unrelated_run_in_the_same_seat_cannot_excuse_the_fill(
+        tmp_path, monkeypatch):
+    """The comparison is to the blank RUN the fill consumed, not to whichever
+    charPr happens to carry the most text elsewhere in the same cell.
+
+    The blank label is charPr 0, but a longer sibling run makes charPr 9 the
+    seat-wide majority. The artifact incorrectly writes the filled label with
+    9. A seat-majority implementation calls that inherited; the exact label
+    run proves the fill changed it and must HARD.
+    """
+    sibling = "Unrelated printed guidance that stays in this cell"
+    blank = make_seat_form_hwpx(
+        tmp_path / "blank.hwpx", seat=_SEAT_LABEL, seat_charpr=0,
+        seat_extra_run=(9, sibling))
+    artifact = make_seat_form_hwpx(
+        tmp_path / "filled.hwpx", seat=_SEAT_FILLED, seat_charpr=9,
+        seat_extra_run=(9, sibling))
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    evidence = hards[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] == "0"
+    assert evidence["form_baseline_match"] == "fill_map_key"
+    assert "the fill changed it" in evidence["form_baseline_note"]
+
+
+def test_t40_ambiguous_blank_run_match_refuses_to_excuse(
+        tmp_path, monkeypatch):
+    """Two blank runs in one seat match the consumed key but use different
+    faces. The detector has enough information to know the baseline is
+    ambiguous and must keep the HARD, naming both candidates (the #47 rule)."""
+    blank = make_seat_form_hwpx(
+        tmp_path / "blank.hwpx", seat=_SEAT_LABEL, seat_charpr=0,
+        seat_extra_run=(9, _SEAT_LABEL))
+    artifact = make_seat_form_hwpx(
+        tmp_path / "filled.hwpx", seat=_SEAT_FILLED, seat_charpr=9,
+        seat_extra_run=(9, _SEAT_LABEL))
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [f["code"] for f in hards] == ["fill_charpr_script_mismatch"]
+    evidence = hards[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] is None
+    assert evidence["form_baseline_match"] is None
+    assert {item["charpr_id"] for item in
+            evidence["form_baseline_candidates"]} == {"0", "9"}
+    assert "ambiguous" in evidence["form_baseline_note"]
+
+
+def test_t40_the_footnote_scope_guard_survives_the_seat_comparison(
+        tmp_path, monkeypatch):
+    """The pre-existing false-positive guard is the SCOPE (fill-modified runs
+    only), and adding a second baseline must not widen it: the fixture's
+    genuinely superscripted footnote marker (charPr 8) is compared against
+    nothing, with or without a form baseline."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL,
+                                seat_charpr=0)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED,
+                                   seat_charpr=0)
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+
+    assert code == 0, verdict
+    assert _script_findings(verdict, "hard") == []
+    assert _script_findings(verdict, "warn") == []
+    report = verdict["deterministic"]["fill_charpr_script"]
+    assert report["fill_modified_runs"] == 1        # the footnote is not one
+    assert report["findings"] == 0 and report["inherited"] == 0
+
+
+def test_t40_the_gongmun_shape_reaches_acceptance_with_no_waiver(
+        tmp_path, monkeypatch):
+    """End of the blocker: a correct fill of a form whose seats are all 97%
+    reaches ``acceptance: true`` with ``acceptance_waivers: []``, and
+    ``fill_charpr_script_mismatch`` is still in SAFETY_CHECKS and still RAN."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps(
+        {"form_hash": "sha256:synthetic", "anchors": [], "guide_text": [],
+         "placeholders": []}, ensure_ascii=False),
+        encoding="utf-8")
+    expectations = _seat_expectations(tmp_path / "exp.json", pages_document=1)
+
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(expectations), form_profile=str(profile),
+        deterministic_only=False,
+        vision_verdict=str(_reviewed(tmp_path)))
+
+    assert code == 0, verdict
+    assert verdict["verdict"] == "pass"
+    assert verdict["acceptance"] is True
+    assert verdict["acceptance_waivers"] == []
+    assert verdict["acceptance_blockers"] == []
+    assert verdict["counts"]["hard"] == 0
+    assert "fill_charpr_script_mismatch" in visual_verify.SAFETY_CHECKS
+    assert not set(verdict["deterministic"]["skipped_checks"]) & set(
+        visual_verify.SAFETY_CHECKS)
+    # accepted, and the suppression is still visible
+    assert [f["code"] for f in _script_findings(verdict, "warn")] == [
+        "fill_charpr_script_inherited"]
+
+
+# --------------------------------------------------------------------------
 # (f) the residue keep-list passthrough — a form fill must be able to pass
 # --------------------------------------------------------------------------
 

@@ -128,12 +128,32 @@ second row of the table. Pass the cell's own id, and say why:
 --charpr-per-cell 2,0=14        # the form's 12pt/97% 본문 face, not the 비고 face
 ```
 
-The refusal is still right to fire, and the post-flight
-(`visual_verify`'s `fill_charpr_script_mismatch`) compares the same five
-properties, so it will flag this cell too — declare it on the record as the
-form's own design, the way you would any other waiver. What is *not* acceptable
-is pasting `suggested_flags` unread: on this form that silently reformats the
-본문 to fine print.
+The refusal is still right to fire. What is *not* acceptable is pasting
+`suggested_flags` unread: on this form that silently reformats the 본문 to fine
+print.
+
+**The post-flight answers this for you, if you pass the blank form (T40).**
+`visual_verify`'s `fill_charpr_script_mismatch` compares the same five
+properties, so on its own it would flag every seat on this form — the seats are
+97% and the body baseline is the 비고 face at 100%. With `--baseline
+$W/form.hwpx` (which §3 step 7 already passes, for the pixel diff) it reads the
+blank form's XML too and compares each filled run against **the blank run named
+by the fill-map key in the same seat**, addressed by its `cellAddr`. An
+unrelated sibling run in a multi-run cell can never excuse the fill. A
+signature the printed form
+already had is then a WARN, `fill_charpr_script_inherited`, naming the seat and
+the blank form's charPr — the fill introduced nothing, so there is nothing to
+waive. `--accept-without fill_charpr_script_mismatch` on a gongmun fill is a
+sign the baseline is missing, not a step in the recipe.
+
+What still HARDs, with the baseline in hand:
+
+| the seat, in the BLANK form | verdict |
+|---|---|
+| already carries this exact signature | WARN `fill_charpr_script_inherited` — read the render once to confirm the seat is legible, then move on |
+| carries a *different* signature | HARD — the fill changed the seat's typography |
+| carries **no text at all** (the genuinely empty run a `fill-cells` target has) | HARD — an empty seat has no typography to inherit; this is the T30 trap's own shape |
+| not available — no `--baseline`, or a `.pdf`/image-directory baseline | HARD, and the finding says so: `form_baseline_checked: false` plus the reason. The check does not weaken when it cannot see the form |
 
 ### 1.2 A multi-line cell: the 공문 본문 (T39)
 
@@ -198,7 +218,7 @@ There are **four** files. Not five, and in particular not three maps.
 | `profile.json` | `form_inspect --out profile.json` | `visual_verify --form-profile` (which forwards it to `check_residue`), and your own reading |
 | `baseline.json` | `form_inspect --baseline baseline.json` | `style_diff --baseline` (format-drift proof; optional) |
 | `fill.json` — **the one map** | you write it | `visual_verify --fill-map` **and** `--expectations` (same file, twice — the blessed invocation), and any module checker's `--fill-map` |
-| `form.hwpx` — the blank | the form itself | `visual_verify --baseline` (pixel diff; it converts the blank for you) |
+| `form.hwpx` — the blank | the form itself | `visual_verify --baseline` — two checks off one flag: the pixel diff (it converts the blank for you) and the T30 seat comparison (§1.1; reads the XML, no renderer needed). Not optional on a form whose seats are not the body face |
 
 The edits themselves are **CLI flags**, not a file: `--cell`, `--at-cell`,
 `--at-cell-append`. If you find yourself writing a second map, stop — you are
@@ -466,6 +486,12 @@ form, `warn: []`. If you see `empty_cell_expected_fill` in `warn`, read its
 `seat` — it names the label, not a coordinate — and either fill it or add it to
 `declared_blank`. Blanks the grid owns are already suppressed and listed under
 `deterministic.layout_qa.empty_cell_suppressed` with their reason.
+
+`warn: []` is this form's number, not a rule. A gongmun-family fill accepts
+with `fill_charpr_script_inherited` in `warn`, one per seat whose typography the
+blank form already had (§1.1) — that WARN *is* the suppression, on the record.
+Read each one's `form_baseline_charpr_id` and confirm it is the seat's own
+printed face; a WARN you cannot explain is not a WARN you may ignore.
 
 **Partial results, so you can tell them from success:**
 

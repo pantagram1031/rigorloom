@@ -60,6 +60,45 @@ the kernel's contract shape.
   files under verification is a usage error (exit 2), never a quiet accept.
   Not a relaxation — with no record and `PrintMethod != 0` the HARD stands
   verbatim, and no baseline exemption was added.
+- **T40 — the T30 post-flight compares the SEAT, not just the document.** With
+  T38 fixed, the last thing keeping the gongmun family from `acceptance: true`
+  was two unwaivable `fill_charpr_script_mismatch` HARDs on the 수신/제목 seats
+  of a demonstrably correct 기안문 별지 fill. Both said `differing: ["ratio"]`,
+  97% against a baseline of 100% — and the **untouched blank form** carries 97%
+  on every substantive seat it has. The detector's one baseline was the
+  document's own body charPr (the id carrying the most non-fill text), which on
+  a mostly-EMPTY form is boilerplate: on this form it is the 비고 fine print, so
+  every real field differed from it and the check was inverted on the whole
+  document class. Worse, nothing ever asked the question that decides the
+  finding — *did the fill introduce this signature?* An `--at-cell-append` fill
+  preserves the printed label's charPr on purpose (T31), so the fill introduced
+  nothing and was being blamed for the form's design. `--baseline` (the blank
+  form, which the canonical recipe already passes for the pixel diff) is now
+  read a second way — offline, as XML, no renderer needed — and each
+  fill-modified run is compared against the **exact blank run named by the
+  fill-map key inside its own seat**. A seat is
+  a structural address (`Contents/section0.xml/t1/1,0`), keyed on `cellAddr`
+  because that is the coordinate the fill CLIs take and because text cannot be
+  the key: the same seat reads `수신` in the blank and `수신 국가유산청장` in
+  the artifact. A run HARDs only when it differs from BOTH baselines, so the
+  seat can only downgrade a finding, never create one. Inherited → WARN
+  `fill_charpr_script_inherited`, naming the seat and the blank form's charPr
+  (never a silent drop). An empty seat in the blank form → HARD, because there
+  is no typography to inherit — the trap's own shape. No `.hwpx` baseline, or a
+  `.pdf`/image-directory one → HARD **and the finding says the inheritance
+  question was not checked**. `fill_charpr_script_mismatch` stays in
+  `SAFETY_CHECKS` and `--accept-without` was not widened.
+
+### Changed
+
+- `engine/scripts/charpr_script.py` gains the seat layer: `iter_seat_runs`,
+  `seat_addresses`, `seat_label_runs`. `iter_runs` now
+  delegates to `iter_seat_runs` and drops the seat, so the seat-aware and
+  seat-blind readings of a document cannot report different runs, text or
+  order. Seat resolution takes two passes on purpose: OWPML puts
+  `<hp:cellAddr>` at the END of `<hp:tc>`, after the `<hp:subList>` holding the
+  paragraphs, so a single forward scan reaches every run in a cell before it
+  learns the cell's address.
 
 ## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
 
