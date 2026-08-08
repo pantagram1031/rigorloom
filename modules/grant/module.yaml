@@ -1,0 +1,76 @@
+# Grant distribution module — declaration (schema: pipeline/references/module.schema.json).
+#
+# Work-type module #4 and the last of the planned set: 지원사업 신청 (HWP usage
+# landscape family ⑥). It was kept for last because its distinguishing property
+# breaks an assumption the other three share. A 민원 서식, a 기안문 and a
+# 표준근로계약서 are each ONE document with a fixed shape, so every one of those
+# modules can treat any structural change as damage. A 지원사업 submission is an
+# application PACKET: one file carrying a 신청서 grid, a flowing 사업계획서,
+# 붙임/별첨 parts cited by number, per-programme budget tables and standalone
+# 동의서 sheets. Two consequences, and they are the module:
+#
+#   * **Row count is a legitimate degree of freedom.** The applicant EXTENDS the
+#     budget tables and the rosters, and the corpus form says so in its own words
+#     ('견적서 1개 초과시 표 추가'). So the geometry rule compares COLUMN
+#     structure and the header row and never a cell count — the opposite of what
+#     minwon and hr can afford. Added rows pass and are reported as an extension;
+#     a changed column count is HARD.
+#   * **Parts of the packet reference each other by number.** kstartup cites
+#     별첨 2-1 from three places and carries 【별첨 2-1】 as a section header, so
+#     "does this citation resolve?" is a question the document answers about
+#     itself — no baseline needed.
+#
+# requires_modules is ABSENT on purpose: nothing in this module's payload touches
+# report, style, gongmun, minwon or hr. check_grant imports only core
+# (checker_base, check_residue, engine form_inspect/hwpx_tables), so grant
+# enables alone — asserted by tests/test_grant_contract.py::TestIndependence. In
+# particular it does NOT import minwon or hr: identity_value_invented is minwon's
+# precedent, reproduced here over this family's own vocabulary, because
+# module→module imports are outside the contract (modules/README.md).
+#
+# NO pack_types, for the same reason hr has none and then some. The seats this
+# family would cache — 기업명, 대표자명, 사업자등록번호, 법인등록번호, 주소 —
+# sit directly beside the shapes check_grant's privacy rule refuses to let
+# anything synthesize, and this family asks for MORE of them than any other
+# (주민등록번호, 여권번호, 생년월일, 법인등록번호, 사업자등록번호 across the
+# three corpus forms, with a value supplied for none). A store of them is a
+# standing supply for exactly the finding the rule exists to raise.
+#
+# No cli, run_modes, gate_kinds, studio_panels or preflight: a work-type module
+# earns those when it has something to run, not to look complete. The
+# visual_verify expectations it authors ship as ordinary payload
+# (references/visual_expectations/grant.json) — there is no provides key for
+# them, by contract (modules/README.md).
+schema: rigorloom-module/v1
+name: grant
+requires: {rigorloom: ">=0.16"}
+#
+# wants: [baseline] — SIX of the seventeen rules need the blank form:
+# packet_section_lost, table_structure_lost, table_column_changed,
+# consent_block_lost, consent_option_lost and signature_seat_lost. Without it
+# they report skipped:no_baseline and the checker still exits 0. That is correct
+# behaviour and a bad contract, so the need is declared and a runner supplies the
+# form instead of every caller having to know (modules/README.md,
+# checkers[].wants).
+#
+# The baseline earns its declaration twice over here, because it is also what
+# makes the document's STATE knowable. This family's corpus form ships pre-filled
+# with worked examples — nine budget figures and a marked ■동의함 — so a marked
+# box and a number in a cell are not evidence that anyone wrote anything. With a
+# baseline the state comes from what actually changed; without one it comes from
+# the date seat alone, and the verdict says which under
+# document.state_basis.
+#
+# The rules that do NOT need it are the ones that must never be gated behind an
+# input a caller can forget: identity_value_invented and
+# account_number_invented (a 주민등록번호- or 계좌번호-shaped value nobody
+# declared is a finding on its own evidence), budget_total_mismatch (a 합계 that
+# does not equal its column is decidable from the document alone) and
+# packet_reference_dangling (the packet is being asked about itself).
+provides:
+  checkers:
+    - {name: check_grant, script: scripts/check_grant.py, wants: [baseline]}
+  skill:
+    fragment: skill/FRAGMENT.md
+    references:
+      - skill/references/grant_flow.md

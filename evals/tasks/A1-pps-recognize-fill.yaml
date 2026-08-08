@@ -23,6 +23,20 @@ prompt: |
 input_files:
   - tests/corpus/forms/grant/pps-hyeopeop-seungin-sinchengseo.hwpx
 
+# The blank form, exposed as ${BASELINE} and handed to any check whose checker
+# declares `wants: [baseline]` — see evals/README.md §"wants: [baseline]".
+# check_grant declares it: without the form SIX of its seventeen rules would be
+# SKIPPED with a reason, and the packet's state would fall back to the date seat
+# alone (document.state_basis == "date_seat_only").
+#
+# A1 deliberately carries NO `requires_module` check, and that is a coupling in
+# core rather than a choice: tests/test_cleanroom_evals.py pins THIS task's
+# skipped-check count at 1 (lines ~566 and ~1029), so any module-gated check
+# added here — which skips by design in a core-only sandbox — fails a core test.
+# The grant module's eval wiring therefore lives on A2 and A3, which use the
+# other two family-⑥ forms. See the report accompanying this branch.
+baseline: pps-hyeopeop-seungin-sinchengseo.hwpx
+
 expected_behavior:
   - "[judgment] 채우기 전에 어떤 칸이 입력 대상인지 문서에서 읽어 목록으로 제시한다 (사전 지식이 아니라 프로파일 결과와 문서 텍스트 근거)."
   - "[judgment] 서명 칸(신청인 ... (서명 또는 인))은 비워 두고 사람이 서명해야 한다고 알려준다. 자동으로 이름을 써넣지 않는다."

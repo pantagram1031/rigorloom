@@ -14,6 +14,13 @@ prompt: |
 input_files:
   - tests/corpus/forms/grant/pps-jeongbogonggae-donguiseo.hwpx
 
+# The blank form, handed to checkers declaring `wants: [baseline]` (check_grant)
+# — see evals/README.md §"wants: [baseline]". This task needs it more than most:
+# the two consent choices are `(예,  아니오)` text runs with NO mark glyph, so
+# consent_unmarked is undecidable by design and the only way to know a consent
+# block or one of its options was destroyed is to compare against the form.
+baseline: pps-jeongbogonggae-donguiseo.hwpx
+
 expected_behavior:
   - "[judgment] 채우기 전에 무엇에 동의하는 것인지(수집 항목, 목적, 보유기간, 제3자 제공 대상)를 먼저 요약해 준다. 동의서는 중립적인 표가 아니다."
   - "[judgment] 동의 거부 권리 안내(※ 위의 개인정보 수집ㆍ이용에 대한 동의를 거부할 권리가 있습니다)를 지우지 않는다."
@@ -73,3 +80,53 @@ machine_checks:
     strings:
       - "□ 개인정보 수집ㆍ이용 내역"
       - "□ 개인정보 3자 제공 내역"
+
+  # ── grant distribution module ────────────────────────────────────────
+  # 동의서는 이 계열에서 독립 문서다. check_grant 는 동의 블록과 선택지가
+  # 살아있는지, 거부 선택지를 지워 동의를 조작하지 않았는지, 서명란이 남았는지를
+  # 판정한다. `requires_module: grant` 로 게이트되어 core-only 샌드박스에서는
+  # 이유가 기록된 채 SKIP 된다 (modules/README.md, "absence is not failure").
+  - id: grant_blank_form_shape
+    kind: python
+    requires_module: grant
+    description: 빈 동의서는 blank 상태이고, 표시 글리프가 없다는 사실이 기록되는가
+    argv: ["modules/grant/scripts/check_grant.py", "${BASELINE}", "--out", "${WORK}/grant_blank.json"]
+    expect_exit: 0
+    json_file: "${WORK}/grant_blank.json"
+    assert_json:
+      - 'document.state == "blank"'
+      - "counts.hard == 0"
+      - "document.marked_consent_options == 0"
+
+  - id: grant_structure
+    kind: python
+    requires_module: grant
+    description: 동의 처리된 결과가 지원사업 서식 규칙을 통과하는가
+    argv: ["modules/grant/scripts/check_grant.py", "${WORK}/filled.hwpx", "--out", "${WORK}/grant_verdict.json"]
+    expect_exit: 0
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - "counts.hard == 0"
+      - 'checker == "check_grant"'
+      - "document.seats_changed >= 1"
+
+  - id: grant_consent_rules_were_decided
+    kind: text_absent
+    requires_module: grant
+    description: 동의 규칙이 적발되지 않았는가 — 특히 거부 선택지 삭제
+    # consent_option_lost 는 「(예,  아니오)」에서 '아니오' 를 지워 동의를
+    # 만들어내는 편집을 잡는다. 이름이 결과에 없다는 것이 통과의 증거다.
+    artifact: "${WORK}/grant_verdict.json"
+    strings:
+      - "consent_block_lost"
+      - "consent_option_lost"
+      - "signature_seat_lost"
+      - "table_column_changed"
+
+  - id: grant_glyphless_choice_is_reported_not_guessed
+    kind: text_present
+    requires_module: grant
+    description: 표시할 글리프가 없는 선택지는 추측하지 않고 이유와 함께 건너뛴다
+    artifact: "${WORK}/grant_verdict.json"
+    strings:
+      - "no_mark_glyphs"
