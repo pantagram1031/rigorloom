@@ -310,6 +310,31 @@ def iter_seat_runs(section_xml: str, member: str = ""):
     return out
 
 
+def iter_seat_empty_runs(section_xml: str, member: str = ""):
+    """``[(seat, charPrIDRef)]`` for text-less runs inside table cells.
+
+    Empty runs are excluded from :func:`iter_seat_runs` on purpose: counting
+    reserved form slots as prose would corrupt the document-body baseline.
+    An address-keyed fill still needs a separate, non-weighted view of those
+    slots to prove which typography the blank form reserved for that exact
+    cell (T42). Self-closing, empty ``hp:t`` and empty paired runs all count;
+    a run outside a table does not have a stable seat and is omitted.
+    """
+    timeline = _seat_timeline(section_xml)
+    offsets = [offset for offset, _ in timeline]
+    out = []
+    for match in _RUN_RE.finditer(section_xml):
+        body = match.group(2)
+        text = "" if not body else "".join(_RUN_TEXT_RE.findall(body))
+        text = re.sub(r"<[^>]+>", "", text)
+        if text.strip():
+            continue
+        seat = timeline[bisect.bisect_right(offsets, match.start()) - 1][1]
+        if seat:
+            out.append(((member, *seat), match.group(1)))
+    return out
+
+
 def seat_addresses(section_xml: str, member: str = "") -> set:
     """Every cell seat in ``section_xml``, whether it carries text or not.
 
