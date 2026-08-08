@@ -1,0 +1,170 @@
+schema: rigorloom-eval-task/v1
+id: P2-jeongbo-staff-seats
+family: petition
+title: 정보공개 청구서 채우기 (접수·처리 기관 칸 경계)
+source_scenario: P2-fill-boundary-jeongbo (docs/research/form-eval-scenarios.md, family 1)
+note: XC-1 변환본 사용 - 원본은 .hwp. P1(주민등록 등초본)은 접수 블록이 없어 check_minwon 의 staff_seat_filled / staff_seat_removed 가 seat_absent 로 건너뛰어진다. 이 서식은 음영 접수란 3칸 + 접수증 블록 4칸을 갖고 있고 "색상이 어두운 칸은 신청인(대리인)이 작성하지 않습니다" 문장을 스스로 선언하므로, 두 규칙을 실제로 판정하는 유일한 코퍼스 서식이다
+
+prompt: |
+  첨부한 정보공개 청구서를 청구인(개인) 칸만 아래 값으로 채워줘. 양식 모양은 절대 바뀌면 안 돼.
+  - 성명: 이서연
+  - 주소(소재지): 서울특별시 종로구 사직로 161
+  - 전화번호: 010-0000-0000
+  - 전자우편주소: seoyeon@example.com
+  - 청구 내용: 2026년 상반기 지역 문화재 보수 공사 계약 현황 일체
+  - 공개 방법: 전자파일
+  - 수령 방법: 전자우편 등
+  - 수수료: 감면 대상 아님
+  - 작성일: 2026년 8월 20일
+  결과는 작업 폴더에 filled.hwpx 로 저장해줘.
+
+# The blank form. Checkers declaring `wants: [baseline]` (check_minwon) are
+# handed this automatically — see evals/README.md §"wants: [baseline]". It is
+# what makes the staff-seat rules decidable at all: staff_seat_filled compares
+# every 접수·처리 seat the BLANK form carries against the artifact, and
+# staff_seat_removed asks whether that seat still exists.
+baseline: jeongbo-gonggae-cheongguseo.hwpx
+
+input_files:
+  - tests/corpus/forms/converted/jeongbo-gonggae-cheongguseo.hwpx
+
+expected_behavior:
+  - "[judgment] 접수번호, 접수일, 처리기간과 아래쪽 접수증 블록(접수번호/청구인 성명/접수부서/접수자 성명)은 접수 기관 몫임을 알아보고 쓰지 않는다. 서식이 스스로 '색상이 어두운 칸은 신청인(대리인)이 작성하지 않습니다'라고 말한다."
+  - "[judgment] 생년월일(성별), 여권ㆍ외국인등록번호, 사업자(법인ㆍ단체)등록번호는 사용자가 주지 않았으므로 비워 두고 무엇이 비었는지 되돌려 알려준다. 절대 임의 생성하지 않는다."
+  - "[judgment] 공개 방법, 수령 방법, 수수료 선택은 [ ] 안에 √ 를 넣는 텍스트 토글로 처리하고, 고르지 않은 선택지를 지우지 않는다."
+  - "[judgment] 유의 사항 블록과 (서명 또는 인) 자리는 사람 몫으로 남긴다."
+  - "[judgment] 「공공기관의 정보공개에 관한 법률」 제10조제1항 근거 문구와 별지서식 머리글은 손대지 않는다."
+
+machine_checks:
+  - id: profile_blank
+    kind: python
+    description: 조밀 그리드 인식 하한 (35행 17열 프레임 표)
+    argv: ["engine/scripts/form_inspect.py", "${INPUTS}/jeongbo-gonggae-cheongguseo.hwpx", "--out", "${WORK}/blank.profile.json"]
+    expect_exit: 0
+    json_file: "${WORK}/blank.profile.json"
+    assert_json: ["len(anchors) >= 30", "len(table_map) >= 2", "len(table_map[0].cells) >= 60"]
+
+  - id: filled_produced
+    kind: file
+    path: "${WORK}/filled.hwpx"
+    mode: nonempty
+
+  - id: original_untouched
+    kind: unmodified
+    input: jeongbo-gonggae-cheongguseo.hwpx
+
+  - id: profile_filled
+    kind: python
+    argv: ["engine/scripts/form_inspect.py", "${WORK}/filled.hwpx", "--out", "${WORK}/filled.profile.json"]
+    expect_exit: 0
+
+  - id: geometry_unchanged
+    kind: geometry
+    before: "${WORK}/blank.profile.json"
+    after: "${WORK}/filled.profile.json"
+
+  - id: residue_clean
+    kind: residue
+    profile: "${WORK}/blank.profile.json"
+    artifact: "${WORK}/filled.hwpx"
+    baseline: "${INPUTS}/jeongbo-gonggae-cheongguseo.hwpx"
+    expect_exit: 0
+    require_consumed: 1
+
+  - id: furniture_and_statute_intact
+    kind: text_present
+    description: 별지서식 머리글, 법률 근거 문구, 유의사항, 서명 자리, 접수증 라벨
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "[별지 제1호의2서식]"
+      - "제10조제1항 및 같은 법 시행령 제6조제1항에 따라"
+      - "색상이 어두운 칸은 신청인(대리인)이 작성하지 않습니다"
+      - "(서명 또는 인)"
+      - "접 수 증"
+      - "처리기간"
+
+  - id: values_written
+    kind: text_present
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "이서연"
+      - "사직로 161"
+      - "지역 문화재 보수 공사 계약 현황"
+
+  # ── minwon distribution module ────────────────────────────────────────
+  # This task exists for two rules. `check_minwon`'s staff_seat_filled and
+  # staff_seat_removed compare every 접수·처리 기관 seat the blank form carries
+  # against the artifact, and P1 (주민등록 등초본 교부 신청서) cannot exercise
+  # either: that form has no 접수 block, so the verdict records
+  # `staff_seat_filled: seat_absent` and the rule never runs. 정보공개 청구서
+  # carries three shaded 접수번호/접수일/처리기간 cells, a four-cell 접수증 block,
+  # AND the form's own shading declaration — seven recognized staff seats, both
+  # recognizers (label and shaded), and the only corpus form on which these two
+  # rules are decided rather than skipped.
+  # `requires_module: minwon` gates every check below on the module being
+  # enabled: in a core-only sandbox they are SKIPPED with a recorded reason
+  # instead of failing (modules/README.md, "absence is not failure").
+  - id: minwon_blank_form_shape
+    kind: python
+    requires_module: minwon
+    description: 빈 서식은 unfilled 형태로 보고되어야 한다 (통과, 크래시 아님)
+    # The target IS the baseline here, and a document is never its own baseline:
+    # the harness supplies nothing (${BASELINE} is already in the argv) and this
+    # stays the no-baseline shape check.
+    argv: ["modules/minwon/scripts/check_minwon.py", "${BASELINE}", "--out", "${WORK}/minwon_blank.json"]
+    expect_exit: 0
+    json_file: "${WORK}/minwon_blank.json"
+    assert_json:
+      - 'document.state == "blank"'
+      - "len(document.families) >= 6"
+      - "counts.hard == 0"
+      - "document.marked_checkboxes == 0"
+      # The form declares its own shading rule; without that sentence a dark
+      # cell means nothing and the `shaded` recognizer stays off.
+      - "document.shading_rule_declared == true"
+
+  - id: minwon_structure
+    kind: python
+    requires_module: minwon
+    description: 채운 청구서가 민원 서식 규칙을 모두 통과하는가
+    # No --baseline here on purpose: check_minwon declares wants: [baseline], so
+    # the harness supplies the task's blank form. --fill-map is deliberately NOT
+    # supplied: the prompt gives no 생년월일 and no 등록번호, so ANY identity
+    # number in the artifact is undeclared and the identity rules fire.
+    argv: ["modules/minwon/scripts/check_minwon.py", "${WORK}/filled.hwpx", "--out", "${WORK}/minwon_verdict.json"]
+    expect_exit: 0
+    json_file: "${WORK}/minwon_verdict.json"
+    assert_json:
+      - "counts.hard == 0"
+      - 'checker == "check_minwon"'
+      # cells_changed is only computed when a baseline model is present, so a
+      # non-zero value proves BOTH that the harness supplied the blank form and
+      # that the agent actually wrote into the grid.
+      - "document.cells_changed >= 1"
+
+  - id: minwon_staff_rules_were_decided
+    kind: text_absent
+    requires_module: minwon
+    description: staff_seat_filled / staff_seat_removed 가 건너뛰어지지도, 적발되지도 않았는가
+    # The rule name appears in the verdict in exactly two situations: as a
+    # `skipped[].rule` (undecidable — the P1 case) or as a `hard[].code` (the
+    # office's block was written into or deleted). Its ABSENCE from the verdict
+    # is therefore the machine-readable proof that both rules ran and passed —
+    # which is the whole reason this task was added.
+    artifact: "${WORK}/minwon_verdict.json"
+    strings:
+      - "staff_seat_filled"
+      - "staff_seat_removed"
+
+  - id: minwon_staff_seats_were_recognized
+    kind: text_present
+    requires_module: minwon
+    description: 접수 칸이 라벨과 음영 두 인식기 모두로 실제 잡혔는가
+    # The positive half of the check above: "untouched" is the state only a
+    # staff seat is ever reported in, and "shaded" is the basis only the
+    # shading recognizer produces. Both present = the seats were found, the
+    # comparison ran, and it found them intact.
+    artifact: "${WORK}/minwon_verdict.json"
+    strings:
+      - "untouched"
+      - "shaded"

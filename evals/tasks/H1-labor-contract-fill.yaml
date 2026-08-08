@@ -3,7 +3,7 @@ id: H1-labor-contract-fill
 family: hr
 title: 표준근로계약서 채우기
 source_scenario: H1-labor-contract-fill (docs/research/form-eval-scenarios.md, family 7)
-note: XC-1 변환본 사용 - 원본은 .hwp. 기준선 계열이라 기계 검사 실패는 경계가 아니라 적신호다
+note: XC-1 변환본 사용 - 원본은 .hwp. 기준선 계열이라 기계 검사 실패는 경계가 아니라 적신호다. hr 배포 모듈이 켜져 있으면 check_hr 이 서식 규칙(조항 골격/계약서 종류/조항 문구 보존/법령 인용/양 당사자 서명란/서식 판본/개인번호 비생성)을 판정한다
 
 prompt: |
   첨부한 표준근로계약서에서 기간의 정함이 없는 경우 계약서를 아래 값으로 채워줘.
@@ -19,11 +19,20 @@ prompt: |
 input_files:
   - tests/corpus/forms/converted/moel-pyojun-geunrogyeyakseo-2025.hwpx
 
+# The blank form. Checkers declaring `wants: [baseline]` (check_hr) are handed
+# this automatically — see evals/README.md §"wants: [baseline]". Without it
+# TWELVE of check_hr's fifteen rules would be SKIPPED with a reason, because the
+# whole family is preservation rules over prose: "was this clause / this citation
+# / this sentence destroyed?" is only decidable against the form it came from.
+baseline: moel-pyojun-geunrogyeyakseo-2025.hwpx
+
 expected_behavior:
-  - "[judgment] 여러 종류의 표준계약서가 한 문서에 들어 있음을 알아보고, 사용자가 지정한 기간의 정함이 없는 경우 계약서만 채운다."
+  - "[judgment] 여러 종류의 표준계약서가 한 문서에 들어 있음을 알아보고, 사용자가 지정한 기간의 정함이 없는 경우 계약서만 채운다. 나머지 계약서 시트는 지우지 않는다."
   - "[judgment] 상여금, 수당, 임금지급일처럼 사용자가 주지 않은 항목은 지어내지 않고 빈칸으로 두며 무엇이 비었는지 되돌려 알려준다."
-  - "[judgment] 사업주와 근로자 양쪽 서명란을 모두 비워 둔다."
-  - "[judgment] 조항 번호와 법령 참조 문구를 바꾸지 않는다."
+  - "[judgment] 사업주와 근로자 양쪽 서명란을 모두 비워 둔다. 한쪽만 채운 계약서는 만들지 않는다."
+  - "[judgment] 조항 번호와 법령 참조 문구를 바꾸지 않는다. 서식에 없는 조항을 인용하지도 않는다."
+  - "[judgment] 주민등록번호나 계좌번호는 사용자가 주지 않았으므로 절대 임의 생성하지 않는다. 전화번호도 마찬가지다."
+  - "[judgment] 2025년 개정판 문구를 2013년판 문구(기타급여(제수당 등), 예금통장에 입금 등)로 바꾸지 않는다."
 
 machine_checks:
   - id: profile_blank
@@ -75,3 +84,74 @@ machine_checks:
     strings:
       - "정밀 이송 스테이지 조립 및 검사"
       - "동탄산단로 15"
+
+  # ── hr distribution module ───────────────────────────────────────────
+  # check_hr judges the 계약·인사 서식 itself: the numbered-clause skeleton, the
+  # contract-variant banners the pack ships with, the clause text a filled seat
+  # must not consume, the 근로기준법 citations that must survive verbatim, the
+  # two-party 사업주/근로자 signature block, the template revision (this family's
+  # corpus is a VERSIONED PAIR — 2013 and 2025 — so "did the fill quietly
+  # migrate the contract" is a decidable question), and that no 주민등록번호 or
+  # 계좌번호 was invented. `requires_module: hr` gates every check below on the
+  # module being enabled: in a core-only sandbox they are SKIPPED with a
+  # recorded reason instead of failing (a missing module is not a product
+  # defect — modules/README.md, "absence is not failure").
+  # The target IS the baseline here, and a document is never its own baseline:
+  # the harness supplies nothing and this stays the no-baseline shape check.
+  - id: hr_blank_form_shape
+    kind: python
+    requires_module: hr
+    description: 빈 서식은 unfilled 형태로 보고되어야 한다 (통과, 크래시 아님)
+    argv: ["modules/hr/scripts/check_hr.py", "${BASELINE}", "--out", "${WORK}/hr_blank.json"]
+    expect_exit: 0
+    json_file: "${WORK}/hr_blank.json"
+    assert_json:
+      - 'document.state == "blank"'
+      - "len(document.families) == 7"
+      - "counts.hard == 0"
+      - "document.marked_slots == 0"
+      - "document.party_seats_filled == 0"
+
+  - id: hr_structure
+    kind: python
+    requires_module: hr
+    description: 채운 계약서가 계약·인사 서식 규칙을 모두 통과하는가
+    # No --baseline here on purpose: check_hr declares wants: [baseline], so the
+    # harness supplies the task's blank form. --fill-map is deliberately NOT
+    # supplied: the prompt gives no 주민등록번호, no 계좌번호 and no 전화번호, so
+    # ANY personal-number-shaped value in the artifact is undeclared and
+    # identity_value_invented / personal_number_invented fire.
+    argv: ["modules/hr/scripts/check_hr.py", "${WORK}/filled.hwpx", "--out", "${WORK}/hr_verdict.json"]
+    expect_exit: 0
+    json_file: "${WORK}/hr_verdict.json"
+    assert_json:
+      - "counts.hard == 0"
+      - 'checker == "check_hr"'
+      # paragraphs_changed is only computed when a baseline model is present, so
+      # a non-zero value proves BOTH that the harness supplied the blank form
+      # and that the agent actually wrote into the contract.
+      - "document.paragraphs_changed >= 1"
+      # both parties identified — a dated contract with one is party_half_filled
+      - "document.party_seats_filled >= 2"
+
+  - id: hr_version_rules_were_decided
+    kind: text_absent
+    requires_module: hr
+    description: 서식 판본 규칙이 건너뛰어지지도, 적발되지도 않았는가
+    # Each rule name appears in the verdict only when it was skipped
+    # (undecidable) or fired. Its ABSENCE is the machine-readable proof that the
+    # versioned-pair rules ran and passed — which is why this family was the
+    # third work-type module.
+    artifact: "${WORK}/hr_verdict.json"
+    strings:
+      - "template_version_changed"
+      - "template_version_mixed"
+
+  - id: hr_stayed_on_the_2025_revision
+    kind: text_present
+    requires_module: hr
+    description: 판본 지문이 2025 개정판으로 잡혔는가
+    artifact: "${WORK}/hr_verdict.json"
+    strings:
+      - "v2025"
+      - "verbatim"

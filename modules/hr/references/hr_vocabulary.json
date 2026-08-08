@@ -1,0 +1,133 @@
+{
+  "schema": "rigorloom-hr-vocabulary/v1",
+  "regulation": "고용노동부 표준근로계약서 서식 묶음 (근로기준법 제17조 서면 명시 의무). 2013년판과 2025년 개정판 두 벌이 코퍼스에 있다: tests/corpus/forms/hr/moel-pyojun-geunrogyeyakseo-{2013,2025}.hwp",
+  "description": "Structural vocabulary of the 계약·인사 서식 family (HWP usage landscape family ⑦), as data. check_hr.py carries no Korean literals: every term and pattern below is family-level. The family's defining property is that the document IS the legal instrument — a 표준근로계약서 is numbered clause prose, not a fixed grid, and its text carries the 근로기준법 서면 명시 의무 itself. So the rules are preservation rules over prose: the clause skeleton, the surrounding legal text a filled seat must not eat, the statutory citations, and the two-party signature block. Term matching is whitespace-insensitive because the form letter-spaces its own labels ('근 무 장 소', '대 표 자', '임  금').",
+  "sections": {
+    "contract": {
+      "description": "Contract-variant banners. Both corpus versions are PACKS of variants, each introduced by a one-cell banner table: 2013 ships 표준근로계약서 / 연소근로자 / 친권자(후견인) 동의서 / 건설일용근로자 / 단시간근로자 plus the bilingual EPS 표준근로계약서 (a row inside its own table); 2025 ships six, splitting 표준근로계약서 into 기간의 정함이 없는/있는 경우 and dropping the EPS sheet. Recognized only in TABLE CELLS: '8. 가족관계증명서 및 동의서' is a numbered clause in a top-level paragraph and must not read as a variant banner.",
+      "labels": [
+        "표준근로계약서",
+        "동의서"
+      ]
+    },
+    "clause": {
+      "description": "Canonical numbered-clause labels, the union of both versions. Used to REPORT which clauses a document carries; the inventory a rule judges against always comes from the baseline, never from this list (2013's 단시간 sheet embeds its clause 7 mid-paragraph, so 'numbers must run 1..N' is false on the pristine form).",
+      "labels": [
+        "근로계약기간",
+        "근로개시일",
+        "근무장소",
+        "업무의 내용",
+        "소정근로시간",
+        "근로일 및 근로일별 근로시간",
+        "근무일/휴일",
+        "임금",
+        "연차유급휴가",
+        "가족관계증명서 및 동의서",
+        "사회보험 적용여부",
+        "근로계약서 교부",
+        "근로계약, 취업규칙 등의 성실한 이행의무",
+        "기타",
+        "그 밖의 사항"
+      ]
+    },
+    "party": {
+      "description": "The two contracting parties and the seats each one fills. A party block starts at the paragraph carrying the party marker and runs while the following paragraphs still carry a seat label — 2013 spreads one party over three paragraphs, 2025 collapses it into one, and both have to work. 친권자(후견인) is deliberately NOT a party: its only appearance is a signature line in the 동의서 sheet, covered by signature_marker_lost.",
+      "employer_labels": [
+        "(사업주)",
+        "(사용자)"
+      ],
+      "worker_labels": [
+        "(근로자)"
+      ],
+      "seat_labels": [
+        "사업체명",
+        "회사명",
+        "업체명",
+        "소재지",
+        "대표자",
+        "주소",
+        "전화",
+        "연락처",
+        "성명"
+      ]
+    },
+    "statute": {
+      "description": "The statutes this family's text cites. A 표준근로계약서 is the 근로기준법 제17조 서면 명시 그 자체, so a citation is not decoration: losing one changes what the document is. Every term appears in at least one corpus version (근로관계법령 is 2025-only, 근로기준법 is in both).",
+      "labels": [
+        "근로기준법",
+        "근로관계법령",
+        "최저임금",
+        "고용노동부장관"
+      ]
+    },
+    "identity": {
+      "description": "Identity-number and account seats. A tool NEVER invents one of these values. 2013 asks for 주민등록번호 in both 인적사항 blocks of the 연소근로자 동의서; the 2025 revision replaced every one of them with 생년월일, which is itself the clearest privacy signal in the pair. 계좌 / 예금통장 are here because the 지급방법 clause names an account the tool must never fabricate a number for.",
+      "labels": [
+        "주민등록번호",
+        "생년월일",
+        "외국인등록번호",
+        "사업자등록번호",
+        "계좌번호",
+        "예금통장"
+      ]
+    }
+  },
+  "versions": {
+    "_note": "Version fingerprints for the 2013 / 2025 pair. Every marker below was measured on the two corpus forms and is STRICTLY disjoint: it occurs in its own version and zero times in the other (asserted by tests/test_hr_corpus.py). This is what makes 'which template is this' decidable without a baseline, and what makes a document carrying markers from both versions a spliced document (template_version_mixed).",
+    "v2013": {
+      "label": "표준근로계약서 (2013 서식 pack)",
+      "markers": [
+        "기타급여(제수당 등)",
+        "예금통장에 입금",
+        "주민등록번호",
+        "Standard Labor Contract",
+        "근로기준법령에 의함",
+        "직접지급"
+      ]
+    },
+    "v2025": {
+      "label": "표준근로계약서 (2025 개정)",
+      "markers": [
+        "그 밖의 수당(약정수당)",
+        "계좌에 입금",
+        "사회보험 적용여부",
+        "대체공휴일",
+        "근로계약, 취업규칙 등의 성실한 이행의무",
+        "근로관계법령",
+        "직접(현금)지급"
+      ]
+    }
+  },
+  "contract_title_max_chars": 40,
+  "contract_title_note": "A variant banner is a SHORT table cell carrying a contract label. Measured on the corpus: the six banners are 7–28 squeezed characters, the longest being 2013's bilingual '표준근로계약서 Standard Labor Contract' row. The cap is insurance against a fill that mentions the form's own name inside a long body cell.",
+  "family_minimum": 4,
+  "family_minimum_note": "How many of the seven seat families (contract, clause, party, statute, signature, slot, identity) a document must carry before the 계약·인사 rules apply at all. Both corpus versions carry all seven; a 탐구 보고서 or a 기안문 carries at most one, so 4 separates the family without needing a title match.",
+  "blank_run_re": "[ \\t\\u00a0\\u3000]{2,}|_{3,}",
+  "blank_run_note": "The fill targets. The premise that this family uses '______' underline runs does NOT hold on the corpus: the 2013 pack contains exactly ONE underscore run (the EPS sheet's '____________  (YY/MM/DD)' date line) and the 2025 revision contains none. What both versions actually use is a run of ≥2 spaces after a label — the underline is a charPr property, not a character. The underscore alternative is kept so the one 2013 instance is counted rather than special-cased.",
+  "unmarked_slot_re": "\\(\\s+\\)|\\[\\s*\\]",
+  "marked_slot_re": "\\(\\s*[^()\\[\\]\\s]{1,8}\\s*\\)|\\[\\s*[^()\\[\\]\\s]{1,8}\\s*\\]",
+  "marked_slot_note": "A slot that now holds SOMETHING, used ONLY for the slot-count preservation rule (option_slot_lost). 'Something' has to be broad: the 2025 근로일별 근로시간 grid fills '(    )요일' with a day name, and 지급방법 takes a mark in '[    ]'. Bound at 8 non-space characters so a whole parenthetical clause never reads as a slot. Printed parentheticals like '(서명)' and '(앞쪽)' match too, and that is harmless HERE because the rule compares the artifact's total against the baseline's total and a printed parenthetical is stable across a fill. It is NOT harmless for state classification — see mark_glyph_re.",
+  "mark_glyph_re": "[(\\[]\\s*[○√∨✔✓ⅤVv×✕]\\s*[)\\]]",
+  "mark_glyph_note": "A slot carrying a SELECTION MARK, used only to decide whether anyone has written in the document yet. This has to be narrow: the broad marked_slot_re matches 32 printed parentheticals on the pristine 2013 pack and 66 on the pristine 2025 pack ('(서명)', '(인)', '(앞쪽)', '(만 세)'…), so classifying state by it would report every blank form as a draft and nothing would ever be reported as blank-by-design. The glyph class is the corpus's own: 2013 instructs '해당사항에 ○표', and √ / V / × are the marks a filler actually types into '[  ]'.",
+  "unfilled_date_seat_re": "년\\s+월\\s+일",
+  "unfilled_date_seat_note": "The signature date line, '      년      월      일'. Requiring whitespace between the three characters is what keeps 생년월일 (contiguous) and a WRITTEN date ('2026년 8월 20일') out — both would otherwise read as an unfilled seat and no filled contract would ever classify as final.",
+  "unfilled_time_seat_re": "시\\s+분",
+  "unfilled_time_seat_note": "The '   시   분' skeleton in 소정근로시간 / 휴게시간 / 업무 시작·종료. A written time ('09시 00분') puts a digit between 시 and 분 and does not match.",
+  "clause_head_re": "^\\s*(\\d{1,2})\\s*[.．]\\s*(.+)$",
+  "clause_label_stop_re": "[:：※]",
+  "clause_label_max_chars": 24,
+  "clause_label_note": "A clause is keyed by its NUMBER plus a squeezed label: the text after 'N.' up to the first colon or ※, capped at clause_label_max_chars. The cap matters because 2025's 연소근로자 clause 6 has no colon ('6. 임  금   ※ (참고) 연소근로자의 경우에도 …'), so an uncapped label would swallow a whole guidance sentence and any edit to that sentence would read as a lost clause. Measured on the corpus: real labels are 2–19 squeezed characters.",
+  "signature_marker_re": "\\(\\s*(?:서명\\s*또는\\s*인|서명란|서명|날인|인)\\s*\\)",
+  "statute_article_re": "제\\s*\\d+\\s*조(?:의\\s*\\d+)?(?:\\s*제\\s*\\d+\\s*항)?",
+  "rrn_re": "(?<!\\d)\\d{6}\\s*[-–—~]\\s*\\d{7}(?!\\d)",
+  "personal_number_re": "(?<![\\d,])(?:\\d{2,6}(?:\\s*[-–—]\\s*\\d{2,8}){1,3}|\\d{10,})(?![\\d,])",
+  "personal_number_min_digits": 10,
+  "personal_number_note": "The 계좌번호 half of the never-invent rule. There is no 계좌번호 SEAT anywhere in either version — the 지급방법 clause only names an account — so the rule can only be a value-shape rule: a hyphen-grouped (or bare) digit run carrying at least personal_number_min_digits digits that the operator did not declare. The comma guards keep money out: '2,800,000원' has no run of 10 contiguous digits and its groups are comma-separated, while '010-0000-0000' (11 digits) and a bank account both trip it. A phone number the operator supplied is declared and passes; a phone number the tool made up is exactly what this rule is for. A date ('2026-09-01', 8 digits) stays below the floor.",
+  "noise_re": "[\\s()\\[\\]/,.:;·ㆍ―–—_※○●◯~∼\\-]+",
+  "stencil_split_re": "[ \\t\\u00a0\\u3000]{2,}|_{3,}|[:：]",
+  "stencil_fragment_min_chars": 6,
+  "stencil_fragment_note": "The mechanism behind clause_text_consumed. Splitting a baseline seat on its blank runs AND on its colons leaves the form's own literal fragments; each one must still appear in the artifact, so writing INTO a seat is fine while writing OVER the surrounding legal text is not. The colon has to be a boundary as well as the blank run, because this family letter-spaces its labels: '주    소 :' contains a four-space run of its own, so a blank-run-only split fuses '소 :' with the '대 표 자 :' that follows it, and then legitimately filling 주소 separates them and reads as consumed text. Splitting at the colon costs only short label tails and keeps every sentence — which is what the rule is actually about. The 6-character floor drops punctuation crumbs ('(전화', '원,', '요일') whose exact spacing a legitimate fill may change, and keeps the clause heads ('1. 근로계약기간' = 8, '(사업주) 사업체명' = 9) and the whole 근로기준법 제17조 이행 sentence (60+). Measured on the corpus: 161 unique fragments in the 2013 pack (longest 182 characters) and 111 in the 2025 pack (longest 75).",
+  "identity_seat_max_chars": 40,
+  "identity_seat_note": "An identity SEAT is a label, not prose. A paragraph or cell qualifies only when it carries an identity label and its squeezed text is at most this long. Measured on the corpus: the real seats are 6–38 squeezed characters ('주민등록번호:', '생년월일:', '사업자등록번호(주민등록번호)Identificationnumber'), while the sentences that merely MENTION an account ('임금 및 수당은 \"근로자\"에게 직접 지불하거나 \"근로자\"의 명의로 된 예금통장에 입금한다…', 100+ characters) are not seats and must not be judged as such.",
+  "identity_value_min_length": 2
+}

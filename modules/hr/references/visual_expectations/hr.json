@@ -1,0 +1,18 @@
+{
+  "_note": "visual_verify expectations for a filled 계약·인사 서식 (pipeline/scripts/visual_verify.py --expectations). Modules are the natural author of this file and there is no provides key for it: it is ordinary payload the caller passes. This family sits between gongmun's and minwon's balance. Like minwon, almost nothing printed on the page may disappear — the text IS the legal instrument — so forbidden_text is short. Unlike minwon, the seats a tool must leave alone are not shaded cells but the two signature lines and the identity seats, so intentionally_blank carries the work. page_budget is NOT declared: the pack ships five or six variants across as many pages and a caller filling one of them decides how many pages to keep, so visual_verify lists it under deterministic.skipped.",
+  "forbidden_text": [
+    "○○○"
+  ],
+  "_forbidden_text_note": "Only the ○ placeholder run. Everything else printed on a 표준근로계약서 — every clause, every statute citation, every unselected option, the guidance notes marked ※ — MUST be visible in the render. That is check_hr's clause_text_consumed / statute_reference_lost / option_slot_lost trio, and its visual twin is a keep expectation, not a forbidden list.",
+  "intentionally_blank": [
+    "(서명)",
+    "(서명 또는 인)",
+    "(인)",
+    "주민등록번호",
+    "생년월일",
+    "사업자등록번호",
+    "계좌번호"
+  ],
+  "_intentionally_blank_note": "Two classes, both things the TOOL must leave alone: the signature seats a person completes by hand (check_hr's signature_marker_lost), and the identity and account seats a tool never fabricates (identity_value_invented / personal_number_invented / identity_seat_autofilled). A render that shows any of these carrying tool-written content is a defect even when the text checks pass. 상여금 / 임금지급일 / 그 밖의 수당 are deliberately ABSENT from this list: they are seats the user may legitimately supply, and check_hr reports them unfilled rather than forbidding them.",
+  "_fill_map_note": "No fill_map is declared here. Everything a 근로계약서 fill writes — 사업체명, 대표자, 성명, 주소, 연락처, 근무장소, 업무의 내용, 임금, dates — is per-document data belonging to the caller's own fill map, and shipping a specimen in module payload would be shipping personal data."
+}

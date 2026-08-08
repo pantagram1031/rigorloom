@@ -45,6 +45,27 @@ package_module = _load(
 
 TASKS_DIR = REPO_ROOT / "evals" / "tasks"
 A1_TASK = TASKS_DIR / "A1-pps-recognize-fill.yaml"
+CORPUS_MANIFEST = REPO_ROOT / "tests" / "corpus" / "forms" / "manifest.json"
+
+#: Non-vacuity floor for the shipped-task scan (see
+#: ``TestTaskDefinitions.test_every_shipped_task_validates``). This is NOT the
+#: task count — adding a task must never require editing a core test — it only
+#: stops a scan over an empty or gutted ``evals/tasks/`` from reading as a pass.
+MIN_SHIPPED_TASKS = 5
+
+
+def corpus_families() -> set[str]:
+    """The form families the blank-form corpus actually backs.
+
+    Derived from ``tests/corpus/forms/manifest.json`` rather than listed here:
+    the manifest is the only place that knows which families have a real blank
+    template on disk, and a hardcoded list is exactly the coupling #26 is about.
+    ``skipped[]`` entries are excluded on purpose — a recorded corpus gap (family
+    ③ school, family ⑤ corp) has no document to write a task against.
+    """
+    manifest = json.loads(CORPUS_MANIFEST.read_text(encoding="utf-8"))
+    return {row["family"] for row in manifest["documents"]
+            if isinstance(row.get("family"), str) and row["family"].strip()}
 
 
 # --------------------------------------------------------------------------- #
@@ -385,14 +406,52 @@ machine_checks:
 
 class TestTaskDefinitions:
     def test_every_shipped_task_validates(self):
+        """The task inventory is a PROPERTY, not a count (#26).
+
+        Three claims, none of which a new ``evals/tasks/*.yaml`` can break:
+
+        * every shipped definition validates against the task schema, and its
+          inputs come from the blank-form corpus;
+        * every corpus-backed family has at least one task, with the family list
+          *derived* from ``tests/corpus/forms/manifest.json``. Adding a family to
+          the corpus therefore obliges a task for it; adding a task for a family
+          the corpus does not back is equally a defect (the inputs would have to
+          come from somewhere else);
+        * a non-vacuity floor, so a scan over an empty tasks directory cannot
+          silently pass.
+
+        The old form asserted ``len(tasks) == 7`` and the exact family set, which
+        made "ship one more eval task" a core-test edit — the coupling this test
+        now refuses to have.
+        """
         tasks = cleanroom.load_tasks(TASKS_DIR)
-        assert len(tasks) == 7
-        assert {task["family"] for task in tasks} == {
-            "grant", "petition", "gongmun", "hr", "research"}
+        assert len(tasks) >= MIN_SHIPPED_TASKS, (
+            f"only {len(tasks)} shipped eval task(s) — below the non-vacuity "
+            f"floor of {MIN_SHIPPED_TASKS}; the scan below would prove nothing")
+
+        backed = corpus_families()
+        assert backed, "the corpus manifest declares no families — vacuous scan"
+        covered = {task["family"] for task in tasks}
+        assert backed <= covered, (
+            "corpus-backed families with no eval task: "
+            f"{sorted(backed - covered)}")
+        assert covered <= backed, (
+            "eval tasks claim families the blank-form corpus does not back: "
+            f"{sorted(covered - backed)}")
+
         for task in tasks:
             assert task["prompt"].strip()
             assert all(entry.startswith("tests/corpus/forms/")
                        for entry in task["input_files"])
+
+    def test_the_family_coverage_property_bites_on_an_uncovered_family(
+            self, tmp_path):
+        """Negative control: the derived-family scan must catch a gap it is
+        shown. Planting a corpus family with no task has to fail, otherwise the
+        property above is decoration."""
+        backed = corpus_families() | {"planted-family"}
+        covered = {task["family"] for task in cleanroom.load_tasks(TASKS_DIR)}
+        assert backed - covered == {"planted-family"}
 
     def test_no_binaries_live_under_evals(self):
         """The eval tree references corpus files by path; embedding one would

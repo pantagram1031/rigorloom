@@ -1,0 +1,71 @@
+# Hr distribution module — declaration (schema: pipeline/references/module.schema.json).
+#
+# Work-type module #3: 계약·인사 서식 (HWP usage landscape family ⑦). It was
+# chosen third for one reason the other families cannot offer: the corpus holds
+# a VERSIONED PAIR of the same form — 고용노동부 표준근로계약서 2013 and its 2025
+# revision (tests/corpus/forms/hr/moel-pyojun-geunrogyeyakseo-{2013,2025}.hwp).
+# Two revisions of one instrument make "which template is this, and did a fill
+# quietly migrate it" a decidable question instead of a worry, and every rule
+# below was verified against BOTH forms before it was written.
+#
+# The family is also the one work type whose document IS the legal instrument. A
+# 민원 서식 is a fixed grid whose printed guide text must survive; a 공문's
+# 별지서식 guide vocabulary must be consumed. A 표준근로계약서 is numbered clause
+# prose carrying the 근로기준법 제17조 서면 명시 의무 in its own words, so the
+# rules are preservation rules over PROSE: the clause skeleton, the text a filled
+# seat must not eat, the statutory citations, and the two-party signature block.
+#
+# requires_modules is ABSENT on purpose: nothing in this module's payload touches
+# report, style, gongmun or minwon. check_hr imports only core (checker_base,
+# check_residue, engine form_inspect/hwpx_tables), so hr enables alone — asserted
+# by tests/test_hr_contract.py::TestIndependence. In particular it does NOT
+# import minwon: the identity_value_invented rule is minwon's precedent and this
+# module reimplements the pattern over its own vocabulary, because module→module
+# imports are outside the contract (modules/README.md, "Core never imports a
+# module" points one way and siblings do not point at each other at all).
+#
+# NO pack_types, and that is a finding rather than an omission. gongmun defines
+# gongmun_org because "which agency issues this document, under which 직위" is a
+# genuine per-operator vocabulary. A 근로계약서 looks like it has one — 사업체명,
+# 주소, 대표자 recur for one employer — and it must not have it:
+#   * the document is a TWO-party instrument, and party_half_filled exists
+#     exactly to catch a document where one side's seats are filled and the
+#     other's are not. A repository pack would be a standing supply of that
+#     half-fill;
+#   * the seats it would hold sit next to 사업자등록번호 and 계좌번호, the two
+#     shapes check_hr's privacy rule refuses to let anything synthesize. A pack
+#     is a store, and this is the one family where the store is the hazard;
+#   * everything the worker supplies is per-document personal data and belongs
+#     in a fill map, never in a repository.
+#
+# No cli, run_modes, gate_kinds, studio_panels or preflight: a work-type module
+# earns those when it has something to run, not to look complete. The
+# visual_verify expectations it authors ship as ordinary payload
+# (references/visual_expectations/hr.json) — there is no provides key for them,
+# by contract (modules/README.md).
+schema: rigorloom-module/v1
+name: hr
+requires: {rigorloom: ">=0.16"}
+#
+# wants: [baseline] — TWELVE of the twenty rules need the blank form:
+# clause_block_lost, clause_lost, clause_renumbered, contract_variant_lost,
+# clause_text_consumed, option_slot_lost, party_block_lost,
+# signature_marker_lost, statute_reference_lost, statute_reference_invented,
+# template_version_changed and identity_seat_autofilled. Without it they report
+# skipped:no_baseline and the checker still exits 0. That is correct behaviour
+# and a bad contract, so the need is declared and a runner supplies the form
+# instead of every caller having to know (modules/README.md, checkers[].wants).
+#
+# The three that do NOT need it are the ones that must never be gated behind an
+# input a caller can forget: identity_value_invented and
+# personal_number_invented (a 주민등록번호- or 계좌번호-shaped value nobody
+# declared is a finding on its own evidence) and template_version_mixed (a
+# document carrying two revisions' vocabulary matches no published 서식,
+# whatever it was filled from).
+provides:
+  checkers:
+    - {name: check_hr, script: scripts/check_hr.py, wants: [baseline]}
+  skill:
+    fragment: skill/FRAGMENT.md
+    references:
+      - skill/references/hr_flow.md
