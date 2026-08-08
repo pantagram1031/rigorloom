@@ -423,7 +423,7 @@ CLIs, not auto-fired.
 python engine/scripts/com_backend.py inspect --file FORM.hwp
 python engine/scripts/com_backend.py edit --file FORM.hwp --ops ops.json --save-as OUT.hwpx --export-pdf verify.pdf
 python engine/scripts/com_backend.py set-cell --file FORM.hwp --addr ROW,COL --text "값" [--table 0] --save-as OUT.hwpx [--expect-empty | --expect TEXT]
-python engine/scripts/com_backend.py convert --file IN.hwp[x] --to OUT.hwpx|OUT.pdf   # format by --to's extension
+python engine/scripts/com_backend.py convert --file IN.hwp[x] --to OUT.hwpx|OUT.pdf [--record PATH | --no-record]   # format by --to's extension
 python engine/scripts/build_report.py --content bundle/content.md --form FORM.hwp > ops.json   # --dry-run: no Hancom
 ```
 
@@ -444,7 +444,29 @@ behind an explicit `"raw_traversal": true`; the validator rejects bare
 session, so prefer the `set-cell` subcommand: **one invocation = one session =
 one cell**, run serially, never `--kill-stale` (T21). The walk itself is
 entry-point independent (it wraps), so drift cannot silently retarget it.
-`convert` is the one PDF/format path: `--to` decides the target by extension, one serial invocation, never `--kill-stale`. It is exactly what `visual_verify` shells out to when handed an `.hwpx` without a `--pdf`. For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
+`convert` is the one PDF/format path: `--to` decides the target by extension, one serial invocation, never `--kill-stale`. It is exactly what `visual_verify` shells out to when handed an `.hwpx` without a `--pdf`.
+
+**`convert` to PDF leaves a conversion record, and the next step needs it (T38).**
+Converting an `.hwpx` whose `settings.xml` stores a non-zero
+`PrintInfo/PrintMethod` (n-up 모아찍기 — the gongmun family does; 기안문 별지
+stores 4) first rewrites that value to 0 in a *temporary copy*, because Hancom's
+`SaveAs(PDF)` honours the stored print imposition and would fold the logical
+pages into the PDF. The original is never modified. That normalisation is
+reported in the stdout JSON as `print_method_normalized` **and** written to a
+`rigorloom/conversion-record/v1` sidecar at `<--to>.conversion.json`, by
+default and with no flag to remember. The sidecar exists because the canonical
+recipe converts in one process and verifies in another: `visual_verify` gates
+its print-method leg on evidence that the imposition was neutralised, and with
+that evidence confined to a stdout nobody captured it saw none and HARDed
+`imposition_mismatch` — unwaivably, since that class is deliberately not in
+`SAFETY_CHECKS`. A gate cannot tell "did not happen" from "was not told".
+`visual_verify` auto-discovers the sidecar beside `--pdf`; `--record PATH`
+relocates it (then pass `--conversion-record PATH` to `visual_verify`), and
+`--no-record` opts out, which restores the HARD. The record carries the sha256
+of both the source and the output PDF, so it cannot be pointed at a different
+artifact or a stale render — a mismatch is a usage error, not a weaker check.
+
+For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
 any SECTION-anchor mismatch (fix content.md, never bypass). ops JSON schema:
 `engine/references/ops_schema.md`; equation syntax:
 `engine/references/hwpeqn_cheatsheet.md` (brace every script: `x^{2}`, T13).
@@ -470,7 +492,8 @@ is you, reading page PNGs against `references/visual-rubric.md`.
 ```
 # pass 1 — machine half + vision task
 python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
-    [--pdf verify.pdf] [--expectations exp.json] [--png-dir DIR] [--dpi 130] \
+    [--pdf verify.pdf] [--conversion-record REC.json] \
+    [--expectations exp.json] [--png-dir DIR] [--dpi 130] \
     [--baseline BLANK.hwpx|BASE.pdf|DIR] \
     [--form-profile profile.json [--fill-map MAP.json] \
                     [--keep TEXT ...] [--keep-pattern REGEX]] \
@@ -517,6 +540,23 @@ produces it is a bug (T36).
   no `--pdf` is a usage error, never a pass. Pages are rasterized to
   `--png-dir` (default `<pdf>_pages/`) at `--dpi` (default 130). Equation
   scope errors (T13) need a separate `--dpi 300` run on that page.
+- **A PDF converted by an earlier step brings its provenance with it** (T38).
+  `com_backend.py convert` writes a `<pdf>.conversion.json` sidecar recording
+  what that conversion did — notably whether it had to normalise a stored n-up
+  `PrintMethod` — and this script auto-discovers it beside `--pdf`, or takes
+  `--conversion-record PATH`. The record then populates exactly the
+  `conversion` dict this script would have built had it done the convert
+  itself, so the print-method leg is satisfied by proof and `pages_document`
+  comes from Hancom's own `PageCount` (`pages_document_source: conversion`).
+  Verify it landed: `deterministic.conversion.provenance` reads
+  `conversion_record`. The record is believed only when bound to the bytes
+  under verification — its `source_sha256` must match `--artifact` and its
+  `pdf_sha256` must match `--pdf`; a mismatch, a missing hash or a wrong schema
+  is a **usage error (exit 2)**, never a quiet accept, which is also what
+  catches an artifact edited after its PDF was rendered. With **no** record and
+  a source storing `PrintMethod != 0`, the `imposition_mismatch` HARD stands
+  unchanged: this is plumbing for evidence, not a relaxation of the check, and
+  `imposition_mismatch` remains outside the SAFETY set and therefore unwaivable.
 - **Deterministic backstops**, all merged into one findings list: hwpx
   section/header XML validity (T23 `artifact_malformed`); zero-text document
   and zero-content page (T25 `blank_render`); stored `PrintInfo/PrintMethod`
@@ -531,8 +571,10 @@ produces it is a bug (T36).
   page, so a caller can assert unchanged regions stayed unchanged).
 - **`pages_document` is never yours to remember** (T36). Page parity takes the
   first source it can get and records which in
-  `deterministic.pages_document_source`: `conversion` (Hancom's own `PageCount`,
-  when this script did the convert) → `expectations` (an explicit declaration) →
+  `deterministic.pages_document_source`: `conversion` (Hancom's own `PageCount`
+  — from a convert this script performed, or from a hash-bound conversion
+  record left by one that an earlier step performed, T38) →
+  `expectations` (an explicit declaration) →
   `artifact_layout_cache` (derived here from the artifact's own
   `<hp:lineseg vertpos>` cache, counting the points where `vertpos` stops
   increasing; cell-relative linesegs inside `hp:tc`/`hp:subList` are excluded).

@@ -53,6 +53,13 @@ Rendering rules (non-negotiable):
     never with ``--kill-stale`` (killing a live Hancom belongs to an operator,
     not to a verification loop);
   * no Hancom and no ``--pdf`` is a usage error, never a silent pass;
+  * a PDF converted by an EARLIER step carries its provenance in a
+    ``<pdf>.conversion.json`` sidecar (``--conversion-record`` to name it
+    elsewhere), which is how print-method normalisation performed by
+    ``com_backend.py convert`` survives the step boundary. The record is
+    believed only when its ``source_sha256``/``pdf_sha256`` match the files
+    actually under verification; a mismatch is a usage error. With no record
+    the imposition HARD stands unchanged (T38);
   * ``--baseline`` names the BLANK FORM, so it takes one: an ``.hwpx``/``.hwp``
     baseline goes through the SAME serial conversion, and with no renderer the
     pixel diff is a skip-with-reason (``deterministic.skipped``) rather than a
@@ -70,6 +77,7 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -391,6 +399,107 @@ def convert_to_pdf(artifact, out_pdf):
             f"com_backend convert failed (exit {proc.returncode}): "
             f"{(proc.stderr or proc.stdout or '')[:500]}")
     return str(out_pdf), payload, None
+
+
+# ---------------------------------------------------------------------------
+# Conversion provenance across a step boundary (T38)
+# ---------------------------------------------------------------------------
+
+CONVERSION_RECORD_SCHEMA = "rigorloom/conversion-record/v1"
+#: WIRE CONTRACT with ``com_backend.py`` — it writes this sidecar, this script
+#: reads it. Both constants are asserted equal by the test suite rather than
+#: imported, so that visual_verify never takes an import-time dependency on
+#: the COM backend (which must stay optional on non-Hancom machines).
+CONVERSION_RECORD_SUFFIX = ".conversion.json"
+
+
+def conversion_record_path(pdf_path):
+    """Where ``com_backend.py convert`` leaves the sidecar for ``pdf_path``."""
+    return Path(str(pdf_path) + CONVERSION_RECORD_SUFFIX)
+
+
+def sha256_file(path, _chunk=1024 * 1024):
+    digest = hashlib.sha256()
+    try:
+        with open(str(path), "rb") as handle:
+            while True:
+                block = handle.read(_chunk)
+                if not block:
+                    break
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def load_conversion_record(record_path, artifact, pdf_path):
+    """Rebuild the ``conversion`` dict from a record written by an EARLIER step.
+
+    Why this exists. ``check_imposition``'s print_method leg HARDs when the
+    source stores a non-zero ``PrintMethod`` and nothing says the imposition
+    was neutralised. ``com_backend.py convert`` DOES neutralise it — but the
+    canonical recipe converts in one process and verifies in another, so the
+    proof died at the step boundary and this script, seeing nothing, could not
+    tell "the normalisation did not happen" from "nobody told me it happened".
+    It correctly assumed the worse of the two. This function is the telling.
+
+    It is plumbing, NOT a relaxation. The record only counts when it is bound
+    to the exact bytes under verification: ``source_sha256`` must match the
+    ``--artifact`` being checked and ``pdf_sha256`` must match the ``--pdf``
+    being rendered. Anything else — wrong file, edited artifact, regenerated
+    PDF, hand-written claim — is a usage error, never a quiet accept. With no
+    record at all the HARD stands exactly as before.
+
+    Returns ``(conversion_dict, error_message)``; exactly one is None.
+    """
+    record_path = Path(record_path)
+    if not record_path.is_file():
+        return None, f"--conversion-record not found: {record_path}"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"unreadable conversion record {record_path}: {exc}"
+    if not isinstance(record, dict):
+        return None, (f"conversion record {record_path} is not a JSON object")
+    schema = record.get("schema")
+    if schema != CONVERSION_RECORD_SCHEMA:
+        return None, (
+            f"conversion record {record_path} has schema {schema!r}, "
+            f"expected {CONVERSION_RECORD_SCHEMA!r}")
+
+    # -- the binding. A provenance claim that can be pointed at the wrong PDF
+    #    is worse than no claim, so both ends are checked before anything in
+    #    the record is believed.
+    for label, claimed, actual_path in (
+            ("source", record.get("source_sha256"), artifact),
+            ("pdf", record.get("pdf_sha256"), pdf_path)):
+        actual = sha256_file(actual_path)
+        if not claimed:
+            return None, (
+                f"conversion record {record_path} carries no {label}_sha256; "
+                "an unbound conversion record is not evidence")
+        if actual is None:
+            return None, (
+                f"cannot hash {label} {actual_path} to check the conversion "
+                f"record {record_path}")
+        if claimed != actual:
+            return None, (
+                f"conversion record {record_path} describes a different "
+                f"{label}: record says {label}_sha256={claimed[:16]}… but "
+                f"{actual_path} hashes to {actual[:16]}…. Re-run "
+                "`com_backend.py convert` on the artifact you are verifying "
+                "— a stale record is a claim about bytes that no longer exist.")
+
+    conversion = {
+        "print_method_normalized": record.get("print_method_normalized"),
+        "pages_document": record.get("pages_document"),
+        "pages_pdf": record.get("pages_pdf"),
+        "source_print_method": record.get("source_print_method"),
+        "provenance": "conversion_record",
+        "record": str(record_path),
+        "record_created_utc": record.get("created_utc"),
+    }
+    return conversion, None
 
 
 def render_pages(fitz, pdf_path, png_dir, dpi):
@@ -1519,6 +1628,23 @@ def verify(args):
         if error:
             return usage_error(str(artifact), "visual_verify", error)
 
+    # A conversion this script did not perform can still be PROVEN, when the
+    # step that did perform it left a record bound to these exact bytes (T38).
+    # Auto-discovery is deliberate: the canonical recipe converts then
+    # verifies, and the operator must not have to remember a flag to keep the
+    # evidence from evaporating between the two. An explicitly named record
+    # that is missing or unbound is a usage error; so is a DISCOVERED one that
+    # does not match, because a stale sidecar next to the PDF means the PDF
+    # itself is stale — exactly the thing that must never verify quietly.
+    if conversion is None:
+        named = getattr(args, "conversion_record", None)
+        candidate = Path(named) if named else conversion_record_path(pdf_path)
+        if named or candidate.is_file():
+            conversion, error = load_conversion_record(
+                candidate, artifact, pdf_path)
+            if error:
+                return usage_error(str(artifact), "visual_verify", error)
+
     png_dir = Path(args.png_dir) if args.png_dir else (
         Path(pdf_path).parent / (Path(pdf_path).stem + "_pages"))
     try:
@@ -1851,6 +1977,15 @@ def main(argv=None):
                         help=".hwpx/.hwp artifact, or a .pdf to judge directly")
     parser.add_argument("--pdf", default=None,
                         help="already-rendered PDF (skips conversion)")
+    parser.add_argument("--conversion-record", default=None,
+                        help="JSON record written by `com_backend.py convert` "
+                             "proving what that conversion did (notably "
+                             "print-method normalisation). Defaults to the "
+                             f"<--pdf>{CONVERSION_RECORD_SUFFIX} sidecar when "
+                             "present. The record must carry the sha256 of "
+                             "BOTH this --artifact and this --pdf; a record "
+                             "that does not match is a usage error, not a "
+                             "weaker check.")
     parser.add_argument("--expectations", default=None,
                         help="JSON: pages_document, page_budget{min,max}/"
                              "max_pages, base_pt, line_spacing_pct, "
