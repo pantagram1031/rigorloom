@@ -129,7 +129,7 @@ the cell already prints something:
 
 | the cell | use |
 |---|---|
-| `classification: fill_target` — *genuinely empty*: `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (19 of 19 empty cells on the PPS 협업승인신청서) | **`fill-cells --cell ROW,COL=값`** (T27). There is no string to key on, so `replace --map` structurally cannot reach it |
+| `classification: fill_target` — *genuinely empty*: `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (all 19 empty cells on the PPS 협업승인신청서; 13 of them are `fill_target`, the other 6 are `spacer`) | **`fill-cells --cell ROW,COL=값`** (T27). There is no string to key on, so `replace --map` structurally cannot reach it |
 | already prints a **seat**: a skeleton the form typeset for you to write over or into — `" 우(     -     )"`, `" http://"`, `"20   .    .    .  ~  20   .    .    .   (     개월)"` | **`replace --at-cell ROW,COL=값`** or **`--at-cell-append`** (T34). Address-keyed, so you never need the skeleton's exact internal whitespace |
 | a literal, document-unique placeholder string you already hold (`[제목]`) | **`replace --map`** |
 
@@ -557,17 +557,48 @@ produces it is a bug (T36).
   POST-flight half; the pre-flight (`form_inspect` `script_anomaly` →
   `fill-cells --charpr-per-cell`) is under §3 and shares this comparison
   code, so a fill that passed the pre-flight cannot fail here for this reason.
+- **A cell that is blank ON PURPOSE is declared, not inferred** —
+  `declared_blank`. A form's signature line, a staff-only box and a field you
+  simply have no value for look identical in the render, so before this every
+  accepted tier of the clean-room run emitted the SAME two
+  `empty_cell_expected_fill` warns (y=91.2 and y=350.3 on the PPS fill), and a
+  warning every correct run emits trains people to ignore warnings. Three
+  changes, one rule — *say it or see it, and never see it twice*:
+  - **suppressed when the grid owns the blank.** A wholly blank detected
+    header row (`blank_band`) or the empty corner where column headers meet
+    the row labels (`stub_head`) is structure, not an omission — the same two
+    shapes `form_inspect` reports as `spacer` (§2). PPS's y=350.3 was the
+    협업업체 matrix stub head.
+  - **suppressed when you declare the seat.** `declared_blank: [label]` in
+    `expectations` — or in the wrapper-shaped `--fill-map` file, so ONE file
+    still carries the whole fill. `intentionally_blank` is accepted as an
+    alias and folded into the same list (two spellings of one concept is the
+    T36 defect shape). Matching is whitespace-normalized and containment-based
+    in either direction, so `성명` reaches the form's `성    명`. The
+    declaration drives BOTH legs: the `fill_map` presence check and the layout
+    one.
+  - **otherwise reported by LABEL.** The finding used to carry only `at_y` — a
+    page coordinate says "some table on this page has a blank header cell" and
+    leaves finding it to you. It now carries `seat` (the printed cell to its
+    left in the header row, else the cell beneath it), `col` and the header
+    row itself. PPS's y=91.2 reads `seat: 법인등록번호`.
+  Suppression is never silent: `deterministic.layout_qa.empty_cell_suppressed`
+  lists `{reason, label, at_y, page}` per suppressed cell, and the verdict
+  carries `deterministic.declared_blank` with `declared_blank_source` naming
+  every surface it arrived on.
 - **`expectations.json`** keys: `pages_document`, `page_budget {min,max}` or
   `max_pages`, `base_pt`, `line_spacing_pct`, `margins_mm {top,bottom,left,
-  right}`, `fill_map {label: value}`, `intentionally_blank [label]`,
-  `blank_pages [n]`, `forbidden_text [str]`. Everything absent is listed
+  right}`, `fill_map {label: value}`, `declared_blank [label]`
+  (alias: `intentionally_blank`), `blank_pages [n]`, `forbidden_text [str]`.
+  Everything absent is listed
   under `deterministic.skipped` — the verdict says what it could NOT check.
 - **`visual_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
   rubric, rubric_path, acceptance, acceptance_waivers[], acceptance_blockers[],
   pages[], deterministic{}, vision{}, vision_required[], loop{}, hard[], warn[],
   counts, verdict}`. `verdict` is one of `pass`, `fail`, `vision_pending`,
   `deterministic_pass`, `safety_incomplete`, `usage_error` — see the exit table
-  above. `deterministic` carries `safety_checks[]`, `skipped[]` (human
+  above. `deterministic` carries `safety_checks[]`, `declared_blank[]`,
+  `declared_blank_source[]`, `skipped[]` (human
   `"check: reason"` strings), `skipped_checks[]` (the keys alone),
   `pages_document_source` and `fill_map_source`.
 - **The vision handback** (`--vision-verdict`) is

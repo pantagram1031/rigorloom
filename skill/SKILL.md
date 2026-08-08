@@ -122,7 +122,7 @@ path, that is a surface defect to report, not a reason to escalate.
   the one you mean with `ROW,COL#RUN`. Never reconstruct the seat string by
   hand to feed `--map`.
 - An empty form cell has **no text to key on** — it is a self-closing
-  `<hp:run charPrIDRef="N"/>` with no `<hp:t>` (19 of 19 empty cells on the
+  `<hp:run charPrIDRef="N"/>` with no `<hp:t>` (all 19 empty cells on the
   PPS form). `preedit replace` is text-keyed and cannot reach it; that is what
   `preedit fill-cells` is for (T27). Routing an empty cell to `replace` is the
   defect that pushed two clean-room agents onto the COM path and into T28.

@@ -46,7 +46,9 @@ SCRIPT = REPO_ROOT / "pipeline" / "scripts" / "visual_verify.py"
 RUBRIC = REPO_ROOT / "skill" / "references" / "visual-rubric.md"
 
 sys.path.insert(0, str(REPO_ROOT / "pipeline" / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "engine" / "scripts"))
 import check_residue  # noqa: E402
+import layout_qa  # noqa: E402
 import visual_verify  # noqa: E402
 
 
@@ -1811,3 +1813,118 @@ def test_every_incident_is_covered_by_the_rubric(incident):
             m[0] for m in visual_verify._LAYOUT_QA_MAP.values()}, (
             f"{incident}: {cls} is recorded vision-only but a deterministic "
             "detector emits it — update the matrix or the rubric")
+
+
+# --------------------------------------------------------------------------
+# Q3 — a warning every correct run emits is a warning nobody reads
+#
+# failing-before: every accepted tier of the v0.17 clean-room run carried the
+# SAME two `empty_cell_expected_fill` warns, at y=91.2 and y=350.3 on the PPS
+# fill — one for a by-design-blank matrix stub head, one for a cell nobody
+# supplied. Both were correct runs. The evidence was a y coordinate, which
+# says a table on this page has a blank header cell and leaves finding it to
+# the reader.
+# --------------------------------------------------------------------------
+
+def _header_rows(rows, at_y=100.0):
+    return layout_qa.header_cell_violations(rows, at_y)
+
+
+def test_header_cell_empty_names_the_seat_by_its_label():
+    """The surviving warning identifies the seat, not a coordinate."""
+    rows = [["신청업체", "기 업 명", "한빛정밀(주)", "법인등록번호", ""],
+            ["", "주    소", "서울…", "", ""]]
+    items = _header_rows(rows, 91.2)
+    assert len(items) == 1
+    assert items[0]["label"] == "법인등록번호"
+    assert items[0]["col"] == 4
+    assert items[0]["spacer_pattern"] is None
+    reason, label = visual_verify.resolve_header_cell_empty(items[0], ())
+    assert reason is None                      # nothing suppresses it
+    assert label == "법인등록번호"
+
+
+def test_matrix_stub_head_is_a_spacer_not_a_warning():
+    """PPS y=350.3: the corner where column headers meet the row labels."""
+    rows = [["", "기 업 명", "대표자", "전 화", "메일주소"],
+            ["참여기업", "대한기계(주)", "박정우", "031-777-0101", "경기도…"]]
+    items = _header_rows(rows, 350.3)
+    assert [i["spacer_pattern"] for i in items] == ["stub_head"]
+    reason, _label = visual_verify.resolve_header_cell_empty(items[0], ())
+    assert reason == "spacer:stub_head"
+
+
+def test_wholly_blank_band_is_one_fact_not_one_per_column():
+    rows = [["", "", "", ""], ["신청인", "", "", ""]]
+    items = _header_rows(rows)
+    assert len(items) == 1
+    assert items[0]["spacer_pattern"] == "blank_band"
+    assert items[0]["col"] is None
+    reason, _ = visual_verify.resolve_header_cell_empty(items[0], ())
+    assert reason == "spacer:blank_band"
+
+
+def test_declared_blank_suppresses_only_the_seat_it_names():
+    rows = [["신청업체", "기 업 명", "", "법인등록번호", ""],
+            ["", "주    소", "서울…", "", ""]]
+    items = _header_rows(rows)
+    labels = [i["label"] for i in items]
+    assert labels == ["기 업 명", "법인등록번호"]
+    reasons = [visual_verify.resolve_header_cell_empty(
+        item, ["법인등록번호"])[0] for item in items]
+    assert reasons == [None, "declared_blank"]
+
+
+def test_declared_blank_matching_is_whitespace_normalized():
+    """Form labels carry the form's own padding; a caller will not retype it."""
+    assert visual_verify.declared_blank_match(["성명"], "성    명") == "성명"
+    assert visual_verify.declared_blank_match(["성    명"], "성명") == "성    명"
+    assert visual_verify.declared_blank_match(["대표자"], "법인등록번호") is None
+    assert visual_verify.declared_blank_match([], "성명") is None
+
+
+def test_declared_blank_is_one_list_however_it_is_spelled(tmp_path):
+    """`declared_blank` is the name; `intentionally_blank` is its alias.
+
+    Two spellings for one concept is the T36 defect shape, so they reconcile
+    into ONE list and the verdict records every surface it arrived on."""
+    fill_map = tmp_path / "fill.json"
+    fill_map.write_text(json.dumps({
+        "fill_map": {"applicant": "Hong Gildong"},
+        "declared_blank": ["signature"],
+    }), encoding="utf-8")
+    expectations = {"intentionally_blank": ["date"]}
+    entries, sources, error = visual_verify.reconcile_declared_blank(
+        expectations, fill_map)
+    assert error is None
+    assert entries == ["date", "signature"]
+    assert sources == ["expectations.intentionally_blank",
+                       "fill_map.declared_blank"]
+
+
+def test_declared_blank_wrong_shape_is_a_usage_error():
+    _e, _s, error = visual_verify.reconcile_declared_blank(
+        {"declared_blank": "signature"}, None)
+    assert error and "list of seat names" in error
+
+
+def test_declared_blank_and_suppression_are_recorded_in_the_verdict(tmp_path):
+    """Suppression must be auditable — never a silent drop."""
+    artifact = make_hwpx(tmp_path / "a.hwpx")
+    pdf = make_pdf(tmp_path / "a.pdf", [_body_page()])
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({
+        "fill_map": {"applicant": "Hong Gildong", "date": "2026-08-08"},
+        "declared_blank": ["date"],
+    }), encoding="utf-8")
+    _code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                            "--expectations", expectations,
+                            "--png-dir", tmp_path / "png")
+    det = verdict["deterministic"]
+    assert det["declared_blank"] == ["date"]
+    assert det["declared_blank_source"] == ["expectations.declared_blank"]
+    assert "empty_cell_suppressed" in det["layout_qa"]
+    # still-catches: the undeclared label is still reported by name.
+    labels = {f["evidence"]["label"] for f in verdict["hard"]
+              if f["class"] == "empty_cell_expected_fill"}
+    assert labels == {"applicant"}
