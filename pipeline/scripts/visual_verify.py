@@ -100,6 +100,7 @@ for _dir in (_SCRIPTS_DIR, _ENGINE_SCRIPTS):
 
 import charpr_script  # noqa: E402  (engine/scripts — shared T30 vocabulary)
 import check_residue  # noqa: E402
+import preedit  # noqa: E402  (T39 fill-value paragraph semantics)
 from checker_base import (  # noqa: E402
     EXIT_HARD, EXIT_PASS, _utf8_stdio, dump_json, emit_verdict, usage_error,
     verdict_skeleton,
@@ -1055,9 +1056,9 @@ def derive_form_keep(profile, fill_map, haystack=None, scopes=None):
     keeps the label as a prefix — ``" http://"`` becomes
     ``" http://hanbit.example.kr"`` — so the key survives by construction:
 
-    * ``consumed`` — the mapped VALUE is present in ``haystack``: the fill
-      happened. The entry is not keep-listed; any surviving occurrence of it
-      inside the value's span is attributed there by the gate's
+    * ``consumed`` — an occurrence of the targeted entry is wholly inside a
+      mapped VALUE span in ``haystack``: the fill happened. The entry is not
+      keep-listed; that occurrence is attributed there by the gate's
       ``--fill-map`` accounting, and an occurrence anywhere else still HARDs.
     * ``consumed`` — no value found but the entry text is gone too: nothing
       to flag either way (key-absence fallback).
@@ -1130,7 +1131,7 @@ def derive_form_keep(profile, fill_map, haystack=None, scopes=None):
             keep.append(text)
         elif any(scope_by_norm.get(key) == "form_text" for key in matched):
             keep.append(text)              # declared: the form prints this
-        elif haystack is None or _fill_landed(keys, matched, haystack):
+        elif haystack is None or _fill_landed(keys, matched, text, haystack):
             consumed.append(text)
         elif check_residue.normalize_text(text) not in haystack:
             consumed.append(text)          # key-absence fallback
@@ -1150,13 +1151,23 @@ def _occurrence_count(haystack, text):
     return len(check_residue.occurrences(haystack, needle)) if needle else 0
 
 
-def _fill_landed(keys, matched, haystack):
-    """True when a mapped value for one of ``matched`` is in the document."""
+def _fill_landed(keys, matched, target, haystack):
+    """True when ``target`` lands *inside* one of its mapped value spans.
+
+    Merely finding a mapped fragment somewhere after a surviving form label
+    contradicts the residue delegate: that label is outside the declared
+    value and therefore still residue. Reuse the delegate's own occurrence
+    and span primitives so the keep report and the gate cannot disagree (T43).
+    """
+    target = check_residue.normalize_text(target)
     for key in matched:
         for value in keys[key]:
-            value = check_residue.normalize_text(str(value or ""))
-            if value and value in haystack:
-                return True
+            spans = check_residue.value_spans(haystack, {key: value})
+            for start in check_residue.occurrences(haystack, target):
+                end = start + len(target)
+                if any(span["start"] <= start and end <= span["end"]
+                       for span in spans):
+                    return True
     return False
 
 
@@ -1385,6 +1396,30 @@ def _norm(text):
     return re.sub(r"\s+", "", text or "")
 
 
+def _fill_value_parts(value):
+    """Non-empty normalized paragraphs in one declared fill value (T44).
+
+    ``preedit.split_fill_lines`` is the authoring contract for JSON arrays,
+    LF/CRLF/CR strings and intentional blank paragraphs. Reusing it here
+    keeps the post-flight from treating a multi-paragraph fill as one XML run
+    that can never exist.
+    """
+    return [part for line in preedit.split_fill_lines(value)
+            if (part := _norm(line))]
+
+
+def _cell_address_key(label):
+    match = re.fullmatch(r"\s*(\d+)\s*,\s*(\d+)\s*", str(label))
+    return tuple(map(int, match.groups())) if match else None
+
+
+def _seat_matches_address(seat, address):
+    if not seat or address is None:
+        return False
+    match = re.fullmatch(r"(\d+),(\d+)", seat[-1].rsplit("/", 1)[-1])
+    return bool(match) and tuple(map(int, match.groups())) == address
+
+
 def check_fill_map(records, expectations, declared_blank=()):
     """Declared fill values must be visible somewhere in the render."""
     fill_map = expectations.get("fill_map") or {}
@@ -1395,9 +1430,11 @@ def check_fill_map(records, expectations, declared_blank=()):
     for label, value in sorted(fill_map.items()):
         if declared_blank_match(declared_blank, label) is not None:
             continue
-        if value is None or str(value) == "":
+        parts = preedit.split_fill_lines(value)
+        declared = _norm("".join(parts))
+        if not declared:
             continue
-        if _norm(str(value)) not in haystack:
+        if declared not in haystack:
             out.append(finding(
                 "empty_cell_expected_fill", "hard",
                 cls="empty_cell_expected_fill",
@@ -1461,6 +1498,24 @@ def _hwpx_seat_runs(artifact):
             for name in names:
                 xml = archive.read(name).decode("utf-8", "replace")
                 out.extend(charpr_script.iter_seat_runs(xml, name))
+    except (OSError, zipfile.BadZipFile):
+        return []
+    return out
+
+
+def _hwpx_seat_empty_runs(artifact):
+    """``[(seat, charPrIDRef)]`` for reserved, text-less table-cell runs."""
+    path = Path(artifact)
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return []
+    out = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = sorted(n for n in archive.namelist()
+                           if re.match(r"Contents/section\d+\.xml$", n))
+            for name in names:
+                xml = archive.read(name).decode("utf-8", "replace")
+                out.extend(charpr_script.iter_seat_empty_runs(xml, name))
     except (OSError, zipfile.BadZipFile):
         return []
     return out
@@ -1559,30 +1614,34 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
         is why the whole 기안문 별지 gongmun family was unfillable — every
         substantive seat on that form is ratio 97%% while the heaviest charPr
         is the 비고 fine print at 100%%.
-      * differs from body and the blank form's same seat carries no text at
-        all (the genuinely empty run a ``fill-cells`` writes into) → HARD.
-        An empty seat has no typography to inherit, so nothing is excused.
+      * differs from body and an address-keyed fill matches a repeated block
+        of reserved empty runs in the blank seat → WARN only when every run
+        has one exact matching charPr whose sole body difference is ``ratio``
+        (T42). A single empty run, mixed ids, a changed signature or any
+        script/scale/offset anomaly stays HARD.
       * differs from body and no ``.hwpx`` baseline was available → HARD, and
         the finding SAYS the inheritance question was not checked. The
         detection stays, the claim does not exceed the evidence.
     """
     fill_map = expectations.get("fill_map") or {}
-    values = [str(v) for v in fill_map.values() if v not in (None, "")]
-    if not values:
+    if not any(_fill_value_parts(value) for value in fill_map.values()):
         return [], None
     profiles = charpr_script_profiles(artifact)
     runs = _hwpx_seat_runs(artifact)
     if not profiles or not runs:
         return [], None
 
-    normalized_values = [(label, _norm(str(value)))
-                         for label, value in sorted(fill_map.items())
-                         if value not in (None, "")]
+    normalized_values = [
+        (label, part, _cell_address_key(label))
+        for label, value in sorted(fill_map.items())
+        for part in _fill_value_parts(value)]
     filled, body_weight = [], collections.Counter()
     for seat, cid, text in runs:
         normalized = _norm(text)
-        hit = next((label for label, value in normalized_values
-                    if value and value in normalized), None)
+        hit = next((label for label, part, address in normalized_values
+                    if part in normalized
+                    and (address is None
+                         or _seat_matches_address(seat, address))), None)
         if hit is not None:
             filled.append((seat, cid, text, hit))
         else:
@@ -1598,17 +1657,20 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
 
     # -- the blank form's own seats, when one is readable -------------------
     form_source, form_note = seat_baseline_source(baseline_form)
-    form_profiles, form_runs, form_addresses = {}, None, set()
+    form_profiles, form_runs = {}, None
+    form_empty_runs, form_addresses = [], set()
     if form_source is not None:
         form_profiles = charpr_script_profiles(form_source)
         baseline_runs = _hwpx_seat_runs(form_source)
-        if not form_profiles or not baseline_runs:
+        baseline_empty_runs = _hwpx_seat_empty_runs(form_source)
+        if not form_profiles or not (baseline_runs or baseline_empty_runs):
             form_note = (f"--baseline {form_source.name} carries no readable "
-                         f"charPr definitions or no text runs, so whether the "
+                         f"charPr definitions or no runs, so whether the "
                          f"form already carried this signature could not be "
                          f"checked")
         else:
             form_runs = baseline_runs
+            form_empty_runs = baseline_empty_runs
             form_addresses = _hwpx_seats(form_source)
 
     report = {"baseline_charpr_id": baseline_cid,
@@ -1672,6 +1734,54 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
                 form_seat_note = (
                     "the blank form has no such seat, so the comparison could "
                     "not be made")
+            elif (wanted := _cell_address_key(label)) is not None:
+                reserved = [(run_seat, empty_cid)
+                            for run_seat, empty_cid in form_empty_runs
+                            if (run_seat == seat
+                                and _seat_matches_address(run_seat, wanted))]
+                empty_cids = sorted({empty_cid for _run_seat, empty_cid
+                                     in reserved})
+                evidence["form_baseline_reserved_runs"] = len(reserved)
+                evidence["form_baseline_empty_charpr_ids"] = empty_cids
+                if not reserved:
+                    form_seat_note = (
+                        "the blank form's same seat has no repeated reserved "
+                        "empty runs, so there is no address-keyed typography "
+                        "to inherit")
+                elif len(reserved) < 2:
+                    form_seat_note = (
+                        "the blank form's same seat has only a genuinely "
+                        "empty run, not a repeated reserved typography block, "
+                        "so there is nothing safe to inherit")
+                elif len(empty_cids) != 1:
+                    form_seat_note = (
+                        "the blank form's reserved runs in this seat carry "
+                        "several charPr ids, so the address baseline is "
+                        "ambiguous and nothing can be excused")
+                else:
+                    reserved_cid = empty_cids[0]
+                    reserved_profile = form_profiles.get(reserved_cid)
+                    reserved_differing = (
+                        charpr_script.differing_keys(reserved_profile, baseline)
+                        if reserved_profile is not None else [])
+                    if reserved_profile is None:
+                        form_seat_note = (
+                            "the blank form's reserved runs refer to undefined "
+                            f"charPr {reserved_cid}, so nothing can be excused")
+                    elif set(reserved_differing) - {"ratio"}:
+                        form_seat_note = (
+                            "the blank form's repeated reserved typography "
+                            "itself carries a script/scale/offset anomaly, so "
+                            "it cannot excuse the filled run")
+                    elif charpr_script.differing_keys(profile,
+                                                       reserved_profile):
+                        form_seat_note = (
+                            "the filled run does not match the blank form's "
+                            "repeated reserved typography, so the fill changed "
+                            "its script/scale/offset signature")
+                    else:
+                        form_cid = reserved_cid
+                        form_match = "cell_address_reserved_runs"
             elif not any(run_seat == seat for run_seat, _cid, _text in form_runs):
                 form_seat_note = (
                     "the blank form's same seat carries no text at all (a "

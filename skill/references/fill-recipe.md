@@ -149,7 +149,11 @@ properties, so on its own it would flag every seat on this form — the seats ar
 97% and the body baseline is the 비고 face at 100%. With `--baseline
 $W/form.hwpx` (which §3 step 7 already passes, for the pixel diff) it reads the
 blank form's XML too and compares each filled run against **the blank run named
-by the fill-map key in the same seat**, addressed by its `cellAddr`. An
+by the fill-map key in the same seat**, addressed by its `cellAddr`. For an
+exact `ROW,COL` key whose seat has no visible text, it can instead prove the
+form's typography from a repeated reserved-run block: at least two empty runs,
+one shared charPr, an exact match to the fill, and no body difference except
+`ratio` (T42). An
 unrelated sibling run in a multi-run cell can never excuse the fill. A
 signature the printed form
 already had is then a WARN, `fill_charpr_script_inherited`, naming the seat and
@@ -163,7 +167,8 @@ What still HARDs, with the baseline in hand:
 |---|---|
 | already carries this exact signature | WARN `fill_charpr_script_inherited` — read the render once to confirm the seat is legible, then move on |
 | carries a *different* signature | HARD — the fill changed the seat's typography |
-| carries **no text at all** (the genuinely empty run a `fill-cells` target has) | HARD — an empty seat has no typography to inherit; this is the T30 trap's own shape |
+| exact `ROW,COL` key; at least two reserved empty runs with one matching charPr that differs from body only by `ratio` | WARN `fill_charpr_script_inherited` — the form reserved that typography (T42) |
+| one empty run, mixed reserved charPr ids, a changed signature, or a reserved script/scale/offset anomaly | HARD — repetition did not prove safe inheritance |
 | not available — no `--baseline`, or a `.pdf`/image-directory baseline | HARD, and the finding says so: `form_baseline_checked: false` plus the reason. The check does not weaken when it cannot see the form |
 
 ### 1.2 A multi-line cell: the 공문 본문 (T39)
@@ -218,6 +223,12 @@ loses its cached lineseg, so Hancom re-layouts on open — which is what makes i
 render correctly. Take `pages_document` from the conversion, or declare
 `expectations.pages_document`; the `artifact_layout_cache` source under-counts.
 
+If the one `fill_map` declares this whole body, use the same JSON array or
+newline string. The post-flight splits it with the writer's exact
+`split_fill_lines` rule: every non-empty paragraph is checked for T30/T42, and
+the address key limits those matches to cell `2,0` (T44). A multi-paragraph
+value therefore cannot turn the charPr safety check into a skip.
+
 ---
 
 ## 2. The artifacts, and exactly which flag eats each one
@@ -261,6 +272,13 @@ and the blank declarations:
 the fill CONSUMED*, because that is what the residue keep derivation reads it
 as: a key matching a form anchor removes that anchor from the keep list, on the
 theory that the label survives *inside* the value (T31).
+
+The mapped value is the **complete authored span in the artifact**, not merely
+the payload inserted after a label (T43). If COM changes `수신` to
+`수신 국가유산청장`, declare `"수신": "수신 국가유산청장"`, not
+`"수신": "국가유산청장"`. A label counts as consumed only when that occurrence
+lies wholly inside the declared value span; a payload fragment elsewhere does
+not suppress surviving form text.
 
 - For a **seat** you rewrote or appended to, the key is the **seat text** —
   `"20   .    .    .  ~  20   .    .    .   (     개월)"`, `"http://"`. That is

@@ -153,6 +153,28 @@ def test_an_empty_seat_has_no_label_run_to_match():
     assert charpr_script.seat_label_runs(runs, ("s0", "t1/1,0"), "수신") == []
 
 
+def test_empty_runs_keep_their_exact_structural_seat_and_charpr():
+    """T42 needs the typography of a reserved blank block without pretending
+    that it is visible text. Self-closing runs, paired empty runs and an empty
+    ``<hp:t/>`` all count; a nested table keeps its own deeper seat."""
+    inner = ('<hp:tbl id="30"><hp:tr>'
+             + _cell(0, 0, '<hp:p id="8"><hp:run charPrIDRef="7"/></hp:p>')
+             + '</hp:tr></hp:tbl>')
+    xml = _sec('<hp:p id="1"><hp:tbl id="20"><hp:tr>'
+               + _cell(2, 0, '<hp:p id="9">'
+                       '<hp:run charPrIDRef="14"/>'
+                       '<hp:run charPrIDRef="14"><hp:t/></hp:run>'
+                       '<hp:run charPrIDRef="14"><hp:t></hp:t></hp:run>'
+                       + inner + '</hp:p>')
+               + '</hp:tr></hp:tbl></hp:p>')
+    assert charpr_script.iter_seat_empty_runs(xml, "s0") == [
+        (("s0", "t1/2,0"), "14"),
+        (("s0", "t1/2,0"), "14"),
+        (("s0", "t1/2,0"), "14"),
+        (("s0", "t1/2,0", "t2/0,0"), "7"),
+    ]
+
+
 def test_iter_runs_is_iter_seat_runs_with_the_seat_dropped():
     """One traversal, two views. The seat-aware and seat-blind readings of a
     document must never report different runs, different text or a different
