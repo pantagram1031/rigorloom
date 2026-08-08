@@ -44,7 +44,8 @@ fixed-grid forms; the fill gate there is layout immutability, not budget),
 `addr`/`span`/size/borderFill/shading/classification/`text_preview` +
 `truncated` — plus the T30 pre-flight fields
 `charpr`/`script_anomaly`/`charpr_suggested` on `fill_target` cells),
-`body_baseline_charpr`, `script_anomaly_targets`,
+`body_baseline_charpr`, `script_anomaly_targets`, `spacer_cells`,
+`fill_target_count`,
 `break_audit`. `--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
@@ -55,6 +56,40 @@ otherwise 0 (diagnostic tool, never a gate).
 `"20   .    .    .  ~  20   .   "`, which HIDES the `(     개월)` blank in
 its middle, and a round-3 clean-room agent reasonably concluded the skeleton
 ended there. Never treat a preview as the cell's text.
+
+**`classification` has four values, and `spacer` is the one that saves you
+work.** `guide` / `static` / `fill_target` / `spacer`. A **spacer** is an
+empty cell the GRID needs and no writer ever touches; it is excluded from
+`fill_target_count` and listed separately under `spacer_cells`
+(`{table, addr, pattern}`). Three conjunctive conditions, all read off the
+table itself — there is no address list anywhere in the code:
+
+1. **no printed content** (it would otherwise be a `fill_target`);
+2. **no label neighbour** — nothing names it, so nothing can be asked for it.
+   A label neighbour is a printed cell ending exactly where this one starts on
+   the same row band (`법인등록번호` → the cell to its right), or a printed
+   cell directly above covering **exactly** this cell's column band (a matrix
+   column header). Column-band equality is the whole rule: a form title or a
+   prose paragraph also sits "above" a full-width strip without delimiting a
+   field, and PPS's narrow `첨부서류` at (17,0) does not own the full-width
+   strip at (18,0). Two stacked full-width bands are document flow, never a
+   label/value pair;
+3. **filler geometry**, one of two shapes the corpus grids actually use:
+   - `full_width_band` — spans every column of its table AND is shorter than
+     the shortest cell in that same table that manages to print text. It spans
+     the label column too, so no field can live in it, and the grid itself
+     proves no text line fits at that height. PPS (1,0)/(9,0)/(12,0) at 240
+     and (16,0)/(18,0) at 1280/1080 against a 1860 shortest printed cell;
+   - `stub_head` — the empty corner where a header row crosses a label column:
+     every other cell in its row is a printed `static`, and the cell directly
+     beneath it, sharing its exact column band, prints text. PPS (13,0), above
+     `협업업체` and beside `업 체 명 / 대표자 / 전 화 / 사업장주소`.
+
+On the PPS 협업승인신청서 that is 19 empty cells → **13 `fill_target` + 6
+`spacer`**. A genuinely empty fillable cell keeps its label neighbour and
+stays a `fill_target`: (2,7), the blank beside `법인등록번호`, is empty, is
+not thin, and is named — so it is still yours to fill. Spacers carry no T30
+pre-flight fields, because nothing will ever be written into them.
 
 **Contract: structure only.** The profile carries anchor/guide strings, not
 the document body. Do not dump section XML into context.
