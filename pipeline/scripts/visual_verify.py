@@ -641,12 +641,19 @@ _LAYOUT_QA_MAP = {
 }
 
 
-def run_layout_qa(pdf_path, guide_strings=None):
+def run_layout_qa(pdf_path, guide_strings=None, declared_blank=()):
     """Run the engine's layout_qa and map what it finds onto rubric classes.
 
     Unmapped findings (citation markers, latex leaks, whitespace flags) are
     preserved verbatim under ``unmapped`` rather than stretched into a class
     they do not fit — see the rubric §4 rule.
+
+    ``header_cell_empty`` gets a policy rather than a straight mapping: a
+    blank the GRID owns (a separator band, a matrix stub head) and a blank the
+    CALLER declared are both correct, and a warning every correct run emits is
+    a warning nobody reads. Both are suppressed *on the record* — the summary
+    carries ``empty_cell_suppressed`` with the reason and the label — and what
+    survives is named by its label instead of a y coordinate.
     """
     try:
         import layout_qa  # noqa: PLC0415
@@ -660,7 +667,7 @@ def run_layout_qa(pdf_path, guide_strings=None):
     except Exception as exc:  # a QA crash must not read as a pass
         return None, [finding("layout_qa_failed", "hard", cls=None,
                               detector="layout_qa", error=str(exc)[:400])], {}
-    findings, unmapped = [], []
+    findings, unmapped, suppressed = [], [], []
     for group, items in (raw.get("checks") or {}).items():
         for item in items:
             key = (group, item.get("kind"))
@@ -669,16 +676,27 @@ def run_layout_qa(pdf_path, guide_strings=None):
                 unmapped.append({"group": group, **item})
                 continue
             cls, severity = mapped
+            evidence = {k: v for k, v in item.items() if k != "page"}
+            if key == ("tables", "header_cell_empty"):
+                reason, label = resolve_header_cell_empty(
+                    item, declared_blank or ())
+                if reason:
+                    suppressed.append({"reason": reason, "label": label,
+                                       "at_y": item.get("at_y"),
+                                       "page": item.get("page")})
+                    continue
+                evidence["seat"] = label or "(unnamed — no printed neighbour)"
             findings.append(finding(
                 cls, severity, cls=cls, page=item.get("page"),
                 detector=f"layout_qa.{group}",
-                evidence={k: v for k, v in item.items() if k != "page"}))
+                evidence=evidence))
     summary = {
         "page_count": raw.get("page_count"),
         "flagged_pages": raw.get("flagged_pages"),
         "pass": raw.get("pass"),
         "pages": raw.get("pages"),
         "unmapped": unmapped,
+        "empty_cell_suppressed": suppressed,
     }
     return raw, findings, summary
 
@@ -736,6 +754,101 @@ def reconcile_fill_map(expectations, fill_map_path):
     seeded = dict(expectations)
     seeded["fill_map"] = mapping
     return seeded, "cli", None
+
+
+#: The alias kept for the module payloads that already ship it. ONE concept,
+#: two spellings, reconciled in one place — the same discipline
+#: ``reconcile_fill_map`` applies to the map itself.
+DECLARED_BLANK_ALIASES = ("declared_blank", "intentionally_blank")
+
+
+def reconcile_declared_blank(expectations, fill_map_path):
+    """The seats the caller says they left blank ON PURPOSE, and where from.
+
+    A blank seat is not a defect the tool can infer: a form's signature line,
+    a staff-only box and a field the operator simply has no value for all look
+    identical in the render. Before this, the only outlet was
+    ``expectations.intentionally_blank`` on the fill-value leg, and the
+    layout side had none at all — so every accepted run on a form with a
+    by-design blank emitted the same ``empty_cell_expected_fill`` warning, and
+    a warning every correct run emits teaches people to ignore warnings.
+
+    So the declaration is explicit, it is ONE list however it arrives, and it
+    is recorded: the verdict publishes ``deterministic.declared_blank`` and
+    ``declared_blank_source``. ``declared_blank`` is the name to use;
+    ``intentionally_blank`` is accepted as its alias (module payloads ship it)
+    and folded into the same list. The fill-map file may carry it too when it
+    is the wrapper shape, which keeps ONE file for the whole fill.
+
+    Returns ``(entries, sources, error)``.
+    """
+    entries, sources = [], []
+
+    def _take(payload, origin):
+        for name in DECLARED_BLANK_ALIASES:
+            value = payload.get(name)
+            if value is None:
+                continue
+            if not isinstance(value, list) or not all(
+                    isinstance(item, str) for item in value):
+                return (f"{origin}.{name} must be a list of seat names "
+                        "(labels or fill-map keys), "
+                        f"got {type(value).__name__}")
+            source = f"{origin}.{name}"
+            if value and source not in sources:
+                sources.append(source)
+            for item in value:
+                if item not in entries:
+                    entries.append(item)
+        return None
+
+    error = _take(expectations, "expectations")
+    if error:
+        return [], [], error
+    if fill_map_path is not None:
+        try:
+            payload = json.loads(
+                Path(fill_map_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None          # load_fill_map already reported the shape
+        if isinstance(payload, dict) and "fill_map" in payload:
+            error = _take(payload, "fill_map")
+            if error:
+                return [], [], error
+    return entries, sources, None
+
+
+def declared_blank_match(declared, label):
+    """Does a declaration name this seat? Whitespace-normalized, either way.
+
+    Form labels arrive with the form's own padding (``성    명``), and a
+    caller writing the declaration by hand will not reproduce it. Containment
+    in either direction also lets one entry cover a seat the PDF reports under
+    a longer name.
+    """
+    target = _norm(label or "")
+    if not target:
+        return None
+    for entry in declared:
+        normalized = _norm(entry)
+        if normalized and (normalized in target or target in normalized):
+            return entry
+    return None
+
+
+def resolve_header_cell_empty(item, declared_blank):
+    """(suppression_reason, label) for one ``layout_qa`` header_cell_empty.
+
+    ``None`` reason means "report it" — and then the finding is named by its
+    LABEL, not by the y coordinate that made the old warning unactionable.
+    """
+    pattern = item.get("spacer_pattern")
+    if pattern:
+        return f"spacer:{pattern}", item.get("label")
+    entry = declared_blank_match(declared_blank, item.get("label"))
+    if entry is not None:
+        return "declared_blank", item.get("label")
+    return None, item.get("label")
 
 
 def artifact_haystack(artifact):
@@ -1037,16 +1150,17 @@ def _norm(text):
     return re.sub(r"\s+", "", text or "")
 
 
-def check_fill_map(records, expectations):
+def check_fill_map(records, expectations, declared_blank=()):
     """Declared fill values must be visible somewhere in the render."""
     fill_map = expectations.get("fill_map") or {}
-    skip = set(expectations.get("intentionally_blank") or [])
     if not fill_map:
         return []
     haystack = _norm("".join(r["_text"] for r in records))
     out = []
     for label, value in sorted(fill_map.items()):
-        if label in skip or value is None or str(value) == "":
+        if declared_blank_match(declared_blank, label) is not None:
+            continue
+        if value is None or str(value) == "":
             continue
         if _norm(str(value)) not in haystack:
             out.append(finding(
@@ -1368,6 +1482,12 @@ def verify(args):
         expectations, args.fill_map)
     if error:
         return usage_error(str(artifact), "visual_verify", error)
+    # Same discipline for "I deliberately left this blank": one list, however
+    # it is spelled, recorded in the verdict with where it came from.
+    declared_blank, declared_blank_sources, error = reconcile_declared_blank(
+        expectations, args.fill_map)
+    if error:
+        return usage_error(str(artifact), "visual_verify", error)
 
     fitz = _import_fitz()
     if fitz is None:
@@ -1435,7 +1555,7 @@ def verify(args):
         pages_source=pages_document_source)
     det += check_page_budget(expectations, page_count)
     det += check_format(records, expectations)
-    det += check_fill_map(records, expectations)
+    det += check_fill_map(records, expectations, declared_blank)
     script_findings, script_report = check_fill_charpr_script(
         artifact, expectations)
     det += script_findings
@@ -1443,7 +1563,7 @@ def verify(args):
 
     guide_strings = expectations.get("forbidden_text") or None
     layout_raw, layout_findings, layout_summary = run_layout_qa(
-        pdf_path, guide_strings=guide_strings)
+        pdf_path, guide_strings=guide_strings, declared_blank=declared_blank)
     det += layout_findings
 
     delegates = []
@@ -1644,6 +1764,8 @@ def verify(args):
                 "pages_pdf": pages_pdf,
                 "conversion": conversion,
                 "fill_map_source": fill_map_source,
+                "declared_blank": declared_blank,
+                "declared_blank_source": declared_blank_sources,
                 "layout_qa": layout_summary,
                 "fill_charpr_script": script_report,
                 "residue_keep": residue_keep,
@@ -1734,8 +1856,10 @@ def main(argv=None):
                              "max_pages, base_pt, line_spacing_pct, "
                              "margins_mm{top,bottom,left,right}, fill_map "
                              "(the same map --fill-map takes — one concept, "
-                             "either surface), intentionally_blank, "
-                             "blank_pages, forbidden_text")
+                             "either surface), declared_blank (the seats you "
+                             "deliberately left empty; intentionally_blank is "
+                             "accepted as its alias), blank_pages, "
+                             "forbidden_text")
     parser.add_argument("--png-dir", default=None,
                         help="where page PNGs are written "
                              "(default: <pdf>_pages/ next to the PDF)")

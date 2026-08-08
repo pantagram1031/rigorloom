@@ -324,6 +324,63 @@ def check_figure_placement(page, col_width=None):
     return violations
 
 
+def _cell_text(cell):
+    return ("" if cell is None else str(cell)).strip()
+
+
+def header_cell_violations(rows, at_y):
+    """One ``header_cell_empty`` per empty header CELL, named by its label.
+
+    A y coordinate is not something a reader can act on: it says a table on
+    this page has a blank header cell and leaves finding it to them. So every
+    finding carries the header row it came from, the column, and a ``label``
+    — the printed cell to its left in the same header row, or failing that the
+    cell directly beneath it. That is the name the caller used for the seat,
+    which is also what a ``declared_blank`` entry can match.
+
+    ``spacer_pattern`` marks the two shapes that are blank BY DESIGN, using
+    the same vocabulary ``form_inspect`` uses on the .hwpx side:
+
+    * ``blank_band`` — the whole detected header row is blank: the table
+      finder locked onto a separator band, not a header;
+    * ``stub_head`` — the leading cell is the only blank one and the cell
+      below it prints: the corner of a matrix, where the column headers meet
+      the row labels. PPS's 협업업체 matrix is exactly this.
+
+    Deciding what to DO about a by-design blank is the caller's (see
+    ``visual_verify``); this function only says which shape it is.
+    """
+    header = rows[0]
+    empty_cols = [i for i, cell in enumerate(header) if not _cell_text(cell)]
+    if not empty_cols:
+        return []
+    below = rows[1] if len(rows) > 1 else []
+    printed = [i for i, cell in enumerate(header) if _cell_text(cell)]
+    preview_all = [_cell_text(cell)[:24] for cell in header]
+    if not printed:
+        # A wholly blank band is ONE fact, not one per column.
+        return [{"page": None, "kind": "header_cell_empty", "at_y": at_y,
+                 "col": None, "label": None, "header": preview_all,
+                 "spacer_pattern": "blank_band"}]
+    if empty_cols == [0] and below and _cell_text(below[0]):
+        pattern = "stub_head"
+    else:
+        pattern = None
+    preview = preview_all
+    out = []
+    for col in empty_cols:
+        label = next((preview[i] for i in range(col - 1, -1, -1)
+                      if preview[i]), "")
+        if not label and col < len(below):
+            label = _cell_text(below[col])[:24]
+        out.append({
+            "page": None, "kind": "header_cell_empty", "at_y": at_y,
+            "col": col, "label": label or None, "header": preview,
+            "spacer_pattern": pattern,
+        })
+    return out
+
+
 def check_tables(pdf_or_page):
     """표 규칙: 행별 열 개수 불일치(ragged), 헤더 셀 공백, 본문폭 초과.
 
@@ -354,12 +411,7 @@ def check_tables(pdf_or_page):
                 "page": None, "kind": "ragged",
                 "col_counts": sorted(col_counts), "at_y": round(tbl.bbox[1], 1),
             })
-        header = rows[0]
-        if any((c is None or not str(c).strip()) for c in header):
-            violations.append({
-                "page": None, "kind": "header_cell_empty",
-                "at_y": round(tbl.bbox[1], 1),
-            })
+        violations += header_cell_violations(rows, round(tbl.bbox[1], 1))
         tw = tbl.bbox[2] - tbl.bbox[0]
         if col_width and tw > col_width * 1.02:
             violations.append({

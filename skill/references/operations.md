@@ -4,6 +4,11 @@ All paths are checkout-relative. Every operation is non-destructive (reads
 the input, writes `--out`/`--save-as`). Exit codes follow the checker
 convention where noted: 0 = pass/clean, 2 = usage/config error, 3 = finding.
 
+Filling a form is a **sequence**, not a lookup: read
+[`fill-recipe.md`](fill-recipe.md) for the branch-per-cell decision rule, the
+four artifacts and the flags that consume them, and what an accepted verdict
+looks like. This file is the per-CLI contract each of those steps invokes.
+
 ## TOC
 
 1. [probe](#1-probe) — capability probe
@@ -44,7 +49,8 @@ fixed-grid forms; the fill gate there is layout immutability, not budget),
 `addr`/`span`/size/borderFill/shading/classification/`text_preview` +
 `truncated` — plus the T30 pre-flight fields
 `charpr`/`script_anomaly`/`charpr_suggested` on `fill_target` cells),
-`body_baseline_charpr`, `script_anomaly_targets`,
+`body_baseline_charpr`, `script_anomaly_targets`, `spacer_cells`,
+`fill_target_count`,
 `break_audit`. `--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
@@ -55,6 +61,40 @@ otherwise 0 (diagnostic tool, never a gate).
 `"20   .    .    .  ~  20   .   "`, which HIDES the `(     개월)` blank in
 its middle, and a round-3 clean-room agent reasonably concluded the skeleton
 ended there. Never treat a preview as the cell's text.
+
+**`classification` has four values, and `spacer` is the one that saves you
+work.** `guide` / `static` / `fill_target` / `spacer`. A **spacer** is an
+empty cell the GRID needs and no writer ever touches; it is excluded from
+`fill_target_count` and listed separately under `spacer_cells`
+(`{table, addr, pattern}`). Three conjunctive conditions, all read off the
+table itself — there is no address list anywhere in the code:
+
+1. **no printed content** (it would otherwise be a `fill_target`);
+2. **no label neighbour** — nothing names it, so nothing can be asked for it.
+   A label neighbour is a printed cell ending exactly where this one starts on
+   the same row band (`법인등록번호` → the cell to its right), or a printed
+   cell directly above covering **exactly** this cell's column band (a matrix
+   column header). Column-band equality is the whole rule: a form title or a
+   prose paragraph also sits "above" a full-width strip without delimiting a
+   field, and PPS's narrow `첨부서류` at (17,0) does not own the full-width
+   strip at (18,0). Two stacked full-width bands are document flow, never a
+   label/value pair;
+3. **filler geometry**, one of two shapes the corpus grids actually use:
+   - `full_width_band` — spans every column of its table AND is shorter than
+     the shortest cell in that same table that manages to print text. It spans
+     the label column too, so no field can live in it, and the grid itself
+     proves no text line fits at that height. PPS (1,0)/(9,0)/(12,0) at 240
+     and (16,0)/(18,0) at 1280/1080 against a 1860 shortest printed cell;
+   - `stub_head` — the empty corner where a header row crosses a label column:
+     every other cell in its row is a printed `static`, and the cell directly
+     beneath it, sharing its exact column band, prints text. PPS (13,0), above
+     `협업업체` and beside `업 체 명 / 대표자 / 전 화 / 사업장주소`.
+
+On the PPS 협업승인신청서 that is 19 empty cells → **13 `fill_target` + 6
+`spacer`**. A genuinely empty fillable cell keeps its label neighbour and
+stays a `fill_target`: (2,7), the blank beside `법인등록번호`, is empty, is
+not thin, and is named — so it is still yours to fill. Spacers carry no T30
+pre-flight fields, because nothing will ever be written into them.
 
 **Contract: structure only.** The profile carries anchor/guide strings, not
 the document body. Do not dump section XML into context.
@@ -89,14 +129,13 @@ python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
 
-**Which one fills a form.** Look at `table_map` first, and split on whether
-the cell already prints something:
-
-| the cell | use |
-|---|---|
-| `classification: fill_target` — *genuinely empty*: `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (19 of 19 empty cells on the PPS 협업승인신청서) | **`fill-cells --cell ROW,COL=값`** (T27). There is no string to key on, so `replace --map` structurally cannot reach it |
-| already prints a **seat**: a skeleton the form typeset for you to write over or into — `" 우(     -     )"`, `" http://"`, `"20   .    .    .  ~  20   .    .    .   (     개월)"` | **`replace --at-cell ROW,COL=값`** or **`--at-cell-append`** (T34). Address-keyed, so you never need the skeleton's exact internal whitespace |
-| a literal, document-unique placeholder string you already hold (`[제목]`) | **`replace --map`** |
+**Which one fills a form** — the decision rule, the worked 협업기간 example
+and the whole end-to-end sequence live in **`references/fill-recipe.md`**.
+Read it before your first fill; do not re-derive the branch from the CLI
+contracts below. In one line: genuinely empty run → `fill-cells`; printed
+skeleton to keep → `replace --at-cell-append`; printed text to replace wholly →
+`replace --at-cell`; multi-run cell → the `#RUN` the refusal hands you;
+`classification: spacer` → do not write there at all.
 
 - `replace`: MAP.json is `{"placeholder text": "value", ...}`. Two tiers per
   key: (A) run-text strip-compare (whole-run match, whitespace-tolerant),
@@ -340,6 +379,7 @@ CLIs, not auto-fired.
 python engine/scripts/com_backend.py inspect --file FORM.hwp
 python engine/scripts/com_backend.py edit --file FORM.hwp --ops ops.json --save-as OUT.hwpx --export-pdf verify.pdf
 python engine/scripts/com_backend.py set-cell --file FORM.hwp --addr ROW,COL --text "값" [--table 0] --save-as OUT.hwpx [--expect-empty | --expect TEXT]
+python engine/scripts/com_backend.py convert --file IN.hwp[x] --to OUT.hwpx|OUT.pdf   # format by --to's extension
 python engine/scripts/build_report.py --content bundle/content.md --form FORM.hwp > ops.json   # --dry-run: no Hancom
 ```
 
@@ -360,7 +400,7 @@ behind an explicit `"raw_traversal": true`; the validator rejects bare
 session, so prefer the `set-cell` subcommand: **one invocation = one session =
 one cell**, run serially, never `--kill-stale` (T21). The walk itself is
 entry-point independent (it wraps), so drift cannot silently retarget it.
-For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
+`convert` is the one PDF/format path: `--to` decides the target by extension, one serial invocation, never `--kill-stale`. It is exactly what `visual_verify` shells out to when handed an `.hwpx` without a `--pdf`. For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
 any SECTION-anchor mismatch (fix content.md, never bypass). ops JSON schema:
 `engine/references/ops_schema.md`; equation syntax:
 `engine/references/hwpeqn_cheatsheet.md` (brace every script: `x^{2}`, T13).
@@ -522,17 +562,48 @@ produces it is a bug (T36).
   POST-flight half; the pre-flight (`form_inspect` `script_anomaly` →
   `fill-cells --charpr-per-cell`) is under §3 and shares this comparison
   code, so a fill that passed the pre-flight cannot fail here for this reason.
+- **A cell that is blank ON PURPOSE is declared, not inferred** —
+  `declared_blank`. A form's signature line, a staff-only box and a field you
+  simply have no value for look identical in the render, so before this every
+  accepted tier of the clean-room run emitted the SAME two
+  `empty_cell_expected_fill` warns (y=91.2 and y=350.3 on the PPS fill), and a
+  warning every correct run emits trains people to ignore warnings. Three
+  changes, one rule — *say it or see it, and never see it twice*:
+  - **suppressed when the grid owns the blank.** A wholly blank detected
+    header row (`blank_band`) or the empty corner where column headers meet
+    the row labels (`stub_head`) is structure, not an omission — the same two
+    shapes `form_inspect` reports as `spacer` (§2). PPS's y=350.3 was the
+    협업업체 matrix stub head.
+  - **suppressed when you declare the seat.** `declared_blank: [label]` in
+    `expectations` — or in the wrapper-shaped `--fill-map` file, so ONE file
+    still carries the whole fill. `intentionally_blank` is accepted as an
+    alias and folded into the same list (two spellings of one concept is the
+    T36 defect shape). Matching is whitespace-normalized and containment-based
+    in either direction, so `성명` reaches the form's `성    명`. The
+    declaration drives BOTH legs: the `fill_map` presence check and the layout
+    one.
+  - **otherwise reported by LABEL.** The finding used to carry only `at_y` — a
+    page coordinate says "some table on this page has a blank header cell" and
+    leaves finding it to you. It now carries `seat` (the printed cell to its
+    left in the header row, else the cell beneath it), `col` and the header
+    row itself. PPS's y=91.2 reads `seat: 법인등록번호`.
+  Suppression is never silent: `deterministic.layout_qa.empty_cell_suppressed`
+  lists `{reason, label, at_y, page}` per suppressed cell, and the verdict
+  carries `deterministic.declared_blank` with `declared_blank_source` naming
+  every surface it arrived on.
 - **`expectations.json`** keys: `pages_document`, `page_budget {min,max}` or
   `max_pages`, `base_pt`, `line_spacing_pct`, `margins_mm {top,bottom,left,
-  right}`, `fill_map {label: value}`, `intentionally_blank [label]`,
-  `blank_pages [n]`, `forbidden_text [str]`. Everything absent is listed
+  right}`, `fill_map {label: value}`, `declared_blank [label]`
+  (alias: `intentionally_blank`), `blank_pages [n]`, `forbidden_text [str]`.
+  Everything absent is listed
   under `deterministic.skipped` — the verdict says what it could NOT check.
 - **`visual_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
   rubric, rubric_path, acceptance, acceptance_waivers[], acceptance_blockers[],
   pages[], deterministic{}, vision{}, vision_required[], loop{}, hard[], warn[],
   counts, verdict}`. `verdict` is one of `pass`, `fail`, `vision_pending`,
   `deterministic_pass`, `safety_incomplete`, `usage_error` — see the exit table
-  above. `deterministic` carries `safety_checks[]`, `skipped[]` (human
+  above. `deterministic` carries `safety_checks[]`, `declared_blank[]`,
+  `declared_blank_source[]`, `skipped[]` (human
   `"check: reason"` strings), `skipped_checks[]` (the keys alone),
   `pages_document_source` and `fill_map_source`.
 - **The vision handback** (`--vision-verdict`) is

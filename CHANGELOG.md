@@ -8,6 +8,51 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Skill — one canonical fill recipe, one spacer class, one fewer permanent warning
+
+The independent Codex harness reported three defects that share a shape: the
+product knew things it never said, so every reader re-derived them.
+
+- **`skill/references/fill-recipe.md`** — the canonical mixed-storage fill,
+  worked end to end on the real PPS 협업승인신청서 and replayed verbatim to
+  `acceptance: true`. Three harnesses filling that form picked three different
+  strategies for the *same* 협업기간 cell, and one built three separate maps.
+  So the recipe states the branch-per-cell decision rule first (empty run →
+  `fill-cells`; skeleton to keep → `--at-cell-append`; template to replace
+  wholly → `--at-cell`; multi-run → the `#RUN` the refusal hands you; `spacer`
+  → do not write there), works 협업기간 as the example *because* it is the
+  field that fractured, names the four artifacts and the exact flag that eats
+  each, gives the literal sequence including the previously-undocumented
+  `com_backend.py convert --file … --to …` and the `tasklist` check before COM,
+  and closes with what an accepted verdict looks like versus each partial.
+  Linked one level deep from SKILL.md's routing table; the superseded
+  "which one fills a form" table in `operations.md` §3 is now a pointer, not a
+  second account.
+- **`form_inspect`: `classification: spacer`.** Six cells on the PPS form were
+  reported as `fill_target` when nothing is ever written in them, so Codex and
+  the round-3 Opus run each reasoned them away by hand. A spacer is empty, has
+  no label neighbour, and has one of two filler geometries derived from the
+  table itself — `full_width_band` (spans every column AND is shorter than the
+  shortest cell in that table that prints text) or `stub_head` (the corner
+  where a header row crosses a label column). No addresses, no absolute
+  heights, no tuned ratios. Excluded from the new `fill_target_count`, reported
+  under `spacer_cells`. PPS: 19 empty cells → 13 + 6.
+- **`empty_cell_expected_fill` stops firing on correct runs.** Every accepted
+  tier emitted the same two warns for by-design-blank or unsupplied cells, with
+  a page y-coordinate as the only evidence. `layout_qa` now emits one finding
+  per empty header cell carrying its column, its header row and a `label`, plus
+  `spacer_pattern` for the two by-design shapes; `visual_verify` suppresses
+  those and any seat named in **`declared_blank`** (in expectations or in the
+  wrapper-shaped fill map — `intentionally_blank` is an accepted alias, folded
+  into one list), recording every suppression under
+  `deterministic.layout_qa.empty_cell_suppressed` and the declaration under
+  `deterministic.declared_blank` / `declared_blank_source`.
+- **Ragged shipped tables fail the build.** In GFM a raw `|` splits a cell even
+  inside a code span, so `com_backend.py inspect|edit` gave SKILL.md's routing
+  table one four-cell row among three-cell rows — in the first table a router
+  reads. Escaped, and `package_module` now asserts every table in every shipped
+  surface document is rectangular (core bundle and each module fragment).
+
 ### Engine — the seat-text gap the third clean-room round left open (T34)
 
 Round 3 measured the already-fixed product and both tiers — Sonnet and Opus,

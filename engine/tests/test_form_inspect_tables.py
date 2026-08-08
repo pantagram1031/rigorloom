@@ -99,9 +99,13 @@ def test_pps_empty_fill_targets_have_no_text_element():
     `preedit fill-cells`가 있어야 하는 이유."""
     profile, _ = form_inspect.analyze(PPS_FORM, want_baseline=False)
     table = profile["table_map"][0]
+    # 빈 칸은 19개 그대로다. 그 중 6개는 격자용 spacer로 내려갔고(Q2),
+    # 채우기 대상은 13개 — T27의 "hp:t가 없다"는 성질은 둘 다에 해당한다.
     targets = [c for c in table["cells"]
-               if c["classification"] == "fill_target"]
+               if c["classification"] in ("fill_target", "spacer")]
     assert len(targets) == 19
+    assert profile["fill_target_count"] == 13
+    assert len(profile["spacer_cells"]) == 6
 
     _name, xml = next(iter(_sections(PPS_FORM)))
     scanned = scan_tables(xml)[0]
@@ -273,3 +277,85 @@ def test_at_cell_edits_every_pps_seat_without_a_string_key(tmp_path):
     assert " 우(     -     )서울특별시 강남구 …" in out_xml
     assert " http://hanbit.example.kr" in out_xml
     assert PPS_SEATS[(11, 2)] not in out_xml
+
+
+# ---------------------------------------------------------------------------
+# Q2 — 구조용 빈 칸(spacer)은 채우기 대상이 아니다
+#
+# failing-before: PPS 양식의 (1,0)/(9,0)/(12,0)/(13,0)/(16,0)/(18,0) 여섯 칸이
+# fill_target으로 잡혀서, Codex 하네스와 3라운드 Opus 런이 **각자** "이건 칸이
+# 아니다"를 추론으로 걷어내야 했다. 분류가 할 일을 독자에게 떠넘긴 것이다.
+# 판정 근거는 표 자신의 기하다 — 주소 목록이 아니다.
+# ---------------------------------------------------------------------------
+
+PPS_SPACERS = {(1, 0), (9, 0), (12, 0), (13, 0), (16, 0), (18, 0)}
+
+
+@pytest.mark.skipif(not os.path.exists(PPS_FORM), reason="corpus absent")
+def test_pps_structural_spacers_are_not_fill_targets():
+    profile, _ = form_inspect.analyze(PPS_FORM, want_baseline=False)
+    cells = profile["table_map"][0]["cells"]
+    spacers = {(c["addr"]["row"], c["addr"]["col"]) for c in cells
+               if c["classification"] == "spacer"}
+    assert spacers == PPS_SPACERS
+    fills = {(c["addr"]["row"], c["addr"]["col"]) for c in cells
+             if c["classification"] == "fill_target"}
+    assert not (fills & PPS_SPACERS)
+    assert profile["fill_target_count"] == len(fills) == 13
+    # 자기 부류로 보고된다 — 조용히 사라지지 않는다.
+    reported = {(s["addr"]["row"], s["addr"]["col"]): s["pattern"]
+                for s in profile["spacer_cells"]}
+    assert set(reported) == PPS_SPACERS
+    assert reported[(13, 0)] == "stub_head"          # 행렬 모서리
+    assert reported[(1, 0)] == "full_width_band"     # 구분 띠
+    # spacer에는 T30 사전 점검 필드가 붙지 않는다(채울 일이 없으므로).
+    assert all("charpr_suggested" not in c for c in cells
+               if c["classification"] == "spacer")
+
+
+@pytest.mark.skipif(not os.path.exists(PPS_FORM), reason="corpus absent")
+def test_labelled_empty_cell_stays_a_fill_target():
+    """still-catches: 라벨 이웃이 있는 진짜 빈 칸은 그대로 fill_target.
+
+    PPS (2,7)은 (2,6) `법인등록번호` 바로 오른쪽의 빈 칸이다 — 비어 있고,
+    행 전체가 얇지도 않고, 라벨이 이름을 붙여 준다."""
+    profile, _ = form_inspect.analyze(PPS_FORM, want_baseline=False)
+    by_addr = {(c["addr"]["row"], c["addr"]["col"]): c
+               for c in profile["table_map"][0]["cells"] if c["addr"]}
+    assert by_addr[(2, 6)]["text_preview"].strip() == "법인등록번호"
+    target = by_addr[(2, 7)]
+    assert target["text_preview"] == ""
+    assert target["classification"] == "fill_target"
+    assert "charpr_suggested" in target      # 사전 점검 필드는 살아 있다
+
+
+@pytest.mark.skipif(not os.path.exists(PPS_FORM), reason="corpus absent")
+def test_spacer_criterion_is_geometric_not_addressed():
+    """기준이 주소가 아니라 기하라는 것 자체를 고정한다.
+
+    같은 표에서 라벨 이웃을 하나 심어 주면 그 칸은 다시 fill_target이 되고,
+    반대로 격자의 filler 기하가 없으면 라벨이 없어도 spacer가 아니다."""
+    profile, _ = form_inspect.analyze(PPS_FORM, want_baseline=False)
+    cells = [dict(c) for c in profile["table_map"][0]["cells"]]
+    col_cnt = profile["table_map"][0]["colCnt"]
+
+    # (18,0)은 지금 full_width_band spacer다.
+    fresh = [dict(c, classification=("fill_target"
+                                     if c["classification"] == "spacer"
+                                     else c["classification"]))
+             for c in cells]
+    marked = form_inspect._mark_spacers(fresh, col_cnt)
+    assert (18, 0) in {(c["addr"]["row"], c["addr"]["col"]) for c in marked}
+
+    # 같은 칸을 본문 행 높이로 키우면(= 한 줄이 들어가는 기하) 더 이상
+    # filler가 아니고, 주소가 같아도 spacer로 내려가지 않는다.
+    taller = [dict(c, classification=("fill_target"
+                                      if c["classification"] == "spacer"
+                                      else c["classification"]))
+              for c in cells]
+    for cell in taller:
+        if (cell["addr"]["row"], cell["addr"]["col"]) == (18, 0):
+            cell["height"] = 99999
+    marked2 = form_inspect._mark_spacers(taller, col_cnt)
+    assert (18, 0) not in {(c["addr"]["row"], c["addr"]["col"])
+                           for c in marked2}

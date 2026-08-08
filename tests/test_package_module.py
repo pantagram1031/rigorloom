@@ -489,6 +489,63 @@ class TestShippedSurfaceReferencesResolve:
         assert package_module._referenced_doc_paths(
             f"read `{ignored}` first") == []
 
+    # ── shipped-surface tables are rectangular ───────────────────────
+    #
+    # failing-before: SKILL.md's task-routing table had
+    # `com_backend.py inspect|edit` in a cell. In GFM a raw `|` splits a cell
+    # even inside a code span, so that row had FOUR cells where every other row
+    # had three and the last column fell off — in the FIRST table a router
+    # reads. The fix is `\|`; the guard is that nobody has to remember it.
+
+    def test_every_table_in_the_real_core_surface_is_rectangular(
+            self, core_tree: Path):
+        """Every row of every table in every shipped surface doc has the same
+        cell count as its own header row."""
+        package_module._assert_skill_surface_tables(
+            core_tree, Path("skill"), "core bundle")
+        # non-empty control: the surface really does contain tables
+        docs = package_module._surface_docs(core_tree, Path("skill"))
+        rows = sum(1 for doc in docs
+                   for line in doc.read_text(encoding="utf-8").splitlines()
+                   if line.strip().startswith("|"))
+        assert rows > 20, "no tables found — the assertion above proves nothing"
+
+    def test_an_unescaped_pipe_in_a_code_span_is_caught(self):
+        """The exact reported defect, reproduced."""
+        text = "\n".join([
+            "| intent | command | freedom |",
+            "|---|---|---|",
+            "| COM edit | `com_backend.py inspect|edit --file ...` | LOW |",
+        ])
+        defects = package_module.markdown_table_defects(text)
+        assert len(defects) == 1
+        assert defects[0]["cells"] == 4 and defects[0]["expected"] == 3
+        # and escaping it is accepted
+        assert package_module.markdown_table_defects(
+            text.replace("inspect|edit", "inspect\\|edit")) == []
+
+    def test_a_planted_ragged_row_fails_the_shipped_surface_guard(
+            self, core_tree: Path, tmp_path: Path):
+        planted = tmp_path / "planted"
+        shutil.copytree(core_tree, planted)
+        skill = planted / "skill" / "SKILL.md"
+        skill.write_text(
+            skill.read_text(encoding="utf-8")
+            + "\n| a | b |\n|---|---|\n| one | two | three |\n",
+            encoding="utf-8")
+        with pytest.raises(package_module.PackageError) as ctx:
+            package_module._assert_skill_surface_tables(
+                planted, Path("skill"), "core bundle")
+        assert ctx.value.exit_code == 3
+        assert "ragged table row" in str(ctx.value)
+        assert "skill/SKILL.md" in str(ctx.value)
+
+    def test_table_cell_splitter_matches_gfm_not_intuition(self):
+        cells = package_module.markdown_table_cells
+        assert cells("| a | b | c |") == [" a ", " b ", " c "]
+        assert cells("| a | `x\\|y` |") == [" a ", " `x\\|y` "]
+        assert len(cells("| a | `x|y` |")) == 3      # code span does NOT shield
+
     def test_module_bundle_with_a_dangling_fragment_reference_is_refused(
             self, tmp_path: Path):
         """Full build path, module side: the same guard runs over a
