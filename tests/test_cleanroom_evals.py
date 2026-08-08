@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,45 @@ def corpus_families() -> set[str]:
     manifest = json.loads(CORPUS_MANIFEST.read_text(encoding="utf-8"))
     return {row["family"] for row in manifest["documents"]
             if isinstance(row.get("family"), str) and row["family"].strip()}
+
+
+def declared_skips(task: dict, enabled_modules: Iterable[str] = ()) -> dict:
+    """The check ids a task DECLARES will skip, given the enabled modules (#27).
+
+    Derived from the task definition by mirroring the two declared gates in
+    ``cleanroom.run_machine_check``, in its order:
+
+    * ``blocked_on`` — skips in every sandbox, by definition;
+    * ``requires_module: NAME`` — skips wherever ``NAME`` is not enabled.
+
+    Returns ``{check_id: gate_key}``, so a caller gets both the count and the
+    identities and can assert the set both ways instead of a number.
+
+    This exists because pinning the number was the bug. A core test used to
+    assert A1's skipped count ``== 1``; every ``requires_module`` check added to
+    a shipped task skips by design in a core-only sandbox, so growing a task's
+    module-gated coverage failed a core test that knew nothing about the module
+    — the grant module wired its A1 checks onto A2/A3 to route around it. The
+    expected count is a function of the definition, so compute it.
+
+    NOT modelled here, on purpose: the third skip reason in
+    ``run_machine_check`` — a ``python`` check whose checker declares
+    ``wants: [baseline]`` while the task declares no ``baseline``. That one is
+    not visible in the task alone (it depends on the installed module's
+    ``module.yaml``), and it is a defect rather than a declaration: a task that
+    triggers it is missing a baseline. Callers therefore compare the derived set
+    to the observed set BOTH ways, which is what makes an unmodelled skip a
+    failure here rather than a silent tolerance.
+    """
+    enabled = set(enabled_modules)
+    skips: dict[str, str] = {}
+    for check in task["machine_checks"]:
+        if check.get("blocked_on"):
+            skips[check["id"]] = "blocked_on"
+        elif check.get("requires_module") and (
+                check["requires_module"] not in enabled):
+            skips[check["id"]] = "requires_module"
+    return skips
 
 
 # --------------------------------------------------------------------------- #
@@ -113,8 +153,10 @@ class TestCleanroomPrepare:
 
     def test_bundles_verify_through_the_shipped_verifier(self, prepared):
         report = prepared["report"]
+        # the bundle list comes from the fixture that built them, not a literal
+        # (#27): which bundles this sandbox installs is the fixture's decision
         assert [row["bundle"] for row in report["verify"]] == [
-            "rigorloom-core-0.16.0.zip", "rigorloom-style-0.16.0.zip"]
+            path.name for path in prepared["bundles"]]
         assert all(row["ok"] for row in report["verify"])
         assert all(row["problems"] == [] for row in report["verify"])
         # the verifier that ran is the one that shipped, not the repo's copy
@@ -373,6 +415,9 @@ class TestSkillInstallFromBundlesAlone:
         assert again["ok"] is True, again
         body = (Path(again["install_root"]) / "SKILL.md").read_text(
             encoding="utf-8")
+        # NOT an inventory count: 1 means "once, not twice" — the whole point of
+        # the test. It does not move when a module is added, because it counts
+        # one named module's heading, not the modules.
         assert body.count("## Module: style") == 1
 
 
@@ -546,7 +591,11 @@ class TestTaskRun:
         work = Path(payload["work_dir"])
         assert (work / "PROMPT.txt").is_file()
         assert (work / "task.json").is_file()
-        assert len(payload["inputs"]) == 1
+        # every declared input arrives, derived from the task (#27) — giving A1
+        # a second attachment must not be a core-test edit
+        declared = materialized["task"]["input_files"]
+        assert declared, "A1 declares no input file — nothing to copy"
+        assert len(payload["inputs"]) == len(declared)
         copied = Path(payload["inputs"][0]["sandbox_path"])
         assert copied.is_file()
         assert copied.read_bytes() == (
@@ -562,8 +611,23 @@ class TestTaskRun:
         by_id = {row["id"]: row for row in results["checks"]}
         assert by_id["profile_blank"]["status"] == "pass"
         assert by_id["filled_produced"]["status"] == "fail"
-        assert by_id["repeat_fill_idempotent"]["status"] == "skipped"
-        assert results["counts"]["skipped"] == 1
+
+        # The skips are a PROPERTY of the task definition, not a number (#27):
+        # exactly the checks A1 declares a gate on, no more and no fewer. The
+        # old form pinned ``counts["skipped"] == 1``, which made "add a
+        # module-gated check to a shipped task" a core-test edit.
+        expected = declared_skips(
+            materialized["task"], results["enabled_modules"])
+        assert expected, (
+            "A1 declares no gated check in this sandbox — the scan below "
+            "would prove nothing")
+        observed = {cid for cid, row in by_id.items()
+                    if row["status"] == "skipped"}
+        assert observed == set(expected), {
+            "declared": sorted(expected), "observed": sorted(observed)}
+        assert results["counts"]["skipped"] == len(expected)
+        for cid, gate in expected.items():
+            assert by_id[cid].get("reason"), (cid, gate)
 
     def test_checks_pass_on_a_faithful_fill(self, materialized):
         """Prove the rubric is satisfiable: fill the form with the SANDBOX
@@ -740,6 +804,11 @@ class TestRequiresModuleGate:
         ran = cleanroom.run_checks(prepared["root"], enabled)
         skipped = cleanroom.run_checks(prepared["root"], absent)
 
+        # These integers are the arity of ``_module_gated_task``, which this
+        # file writes six lines up: exactly two checks, exactly one of them
+        # gated. Not inventory — no shipped task, module or corpus document can
+        # move them, and stating them literally is what makes the arithmetic
+        # (1 pass + 1 skip, total unchanged) readable.
         assert ran["counts"]["pass"] == 2 and ran["counts"]["skipped"] == 0
         assert skipped["counts"]["pass"] == 1, (
             "a skipped gate was counted as a pass")
@@ -1004,16 +1073,30 @@ def _run_record(**overrides) -> dict:
 
 
 def _checks(fail: int = 0) -> dict:
-    rows = [{"id": "profile_blank", "status": "pass"},
-            {"id": "residue_clean", "status": "pass"},
-            {"id": "repeat_fill_idempotent", "status": "skipped"}]
-    for index in range(fail):
-        rows.append({"id": f"broken{index}", "status": "fail"})
+    """A checks payload for A1, DERIVED from A1's definition (#27).
+
+    Every check A1 declares a gate on is ``skipped``, every other check
+    ``pass``, and ``counts`` is tallied from the rows — so the payload keeps
+    describing a core-only clean-room run of the real task no matter how many
+    gated checks A1 grows. The old form listed three hand-written rows and
+    pinned ``{"pass": 2, "skipped": 1}``, which is the same coupling as the
+    direct assertion above: a second gated check in A1 made this fixture lie,
+    and ``test_scorecard_join`` failed on a product that was working.
+    """
+    task = cleanroom.load_task(A1_TASK)
+    skips = declared_skips(task)  # core-only: no distribution modules enabled
+    rows = [{"id": check["id"],
+             "status": "skipped" if check["id"] in skips else "pass"}
+            for check in task["machine_checks"]]
+    rows += [{"id": f"broken{index}", "status": "fail"}
+             for index in range(fail)]
+    tally = {status: sum(1 for row in rows if row["status"] == status)
+             for status in ("pass", "fail", "skipped")}
     return {
         "schema": "rigorloom-eval-checks/v1",
-        "task_id": "A1-pps-recognize-fill",
-        "family": "grant",
-        "counts": {"pass": 2, "fail": fail, "skipped": 1, "total": 3 + fail},
+        "task_id": task["id"],
+        "family": task["family"],
+        "counts": {**tally, "total": len(rows)},
         "ok": fail == 0,
         "checks": rows,
     }
@@ -1026,7 +1109,13 @@ class TestScore:
         assert card["schema"] == score.SCORECARD_SCHEMA
         assert card["passed"] is True
         assert card["blockers"] == []
-        assert card["machine"]["skipped"] == 1
+        # Derived from the task, not pinned (#27): the scorecard must report
+        # every declared gate as a skip, by identity.
+        gated = declared_skips(task)
+        assert gated, "A1 declares no gated check — this claim would be vacuous"
+        assert card["machine"]["skipped"] == len(gated)
+        assert sorted(card["machine"]["skipped_ids"]) == sorted(gated)
+        assert card["machine"]["total"] == len(task["machine_checks"])
         assert card["judgment"]["rubric_total"] == len(task["expected_behavior"])
         assert card["judgment"]["complete"] is True
         assert card["efficiency"]["tokens_total"] == 43000

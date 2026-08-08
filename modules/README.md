@@ -90,6 +90,44 @@ registry and CI enforce them.
   outside `modules/`. **If you find yourself adding a module's name to a file
   outside `modules/`, that file is the bug.**
 
+### Rule 4's most common violation: a count
+
+A module's name is the obvious way to break rule 4 and the rare one, because it
+is visible. The recurring way is an **integer**. Three v0.17 modules were each
+blocked by a core test asserting `== N` on something the repo grows, and the
+count named no module at all (`docs/trouble-table.md` T33):
+
+- **#68** — `pyproject.toml`'s `testpaths` and CI's `py_compile` step were
+  per-module lists. Fixed by the globs described above.
+- **#26** — `test_every_shipped_task_validates` pinned `len(tasks) == 7`, so
+  shipping an eval task failed a core test. Fixed by deriving the family set
+  from `tests/corpus/forms/manifest.json` and asserting coverage in *both*
+  directions.
+- **#27** — `tests/test_cleanroom_evals.py` pinned eval task A1's
+  skipped-check count at `1`. Every `requires_module` check skips by design in a
+  core-only sandbox ("absence is not failure", above), so the grant module could
+  not put its A1 checks on A1 and wired them onto A2/A3 instead — a module
+  reshaping its own payload to satisfy an integer in core. Fixed by deriving the
+  expected skips from the task definition (`declared_skips`, which mirrors
+  `blocked_on` and `requires_module`) and comparing the id SET both ways.
+
+The rule, stated so it is checkable: **derive from discovery, never pin
+inventory.** A core test may assert *properties* of what it finds (every shipped
+task validates; every corpus-backed family has a task; a skipped gate never
+counts as a pass) and it may assert a `>=` non-vacuity **floor** so a scan over
+an empty collection cannot read as a pass. It may not assert how many modules,
+tasks, checks, packs, bundle files, corpus documents, checkers, gate kinds or
+pack types exist.
+
+`tests/test_no_inventory_pins.py` guards the class: it walks the syntax tree of
+every core test file and fails on an `== <int>` whose other operand reads as
+inventory. Genuinely fixed arity — the arity of a fixture the test itself wrote,
+an idempotency "once, not twice" — is admitted as a **reasoned** allowlist row
+inside that test, so the exception documents why no added module can move it.
+Module-owned tests (`modules/*/tests`) are out of scope by design: a module may
+measure its own corpus however precisely it likes. The contract is only about
+what *core* is allowed to know.
+
 ## Provides keys
 
 Every key under `provides:` is optional; an empty `provides: {}` is a valid
