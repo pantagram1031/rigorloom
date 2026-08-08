@@ -1,0 +1,24 @@
+{
+  "_note": "visual_verify expectations for a filled 지원사업 신청 packet (pipeline/scripts/visual_verify.py --expectations). Modules are the natural author of this file and there is no provides key for it: it is ordinary payload the caller passes. This family's balance is its own: unlike 민원, where nothing printed may disappear, a 지원사업 form INSTRUCTS the applicant to remove things ('※ 해당 안내를 포함한, 아래 파란색 안내 문구는 참고하여 작성 후 삭제', '※ 해당자에 한함 (없을 시 삭제)'), so forbidden_text carries real weight here — it is the render-side twin of check_grant's self_deleting_guide_retained and example_placeholder_retained. intentionally_blank is the identity and signature half.",
+  "forbidden_text": [
+    "참고하여 작성 후 삭제",
+    "~~~~",
+    "ㅇㅇㅇ",
+    "예시)"
+  ],
+  "_forbidden_text_note": "Every entry is something the FORM told the applicant to remove, not a preference of ours. The guide-deletion instruction includes itself ('해당 안내를 포함한'), the ~~~~ and ㅇㅇㅇ runs are the form's worked-example stand-ins where the applicant's own words and name go, and '예시)' marks the sample rows beside them. A render still showing any of them is a packet that went out with its scaffolding attached.",
+  "intentionally_blank": [
+    "(서명 또는 인)",
+    "(인)",
+    "(서명)",
+    "주민등록번호",
+    "여권번호",
+    "법인등록번호",
+    "사업자등록번호",
+    "생년월일",
+    "계좌번호"
+  ],
+  "_intentionally_blank_note": "Two classes, both things the TOOL must leave alone: the per-sheet signature seats a person completes by hand (check_grant's signature_seat_lost — this family signs once per sheet, six seats in the kstartup packet alone), and the identity and account seats a tool never fabricates (identity_value_invented / account_number_invented). The consent choice is deliberately ABSENT from this list: an unmarked required consent is a defect (consent_unmarked), but MARKING it is the applicant's decision, so the render expectation cannot demand either state.",
+  "_page_budget_note": "page_budget is NOT declared, and that is a corpus finding rather than an omission. The landscape write-up predicts per-section page budgets for this family ('5쪽 이내'); no corpus form declares one — check_grant's page_budget_re matches zero times across all three — so there is no number to put here. If a 공고 form does declare one, this is where it goes: visual_verify owns the rendered page count, which is exactly why check_grant reports length_budget_unverified as skipped:needs_render instead of guessing.",
+  "_fill_map_note": "No fill_map is declared here. Everything a 지원사업 packet fill writes — 기업명, 대표자명, 성명, 주소, 연락처, 과제명, budget figures, dates — is per-document data belonging to the caller's own fill map, and shipping a specimen in module payload would be shipping personal and commercial data."
+}

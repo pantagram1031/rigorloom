@@ -1,0 +1,113 @@
+{
+  "schema": "rigorloom-grant-vocabulary/v1",
+  "regulation": "지원사업/공모 신청서 packets (HWP usage landscape family ⑥). Measured on three corpus forms: tests/corpus/forms/grant/pps-hyeopeop-seungin-sinchengseo.hwpx (조달청 우수조달물품 지정관리 규정 별지 제2호의7서식), tests/corpus/forms/grant/pps-jeongbogonggae-donguiseo.hwpx (조달청 별지 제1호의2서식 정보공개·개인정보 동의서), tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx (2026년 맞춤형예비창업가발굴육성사업 신청서 및 사업계획서, 42 tables / 366 cells).",
+  "description": "Structural vocabulary of the 지원사업 신청 family, as data. check_grant.py carries no Korean literals: every term and pattern below is family-level. The family's distinguishing property is that a 지원사업 submission is a PACKET, not a document — one file carries a 신청서 grid, a flowing 사업계획서, 붙임/별첨 parts referenced by number, per-programme budget tables the applicant EXTENDS by adding rows, and standalone 동의서 blocks. Two consequences shape every rule: (1) row COUNT is a legitimate degree of freedom, so table geometry is compared by column structure and header row and never by cell count; (2) parts of the packet reference each other by number, so a reference whose target section is gone is a defect the document itself can prove. Term matching is whitespace-insensitive because these forms letter-space their own labels ('기 업 명', '합        계', '주    소', '지    원 신 청 자 정    보').",
+  "sections": {
+    "packet": {
+      "description": "The words that introduce or cite a packet part. 붙임 / 별첨 / 첨부 only. 별지 is deliberately EXCLUDED and that exclusion is measured: pps-hyeopeop's own identity line is '[별지 제2호의 7서식 (제5조 제2항)]' while its 첨부서류 block cites '[별지 제2호의 8서식] 양식의 협업체 구성현황 1부' — a 별지 number names a separately published 서식 (a different file, submitted '1부'), never a section of this document, so making 별지 resolvable would fail the pristine form. Which of the three markers is INTERNAL to a document is not declared here either: the checker calls a marker class internal when the document carries at least one header for it, and external otherwise. On kstartup that makes 별첨 internal (3 headers: 1, 2-1, 2-2) and 붙임 external (0 headers — 붙임3 / 붙임5 live in the 공고문, not in this file).",
+      "markers": [
+        "붙임",
+        "별첨",
+        "첨부"
+      ],
+      "attachment_list_labels": [
+        "첨부서류",
+        "제출서류",
+        "구비서류"
+      ]
+    },
+    "budget": {
+      "description": "The 합계 row is this family's one genuinely numeric invariant and the corpus backs it three times over: kstartup's 신청서 예산표 ('합        계(천원)' = 35,000 / 30,000 / 5,000 over 소요예산 / 지원신청액 / 자부담금) and its two 사업비 편성표 ('합  계(VAT 별도)' = 16,000,000 / 0 / 16,000,000 and 14,000,000 / 5,000,000 / 19,000,000). Every one of the nine column totals equals the sum of the column above it, on the pristine form. 소계 is NOT a total label: a nested subtotal would be double-counted by a whole-column sum, and no corpus form has one.",
+      "total_labels": [
+        "합계",
+        "총계",
+        "총액"
+      ]
+    },
+    "consent": {
+      "description": "Consent blocks. pps-jeongbogonggae IS one, and kstartup carries four 동의서 sheets. A consent CHOICE is an option group — a parenthesized run offering at least two of the option labels below, or carrying at least two checkbox glyphs. What is NOT a choice: the bare □ that both pps-jeongbogonggae ('□ 개인정보 수집ㆍ이용 내역') and kstartup ('□ 수집·이용 목적', '□ 청렴서약') use as a SECTION BULLET. Thirty of kstartup's 32 box glyphs are bullets or non-consent option lists; treating them as consent slots would demand marking a heading.",
+      "labels": [
+        "동의"
+      ],
+      "option_labels": [
+        "동의함",
+        "동의하지않음",
+        "부동의",
+        "예",
+        "아니오"
+      ],
+      "required_labels": [
+        "필수항목",
+        "필수적",
+        "제출 필수"
+      ]
+    },
+    "identity": {
+      "description": "Identity- and account-number labels. A tool NEVER invents one of these values. The family asks for a lot of them — kstartup's 신청서 grid has a 생년월일 seat, its 첨부서류 list demands '주민등록등본(*주민번호 전부 표시)', its 동의서 collects '이름, 주민등록번호 또는 여권번호', and pps-hyeopeop has 법인등록번호 and 사업자등록번호 seats — and supplies a value for none of them.",
+      "labels": [
+        "주민등록번호",
+        "주민번호",
+        "생년월일",
+        "여권번호",
+        "법인등록번호",
+        "사업자등록번호",
+        "외국인등록번호",
+        "계좌번호"
+      ]
+    },
+    "addressee": {
+      "description": "Who the packet is submitted to. All three forms carry one ('조달청장  귀하', '(재)광주테크노파크 원장 귀하'), which is what separates a 지원사업 packet from a private instrument like a 근로계약서.",
+      "labels": [
+        "귀하",
+        "귀중"
+      ]
+    }
+  },
+  "grid_min_cols": 3,
+  "grid_min_cols_note": "A table is GRID-shaped — a candidate for the extendable-table geometry rule — only from this column count up, because an extendable table is one whose ROW IS A RECORD. Two columns make a label/value pair list, where adding a row means adding a labelled field rather than another record, and the corpus is unanimous: every genuinely extendable table it carries has three or more columns (kstartup's 예산표 7, its two 사업비 편성표 7 each, its 추진일정 14, its 성과목표 5, its 전문가 프로필 12, its 기술이전 의향서 5; pps-hyeopeop's 참여기업 roster 9; pps-jeongbogonggae's two 개인정보 tables 3 and 4). The measured cost of admitting two-column tables was a FALSE POSITIVE, not a gap: kstartup's 사업계획서 section tables are 2×N label|content grids whose content column is the prose fill target the form says to delete ('아래 파란색 안내 문구는 참고하여 작성 후 삭제'), so every row of them is a header-row candidate and a correct fill reads as table_structure_lost. kstartup's 25 single-column tables — prose banners, attachment placeholders, 동의 sheets — are out for the same reason.",
+  "header_min_labels": 2,
+  "header_min_labels_note": "The header row is the FIRST row carrying at least this many non-empty cells — not row 0. Measured need: kstartup's 전문가 프로필 table opens with a single merged '1. 인적사항' banner row and its real header is row 1, and its 신청서 예산표's header IS row 0. Taking row 0 unconditionally would leave every banner-led roster unpairable.",
+  "header_match_min_ratio": 0.6,
+  "header_match_min_ratio_note": "A baseline grid is paired with an artifact grid when this fraction of its header labels survive in the candidate's header row. Not 1.0: a header cell may itself be a seat (kstartup's 과제(창업아이템)명 row) and a legitimate fill changes its text. Not lower: 0.6 still refuses to pair kstartup's two 사업비 편성표 with its 성과목표 table (0 of 5 labels shared) while pairing each 편성표 with itself (7 of 7).",
+  "budget_min_addends": 1,
+  "budget_min_addends_note": "How many numeric cells must sit above a 합계 cell in its own column before the sum is compared. Below it the rule reports skipped rather than asserting that an empty column sums to the printed total — a 합계 column whose addends are all '-' (kstartup 자부담금, three of them) has nothing to add up and its printed 0 is not evidence of anything.",
+  "family_minimum": 3,
+  "family_minimum_note": "How many of the six seat families (packet, budget, consent, signature, addressee, grid) a document must carry before the 지원사업 rules apply. Measured across the whole blank-form corpus: kstartup 6, pps-hyeopeop 4 (packet, signature, addressee, grid), pps-jeongbogonggae 4 (consent, signature, addressee, grid); 기안문 별지 제1/2호 1 each, NRF 결과보고서 2, 표준근로계약서 2013/2025 2 each — all refused. This gate is a 'this is not a 신청 packet at all' filter, NOT a family classifier, and the corpus says so: the four 민원 별지서식 also score 3–4 (signature + addressee + grid, and 사업자등록 신청서 additionally carries a 제출서류 list), so they clear it too. That overlap is real rather than a calibration failure — pps-hyeopeop IS a 신청서 with a 첨부서류 block and is structurally indistinguishable from a 민원 신청서, so a threshold that refused 민원 forms would refuse a corpus member of this family. The caller chooses the checker; the rules that make this module different (packet references, 합계 arithmetic, consent choices) all self-skip with a reason when their seats are absent, which is what a 민원 서식 handed to check_grant gets. Asserted in both directions by tests/test_grant_corpus.py.",
+  "optional_lookahead_seats": 2,
+  "optional_lookahead_seats_note": "How far past a 붙임/별첨 header the optional-section marker is looked for. kstartup writes it on the line after the header ('【별첨 1】…' then '※ 기술이전 수행 예정 및 …'), and its deletable attachment placeholders say so on their own second line ('※ 해당자에 한함 (없을 시 삭제)').",
+  "blank_run_re": "[ \\t\\u00a0\\u3000]{2,}|_{3,}",
+  "blank_run_note": "The fill targets, reported not judged. These forms leave runs of spaces inside a cell (' 우(     -     )', '20   .    .    .  ~  20   .    .    .   (     개월)') rather than underline characters.",
+  "unfilled_date_seat_re": "년\\s+월\\s+일|\\d{2,4}\\s*\\.\\s*\\.\\s*\\.",
+  "unfilled_date_seat_note": "The signature date seat, in the two shapes the corpus uses: '년      월      일' / '2026년   월   일' / '202 년  월   일' (whitespace between the three characters) and '20   .    .    .' / '2026.     .    . ' (a dotted skeleton). A WRITTEN date defeats both — '2026년 8월 20일' puts a digit after 년, and '2026. 8. 20.' puts digits between the dots.",
+  "rrn_re": "(?<!\\d)\\d{6}\\s*[-–—~]\\s*\\d{7}(?!\\d)",
+  "account_number_re": "(?<![\\d,])(?:\\d{2,6}(?:\\s*[-–—]\\s*\\d{2,8}){1,3}|\\d{10,})(?![\\d,])",
+  "account_number_min_digits": 10,
+  "account_number_note": "The 계좌번호 / 사업자등록번호 / 법인등록번호 / 여권번호 half of the never-invent rule, as a VALUE SHAPE: a hyphen-grouped or bare digit run carrying at least account_number_min_digits digits that the operator did not declare. The comma guards are what keep this family's money out — kstartup prints 16,000,000 and 35,000 in its budget tables and neither has ten contiguous digits nor an un-comma'd group boundary. '별첨 2-1' (two digits) and '제2호의 7서식' stay far below the floor; '214-81-00000' and '110-234-567890' trip it.",
+  "packet_header_re": "^[【\\[]\\s*(붙임|별첨|첨부)\\s*(\\d+(?:-\\d+)?)\\s*[】\\]]",
+  "packet_header_note": "A packet SECTION header: a bracketed marker-and-number at the very start of a seat. kstartup's three are '【별첨 1】', '【별첨 2-1】', '【별첨 2-2】'. Anchoring at the start is what keeps '[별첨 2-1] 개인정보 제공 및 활용(제3자 제공)동의서 1부' — a mid-cell citation of the same section — a reference rather than a second header.",
+  "packet_reference_re": "[\\[【]?\\s*(붙임|별첨|첨부)\\s*(\\d+(?:-\\d+)?)",
+  "packet_reference_note": "A citation of a packet part by number. Requiring a number is what keeps '사진 첨부' (14 occurrences in kstartup) and '첨부서류' out: they name the act and the block, not a part.",
+  "amount_re": "^\\d{1,3}(?:,\\d{3})*$|^\\d+$",
+  "amount_note": "A cell that IS a number, applied to the squeezed cell text. Whole-cell anchoring is the point: '5,000천원' and '= 20%' and '10,000,000 × 1건' are prose about money and must not join a column sum, while '11,000' and '16,000,000' and '0' must.",
+  "box_unmarked_re": "[□☐▢]",
+  "box_marked_re": "[■☑☒✔✓√⊠▣]",
+  "box_glyph_note": "Box glyphs alone mean nothing in this family: 30 of kstartup's 32 are section bullets ('□ 수집·이용 목적') or non-consent option lists ('□ 특허 / □ 노하우'), and both of pps-jeongbogonggae's two are bullets ('□ 개인정보 수집ㆍ이용 내역'). Only a glyph inside a qualifying option group is a consent slot.",
+  "option_group_re": "[(（]([^()（）]{1,80})[)）]",
+  "option_split_re": "[,，/·ㆍ|、]+",
+  "option_group_note": "A consent CHOICE: a parenthesized run inside a seat that also carries a 동의 label, offering at least two options. Two counters, and the glyph one wins when it applies: kstartup's '( ■동의함    □동의하지 않음 )' has no separator at all and is counted by its two glyphs, while pps-jeongbogonggae's '(예,  아니오)' has no glyph and is counted by exact token match after splitting on option_split_re. Exact token match rather than substring is load-bearing — '예' is a substring of 예비창업자, 예시 and 예정, and '(예비)창업자 부담금율' must not read as a consent choice.",
+  "min_options": 2,
+  "signature_marker_re": "\\(\\s*(?:서명\\s*또는\\s*인|서명란|서명|날인|인)\\s*\\)",
+  "signature_marker_note": "The seats a human completes by hand, counted not addressed: they live in top-level paragraphs whose index shifts the moment a line is added, and this family adds lines by design. kstartup carries six ((인)×5, (서명)×1), pps-hyeopeop one, pps-jeongbogonggae two.",
+  "self_deleting_guide_re": "(?:안내|예시|참고)[^\\n]{0,30}삭제",
+  "self_deleting_guide_note": "The form's own instruction to delete its guidance: kstartup's '※ 해당 안내를 포함한, 아래 파란색 안내 문구는 참고하여 작성 후 삭제'. The instruction includes itself ('해당 안내를 포함한'), which is what makes its survival in a finished packet a defect the document declares rather than a preference. Deliberately does NOT match '해당자에 한함 (없을 시 삭제)' — that sentence licenses deleting an ATTACHMENT, and optional_section_re is where it belongs.",
+  "optional_section_re": "없을\\s*시\\s*삭제|해당자에\\s*한함|해당\\s*시\\s*만|해당하는\\s*경우",
+  "optional_section_note": "A packet part the form itself says may be dropped. kstartup marks two attachment placeholders this way ('※ 해당자에 한함 (없을 시 삭제)'). A section carrying this is WARN when it goes missing, not HARD: deleting it is following the form.",
+  "example_placeholder_re": "[~〜～]{3,}|[ㅇ]{3,}|[○]{3,}",
+  "example_placeholder_note": "The form's own worked-example stand-ins: kstartup writes '~~~~ 기술을 적용(활용)한 ~~~ 개발(제작)' and '지원자      ㅇㅇㅇ  (인)'. Runs of three or more, because a single ○ is this family's bullet character (kstartup uses it 40+ times: '○ 창업아이템 및 이전기술의 성능 및 기능').",
+  "page_budget_re": "(\\d+)\\s*(?:쪽|페이지|장)\\s*(?:이내|이하|미만)",
+  "char_budget_re": "(\\d+)\\s*자\\s*(?:이내|이하)",
+  "length_budget_note": "The landscape write-up (docs/research/hwp-usage-landscape.md family ⑥) predicts per-section page budgets — '5쪽 이내'. The corpus does not carry one: page_budget_re and char_budget_re both match ZERO times across all three forms. The detector ships anyway, and the rule it feeds is permanently a SKIP with a reason, because a page count is not derivable from Contents/section*.xml — it needs a render. See length_budget_unverified in skill/references/grant_flow.md §5.",
+  "budget_cap_re": "([0-9][0-9,]*\\s*(?:천만원|백만원|천원|만원|억원|원))\\s*(?:을?\\s*초과|이내|이하|미만)|최대\\)?\\s*([0-9][0-9,]*\\s*(?:천만원|백만원|천원|만원|억원|원))",
+  "budget_cap_note": "Monetary caps the form states about its own budget, EXTRACTED AND REPORTED, never gated. kstartup declares three ('지원신청액의 합계액 … (최대) 30,000천원을 초과 不', '전문가 활용비 : 전체 지원신청액의 총 1백만원 이내', '기술료 이전비 : 전체 지원신청액의 총 2천만원 이내') and the pristine form satisfies all three. They are not a rule because binding a cap to a figure needs a guess: two of the three name the same column noun (지원신청액) with different scopes — one the whole 합계 row, one a single programme line — and nothing in the document says which. Reporting them puts the numbers in front of the operator without pretending the tool resolved the scope. The unit list carries 천만원 before 천원 on purpose: the alternation is ordered longest-first so '2천만원' is not read as '2천' plus stray text.",
+  "noise_re": "[\\s()\\[\\]/,.:;·ㆍ―–—_※○●◯~∼\\-]+"
+}
