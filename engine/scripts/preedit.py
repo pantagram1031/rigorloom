@@ -41,8 +41,20 @@ style_diff도 통과). 그래서 fill-cells는 재지정 id 없이 script_anomal
 전부 이름 붙여서). 사전에 어느 셀인지 보려면 form_inspect의 table_map
 fill_target 셀에 붙는 charpr/script_anomaly/charpr_suggested를 읽으면 된다.
 
+T34 seat-text(주소로 잡는 치환): 양식이 **인쇄해 둔 자리표**(" 우(     -     )",
+"20   .    .    .  ~  20   .    .    .   (     개월)", " http://")를 고치려면
+문자열 키가 런의 내부 공백까지 정확히 같아야 한다 — 그런데 그 문자열을 얻을
+경로가 제품에 없었다(text_preview는 30자 무표시 잘림, 스켈레톤은 anchors에
+없음, content_extract는 공백을 접는다). 그래서 정확한 문자열을 **필요 없게**
+만든다: replace가 셀 주소로 대상 런을 잡는다(--at-cell / --at-cell-append).
+
 CLI(얇은 래퍼):
     python preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
+    python preedit.py replace IN.hwpx --out OUT.hwpx [--table 0]     # 주소 키(T34)
+                      --at-cell 'ROW,COL[#RUN]=TEXT' ...      # 런 텍스트 전체 교체
+                      --at-cell-append 'ROW,COL[#RUN]=TEXT' ...  # 인쇄된 접두 보존
+                      [--at-cell-map JSON] [--at-cell-expect 'ROW,COL[#RUN]=부분문자열']
+                      [--at-cell-charpr 'ROW,COL[#RUN]=ID']
     python preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0]
                       --cell 'ROW,COL=TEXT' ... [--map CELLS.json] [--overwrite]
                       [--charpr ID]                # 배치 전체(T32)
@@ -63,7 +75,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -117,11 +129,14 @@ class ScriptAnomalyError(PreeditError):
 
     exit_code = 3
 
-    def __init__(self, anomalies):
+    def __init__(self, anomalies, flag="--charpr-per-cell"):
         self.anomalies = list(anomalies)
+        self.flag = flag
         lines, flags = [], []
         for a in self.anomalies:
-            addr = f"{a['addr'][0]},{a['addr'][1]}"
+            # spec: 플래그에 그대로 넣을 대상 표기. fill-cells는 "ROW,COL",
+            # --at-cell은 런까지 특정하는 "ROW,COL#RUN" 이다.
+            addr = a.get("spec") or f"{a['addr'][0]},{a['addr'][1]}"
             rendered = a.get("rendered_pt_estimate")
             rendered_note = (f", 렌더 추정 ~{rendered}pt"
                              if rendered is not None else "")
@@ -135,7 +150,7 @@ class ScriptAnomalyError(PreeditError):
                 f" {'/'.join(a['differing'])}에서 다름"
                 f"(nominal {a.get('nominal_height_pt')}pt vs baseline"
                 f" {a.get('baseline_height_pt')}pt{rendered_note})")
-            flags += ["--charpr-per-cell", f"{addr}={a['charpr_suggested']}"]
+            flags += [flag, f"{addr}={a['charpr_suggested']}"]
         # 그대로 붙여넣을 수 있는 플래그 목록 — 코퍼스 실측으로 이상 대상이 한
         # 양식에 18개까지 나온다(jeongbo-gonggae-cheongguseo). 셀별 문구를 읽고
         # 손으로 플래그를 조립하게 만들면 사전 점검이 아니라 숙제다.
@@ -146,6 +161,36 @@ class ScriptAnomalyError(PreeditError):
             + ". baseline 서식으로 채우려면 그대로 붙여넣을 것: "
             + " ".join(flags)
             + " (그 셀이 의도적으로 다른 서식이라면 원하는 id를 직접 지정한다)")
+
+
+class AmbiguousCellRunError(PreeditError):
+    """--at-cell 대상 셀에 텍스트 런이 둘 이상 — 어느 런인지 명시해야 한다.
+
+    조용히 '첫 런'을 고르는 것도, '셀 텍스트 전체'를 값으로 밀어버리는 것도
+    선택지가 아니다. PPS 양식의 (15,0)은 한 셀 안에 규정 인용문·"년 월 일"
+    신청일 줄·"신청인"·"(서명 또는 인)"·"조달청장 귀하"가 각각 자기 런으로
+    들어 있는 병합 셀이다 — 첫 런을 고르면 규정 인용문을 지우고, 셀 전체를
+    밀면 나머지 다섯 줄을 함께 지운다.
+
+    ``runs``: 그 셀의 모든 텍스트 런과 **정확한** 문자열([{index, text, charpr}]).
+    이 목록 자체가 탈출구다 — section XML을 열 이유가 없다.
+    exit code 2(사용법: 주소가 덜 특정됐다).
+    """
+
+    exit_code = 2
+
+    def __init__(self, addr, runs, flag="--at-cell"):
+        self.addr = [addr[0], addr[1]]
+        self.runs = [{"index": r["index"], "text": r["text"],
+                      "charpr": r["charpr"]} for r in runs]
+        self.suggested_flags = [
+            x for r in self.runs
+            for x in (flag, f"{addr[0]},{addr[1]}#{r['index']}=<TEXT>")]
+        listing = " | ".join(f"#{r['index']}={r['text']!r}" for r in self.runs)
+        super().__init__(
+            f"셀 ({addr[0]},{addr[1]})에 텍스트 런이 {len(self.runs)}개다 —"
+            " 어느 런인지 ROW,COL#RUN 으로 지정할 것(조용히 첫 런을 고르거나"
+            f" 셀 텍스트 전체를 밀지 않는다): {listing}")
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +596,62 @@ def _body_charpr_weights(contents, section_names):
     return weights
 
 
+def _locate_table(contents, section_names, table):
+    """문서 순서 표 색인 → (section 이름, 표 dict, 문서 전체 표 수, section xml).
+
+    `form_inspect` table_map의 index와 **같은 규약**(같은 스캐너, 여는 태그
+    문서 순서, 중첩 표도 자기 색인). fill-cells와 replace --at-cell이 이 함수를
+    공유하므로 `--table N`이 두 오퍼레이션에서 다른 표를 가리킬 수 없다.
+    """
+    index, target = 0, None
+    for sname in section_names:
+        xml = contents[sname].decode("utf-8")
+        for tbl in scan_tables(xml):
+            if index == table:
+                target = (sname, tbl, xml)
+            index += 1
+    if target is None:
+        raise PreeditError(
+            f"표 index={table} 없음 — 문서 전체 표는 {index}개"
+            " (form_inspect table_map의 index와 같은 규약)")
+    sname, tbl, xml = target
+    return sname, tbl, index, xml
+
+
+def _script_baseline(contents, section_names):
+    """(header의 charPr script 프로파일, 본문 baseline id, baseline 프로파일).
+
+    T30 사전 점검의 재료. form_inspect(사전 점검 보고)·visual_verify(사후 검출)와
+    **같은 모듈·같은 가중치**를 쓴다.
+    """
+    header_xml = contents[_header_name(contents)].decode("utf-8")
+    profiles = charpr_script.profiles_from_header(header_xml)
+    baseline_id = charpr_script.body_baseline_id(
+        _body_charpr_weights(contents, section_names))
+    return profiles, baseline_id, profiles.get(baseline_id)
+
+
+def _script_anomaly(profile, baseline_profile, baseline_id):
+    """런 charPr 하나의 T30 판정. 이상이 없거나 판정 불가면 None.
+
+    반환(이상일 때): {charpr_suggested, differing, nominal_height_pt,
+    baseline_height_pt, rendered_pt_estimate} — 호출자가 addr/spec을 붙여
+    ScriptAnomalyError에 넘긴다.
+    """
+    if profile is None or baseline_profile is None:
+        return None
+    differing = charpr_script.differing_keys(profile, baseline_profile)
+    if not differing:
+        return None
+    return {
+        "differing": differing,
+        "charpr_suggested": baseline_id,
+        "nominal_height_pt": profile.get("height_pt"),
+        "baseline_height_pt": baseline_profile.get("height_pt"),
+        "rendered_pt_estimate": charpr_script.rendered_pt_estimate(profile),
+    }
+
+
 def _fill_target_paragraph_index(paras):
     """fill_cells가 쓸 문단의 색인(중첩 표를 담지 않은 첫 문단). 없으면 None."""
     return next((i for i, (_s, _e, p) in enumerate(paras)
@@ -679,33 +780,15 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
     infos, contents = _read_zip(hwpx_in)
     section_names = _section_names(contents)
 
-    index, target_section, target_table, total = 0, None, None, 0
-    parsed = {}
-    for sname in section_names:
-        xml = contents[sname].decode("utf-8")
-        tables = scan_tables(xml)
-        parsed[sname] = (xml, tables)
-        for tbl in tables:
-            if index == table:
-                target_section, target_table = sname, tbl
-            index += 1
-    total = index
-    if target_table is None:
-        raise PreeditError(
-            f"표 index={table} 없음 — 문서 전체 표는 {total}개"
-            " (form_inspect table_map의 index와 같은 규약)")
-
-    xml, _tables = parsed[target_section]
+    target_section, target_table, total, xml = _locate_table(
+        contents, section_names, table)
     known = sorted(c["addr"] for c in target_table["cells"] if c["addr"])
 
     # T30 사전 점검용 재료 — header의 charPr script 프로파일과 본문 baseline.
     # 대상 셀을 하나도 손대기 전에 전부 모아서 한 번에 판정한다(부분 편집 후
     # 중간에 터지는 일이 없게).
-    header_xml = contents[_header_name(contents)].decode("utf-8")
-    script_profiles = charpr_script.profiles_from_header(header_xml)
-    baseline_id = charpr_script.body_baseline_id(
-        _body_charpr_weights(contents, section_names))
-    baseline_profile = script_profiles.get(baseline_id)
+    script_profiles, baseline_id, baseline_profile = _script_baseline(
+        contents, section_names)
 
     resolved, anomalies = {}, []
     for row, col, _text in fills:
@@ -720,21 +803,13 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
             continue
         run_charpr = fill_target_run_charpr(
             xml[cell["body_start"]:cell["body_end"]])
-        profile = script_profiles.get(run_charpr)
-        if run_charpr is None or profile is None:
+        if run_charpr is None:
             continue
-        differing = charpr_script.differing_keys(profile, baseline_profile)
-        if differing:
-            anomalies.append({
-                "addr": [row, col],
-                "charpr": run_charpr,
-                "differing": differing,
-                "charpr_suggested": baseline_id,
-                "nominal_height_pt": profile.get("height_pt"),
-                "baseline_height_pt": baseline_profile.get("height_pt"),
-                "rendered_pt_estimate":
-                    charpr_script.rendered_pt_estimate(profile),
-            })
+        found = _script_anomaly(script_profiles.get(run_charpr),
+                                baseline_profile, baseline_id)
+        if found:
+            anomalies.append(
+                dict(found, addr=[row, col], charpr=run_charpr))
     if anomalies:
         raise ScriptAnomalyError(anomalies)
 
@@ -772,6 +847,339 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "table": table, "tables_total": total,
             "filled": sum(c["hits"] for c in report), "cells": report,
+            "body_baseline_charpr_id": baseline_id}
+
+
+# ---------------------------------------------------------------------------
+# 1c) replace_at_cells — 주소로 키를 잡는 치환 ('seat text' 클래스, T34)
+#
+# 3라운드 클린룸에서 **두 티어가 독립적으로** 걸린 마지막 큰 구멍이다. 양식이
+# 인쇄해 둔 '자리표'(seat) — " 우(     -     )", " http://",
+# "20   .    .    .  ~  20   .    .    .   (     개월)" — 를 고치려면
+# `replace`의 문자열 키가 런의 **내부 공백까지** 정확해야 하는데, 그 문자열을
+# 제품 안에서 얻을 경로가 없었다:
+#   · table_map.text_preview 는 text[:30] 이고 잘림 표시가 없었다 → Sonnet은
+#     협업기간 스켈레톤 중간의 "(     개월)" 빈칸을 아예 못 보고 2차 치환을
+#     한 번 더 써야 했다,
+#   · 스켈레톤은 30자를 넘고 anchors에도 없다,
+#   · content_extract는 공백을 접는다.
+# 결과: 두 티어 모두 Contents/section0.xml을 손으로 읽었다 — 스킬이 금지한
+# 바로 그 접촉이고, Opus는 거기서 키 두 개를 손으로 조립했다.
+#
+# 근본 수정은 '정확한 문자열을 주는 것'이 아니라 '정확한 문자열을 필요 없게
+# 하는 것'이다: 주소(cellAddr + 셀 안 런 색인)로 대상을 잡는다. 주소 규약·
+# 스캐너·가드(stale-lineseg, well-formed 불변식, T30 사전 점검, T22 사후검사)는
+# fill-cells와 전부 공유한다.
+# ---------------------------------------------------------------------------
+
+def _no_ws(text):
+    """공백 전부 제거 — --at-cell-expect의 비교 정규화.
+
+    운영자는 자리표의 정확한 공백을 볼 수 없다(그게 T34의 전제다). 그러니
+    **편집**은 주소로 하고, **사전조건**은 공백에 관용적으로 본다:
+    `--at-cell-expect 4,3='우(-)'` 가 " 우(     -     )" 에 맞아야 한다.
+    `_scope_repoint_paragraph`의 anchor 매칭과 같은 정규화다.
+    """
+    return re.sub(r"\s+", "", text)
+
+
+def cell_text_runs(body):
+    """셀 몸통(hp:tc의 자식 스팬)의 '자기' 텍스트 런 목록 — 문서 순서.
+
+    반환: [{index, text, charpr, para_start, para_end, open_start, open_end,
+            t_spans:[(s,e), ...]}] — 모든 offset은 body 기준.
+      · text  — 그 런의 hp:t 내용을 이어붙여 XML 언이스케이프한 **정확한**
+        문자열. 내부 공백을 그대로 보존한다(그게 seat-text의 전부다).
+      · t_spans — 짝 있는 <hp:t>의 **내용** 스팬만.
+
+    중첩 표를 담은 문단은 통째로 제외한다(그 표의 셀은 그 표 자신의 색인에
+    속한다 — scan_tables 규약, `_fill_cell_body`의 배제와 동일).
+    짝 있는 hp:t가 없는 런(빈 셀의 표준형 자기닫힘 런)은 목록에 **없다** —
+    거기엔 고칠 텍스트가 없고 그건 fill-cells의 소관이다(T27).
+
+    form_inspect --full-text 가 이 함수를 import해서 같은 색인을 보고한다 —
+    보고한 #RUN과 편집이 가리키는 런이 어긋날 수 없게 하기 위함
+    (fill_target_run_charpr을 공유하는 것과 같은 이유).
+    """
+    runs = []
+    for p_start, p_end, p_xml in _find_paragraphs(body):
+        if TBL_TAG_RE.search(p_xml):
+            continue
+        for m in RUN_RE.finditer(p_xml):
+            inner = m.group(3)
+            if inner is None:
+                continue                  # 자기닫힘 런 — 채울 자리(T27)
+            open_m = RUN_OPEN_RE.match(m.group(0))
+            inner_off = p_start + m.start() + open_m.end()
+            spans = [(inner_off + tm.start(2), inner_off + tm.end(2))
+                     for tm in T_FULL_RE.finditer(inner)]
+            if not spans:
+                continue                  # hp:t 없음/자기닫힘 hp:t
+            cm = re.search(r'\bcharPrIDRef="(\d+)"', m.group(2) or "")
+            runs.append({
+                "index": len(runs),
+                "text": unescape(_strip_tags(
+                    "".join(body[s:e] for s, e in spans))),
+                "charpr": cm.group(1) if cm else None,
+                "para_start": p_start,
+                "para_end": p_end,
+                "open_start": p_start + m.start(),
+                "open_end": p_start + m.start() + open_m.end(),
+                "t_spans": spans,
+            })
+    return runs
+
+
+def _spec_text(row, col, run_index=None):
+    return (f"{row},{col}" if run_index is None
+            else f"{row},{col}#{run_index}")
+
+
+def _edit_cell_runs(body, items):
+    """셀 몸통에 런 단위 편집을 적용한 새 몸통.
+
+    items: [{run, text, mode, charpr}] — run은 cell_text_runs 항목.
+      text=None 은 '텍스트는 손대지 않고 charPr만 재지정' (멱등 재실행에서
+      원본 바이트를 흔들지 않기 위해).
+    문단 단위로 묶어 뒤에서부터 적용하고, 텍스트가 바뀐 문단의
+    <hp:linesegarray>만 제거한다(T24 stale-lineseg — 건드리지 않은 문단의
+    캐시 레이아웃은 바이트 그대로 보존).
+    """
+    by_para = {}
+    for item in items:
+        run = item["run"]
+        key = (run["para_start"], run["para_end"])
+        by_para.setdefault(key, []).append(item)
+
+    out = body
+    for (p_start, p_end), group in sorted(by_para.items(), reverse=True):
+        p_xml = body[p_start:p_end]
+        edits, text_changed = [], False
+        for item in group:
+            run = item["run"]
+            if item["text"] is not None:
+                text_changed = True
+                esc = escape(str(item["text"]))
+                spans = [(s - p_start, e - p_start) for s, e in run["t_spans"]]
+                if item["mode"] == "append":
+                    # 인쇄된 접두를 남기고 뒤에 이어붙인다(T31의 정상 형태).
+                    # 분할 런이면 마지막 hp:t 뒤 — 그게 '끝'이다.
+                    s, e = spans[-1]
+                    edits.append((s, e, p_xml[s:e] + esc))
+                else:
+                    # 런 텍스트 전체 교체: 첫 hp:t에 값을 쓰고 나머지를 비운다.
+                    # 사이의 탭·제어 요소는 스팬 밖이므로 바이트 그대로 남는다.
+                    s, e = spans[0]
+                    edits.append((s, e, esc))
+                    edits += [(s2, e2, "") for s2, e2 in spans[1:]]
+            if item["charpr"] is not None:
+                o_s = run["open_start"] - p_start
+                o_e = run["open_end"] - p_start
+                edits.append((o_s, o_e, _tag_set_attr(
+                    p_xml[o_s:o_e], "charPrIDRef", str(item["charpr"]))))
+        for s, e, repl in sorted(edits, reverse=True):
+            p_xml = p_xml[:s] + repl + p_xml[e:]
+        if text_changed:
+            p_xml = LINESEG_RE.sub("", p_xml)
+        out = out[:p_start] + p_xml + out[p_end:]
+    return out
+
+
+def replace_at_cells(hwpx_in, hwpx_out, edits, *, table=0, expects=None,
+                     charpr_at_cell=None):
+    """표 셀 **주소**로 대상 런을 잡는 치환 — 정확한 문자열 키가 필요 없다(T34).
+
+    edits: [(row, col, run_index|None, text, mode), ...]
+      · row/col — `<hp:cellAddr>` 그대로, 즉 `form_inspect` table_map의
+        `addr`. fill-cells와 같은 스캐너·같은 색인(`--table N` 동일 규약).
+      · run_index — 셀 안 텍스트 런의 0-기반 색인(cell_text_runs 순서 =
+        `form_inspect --full-text`의 `runs[].index`). None이면 '셀에 텍스트
+        런이 정확히 하나'일 때만 그 런으로 해석하고, 둘 이상이면
+        AmbiguousCellRunError로 거부한다(조용히 첫 런을 고르지 않는다).
+      · mode — "replace": 그 런의 텍스트 **전체**를 text로 교체.
+                "append": 그 런의 텍스트를 **접두로 남기고** 뒤에 text를
+                이어붙인다(" http://" → " http://host" — 라벨 필드의 정상
+                형태, T31). 둘 중 무엇인지는 항상 명시된다 — 추측하지 않는다.
+
+    다중 hp:t 런(탭 등을 사이에 둔 분할 런): replace는 첫 hp:t에 값을 쓰고
+    나머지 hp:t를 비운다(사이 요소는 보존), append는 마지막 hp:t 뒤에 붙인다.
+
+    expects: {(row, col, run_index): 부분문자열} — 편집 전 사전조건. 그 런의
+      현재 텍스트가 (양쪽 공백 전부 제거 후) 부분문자열을 포함하지 않으면
+      아무것도 쓰지 않고 거부한다. 키는 edits의 대상 표기와 **같은 형태**여야
+      한다(edits에 없는 대상을 지정하면 사용법 오류).
+
+    charpr_at_cell: {(row, col, run_index): id} — 그 런의 charPrIDRef 재지정.
+      T30 사전 점검을 통과하는 유일한 경로이기도 하다(아래).
+
+    계약(fill-cells와 공유):
+      - 대상 셀에 텍스트 런이 없으면(= 진짜 빈 셀) 거부 — fill-cells를 쓸 것(T27).
+      - **T30 사전 점검**: 재지정 id 없이 대상 런의 charPr이 본문 baseline과
+        supscript/subscript/ratio/relSz/offset에서 다르면 ScriptAnomalyError로
+        거부한다(exit 3). 자리표를 고쳐 넣은 값은 사후 게이트
+        (visual_verify fill_charpr_script_mismatch)가 같은 다섯 속성으로 보므로,
+        사전 점검이 통과시킨 것을 게이트가 막으면 최악이다.
+      - 텍스트가 바뀐 문단의 <hp:linesegarray> 제거(T24), 쓰기 전 수정 멤버
+        well-formed 검증(실패 시 아무것도 쓰지 않음), charPr 재지정 시 T22
+        dangling-charPr 사후검사.
+      - 같은 (셀, 런)을 두 번 지정하면 오류(조용한 마지막-승리 금지).
+
+    멱등성: 이미 최종값인 런은 no-op이다 — replace는 텍스트가 이미 같으면,
+    append는 이미 그 접미로 끝나면 손대지 않는다(hits 0). 그래서 재실행이
+    content-identical이고, append가 값을 두 번 이어붙이지 않는다(T26과 같은 원리).
+
+    반환: {"ok": True, "mode": "at-cell", "table": n, "tables_total": n,
+           "replaced": n, "body_baseline_charpr_id": id,
+           "cells": [{"addr": [r, c], "run": i, "mode": "replace"|"append",
+                      "hits": 0|1, "action": "replaced"|"appended"|"noop",
+                      "before": "…", "after": "…", "charpr": id|None}]}
+    """
+    norm = []
+    for row, col, run_index, text, mode in edits:
+        if mode not in ("replace", "append"):
+            raise ValueError(f"mode는 'replace'|'append': {mode!r}")
+        norm.append((int(row), int(col),
+                     None if run_index is None else int(run_index),
+                     "" if text is None else str(text), mode))
+    if not norm:
+        raise ValueError("편집할 대상이 하나도 없음")
+    if any(t == "" for _r, _c, _i, t, m in norm if m == "append"):
+        raise PreeditError("--at-cell-append에 빈 텍스트는 의미 없음")
+
+    specs = {(r, c, i) for r, c, i, _t, _m in norm}
+    if len(specs) != len(norm):
+        raise PreeditError(
+            "같은 대상이 중복 지정됨: "
+            + str(sorted(_spec_text(*s) for s in specs)))
+    expects = {tuple(k): str(v) for k, v in (expects or {}).items()}
+    charpr_at_cell = {tuple(k): str(v)
+                      for k, v in (charpr_at_cell or {}).items()}
+
+    infos, contents = _read_zip(hwpx_in)
+    section_names = _section_names(contents)
+    target_section, target_table, total, xml = _locate_table(
+        contents, section_names, table)
+    known = sorted(c["addr"] for c in target_table["cells"] if c["addr"])
+    _profiles, baseline_id, baseline_profile = _script_baseline(
+        contents, section_names)
+
+    # 1패스: 대상 런 해석 + 사전조건 + T30 판정. 아무것도 쓰기 전에 전부 본다
+    # (부분 편집 후 중간에 터지는 일이 없게 — fill-cells와 동일 정책).
+    #
+    # --at-cell-expect / --at-cell-charpr 의 키는 '쓴 그대로'(ROW,COL)와
+    # '해석된 것'(ROW,COL#RUN) 둘 다로 맞춘다. 거부 메시지의 suggested_flags는
+    # 항상 런까지 특정한 형태(#RUN)로 나오므로, 그걸 그대로 붙여넣어도 원래
+    # --at-cell 이 ROW,COL 이었을 때 '편집 목록에 없다'로 튕기면 안 된다 —
+    # 붙여넣으면 통하는 것이 suggested_flags의 존재 이유다(T30과 동일 계약).
+    plan, resolved_keys, anomalies, accepted = [], set(), [], set()
+    for row, col, run_index, text, mode in norm:
+        cell = find_cell(target_table, row, col)
+        if cell is None:
+            raise PreeditError(
+                f"표 {table}에 cellAddr ({row},{col}) 없음 — 병합 셀이 덮은"
+                f" 좌표이거나 오타. 실제 주소 {len(known)}개: {known[:20]}")
+        body = xml[cell["body_start"]:cell["body_end"]]
+        runs = cell_text_runs(body)
+        if not runs:
+            raise PreeditError(
+                f"셀 ({row},{col})에 텍스트 런이 없음 — 자리표가 인쇄돼 있지"
+                " 않은 '진짜 빈' 셀이다. 채우려면 fill-cells를 쓸 것(T27)")
+        if run_index is None:
+            if len(runs) > 1:
+                raise AmbiguousCellRunError((row, col), runs)
+            run = runs[0]
+        else:
+            if not 0 <= run_index < len(runs):
+                raise PreeditError(
+                    f"셀 ({row},{col})의 런 색인 #{run_index} 범위 밖 —"
+                    f" 텍스트 런은 {len(runs)}개(#0..#{len(runs) - 1})")
+            run = runs[run_index]
+        key = (row, col, run_index)
+        resolved = (row, col, run["index"])
+        if resolved in resolved_keys:
+            raise PreeditError(
+                f"같은 런이 두 번 지정됨: {_spec_text(*resolved)}")
+        resolved_keys.add(resolved)
+        accepted.update({key, resolved})
+
+        want = expects.get(key, expects.get(resolved))
+        if want is not None and _no_ws(want) not in _no_ws(run["text"]):
+            raise PreeditError(
+                f"사전조건 불일치 {_spec_text(*resolved)}: 기대 {want!r}가"
+                f" 현재 런 텍스트 {run['text']!r}에 없음 — 아무것도 쓰지 않음"
+                " (주소가 밀렸거나 이미 편집된 파일이다)")
+
+        cell_charpr = charpr_at_cell.get(key, charpr_at_cell.get(resolved))
+        if cell_charpr is None:
+            found = _script_anomaly(_profiles.get(run["charpr"]),
+                                    baseline_profile, baseline_id)
+            if found:
+                anomalies.append(dict(
+                    found, addr=[row, col], charpr=run["charpr"],
+                    spec=_spec_text(row, col, run["index"])))
+        plan.append({"cell": cell, "addr": (row, col), "run": run,
+                     "text": text, "mode": mode, "charpr": cell_charpr})
+
+    for name, given in (("--at-cell-expect", expects),
+                        ("--at-cell-charpr", charpr_at_cell)):
+        unknown = sorted(_spec_text(*k) for k in given if k not in accepted)
+        if unknown:
+            raise PreeditError(
+                f"{name} 대상이 편집 목록에 없음: {unknown}"
+                " — 오타이거나 --at-cell/--at-cell-append를 빠뜨렸다")
+    if anomalies:
+        raise ScriptAnomalyError(anomalies, flag="--at-cell-charpr")
+
+    # 2패스: 셀별로 묶어 편집. 셀 몸통 스팬은 뒤에서부터 갈아넣는다.
+    by_cell, report = {}, []
+    for item in plan:
+        run, text, mode = item["run"], item["text"], item["mode"]
+        if mode == "append":
+            after = run["text"] + text
+            noop = run["text"].endswith(text)   # 이미 최종값 — 두 번 붙이지 않는다
+        else:
+            after = text
+            noop = run["text"] == text
+        report.append({
+            "addr": [item["addr"][0], item["addr"][1]],
+            "run": run["index"],
+            "mode": mode,
+            "hits": 0 if noop else 1,
+            "action": "noop" if noop
+                      else ("appended" if mode == "append" else "replaced"),
+            "before": run["text"],
+            "after": run["text"] if noop else after,
+            "charpr": item["charpr"],
+        })
+        if noop and item["charpr"] is None:
+            continue
+        key = (item["cell"]["body_start"], item["cell"]["body_end"])
+        # noop인데 charPr 재지정이 있으면 텍스트는 손대지 않는다(text=None) —
+        # 같은 값을 다시 escape해 써넣으면 원본 바이트가 흔들릴 수 있다.
+        by_cell.setdefault(key, []).append(
+            {"run": run, "text": None if noop else text, "mode": mode,
+             "charpr": item["charpr"]})
+
+    for (body_start, body_end), items in sorted(by_cell.items(), reverse=True):
+        body = xml[body_start:body_end]
+        xml = xml[:body_start] + _edit_cell_runs(body, items) + xml[body_end:]
+
+    data = xml.encode("utf-8")
+    modified = set()
+    if data != contents[target_section]:
+        contents[target_section] = data
+        modified.add(target_section)
+
+    _assert_members_well_formed(contents, modified)
+    if charpr_at_cell:
+        header = contents[_header_name(contents)].decode("utf-8")
+        for sname in section_names:
+            guards.assert_no_dangling_charpr(
+                contents[sname].decode("utf-8"), header)
+    _write_zip(hwpx_out, infos, contents)
+    return {"ok": True, "mode": "at-cell", "table": table,
+            "tables_total": total,
+            "replaced": sum(c["hits"] for c in report), "cells": report,
             "body_baseline_charpr_id": baseline_id}
 
 
@@ -1242,6 +1650,72 @@ def _die(msg, code=1, **extra):
     sys.exit(code)
 
 
+_AT_ADDR_RE = re.compile(r'^\s*(-?\d+)\s*,\s*(-?\d+)\s*(?:#\s*(\d+)\s*)?$')
+
+
+def _parse_at_addr(spec_addr, flag):
+    """'ROW,COL' 또는 'ROW,COL#RUN' → (row, col, run_index|None)."""
+    m = _AT_ADDR_RE.match(spec_addr)
+    if not m:
+        _die(f"{flag} 주소 형식은 ROW,COL 또는 ROW,COL#RUN: {spec_addr!r}",
+             code=2)
+    return (int(m.group(1)), int(m.group(2)),
+            None if m.group(3) is None else int(m.group(3)))
+
+
+def _parse_at_specs(specs, flag):
+    """['ROW,COL[#RUN]=VALUE', ...] → [((row, col, run), value), ...]."""
+    out = []
+    for spec in specs:
+        addr, sep, value = spec.partition("=")
+        if not sep:
+            _die(f"{flag} 형식은 ROW,COL[#RUN]=VALUE: {spec!r}", code=2)
+        out.append((_parse_at_addr(addr, flag), value))
+    return out
+
+
+def _run_at_cell(args):
+    """replace의 주소 키 모드 — CLI 문자열을 replace_at_cells 인자로."""
+    edits = []
+    for key, value in _parse_at_specs(args.at_cell, "--at-cell"):
+        edits.append((key[0], key[1], key[2], value, "replace"))
+    for key, value in _parse_at_specs(args.at_cell_append, "--at-cell-append"):
+        edits.append((key[0], key[1], key[2], value, "append"))
+    if args.at_cell_map:
+        raw = json.loads(Path(args.at_cell_map).read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            _die('--at-cell-map JSON은 {"ROW,COL[#RUN]": 값} 객체여야 함',
+                 code=2)
+        for addr, value in raw.items():
+            key = _parse_at_addr(str(addr), "--at-cell-map")
+            if isinstance(value, dict):
+                mode = value.get("mode", "replace")
+                if mode not in ("replace", "append"):
+                    _die("--at-cell-map의 mode는 'replace'|'append': "
+                         f"{mode!r}", code=2)
+                if "text" not in value:
+                    _die(f'--at-cell-map[{addr!r}]에 "text"가 없음', code=2)
+                edits.append((key[0], key[1], key[2], value["text"], mode))
+            else:
+                edits.append((key[0], key[1], key[2], value, "replace"))
+    if not edits:
+        _die("--at-cell/--at-cell-append/--at-cell-map 중 최소 하나 필요",
+             code=2)
+
+    expects, charpr = {}, {}
+    for name, specs, sink in (
+            ("--at-cell-expect", args.at_cell_expect, expects),
+            ("--at-cell-charpr", args.at_cell_charpr, charpr)):
+        for key, value in _parse_at_specs(specs, name):
+            if key in sink:
+                _die(f"{name} 대상이 중복 지정됨: {_spec_text(*key)}", code=2)
+            if not str(value).strip():
+                _die(f"{name}의 값이 빔: {_spec_text(*key)}", code=2)
+            sink[key] = value
+    return replace_at_cells(args.file, args.out, edits, table=args.table,
+                            expects=expects, charpr_at_cell=charpr)
+
+
 def _emit(result):
     sys.stdout.buffer.write(
         (json.dumps(result, ensure_ascii=False) + "\n").encode("utf-8"))
@@ -1255,13 +1729,44 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p_rep = sub.add_parser("replace", help="dict 기반 자리표시자 치환")
+    p_rep = sub.add_parser(
+        "replace",
+        help="자리표시자 치환 — 문자열 키(--map) 또는 셀 주소 키(--at-cell)")
     p_rep.add_argument("file")
     p_rep.add_argument("--out", required=True)
-    p_rep.add_argument("--map", required=True,
-                       help="치환 dict JSON 파일 경로({old: new, ...})")
+    p_rep.add_argument("--map",
+                       help="치환 dict JSON 파일 경로({old: new, ...}) —"
+                            " 문자열 키 모드. --at-cell*과 함께 쓸 수 없다")
     p_rep.add_argument("--allow-missing", action="store_true",
-                       help="0-hit 키를 오류 대신 0으로 보고(멱등 재실행용)")
+                       help="0-hit 키를 오류 대신 0으로 보고(멱등 재실행용)."
+                            " 문자열 키 모드 전용")
+    p_rep.add_argument("--table", type=int, default=0,
+                       help="주소 키 모드의 표 색인(문서 순서, form_inspect"
+                            " table_map과 동일). 기본 0")
+    p_rep.add_argument("--at-cell", action="append", default=[],
+                       metavar="ROW,COL[#RUN]=TEXT",
+                       help="셀 주소로 대상 런을 잡아 **텍스트 전체를 교체**"
+                            "(반복 가능). 양식이 인쇄해 둔 자리표의 정확한"
+                            " 내부 공백을 몰라도 된다(T34). 셀에 텍스트 런이"
+                            " 둘 이상이면 #RUN으로 지정해야 한다 —"
+                            " 색인은 form_inspect --full-text가 보고한다")
+    p_rep.add_argument("--at-cell-append", action="append", default=[],
+                       metavar="ROW,COL[#RUN]=TEXT",
+                       help="인쇄된 접두를 **남기고** 뒤에 이어붙인다"
+                            "(' http://' → ' http://host' — 라벨 필드의 정상"
+                            " 형태, T31). 반복 가능")
+    p_rep.add_argument("--at-cell-map",
+                       help='주소 키 JSON({"11,2": "값", "15,0#2": {"text":'
+                            ' "…", "mode": "append"}}) — 문자열 값은 replace')
+    p_rep.add_argument("--at-cell-expect", action="append", default=[],
+                       metavar="ROW,COL[#RUN]=부분문자열",
+                       help="편집 전 사전조건(반복 가능): 그 런의 현재 텍스트가"
+                            " 이 부분문자열을 포함해야 한다(양쪽 공백 전부"
+                            " 제거 후 비교). 불일치면 아무것도 쓰지 않는다")
+    p_rep.add_argument("--at-cell-charpr", action="append", default=[],
+                       metavar="ROW,COL[#RUN]=ID",
+                       help="그 런의 charPrIDRef 재지정(반복 가능)."
+                            " T30 사전 점검 거부를 넘기는 경로다")
 
     p_fc = sub.add_parser("fill-cells",
                           help="cellAddr(row,col)로 표 셀 채우기(빈 셀 도달 경로)")
@@ -1315,10 +1820,22 @@ def main(argv=None):
 
     try:
         if args.cmd == "replace":
-            mapping = json.loads(Path(args.map).read_text(encoding="utf-8"))
-            result = replace_placeholders(
-                args.file, args.out, mapping,
-                on_zero_hits="ignore" if args.allow_missing else "error")
+            at_cell_given = bool(args.at_cell or args.at_cell_append
+                                 or args.at_cell_map)
+            if args.map and at_cell_given:
+                _die("--map(문자열 키)와 --at-cell*(주소 키)는 함께 쓸 수 없음"
+                     " — 두 번 호출해 연결할 것(한 호출 안에서 섞으면 주소"
+                     " 오프셋과 치환 결과가 서로를 덮는다)", code=2)
+            if not args.map and not at_cell_given:
+                _die("--map 또는 --at-cell/--at-cell-append/--at-cell-map 중"
+                     " 최소 하나 필요", code=2)
+            if at_cell_given:
+                result = _run_at_cell(args)
+            else:
+                mapping = json.loads(Path(args.map).read_text(encoding="utf-8"))
+                result = replace_placeholders(
+                    args.file, args.out, mapping,
+                    on_zero_hits="ignore" if args.allow_missing else "error")
         elif args.cmd == "fill-cells":
             fills = []
             for spec in args.cell:
@@ -1399,6 +1916,14 @@ def main(argv=None):
             result = normalize_clones(args.file, args.out, clones,
                                       clone_attrs=attrs, repoints=repoints,
                                       scope_repoints=scope_repoints)
+    except AmbiguousCellRunError as exc:
+        # exit 2 = 사용법(주소가 덜 특정됐다). 거부 payload가 그 셀의 모든 런과
+        # **정확한** 문자열을 들고 있으므로, 이 JSON만 읽고 #RUN을 골라 다시
+        # 부르면 된다 — section XML을 열 이유가 없다(그게 T34의 요점).
+        _die(str(exc), code=exc.exit_code,
+             code_name="at_cell_run_ambiguous",
+             addr=exc.addr, runs=exc.runs,
+             suggested_flags=exc.suggested_flags)
     except ScriptAnomalyError as exc:
         # exit 3 = '발견'. 거부 메시지에 셀 주소·이상 charPr·권장 id·정확히
         # 넘겨야 하는 플래그가 다 들어 있어야 한다 — 이 거부를 읽고 header.xml을

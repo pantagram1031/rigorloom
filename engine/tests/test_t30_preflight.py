@@ -19,6 +19,10 @@ PPS 양식 (10,2) 셀의 빈 런은 본문과 **동일한** charPr에 `<hh:supsc
      적용되는 제약 — T32).
   4. 정상 문서에는 오탐이 없고, 의도적으로 위첨자인 **비대상** 런은 절대
      플래그되지 않는다.
+  5. (T34) 주소 키 치환 `replace --at-cell`도 **같은** 사전 점검을 진다 —
+     자리표를 고쳐 넣은 값도 사후 게이트가 같은 다섯 속성으로 보므로, 새 경로가
+     T30을 우회하는 뒷문이 되면 안 된다. 거부는 `--at-cell-charpr` 플래그를
+     이름 붙여 알려주고, 그 플래그는 그대로 붙여넣으면 통해야 한다.
 """
 import json
 import subprocess
@@ -35,6 +39,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import charpr_script  # noqa: E402
 import form_inspect  # noqa: E402
 from hwpx_tables import find_cell, scan_tables  # noqa: E402
+import preedit  # noqa: E402
 from preedit import (  # noqa: E402
     ScriptAnomalyError,
     fill_cells,
@@ -547,3 +552,179 @@ def test_corpus_forms_with_no_anomaly_are_never_refused(tmp_path):
                             table=table)
         assert result["filled"] == 1, form.name
         assert result["cells"][0]["charpr"] is None   # charPr 보존
+
+
+# ---------------------------------------------------------------------------
+# 5) replace --at-cell 도 같은 사전 점검을 진다 (T34가 T30을 우회하지 않는다)
+#
+# 자리표를 고쳐 넣은 값도 사후 게이트(visual_verify
+# fill_charpr_script_mismatch)가 같은 다섯 속성으로 본다. 사전 점검이
+# 통과시킨 것을 게이트가 막으면 최악이므로, 주소 키 치환도 이상 런을 거부하고
+# 넘어갈 플래그를 이름 붙여 알려준다.
+# ---------------------------------------------------------------------------
+
+def seat_form(tmp_path, *, name="seat.hwpx", seat_charprs=(7, 9)):
+    """자리표가 인쇄된 셀 둘 — 하나는 정상 charPr, 하나는 이상(supscript)."""
+    a, b = seat_charprs
+    tbl = (
+        '<hp:tbl id="9" rowCnt="2" colCnt="2"><hp:tr>'
+        + TC(0, 0, P(R(0, "홈페이지")))
+        + TC(0, 1, P(R(a, " http://")))
+        + TC(1, 0, P(R(0, "협 업 기 간")))
+        + TC(1, 1, P(R(b, "20   .    .    .  ~  20   .    .    .   (     개월)")))
+        + '</hp:tr></hp:tbl>'
+    )
+    section = SEC(
+        P(R(0, "I.  서론")),
+        f'<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">{tbl}</hp:run></hp:p>',
+        P(R(0, BODY)),
+        P(R(0, "각주 대상 문구"), R(8, "1)")),
+    )
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("mimetype", "application/hwp+zip")
+        z.writestr("Contents/header.xml", header_xml())
+        z.writestr("Contents/section0.xml", section)
+    return path
+
+
+class TestAtCellPreflight:
+    def test_normal_seat_run_is_not_refused(self, tmp_path):
+        src = seat_form(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(
+            src, out, [(0, 1, None, "host.kr", "append")])
+        assert result["replaced"] == 1
+        assert result["cells"][0]["charpr"] is None      # charPr 보존
+
+    def test_anomalous_seat_run_is_refused_naming_the_at_cell_flag(
+            self, tmp_path):
+        """거부 메시지의 플래그가 fill-cells의 것이 아니라 --at-cell-charpr
+        이어야 한다 — 붙여넣으면 그대로 통해야 의미가 있다."""
+        src = seat_form(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(ScriptAnomalyError) as exc:
+            preedit.replace_at_cells(src, out, [(1, 1, None, "6개월",
+                                                 "replace")])
+        assert not out.exists()
+        assert exc.value.suggested_flags == ["--at-cell-charpr", "1,1#0=0"]
+        assert "--at-cell-charpr 1,1#0=0" in str(exc.value)
+
+    def test_suggested_flag_closes_the_loop(self, tmp_path):
+        src = seat_form(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(
+            src, out, [(1, 1, None, "6개월", "replace")],
+            charpr_at_cell={(1, 1, None): "0"})
+        assert result["cells"][0]["charpr"] == "0"
+        assert '<hp:run charPrIDRef="0"><hp:t>6개월</hp:t></hp:run>' \
+            in section_of(out)
+
+    def test_dangling_charpr_guard_still_runs(self, tmp_path):
+        """T22: 정의 없는 id로 재지정하면 출력 전에 터진다."""
+        src = seat_form(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(Exception):
+            preedit.replace_at_cells(
+                src, out, [(0, 1, None, "값", "replace")],
+                charpr_at_cell={(0, 1, None): "999"})
+
+    def test_intentional_superscript_run_is_out_of_scope(self, tmp_path):
+        """비대상 런(진짜 각주 표식)은 애초에 비교 대상이 아니다 — 그 런을
+        **명시적으로** 고치겠다고 할 때만 사전 점검에 걸린다."""
+        src = seat_form(tmp_path)
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(src, out, [(0, 1, None, "x", "append")])
+        assert '<hp:run charPrIDRef="8"><hp:t>1)</hp:t></hp:run>' \
+            in section_of(out)
+
+
+class TestAtCellCli:
+    def test_map_and_at_cell_are_mutually_exclusive(self, tmp_path):
+        src = seat_form(tmp_path)
+        mp = tmp_path / "m.json"
+        mp.write_text('{"a": "b"}', encoding="utf-8")
+        proc = _cli("replace", src, "--out", tmp_path / "o.hwpx",
+                    "--map", mp, "--at-cell", "0,1=x")
+        assert proc.returncode == 2, proc.stdout
+        assert "함께 쓸 수 없음" in proc.stdout
+
+    def test_neither_map_nor_at_cell_is_a_usage_error(self, tmp_path):
+        src = seat_form(tmp_path)
+        proc = _cli("replace", src, "--out", tmp_path / "o.hwpx")
+        assert proc.returncode == 2, proc.stdout
+
+    def test_ambiguous_cell_exits_2_with_machine_readable_runs(self, tmp_path):
+        """다중 런 셀의 거부는 기계 판독 가능해야 한다 — 이 payload만 읽고
+        #RUN을 골라야 section XML을 열 이유가 없다."""
+        src = seat_form(tmp_path)
+        multi = tmp_path / "multi.hwpx"
+        xml = section_of(src).replace(
+            R(0, "홈페이지"), R(0, "홈") + R(0, "페이지"))
+        with zipfile.ZipFile(src) as z, \
+                zipfile.ZipFile(multi, "w", zipfile.ZIP_DEFLATED) as w:
+            for info in z.infolist():
+                data = (xml.encode("utf-8")
+                        if info.filename.endswith("section0.xml")
+                        else z.read(info.filename))
+                w.writestr(info, data)
+        out = tmp_path / "o.hwpx"
+        proc = _cli("replace", multi, "--out", out, "--at-cell", "0,0=값")
+        assert proc.returncode == 2, proc.stdout
+        assert not out.exists()
+        payload = json.loads(proc.stdout)
+        assert payload["code_name"] == "at_cell_run_ambiguous"
+        assert payload["addr"] == [0, 0]
+        assert [r["text"] for r in payload["runs"]] == ["홈", "페이지"]
+        assert payload["suggested_flags"][:2] == ["--at-cell", "0,0#0=<TEXT>"]
+
+    def test_anomaly_refusal_exits_3_with_at_cell_flags(self, tmp_path):
+        src = seat_form(tmp_path)
+        out = tmp_path / "o.hwpx"
+        proc = _cli("replace", src, "--out", out, "--at-cell", "1,1=6개월")
+        assert proc.returncode == 3, proc.stdout
+        assert not out.exists()
+        payload = json.loads(proc.stdout)
+        assert payload["code_name"] == "fill_charpr_script_anomaly"
+        assert payload["suggested_flags"] == ["--at-cell-charpr", "1,1#0=0"]
+        # 그대로 붙여넣으면 통한다
+        ok = _cli("replace", src, "--out", out, "--at-cell", "1,1=6개월",
+                  *payload["suggested_flags"])
+        assert ok.returncode == 0, ok.stdout
+        assert json.loads(ok.stdout)["replaced"] == 1
+
+    def test_at_cell_map_accepts_string_and_object_values(self, tmp_path):
+        src = seat_form(tmp_path)
+        mp = tmp_path / "at.json"
+        mp.write_text(json.dumps({
+            "0,1": {"text": "host.kr", "mode": "append"},
+            "1,1#0": "6개월",
+        }, ensure_ascii=False), encoding="utf-8")
+        out = tmp_path / "o.hwpx"
+        proc = _cli("replace", src, "--out", out, "--at-cell-map", mp,
+                    "--at-cell-charpr", "1,1#0=0")
+        assert proc.returncode == 0, proc.stdout
+        result = json.loads(proc.stdout)
+        assert result["replaced"] == 2
+        modes = {tuple(c["addr"]): c["mode"] for c in result["cells"]}
+        assert modes == {(0, 1): "append", (1, 1): "replace"}
+
+    def test_bad_address_spec_is_a_usage_error(self, tmp_path):
+        src = seat_form(tmp_path)
+        for spec in ("0-1=x", "0,1#x=v", "0,1"):
+            proc = _cli("replace", src, "--out", tmp_path / "o.hwpx",
+                        "--at-cell", spec)
+            assert proc.returncode == 2, (spec, proc.stdout)
+
+    def test_expect_flag_refuses_before_writing(self, tmp_path):
+        src = seat_form(tmp_path)
+        out = tmp_path / "o.hwpx"
+        proc = _cli("replace", src, "--out", out,
+                    "--at-cell-append", "0,1=host.kr",
+                    "--at-cell-expect", "0,1=협업기간")
+        assert proc.returncode == 1, proc.stdout
+        assert not out.exists()
+        ok = _cli("replace", src, "--out", out,
+                  "--at-cell-append", "0,1=host.kr",
+                  "--at-cell-expect", "0,1=http://")
+        assert ok.returncode == 0, ok.stdout
