@@ -191,8 +191,9 @@ The comparison table prints `—` and stays honest; it never estimates.
 ## 6. Task definitions
 
 `tasks/*.yaml`, schema `rigorloom-eval-task/v1`, derived from
-`docs/research/form-eval-scenarios.md`. Seven tasks, one per corpus-backed
-family plus the three grant-family scenarios:
+`docs/research/form-eval-scenarios.md`. At least one task per corpus-backed
+family, plus extra scenarios where a family has more than one shape worth
+exercising:
 
 | id | family | source scenario | input |
 |---|---|---|---|
@@ -200,26 +201,49 @@ family plus the three grant-family scenarios:
 | `A2-pps-consent-checkboxes` | grant | A2 | native `.hwpx` |
 | `A3-kstartup-hybrid` | grant | A3 | XC-1 converted |
 | `P1-jumin-recognize-fill` | petition | P1 | XC-1 converted |
+| `P2-jeongbo-staff-seats` | petition | P2 | XC-1 converted |
 | `G1-gianmun-body-edit` | gongmun | G1 | XC-1 converted |
 | `H1-labor-contract-fill` | hr | H1 | XC-1 converted |
 | `R1-nrf-profile` | research | R1 | XC-1 converted |
 
-Two tasks additionally run a work-type distribution module's checker over the
+**The inventory is a property, not a count.** `tests/test_cleanroom_evals.py::
+TestTaskDefinitions::test_every_shipped_task_validates` asserts that every
+shipped definition validates, that every family in
+`tests/corpus/forms/manifest.json` `documents[]` has at least one task (the
+family list is *derived* from the manifest, never listed in the test), that no
+task claims a family the corpus does not back, and a non-vacuity floor so the
+scan cannot pass on zero tasks. Adding a task here requires no core edit; adding
+a *family* to the corpus obliges a task for it.
+
+Three tasks additionally run a work-type distribution module's checker over the
 blank form and over the produced artifact:
 
 | task | module | checker | what it adds |
 |---|---|---|---|
 | `G1-gianmun-body-edit` | gongmun | `check_gongmun` | 두문/결재란/결문/발신명의/직인 seats and the 별지서식 guide vocabulary that must not survive |
-| `P1-jumin-recognize-fill` | minwon | `check_minwon` | the 별지서식 frame, the 접수·처리 기관 seats a citizen must not fill, 선택 항목 slot preservation, the 서명 markers, the 유의사항/수수료/제출서류 blocks that must survive, and that no 주민등록번호 was invented |
+| `P1-jumin-recognize-fill` | minwon | `check_minwon` | the 별지서식 frame, 선택 항목 slot preservation, the 서명 markers, the 유의사항/수수료/제출서류 blocks that must survive, and that no 주민등록번호 was invented |
+| `P2-jeongbo-staff-seats` | minwon | `check_minwon` | the 접수·처리 기관 seats a citizen must not fill — the two rules P1 structurally cannot reach |
 
-All four checks declare `requires_module` (below), so a sandbox without the
-module skips them with a reason instead of failing them. Both tasks declare a
-`baseline`, because both checkers declare `wants: [baseline]`.
+Every one of those checks declares `requires_module` (below), so a sandbox
+without the module skips them with a reason instead of failing them. All three
+tasks declare a `baseline`, because both checkers declare `wants: [baseline]`.
 
 `P1`'s minwon checks are worth one note: the prompt supplies no 주민등록번호 and
 the check deliberately passes **no** `--fill-map`, so any identity-number-shaped
 value in the artifact is undeclared and `identity_value_invented` fires. That
 turns "절대 임의 생성하지 않는다" from a judgment line into a machine check.
+
+`P2` exists because a rule that is always `skipped` is not covered. 주민등록표
+등초본 교부 신청서 has **no 접수 block at all**, so a `check_minwon` run over P1's
+artifact records `staff_seat_filled: seat_absent` and neither staff rule ever
+executes. 정보공개 청구서 carries three shaded 접수번호/접수일/처리기간 cells, a
+four-cell 접수증 block, and the form's own
+`※ 색상이 어두운 칸은 신청인(대리인)이 작성하지 않습니다` declaration — seven
+recognized staff seats across **both** recognizers (label and shaded). P2's last
+two checks pin that down without needing a filter expression: the rule names must
+be *absent* from the verdict (present only when skipped or when they fire), while
+`untouched` and `shaded` must be *present* (states only a recognized staff seat
+is reported in).
 
 Family ③ 학교 서식 has no task (corpus gap) and family ⑤ 기업 내부 문서 has no
 task (documented capability boundary) — both are statements in
