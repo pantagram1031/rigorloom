@@ -38,8 +38,10 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
-| fill an **empty** form cell (`table_map` says `fill_target`) | `python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx --cell ROW,COL=값` (ROW,COL = the cellAddr `table_map` reports) | LOW |
+| fill an **empty** form cell (`table_map` says `fill_target`) | `python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx --cell ROW,COL=값 [--charpr-per-cell ROW,COL=ID]` (ROW,COL = the cellAddr `table_map` reports; `--charpr-per-cell` takes the pre-flight's `charpr_suggested`, see references/operations.md §3) | LOW |
+| write over/into a **printed seat** the form typeset (`" 우(     -     )"`, `" http://"`, a date skeleton) | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --at-cell 'ROW,COL=값'` — or `--at-cell-append 'ROW,COL=값'` to keep the printed prefix. Address-keyed, so you never need the seat's exact internal whitespace (T34) | LOW |
 | replace a literal placeholder string that exists in the document | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json` | LOW |
+| read a cell's **exact** text (only when a byte-exact string is genuinely needed) | `python engine/scripts/form_inspect.py FORM.hwpx --full-text ROW,COL` — per-cell opt-in escape from the structure-only contract | LOW |
 | write one cell of a `.hwp` (Windows+Hancom, one session per cell) | `python engine/scripts/com_backend.py set-cell --file F.hwp --addr ROW,COL --text 값 --expect-empty --save-as OUT.hwpx` | LOW |
 | delete guide text (colored 안내문) | `python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx --color ...` | LOW |
 | normalize charPr clones (postedit) | `python engine/scripts/preedit.py normalize-clones ...` | LOW |
@@ -98,7 +100,20 @@ path, that is a surface defect to report, not a reason to escalate.
 ## Contracts (violations are defects)
 
 - `inspect`/`form_inspect` return **structure only, never body text** — do
-  not dump full document text into context.
+  not dump full document text into context. The one sanctioned exception is
+  `form_inspect --full-text ROW,COL`, which emits the exact run text for the
+  cells you **name** and no others; it is per-cell opt-in for that reason.
+  Reading `Contents/section*.xml` by hand is still the defect it always was
+  (T34: both round-3 clean-room tiers did it, for want of this flag).
+- `table_map`'s `text_preview` is 30 chars and tells you when it cut
+  (`truncated: true`). Never key a `replace` on a preview — the 협업기간
+  skeleton's preview stops right before its `(     개월)` blank (T34).
+- To **edit** a printed seat, address it: `replace --at-cell ROW,COL=값`
+  (whole run) or `--at-cell-append ROW,COL=값` (keep the printed prefix — the
+  normal shape of a labeled field, T31). Pick the mode explicitly. A cell with
+  several text runs refuses and lists every run's index and exact text; name
+  the one you mean with `ROW,COL#RUN`. Never reconstruct the seat string by
+  hand to feed `--map`.
 - An empty form cell has **no text to key on** — it is a self-closing
   `<hp:run charPrIDRef="N"/>` with no `<hp:t>` (19 of 19 empty cells on the
   PPS form). `preedit replace` is text-keyed and cannot reach it; that is what

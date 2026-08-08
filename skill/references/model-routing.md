@@ -113,12 +113,16 @@ tiers a retry.
    independent party writing their own task would be a stronger proof and has
    not happened.
 5. **Round-2 numbers included one known defect** (the keep-list derivation);
-   round 3 ran after it landed. Round 3 in turn still carries one open gap
-   that cost both tiers work: nothing shipped yields the exact text of a
-   printed non-anchor seat, so both agents ended up reading the artifact's
-   own XML — Opus to build two replace keys, Sonnet because
-   `text_preview` truncates at 30 characters with no flag and hid a
-   `(     개월)` blank. Expect both tiers to drop again once that is closed.
+   round 3 ran after it landed. Round 3 in turn surfaced one gap that cost
+   both tiers work: nothing shipped yielded the exact text of a printed
+   non-anchor seat, so both agents ended up reading the artifact's own XML —
+   Opus to build two replace keys, Sonnet because `text_preview` truncated at
+   30 characters with no flag and hid a `(     개월)` blank. **Closed after
+   the round** (T34): `replace --at-cell ROW,COL=값` addresses the seat run so
+   no exact string is needed, `text_preview` now carries `truncated`, and
+   `form_inspect --full-text ROW,COL` is the per-cell escape hatch. The
+   numbers in this table are the pre-fix measurement; expect both tiers to
+   drop on the next round.
 6. **Every run so far is a Claude agent.** A different agent harness has not
    been measured, and the skill leans on at least one Claude-Code-specific
    mechanism (the capability probe is injected by an inline-command syntax).

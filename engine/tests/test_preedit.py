@@ -915,3 +915,291 @@ class TestFillCells:
         fill_cells(src, out, [(0, 0, "값")])
         assert '<hp:run charPrIDRef="7"><hp:t>값</hp:t></hp:run>' \
             in section_xml(out)
+
+
+# ---------------------------------------------------------------------------
+# 8) replace --at-cell — 주소로 잡는 치환 ('seat text' 클래스, T34)
+#
+# failing-before: 양식이 인쇄해 둔 자리표를 고치려면 문자열 키가 런의 내부
+# 공백까지 정확해야 했고, 그 문자열을 제품 안에서 얻을 경로가 없었다
+# (text_preview는 30자 무표시 잘림, 스켈레톤은 anchors에 없음). 3라운드
+# 클린룸에서 두 티어 모두 Contents/section0.xml을 손으로 읽었다 — 배포된
+# 스킬이 금지한 바로 그 접촉. 여기서 고정하는 것은 '정확한 문자열이 아예
+# 필요 없다'는 계약이다.
+# ---------------------------------------------------------------------------
+
+SEAT_ZIP = " 우(     -     )"
+SEAT_URL = " http://"
+SEAT_PERIOD = "20   .    .    .  ~  20   .    .    .   (     개월)"
+SEAT_DATE = "                                               년      월      일"
+
+
+def _seat_fixture(tmp_path, name="seat.hwpx"):
+    """자리표가 인쇄된 양식 표 — T34의 대상 형태.
+
+    (0,1) 우편번호 스켈레톤 · (1,1) http 접두 · (2,1) 협업기간 스켈레톤(30자
+    초과) · (3,1) 한 셀 안 여러 런(그 중 하나가 신청일 줄) · (4,1) 진짜 빈 셀.
+    """
+    tbl = TBL([
+        TC(0, 0, P(R(0, "주    소"))),
+        TC(0, 1, PL(R(0, SEAT_ZIP))),
+        TC(1, 0, P(R(0, "홈페이지"))),
+        TC(1, 1, PL(R(0, SEAT_URL))),
+        TC(2, 0, P(R(0, "협 업 기 간"))),
+        TC(2, 1, PL(R(0, SEAT_PERIOD))),
+        TC(3, 0, P(R(0, "신청"))),
+        TC(3, 1, PL(R(0, "규정에 따라 신청합니다."), R(0, SEAT_DATE),
+                    R(6, "신청인"))),
+        TC(4, 0, P(R(0, "서명"))),
+        TC(4, 1, EMPTY_P()),
+    ], rows=5, cols=2)
+    return make_hwpx(tmp_path,
+                     make_header([CP_BLACK, CP_BLUE, CP_NAVY, CP_CELL]),
+                     SEC(TBL_WRAP(tbl)), name=name)
+
+
+def _geometry_skeleton(xml):
+    """텍스트 내용과 캐시 레이아웃을 뺀 XML — 표/셀 기하만 남는다.
+
+    이게 같으면 '텍스트 말고는 아무것도 안 바뀌었다'가 바이트로 증명된다
+    (셀 수·주소·병합·borderFill·cellSz·문단 구조 전부 포함)."""
+    return preedit.T_FULL_RE.sub(
+        lambda m: m.group(1) + m.group(3), preedit.LINESEG_RE.sub("", xml))
+
+
+def _cell_runs_at(path, addr, table=0):
+    xml = section_xml(path)
+    cell = find_cell(scan_tables(xml)[table], *addr)
+    return preedit.cell_text_runs(xml[cell["body_start"]:cell["body_end"]])
+
+
+class TestReplaceAtCells:
+    def test_seat_text_replaced_without_knowing_its_whitespace(self, tmp_path):
+        """failing-before: 이 값을 쓰려면 30자 넘는 스켈레톤을 공백까지 정확히
+        키로 써야 했다. 주소만으로 대상을 잡고, 정확한 이전 텍스트는 결과가
+        되돌려준다."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(
+            src, out, [(2, 1, None, "2026. 3. 1. ~ 2026. 8. 31. (6개월)",
+                        "replace")])
+        assert result["replaced"] == 1
+        cell = result["cells"][0]
+        assert cell["addr"] == [2, 1] and cell["run"] == 0
+        assert cell["action"] == "replaced"
+        assert cell["before"] == SEAT_PERIOD          # 정확한 자리표를 보고
+        assert cell["after"] == "2026. 3. 1. ~ 2026. 8. 31. (6개월)"
+        xml = section_xml(out)
+        ET.fromstring(xml)
+        assert SEAT_PERIOD not in xml
+        assert "<hp:t>2026. 3. 1. ~ 2026. 8. 31. (6개월)</hp:t>" in xml
+
+    def test_geometry_is_byte_identical(self, tmp_path):
+        """기하 불변: 텍스트와 (바뀐 문단의) lineseg 말고는 한 바이트도
+        달라지지 않는다."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(src, out, [
+            (0, 1, None, "서울 강남구", "append"),
+            (2, 1, None, "6개월", "replace"),
+            (3, 1, 1, "2026 년 3 월 1 일", "replace"),
+        ])
+        assert _geometry_skeleton(section_xml(out)) \
+            == _geometry_skeleton(section_xml(src))
+        before = scan_tables(section_xml(src))[0]["cells"]
+        after = scan_tables(section_xml(out))[0]["cells"]
+        assert [(c["addr"], c["span"], c["attrs"]) for c in before] \
+            == [(c["addr"], c["span"], c["attrs"]) for c in after]
+
+    def test_append_preserves_the_printed_prefix(self, tmp_path):
+        """T31의 정상 형태: 라벨 필드는 접두를 남기고 값을 이어붙인다."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(
+            src, out, [(1, 1, None, "hanbit.example.kr", "append")])
+        assert result["cells"][0]["action"] == "appended"
+        assert result["cells"][0]["after"] == " http://hanbit.example.kr"
+        assert "<hp:t> http://hanbit.example.kr</hp:t>" in section_xml(out)
+
+    def test_replace_mode_discards_the_prefix(self, tmp_path):
+        """모드는 명시된다 — 같은 셀에 replace를 주면 접두가 사라진다.
+        추측하지 않는다는 계약을 두 모드의 관측 가능한 차이로 고정."""
+        src = _seat_fixture(tmp_path)
+        a, b = tmp_path / "a.hwpx", tmp_path / "b.hwpx"
+        preedit.replace_at_cells(src, a, [(1, 1, None, "X", "append")])
+        preedit.replace_at_cells(src, b, [(1, 1, None, "X", "replace")])
+        assert "<hp:t> http://X</hp:t>" in section_xml(a)
+        assert "<hp:t>X</hp:t>" in section_xml(b)
+        assert " http://" not in section_xml(b)
+
+    def test_multi_run_cell_refuses_and_lists_every_run(self, tmp_path):
+        """다중 런 셀: 조용히 첫 런을 고르지도, 셀 텍스트 전체를 밀지도
+        않는다. 거부 payload가 모든 런의 **정확한** 문자열을 들고 있으므로
+        그것만 읽고 #RUN을 골라 다시 부르면 된다."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(preedit.AmbiguousCellRunError) as exc:
+            preedit.replace_at_cells(src, out, [(3, 1, None, "값", "replace")])
+        assert not out.exists()
+        runs = exc.value.runs
+        assert [r["index"] for r in runs] == [0, 1, 2]
+        assert runs[1]["text"] == SEAT_DATE      # 정확한 공백까지
+        assert runs[2]["charpr"] == "6"
+        assert exc.value.suggested_flags[:2] == ["--at-cell", "3,1#0=<TEXT>"]
+
+    def test_named_run_edits_only_that_run(self, tmp_path):
+        """#RUN을 주면 그 런만 바뀌고 같은 셀의 다른 런은 바이트 그대로."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(
+            src, out, [(3, 1, 1, "2026 년   3 월   1 일", "replace")])
+        assert result["cells"][0]["before"] == SEAT_DATE
+        xml = section_xml(out)
+        assert ('<hp:run charPrIDRef="0"><hp:t>규정에 따라 신청합니다.</hp:t>'
+                '</hp:run>') in xml
+        assert '<hp:run charPrIDRef="6"><hp:t>신청인</hp:t></hp:run>' in xml
+        assert SEAT_DATE not in xml
+
+    def test_truly_empty_cell_is_routed_to_fill_cells(self, tmp_path):
+        """자리표가 없는 셀에는 고칠 텍스트가 없다 — T27의 경계."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="fill-cells"):
+            preedit.replace_at_cells(src, out, [(4, 1, None, "값", "replace")])
+        assert not out.exists()
+
+    def test_run_index_out_of_range_reports_the_count(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="범위 밖"):
+            preedit.replace_at_cells(src, tmp_path / "o.hwpx",
+                                     [(3, 1, 9, "값", "replace")])
+
+    def test_duplicate_target_rejected(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="중복"):
+            preedit.replace_at_cells(src, tmp_path / "o.hwpx", [
+                (2, 1, None, "a", "replace"), (2, 1, None, "b", "replace")])
+        # 같은 런을 다른 표기로 두 번 가리키는 경우도 조용한 마지막-승리 금지
+        with pytest.raises(PreeditError, match="두 번"):
+            preedit.replace_at_cells(src, tmp_path / "o2.hwpx", [
+                (2, 1, None, "a", "replace"), (2, 1, 0, "b", "replace")])
+
+    def test_expect_precondition_is_whitespace_tolerant(self, tmp_path):
+        """운영자는 자리표의 공백을 볼 수 없다 — 사전조건은 공백을 전부 뺀
+        부분일치로 본다. 편집은 주소로, 확인은 관용적으로."""
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(src, out, [(0, 1, None, "서울", "append")],
+                                 expects={(0, 1, None): "우(-)"})
+        assert "<hp:t> 우(     -     )서울</hp:t>" in section_xml(out)
+
+    def test_expect_mismatch_writes_nothing(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="사전조건 불일치"):
+            preedit.replace_at_cells(src, out, [(0, 1, None, "X", "append")],
+                                     expects={(0, 1, None): "홈페이지"})
+        assert not out.exists()
+
+    def test_expect_target_must_be_in_the_edit_list(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="편집 목록에 없음"):
+            preedit.replace_at_cells(
+                src, tmp_path / "o.hwpx", [(0, 1, None, "X", "append")],
+                expects={(1, 1, None): "http"})
+
+    def test_idempotent_in_both_modes(self, tmp_path):
+        """이미 최종값인 런은 no-op — append가 값을 두 번 붙이지 않는다
+        (T26과 같은 원리, 재실행이 content-identical)."""
+        src = _seat_fixture(tmp_path)
+        a, b = tmp_path / "a.hwpx", tmp_path / "b.hwpx"
+        edits = [(1, 1, None, "host.kr", "append"),
+                 (2, 1, None, "6개월", "replace")]
+        preedit.replace_at_cells(src, a, edits)
+        again = preedit.replace_at_cells(a, b, edits)
+        assert again["replaced"] == 0
+        assert [c["action"] for c in again["cells"]] == ["noop", "noop"]
+        assert content_fingerprint(a) == content_fingerprint(b)
+        assert section_xml(b).count("host.kr") == 1
+
+    def test_strips_lineseg_of_edited_paragraph_only(self, tmp_path):
+        """T24: 바뀐 문단만 캐시 레이아웃을 잃는다."""
+        src = _seat_fixture(tmp_path)
+        assert section_xml(src).count("<hp:linesegarray") == 5
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(src, out, [(2, 1, None, "6개월", "replace")])
+        assert section_xml(out).count("<hp:linesegarray") == 4
+
+    def test_multi_t_run_keeps_the_tab_between_the_texts(self, tmp_path):
+        """분할 런(탭을 사이에 둔 hp:t 둘): replace는 첫 hp:t에 쓰고 나머지를
+        비우되 탭은 보존하고, append는 마지막 hp:t 뒤에 붙는다."""
+        run = ('<hp:run charPrIDRef="0"><hp:t>좌</hp:t><hp:tab/>'
+               '<hp:t>우</hp:t></hp:run>')
+        tbl = TBL([TC(0, 0, '<hp:p paraPrIDRef="34">' + run + '</hp:p>')],
+                  rows=1, cols=1)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_CELL]),
+                        SEC(TBL_WRAP(tbl)))
+        assert [r["text"] for r in _cell_runs_at(src, (0, 0))] == ["좌우"]
+
+        rep, app = tmp_path / "rep.hwpx", tmp_path / "app.hwpx"
+        preedit.replace_at_cells(src, rep, [(0, 0, None, "값", "replace")])
+        assert '<hp:t>값</hp:t><hp:tab/><hp:t></hp:t>' in section_xml(rep)
+        preedit.replace_at_cells(src, app, [(0, 0, None, "!", "append")])
+        assert '<hp:t>좌</hp:t><hp:tab/><hp:t>우!</hp:t>' in section_xml(app)
+
+    def test_nested_table_runs_belong_to_the_inner_table(self, tmp_path):
+        """중첩 표를 담은 셀의 '자기' 텍스트 런에 안쪽 표의 런이 섞이지
+        않는다 — fill-cells와 같은 귀속 규약."""
+        inner = TBL([TC(0, 0, P(R(0, "안쪽 자리표")))],
+                    tid="20", rows=1, cols=1)
+        outer = TBL([TC(0, 0, TBL_WRAP(inner)), TC(0, 1, PL(R(0, SEAT_URL)))],
+                    tid="10", rows=1, cols=2)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_CELL]),
+                        SEC(TBL_WRAP(outer)))
+        assert _cell_runs_at(src, (0, 0)) == []
+        # 안쪽 표는 자기 색인으로 도달한다
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(src, out, [(0, 0, None, "값", "replace")],
+                                 table=1)
+        assert "<hp:t>값</hp:t>" in section_xml(out)
+
+    def test_missing_cell_and_table_report_real_addresses(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="cellAddr"):
+            preedit.replace_at_cells(src, tmp_path / "o.hwpx",
+                                     [(9, 9, None, "값", "replace")])
+        with pytest.raises(PreeditError, match="표는 1개"):
+            preedit.replace_at_cells(src, tmp_path / "o.hwpx",
+                                     [(2, 1, None, "값", "replace")], table=7)
+
+    def test_value_is_xml_escaped_and_output_well_formed(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        preedit.replace_at_cells(
+            src, out, [(2, 1, None, "A & B <주의>", "replace")])
+        xml = section_xml(out)
+        ET.fromstring(xml)
+        assert "<hp:t>A &amp; B &lt;주의&gt;</hp:t>" in xml
+
+    def test_two_runs_in_one_paragraph_both_edited(self, tmp_path):
+        """같은 문단 안 두 런을 한 호출에 — 편집이 서로의 오프셋을 밀지 않고,
+        그 문단의 lineseg는 한 번만 사라진다."""
+        para = ('<hp:p paraPrIDRef="34">' + R(0, "A(  )") + R(0, "B(  )")
+                + LINESEG + '</hp:p>')
+        tbl = TBL([TC(0, 0, para)], rows=1, cols=1)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_CELL]),
+                        SEC(TBL_WRAP(tbl)))
+        out = tmp_path / "out.hwpx"
+        result = preedit.replace_at_cells(src, out, [
+            (0, 0, 0, "X", "append"), (0, 0, 1, "Y", "replace")])
+        assert result["replaced"] == 2
+        xml = section_xml(out)
+        ET.fromstring(xml)
+        assert "<hp:t>A(  )X</hp:t>" in xml and "<hp:t>Y</hp:t>" in xml
+        assert "linesegarray" not in xml
+
+    def test_empty_append_text_rejected(self, tmp_path):
+        src = _seat_fixture(tmp_path)
+        with pytest.raises(PreeditError, match="빈 텍스트"):
+            preedit.replace_at_cells(src, tmp_path / "o.hwpx",
+                                     [(1, 1, None, "", "append")])

@@ -329,8 +329,10 @@ Note: the two `□` glyphs in A2 are section-heading bullets ("□ 개인정보
 3. `guide_text = 0` and `constraints_detected = 0` reconfirmed on both
    forms (Bench-0 finding stands; W6 §6.2 item unchanged).
 4. Geometry comparison method: `form_inspect` table_map with the
-   text-dependent fields (`text_preview`, `classification`) stripped;
-   everything else byte-equal. Idempotence: per-member sha256 of zip
+   text-dependent fields (`text_preview`, `truncated`, `classification`)
+   stripped; everything else byte-equal. `evals/cleanroom.py`'s
+   `_geometry_signature` is an allowlist of geometry keys, so a new
+   text-derived field cannot leak into the comparison by accident. Idempotence: per-member sha256 of zip
    contents (timestamps excluded per the preedit contract).
 
 ### Scenario-vs-run deltas (for the operator re-run)

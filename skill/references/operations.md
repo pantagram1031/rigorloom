@@ -7,8 +7,8 @@ convention where noted: 0 = pass/clean, 2 = usage/config error, 3 = finding.
 ## TOC
 
 1. [probe](#1-probe) — capability probe
-2. [form_inspect](#2-form_inspect) — offline form profiling
-3. [preedit](#3-preedit) — replace / fill-cells / delete-guides / normalize-clones
+2. [form_inspect](#2-form_inspect) — offline form profiling (+ `--full-text`)
+3. [preedit](#3-preedit) — replace (`--map` / `--at-cell`) / fill-cells / delete-guides / normalize-clones
 4. [check_residue](#4-check_residue) — scan-derived residue gate
 5. [charpr_check / style_diff](#5-charpr_check--style_diff) — format proofs
 6. [layout_qa / fill_report](#6-layout_qa--fill_report) — PDF measurement
@@ -33,6 +33,7 @@ sources appear as `{"error": ...}`. Injected into SKILL.md at load.
 ```
 python engine/scripts/form_inspect.py FORM.hwpx --out profile.json
     [--baseline baseline.json] [--base-pt 10] [--line-spacing 160]
+    [--full-text [TABLE:]ROW,COL ...]
 ```
 
 Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
@@ -40,19 +41,41 @@ Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
 `constraints` (base_pt / line_spacing_pct / max_pages — 0 detected on
 fixed-grid forms; the fill gate there is layout immutability, not budget),
 `page_metrics`, `table_map` (per-table `index`/`depth`, per-cell
-`addr`/`span`/size/borderFill/shading/classification — plus the T30
-pre-flight fields `charpr`/`script_anomaly`/`charpr_suggested` on
-`fill_target` cells), `body_baseline_charpr`, `script_anomaly_targets`,
+`addr`/`span`/size/borderFill/shading/classification/`text_preview` +
+`truncated` — plus the T30 pre-flight fields
+`charpr`/`script_anomaly`/`charpr_suggested` on `fill_target` cells),
+`body_baseline_charpr`, `script_anomaly_targets`,
 `break_audit`. `--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
 
+**`text_preview` is `text[:30]` and says when it cut** — `truncated: true`
+(T34). A silent cut is worse than a short one: the 협업기간 skeleton
+`"20   .    .    .  ~  20   .    .    .   (     개월)"` previews as
+`"20   .    .    .  ~  20   .   "`, which HIDES the `(     개월)` blank in
+its middle, and a round-3 clean-room agent reasonably concluded the skeleton
+ended there. Never treat a preview as the cell's text.
+
 **Contract: structure only.** The profile carries anchor/guide strings, not
 the document body. Do not dump section XML into context.
 
+**`--full-text [TABLE:]ROW,COL` is the one documented escape from that
+contract** (repeatable; `TABLE:` defaults to 0). It emits `full_text`
+`[{table, addr, text, truncated_preview, runs:[{index, text, charpr}]}]` —
+the **exact** run text, whitespace intact — for the cells you name and no
+others. It is opt-in **per cell** on purpose: the key absent from the profile
+unless requested, no flag that dumps the body, and each request is a decision
+you can justify. Reach for it only when you need a byte-exact string, which
+in practice means a `replace --map` key or a `check_residue --fill-map`
+entry. To *edit* a printed skeleton you do not need the string at all — use
+`preedit replace --at-cell ROW,COL=값` (§3), which addresses the run instead.
+`runs[].index` IS `--at-cell`'s `#RUN` (one shared enumerator), and the
+string round-trips: fed back as a `replace` key it hits exactly once.
+
 ## 3. preedit
 
-Four offline operations; all validate every modified XML member is
+Four offline operations (`replace` has two keying modes — string and
+address); all validate every modified XML member is
 well-formed BEFORE writing (a malformed member renders the whole document
 blank in Hancom — structurally impossible here), and all strip the cached
 `<hp:linesegarray>` of any paragraph whose text changed (stale linesegs
@@ -60,17 +83,20 @@ overprint at old coordinates).
 
 ```
 python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
+python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx [--table 0] --at-cell 'ROW,COL[#RUN]=TEXT' ... --at-cell-append 'ROW,COL[#RUN]=TEXT' ... [--at-cell-map AT.json] [--at-cell-expect 'ROW,COL[#RUN]=SUBSTR' ...] [--at-cell-charpr 'ROW,COL[#RUN]=ID' ...]
 python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--map CELLS.json] [--overwrite] [--charpr ID] [--charpr-per-cell ROW,COL=ID ...]
 python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue] [--charpr-ids 5,6]
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
 
-**Which one fills a form.** Look at `table_map` first. A cell whose
-`classification` is `fill_target` is *genuinely empty* — in real forms it is
-`<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (measured: 19 of 19 empty
-cells on the PPS 협업승인신청서). There is no string to key on, so `replace`
-cannot reach it: use **`fill-cells`** (T27). Use `replace` only where a
-literal placeholder string exists in the document.
+**Which one fills a form.** Look at `table_map` first, and split on whether
+the cell already prints something:
+
+| the cell | use |
+|---|---|
+| `classification: fill_target` — *genuinely empty*: `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (19 of 19 empty cells on the PPS 협업승인신청서) | **`fill-cells --cell ROW,COL=값`** (T27). There is no string to key on, so `replace --map` structurally cannot reach it |
+| already prints a **seat**: a skeleton the form typeset for you to write over or into — `" 우(     -     )"`, `" http://"`, `"20   .    .    .  ~  20   .    .    .   (     개월)"` | **`replace --at-cell ROW,COL=값`** or **`--at-cell-append`** (T34). Address-keyed, so you never need the skeleton's exact internal whitespace |
+| a literal, document-unique placeholder string you already hold (`[제목]`) | **`replace --map`** |
 
 - `replace`: MAP.json is `{"placeholder text": "value", ...}`. Two tiers per
   key: (A) run-text strip-compare (whole-run match, whitespace-tolerant),
@@ -87,6 +113,50 @@ literal placeholder string exists in the document.
   (`{" http://": " http://example.kr"}`) is applied exactly once and re-runs
   are no-ops — tier B never rewrites what tier A (or an earlier key, or an
   earlier run of the same command) already wrote.
+- `replace --at-cell` — **address-keyed, no string at all** (T34). The form's
+  printed seats are exactly the strings you cannot type reliably: their
+  internal spacing is invisible in a 30-char preview and absent from
+  `anchors`. So key on the address instead. `ROW,COL` is the `cellAddr`
+  `table_map` reports and `--table N` is the same index as `fill-cells`
+  (shared scanner). `#RUN` is the 0-based text-run index within the cell, the
+  same enumeration `form_inspect --full-text` reports.
+  - **Two explicit modes, never guessed.** `--at-cell ROW,COL=TEXT` replaces
+    the run's **whole** text. `--at-cell-append ROW,COL=TEXT` keeps the
+    printed prefix and appends — `" http://"` → `" http://host.kr"`, which is
+    the *normal* shape of a labeled field, not an edge case (T31). Pick the
+    one you mean; the tool will not infer it.
+  - **Multi-run cells refuse.** A cell with more than one text run exits 2
+    with `code_name: at_cell_run_ambiguous` and a `runs` array giving every
+    index with its exact text. Neither "first run wins" nor "flatten the
+    cell" is offered: PPS (15,0) carries the regulation sentence, the
+    `년 월 일` 신청일 line, `신청인`, `(서명 또는 인)` and `조달청장 귀하` as
+    separate runs, and either guess deletes real content. That refusal
+    listing is also the cheapest way to learn the indices.
+  - A cell with **no** text run is refused and pointed at `fill-cells` (T27).
+  - `--at-cell-map AT.json` is `{"11,2": "값", "15,0#2": {"text": "…",
+    "mode": "append"}}` — a bare string means `replace`.
+  - `--at-cell-expect ROW,COL[#RUN]=SUBSTR` is a pre-write precondition,
+    compared with **all whitespace removed on both sides**, so you can assert
+    `우(-)` or `개월` without counting spaces. A mismatch writes nothing.
+  - `--at-cell-charpr ROW,COL[#RUN]=ID` repoints the run's charPr; it is also
+    how you get past the T30 pre-flight refusal below (the refusal prints the
+    flag with `#RUN` filled in, and that form is accepted even if your
+    `--at-cell` named the cell without `#RUN`).
+  - Same guards as `fill-cells`: stale-lineseg strip on changed paragraphs
+    only, well-formedness of every modified member before writing, T30
+    charPr pre-flight, T22 dangling-charPr assertion when a charPr is
+    repointed, duplicate targets are a hard error, and a refusal anywhere
+    writes nothing. Re-runs are no-ops in **both** modes (`action: "noop"`,
+    `replaced: 0`), so append never doubles a value.
+  - Output JSON: `{"ok": true, "mode": "at-cell", "table": n,
+    "tables_total": n, "replaced": n, "body_baseline_charpr_id": "0",
+    "cells": [{"addr": [r, c], "run": i, "mode": "replace"|"append",
+    "hits": 0|1, "action": "replaced"|"appended"|"noop", "before": "…",
+    "after": "…", "charpr": id|null}]}`. `before` is the seat's **exact**
+    text — that is where you read it from, not from the section XML.
+  - `--map` and `--at-cell*` in one call is a usage error (exit 2). Chain two
+    calls: mixed in one, string replacement and address offsets rewrite each
+    other.
 - `fill-cells`: addresses cells by the `cellAddr` **`table_map` reports** —
   `--cell ROW,COL=TEXT` (repeatable) or `--map` `{"2,3": "값"}`. `--table N`
   (default 0) indexes tables in document order, nested tables included and
@@ -94,16 +164,25 @@ literal placeholder string exists in the document.
   a `depth`). Merged cells own the top-left coordinate only, so addresses are
   not contiguous — a coordinate a rowSpan/colSpan covers has no cell and is a
   hard error listing the real addresses. Creates the `<hp:t>` inside the empty
-  run and **preserves that run's charPr** (`--charpr ID` overrides, and then
-  the T22 dangling-charPr assertion runs too). A non-empty target is refused
+  run and **preserves that run's charPr**. A non-empty target is refused
   unless `--overwrite`; a refusal anywhere in the batch writes nothing at all.
   Output JSON: `{"ok": true, "table": n, "tables_total": n, "filled": n,
   "body_baseline_charpr_id": "0", "cells": [{"addr": [r, c], "hits": 1,
   "action": "filled"|"overwritten", "previous": "…", "charpr": "0"|null}]}`.
-  **`--charpr` applies to the whole batch** (T32) — it is only safe when every
-  target shares a charPr. Per-cell ids need `--charpr-per-cell ROW,COL=ID`
-  (repeatable, wins over `--charpr`); an address it names that is not in the
-  fill list is a usage error, not a silent no-op.
+  - **`--charpr-per-cell ROW,COL=ID` (repeatable) is the charPr flag you will
+    actually need**, and it belongs in the fill command you type — not only in
+    the T30/T32 prose below. It sets **one** target's charPr and wins over
+    `--charpr`; targets it does not name keep their own. The T30 pre-flight
+    emits exactly this flag list as `suggested_flags`, so the normal fill call
+    is `fill-cells --cell … --charpr-per-cell ROW,COL=<charpr_suggested> …`,
+    not a bare `fill-cells --cell …`. An address it names that is not in the
+    fill list, or a duplicated address, is a usage error — not a silent no-op.
+  - `--charpr ID` **applies to the whole batch** (T32) and is only safe when
+    every target in the call shares a charPr — which is precisely what the T30
+    pre-flight breaks (anomalous cells need repointing, normal ones must be
+    left alone). Prefer `--charpr-per-cell`.
+  - Either flag then also runs the T22 dangling-charPr assertion before
+    writing.
 
 ### The charPr pre-flight before any fill (T30)
 
@@ -131,7 +210,10 @@ If you skip step 1, `fill-cells` refuses (exit 3, `code_name`
 `fill_charpr_script_anomaly`) rather than silently producing a 6pt raised
 fill. The refusal names **every** anomalous target in one shot and carries
 `suggested_flags` — the ready-to-paste `--charpr-per-cell` argument list — so
-the loop closes without ever opening the header. Non-target runs are never
+the loop closes without ever opening the header. `replace --at-cell` runs the
+**same** pre-flight on the seat run it is about to rewrite, and its refusal
+carries `--at-cell-charpr ROW,COL#RUN=<id>` instead — so T34's address-keyed
+path cannot be used to route around T30. Non-target runs are never
 compared, so a genuinely superscripted footnote marker, ordinal or unit
 exponent is out of scope by construction.
 `visual_verify`'s `fill_charpr_script_mismatch` (T30) is the post-flight half
@@ -157,8 +239,15 @@ that style's id instead.
   (T22) before writing.
 
 Idempotence contract (all four): applying an operation to its own output is
-content-identical (zip member contents; timestamps ignored). `replace` needs
-`--allow-missing` for the second run, `fill-cells` needs `--overwrite`.
+content-identical (zip member contents; timestamps ignored). `replace --map`
+needs `--allow-missing` for the second run, `fill-cells` needs `--overwrite`;
+`replace --at-cell*` needs no flag — a run already holding the final value is
+reported `action: "noop"`.
+
+Geometry contract: an `--at-cell` / `fill-cells` edit changes text runs and
+the cached `<hp:linesegarray>` of the paragraphs it touched, and **nothing
+else** — cell count, addresses, spans, borderFill and cellSz are byte-identical
+(fixed by regression on the real PPS seats).
 
 ## 4. check_residue
 

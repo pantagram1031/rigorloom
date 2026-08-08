@@ -7,17 +7,28 @@ section*.xml(문단/런) 을 대조해, 조립(build_report.py) 전에 알아야
 (글자크기·줄간격·분량) — 를 결정론적으로 뽑아낸다.
 
     python form_inspect.py FORM.hwpx [--out form_profile.json] [--baseline form_baseline.json]
-        [--base-pt 10] [--line-spacing 160]
+        [--base-pt 10] [--line-spacing 160] [--full-text ROW,COL ...]
 
 --baseline: form_profile.json에 더해 폰트/크기/색/줄간격/사용빈도 분포를
             form_baseline.json으로 추가 기록한다(style_diff.py의 기준선).
 --base-pt/--line-spacing: page_metrics의 lines_per_page/chars_per_line 계산에
             쓰는 가정값(각각 기본 10pt/160%).
+--full-text: 구조-전용 계약의 **의도적 탈출구**. 이름 붙인 셀만 의 정확한 런
+            텍스트를 `full_text`로 emit한다(반복 가능, `TABLE:ROW,COL`도 허용).
+            셀 단위 opt-in인 이유: 자리표의 정확한 내부 공백은 문자열 키가
+            필요한 소수 경로에서만 쓰고, 그 밖에는 profile이 본문 텍스트를
+            담지 않아야 한다. 요청하지 않은 셀은 한 글자도 나오지 않고 문서
+            본문 전체를 뽑는 경로는 없다. 자리표를 **고치는** 것이 목적이면
+            보통 문자열이 아예 필요 없다 — `preedit replace --at-cell
+            ROW,COL=값` 이 주소로 대상을 잡는다(T34).
 
 v2 추가 섹션(form_profile.json):
   page_metrics — section0.xml의 hp:pagePr/margin에서 페이지 여백/가용영역과
                  lines_per_page/chars_per_line 파생값.
   table_map    — 모든 hp:tbl의 셀 단위 지도(addr/size/borderFill/음영/분류).
+                 `text_preview`는 30자로 자르되 잘렸으면 `truncated: true`를
+                 함께 보고한다(T34 — 무표시 잘림이 스켈레톤 중간의 빈칸을
+                 숨겼다). 정확한 전문은 --full-text ROW,COL.
   break_audit  — header.xml paraPr들의 hh:breakSetting 플래그 집계.
 
 T30 사전 점검(fill 대상 charPr):
@@ -49,12 +60,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_io import utf8_stdio  # noqa: E402
-from hwpx_tables import scan_tables  # noqa: E402
+from hwpx_tables import find_cell, scan_tables  # noqa: E402
 # T30 사전 점검 — script/scale/offset 어휘는 visual_verify(사후 검출)와 공유하고,
 # '어느 런을 채우는가'는 preedit(실제 채우는 쪽)에서 그대로 가져온다.
 # 두 도구가 어긋날 수 있으면 사전 점검은 없는 것보다 나쁘다.
 import charpr_script  # noqa: E402
-from preedit import fill_target_run_charpr  # noqa: E402
+# --full-text의 런 색인은 `preedit replace --at-cell ROW,COL#RUN`이 편집하는
+# 런과 **같은 열거**여야 한다(T34) — 그래서 같은 함수를 쓴다.
+from preedit import cell_text_runs, fill_target_run_charpr  # noqa: E402
 
 NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
@@ -580,6 +593,13 @@ def _table_map(section_names, z, defs, borderfill_shaded,
                     "borderFillIDRef": bfid,
                     "shaded": shaded,
                     "text_preview": text[:30],
+                    # 잘림은 **말해야** 한다(T34). 무표시 30자 잘림 때문에
+                    # 3라운드 클린룸의 Sonnet 티어는 협업기간 스켈레톤
+                    # "20   .    .    .  ~  20   .    .    .   (     개월)"
+                    # (50자) 중간의 "(     개월)" 빈칸을 아예 못 봤고, 채우기를
+                    # 한 번 더 돌려야 했다. preview는 그대로 두고 '더 있다'만
+                    # 밝힌다 — 정확한 문자열은 --full-text ROW,COL 이 준다.
+                    "truncated": len(text) > 30,
                     "classification": classification,
                 }
                 if classification == "fill_target":
@@ -602,6 +622,61 @@ def _table_map(section_names, z, defs, borderfill_shaded,
             })
             idx += 1
     return tables
+
+
+def _full_text(section_names, z, wanted):
+    """--full-text로 **이름 붙여 요청한 셀만** 의 정확한 런 텍스트.
+
+    구조-전용 계약(profile은 본문 텍스트를 담지 않는다)의 **의도적** 탈출구다.
+    그래서 opt-in이고, 셀 단위다: 요청하지 않은 셀은 한 글자도 나오지 않고,
+    문서 본문 전체를 뽑는 경로는 여기에 없다.
+
+    왜 필요한가(T34): `preedit replace`의 문자열 키는 런의 내부 공백까지 정확히
+    같아야 한다. 양식이 인쇄해 둔 자리표(" 우(     -     )")는 30자
+    text_preview로는 잘리고 anchors에도 없어서, 3라운드 클린룸의 두 티어가
+    **모두** Contents/section0.xml을 손으로 읽었다 — 스킬이 금지한 접촉.
+    보통은 주소 키(`--at-cell ROW,COL=…`)가 정답이고 문자열이 아예 필요 없다.
+    문자열 키가 꼭 필요할 때(check_residue --fill-map의 키 등) 이 플래그가
+    그 문자열을 준다.
+
+    wanted: [(table_index|None, row, col), ...] — table_index None은 표 0.
+    반환: [{table, addr:{row,col}, text, truncated_preview, runs:[{index, text,
+            charpr}]}] — runs[].index가 `--at-cell ROW,COL#RUN`의 #RUN이다.
+    반환 순서는 요청 순서. 없는 표/셀은 ValueError.
+    """
+    tables = []                       # [(index, xml, table dict)]
+    idx = 0
+    for sname in section_names:
+        xml = z.read(sname).decode("utf-8")
+        for tbl in scan_tables(xml):
+            tables.append((idx, xml, tbl))
+            idx += 1
+    out = []
+    for table_index, row, col in wanted:
+        t = 0 if table_index is None else table_index
+        match = next((x for x in tables if x[0] == t), None)
+        if match is None:
+            raise ValueError(
+                f"--full-text: 표 index={t} 없음 — 문서 전체 표는 {idx}개")
+        _i, xml, tbl = match
+        cell = find_cell(tbl, row, col)
+        if cell is None:
+            known = sorted(c["addr"] for c in tbl["cells"] if c["addr"])
+            raise ValueError(
+                f"--full-text: 표 {t}에 cellAddr ({row},{col}) 없음 — 병합"
+                f" 셀이 덮은 좌표이거나 오타. 실제 주소 {len(known)}개:"
+                f" {known[:20]}")
+        runs = cell_text_runs(xml[cell["body_start"]:cell["body_end"]])
+        text = "".join(r["text"] for r in runs)
+        out.append({
+            "table": t,
+            "addr": {"row": row, "col": col},
+            "text": text,
+            "truncated_preview": len(text) > 30,
+            "runs": [{"index": r["index"], "text": r["text"],
+                      "charpr": r["charpr"]} for r in runs],
+        })
+    return out
 
 
 def _break_audit(header_xml):
@@ -689,7 +764,8 @@ def _parse_constraints(guide_texts):
             "max_pages": max_pages, "min_pages": min_pages}
 
 
-def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
+def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
+            full_text=None):
     data = Path(path).read_bytes()
     form_hash = hashlib.sha256(data).hexdigest()
 
@@ -868,6 +944,9 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160):
             if c.get("script_anomaly")],
         "break_audit": break_audit,
     }
+    if full_text:
+        # opt-in 이므로 요청이 없으면 키 자체가 없다 — 구조-전용 계약 유지.
+        profile["full_text"] = _full_text(section_names, z, full_text)
 
     baseline = None
     if want_baseline:
@@ -925,19 +1004,39 @@ def main():
                      help="page_metrics 계산에 쓸 기준 본문 글자크기(pt, 기본 10)")
     ap.add_argument("--line-spacing", type=int, default=160,
                      help="page_metrics 계산에 쓸 줄간격(%%, 기본 160)")
+    ap.add_argument("--full-text", action="append", default=[],
+                     metavar="[TABLE:]ROW,COL",
+                     help="**이름 붙인 셀만** 의 정확한 런 텍스트를 emit"
+                          "(반복 가능, 기본 표 0). 구조-전용 계약의 의도적"
+                          " 탈출구이므로 셀 단위 opt-in 이다 — 요청하지 않은"
+                          " 셀은 한 글자도 나오지 않고, 본문 전체를 뽑는"
+                          " 경로는 없다. 자리표의 정확한 내부 공백이 필요할"
+                          " 때만 쓴다(보통은 preedit replace --at-cell"
+                          " ROW,COL=값 이 정답이고 문자열이 필요 없다, T34)")
     args = ap.parse_args()
 
     if not Path(args.form).exists():
         die(f"파일 없음: {args.form}")
 
+    wanted = []
+    for spec in args.full_text:
+        m = re.fullmatch(r'\s*(?:(\d+)\s*:\s*)?(\d+)\s*,\s*(\d+)\s*', spec)
+        if not m:
+            die(f"--full-text 형식은 ROW,COL 또는 TABLE:ROW,COL: {spec!r}")
+        wanted.append((None if m.group(1) is None else int(m.group(1)),
+                       int(m.group(2)), int(m.group(3))))
+
     try:
         profile, baseline = analyze(
             args.form, want_baseline=bool(args.baseline),
-            base_pt=args.base_pt, line_spacing_pct=args.line_spacing)
+            base_pt=args.base_pt, line_spacing_pct=args.line_spacing,
+            full_text=wanted)
     except KeyError as e:
         die(f"hwpx 구조 이상(필수 엔트리 없음): {e}")
     except zipfile.BadZipFile:
         die(f"유효한 zip(.hwpx)이 아님: {args.form}")
+    except ValueError as e:
+        die(str(e))
 
     text = json.dumps(profile, ensure_ascii=False, indent=2)
     if args.out:
