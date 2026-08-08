@@ -1,6 +1,6 @@
 # Model routing — which tier to run the skill on
 
-Measured 2026-08-07 in the clean-room harness (the `evals/` clean-room harness in the source repository). This document is
+Measured 2026-08-07/08 in the clean-room harness (the `evals/` clean-room harness in the source repository). This document is
 about **using** the skill, not authoring it. It exists so a buyer can run the
 cheap tier by default and escalate only where a measurement says to.
 
@@ -123,8 +123,24 @@ tiers a retry.
    `form_inspect --full-text ROW,COL` is the per-cell escape hatch. The
    numbers in this table are the pre-fix measurement; expect both tiers to
    drop on the next round.
-6. **Every run so far is a Claude agent.** A different agent harness has not
-   been measured, and the skill leans on at least one Claude-Code-specific
-   mechanism (the capability probe is injected by an inline-command syntax).
-   Whether the shipped surface works outside one vendor's harness is a
-   separate axis of this table and is currently blank.
+6. **Every measured run in the table above is a Claude agent**, and the skill
+   leans on at least one Claude-Code-specific mechanism (the capability probe is
+   injected by an inline-command syntax). The non-Claude axis has **exactly one
+   data point**, and it is not in the table because it was not run in this
+   harness: an independent **Codex** harness ran the same A1 task across three
+   tiers (sol / terra / luna) after round 3. Its outcome, honestly:
+   - The luna tier **produced an accepted document** — so a second vendor can
+     drive the shipped surface. But it needed more retries than the Claude
+     tiers on the same task, and it needed an auditing harness around it to get
+     there. "A second vendor can drive this" is supported; "as cheaply" is not,
+     and no token or step numbers from that run are comparable with the table
+     above (different harness, different accounting).
+   - It found two defects this harness structurally could not: `acceptance:
+     true` returned while three safety checks sat in `deterministic.skipped[]`,
+     and `vision_pending` exiting 1 (an unguarded `emit_verdict` traceback)
+     where the contract says 3. Both are fixed (T36) — that is why the
+     acceptance rule now reads the skip list and no path exits 1.
+
+   One data point is not a trend, and it does not establish that the surface
+   works on a third harness. Treat the routing table as Claude-measured, and
+   expect a non-Claude tier to need the auditing discipline luna needed.
