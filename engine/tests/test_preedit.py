@@ -10,6 +10,9 @@
   - T22: 정의 없는 charPr 재지정은 내장 사후검사가 출력 전에 잡는다.
   - 멱등성: 자기 출력에 재적용해도 content-identical.
 """
+import json
+import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -19,6 +22,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+PREEDIT = ROOT / "scripts" / "preedit.py"
+
+
+def _cli(*args):
+    """CLI를 하위 프로세스로 — 종료코드와 JSON payload가 계약의 일부다."""
+    return subprocess.run([sys.executable, str(PREEDIT), *map(str, args)],
+                          capture_output=True, text=True, encoding="utf-8")
 
 import preedit  # noqa: E402
 from hwpx_tables import find_cell, scan_tables  # noqa: E402
@@ -1203,3 +1213,263 @@ class TestReplaceAtCells:
         with pytest.raises(PreeditError, match="빈 텍스트"):
             preedit.replace_at_cells(src, tmp_path / "o.hwpx",
                                      [(1, 1, None, "", "append")])
+
+
+# ---------------------------------------------------------------------------
+# 9) fill-cells 다문단 (T39)
+#
+# failing-before: fill-cells는 셀의 문단 **하나**에만 쓰고 나머지를 비웠다.
+# 공문 본문은 규정상 1. / 가. / 1) / 가)가 각각 자기 문단이라, 클린룸
+# 에이전트는 기안문 별지에 '1.' 한 항목만 넣고 끝낼 수밖에 없었다(더 깊이
+# 가려면 XML 손편집이 필요한데 스킬이 금지한다).
+# ---------------------------------------------------------------------------
+
+CP_SUP = ('<hh:charPr id="9" height="1000" textColor="#000000">'
+          '<hh:supscript/></hh:charPr>')       # T30 함정: 본문 + 위첨자
+
+
+def BLANK_P(cid=7, ppr=34):
+    """양식이 예약해 둔 빈 문단(자기닫힘 런 + 캐시 레이아웃)."""
+    return (f'<hp:p paraPrIDRef="{ppr}"><hp:run charPrIDRef="{cid}"/>'
+            f'{LINESEG}</hp:p>')
+
+
+def _body_cell_fixture(tmp_path, slots=4, *, tail="", name="body.hwpx",
+                       charprs=None, extra_parapr=False):
+    """기안문 본문 셀의 축소형: 예약된 빈 문단 여러 개 + (선택) 그 뒤 중첩 표.
+
+    실측 형태 그대로다 — 기안문 별지 제1호서식 (2,0)은 빈 문단 18개 다음에
+    직인·발신명의를 담은 중첩 표 문단이 오고, 그 뒤에 또 빈 문단이 있다.
+    """
+    header = make_header(charprs or [CP_BLACK, CP_BLUE, CP_CELL])
+    if extra_parapr:
+        header = header.replace(
+            '<hh:paraPr id="34" tabPrIDRef="0"/>',
+            '<hh:paraPr id="34" tabPrIDRef="0"/>'
+            '<hh:paraPr id="35" tabPrIDRef="0"/>')
+    tbl = TBL([TC(0, 0, "".join(BLANK_P() for _ in range(slots)) + tail)],
+              tid="9", rows=1, cols=1)
+    return make_hwpx(tmp_path, header, SEC(TBL_WRAP(tbl)), name=name)
+
+
+def _cell_paragraphs(path, addr=(0, 0), table=0):
+    xml = section_xml(path)
+    cell = find_cell(scan_tables(xml)[table], *addr)
+    return preedit._find_paragraphs(xml[cell["body_start"]:cell["body_end"]])
+
+
+def _cell_texts(path, addr=(0, 0), table=0):
+    """그 셀 문단들의 자기 텍스트(중첩 표 제외) — 문서 순서."""
+    return [preedit._fragment_text(p) for _s, _e, p in
+            _cell_paragraphs(path, addr, table)]
+
+
+def _cell_geometry(xml):
+    """표/셀 기하만 — 주소·병합·크기·테두리. 다문단이 늘려도 절대 안 바뀐다."""
+    return ([[(c["addr"], c["span"], c["attrs"]) for c in t["cells"]]
+             for t in scan_tables(xml)],
+            re.findall(r'<hp:cellSz[^>]*/?>', xml),
+            re.findall(r'<hp:cellAddr[^>]*/?>', xml),
+            re.findall(r'<hp:cellSpan[^>]*/?>', xml))
+
+
+class TestFillCellsMultiline:
+    def test_writes_one_paragraph_per_line(self, tmp_path):
+        """failing-before: 값의 개행은 아무 의미도 없었고 둘째 줄부터 사라졌다."""
+        src = _body_cell_fixture(tmp_path, slots=4)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 0, "1. 첫째\n  가. 둘째\n    1) 셋째")])
+        assert result["cells"][0]["paragraphs"] == 3
+        assert _cell_texts(out)[:4] == ["1. 첫째", "  가. 둘째", "    1) 셋째", ""]
+        ET.fromstring(section_xml(out))
+
+    def test_newline_string_and_list_are_the_same_value(self, tmp_path):
+        """개행 문자열과 배열은 같은 문단 목록의 두 표기다 — 결과가 같아야 한다."""
+        src = _body_cell_fixture(tmp_path, slots=4)
+        a, b = tmp_path / "a.hwpx", tmp_path / "b.hwpx"
+        fill_cells(src, a, [(0, 0, "1. 가\n2. 나")])
+        fill_cells(src, b, [(0, 0, ["1. 가", "2. 나"])])
+        assert content_fingerprint(a) == content_fingerprint(b)
+        assert preedit.split_fill_lines("가\r\n나\r다") == ["가", "나", "다"]
+
+    def test_reuses_the_blank_paragraphs_the_form_reserved(self, tmp_path):
+        """양식이 예약한 자리를 먼저 쓴다 — 무조건 새로 만들면 셀이 예약분만큼
+        통째로 길어져 표가 자라고 페이지가 늘어난다(실측: 기안문 본문 셀의
+        빈 문단 18개)."""
+        src = _body_cell_fixture(tmp_path, slots=6)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 0, "가\n나\n다")])
+        assert (result["cells"][0]["paragraphs_reused"],
+                result["cells"][0]["paragraphs_created"]) == (3, 0)
+        assert len(_cell_paragraphs(out)) == len(_cell_paragraphs(src)) == 6
+
+    def test_clones_the_target_paragraph_when_slots_run_out(self, tmp_path):
+        """자리가 모자라면 target 문단을 복제한다 — paraPr(들여쓰기·정렬)과
+        런 charPr이 양식 자신의 설계 그대로여야 한다."""
+        src = _body_cell_fixture(tmp_path, slots=2)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 0, "가\n나\n다\n라")])
+        assert (result["cells"][0]["paragraphs_reused"],
+                result["cells"][0]["paragraphs_created"]) == (2, 2)
+        paras = [p for _s, _e, p in _cell_paragraphs(out)]
+        assert len(paras) == 4
+        assert _cell_texts(out) == ["가", "나", "다", "라"]
+        # 복제 문단은 target과 같은 paraPr·charPr을 진다(기본 서식 날조 금지)
+        assert all('paraPrIDRef="34"' in p for p in paras)
+        assert all('charPrIDRef="7"' in p for p in paras)
+
+    def test_created_paragraphs_carry_no_linesegarray(self, tmp_path):
+        """T24: 새 문단이 남의 캐시 좌표를 물고 나오면 그게 겹쳐 찍힘이다."""
+        src = _body_cell_fixture(tmp_path, slots=1)
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 0, "가\n나\n다")])
+        assert "linesegarray" not in section_xml(out)
+
+    def test_slots_stop_at_a_nested_table(self, tmp_path):
+        """중첩 표(직인·발신명의)를 건너뛰고 그 **뒤** 빈 문단까지 자리로 세면
+        본문 한 줄이 발신명의 아래에 찍힌다. 자리는 연속 구간까지다."""
+        inner = TBL([TC(0, 0, P(R(0, "발신명의")))], tid="20", rows=1, cols=1)
+        tail = TBL_WRAP(inner) + BLANK_P() + BLANK_P()
+        src = _body_cell_fixture(tmp_path, slots=2, tail=tail)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 0, "가\n나\n다\n라")])
+        assert result["cells"][0]["paragraphs_created"] == 2
+        texts = _cell_texts(out)
+        # 네 줄이 중첩 표 문단 **앞**에 연속으로 놓인다
+        assert texts[:4] == ["가", "나", "다", "라"]
+        assert "발신명의" in section_xml(out)
+        assert texts[4].strip() == ""      # 중첩 표를 품은 문단의 자기 텍스트
+
+    def test_geometry_is_byte_identical_after_a_multiline_fill(self, tmp_path):
+        """문단을 새로 만들어도 셀 주소·병합·크기·테두리는 한 바이트도 안 바뀐다."""
+        src = _body_cell_fixture(tmp_path, slots=1)
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 0, "가\n나\n다\n라\n마")])
+        assert _cell_geometry(section_xml(out)) == \
+            _cell_geometry(section_xml(src))
+        assert header_xml_of(out) == header_xml_of(src)
+
+    def test_single_paragraph_path_is_unchanged(self, tmp_path):
+        """음성 대조군: 한 줄 채우기는 T39 이전과 바이트 단위로 같은 일을 한다 —
+        문단을 만들지도, 없애지도, 옮기지도 않는다."""
+        src = _form_fixture(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 2, "이하율")])
+        cell = result["cells"][0]
+        assert (cell["paragraphs"], cell["paragraphs_reused"],
+                cell["paragraphs_created"]) == (1, 1, 0)
+        xml = section_xml(out)
+        assert '<hp:run charPrIDRef="7"><hp:t>이하율</hp:t></hp:run>' in xml
+        assert _cell_geometry(xml) == _cell_geometry(section_xml(src))
+        # 문단 수·문단 여는 태그가 그대로 = 구조 변경 없음
+        assert (preedit.P_OPEN_RE.findall(xml)
+                == preedit.P_OPEN_RE.findall(section_xml(src)))
+        # 손대지 않은 두 빈 셀의 lineseg는 바이트 그대로
+        assert xml.count("<hp:linesegarray>") == 2
+
+    def test_idempotent_under_overwrite(self, tmp_path):
+        """2회차는 1회차가 만든 문단을 '예약된 자리'로 그대로 다시 쓴다."""
+        src = _body_cell_fixture(tmp_path, slots=2)
+        first, second = tmp_path / "a.hwpx", tmp_path / "b.hwpx"
+        fill_cells(src, first, [(0, 0, "가\n나\n다\n라")])
+        again = fill_cells(first, second, [(0, 0, "가\n나\n다\n라")],
+                           overwrite=True)
+        assert again["filled"] == 0
+        assert again["cells"][0]["paragraphs_created"] == 0
+        assert content_fingerprint(first) == content_fingerprint(second)
+
+    def test_t30_preflight_sees_every_paragraph_it_will_write(self, tmp_path):
+        """두 번째 자리가 supscript 클론이면 두 번째 줄이 6.35pt 올려찍힌다 —
+        첫 줄만 검사하는 사전 점검은 T30을 한 문단 아래에서 그대로 재현한다."""
+        cell = BLANK_P(7) + BLANK_P(9) + BLANK_P(7)
+        tbl = TBL([TC(0, 0, cell), TC(0, 1, P(R(0, "본문 텍스트가 여기 많다")))],
+                  tid="9", rows=1, cols=2)
+        src = make_hwpx(tmp_path,
+                        make_header([CP_BLACK, CP_BLUE, CP_CELL, CP_SUP]),
+                        SEC(TBL_WRAP(tbl)))
+        out = tmp_path / "out.hwpx"
+        fill_cells(src, out, [(0, 0, "한 줄")])          # 첫 자리는 정상
+        with pytest.raises(preedit.ScriptAnomalyError) as exc:
+            fill_cells(src, tmp_path / "no.hwpx", [(0, 0, "가\n나")])
+        assert not (tmp_path / "no.hwpx").exists()
+        assert [a["charpr"] for a in exc.value.anomalies] == ["9"]
+        assert exc.value.anomalies[0]["addr"] == [0, 0]
+        # 셀 단위 재지정 하나로 그 셀의 모든 문단이 함께 정상화된다
+        ok = fill_cells(src, tmp_path / "ok.hwpx", [(0, 0, "가\n나")],
+                        charpr_per_cell={(0, 0): "0"})
+        assert ok["filled"] == 1
+        written = [p for _s, _e, p in _cell_paragraphs(tmp_path / "ok.hwpx")]
+        assert [preedit._para_first_run_charpr(p) for p in written] == \
+            ["0", "0", "7"]
+
+    def test_parapr_per_cell_repoints_only_the_written_paragraphs(self,
+                                                                  tmp_path):
+        """양식이 빈 문단에 걸어 둔 문단서식이 본문용이 아닐 때의 탈출구.
+        쓰지 않은 문단은 그대로 둔다."""
+        src = _body_cell_fixture(tmp_path, slots=3, extra_parapr=True)
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(src, out, [(0, 0, "가\n나")],
+                            parapr_per_cell={(0, 0): "35"})
+        assert result["cells"][0]["parapr"] == "35"
+        paras = [p for _s, _e, p in _cell_paragraphs(out)]
+        assert ['paraPrIDRef="35"' in p for p in paras] == [True, True, False]
+
+    def test_dangling_parapr_is_caught_before_writing(self, tmp_path):
+        """T22의 자매 단언 — 정의 없는 paraPr id로 재지정하면 출력 전에 터진다."""
+        src = _body_cell_fixture(tmp_path, slots=2)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(AssertionError, match="paraPr"):
+            fill_cells(src, out, [(0, 0, "가\n나")],
+                       parapr_per_cell={(0, 0): "999"})
+
+    def test_unknown_parapr_address_is_rejected(self, tmp_path):
+        src = _body_cell_fixture(tmp_path, slots=2)
+        with pytest.raises(PreeditError, match="--parapr-per-cell"):
+            fill_cells(src, tmp_path / "o.hwpx", [(0, 0, "가")],
+                       parapr_per_cell={(3, 3): "34"})
+
+
+class TestFillCellsMultilineCli:
+    def test_cell_line_stacks_paragraphs_in_order(self, tmp_path):
+        """PowerShell에서 개행 없이 계층 본문을 쓰는 표기 — 준 순서가 문단 순서."""
+        src = _body_cell_fixture(tmp_path, slots=4)
+        out = tmp_path / "out.hwpx"
+        proc = _cli("fill-cells", src, "--out", out,
+                    "--cell-line", "0,0=1. 자료 제출 요청",
+                    "--cell-line", "0,0=  가. 제출 기한: 2026. 9. 30.",
+                    "--cell-line", "0,0=    1) 전자문서시스템 첨부")
+        assert proc.returncode == 0, proc.stdout
+        payload = json.loads(proc.stdout)
+        assert payload["cells"][0]["paragraphs"] == 3
+        assert _cell_texts(out)[:3] == [
+            "1. 자료 제출 요청", "  가. 제출 기한: 2026. 9. 30.",
+            "    1) 전자문서시스템 첨부"]
+
+    def test_cell_and_cell_line_on_one_address_is_a_usage_error(self, tmp_path):
+        """두 플래그의 상대 순서는 정의되지 않는다 — 조용히 한 쪽을 앞세우지 않는다."""
+        src = _body_cell_fixture(tmp_path, slots=4)
+        out = tmp_path / "out.hwpx"
+        proc = _cli("fill-cells", src, "--out", out,
+                    "--cell", "0,0=가", "--cell-line", "0,0=나")
+        assert proc.returncode == 2
+        assert not out.exists()
+        assert "--cell-line" in json.loads(proc.stdout)["error"]
+
+    def test_map_accepts_a_list_of_paragraphs(self, tmp_path):
+        src = _body_cell_fixture(tmp_path, slots=4)
+        cells = tmp_path / "cells.json"
+        cells.write_text(json.dumps({"0,0": ["1. 가", "  가. 나"]},
+                                    ensure_ascii=False), encoding="utf-8")
+        out = tmp_path / "out.hwpx"
+        proc = _cli("fill-cells", src, "--out", out, "--map", cells)
+        assert proc.returncode == 0, proc.stdout
+        assert _cell_texts(out)[:2] == ["1. 가", "  가. 나"]
+
+    def test_parapr_per_cell_through_the_cli(self, tmp_path):
+        src = _body_cell_fixture(tmp_path, slots=3, extra_parapr=True)
+        out = tmp_path / "out.hwpx"
+        proc = _cli("fill-cells", src, "--out", out,
+                    "--cell-line", "0,0=가", "--cell-line", "0,0=나",
+                    "--parapr-per-cell", "0,0=35")
+        assert proc.returncode == 0, proc.stdout
+        assert json.loads(proc.stdout)["cells"][0]["parapr"] == "35"

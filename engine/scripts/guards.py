@@ -153,6 +153,35 @@ def assert_no_dangling_charpr(section_xml, header_xml):
         f" — id {dangling}")
 
 
+def parapr_id_present(header_xml, ppr_id):
+    """header.xml에 paraPr 정의 id가 존재하는지 — charPr과 **같은** 요소 한정 형태.
+
+    T22의 오탐이 charPr↔paraPr 사이의 id 충돌에서 나왔으므로, paraPr 쪽
+    가드도 나이브 부분문자열이 아니라 요소를 한정해서 본다.
+    """
+    pattern = (r'<' + NS + r':paraPr\b[^>]*\bid="'
+               + re.escape(str(ppr_id)) + r'"')
+    return bool(re.search(pattern, header_xml))
+
+
+PARAPR_IDREF_RE = re.compile(r'\bparaPrIDRef="(\d+)"')
+
+
+def dangling_parapr_refs(section_xml, header_xml):
+    """section이 참조하는 paraPrIDRef 중 header에 정의가 없는 id들(정렬 리스트)."""
+    used = set(PARAPR_IDREF_RE.findall(section_xml))
+    return sorted((pid for pid in used
+                   if not parapr_id_present(header_xml, pid)), key=int)
+
+
+def assert_no_dangling_parapr(section_xml, header_xml):
+    """section의 모든 paraPrIDRef가 header에 정의돼 있음을 단언(T22 자매 단언)."""
+    dangling = dangling_parapr_refs(section_xml, header_xml)
+    assert not dangling, (
+        f"공중 paraPr 참조 발견 (T22): section이 참조하나 header에 정의 없음"
+        f" — id {dangling}")
+
+
 # ---------------------------------------------------------------------------
 # T21 — 머신 단위 한글 COM 인스턴스 락
 # ---------------------------------------------------------------------------

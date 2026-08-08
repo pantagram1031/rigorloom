@@ -6,6 +6,41 @@ stages.yaml`'s `version: "0.6"`) has not changed since v0.7 — these releases
 add gates, backends, and tooling on top of a stable kernel, they do not change
 the kernel's contract shape.
 
+## Unreleased
+
+### Added
+
+- `preedit fill-cells` writes **multiple paragraphs** into one cell (T39). A
+  fill value is now a list of paragraphs: a `--map` JSON array, a newline inside
+  any value, or `--cell-line ROW,COL=TEXT` (repeatable, given order = paragraph
+  order) — the PowerShell-usable spelling. Korean 공문 본문 is hierarchical by
+  regulation (`1.` / `가.` / `1)` / `가)`, one paragraph per level), so the
+  gongmun module could not produce a regulation-shaped 본문 at all before this.
+  The blank paragraphs a form already reserves in the cell are used before any
+  are created; the writable run stops at the first paragraph holding a nested
+  table (the 기안문 본문 cell contains the 직인/발신명의 tables); continuations
+  beyond the reserved run clone the target paragraph whole, so paraPr and charPr
+  are the form's own and no created paragraph carries a stale `linesegarray`.
+  The T30 pre-flight now covers every paragraph a call will write.
+- `--parapr-per-cell ROW,COL=ID` repoints the `paraPrIDRef` of the paragraphs a
+  fill writes, for forms whose reserved blanks are not body-formatted (the
+  기안문 본문 blanks are centre-aligned because they share the cell with
+  발신명의). Per-cell only, never batch-wide (T32); guarded by
+  `guards.assert_no_dangling_parapr`, the T22 assertion's sister.
+- `fill-cells` cell reports gain `paragraphs`, `paragraphs_reused`,
+  `paragraphs_created` and `parapr`.
+
+### Documentation
+
+- `fill-recipe.md` §1.1 distinguishes a T30 charPr **trap** from the form's own
+  typography, with the 기안문 별지 제1호서식 numbers as the worked example
+  (body baseline charPr 23 = 10pt/100% 비고 fine print vs the 12pt/97% label and
+  본문 face) — previously any `script_anomaly` read as a defect and pasting
+  `suggested_flags` unread would silently reformat the 본문.
+- `fill-recipe.md` §1.2, the gongmun fragment and `gongmun_flow.md` carry the
+  multi-paragraph 본문 call; T39 is in the trouble table and the shipped
+  troubleshooting distillate.
+
 ## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
 
 v0.16.0 shipped as an **alpha**: written by its authors, run on its authors'

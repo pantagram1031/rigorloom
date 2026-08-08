@@ -57,8 +57,10 @@ CLI(얇은 래퍼):
                       [--at-cell-charpr 'ROW,COL[#RUN]=ID']
     python preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0]
                       --cell 'ROW,COL=TEXT' ... [--map CELLS.json] [--overwrite]
+                      --cell-line 'ROW,COL=TEXT' ...  # 문단 하나씩 쌓기(T39)
                       [--charpr ID]                # 배치 전체(T32)
                       [--charpr-per-cell ROW,COL=ID ...]   # 셀 단위(우선)
+                      [--parapr-per-cell ROW,COL=ID ...]   # 문단서식, 셀 단위
     python preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue]
                       [--charpr-ids 5,6]
     python preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW ...
@@ -658,6 +660,52 @@ def _fill_target_paragraph_index(paras):
                  if not TBL_TAG_RE.search(p)), None)
 
 
+def _fill_slot_indices(paras, target):
+    """target에서 시작하는 **연속** 비-중첩표 문단들의 색인(= 쓸 수 있는 자리).
+
+    T39 다문단 채우기의 지형이다. 연속(contiguous)인 것이 핵심 — 기안문
+    별지의 본문 셀은 빈 문단 18개 다음에 직인·발신명의를 담은 **중첩 표
+    문단**이 오고 그 뒤에 또 빈 문단이 있다. 중첩 표를 건너뛰고 뒤쪽 빈
+    문단까지 자리로 세면 본문 한 줄이 발신명의 아래에 찍힌다.
+    """
+    slots = []
+    for i in range(target, len(paras)):
+        if TBL_TAG_RE.search(paras[i][2]):
+            break
+        slots.append(i)
+    return slots
+
+
+def _para_first_run_charpr(p_xml):
+    m = RUN_RE.search(p_xml)
+    if m is None:
+        return None
+    cm = re.search(r'\bcharPrIDRef="(\d+)"', m.group(2) or "")
+    return cm.group(1) if cm else None
+
+
+def fill_target_run_charprs(body, lines=1):
+    """`lines`개 문단을 채울 때 텍스트가 **실제로 상속할** charPrIDRef 목록.
+
+    문서 순서, 자리마다 한 개(charPr이 없는 자리는 None). 자리가 모자라
+    새로 만들 문단은 target 문단의 클론이므로 target의 charPr을 상속한다.
+    T30 사전 점검은 이 목록 **전부**를 본다 — 첫 줄만 검사하면 두 번째 줄이
+    supscript 클론을 물고 6.35pt 올려찍히는 T30 사고가 한 문단 아래에서
+    그대로 재현된다.
+    """
+    paras = _find_paragraphs(body)
+    if not paras:
+        return []
+    target = _fill_target_paragraph_index(paras)
+    if target is None:
+        return []
+    slots = _fill_slot_indices(paras, target)
+    out = [_para_first_run_charpr(paras[i][2]) for i in slots[:lines]]
+    if lines > len(slots):                    # 클론은 target 서식을 물려받는다
+        out += [_para_first_run_charpr(paras[target][2])] * (lines - len(slots))
+    return out
+
+
 def fill_target_run_charpr(body):
     """이 셀을 채울 때 텍스트가 **실제로 상속할** charPrIDRef. 없으면 None.
 
@@ -670,24 +718,57 @@ def fill_target_run_charpr(body):
     body: hp:tc의 자식 스팬(중첩 표 제거 전 원본 — 문단 색인이 fill_cells와
     같아야 한다).
     """
-    paras = _find_paragraphs(body)
-    if not paras:
-        return None
-    target = _fill_target_paragraph_index(paras)
-    if target is None:
-        return None
-    m = RUN_RE.search(paras[target][2])
+    got = fill_target_run_charprs(body, 1)
+    return got[0] if got else None
+
+
+P_OPEN_HEAD_RE = re.compile(r'^<' + NS + r':p\b[^>]*>')
+
+
+def _set_para_pr(p_xml, parapr):
+    """문단 여는 태그의 paraPrIDRef만 바꾼다(그 외 한 바이트도 건드리지 않음).
+
+    양식이 그 셀의 빈 문단에 걸어 둔 문단서식이 **본문용이 아닐 수** 있다 —
+    기안문 별지의 본문 셀은 발신명의·직인을 함께 담고 있어서 빈 문단이 전부
+    가운데 정렬(paraPr 15)이다. 그대로 채우면 1./가./1) 계층이 전부 가운데로
+    모여 들여쓰기가 사라진다. 그 셀에 맞는 id를 운영자가 지정하는 경로다.
+    """
+    if parapr is None:
+        return p_xml
+    m = P_OPEN_HEAD_RE.match(p_xml)
     if m is None:
-        return None
-    cm = re.search(r'\bcharPrIDRef="(\d+)"', m.group(2) or "")
-    return cm.group(1) if cm else None
+        return p_xml
+    return _tag_set_attr(m.group(0), "paraPrIDRef",
+                         str(parapr)) + p_xml[m.end():]
 
 
-def _fill_cell_body(body, text, *, overwrite, charpr):
-    """셀 몸통(hp:tc의 자식 스팬)에 텍스트를 쓴 새 몸통을 만든다.
+def _clone_target_paragraph(template, text_esc, charpr):
+    """target 문단을 복제해 한 줄을 담은 **새 문단**을 만든다.
 
-    반환: (new_body, current_text). 비어 있지 않은데 overwrite가 아니면
-    PreeditError — 라벨 셀 덮어쓰기는 이 엔진에서 사고이지 기능이 아니다.
+    양식이 예약해 둔 빈 문단이 모자랄 때만 쓴다. 복제 대상은 target 문단
+    통째 — 즉 `paraPrIDRef`(들여쓰기·정렬·줄간격)도, 런의 charPr도 양식
+    자신의 설계 그대로다. 기본 문단 서식을 새로 지어내면 이어지는 줄만
+    다른 들여쓰기로 찍힌다.
+
+    새 문단은 `linesegarray`를 절대 갖지 않는다(T24: 남의 좌표를 물려받은
+    캐시 레이아웃 = 겹쳐 찍힘). 한컴이 열 때 재계산한다.
+    """
+    blank, _changed = _blank_paragraph_text(template)
+    blank = LINESEG_RE.sub("", blank)
+    return _write_text_into_paragraph(blank, text_esc, charpr)
+
+
+def _fill_cell_body(body, lines, *, overwrite, charpr, parapr=None):
+    """셀 몸통(hp:tc의 자식 스팬)에 `lines`(문단당 한 줄)를 쓴 새 몸통을 만든다.
+
+    자리 배정(T39): 양식이 그 셀에 **이미 예약해 둔** 연속 빈 문단부터 쓰고,
+    모자란 만큼만 target 문단을 복제해 마지막으로 쓴 자리 **바로 뒤**에
+    끼운다. 예약된 자리를 두고 무조건 새 문단을 만들면 셀이 예약분만큼
+    통째로 길어져 표가 자라고 페이지가 늘어난다(기안문 본문 셀 = 빈 문단
+    18개). 쓰지 않은 자리는 종전대로 비운다.
+
+    반환: (new_body, current_text, stats). 비어 있지 않은데 overwrite가
+    아니면 PreeditError — 라벨 셀 덮어쓰기는 이 엔진에서 사고이지 기능이 아니다.
     """
     current = _fragment_text(body)
     if current.strip() and not overwrite:
@@ -702,12 +783,20 @@ def _fill_cell_body(body, text, *, overwrite, charpr):
     if target is None:
         raise PreeditError("셀의 모든 문단이 중첩 표를 담고 있음 — 쓸 자리 없음")
 
-    text_esc = escape(str(text))
+    slots = _fill_slot_indices(paras, target)
+    reused = slots[:len(lines)]
+    extra = lines[len(reused):]
+    line_at = {idx: lines[k] for k, idx in enumerate(reused)}
+    last_reused = reused[-1]
+    template = paras[target][2]
+
     out, last = [], 0
     for i, (start, end, p_xml) in enumerate(paras):
         out.append(body[last:start])
-        if i == target:
-            new_p = _write_text_into_paragraph(p_xml, text_esc, charpr)
+        if i in line_at:
+            new_p = _set_para_pr(
+                _write_text_into_paragraph(p_xml, escape(line_at[i]), charpr),
+                parapr)
             changed = True
         else:
             new_p, changed = _blank_paragraph_text(p_xml)
@@ -717,19 +806,45 @@ def _fill_cell_body(body, text, *, overwrite, charpr):
             # '빈 줄' 좌표라 새 텍스트가 통째로 어긋난다).
             new_p = LINESEG_RE.sub("", new_p)
         out.append(new_p)
+        if i == last_reused:
+            for line in extra:
+                out.append(_set_para_pr(_clone_target_paragraph(
+                    template, escape(line), charpr), parapr))
         last = end
     out.append(body[last:])
-    return "".join(out), current
+    stats = {"paragraphs": len(lines),
+             "paragraphs_reused": len(reused),
+             "paragraphs_created": len(extra)}
+    return "".join(out), current, stats
+
+
+def split_fill_lines(value):
+    """채우기 값 하나 → 문단 목록. 다문단 표기를 한 규칙으로 모은다(T39).
+
+    - 리스트/튜플: 원소 하나가 문단 하나(JSON `--map` 값의 배열 형태).
+    - 문자열: 개행(\\n, \\r\\n, \\r)으로 나눈다.
+    빈 값도 문단 하나(빈 줄)다 — 자리를 지우는 것과 구별한다.
+    """
+    if isinstance(value, (list, tuple)):
+        lines = ["" if v is None else str(v) for v in value]
+        return lines or [""]
+    text = "" if value is None else str(value)
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
-               charpr=None, charpr_per_cell=None):
+               charpr=None, charpr_per_cell=None, parapr_per_cell=None):
     """표 셀을 cellAddr(row, col)로 직접 채운다 — 텍스트 키 없이(오프라인).
 
-    fills: [(row, col, text), ...] — row/col은 `<hp:cellAddr rowAddr colAddr>`
+    fills: [(row, col, value), ...] — row/col은 `<hp:cellAddr rowAddr colAddr>`
     그대로, 즉 `form_inspect`의 `table_map[...]["cells"][...]["addr"]`가
     보고하는 값이다. 병합 셀의 주소는 좌상단 격자 좌표이며, rowSpan/colSpan이
     덮는 좌표에는 셀이 존재하지 않는다(주소는 연속이 아니다).
+
+    value는 문자열(개행이 문단 구분) 또는 문자열 리스트(원소 = 문단)다 —
+    `split_fill_lines`가 둘을 같은 문단 목록으로 만든다. 공문 본문은 규정상
+    `1.` / `가.` / `1)` / `가)`가 각각 자기 문단이므로 다문단이 정상이고
+    한 문단이 예외다(T39).
 
     table: 문서 전체 표를 '여는 태그 문서 순서'로 센 색인(기본 0). 중첩 표도
     자기 색인을 갖고, 바깥 표가 항상 먼저다(form_inspect table_map과 동일
@@ -742,26 +857,38 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
     charpr_per_cell: {(row, col): id} — 그 셀에만 적용되는 재지정. charpr보다
     우선한다.
 
+    parapr_per_cell: {(row, col): id} — 그 셀에 **쓰는 문단들**의 paraPrIDRef
+    재지정(들여쓰기·정렬·줄간격). 배치 전체 형태는 일부러 두지 않는다(T32의
+    교훈: 서식 플래그는 셀 단위여야 한다). 쓰지 않은 문단은 그대로 둔다.
+
     계약:
       - 대상 셀이 비어 있지 않으면 거부(PreeditError). --overwrite에서만 덮어씀.
       - 빈 셀의 표준형 자기닫힘 런 <hp:run charPrIDRef="7"/> 안에 <hp:t>를
         만든다. 런의 charPr은 보존(charpr/charpr_per_cell을 주면 그 id로 덮어씀).
-      - **T30 사전 점검**: 재지정 id가 주어지지 않은 대상 셀의 런이
-        script_anomaly(본문 baseline과 supscript/subscript/ratio/relSz/offset이
-        다름)를 지고 있으면 ScriptAnomalyError로 거부한다 — '보존'이 6.35pt
-        올려찍힘을 뜻하는 셀을 조용히 채우는 것이 T30 사고 그 자체였다.
-      - 텍스트가 바뀐 문단의 <hp:linesegarray>는 제거(T24).
+      - **다문단(T39)**: 값이 여러 줄이면 양식이 그 셀에 예약해 둔 연속 빈
+        문단부터 채우고, 모자란 만큼만 target 문단을 복제한다(paraPr·charPr
+        = 양식 자신의 설계). 재지정 id는 그 셀의 **모든** 문단에 똑같이
+        적용된다.
+      - **T30 사전 점검**: 재지정 id가 주어지지 않은 대상 셀에서 **쓰게 될
+        문단 전부**의 런이 script_anomaly(본문 baseline과
+        supscript/subscript/ratio/relSz/offset이 다름)를 지고 있으면
+        ScriptAnomalyError로 거부한다 — '보존'이 6.35pt 올려찍힘을 뜻하는
+        셀을 조용히 채우는 것이 T30 사고 그 자체였다.
+      - 텍스트가 바뀐 문단의 <hp:linesegarray>는 제거(T24). 새로 만든 문단은
+        아예 갖지 않는다.
       - 쓰기 전 수정 멤버 well-formed 검증(실패 시 아무것도 쓰지 않음),
         charPr 재지정 시 T22 dangling-charPr 사후검사.
       - 같은 주소를 두 번 지정하면 오류(조용한 마지막-승리 금지).
 
-    멱등성: 같은 값으로 --overwrite 재실행하면 content-identical.
+    멱등성: 같은 값으로 --overwrite 재실행하면 content-identical(2회차는
+    1회차가 만든 문단을 '예약된 자리'로 그대로 다시 쓴다).
 
     반환: {"ok": True, "table": n, "filled": n, "cells":
            [{"addr": [r, c], "hits": 1, "action": "filled"|"overwritten",
-             "previous": "…", "charpr": "9"|None}, ...]}
+             "previous": "…", "charpr": "9"|None, "paragraphs": n,
+             "paragraphs_reused": n, "paragraphs_created": n}, ...]}
     """
-    fills = [(int(r), int(c), "" if t is None else str(t)) for r, c, t in fills]
+    fills = [(int(r), int(c), split_fill_lines(t)) for r, c, t in fills]
     if not fills:
         raise ValueError("채울 셀이 하나도 없음")
     seen = set()
@@ -771,11 +898,15 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         seen.add((row, col))
     per_cell = {(int(r), int(c)): str(v)
                 for (r, c), v in (charpr_per_cell or {}).items()}
-    unknown = sorted(addr for addr in per_cell if addr not in seen)
-    if unknown:
-        raise PreeditError(
-            f"--charpr-per-cell 주소가 채울 셀 목록에 없음: {unknown}"
-            " — 오타이거나 --cell/--map을 빠뜨렸다")
+    para_per_cell = {(int(r), int(c)): str(v)
+                     for (r, c), v in (parapr_per_cell or {}).items()}
+    for flag, mapping in (("--charpr-per-cell", per_cell),
+                          ("--parapr-per-cell", para_per_cell)):
+        unknown = sorted(addr for addr in mapping if addr not in seen)
+        if unknown:
+            raise PreeditError(
+                f"{flag} 주소가 채울 셀 목록에 없음: {unknown}"
+                " — 오타이거나 --cell/--cell-line/--map을 빠뜨렸다")
 
     infos, contents = _read_zip(hwpx_in)
     section_names = _section_names(contents)
@@ -790,8 +921,8 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
     script_profiles, baseline_id, baseline_profile = _script_baseline(
         contents, section_names)
 
-    resolved, anomalies = {}, []
-    for row, col, _text in fills:
+    resolved, anomalies, seen_anomaly = {}, [], set()
+    for row, col, lines in fills:
         cell = find_cell(target_table, row, col)
         if cell is None:
             raise PreeditError(
@@ -801,25 +932,30 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         resolved[(row, col)] = explicit
         if explicit is not None or baseline_profile is None:
             continue
-        run_charpr = fill_target_run_charpr(
-            xml[cell["body_start"]:cell["body_end"]])
-        if run_charpr is None:
-            continue
-        found = _script_anomaly(script_profiles.get(run_charpr),
-                                baseline_profile, baseline_id)
-        if found:
-            anomalies.append(
-                dict(found, addr=[row, col], charpr=run_charpr))
+        # 쓰게 될 문단 **전부**를 본다 — 재사용 자리는 target과 다른 charPr을
+        # 지고 있을 수 있고, 그러면 두 번째 줄부터 T30 사고가 그대로 난다.
+        for run_charpr in fill_target_run_charprs(
+                xml[cell["body_start"]:cell["body_end"]], len(lines)):
+            if run_charpr is None or (row, col, run_charpr) in seen_anomaly:
+                continue
+            found = _script_anomaly(script_profiles.get(run_charpr),
+                                    baseline_profile, baseline_id)
+            if found:
+                seen_anomaly.add((row, col, run_charpr))
+                anomalies.append(
+                    dict(found, addr=[row, col], charpr=run_charpr))
     if anomalies:
         raise ScriptAnomalyError(anomalies)
 
     edits, report = [], []
-    for row, col, text in fills:
+    for row, col, lines in fills:
         cell = find_cell(target_table, row, col)
         cell_charpr = resolved[(row, col)]
         body = xml[cell["body_start"]:cell["body_end"]]
-        new_body, previous = _fill_cell_body(
-            body, text, overwrite=overwrite, charpr=cell_charpr)
+        cell_parapr = para_per_cell.get((row, col))
+        new_body, previous, stats = _fill_cell_body(
+            body, lines, overwrite=overwrite, charpr=cell_charpr,
+            parapr=cell_parapr)
         edits.append((cell["body_start"], cell["body_end"], new_body))
         report.append({
             "addr": [row, col],
@@ -827,6 +963,8 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
             "action": "overwritten" if previous.strip() else "filled",
             "previous": previous.strip()[:30],
             "charpr": cell_charpr,
+            "parapr": cell_parapr,
+            **stats,
         })
 
     for start, end, new_body in sorted(edits, reverse=True):
@@ -839,11 +977,13 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         modified.add(target_section)
 
     _assert_members_well_formed(contents, modified)
-    if any(v is not None for v in resolved.values()):
+    if any(v is not None for v in resolved.values()) or para_per_cell:
         header = contents[_header_name(contents)].decode("utf-8")
         for sname in section_names:
-            guards.assert_no_dangling_charpr(
-                contents[sname].decode("utf-8"), header)
+            sec = contents[sname].decode("utf-8")
+            guards.assert_no_dangling_charpr(sec, header)
+            if para_per_cell:
+                guards.assert_no_dangling_parapr(sec, header)
     _write_zip(hwpx_out, infos, contents)
     return {"ok": True, "table": table, "tables_total": total,
             "filled": sum(c["hits"] for c in report), "cells": report,
@@ -1776,9 +1916,20 @@ def main(argv=None):
                       help="표 색인(문서 순서, form_inspect table_map과 동일). 기본 0")
     p_fc.add_argument("--cell", action="append", default=[],
                       metavar="ROW,COL=TEXT",
-                      help="채울 셀(반복 가능). ROW/COL은 cellAddr 값")
+                      help="채울 셀(반복 가능). ROW/COL은 cellAddr 값."
+                           " 값 안의 개행은 문단 구분이다 — 같은 주소를 두 번"
+                           " 주는 것은 오류이니, 여러 문단은 --cell-line을 쓸 것")
+    p_fc.add_argument("--cell-line", action="append", default=[],
+                      dest="cell_line", metavar="ROW,COL=TEXT",
+                      help="그 셀의 **문단 하나**(반복 가능, 준 순서가 문단"
+                           " 순서). 같은 주소를 여러 번 주면 문단이 쌓인다 —"
+                           " 공문 본문의 1./가./1) 계층을 PowerShell에서 개행"
+                           " 없이 쓰는 표기다(T39). 같은 주소를 --cell과"
+                           " 섞어 쓰는 것은 오류")
     p_fc.add_argument("--map",
-                      help='셀 JSON 파일({"2,3": "값", ...}) — --cell과 병용 가능')
+                      help='셀 JSON 파일({"2,3": "값", "2,0": ["1. …", "  가. …"]})'
+                           " — --cell과 병용 가능. 값이 배열이면 원소 하나가"
+                           " 문단 하나, 문자열이면 개행이 문단 구분")
     p_fc.add_argument("--overwrite", action="store_true",
                       help="비어 있지 않은 셀도 덮어씀(기본은 거부)")
     p_fc.add_argument("--charpr",
@@ -1789,6 +1940,14 @@ def main(argv=None):
                       metavar="ROW,COL=ID",
                       help="그 셀에만 적용되는 charPrIDRef 재지정(반복 가능)."
                            " --charpr보다 우선한다")
+    p_fc.add_argument("--parapr-per-cell", action="append", default=[],
+                      metavar="ROW,COL=ID",
+                      help="그 셀에 **쓰는 문단들**의 paraPrIDRef 재지정"
+                           "(들여쓰기·정렬·줄간격, 반복 가능). 양식이 빈 문단에"
+                           " 걸어 둔 서식이 본문용이 아닐 때 쓴다 — 기안문"
+                           " 별지 본문 셀의 빈 문단은 발신명의와 같은 가운데"
+                           " 정렬이라, 그대로 채우면 1./가./1) 들여쓰기가"
+                           " 사라진다(T39). 배치 전체 형태는 없다(T32)")
 
     p_del = sub.add_parser("delete-guides", help="가이드 charPr 문단 삭제(T18 가드)")
     p_del.add_argument("file")
@@ -1837,16 +1996,40 @@ def main(argv=None):
                     args.file, args.out, mapping,
                     on_zero_hits="ignore" if args.allow_missing else "error")
         elif args.cmd == "fill-cells":
-            fills = []
+            fills, cell_addrs, line_order, line_by = [], set(), [], {}
             for spec in args.cell:
                 addr, sep, value = spec.partition("=")
                 row, comma, col = addr.partition(",")
                 if not sep or not comma:
                     _die(f"--cell 형식은 ROW,COL=TEXT: {spec!r}", code=2)
                 try:
-                    fills.append((int(row.strip()), int(col.strip()), value))
+                    key = (int(row.strip()), int(col.strip()))
                 except ValueError:
                     _die(f"--cell의 ROW/COL은 정수: {spec!r}", code=2)
+                cell_addrs.add(key)
+                fills.append((key[0], key[1], value))
+            # --cell-line은 같은 주소를 여러 번 받는 유일한 채우기 플래그다.
+            # --cell이 중복을 오류로 막는 이유(조용한 마지막-승리 금지)는
+            # 그대로 두고, '이 셀은 여러 문단'이라는 의도를 표기로 분리한다.
+            for spec in args.cell_line:
+                addr, sep, value = spec.partition("=")
+                row, comma, col = addr.partition(",")
+                if not sep or not comma:
+                    _die(f"--cell-line 형식은 ROW,COL=TEXT: {spec!r}", code=2)
+                try:
+                    key = (int(row.strip()), int(col.strip()))
+                except ValueError:
+                    _die(f"--cell-line의 ROW/COL은 정수: {spec!r}", code=2)
+                if key in cell_addrs:
+                    _die(f"셀 {key[0]},{key[1]}이 --cell과 --cell-line에 모두"
+                         " 지정됨 — 한 쪽으로 통일할 것(두 플래그의 상대 순서는"
+                         " 정의되지 않는다)", code=2)
+                if key not in line_by:
+                    line_order.append(key)
+                    line_by[key] = []
+                line_by[key] += split_fill_lines(value)
+            for key in line_order:
+                fills.append((key[0], key[1], line_by[key]))
             if args.map:
                 cell_map = json.loads(
                     Path(args.map).read_text(encoding="utf-8"))
@@ -1861,25 +2044,28 @@ def main(argv=None):
                     except ValueError:
                         _die(f"--map 키의 ROW/COL은 정수: {addr!r}", code=2)
             if not fills:
-                _die("--cell 또는 --map 중 최소 하나 필요", code=2)
-            per_cell = {}
-            for spec in args.charpr_per_cell:
-                addr, sep, cpr = spec.partition("=")
-                row, comma, col = addr.partition(",")
-                if not sep or not comma or not cpr.strip():
-                    _die(f"--charpr-per-cell 형식은 ROW,COL=ID: {spec!r}",
-                         code=2)
-                try:
-                    key = (int(row.strip()), int(col.strip()))
-                except ValueError:
-                    _die(f"--charpr-per-cell의 ROW/COL은 정수: {spec!r}", code=2)
-                if key in per_cell:
-                    _die("--charpr-per-cell 주소가 중복 지정됨: "
-                         f"{key[0]},{key[1]}", code=2)
-                per_cell[key] = cpr.strip()
+                _die("--cell / --cell-line / --map 중 최소 하나 필요", code=2)
+            per_cell, para_cell = {}, {}
+            for flag, specs, sink in (
+                    ("--charpr-per-cell", args.charpr_per_cell, per_cell),
+                    ("--parapr-per-cell", args.parapr_per_cell, para_cell)):
+                for spec in specs:
+                    addr, sep, cpr = spec.partition("=")
+                    row, comma, col = addr.partition(",")
+                    if not sep or not comma or not cpr.strip():
+                        _die(f"{flag} 형식은 ROW,COL=ID: {spec!r}", code=2)
+                    try:
+                        key = (int(row.strip()), int(col.strip()))
+                    except ValueError:
+                        _die(f"{flag}의 ROW/COL은 정수: {spec!r}", code=2)
+                    if key in sink:
+                        _die(f"{flag} 주소가 중복 지정됨: "
+                             f"{key[0]},{key[1]}", code=2)
+                    sink[key] = cpr.strip()
             result = fill_cells(args.file, args.out, fills, table=args.table,
                                 overwrite=args.overwrite, charpr=args.charpr,
-                                charpr_per_cell=per_cell)
+                                charpr_per_cell=per_cell,
+                                parapr_per_cell=para_cell)
         elif args.cmd == "delete-guides":
             ids = ([i.strip() for i in args.charpr_ids.split(",") if i.strip()]
                    if args.charpr_ids else None)
