@@ -1,0 +1,89 @@
+{
+  "schema": "rigorloom-minwon-vocabulary/v1",
+  "regulation": "민원 처리에 관한 법률 시행규칙 및 각 법령·행정규칙 별지서식 (신청서·청구서·신고서)",
+  "description": "Structural vocabulary of the 민원·신고 서식 family (HWP usage landscape family ①), as data. check_minwon.py carries no Korean literals: every term and pattern below is family-level — it appears in the 별지서식 convention itself, not in one file. The family's defining property is the INVERSE of 공문's: a 민원 서식's printed guide text (유의사항 / 수수료 / 제출서류 / 동의) is part of the submitted document and must SURVIVE, while a 접수·처리 block belongs to the receiving office and must stay untouched. Term matching is whitespace-insensitive because the 서식 letter-spaces its own labels ('접 수 증', '유 의 사 항', '연 락 처').",
+  "sections": {
+    "furniture": {
+      "description": "The 별지서식's own frame: the statutory header line, the paper-spec footer, and the 귀하 addressee line. All three are printed by the regulation and none of them is a fill target.",
+      "labels": [
+        "귀하"
+      ]
+    },
+    "staff": {
+      "description": "접수(처리) 기관 seats — the 민원 처리에 관한 법률 시행규칙 접수란 convention. A citizen filling the form must NOT write here; the receiving office does. Motivated by 정보공개 청구서 (접수번호/접수일/처리기간 + the 접수증 block) and 사업자등록 신청서 (접수번호/처리기간). '접수기관' is deliberately NOT a label: its only corpus appearance is inside the ADDRESSEE line ('(접수 기관의 장) 귀하'), which an agent is supposed to replace with the actual authority — listing it made a correct fill a HARD finding.",
+      "labels": [
+        "접수번호",
+        "접수일",
+        "접수일자",
+        "접수부서",
+        "접수자",
+        "처리기간",
+        "처리부서"
+      ]
+    },
+    "select": {
+      "description": "선택 항목: the [ ] / □ groups. Recognized by glyph, not by label — the option text is per-form, the glyph and the form's own '√표를 합니다' instruction are not.",
+      "labels": []
+    },
+    "guide": {
+      "description": "The keep-list. Printed guide blocks that belong to the submitted document: 유의사항, 수수료 안내, 제출서류, 작성방법, 처리절차, and the 동의 blocks (행정정보 공동이용 동의서, 수신동의). Losing one is a defect; this is the family's headline rule.",
+      "keep_labels": [
+        "유의사항",
+        "수수료",
+        "제출서류",
+        "구비서류",
+        "작성방법",
+        "처리절차",
+        "동의"
+      ],
+      "labels": [
+        "유의사항",
+        "수수료",
+        "제출서류"
+      ]
+    },
+    "human": {
+      "description": "Seats a human completes by hand: the 서명 또는 인 parentheticals and the 직인 impression box. The applicant's NAME legitimately shares the cell with the marker ('성명 (서명 또는 인)'), so the rule is that the MARKER survives — not that the cell is unchanged.",
+      "labels": [
+        "서명 또는 인",
+        "직인"
+      ],
+      "seal_labels": [
+        "직인",
+        "관인"
+      ]
+    },
+    "identity": {
+      "description": "Identity-number seats. A tool NEVER invents one of these values: 주민등록번호/생년월일/외국인등록번호 are personal data and a fabricated value is worse than an empty seat. Every label here appears in at least one corpus form.",
+      "labels": [
+        "주민등록번호",
+        "생년월일",
+        "여권ㆍ외국인등록번호",
+        "여권번호",
+        "외국인등록번호",
+        "국내거소신고번호",
+        "사업자등록번호",
+        "법인등록번호",
+        "부동산등기용등록번호"
+      ]
+    }
+  },
+  "family_minimum": 2,
+  "byeolji_header_re": "\\[\\s*별지\\s*제\\s*\\d+\\s*호(?:의\\s*\\d+)?\\s*서식[^\\]]{0,20}\\]",
+  "paper_spec_re": "210\\s*(?:mm|㎜)\\s*[×xX*]\\s*297\\s*(?:mm|㎜)",
+  "unfilled_date_seat_re": "(?<!생)년\\s*월\\s*일|20\\s*\\.\\s*\\.\\s*\\.",
+  "unmarked_glyph_re": "\\[\\s*\\]|□|☐|〔\\s*〕",
+  "marked_glyph_re": "\\[\\s*[√∨✔✓ⅤVvXx×○◉●■▣0-9]{1,3}\\s*\\]|☑|☒|⊠|▣",
+  "marked_glyph_note": "A bracketed slot that now holds SOMETHING is filled. Digits are in the class on purpose: 주민등록 등초본 신청서 uses the same [ ] glyph for a selection ('[ ]등본 사항') and for a small numeric field ('등본 교부 [ ]통'), so '[1]통' has to read as a consumed slot, not as a deleted option. A bare ■ is deliberately NOT a mark — it is the 별지서식 header's own bullet ('■ 주민등록법 시행규칙 [별지 제7호서식]').",
+  "select_instruction_re": "\\[\\s*\\](?:에는|에|을|를)?[^.。]{0,30}√\\s*표",
+  "shading_declaration_re": "(?:색상|음영)[^.。]{0,20}(?:칸|란)[^.。]{0,30}(?:작성|기재|적)\\s*하?지\\s*않",
+  "signature_marker_re": "\\(\\s*(?:서명\\s*또는\\s*인|서명란|서명|날인|인)\\s*\\)",
+  "rrn_re": "(?<!\\d)\\d{6}\\s*[-–—~]\\s*\\d{7}(?!\\d)",
+  "placeholder_glyph_re": "[○●◯]{2,}",
+  "noise_re": "[\\s()\\[\\]/,.:;·ㆍ―–—_【】「」『』※■□☑○●◯~∼-]+",
+  "shaded_face_max_brightness": 0.86,
+  "shaded_face_brightness_note": "Mean-channel brightness of a cell's fillBrush faceColor, 0..1. A cell at or below this value is 'a dark칸'. Measured on the corpus: 정보공개 청구서's staff-only 접수번호/접수일/처리기간 are #B2B2B2 (0.698) and 사업자등록 신청서's 접수번호 row is #BBBBBB (0.733); its section headers are #D8D8D8 (0.847) and #CCCCCC (0.800) — also not fill targets. The lightest tints in the corpus (#F2F2F2 = 0.949, #E0EED1 = 0.877, #EFF6E7 = 0.940) stay above the line. Shading only MEANS staff-only where the form says so (shading_declaration_re); see check_minwon's staff_seats().",
+  "identity_value_min_length": 2,
+  "identity_seat_max_cell_chars": 40,
+  "identity_seat_note": "An identity SEAT is a label, not prose. A cell qualifies only when it carries no checkbox glyph and its squeezed text is at most identity_seat_max_cell_chars long. Measured on the corpus: the real seats are 4–21 squeezed characters ('주민등록번호', '생년월일(성별)()', '여권ㆍ외국인등록번호(외국인의경우작성)'), while 주민등록 등초본 신청서's instruction block mentions 생년월일 inside ~150 characters and carries the [ ] boxes the applicant marks — treating that as a seat made every legitimate checkbox mark look like an identity autofill."
+}

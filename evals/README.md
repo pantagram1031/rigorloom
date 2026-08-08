@@ -204,10 +204,22 @@ family plus the three grant-family scenarios:
 | `H1-labor-contract-fill` | hr | H1 | XC-1 converted |
 | `R1-nrf-profile` | research | R1 | XC-1 converted |
 
-`G1` additionally runs the gongmun distribution module's `check_gongmun` over
-the blank form and over the produced draft. Those two checks declare
-`requires_module: gongmun` (below), so a sandbox without the module skips them
-with a reason instead of failing them.
+Two tasks additionally run a work-type distribution module's checker over the
+blank form and over the produced artifact:
+
+| task | module | checker | what it adds |
+|---|---|---|---|
+| `G1-gianmun-body-edit` | gongmun | `check_gongmun` | 두문/결재란/결문/발신명의/직인 seats and the 별지서식 guide vocabulary that must not survive |
+| `P1-jumin-recognize-fill` | minwon | `check_minwon` | the 별지서식 frame, the 접수·처리 기관 seats a citizen must not fill, 선택 항목 slot preservation, the 서명 markers, the 유의사항/수수료/제출서류 blocks that must survive, and that no 주민등록번호 was invented |
+
+All four checks declare `requires_module` (below), so a sandbox without the
+module skips them with a reason instead of failing them. Both tasks declare a
+`baseline`, because both checkers declare `wants: [baseline]`.
+
+`P1`'s minwon checks are worth one note: the prompt supplies no 주민등록번호 and
+the check deliberately passes **no** `--fill-map`, so any identity-number-shaped
+value in the artifact is undeclared and `identity_value_invented` fires. That
+turns "절대 임의 생성하지 않는다" from a judgment line into a machine check.
 
 Family ③ 학교 서식 has no task (corpus gap) and family ⑤ 기업 내부 문서 has no
 task (documented capability boundary) — both are statements in
@@ -289,6 +301,15 @@ form** the artifact came from. gongmun's `seat_emptied`, `seal_slot_removed`,
 `--baseline` they report `skipped: no_baseline` and the checker still exits 0.
 Correct, and a trap — the task author had to *know*, and a task that forgot got
 a thinner verdict that read as a pass.
+
+minwon makes the point harder: **ten** of `check_minwon`'s thirteen structural
+rules are
+preservation rules ("was this destroyed?"), and that question is only decidable
+against the form the artifact came from. A `P1` run without a baseline would
+report exit 0 having decided almost nothing. The one rule deliberately *not*
+gated is the privacy rule `identity_value_invented` — a fabricated identity
+number is a finding on its own evidence and must never depend on an input the
+caller can forget.
 
 A checker declares the need in its `module.yaml`
 (`modules/README.md` §`checkers[].wants`):

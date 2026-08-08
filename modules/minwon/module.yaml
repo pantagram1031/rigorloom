@@ -1,0 +1,53 @@
+# Minwon distribution module — declaration (schema: pipeline/references/module.schema.json).
+#
+# Work-type module #2: 민원·신고 서식 (HWP usage landscape family ①) — the
+# highest-prevalence family, and the one the fixed-grid table-fill capability
+# was built for. It contributes one deterministic checker over a filled
+# artifact plus the skill fragment that teaches the 민원 서식 task flow.
+#
+# requires_modules is ABSENT on purpose: nothing in this module's payload
+# touches report, style or gongmun. check_minwon imports only core
+# (checker_base, check_residue, engine form_inspect/hwpx_tables), so minwon
+# enables alone — asserted by
+# tests/test_module_contract.py::TestIndependence.
+#
+# NO pack_types, and that is a finding rather than an omission. gongmun defines
+# gongmun_org because "which agency issues this document, under which 직위" is a
+# genuine per-operator vocabulary. A 민원 서식 has no equivalent: the 접수 기관
+# (세무서장 / 시장ㆍ군수ㆍ구청장 / 법원행정처장) is PRINTED on the form by the
+# regulation, and everything the applicant supplies — 성명, 주소, 연락처,
+# 주민등록번호 — is per-document personal data that belongs in a fill map, never
+# in a repository pack. Inventing a pack type here would create exactly the
+# store of personal data that check_minwon's identity rules exist to prevent.
+#
+# No cli, run_modes, gate_kinds, studio_panels or preflight: a work-type module
+# earns those when it has something to run, not to look complete. The
+# visual_verify expectations it authors ship as ordinary payload
+# (references/visual_expectations/minwon.json) — there is no provides key for
+# them, by contract (modules/README.md).
+schema: rigorloom-module/v1
+name: minwon
+requires: {rigorloom: ">=0.16"}
+#
+# wants: [baseline] — the 민원 family's rules are overwhelmingly PRESERVATION
+# rules, and "was this destroyed?" is only decidable against the form it came
+# from. TEN of the thirteen structural rules need the blank form as --baseline:
+# byeolji_header_lost, paper_spec_footer_lost, addressee_line_lost,
+# staff_seat_filled, staff_seat_removed, checkbox_option_lost,
+# signature_marker_lost, seal_seat_overwritten, guide_block_lost and
+# identity_seat_autofilled. Without it they report skipped:no_baseline and the
+# checker still exits 0. Declaring
+# the need lets a runner supply the blank form instead of every caller having to
+# know (modules/README.md, checkers[].wants).
+#
+# The one rule that does NOT need it is the privacy rule
+# identity_value_invented: a 주민등록번호-shaped value nobody declared is a
+# finding on its own evidence, and that must never be gated behind an input the
+# caller might forget.
+provides:
+  checkers:
+    - {name: check_minwon, script: scripts/check_minwon.py, wants: [baseline]}
+  skill:
+    fragment: skill/FRAGMENT.md
+    references:
+      - skill/references/minwon_flow.md

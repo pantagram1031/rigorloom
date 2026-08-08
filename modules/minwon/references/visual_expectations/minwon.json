@@ -1,0 +1,20 @@
+{
+  "_note": "visual_verify expectations for a filled 민원·신고 서식 (pipeline/scripts/visual_verify.py --expectations). Modules are the natural author of this file and there is no provides key for it: it is ordinary payload the caller passes. The 민원 family inverts 공문's residue logic, so this file inverts gongmun.json: forbidden_text is nearly EMPTY (a 민원 서식 has no guide vocabulary to consume — its printed text belongs in the submitted document), and the work is done by intentionally_blank, which names the seats a human completes by hand so a caller's fill_map does not have to claim them. page_budget is NOT declared: the 별지서식 prescribes 210mm×297mm per page but the page COUNT is per form (주민등록 등초본 신청서 is 3 pages, 사업자등록 신청서 is 6+), so it stays the caller's call and visual_verify lists it under deterministic.skipped.",
+  "forbidden_text": [
+    "○○○"
+  ],
+  "_forbidden_text_note": "Only the ○ placeholder run, which the 행정규칙 서식 uses for the applicant's own name ('신청인 : ○○○ (인)'). Everything else printed on a 민원 서식 — 유의사항, 수수료 안내, 제출서류, 처리기간, 동의서 — MUST be visible in the render. That is check_minwon's guide_block_lost rule, and its visual twin is the keep-list below, not a forbidden list.",
+  "intentionally_blank": [
+    "(서명 또는 인)",
+    "(인)",
+    "직인",
+    "주민등록번호",
+    "생년월일",
+    "접수번호",
+    "접수일",
+    "처리기간",
+    "접수부서",
+    "접수자"
+  ],
+  "_intentionally_blank_note": "Three classes, all of them things the TOOL must leave alone: the signature/seal seats a person completes by hand; the identity-number seats a tool never fabricates (check_minwon's identity_value_invented / identity_seat_autofilled); and the 접수·처리 기관 block the receiving office fills (staff_seat_filled). A render that shows any of these carrying tool-written content is a defect even when the text checks pass."
+}
