@@ -40,6 +40,26 @@ the kernel's contract shape.
 - `fill-recipe.md` §1.2, the gongmun fragment and `gongmun_flow.md` carry the
   multi-paragraph 본문 call; T39 is in the trouble table and the shipped
   troubleshooting distillate.
+### Fixed
+
+- **T38 — conversion provenance survives the step boundary.** A correctly
+  filled 기안문 별지 (and every gongmun-family form whose blank stores
+  `PrintInfo/PrintMethod=4`) could not reach `verdict: pass` by any shipped
+  path. `com_backend.py convert` already neutralises the stored n-up print
+  imposition before `SaveAs(PDF)`, but only reported it on stdout — and the
+  canonical recipe converts in one process and verifies in another, so
+  `visual_verify` saw no evidence, HARDed `imposition_mismatch`, and could not
+  be waived (that class is deliberately outside `SAFETY_CHECKS`). A gate cannot
+  tell "did not happen" from "was not told". `convert` now writes a
+  `rigorloom/conversion-record/v1` sidecar at `<--to>.conversion.json` by
+  default (`--record PATH`, `--no-record`), carrying what the conversion did
+  plus the sha256 of both the source and the output PDF; `visual_verify`
+  auto-discovers it beside `--pdf` (or takes `--conversion-record PATH`) and
+  rebuilds the same `conversion` dict it would have built had it converted
+  itself. The hash binding is enforced: a record that does not describe the
+  files under verification is a usage error (exit 2), never a quiet accept.
+  Not a relaxation — with no record and `PrintMethod != 0` the HARD stands
+  verbatim, and no baseline exemption was added.
 
 ## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
 

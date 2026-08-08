@@ -10,6 +10,9 @@ only vision can see it:
   (a) T23  malformed section XML -> Hancom renders the document blank
   (b) T24  stale ``linesegarray`` + longer replaced text -> overprint
   (c) W6.2 stored 2-up ``PrintMethod`` -> imposition / page-count mismatch
+  (c2) T38  the SAME mechanism after the conversion normalised it, where the
+            proof lived in another step: a hash-bound conversion record lifts
+            the print_method leg, and its absence still HARDs
   (d) T25  missing input -> Hancom opens an empty document -> blank render
   (e) T30  a filled value inherits a charPr identical to body except for a
            trailing ``<hh:supscript/>`` -> 10pt nominal, ~6.35pt raised
@@ -30,6 +33,7 @@ script-independent.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -453,6 +457,259 @@ def test_imposition_false_positive_guard_native_landscape(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# (c2) T38 — conversion provenance across the step boundary
+#
+# ``com_backend.py convert`` neutralises a stored n-up PrintMethod before
+# SaveAs(PDF) and says so in its own stdout JSON. The canonical recipe
+# converts in one step and verifies in another, so that report used to die at
+# the step boundary: visual_verify saw no evidence and — correctly, given what
+# it knew — HARDed. These tests pin the plumbing that carries the evidence
+# across, and pin that the plumbing is NOT a relaxation.
+# --------------------------------------------------------------------------
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def make_conversion_record(path, artifact, pdf, **over):
+    """A record shaped exactly as ``com_backend.write_conversion_record`` writes
+    one. Overrides let a test corrupt precisely one field."""
+    record = {
+        "schema": visual_verify.CONVERSION_RECORD_SCHEMA,
+        "tool": "com_backend.py convert",
+        "created_utc": "2026-08-08T00:00:00Z",
+        "source": str(artifact),
+        "source_sha256": _sha256(artifact),
+        "pdf": str(pdf),
+        "pdf_sha256": _sha256(pdf),
+        "source_print_method": 4,
+        "print_method_normalized": {"from": 4, "to": 0},
+        "pages_document": 1,
+        "pages_pdf": 1,
+    }
+    record.update(over)
+    path = Path(path)
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _folded_form(tmp_path, name="t38"):
+    """A PrintMethod=4 source plus the UNFOLDED single-page PDF a normalised
+    conversion actually produces."""
+    artifact = make_hwpx(tmp_path / f"{name}.hwpx", print_method=4, pages=1)
+    pdf = make_pdf(tmp_path / f"{name}.pdf", [_body_page(n_lines=10)])
+    return artifact, pdf
+
+
+def test_conversion_record_suffix_matches_com_backend():
+    """The sidecar name is a wire contract between two scripts that do not
+    import each other. If this drifts, auto-discovery silently stops working
+    and every gongmun form quietly goes back to HARDing."""
+    sys.path.insert(0, str(REPO_ROOT / "engine" / "scripts"))
+    import com_backend
+    assert (com_backend.CONVERSION_RECORD_SUFFIX
+            == visual_verify.CONVERSION_RECORD_SUFFIX)
+    assert (com_backend.CONVERSION_RECORD_SCHEMA
+            == visual_verify.CONVERSION_RECORD_SCHEMA)
+    assert (str(com_backend.conversion_record_path("x/y.pdf"))
+            == str(visual_verify.conversion_record_path("x/y.pdf")))
+
+
+def test_com_backends_own_writer_round_trips_through_the_reader(tmp_path):
+    """The contract that actually matters: a record produced by the WRITER is
+    accepted by the READER. Asserting matching constants is not enough — the
+    field names have to line up too, and only the real writer can prove that.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "engine" / "scripts"))
+    import com_backend
+    artifact, pdf = _folded_form(tmp_path, name="rt")
+    record_path = com_backend.conversion_record_path(pdf)
+    com_backend.write_conversion_record(
+        record_path, source=artifact, pdf=pdf,
+        normalized={"from": 4, "to": 0}, source_print_method=4,
+        pages_document=1, pages_pdf=1)
+
+    conversion, error = visual_verify.load_conversion_record(
+        record_path, artifact, pdf)
+    assert error is None, error
+    assert conversion["print_method_normalized"] == {"from": 4, "to": 0}
+    assert conversion["pages_document"] == 1
+    assert conversion["provenance"] == "conversion_record"
+    # and end to end through the CLI, with nothing named on the command line
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert not [f for f in verdict["hard"]
+                if f["class"] == "imposition_mismatch"], verdict
+
+
+def test_t38_no_record_and_print_method_4_still_hards(tmp_path):
+    """THE STILL-CATCHES. Nothing says the imposition was neutralised, so the
+    gate must keep assuming it was not. This is the behaviour the fix is
+    forbidden to weaken."""
+    artifact, pdf = _folded_form(tmp_path)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    hard = [f for f in verdict["hard"]
+            if f["detector"] == "visual_verify.print_method"]
+    assert len(hard) == 1, verdict
+    assert hard[0]["class"] == "imposition_mismatch"
+    assert hard[0]["evidence"]["stored_print_method"] == 4
+    # and no waiver exists for it, then or now
+    assert "imposition_mismatch" not in visual_verify.SAFETY_CHECKS
+
+
+def test_t38_record_round_trips_and_lifts_the_hard(tmp_path):
+    """The fix. Same artifact, same PDF, same PrintMethod=4 — the only new
+    thing is the proof that the conversion already normalised it."""
+    artifact, pdf = _folded_form(tmp_path)
+    record = make_conversion_record(tmp_path / "rec.json", artifact, pdf)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", record,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert not [f for f in verdict["hard"]
+                if f["class"] == "imposition_mismatch"], verdict
+    det = verdict["deterministic"]
+    # the source's stored value is still REPORTED — the fix hides nothing
+    assert det["stored_print_method"] == 4
+    assert det["conversion"]["provenance"] == "conversion_record"
+    assert det["conversion"]["print_method_normalized"] == {"from": 4, "to": 0}
+    # and the record's page count becomes the authoritative parity source,
+    # exactly as it would had this script done the conversion itself
+    assert det["pages_document_source"] == "conversion"
+    assert det["pages_document"] == 1
+
+
+def test_t38_sidecar_is_discovered_without_a_flag(tmp_path):
+    """The recipe must not depend on the operator remembering a flag: the
+    sidecar sits beside the PDF and is picked up on its own."""
+    artifact, pdf = _folded_form(tmp_path)
+    make_conversion_record(
+        visual_verify.conversion_record_path(pdf), artifact, pdf)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert not [f for f in verdict["hard"]
+                if f["class"] == "imposition_mismatch"], verdict
+    assert verdict["deterministic"]["conversion"]["record"].endswith(
+        visual_verify.CONVERSION_RECORD_SUFFIX)
+
+
+def test_t38_record_bound_to_a_different_source_is_a_usage_error(tmp_path):
+    """A provenance claim that can be pointed at another file is worse than no
+    claim. Wrong source bytes -> exit 2, never a quiet accept."""
+    artifact, pdf = _folded_form(tmp_path)
+    other = make_hwpx(tmp_path / "other.hwpx", print_method=4, pages=1)
+    other.write_bytes(other.read_bytes() + b"\x00")  # perturb the bytes
+    record = make_conversion_record(tmp_path / "rec.json", artifact, pdf,
+                                    source_sha256=_sha256(other))
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", record,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "different source" in json.dumps(verdict, ensure_ascii=False)
+
+
+def test_t38_record_bound_to_a_different_pdf_is_a_usage_error(tmp_path):
+    """The other end of the binding: the record must describe THIS render."""
+    artifact, pdf = _folded_form(tmp_path)
+    other_pdf = make_pdf(tmp_path / "other.pdf", [_body_page(n_lines=3)])
+    record = make_conversion_record(tmp_path / "rec.json", artifact, pdf,
+                                    pdf_sha256=_sha256(other_pdf))
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", record,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "different pdf" in json.dumps(verdict, ensure_ascii=False)
+
+
+def test_t38_stale_sidecar_after_an_artifact_edit_is_a_usage_error(tmp_path):
+    """The realistic failure this binding buys us: fix the artifact, forget to
+    re-convert, verify the OLD pdf. The sidecar no longer describes the
+    artifact, so the run stops instead of passing on a stale render."""
+    artifact, pdf = _folded_form(tmp_path)
+    make_conversion_record(
+        visual_verify.conversion_record_path(pdf), artifact, pdf)
+    artifact.write_bytes(artifact.read_bytes() + b"\x00")   # edited after
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "Re-run" in json.dumps(verdict, ensure_ascii=False)
+
+
+def test_t38_unbound_record_is_refused(tmp_path):
+    """A record with no hashes is a bare assertion. Refused."""
+    artifact, pdf = _folded_form(tmp_path)
+    record = make_conversion_record(tmp_path / "rec.json", artifact, pdf)
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    payload.pop("source_sha256")
+    record.write_text(json.dumps(payload), encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", record,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "not evidence" in json.dumps(verdict, ensure_ascii=False)
+
+
+def test_t38_wrong_schema_record_is_refused(tmp_path):
+    artifact, pdf = _folded_form(tmp_path)
+    record = make_conversion_record(tmp_path / "rec.json", artifact, pdf,
+                                    schema="something/else/v9")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", record,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+
+
+def test_t38_missing_named_record_is_a_usage_error(tmp_path):
+    artifact, pdf = _folded_form(tmp_path)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--conversion-record", tmp_path / "nope.json",
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+
+
+def test_t38_print_method_zero_needs_no_record(tmp_path):
+    """Unaffected path: nothing to normalise, nothing to prove, no record."""
+    artifact = make_hwpx(tmp_path / "clean.hwpx", print_method=0, pages=1)
+    pdf = make_pdf(tmp_path / "clean.pdf", [_body_page(n_lines=10)])
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["hard"] == []
+    assert verdict["deterministic"]["conversion"] is None
+
+
+def test_t38_record_does_not_suppress_the_page_parity_leg(tmp_path):
+    """Scope check: the record explains print-method normalisation ONLY. A
+    genuine fold still fails parity, now against Hancom's own PageCount."""
+    artifact = make_hwpx(tmp_path / "fold.hwpx", print_method=4, pages=4)
+    pdf = make_pdf(tmp_path / "fold.pdf", [
+        {"width": 842, "height": 595, **_body_page(n_lines=10)},
+        {"width": 842, "height": 595, **_body_page(n_lines=10)},
+    ])
+    make_conversion_record(
+        visual_verify.conversion_record_path(pdf), artifact, pdf,
+        pages_document=4, pages_pdf=2)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    parity = [f for f in verdict["hard"]
+              if f["detector"] == "visual_verify.page_parity"]
+    assert len(parity) == 1, verdict
+    assert parity[0]["evidence"]["pages_document_source"] == "conversion"
+    # the print_method leg IS lifted; only the real fold remains
+    assert not [f for f in verdict["hard"]
+                if f["detector"] == "visual_verify.print_method"]
+
+
+# --------------------------------------------------------------------------
 # (d) T25 — missing input, Hancom opens an empty document
 # --------------------------------------------------------------------------
 
@@ -580,6 +837,7 @@ def _verify_args(artifact, **overrides):
     """The ``verify()`` argument namespace, so a test can monkeypatch."""
     fields = {
         "artifact": str(artifact), "pdf": None, "expectations": None,
+        "conversion_record": None,
         "png_dir": None, "dpi": 130, "baseline": None,
         "form_profile": None, "content": None, "vision_verdict": None,
         "vision_scope": "all", "deterministic_only": True,
