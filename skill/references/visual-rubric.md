@@ -108,6 +108,14 @@ not-applicable row the filler correctly left empty; a cell the form marks
 「해당자만」.
 **Discriminator:** shading. Darker cell = office use = intentionally blank.
 Read the form's own instruction line if it is visible on the page.
+**Declared blanks are not findings.** The machine half suppresses this class
+for a cell the grid owns (a separator band or a matrix stub head — the same
+`spacer` shapes `form_inspect` reports) and for a seat listed in
+`declared_blank`; both are recorded under
+`deterministic.layout_qa.empty_cell_suppressed`. What survives names the seat
+by its LABEL. If you are about to report this class from the page image for a
+cell that is blank by design, add it to `declared_blank` instead — a warning
+every correct run emits is a warning nobody reads.
 **Deterministic:** PARTIAL — `visual_verify` checks that each declared
 `fill_map` value string appears in the page text, which catches a dropped
 value but cannot tell an unfilled cell from an intentionally blank one, and

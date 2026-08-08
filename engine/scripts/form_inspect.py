@@ -26,6 +26,10 @@ v2 추가 섹션(form_profile.json):
   page_metrics — section0.xml의 hp:pagePr/margin에서 페이지 여백/가용영역과
                  lines_per_page/chars_per_line 파생값.
   table_map    — 모든 hp:tbl의 셀 단위 지도(addr/size/borderFill/음영/분류).
+                 분류는 guide / static / fill_target / **spacer** 네 가지다.
+                 spacer = 격자를 위해 존재하는 빈 칸(구분 띠, 행렬 모서리) —
+                 라벨 이웃이 없고 인쇄물도 없으며 격자의 filler 기하를 갖는다.
+                 fill_target 수에서 **빠지고** spacer_cells로 따로 보고한다.
                  `text_preview`는 30자로 자르되 잘렸으면 `truncated: true`를
                  함께 보고한다(T34 — 무표시 잘림이 스켈레톤 중간의 빈칸을
                  숨겼다). 정확한 전문은 --full-text ROW,COL.
@@ -41,6 +45,8 @@ T30 사전 점검(fill 대상 charPr):
                          판정 불가면 None)
       charpr_suggested   대신 써야 할 id(= baseline id)
   script_anomaly_targets  — script_anomaly인 대상 셀만 모은 목록(빠른 확인용).
+  spacer_cells            — 구조용 빈 칸 목록({table, addr, pattern}).
+  fill_target_count       — spacer를 제외한 실제 채우기 대상 수.
 
   절차: form_inspect로 뽑고 → script_anomaly를 보고 → `preedit fill-cells`에
   `--charpr-per-cell ROW,COL=<charpr_suggested>`로 넘긴다. 넘기지 않으면
@@ -522,12 +528,153 @@ def _fill_preflight(raw_body, script_profiles, baseline_id):
     return out
 
 
+def _cell_band(cell):
+    """(row0, row1, col0, col1) — the half-open grid band a cell occupies."""
+    addr = cell.get("addr")
+    if not addr:
+        return None
+    span = cell.get("span") or {}
+    return (addr["row"], addr["row"] + (span.get("row") or 1),
+            addr["col"], addr["col"] + (span.get("col") or 1))
+
+
+def _prints_text(cell):
+    return bool((cell.get("text_preview") or "").strip())
+
+
+def _label_neighbour(cells, cell, col_cnt):
+    """The printed cell that makes ``cell`` the VALUE half of a label pair.
+
+    Two spellings, and only two, because those are the two the corpus grids
+    actually use:
+
+    - **left**: a printed cell ending exactly where this one starts, on the
+      same row band (``명 칭`` → the name field, ``법인등록번호`` → its field);
+    - **above**: a printed cell ending exactly where this row starts and
+      covering **exactly** this cell's column band (a matrix column header:
+      ``업 체 명`` over the 협업업체 name column).
+
+    Column-band EQUALITY is what keeps the relation honest. A form's title or
+    a preceding prose band also sits "above" a full-width strip, but it does
+    not delimit a field, and a narrow label one row up (PPS ``첨부서류`` at
+    (17,0)) does not own the full-width strip below it. Two stacked
+    full-width bands are document flow, never a label/value pair, so that
+    combination is excluded outright.
+    """
+    band = _cell_band(cell)
+    if band is None:
+        return None
+    r0, r1, c0, c1 = band
+    mine_full = (c1 - c0) >= col_cnt if col_cnt else False
+    for other in cells:
+        if other is cell or not _prints_text(other):
+            continue
+        oband = _cell_band(other)
+        if oband is None:
+            continue
+        R0, R1, C0, C1 = oband
+        if C1 == c0 and R0 == r0 and R1 == r1:
+            return {"direction": "left", "addr": other["addr"],
+                    "text": (other.get("text_preview") or "").strip()[:30]}
+        if R1 == r0 and C0 == c0 and C1 == c1:
+            other_full = (C1 - C0) >= col_cnt if col_cnt else False
+            if other_full and mine_full:
+                continue
+            return {"direction": "above", "addr": other["addr"],
+                    "text": (other.get("text_preview") or "").strip()[:30]}
+    return None
+
+
+def _filler_geometry(cells, cell, col_cnt, min_text_height):
+    """Which of the grid's filler shapes this empty cell has, or None.
+
+    Both shapes are DERIVED from the table itself — no address, no absolute
+    height, no tuned ratio:
+
+    ``full_width_band``
+        spans every column of its table AND is shorter than the shortest cell
+        in that same table that manages to print text. Spanning every column
+        means it also spans the label column, so no field can live in it; the
+        height says the grid itself never fits a text line at that size.
+        These are the hairline rules between blocks and the trailing gap
+        bands (PPS (1,0)/(9,0)/(12,0) at 240 and (16,0)/(18,0) at 1280/1080,
+        against a 1860 shortest printed cell).
+
+    ``stub_head``
+        the empty corner where a header row crosses a label column: every
+        OTHER cell in its row prints text and is static, and the cell
+        directly beneath it — sharing its exact column band — prints text
+        too. That is the matrix stub (PPS (13,0), above ``협업업체`` and
+        beside ``업 체 명 / 대표자 / 전 화 / 사업장주소``). Nothing is ever
+        written there.
+    """
+    band = _cell_band(cell)
+    if band is None:
+        return None
+    r0, r1, c0, c1 = band
+    if col_cnt and (c1 - c0) >= col_cnt:
+        height = cell.get("height")
+        if (min_text_height is not None and height is not None
+                and height < min_text_height):
+            return "full_width_band"
+        return None
+    row_mates = [o for o in cells
+                 if o is not cell and (_cell_band(o) or (None,))[0] == r0]
+    if not row_mates:
+        return None
+    if not all(o.get("classification") == "static" and _prints_text(o)
+               for o in row_mates):
+        return None
+    for other in cells:
+        oband = _cell_band(other)
+        if oband is None or not _prints_text(other):
+            continue
+        R0, _R1, C0, C1 = oband
+        if R0 == r1 and C0 == c0 and C1 == c1:
+            return "stub_head"
+    return None
+
+
+def _mark_spacers(cells, col_cnt):
+    """Reclassify structural filler cells ``fill_target`` -> ``spacer``.
+
+    A spacer is an empty cell the GRID needs and no writer ever touches. The
+    three conditions are conjunctive: no printed content (it was a
+    ``fill_target``), no label neighbour (nothing names it, so nothing can be
+    asked for it), and one of the filler geometries above. Codex and the
+    round-3 Opus run each had to reason six such cells away on the PPS form
+    before they could trust the ``fill_target`` count; a genuinely empty
+    fillable cell keeps its label neighbour (PPS (2,7) under
+    ``법인등록번호``) and stays a ``fill_target``.
+
+    Returns the spacer entries, in scan order.
+    """
+    heights = [c["height"] for c in cells
+               if _prints_text(c) and c.get("height")]
+    min_text_height = min(heights) if heights else None
+    spacers = []
+    for cell in cells:
+        if cell.get("classification") != "fill_target":
+            continue
+        if _label_neighbour(cells, cell, col_cnt) is not None:
+            continue
+        pattern = _filler_geometry(cells, cell, col_cnt, min_text_height)
+        if not pattern:
+            continue
+        cell["classification"] = "spacer"
+        cell["spacer_pattern"] = pattern
+        spacers.append(cell)
+    return spacers
+
+
 def _table_map(section_names, z, defs, borderfill_shaded,
                script_profiles=None, baseline_id=None):
     """모든 section의 모든 hp:tbl -> table_map 엔트리 리스트.
 
     cell 분류(guide/fill_target/static)는 _classify_guide/_looks_like_anchor와
-    동일 휴리스틱을 재사용한다(새 규칙 도입 안 함).
+    동일 휴리스틱을 재사용한다(새 규칙 도입 안 함). 그 위에 _mark_spacers가
+    구조용 빈 칸을 fill_target에서 spacer로 내린다 — 판정 근거는 표 자신의
+    기하이지 주소 목록이 아니다.
 
     fill_target 셀에는 T30 사전 점검 필드가 붙는다(그 외 분류에는 붙지 않는다 —
     의도적으로 위첨자인 각주 표식 같은 **비대상** 런은 애초에 비교 대상이
@@ -602,13 +749,20 @@ def _table_map(section_names, z, defs, borderfill_shaded,
                     "truncated": len(text) > 30,
                     "classification": classification,
                 }
-                if classification == "fill_target":
-                    # 원본 몸통(중첩 표 제거 전)을 넘긴다 — preedit의 문단 색인과
-                    # 같아야 하므로 _own_cell_body 결과를 쓰면 안 된다.
-                    raw_body = xml[cell["body_start"]:cell["body_end"]]
+                # 원본 몸통(중첩 표 제거 전) — preedit의 문단 색인과 같아야
+                # 하므로 _own_cell_body 결과를 쓰면 안 된다. spacer 판정이
+                # 끝난 뒤에야 T30 사전 점검을 붙이므로 잠시 들고만 있는다.
+                entry["_raw_body"] = xml[cell["body_start"]:cell["body_end"]]
+                cells.append(entry)
+
+            # spacer는 fill_target에서 **빼는** 분류이므로 T30 사전 점검(대상
+            # 셀에만 붙는다)보다 먼저 확정되어야 한다.
+            _mark_spacers(cells, int(col_cnt) if col_cnt is not None else 0)
+            for entry in cells:
+                raw_body = entry.pop("_raw_body", None)
+                if entry["classification"] == "fill_target" and raw_body is not None:
                     entry.update(_fill_preflight(
                         raw_body, script_profiles or {}, baseline_id))
-                cells.append(entry)
 
             tables.append({
                 "index": idx,
@@ -942,6 +1096,15 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
              "differing": c.get("script_differing", [])}
             for t in table_map for c in t["cells"]
             if c.get("script_anomaly")],
+        # 구조용 빈 칸은 채우기 대상이 **아니다** — 세지 말라고 따로 세어 준다.
+        "spacer_cells": [
+            {"table": t["index"], "addr": c["addr"],
+             "pattern": c.get("spacer_pattern")}
+            for t in table_map for c in t["cells"]
+            if c.get("classification") == "spacer"],
+        "fill_target_count": sum(
+            1 for t in table_map for c in t["cells"]
+            if c.get("classification") == "fill_target"),
         "break_audit": break_audit,
     }
     if full_text:
@@ -1046,7 +1209,9 @@ def main():
               f"constraints={profile['constraints']} "
               f"body_baseline_charpr={profile['body_baseline_charpr']['id']} "
               f"script_anomaly_targets="
-              f"{len(profile['script_anomaly_targets'])}")
+              f"{len(profile['script_anomaly_targets'])} "
+              f"fill_target={profile['fill_target_count']} "
+              f"spacer={len(profile['spacer_cells'])}")
     else:
         sys.stdout.buffer.write(text.encode("utf-8"))
 
