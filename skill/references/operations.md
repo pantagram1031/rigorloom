@@ -391,6 +391,7 @@ python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
     [--form-profile profile.json [--fill-map MAP.json] \
                     [--keep TEXT ...] [--keep-pattern REGEX]] \
     [--content bundle/content.md] [--vision-scope all|targeted] \
+    [--accept-without CHECK ...] \
     [--attempt M --max-fix-attempts N] --out visual_verdict.json
 
 # pass 2 — merge the vision verdict you wrote
@@ -398,7 +399,34 @@ python pipeline/scripts/visual_verify.py --artifact OUT.hwpx --pdf verify.pdf \
     --expectations exp.json --vision-verdict vision.json --out visual_verdict.json
 ```
 
-Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
+**Exit codes — the whole table, one row per terminal state.** Nothing else is
+reachable; in particular **exit 1 is not in the contract** and a run that
+produces it is a bug (T36).
+
+| `verdict` | exit | meaning |
+| --- | --- | --- |
+| `pass` | 0 | accepted — both halves clean AND every SAFETY check ran (or was waived) |
+| `deterministic_pass` | 0 | `--deterministic-only` smoke check; `acceptance: false` by construction |
+| `vision_pending` | 3 | machine half clean, vision half still owed |
+| `fail` | 3 | a HARD finding, deterministic or vision |
+| `safety_incomplete` | 3 | nothing failed, but a SAFETY check never RAN and was not waived |
+| `usage_error` | 2 | bad input, unreadable file, unwritable `--out` |
+
+- **`acceptance: true` is a claim that every SAFETY check RAN** (T36). The
+  SAFETY set is `page_parity`, `xml_wellformedness`, `check_residue`,
+  `empty_cell_expected_fill`, `fill_charpr_script_mismatch` — named once, in
+  `visual_verify.SAFETY_CHECKS`, and published in every verdict under
+  `deterministic.safety_checks`. If any of them lands in
+  `deterministic.skipped_checks`, the verdict is `safety_incomplete` (exit 3)
+  with a HARD `acceptance_safety_skipped` naming which ones and why. The pixel
+  diff is deliberately NOT in the set (T35: a renderer-less machine loses one
+  check, not the run) and neither are the `format_noncompliance/*` tolerance
+  legs — declining to pin a tolerance is not hiding a defect class.
+- **Waive a check only on the record.** `--accept-without CHECK` (repeatable,
+  closed vocabulary = the SAFETY set) lets acceptance proceed without one, and
+  the verdict carries `acceptance_waivers: [...]` plus the unwaived remainder in
+  `acceptance_blockers`. Waiving is per check, never a blanket switch, and it
+  hides nothing: the skip is still reported in `deterministic.skipped`.
 
 - **Rendering.** `--pdf` if you have one; an `.hwpx` without one goes through
   ONE serial `com_backend.py convert` (never `--kill-stale`). No Hancom and
@@ -408,7 +436,8 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
 - **Deterministic backstops**, all merged into one findings list: hwpx
   section/header XML validity (T23 `artifact_malformed`); zero-text document
   and zero-content page (T25 `blank_render`); stored `PrintInfo/PrintMethod`
-  plus `pages_document` vs `pages_pdf` (W6.2 `imposition_mismatch`); declared
+  plus `pages_document` vs `pages_pdf` (W6.2 `imposition_mismatch`, see the
+  page-count sources below); declared
   page budget; declared `base_pt` / `line_spacing_pct` / `margins_mm`;
   declared `fill_map` values present in the render; script/scale/offset
   inheritance on fill-modified runs (T30 `fill_charpr_script_mismatch`);
@@ -416,6 +445,19 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   preserved verbatim); `check_residue` with `--form-profile`; `check_density`
   with `--content`; pixel diff with `--baseline` (changed-region bboxes per
   page, so a caller can assert unchanged regions stayed unchanged).
+- **`pages_document` is never yours to remember** (T36). Page parity takes the
+  first source it can get and records which in
+  `deterministic.pages_document_source`: `conversion` (Hancom's own `PageCount`,
+  when this script did the convert) → `expectations` (an explicit declaration) →
+  `artifact_layout_cache` (derived here from the artifact's own
+  `<hp:lineseg vertpos>` cache, counting the points where `vertpos` stops
+  increasing; cell-relative linesegs inside `hp:tc`/`hp:subList` are excluded).
+  Parity skips only when all three are unavailable, and the reason then names
+  which leg was missing. The derived source is honest about its limits: the cache
+  under-counts when the body lives inside tables and goes stale after an offline
+  XML edit (T24), and n-up imposition can only FOLD pages, so on that source only
+  `pages_pdf < pages_document` is HARD — the other direction is a WARN naming
+  both explanations. An authoritative source keeps both directions HARD.
 - **`--baseline` names the BLANK FORM, so it takes one** (T35). Pass the
   `.hwpx`/`.hwp` blank and it is converted through the same ONE serial
   `com_backend.py convert` the artifact takes (never `--kill-stale`); an
@@ -437,7 +479,20 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   derivation is recorded
   under `deterministic.residue_keep` (`derived_keep`, `consumed`, `unfilled`,
   `explicit_keep`, `keep_pattern`, `keep_total`) so the invocation is
-  auditable. These flags without `--form-profile` are a usage error.
+  auditable. `--keep` / `--keep-pattern` without `--form-profile` are a usage
+  error.
+- **`--fill-map` and `expectations.fill_map` are ONE concept, not two inputs**
+  (T36). They used to be different: the flag drove the residue keep derivation,
+  while the *expectations member* was what activated the declared-value presence
+  check (`empty_cell_expected_fill`) and the T30 charPr post-flight — so a caller
+  who passed only the flag got a verdict with both of those in `skipped[]`.
+  Passing `--fill-map` now **seeds** `expectations.fill_map`, so one map drives
+  all three consumers and `deterministic.fill_map_source` says where it came from
+  (`cli`, `expectations`, or `cli+expectations`). Passing the same expectations
+  file to both flags is the blessed invocation; passing two **different** maps is
+  a usage error, because there is no honest answer to which one the artifact was
+  filled with. `--fill-map` alone no longer needs `--form-profile` (it is
+  meaningful without the residue delegate); `--keep`/`--keep-pattern` still do.
 - **A correct fill KEEPS the label — that is the normal shape, not an edge
   case** (T31). Filling a labeled field means keeping the label as a prefix:
   a URL field goes `" http://"` → `" http://hanbit.example.kr"`, a zip field
@@ -472,10 +527,14 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   right}`, `fill_map {label: value}`, `intentionally_blank [label]`,
   `blank_pages [n]`, `forbidden_text [str]`. Everything absent is listed
   under `deterministic.skipped` — the verdict says what it could NOT check.
-- **`vision_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
-  rubric, rubric_path, acceptance, pages[], deterministic{}, vision{},
-  vision_required[], loop{}, hard[], warn[], counts, verdict}`. `verdict` is one of `pass`,
-  `fail`, `vision_pending`, `deterministic_pass`.
+- **`visual_verdict.json`** shape: `{schema, artifact, pdf, dpi, png_dir,
+  rubric, rubric_path, acceptance, acceptance_waivers[], acceptance_blockers[],
+  pages[], deterministic{}, vision{}, vision_required[], loop{}, hard[], warn[],
+  counts, verdict}`. `verdict` is one of `pass`, `fail`, `vision_pending`,
+  `deterministic_pass`, `safety_incomplete`, `usage_error` — see the exit table
+  above. `deterministic` carries `safety_checks[]`, `skipped[]` (human
+  `"check: reason"` strings), `skipped_checks[]` (the keys alone),
+  `pages_document_source` and `fill_map_source`.
 - **The vision handback** (`--vision-verdict`) is
   `{"schema": "rigorloom/visual-vision-verdict/v1", "pages_reviewed": [...],
   "findings": [{"page", "class", "severity", "evidence"}]}`. `class` is

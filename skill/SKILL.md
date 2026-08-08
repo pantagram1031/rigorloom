@@ -70,6 +70,13 @@ verdict JSON, and re-running. `--deterministic-only` is a smoke check, not an
 acceptance. On repeated failure, `--attempt M --max-fix-attempts N` makes the
 script escalate instead of letting you grind.
 
+`acceptance: true` also claims that every check in the SAFETY set actually
+**ran**. A run that could not run one of them (no fill map, no form profile, no
+page-count source) reports `safety_incomplete` and exits 3 rather than quietly
+accepting; supply the missing input, or waive that one check on the record with
+`--accept-without CHECK`. Full table and vocabulary: `references/operations.md`
+§10.
+
 ## Freedom map
 
 - **LOW freedom** — fill, preedit/postedit, assembly ops, residue/format

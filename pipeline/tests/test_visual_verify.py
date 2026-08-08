@@ -31,6 +31,7 @@ script-independent.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import zipfile
@@ -84,16 +85,44 @@ def _settings(print_method: int) -> str:
     )
 
 
+def _laid_out_pages(n_pages: int) -> str:
+    """One laid-out paragraph per page, as Hancom's layout cache records them.
+
+    Every laid-out line carries ``<hp:lineseg vertpos=...>``, a HWPUNIT offset
+    from the top of ITS page, so a page boundary is exactly a point where
+    ``vertpos`` stops increasing. That is what ``derive_pages_document`` counts,
+    and it is the cache a real .hwpx carries — so a fixture can have a document
+    page count without anybody declaring one.
+
+    ``_SECTION_OK``'s own paragraph already sits at ``vertpos="0"``, so the FIRST
+    block here continues page 1 (equal, not a decrease) and each later block
+    resets and adds one page: N blocks == N pages.
+    """
+    body = ('<hp:run charPrIDRef="0"><hp:t>laid out line</hp:t></hp:run>'
+            '<hp:linesegarray>'
+            + "".join(f'<hp:lineseg textpos="0" vertpos="{v}"/>'
+                      for v in (0, 1000, 2000))
+            + '</hp:linesegarray>')
+    return "".join(f'<hp:p id="{100 + i}">{body}</hp:p>'
+                   for i in range(max(n_pages, 1)))
+
+
 def make_hwpx(path: Path, *, malformed: bool = False,
-              print_method: int = 0) -> Path:
-    """Minimal but structurally real .hwpx (mimetype + settings + Contents)."""
+              print_method: int = 0, pages: int = 1) -> Path:
+    """Minimal but structurally real .hwpx (mimetype + settings + Contents).
+
+    ``pages=N`` writes a layout cache that lays the document out over N pages.
+    """
+    section = _SECTION_MALFORMED if malformed else _SECTION_OK
+    if pages > 1 and not malformed:
+        section = section.replace("</hs:sec>", _laid_out_pages(pages)
+                                  + "</hs:sec>")
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mimetype", "application/hwp+zip")
         zf.writestr("settings.xml", _settings(print_method))
         zf.writestr("Contents/header.xml", _HEADER_OK)
-        zf.writestr("Contents/section0.xml",
-                    _SECTION_MALFORMED if malformed else _SECTION_OK)
+        zf.writestr("Contents/section0.xml", section)
     return path
 
 
@@ -204,14 +233,23 @@ def write_form_profile(path: Path) -> Path:
 
 
 def make_pdf(path: Path, pages) -> Path:
-    """pages = [ {width, height, lines:[(x, y, text, size)]} , ...]."""
+    """pages = [ {width, height, lines:[(x, y, text, size)]} , ...].
+
+    Non-ASCII lines are drawn with PyMuPDF's built-in ``korea`` CJK font, which
+    DOES carry a ToUnicode map — the default base-14 face silently drops Hangul,
+    which is what the module docstring's original fixture note was about. Korean
+    fill values therefore round-trip through text extraction, so a fixture can
+    exercise the render-side ``empty_cell_expected_fill`` leg with the same
+    values its artifact carries.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = fitz.open()
     for spec in pages:
         page = doc.new_page(width=spec.get("width", 595),
                             height=spec.get("height", 842))
         for x, y, text, size in spec.get("lines", []):
-            page.insert_text((x, y), text, fontsize=size)
+            page.insert_text((x, y), text, fontsize=size,
+                             fontname="korea" if not text.isascii() else "helv")
     doc.save(str(path))
     doc.close()
     return path
@@ -544,6 +582,7 @@ def _verify_args(artifact, **overrides):
         "form_profile": None, "content": None, "vision_verdict": None,
         "vision_scope": "all", "deterministic_only": True,
         "keep": [], "keep_pattern": None, "fill_map": None,
+        "accept_without": [],
         "attempt": None, "max_fix_attempts": None, "out": None}
     fields.update({k: (str(v) if isinstance(v, Path) else v)
                    for k, v in overrides.items()})
@@ -1015,9 +1054,21 @@ def make_labeled_form_hwpx(path: Path, *, url: str = _URL_VALUE,
 
 
 def _labeled(tmp_path: Path, *, mapping=None, **kwargs):
-    """(artifact, pdf, profile, fill_map) for one labeled-form run."""
+    """(artifact, pdf, profile, fill_map) for one labeled-form run.
+
+    The PDF carries the SAME labeled-field lines the artifact does. That is not
+    decoration: ``--fill-map`` now seeds ``expectations.fill_map`` (one map, one
+    concept), so the declared values are checked against the render too — a
+    fixture whose render did not show what its artifact contains would be
+    asserting a defect, not a clean fill.
+    """
     artifact = make_labeled_form_hwpx(tmp_path / "labeled.hwpx", **kwargs)
-    pdf = make_pdf(tmp_path / "labeled.pdf", [_body_page(n_lines=8)])
+    rendered = _body_page(n_lines=8)
+    for offset, text in enumerate((f"누리집{kwargs.get('url', _URL_VALUE)}",
+                                   f"주소{kwargs.get('zip_line', _ZIP_VALUE)}",
+                                   *kwargs.get("trailing", ()))):
+        rendered["lines"].append((72.0, 420.0 + offset * 16.0, text, 10.0))
+    pdf = make_pdf(tmp_path / "labeled.pdf", [rendered])
     profile = tmp_path / "labeled_profile.json"
     profile.write_text(json.dumps(LABELED_PROFILE, ensure_ascii=False),
                        encoding="utf-8")
@@ -1146,11 +1197,21 @@ def _clean_run(tmp_path):
     return artifact, pdf
 
 
+#: These vision-contract fixtures are a bare document with no form profile and
+#: no fill map, so three SAFETY checks genuinely cannot run. Acceptance now says
+#: so (``safety_incomplete``), and the only way to an acceptance is to waive
+#: them ON THE RECORD — which is exactly the UX under test here, so the waivers
+#: are spelled out rather than hidden in a helper default.
+_CLEAN_WAIVERS = ("--accept-without", "check_residue",
+                  "--accept-without", "empty_cell_expected_fill",
+                  "--accept-without", "fill_charpr_script_mismatch")
+
+
 def test_clean_artifact_passes_only_with_the_vision_half(tmp_path):
     artifact, pdf = _clean_run(tmp_path)
 
     code, pending, _ = run("--artifact", artifact, "--pdf", pdf,
-                           "--png-dir", tmp_path / "png")
+                           "--png-dir", tmp_path / "png", *_CLEAN_WAIVERS)
     assert code == 3
     assert pending["verdict"] == "vision_pending"
     assert [t["page"] for t in pending["vision_required"]] == [1, 2]
@@ -1161,10 +1222,15 @@ def test_clean_artifact_passes_only_with_the_vision_half(tmp_path):
         "pages_reviewed": [1, 2], "findings": []}), encoding="utf-8")
     code, accepted, _ = run("--artifact", artifact, "--pdf", pdf,
                             "--png-dir", tmp_path / "png",
-                            "--vision-verdict", vision)
+                            "--vision-verdict", vision, *_CLEAN_WAIVERS)
     assert code == 0, accepted
     assert accepted["verdict"] == "pass"
     assert accepted["acceptance"] is True
+    # the waiver is recorded, so the acceptance names what it did not check
+    assert accepted["acceptance_waivers"] == [
+        "check_residue", "empty_cell_expected_fill",
+        "fill_charpr_script_mismatch"]
+    assert accepted["acceptance_blockers"] == []
 
 
 def test_deterministic_only_is_never_an_acceptance(tmp_path):
@@ -1223,7 +1289,7 @@ def test_every_rubric_class_is_accepted_from_vision(tmp_path):
         encoding="utf-8")
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
                            "--png-dir", tmp_path / "png",
-                           "--vision-verdict", vision)
+                           "--vision-verdict", vision, *_CLEAN_WAIVERS)
     assert code == 0, verdict
     assert set(classes(verdict, "warn")) >= set(visual_verify.RUBRIC_CLASSES)
 
@@ -1238,6 +1304,441 @@ def test_rubric_document_and_code_vocabulary_agree():
         "rubric §1 class table and visual_verify.RUBRIC_CLASSES drifted: "
         f"doc-only={sorted(documented - set(visual_verify.RUBRIC_CLASSES))} "
         f"code-only={sorted(set(visual_verify.RUBRIC_CLASSES) - documented)}")
+
+
+# --------------------------------------------------------------------------
+# (h) P0-A — acceptance may not claim more than the run checked
+#
+# The v0.17 clean-room harness, luna tier: a CLI --fill-map was supplied and
+# the verdict STILL carried empty_cell_expected_fill, fill_charpr_script_
+# mismatch AND page_parity in deterministic.skipped[] — and returned
+# acceptance: true with exit 0. Two root causes, both fixed here: acceptance
+# ignored skipped[], and --fill-map / expectations.fill_map were different
+# inputs with materially different effects.
+# --------------------------------------------------------------------------
+
+def _luna_shape(tmp_path, *, value_charpr=7):
+    """luna's exact invocation shape: a CLI --fill-map, and an expectations
+    file that does NOT carry a fill_map member."""
+    artifact = make_form_hwpx(tmp_path / "luna.hwpx", value_charpr=value_charpr)
+    pdf = _fill_pdf(tmp_path / "luna.pdf")
+    profile = write_form_profile(tmp_path / "profile.json")
+    fill_map = tmp_path / "map.json"
+    fill_map.write_text(json.dumps({"20101": _FILL_VALUE}, ensure_ascii=False),
+                        encoding="utf-8")
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"base_pt": 10.0}), encoding="utf-8")
+    return artifact, pdf, profile, fill_map, expectations
+
+
+def _reviewed(tmp_path, pages=(1,)):
+    """A clean vision handback, so a test can reach the acceptance decision."""
+    path = tmp_path / "vision.json"
+    path.write_text(json.dumps({
+        "schema": "rigorloom/visual-vision-verdict/v1",
+        "pages_reviewed": list(pages), "findings": []}), encoding="utf-8")
+    return path
+
+
+def test_luna_cli_fill_map_no_longer_leaves_the_t30_post_flight_inactive(
+        tmp_path):
+    """The CLI map seeds expectations.fill_map, so ALL of its consumers run —
+    and the T30 trap this artifact carries is caught instead of skipped."""
+    artifact, pdf, profile, fill_map, expectations = _luna_shape(tmp_path)
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--vision-scope", "targeted")
+    skipped = verdict["deterministic"]["skipped_checks"]
+    assert "empty_cell_expected_fill" not in skipped, verdict["deterministic"]
+    assert "fill_charpr_script_mismatch" not in skipped
+    assert verdict["deterministic"]["fill_map_source"] == "cli"
+    # the point of the whole fix: the trap fires
+    assert "fill_charpr_script_mismatch" in codes(verdict)
+    assert code == 3
+
+
+def test_luna_shape_a_skipped_safety_check_is_never_an_acceptance(tmp_path):
+    """luna's other half: with page parity still unobtainable and no residue
+    gate, the run must NOT report acceptance — it must name what it skipped."""
+    artifact, pdf, _, fill_map, expectations = _luna_shape(
+        tmp_path, value_charpr=0)          # clean artifact: nothing FAILS
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--vision-verdict", _reviewed(tmp_path))
+    assert verdict["hard"], "the skip itself must be a finding"
+    assert code == 3, verdict
+    assert verdict["verdict"] == "safety_incomplete"
+    assert verdict["acceptance"] is False
+    blocked = {row["check"] for row in verdict["acceptance_blockers"]}
+    # make_form_hwpx carries no layout cache and no --form-profile was passed
+    assert blocked == {"page_parity", "check_residue"}
+    named = [f for f in verdict["hard"]
+             if f["code"] == "acceptance_safety_skipped"]
+    assert len(named) == 1
+    assert named[0]["detector"] == "visual_verify.acceptance"
+    assert set(named[0]["evidence"]["skipped_safety_checks"]) == blocked
+    # every reason is stated, not just the count
+    assert all(any(check in reason for reason in
+                   named[0]["evidence"]["reasons"]) for check in blocked)
+    assert verdict["acceptance_waivers"] == []
+
+
+def test_a_waiver_flips_acceptance_back_and_is_recorded(tmp_path):
+    """Same run, same skips, plus an explicit per-check opt-out."""
+    artifact, pdf, _, fill_map, expectations = _luna_shape(
+        tmp_path, value_charpr=0)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--vision-verdict", _reviewed(tmp_path),
+                           "--accept-without", "page_parity",
+                           "--accept-without", "check_residue")
+    assert code == 0, verdict
+    assert verdict["verdict"] == "pass"
+    assert verdict["acceptance"] is True
+    assert verdict["acceptance_waivers"] == ["check_residue", "page_parity"]
+    assert verdict["acceptance_blockers"] == []
+    # a waiver hides nothing: the skip is still reported out loud
+    assert "page_parity" in verdict["deterministic"]["skipped_checks"]
+
+
+def test_a_partial_waiver_still_blocks_on_the_rest(tmp_path):
+    """Still-catches: waiving one skipped SAFETY check does not waive the
+    others. Per-check, never a blanket switch."""
+    artifact, pdf, _, fill_map, expectations = _luna_shape(
+        tmp_path, value_charpr=0)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--vision-verdict", _reviewed(tmp_path),
+                           "--accept-without", "page_parity")
+    assert code == 3, verdict
+    assert verdict["verdict"] == "safety_incomplete"
+    assert [row["check"] for row in verdict["acceptance_blockers"]] == [
+        "check_residue"]
+    assert verdict["acceptance_waivers"] == ["page_parity"]
+
+
+def test_an_unknown_waiver_is_a_usage_error_naming_the_vocabulary(tmp_path):
+    artifact, pdf = _clean_run(tmp_path)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--accept-without", "everything")
+    # argparse's closed `choices` rejects it before the run even starts
+    assert code == 2, verdict
+
+
+def test_the_safety_set_lives_in_exactly_one_place():
+    """The waiver vocabulary, the skip bookkeeping and the acceptance rule all
+    read SAFETY_CHECKS. Non-vacuity: every member must be a key ``_skipped``
+    can actually emit, or a waiver would name a check that never appears."""
+    emitted = {row["check"] for row in visual_verify._skipped(
+        {}, None, None, None, None, form_profile=None, xml_members=[],
+        pages_document_note=None)}
+    assert set(visual_verify.SAFETY_CHECKS) <= emitted, (
+        "SAFETY_CHECKS names a check _skipped() cannot report: "
+        f"{sorted(set(visual_verify.SAFETY_CHECKS) - emitted)}")
+    assert len(set(visual_verify.SAFETY_CHECKS)) == len(
+        visual_verify.SAFETY_CHECKS)
+
+
+# --------------------------------------------------------------------------
+# (i) P0-A — page parity must not need a hand-declared page count
+#
+# The sol tier only got page parity because it hand-declared
+# expectations.pages_document: on the --pdf path there was no conversion JSON,
+# so parity skipped by default. It is now derived from the artifact's own
+# layout cache, and the verdict names which source it used.
+# --------------------------------------------------------------------------
+
+def test_page_parity_runs_on_the_pdf_path_with_no_declared_count(tmp_path):
+    artifact = make_hwpx(tmp_path / "p.hwpx", pages=3)
+    pdf = make_pdf(tmp_path / "p.pdf", [_body_page()] * 3)
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    det = verdict["deterministic"]
+    assert det["pages_document"] == 3
+    assert det["pages_document_source"] == "artifact_layout_cache"
+    assert "page_parity" not in det["skipped_checks"]
+    assert code == 0, verdict
+
+
+def test_derived_page_parity_catches_the_w62_fold_without_a_declaration(
+        tmp_path):
+    """Still-catches, and it is the real incident: PrintMethod=4 folds four
+    document pages onto two landscape sheets. Nobody declares anything."""
+    artifact = make_hwpx(tmp_path / "nrf.hwpx", print_method=4, pages=4)
+    pdf = make_pdf(tmp_path / "nrf.pdf", [
+        {"width": 842, "height": 595, **_body_page(n_lines=10)},
+        {"width": 842, "height": 595, **_body_page(n_lines=10)},
+    ])
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    parity = [f for f in verdict["hard"]
+              if f["detector"] == "visual_verify.page_parity"]
+    assert len(parity) == 1
+    assert parity[0]["evidence"] == {
+        "pages_document": 4, "pages_pdf": 2,
+        "pages_document_source": "artifact_layout_cache"}
+
+
+def test_a_derived_undercount_is_a_warn_not_a_hard(tmp_path):
+    """False-positive guard, calibrated on the corpus: the layout cache
+    under-counts whenever the body lives inside tables (measured: 4 of the 10
+    rendered corpus forms), and imposition can only FOLD pages — so MORE PDF
+    pages than the cache records is reported, never failed."""
+    artifact = make_hwpx(tmp_path / "u.hwpx", pages=1)
+    pdf = make_pdf(tmp_path / "u.pdf", [_body_page()] * 3)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert not [f for f in verdict["hard"]
+                if f["detector"] == "visual_verify.page_parity"]
+    warned = [f for f in verdict["warn"]
+              if f["detector"] == "visual_verify.page_parity"]
+    assert len(warned) == 1
+    assert "under-count" in warned[0]["evidence"]["note"]
+
+
+def test_a_declared_count_still_wins_over_the_derivation(tmp_path):
+    """An operator declaration is authoritative, so both directions stay HARD
+    — the derivation is a floor under parity, never a ceiling on it."""
+    artifact = make_hwpx(tmp_path / "d.hwpx", pages=1)
+    pdf = make_pdf(tmp_path / "d.pdf", [_body_page()] * 3)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"pages_document": 5}),
+                            encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    parity = [f for f in verdict["hard"]
+              if f["detector"] == "visual_verify.page_parity"]
+    assert parity[0]["evidence"]["pages_document_source"] == "expectations"
+    assert parity[0]["evidence"]["pages_document"] == 5
+
+
+def test_page_parity_skips_with_a_reason_when_nothing_is_derivable(tmp_path):
+    """A .pdf judged directly has no layout cache: parity skips, and the
+    reason says which leg was missing rather than just 'unknown'."""
+    pdf = make_pdf(tmp_path / "only.pdf", [_body_page()])
+    code, verdict, _ = run("--artifact", pdf, "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    det = verdict["deterministic"]
+    assert det["pages_document"] is None
+    assert det["pages_document_source"] is None
+    reason = next(row for row in det["skipped"]
+                  if row.startswith("page_parity:"))
+    assert "layout cache" in reason
+
+
+def test_derive_pages_document_on_the_real_corpus():
+    """Calibration, pinned: the derivation never OVER-counts a form whose PDF
+    is the ground truth, except on the one form that really is imposed."""
+    corpus = REPO_ROOT / "tests" / "corpus" / "forms"
+    renders = corpus / "render"
+    checked = 0
+    for hwpx in sorted((corpus / "converted").glob("*.hwpx")):
+        rendered = renders / f"{hwpx.stem}.pdf"
+        if not rendered.is_file():
+            continue
+        checked += 1
+        derived, note = visual_verify.derive_pages_document(hwpx)
+        assert derived is not None and note is None, hwpx.name
+        pages_pdf = fitz.open(str(rendered)).page_count
+        if derived > pages_pdf:
+            # An OVER-count is the imposition direction, and across the corpus
+            # it happens on exactly the forms that store n-up print imposition
+            # (nrf-gyeolgwa-bogoseo-yangsik, PrintMethod=4, derives 4 against a
+            # 2-page PDF). A form with PrintMethod=0/absent must never
+            # over-count, or the HARD leg would false-positive.
+            assert visual_verify.stored_print_method(hwpx), (
+                f"{hwpx.name}: derived {derived} > pdf {pages_pdf} on a form "
+                "that stores no imposition — the HARD parity leg would "
+                "false-positive")
+    assert checked >= 8, "corpus render set shrank; recalibrate"
+
+
+# --------------------------------------------------------------------------
+# (j) P0-A — ONE fill map, whichever flag carried it
+# --------------------------------------------------------------------------
+
+def test_the_same_map_on_both_surfaces_is_the_blessed_invocation(tmp_path):
+    """T35's shape rule means one expectations file can serve both flags."""
+    artifact = make_form_hwpx(tmp_path / "both.hwpx")
+    pdf = _fill_pdf(tmp_path / "both.pdf")
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": _FILL_MAP},
+                                       ensure_ascii=False), encoding="utf-8")
+    profile = write_form_profile(tmp_path / "profile.json")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--form-profile", profile,
+                           "--fill-map", expectations,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    assert verdict["deterministic"]["fill_map_source"] == "cli+expectations"
+
+
+def test_two_different_maps_are_a_usage_error_not_a_precedence_rule(tmp_path):
+    artifact = make_form_hwpx(tmp_path / "two.hwpx")
+    pdf = _fill_pdf(tmp_path / "two.pdf")
+    expectations = _fill_expectations(tmp_path / "exp.json")
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"20101": "SOMETHING ELSE"}), encoding="utf-8")
+    # the conflict is refused before any check runs
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--fill-map", other,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "DIFFERENT maps" in verdict["error"]
+
+
+def test_a_cli_fill_map_alone_is_no_longer_a_usage_error(tmp_path):
+    """It used to require --form-profile because it 'only applied' to the
+    residue delegate. It now seeds expectations.fill_map, so it stands alone —
+    while --keep/--keep-pattern really are delegate-only and still refuse."""
+    artifact = make_form_hwpx(tmp_path / "alone.hwpx", value_charpr=7)
+    pdf = _fill_pdf(tmp_path / "alone.pdf")
+    fill_map = tmp_path / "map.json"
+    fill_map.write_text(json.dumps({"20101": _FILL_VALUE}), encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert "fill_charpr_script_mismatch" in codes(verdict)
+
+
+def test_the_fill_map_help_states_that_it_is_one_concept():
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(REPO_ROOT))
+    help_text = " ".join(proc.stdout.split())
+    assert "seeds that member" in help_text
+    assert "--accept-without" in help_text
+    for check in visual_verify.SAFETY_CHECKS:
+        assert check in help_text, check
+
+
+# --------------------------------------------------------------------------
+# (k) P0-B — the exit-code contract, every terminal state
+#
+# The clean-room sol and terra tiers both received process exit 1 for
+# vision_pending, where the docs and the verdict contract say 3. 3 is right
+# (it is checker_base.EXIT_HARD, the finding/pending code every checker uses);
+# 1 was an UNHANDLED path — emit_verdict sat outside every guard, so an
+# unwritable --out escaped as a traceback. No invocation may exit 1.
+# --------------------------------------------------------------------------
+
+def _terminal_states(tmp_path):
+    """(name, expected_exit, argv) for every terminal state of the script."""
+    clean, clean_pdf = _clean_run(tmp_path / "clean")
+    vision = tmp_path / "vision.json"
+    vision.write_text(json.dumps({
+        "schema": "rigorloom/visual-vision-verdict/v1",
+        "pages_reviewed": [1, 2], "findings": []}), encoding="utf-8")
+    blank = make_hwpx(tmp_path / "blank" / "b.hwpx")
+    blank_pdf = make_pdf(tmp_path / "blank" / "b.pdf", [{"lines": []}])
+    base = ("--artifact", clean, "--pdf", clean_pdf,
+            "--png-dir", tmp_path / "png")
+    return [
+        ("pass", 0, (*base, "--vision-verdict", vision, *_CLEAN_WAIVERS)),
+        ("deterministic_pass", 0, (*base, "--deterministic-only")),
+        ("vision_pending", 3, (*base, *_CLEAN_WAIVERS)),
+        ("safety_incomplete", 3, (*base, "--vision-verdict", vision)),
+        ("fail", 3, ("--artifact", blank, "--pdf", blank_pdf,
+                     "--png-dir", tmp_path / "png2")),
+        ("usage_error", 2, ("--artifact", tmp_path / "nope.hwpx")),
+    ]
+
+
+def test_exit_code_matrix(tmp_path):
+    """Every terminal state, its verdict string and its exit code, in one
+    table — and 1 is not in it."""
+    for name, expected_code, argv in _terminal_states(tmp_path):
+        code, verdict, stderr = run(*argv)
+        assert verdict is not None, (name, stderr)
+        assert verdict["verdict"] == name, (name, verdict["verdict"])
+        assert code == expected_code, (name, code, verdict["verdict"])
+        assert code != 1, name
+        assert code in (0, 2, 3), (name, code)
+        # ok/acceptance must agree with the row
+        assert verdict["ok"] is (expected_code == 0)
+        if name != "usage_error":
+            assert verdict["acceptance"] is (name == "pass")
+        else:
+            assert "acceptance" not in verdict
+
+
+def test_vision_pending_exits_3_not_1(tmp_path):
+    """The reported defect, pinned on its own so a regression names itself."""
+    artifact, pdf = _clean_run(tmp_path)
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png", *_CLEAN_WAIVERS)
+    assert verdict["verdict"] == "vision_pending"
+    assert code == 3, "3 = EXIT_HARD, the finding/pending code of every checker"
+
+
+def test_an_unwritable_out_is_a_usage_error_not_a_traceback(tmp_path):
+    """The reachable exit-1 path: --out naming an existing directory made
+    emit_verdict raise PermissionError after a perfectly good verdict."""
+    artifact, pdf = _clean_run(tmp_path)
+    collision = tmp_path / "verdict_dir"
+    collision.mkdir()
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--png-dir", tmp_path / "png",
+                           "--out", collision)
+    assert code == 2, verdict
+    assert verdict["verdict"] == "usage_error"
+    assert "--out" in verdict["error"]
+
+
+def test_a_verdict_that_cannot_be_serialized_degrades_to_usage(
+        tmp_path, monkeypatch, capsys):
+    """Backstop for the same class: emission failure is the usage row (2),
+    never a traceback and never exit 1."""
+    artifact, pdf = _clean_run(tmp_path)
+
+    def boom(*_a, **_k):
+        raise ValueError("Out of range float values are not JSON compliant")
+
+    monkeypatch.setattr(visual_verify, "emit_verdict", boom)
+    code = visual_verify.main([
+        "--artifact", str(artifact), "--pdf", str(pdf),
+        "--png-dir", str(tmp_path / "png")])
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["verdict"] == "usage_error"
+    assert "could not emit the verdict" in payload["error"]
+
+
+def test_the_exit_code_table_is_documented(tmp_path):
+    """The docstring table and operations.md must agree with the code."""
+    source = (REPO_ROOT / "pipeline" / "scripts" / "visual_verify.py").read_text(
+        encoding="utf-8")
+    operations = (REPO_ROOT / "skill" / "references" / "operations.md").read_text(
+        encoding="utf-8")
+    for name, expected_code, _ in _terminal_states(tmp_path):
+        assert re.search(rf"{name}\s+{expected_code}\s", source), name
+        assert name in operations, name
+    assert "safety_incomplete" in operations
+    assert "acceptance_waivers" in operations
 
 
 # --------------------------------------------------------------------------
@@ -1273,6 +1774,7 @@ def test_no_pdf_and_no_renderer_is_usage_error_not_a_pass(tmp_path, monkeypatch)
         "form_profile": None, "content": None, "vision_verdict": None,
         "vision_scope": "all", "deterministic_only": False,
         "keep": [], "keep_pattern": None, "fill_map": None,
+        "accept_without": [],
         "attempt": None, "max_fix_attempts": None, "out": None})()
     verdict, code = visual_verify.verify(args)
     assert code == 2

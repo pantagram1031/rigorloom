@@ -256,6 +256,60 @@ the four contract rules and left two harness gaps. All three are closed.
   declared value in the workspace's `gates.yaml`, and no module registers a gate
   kind whose checker wants a baseline.
 
+### Engine — `visual_verify` acceptance and exit-code contract (T36)
+
+Two P0 defects the CODEX clean-room A1 harness found across three model tiers.
+Both are correctness-of-VERDICT: the verdict claimed more than it checked.
+
+- **`acceptance: true` while safety checks were silently skipped.** The luna
+  tier supplied a CLI `--fill-map` and still got `empty_cell_expected_fill`,
+  `fill_charpr_script_mismatch` AND page parity into
+  `deterministic.skipped[]` — then exit 0 with `acceptance: true`, because
+  acceptance was computed as "no HARD finding" and never read the skip list.
+  Now: `visual_verify.SAFETY_CHECKS` names, in ONE place, the five checks whose
+  absence invalidates acceptance (`page_parity`, `xml_wellformedness`,
+  `check_residue`, `empty_cell_expected_fill`,
+  `fill_charpr_script_mismatch`); `_skipped()` returns `{check, reason}`
+  records so a rule can match on them (the flat strings are still published for
+  humans, plus `skipped_checks[]`); and a skipped SAFETY check makes the
+  verdict `safety_incomplete` with a HARD `acceptance_safety_skipped` naming
+  which and why, exit 3. `--accept-without CHECK` (repeatable, closed
+  vocabulary) is the only way past it, recorded as `acceptance_waivers` — per
+  check, never a blanket switch, and the skip is still reported. The pixel diff
+  stays OUT of the set (T35: a renderer-less machine loses one check, not the
+  run), as do the `format_noncompliance/*` tolerance legs.
+- **`--fill-map` and `expectations.fill_map` were two inputs, not one
+  concept.** The flag drove the residue keep derivation; the expectations
+  MEMBER activated the declared-value presence check and the T30 charPr
+  post-flight — so the flag looked sufficient and was not. The CLI map now
+  SEEDS `expectations.fill_map` (`deterministic.fill_map_source` records which
+  surface it arrived on); two DIFFERENT maps are a usage error rather than a
+  silent precedence rule; `--fill-map` alone no longer requires
+  `--form-profile`.
+- **`pages_document` is no longer the caller's to remember.** The sol tier only
+  got page parity because it hand-declared it: on the `--pdf` path there was no
+  source at all. Parity now takes the first of conversion → expectations → the
+  artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
+  excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
+  `pages_document_source`, and skips only when all three fail. Calibrated and
+  pinned against the ten rendered corpus forms: the derived count never
+  over-counts a form that stores no imposition, so on that source only the fold
+  direction (`pages_pdf < pages_document`) is HARD and the under-count
+  direction is a WARN naming both explanations — `nrf-gyeolgwa-bogoseo-yangsik`
+  (`PrintMethod=4`, derives 4 against a 2-page PDF) is caught with nothing
+  declared.
+- **Exit-code contract, all six rows.** sol and terra both saw exit **1** for
+  `vision_pending` where the contract says **3**. 3 is right (it is
+  `checker_base.EXIT_HARD`, the finding/pending code of every checker); 1 was
+  not a code at all but an unhandled path — `emit_verdict` sat outside every
+  guard in `main`, so an unwritable `--out` escaped as a traceback after a
+  perfectly good verdict. `--out` is now validated before the run and the
+  emission is wrapped (an emission failure degrades to the usage row, 2), so
+  **no path exits 1**. `test_exit_code_matrix` pins one row per terminal state
+  — `pass` 0, `deterministic_pass` 0, `vision_pending` 3, `fail` 3,
+  `safety_incomplete` 3, `usage_error` 2 — and the docstring/`operations.md`
+  table is asserted against the code.
+
 ## v0.16.0 — unified core and modules
 
 The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):
