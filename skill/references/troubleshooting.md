@@ -2,7 +2,7 @@
 
 Symptom → cause → fix, engine scope only (assembly/COM/XML/layout/equation).
 This IS the shipped table; the rigorloom repository keeps the full
-trouble table with per-row origins (T1–T14, T26–T44) and the Lane-F
+trouble table with per-row origins (T1–T14, T26–T46) and the Lane-F
 unification rows (T16–T22) alongside the plan that produced them.
 Report-pipeline rows (T2 dataset downloads, T20 bundle figures) live in
 the report module fragment, not here.
@@ -38,6 +38,8 @@ the report module fragment, not here.
 | T42 | a canonical address-keyed 공문 body fill (`"2,0"`) HARDs `fill_charpr_script_mismatch` even though the blank form reserves many empty body runs with the exact same 12pt/97% charPr | T40 could identify only a visible blank run by fill-map text; an empty seat was always treated as having no typography. For an exact `ROW,COL` key only, `visual_verify` now accepts a repeated reserved block as evidence when at least two empty runs in that exact seat share one charPr, the filled signature matches it exactly, and the reserved face differs from body only by `ratio`. It emits WARN `fill_charpr_script_inherited` with `form_baseline_match: cell_address_reserved_runs`. A single empty run, mixed ids, changed fill, undefined charPr or any reserved script/scale/offset anomaly remains HARD; `SAFETY_CHECKS` and waivers are unchanged |
 | T43 | residue keep says a label was `consumed`, but `check_residue` HARDs that same label — e.g. map `{"수신": "국가유산청장"}` against artifact `수신 국가유산청장` | the keep derivation treated “mapped payload appears anywhere” as proof, while the gate correctly attributes only occurrences wholly inside a declared value span → both now use `check_residue.value_spans` plus per-occurrence containment. Declare the complete authored span (`{"수신": "수신 국가유산청장"}`) for a prefix-preserving/COM insertion; a payload-only fragment leaves the label `unfilled` and HARD. Key-absence replacement fallback and repeated-occurrence residue checks are unchanged |
 | T44 | a multi-paragraph `fill-cells` value is present in the artifact but T30/T42 reports no fill-modified runs, or a JSON-array declaration fails render presence | the writer split arrays/newlines into paragraphs while the verifier searched each XML run for the unsplit whole (and stringified a JSON list) → `visual_verify` now reuses `preedit.split_fill_lines`: render presence compares the joined paragraphs, and charPr checks every non-empty paragraph. Exact `ROW,COL` declarations are additionally scoped to that seat. JSON-array and newline forms both run the safety check; a changed charPr still HARDs |
+| T45 | a draft task passes `check_gongmun` only when the out-of-form 비고 instruction remains, then vision HARDs that same visible guide block | task intent was incorrectly encoded as the checker's auto evidence state. For a user-requested draft, pass `--mode draft`, assert `document.state_used`, and independently require the 비고 marker absent; never weaken `guide_text_visible` |
+| T46 | a Codex/PowerShell audit says a checker exited 1 while its JSON says `vision_pending` or `fail` and its contract says 3 | the outer agent shell normalized a bare native non-zero status; the Python checker still returned 3 → capture immediately with `$native=$LASTEXITCODE`, print `DIRECT_EXIT=$native`, and `exit $native`. Do not pipe a gate or use the wrapper summary as its native exit evidence |
 
 ## COM editing and assembly
 

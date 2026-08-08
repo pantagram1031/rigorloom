@@ -531,3 +531,19 @@ printed face; a WARN you cannot explain is not a WARN you may ignore.
 | exit 0, `deterministic_pass` | `--deterministic-only`; `acceptance: false` by construction. A smoke check, never an acceptance |
 | exit 0, `pass`, non-empty `acceptance_waivers` | accepted, minus whatever you waived |
 | exit 2, `usage_error` | bad input; nothing was judged |
+
+**PowerShell: record the checker process, not the harness wrapper (T46).**
+Some Windows agent shells display a generic outer exit `1` for any bare native
+non-zero command, even when the Python checker correctly returned `2` or `3`.
+Capture `$LASTEXITCODE` immediately and propagate that exact value; do not run
+another command or a pipe first:
+
+```powershell
+python pipeline/scripts/visual_verify.py @args
+$native=$LASTEXITCODE
+Write-Output "DIRECT_EXIT=$native"
+exit $native
+```
+
+The JSON verdict says *what* failed; `DIRECT_EXIT` proves the documented
+0/2/3 process contract. A shell UI's uncaptured outer `1` proves neither.
