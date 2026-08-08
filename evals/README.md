@@ -215,20 +215,34 @@ task claims a family the corpus does not back, and a non-vacuity floor so the
 scan cannot pass on zero tasks. Adding a task here requires no core edit; adding
 a *family* to the corpus obliges a task for it.
 
-Four tasks additionally run a work-type distribution module's checker over the
-blank form and over the produced artifact:
+Some tasks additionally run a work-type distribution module's checker over the
+blank form and over the produced artifact. The authority is the definitions —
+grep `requires_module:` under `tasks/` — and this table is the reader's map of
+what each one buys (no count: adding a gated check must not oblige a doc edit
+either, `docs/trouble-table.md` T33):
 
 | task | module | checker | what it adds |
 |---|---|---|---|
+| `A1-pps-recognize-fill` | grant | `check_grant` | that the minimal packet shape — 참여기업 grid + 서명란 + 첨부서류 block, no 동의 seat — reads as `blank` with four of the six seat families and no hard finding |
+| `A2-pps-consent-checkboxes` | grant | `check_grant` | the 동의 block and its choices, that no 거부 option was deleted to manufacture consent, the 서명란, and that a glyphless choice is reported rather than guessed |
+| `A3-kstartup-hybrid` | grant | `check_grant` | the full packet: 붙임/별첨 reference resolution (internal vs external), column structure under legitimately added rows, =SUM() 합계 arithmetic, pre-marked 필수동의, per-sheet 서명란, no invented identity/account number, and the form's own self-deleting guide text |
 | `G1-gianmun-body-edit` | gongmun | `check_gongmun` | 두문/결재란/결문/발신명의/직인 seats and the 별지서식 guide vocabulary that must not survive |
 | `P1-jumin-recognize-fill` | minwon | `check_minwon` | the 별지서식 frame, 선택 항목 slot preservation, the 서명 markers, the 유의사항/수수료/제출서류 blocks that must survive, and that no 주민등록번호 was invented |
 | `P2-jeongbo-staff-seats` | minwon | `check_minwon` | the 접수·처리 기관 seats a citizen must not fill — the two rules P1 structurally cannot reach |
 | `H1-labor-contract-fill` | hr | `check_hr` | the numbered-clause skeleton, the contract-variant banners the pack ships with, the clause text a filled seat must not consume, the 근로기준법 citations that must survive verbatim, the two-party 사업주/근로자 block, the template revision (the corpus is a VERSIONED PAIR), and that no 주민등록번호 / 계좌번호 was invented |
 
 Every one of those checks declares `requires_module` (below), so a sandbox
-without the module skips them with a reason instead of failing them. All four
-tasks declare a `baseline`, because all three checkers declare
+without the module skips them with a reason instead of failing them. Each of
+those tasks declares a `baseline`, because every one of those checkers declares
 `wants: [baseline]`.
+
+A gated check therefore ALWAYS skips in a core-only run, and that is a supported
+configuration rather than a defect. A core test must never pin how many checks a
+task skips: `test_cleanroom_evals.py` derives the expected skips from the task
+definition (`declared_skips`, mirroring `blocked_on` and `requires_module`) and
+compares the id set both ways. It used to pin A1's skipped count at `1`, which is
+why grant's checks were originally wired onto A2/A3 only — see
+`docs/trouble-table.md` T33 and `tests/test_no_inventory_pins.py`.
 
 `P1`'s minwon checks are worth one note: the prompt supplies no 주민등록번호 and
 the check deliberately passes **no** `--fill-map`, so any identity-number-shaped

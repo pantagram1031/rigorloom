@@ -28,13 +28,6 @@ input_files:
 # check_grant declares it: without the form SIX of its seventeen rules would be
 # SKIPPED with a reason, and the packet's state would fall back to the date seat
 # alone (document.state_basis == "date_seat_only").
-#
-# A1 deliberately carries NO `requires_module` check, and that is a coupling in
-# core rather than a choice: tests/test_cleanroom_evals.py pins THIS task's
-# skipped-check count at 1 (lines ~566 and ~1029), so any module-gated check
-# added here — which skips by design in a core-only sandbox — fails a core test.
-# The grant module's eval wiring therefore lives on A2 and A3, which use the
-# other two family-⑥ forms. See the report accompanying this branch.
 baseline: pps-hyeopeop-seungin-sinchengseo.hwpx
 
 expected_behavior:
@@ -109,3 +102,31 @@ machine_checks:
     before: "${WORK}/filled.hwpx"
     after: "${WORK}/filled2.hwpx"
     blocked_on: 반복 채우기 프로토콜(선택)을 수행해 filled2.hwpx 를 만든 런에서만 평가한다
+
+  # ── grant distribution module ────────────────────────────────────────
+  # 이 양식은 지원사업 계열에서 「신청서 + 첨부서류 안내」만으로 이루어진 최소
+  # 형태다: 9열 19행 참여기업 그리드 1개, 서명란 1개, 별도 공표된 별지서식을
+  # 인용하는 첨부서류 블록, 그리고 값이 주어지지 않은 법인등록번호·사업자등록번호
+  # 자리. check_grant 가 판정하는 것은 이 빈 양식이 blank 로 읽히는가(예시값이
+  # 없으니 표시된 동의도 0), 여섯 계열 중 네 개(packet, signature, addressee,
+  # grid)를 갖는가, 그리고 hard 적발이 0인가다.
+  #
+  # `requires_module: grant` 로 게이트되어 core-only 샌드박스에서는 이유가
+  # 기록된 채 SKIP 된다 (modules/README.md, "absence is not failure").
+  # 이 검사는 v0.17 #27 이전에는 A1 에 넣을 수 없었다 —
+  # tests/test_cleanroom_evals.py 가 이 태스크의 skipped 개수를 1 로 못박아
+  # 두었기 때문에, 설계대로 SKIP 되는 검사를 추가하는 순간 core 테스트가
+  # 깨졌다. 그 테스트가 이제 태스크 정의에서 개수를 도출하므로 검사는 원래
+  # 있어야 할 자리인 여기에 있다.
+  - id: grant_blank_form_shape
+    kind: python
+    requires_module: grant
+    description: 빈 협업 승인 신청서가 blank 상태이고 네 계열로 인식되는가
+    argv: ["modules/grant/scripts/check_grant.py", "${BASELINE}", "--out", "${WORK}/grant_blank.json"]
+    expect_exit: 0
+    json_file: "${WORK}/grant_blank.json"
+    assert_json:
+      - 'document.state == "blank"'
+      - "counts.hard == 0"
+      - "len(document.families) == 4"
+      - "document.marked_consent_options == 0"
