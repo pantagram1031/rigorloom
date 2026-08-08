@@ -546,6 +546,36 @@ class TestIdentity:
         assert "identity_value_invented" not in {row["rule"]
                                                 for row in verdict["skipped"]}
 
+    @pytest.mark.parametrize("wrap", [False, True])
+    def test_either_fill_map_shape_declares_the_same_values(
+            self, tmp_path, blank, wrap):
+        """T35: ONE file must serve this checker and visual_verify alike.
+
+        ``--fill-map`` is one flag name, so both shapes it is documented to
+        accept must work here too — a bare ``{key: value}`` map and a wrapper
+        object carrying a ``fill_map`` member (a visual_verify expectations
+        file). Shape handling is core's ``check_residue.load_fill_map``.
+        """
+        mapping = {"guardian_rrn": "900101-1234567"}
+        declared = fx.write_fill_map(
+            tmp_path / f"fill{int(wrap)}.json",
+            {"fill_map": mapping, "base_pt": 10} if wrap else mapping)
+        form = fx.write_hr(tmp_path / "x.hwpx", fx.BLANK, consent_rows=[
+            "○ 친권자(후견인) 인적사항", "   성    명 :",
+            "   생년월일 : 900101-1234567", "   연 락 처 :"])
+        verdict, code = ch.check(form, baseline=blank, fill_map=declared)
+        assert code == 0, verdict["hard"]
+
+    def test_a_wrapper_with_a_non_object_fill_map_is_a_usage_refusal(
+            self, tmp_path, filled):
+        """The wrapper must not degrade into "the wrapper IS the map"."""
+        path = fx.write_fill_map(tmp_path / "nullmap.json",
+                                 {"fill_map": None, "base_pt": 10})
+        verdict, code = ch.check(filled, fill_map=path)
+        assert code == 2
+        assert "'fill_map' member" in verdict["error"]
+        assert "BARE" in verdict["error"] and "WRAPPER" in verdict["error"]
+
     def test_a_declared_rrn_passes(self, tmp_path, blank):
         declared = fx.write_fill_map(tmp_path / "fill.json",
                                      {"guardian_rrn": "900101-1234567"})

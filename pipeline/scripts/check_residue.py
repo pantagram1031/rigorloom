@@ -142,24 +142,73 @@ def derive_forbidden(
     return forbidden, kept
 
 
+#: What ``--fill-map`` accepts, in one sentence. Every consumer's usage error
+#: ends with this, so a caller who guessed the wrong shape is told BOTH shapes
+#: instead of having to guess again (T35).
+FILL_MAP_SHAPES = (
+    "--fill-map accepts either shape: a BARE JSON object of {key: value} (the "
+    "'preedit replace --map' shape), or a WRAPPER object carrying a 'fill_map' "
+    "member whose value is that object (the visual_verify --expectations "
+    "shape)")
+
+
+def _json_typename(value) -> str:
+    """The JSON type name of a decoded value, for a usage message."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
+
+def normalize_fill_map(payload) -> tuple[dict | None, str | None]:
+    """``(mapping, error)`` for an already-decoded ``--fill-map`` payload.
+
+    THE shape rule for the flag, in one place: a wrapper (an object with a
+    ``fill_map`` member) is unwrapped; any other object IS the map. A wrapper
+    whose ``fill_map`` member is not an object is a usage error rather than
+    being read as a bare map — otherwise an expectations file with
+    ``"fill_map": null`` would silently be scanned as ``{base_pt: 10, ...}``.
+    """
+    if not isinstance(payload, dict):
+        return None, (f"--fill-map must be a JSON object, got "
+                      f"{_json_typename(payload)}. {FILL_MAP_SHAPES}")
+    if "fill_map" in payload:
+        inner = payload["fill_map"]
+        if not isinstance(inner, dict):
+            return None, (
+                f"--fill-map: the wrapper's 'fill_map' member must be a JSON "
+                f"object, got {_json_typename(inner)}. {FILL_MAP_SHAPES}")
+        return inner, None
+    return payload, None
+
+
 def load_fill_map(path: str | Path) -> tuple[dict | None, str | None]:
     """``{key: value}`` from a fill map, an expectations file, or either shape.
 
     Returns (mapping, error). Accepts a flat ``{"key": "value"}`` object (the
-    ``preedit replace --map`` shape) or any object carrying a ``fill_map``
-    member, so a caller can pass the file it already has. One loader, shared
-    with ``visual_verify``, so both halves read the same file the same way.
+    ``preedit replace --map`` shape) or an object carrying a ``fill_map``
+    member, so a caller can pass the file it already has. ONE loader, shared by
+    every consumer of the flag — ``visual_verify``, ``check_residue`` and each
+    module checker — so a single file works for all of them and one wrong shape
+    cannot cost a retry against the next consumer (T35). It lives in core so a
+    module payload can import it without a module->module import.
     """
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"--fill-map not found: {path}"
     except (OSError, UnicodeError, ValueError) as exc:
         return None, f"--fill-map unreadable: {exc}"
-    if isinstance(payload, dict) and isinstance(payload.get("fill_map"), dict):
-        payload = payload["fill_map"]
-    if not isinstance(payload, dict):
-        return None, ("--fill-map must be a JSON object of {key: value} (or "
-                      "an object with a 'fill_map' member)")
-    return payload, None
+    return normalize_fill_map(payload)
 
 
 def _occurrences(haystack: str, needle: str) -> list[int]:
@@ -483,10 +532,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--fill-map", default=None,
-        help="fill map JSON ({key: value}, or an object with a 'fill_map' "
-             "member) -> occurrences of a forbidden string INSIDE a declared "
-             "value are attributed to that value (prefix-preserving fills), "
-             "occurrences outside every value still HARD",
+        help="fill map JSON — either a bare {key: value} object or an object "
+             "with a 'fill_map' member holding one -> occurrences of a "
+             "forbidden string INSIDE a declared value are attributed to that "
+             "value (prefix-preserving fills), occurrences outside every "
+             "value still HARD",
     )
 
     def _invoke(args):

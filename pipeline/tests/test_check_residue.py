@@ -324,6 +324,75 @@ class CheckResidueTests(unittest.TestCase):
         self.assertIsNone(mapping)
         self.assertIn("--fill-map", error)
 
+    def test_a_wrapper_whose_fill_map_member_is_not_an_object_is_usage(self):
+        """The wrapper shape must not silently degrade into the bare shape.
+
+        ``{"fill_map": null, "base_pt": 10}`` is an expectations file that
+        declares no map; reading the wrapper ITSELF as the map would scan for
+        the literal value ``10`` under the key ``base_pt``.
+        """
+        for member in (None, [], "x", 3, True):
+            path = self.base / "wrapper.json"
+            path.write_text(json.dumps({"fill_map": member, "base_pt": 10}),
+                            encoding="utf-8")
+            mapping, error = check_residue.load_fill_map(path)
+            self.assertIsNone(mapping, member)
+            self.assertIn("'fill_map' member", error)
+
+    def test_the_shape_error_names_both_accepted_shapes(self):
+        """A caller who guessed wrong is told BOTH shapes, not just one."""
+        bad = self.base / "notobj.json"
+        bad.write_text("[1, 2]", encoding="utf-8")
+        wrapper = self.base / "nullmap.json"
+        wrapper.write_text(json.dumps({"fill_map": None}), encoding="utf-8")
+        for path in (bad, wrapper):
+            _mapping, error = check_residue.load_fill_map(path)
+            self.assertIn("BARE", error)
+            self.assertIn("WRAPPER", error)
+            self.assertIn("fill_map", error)
+
+    def test_a_missing_fill_map_file_names_the_flag(self):
+        mapping, error = check_residue.load_fill_map(self.base / "nope.json")
+        self.assertIsNone(mapping)
+        self.assertIn("--fill-map not found", error)
+
+    def test_normalize_fill_map_is_the_shape_rule_on_a_decoded_payload(self):
+        self.assertEqual(
+            check_residue.normalize_fill_map({"a": "b"}), ({"a": "b"}, None))
+        self.assertEqual(
+            check_residue.normalize_fill_map({"fill_map": {"a": "b"}}),
+            ({"a": "b"}, None))
+        mapping, error = check_residue.normalize_fill_map([1, 2])
+        self.assertIsNone(mapping)
+        self.assertIn("got array", error)
+
+    def test_both_shapes_reach_the_same_verdict_through_the_cli(self):
+        """The delegate half of the flag: one file, either shape, same run."""
+        artifact = self.write_hwpx(
+            "prefixed.hwpx", "홈페이지  http://hanbit.example.kr 로 접속한다")
+        flat = self.base / "flat_cli.json"
+        flat.write_text(json.dumps(
+            {" http://": " http://hanbit.example.kr"}, ensure_ascii=False),
+            encoding="utf-8")
+        wrapped = self.base / "wrapped_cli.json"
+        wrapped.write_text(json.dumps(
+            {"base_pt": 10,
+             "fill_map": {" http://": " http://hanbit.example.kr"}},
+            ensure_ascii=False), encoding="utf-8")
+        verdicts = []
+        for path in (flat, wrapped):
+            out = self.base / f"v_{path.stem}.json"
+            code = check_residue.main([
+                "--artifact", str(artifact),
+                "--form-profile", str(self.profile_path),
+                "--fill-map", str(path), "--out", str(out)])
+            verdicts.append((code, json.loads(out.read_text(encoding="utf-8"))))
+        self.assertEqual(verdicts[0][0], verdicts[1][0])
+        self.assertEqual(verdicts[0][1]["fill_attribution"],
+                         verdicts[1][1]["fill_attribution"])
+        self.assertEqual(verdicts[0][1]["fill_attribution"]["keys"],
+                         [" http://"])
+
     def test_verdict_carries_form_hash_and_counts(self):
         artifact = self.write_hwpx("clean.hwpx", "본문만 있다")
         verdict, code = self.run_check(artifact)

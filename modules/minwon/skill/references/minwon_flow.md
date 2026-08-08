@@ -43,6 +43,10 @@ the four family-① forms in the blank-form corpus
    --fill-map fill.json`, then `pipeline/scripts/visual_verify.py` with
    `modules/minwon/references/visual_expectations/minwon.json`. The checker
    judges structure; visual_verify judges the render.
+   `--fill-map` takes either shape, at the checker and at `visual_verify`
+   alike — a bare `{key: value}` map or a wrapper object with a `fill_map`
+   member — so ONE file serves both halves (T35). `visual_verify --baseline`
+   takes the blank `FORM.hwpx` directly and converts it itself.
 
 ## 2. Document state decides severity
 
