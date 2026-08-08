@@ -1,14 +1,11 @@
 # Release record — v0.17.0
 
-Prepared on branch `v17-release` from `main` @ `37400a8` (#77). This record
+Prepared from the final product tree on `main` @ `cea2cec` (#86). This record
 is the evidence trail for the v0.17.0 tag: bundle inventory with hashes, the
 suite matrix, privacy status, the **validation ledger** (who ran what, and the
-25 defects those runs found), and the honest list of limits. The tag itself is
-applied separately by the operator after reviewing this record.
-
-The bundle hash table below was regenerated on branch
-`v17-reproducible-bundles` (from `main` @ `199f20a`, #78) once bundle builds
-were made reproducible; every other section stands as prepared.
+40 defects and harness lessons those runs found), and the honest list of
+limits. The final release-record PR changes only documentation surfaces that
+are not bundle payload; the tag is applied separately after that PR is green.
 
 ## What this release is
 
@@ -17,8 +14,8 @@ its authors, run on its authors' machine, exercised on one form-family lineage,
 and only ever against empty forms. Nothing outside the authoring loop had
 touched it.
 
-v0.17 is the release that validated it. 21 commits, PRs #57–#77, in four
-movements:
+v0.17 is the release that validated it. The product tree contains 30 commits,
+PRs #57–#86, in four movements:
 
 1. **Autonomous verification** — the system judges its own rendered output with
    no human in the acceptance loop: a closed 12-class visual rubric, a
@@ -54,12 +51,12 @@ unlisted file is exit 3).
 
 | bundle | files | zip sha256 |
 |---|---:|---|
-| `rigorloom-core-0.17.0.zip` | 98 | `23758a0f24981299fd16a1a95c88dd8a9ee16207551f291c1b2930e948d8c01b` |
+| `rigorloom-core-0.17.0.zip` | 98 | `f61b5bca98f738d19b6271743782c15d4104915ae49c05d8523351ef3004953c` |
 | `rigorloom-report-0.17.0.zip` | 87 | `03b8750fe7327b2173549b2049742b39d7b60998705cf0f35afd75d4ea98626c` |
 | `rigorloom-style-0.17.0.zip` | 14 | `8fe375a2f3b73ebaa850c3010eb1a2c27c473668fa771a482a3f9f7493bcb8ed` |
-| `rigorloom-gongmun-0.17.0.zip` | 14 | `199165c45de0321e98cecb3161e5cde5c471ddcef8e7018b79d08c91affc163a` |
-| `rigorloom-minwon-0.17.0.zip` | 12 | `be2fb5def31f2e7f4f613ff5506638679139aeffd583a2417f51c99263c47e2b` |
-| `rigorloom-hr-0.17.0.zip` | 12 | `360ac0c97eddf2b057c3b4317a286fe33408c7f36a2c99b7c7bb12d1d0172f36` |
+| `rigorloom-gongmun-0.17.0.zip` | 14 | `e33aa6cf50f37d9a4e622d0e87417e6b099b1ad71b7d35d93067d64e3b3f5a9d` |
+| `rigorloom-minwon-0.17.0.zip` | 12 | `ce54b56c5151c67b743c394d94883ed7213af9cdcaa7db9a5a81e4a5e752e0dc` |
+| `rigorloom-hr-0.17.0.zip` | 12 | `19b271b20cae739566f9caeff931a267a76c315f57eb4d685742fd039ee78198` |
 | `rigorloom-grant-0.17.0.zip` | 12 | `8ff20755f261760f73d490d430e41165ea74b14c237d9614dc42d0d85f42e08c` |
 
 `files` is the MANIFEST.json payload count, matching what
@@ -124,8 +121,8 @@ carry the same payload counts as v0.16.0.
 
 | matrix point | result |
 |---|---|
-| core-only (`write-enabled --none`) | 1236 passed / 1171 skipped / 17 subtests, exit 0 |
-| all-modules (`write-enabled --all`) | 2267 passed / 140 skipped / 35 subtests, exit 0 |
+| core-only (`write-enabled --none`) | 1365 passed / 1174 skipped / 17 subtests, exit 0 |
+| all-modules (`write-enabled --all`) | 2399 passed / 140 skipped / 35 subtests, exit 0 |
 
 Skips are module-gating (every distribution module's tests collect-and-skip on
 core-only) plus fixture/env skips; both points collect the same total. The
@@ -134,19 +131,19 @@ module disabled, suite green, module entry points refuse loudly by design.
 
 ## Privacy status
 
-- **Repo-wide** `privacy_scan . --json`: exit 0, **HARD 0**, WARN 38 (34 at
-  v0.16.0). All 38 are the one `korean_student_id_proximity` proximity
-  heuristic firing on synthetic fixture data or docstring examples — 33 in test
-  files (`engine/tests/test_preedit.py` 12,
+- **Repo-wide** `privacy_scan . --json`: exit 0, **HARD 0**, WARN 42 (34 at
+  v0.16.0). All 42 are the one `korean_student_id_proximity` proximity
+  heuristic firing on synthetic fixture data or docstring examples — 37 in test
+  files (`engine/tests/test_preedit.py` 16,
   `pipeline/tests/test_declared_gates.py` 8,
   `engine/tests/test_build_report.py` 5,
   `pipeline/tests/test_visual_verify.py` 4,
   `pipeline/tests/test_check_residue.py` 2, and
   `pipeline/tests/test_privacy_scan.py` 2, which is the scanner's own fixture),
   and 5 in shipped code — the same five reported for the core bundle below.
-  The four added since v0.16.0 are exactly the four in
-  `pipeline/tests/test_visual_verify.py`, a file that did not exist at that
-  tag. No HARD finding anywhere.
+  The eight added since v0.16.0 are four synthetic cases in
+  `engine/tests/test_preedit.py` and four in
+  `pipeline/tests/test_visual_verify.py`. No HARD finding anywhere.
 - **Bundle staging**: the packager runs `privacy_scan` over every staging dir
   with the allowlist **not** applied (bundles stay categorical); a HARD refuses
   the build with exit 3 and writes nothing. All seven builds exited 0, which
@@ -193,9 +190,12 @@ module disabled, suite green, module entry points refuse loudly by design.
 
 ## The validation ledger
 
-Four rounds, nine agent runs, two vendors — all on the same task class (A1:
+Six validation campaigns, two vendors. Rounds 1–4 use the same A1 task class:
 profile the 조달청 협업 승인 신청서, fill 10+ fields without altering the
-form's appearance, save, verify).
+form's appearance, save, verify. Round 5 expands to the three previously
+unexercised work-type families (G1 gongmun, P1 minwon, H1 hr); the grant-family
+A1 path had already been exercised. Round 6 is the fresh-bundle G1 acceptance
+chain after the family run exposed blockers.
 
 Rounds 1–3 are **clean-room** runs in the sense `evals/README.md` §1 defines:
 fresh temp root outside the checkout, product content entering only by
@@ -204,7 +204,9 @@ operator intervention during the agent run — with containment re-asserted on
 five independent axes afterwards, zero findings in every run. Round 4 was run
 by an independent Codex harness on the same task; its install and containment
 discipline is that harness's, not ours, so it is reported as an independent run
-rather than as a `cleanroom.py` run.
+rather than as a `cleanroom.py` run. Round 5 used the Claude clean-room harness.
+Round 6 used repeated fresh roots and independent Codex agents; the final run
+was isolated from the checkout and prior run artifacts and passed containment.
 
 | round | harness | tiers | what it measured | defects found |
 |---|---|---|---|---:|
@@ -212,7 +214,9 @@ rather than as a `cleanroom.py` run.
 | 2 | Claude clean-room, `evals/` | Sonnet, Opus | tier difference on a fixed product (after #59–#62) | 4 |
 | 3 | Claude clean-room, `evals/` | Sonnet, Opus | the full product, all six modules enabled | 6 |
 | 4 | **independent Codex harness** | sol, terra, luna | correctness of the *verdict* itself | 7 |
-| | | | | **25** |
+| 5 | Claude family clean-room | Sonnet | G1/P1/H1 work-type coverage; outcomes partial/pass/pass | 9 |
+| 6 | Claude + Codex relay, fresh G1 roots | independent author/reviewer roles | remove the G1 blockers and prove the final bundle/render/containment chain | 6 |
+| | | | | **40** |
 
 **Round 1 measured defect-workaround cost, not tiers.** This needs saying
 plainly, because the round-1 token numbers in `skill/references/model-routing.md`
@@ -226,7 +230,7 @@ and the two tiers differ on that in ways that say nothing about their
 capability on a working one. Round 2 is the first round whose numbers are a
 tier comparison.
 
-### The 25 defects, by round
+### The 40 defects and harness lessons, by campaign
 
 **Round 1 — Claude clean-room, Sonnet + Opus, against v0.16.0 as released (8).**
 
@@ -278,18 +282,46 @@ Defects 23–25 were reported by the Codex harness and independently by the
 round-3 Opus run; they are counted once, under Codex, because that is the run
 that reported them as defects rather than working around them.
 
+**Round 5 — Claude family clean-room, G1 + P1 + H1 (9).** The nine numbered
+items below are the family-run tasks #39–#47. Three remain explicit limits;
+they are findings, not claims of a shipped fix.
+
+| # | defect or lesson | disposition |
+|---|---|---|
+| 26 | task #39 / T38 — conversion normalization evidence died between `convert` and `visual_verify --pdf`, making a correct gongmun impossible to accept | fixed in #81 with a hash-bound conversion sidecar |
+| 27 | task #40 / T37 — self-closing XML regexes stole a paired sibling's text; the first fix also changed shared regex group arity outside the edited directory | fixed in #80; arity and sibling-shape regressions ship |
+| 28 | task #41 / T39 — `fill-cells` could not author a regulation-shaped multi-paragraph 공문 body without private XML surgery | fixed in #82 with reserved-slot reuse and per-cell paraPr control |
+| 29 | task #42 — residue keep derivation knew one key matched several inventory entries but silently consumed them all | fixed as an instance of T41 in #84 |
+| 30 | task #43 — guide-text policy is hardcoded in core instead of being derived from the blank form's own evidence | open, documented baseline-blindness limit; no severity relaxation shipped |
+| 31 | task #44 — the documented HR `replace --map` path silently rewrote the same clause in all sibling contracts | fixed as an instance of T41 in #84; ambiguous matches now refuse |
+| 32 | task #45 — the anchor detector misses a paragraph-seat label with a trailing parenthetical | open, documented detection limit |
+| 33 | task #46 — no offline `--full-text` surface exists for paragraph seats | open, documented inspection limit |
+| 34 | task #47 / T41 — a text surface that can prove ambiguity must refuse rather than choose | fixed in #84 with scoped and explicit-all escape hatches |
+
+**Round 6 — G1 acceptance chain and independent review (6).**
+
+| # | defect or lesson | shipped in |
+|---|---|---|
+| 35 | task #48 / T40 — the T30 post-flight compared a mostly-empty form against its fine-print body baseline instead of the exact blank seat | #83 |
+| 36 | T42 — an address-keyed body fill could not use the blank form's repeated reserved runs as strict typography evidence | #85 |
+| 37 | T43 — the keep report and residue delegate used contradictory definitions of a consumed occurrence | #85 |
+| 38 | T44 — multi-paragraph declarations never reached the T30/T42 post-flight because the verifier searched for the unsplit whole | #85 |
+| 39 | T45 — G1 encoded draft intent by requiring the same visible 비고 block the visual rubric correctly rejects | #86 |
+| 40 | T46 — the Codex PowerShell wrapper displayed outer exit 1 while the checker natively returned its documented 3; the audit measured the wrapper | #86 |
+
 ### The trend
 
-8 → 4 → 6 → 7. The shape is not monotone and should not be read as one. Round
-1's eight are the alpha's real gaps. Round 2's four are what a fixed product
+8 → 4 → 6 → 7 → 9 → 6. The shape is not monotone and should not be read as
+one. Round 1's eight are the alpha's real gaps. Round 2's four are what a fixed product
 still costs a competent agent. Round 3's six rose again because the product
 grew (all six modules, a longer verification path) and because round 3 is the
 first round that pushed on the *seat-text* half of filling rather than the
 empty-cell half. Round 4's seven are a different **kind**: rounds 1–3 found
 defects in what the product *does*, round 4 found defects in what the product
-*claims* — see below.
+*claims*, round 5 expanded the work-type and document-shape surface, and round
+6 kept rerunning G1 until the machine, render and containment contracts agreed.
 
-## What the Codex run changed
+## What the independent Codex runs changed
 
 This is the strongest evidence in the release, and it is worth being precise
 about why.
@@ -301,7 +333,7 @@ document that was not in the bundle, a flag that took the wrong shape. Those
 are real and they were worth finding — but they are all findable by someone who
 trusts our verdicts and works around what breaks.
 
-The Codex harness did not trust our verdicts. It found two things our own
+The round-4 Codex harness did not trust our verdicts. It found two things our own
 harness structurally could not see:
 
 1. **`acceptance: true` returned while three safety checks sat in
@@ -331,6 +363,14 @@ harness structurally could not see:
    usage row, 2), so **no path exits 1**, and `test_exit_code_matrix` pins one
    row per terminal state.
 
+The later Codex relay found a different exit-evidence problem, T46. A bare
+native non-zero command in this Windows harness can be summarized as outer exit
+1 even when `$LASTEXITCODE` is the checker's documented 2 or 3. That does not
+invalidate the product exit matrix; it invalidates an audit that records the
+wrapper summary. The shipped recipe now captures `$LASTEXITCODE` immediately,
+prints `DIRECT_EXIT`, and propagates it. The final G1 run recorded pass 1 as
+native 3 (`vision_pending`) and pass 2 as native 0 (`acceptance: true`).
+
 Both are correctness-of-verdict defects, and that is the category our own
 harness is worst at. A harness written by the same people who wrote the product
 inherits their assumptions about what a verdict means. Getting a second vendor
@@ -356,10 +396,11 @@ tag should not be read as claiming more than the runs support.
    URL; one served an *issued* 가정통신문 rather than a blank template). Both
    are recorded in the corpus manifest's `skipped[]` with the reason. These are
    documented boundaries, not work in progress.
-2. **The harness axis has exactly one non-Claude data point.** Rounds 1–3 are
-   all Claude agents in our harness; round 4 is one other vendor. One data
-   point is not a trend, and it does not establish that the shipped surface
-   works on a third harness. The skill also still leans on at least one
+2. **The harness axis is still two vendors on one machine.** Rounds 1–3 and 5
+   are Claude agents; rounds 4 and 6 add independent Codex agents and repeated
+   fresh-root G1 installs. That is more than one non-Claude run, but it still
+   does not establish that the shipped surface works on a third harness or a
+   different machine. The skill also still leans on at least one
    Claude-Code-specific mechanism (the capability probe is injected by an
    inline-command syntax). **The luna tier's own result carries a caveat**: it
    produced an accepted document, but it needed more retries than the Claude
@@ -397,9 +438,11 @@ tag should not be read as claiming more than the runs support.
    under-count direction is a WARN naming both explanations. It is a correct
    rule over an imprecise input, not a precise input.
 6. **One task, one form family, one machine, in the routing measurement.** The
-   measured task (A1) is a single-page procurement form on a Korean-locale
-   Windows machine with Hancom COM present. `assemble` (multi-section build,
-   page budgets) and `prose/humanize` are explicitly **unmeasured** in
+   measured routing task (A1) is a single-page procurement form on a
+   Korean-locale Windows machine with Hancom COM present. Validation now also
+   covers G1/P1/H1, so all four work-type modules have an agent-run path, but
+   those family runs are not tier-cost measurements. `assemble` (multi-section
+   build, page budgets) and `prose/humanize` are explicitly **unmeasured** in
    `skill/references/model-routing.md` — no claim is made for either. Haiku was
    not measured at all.
 7. **Carried forward from v0.16.0, unchanged**: `.hwp` conversion parity is
@@ -455,7 +498,7 @@ Where the rest lives:
 | which model tier to run which task class on, and what is unmeasured | `skill/references/model-routing.md` |
 | per-family capability boundaries, including the two families with no corpus | `skill/references/forms.md` |
 | the 12 visual defect classes and what each is NOT | `skill/references/visual-rubric.md` |
-| a concrete symptom → cause → fix lookup (T1–T36) | `skill/references/troubleshooting.md`, and `docs/trouble-table.md` in the source repo |
+| a concrete symptom → cause → fix lookup (T1–T14 and T26–T46) | `skill/references/troubleshooting.md`, and `docs/trouble-table.md` in the source repo |
 | what a clean-room run is and what evidence it must produce | `evals/README.md` |
 | the module contract, if you are writing a work-type module | `modules/README.md` |
 
