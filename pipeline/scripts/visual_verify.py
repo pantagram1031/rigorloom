@@ -20,10 +20,31 @@ performs against ``skill/references/visual-rubric.md``.
         --out visual_verdict.json
     #    -> exit 0 only when BOTH halves are clean
 
-Exit codes: 0 = accepted, 2 = usage/config error, 3 = finding (including a
-pending vision half). ``--deterministic-only`` caps the run at the machine
-half; it can exit 0, but the verdict then says ``deterministic_pass`` and
-``acceptance: false`` — it is a smoke check, never an acceptance.
+Exit codes — the WHOLE table, one row per terminal state, and nothing else
+is reachable (``test_exit_code_matrix`` pins every row, including that no
+invocation ever exits 1):
+
+    verdict                exit  meaning
+    pass                    0    accepted: both halves clean, every SAFETY
+                                 check ran (or was explicitly waived)
+    deterministic_pass      0    --deterministic-only smoke check;
+                                 acceptance: false by construction
+    vision_pending          3    machine half clean, vision half still owed
+    fail                    3    a HARD finding (deterministic or vision)
+    safety_incomplete       3    nothing failed, but a SAFETY check never RAN
+                                 and was not waived — see SAFETY_CHECKS
+    usage_error             2    bad input, unreadable file, unwritable --out
+
+``--deterministic-only`` caps the run at the machine half; it can exit 0, but
+the verdict then says ``deterministic_pass`` and ``acceptance: false`` — it is
+a smoke check, never an acceptance.
+
+ACCEPTANCE IS NOT "NOTHING FAILED". ``acceptance: true`` claims that every
+check in ``SAFETY_CHECKS`` actually RAN. A run that could not run one of them
+(no fill map, no form profile, no page-count source, a non-hwpx artifact)
+reports ``safety_incomplete`` and exits 3 instead of quietly accepting; the
+only way past it is ``--accept-without CHECK``, which is recorded in the
+verdict as ``acceptance_waivers`` so a waiver is auditable and never implicit.
 
 Rendering rules (non-negotiable):
   * fitz at ``--dpi`` (default 130) for the page PNGs;
@@ -68,7 +89,7 @@ for _dir in (_SCRIPTS_DIR, _ENGINE_SCRIPTS):
 import charpr_script  # noqa: E402  (engine/scripts — shared T30 vocabulary)
 import check_residue  # noqa: E402
 from checker_base import (  # noqa: E402
-    EXIT_HARD, EXIT_PASS, _utf8_stdio, emit_verdict, usage_error,
+    EXIT_HARD, EXIT_PASS, _utf8_stdio, dump_json, emit_verdict, usage_error,
     verdict_skeleton,
 )
 
@@ -110,6 +131,31 @@ RUBRIC_CLASSES = (
     "figure_overlap",
 )
 VISION_SEVERITIES = ("hard", "warn")
+
+#: THE SAFETY SET — deterministic checks whose ABSENCE invalidates acceptance,
+#: named by the exact key each one reports itself under in
+#: ``deterministic.skipped`` (and, for four of the five, the exact finding code
+#: the detector emits). ONE place: the waiver vocabulary, the skip bookkeeping
+#: and the acceptance rule all read this tuple, so they cannot drift.
+#:
+#: The v0.17 clean-room run is why this exists: the luna tier supplied a CLI
+#: ``--fill-map``, got ``empty_cell_expected_fill``, ``fill_charpr_script_
+#: mismatch`` AND ``page_parity`` into ``skipped[]``, and still received
+#: ``acceptance: true`` with exit 0 — a verdict claiming more than it checked,
+#: which is worse than a missing feature.
+#:
+#: What is NOT in here, on purpose: ``baseline_pixel_diff`` (T35 decided a
+#: machine with no renderer loses ONE check, not the run) and the
+#: ``format_noncompliance/*`` legs, which are per-tolerance declarations rather
+#: than defect detectors — a caller who declares no ``base_pt`` is not hiding a
+#: defect class, they are declining to pin a tolerance.
+SAFETY_CHECKS = (
+    "page_parity",
+    "xml_wellformedness",
+    "check_residue",
+    "empty_cell_expected_fill",
+    "fill_charpr_script_mismatch",
+)
 
 #: Tolerances. Changed only by argument or expectations, never by editing.
 DEFAULT_DPI = 130
@@ -195,6 +241,99 @@ def stored_print_method(artifact):
     except (OSError, zipfile.BadZipFile, UnicodeDecodeError):
         return None
     return int(match.group(1)) if match else None
+
+
+def derive_pages_document(artifact):
+    """The document's own page count, read OFFLINE from its layout cache.
+
+    Page parity (the second leg of the W6.2 imposition mechanism) used to need
+    ``conversion["pages_document"]`` — Hancom's ``hwp.PageCount``, which only
+    exists when THIS script did the conversion. On the ``--pdf`` path there was
+    no source at all, so parity skipped by default and the v0.17 clean-room sol
+    tier had to hand-declare ``expectations.pages_document`` to get it back. A
+    safety check that requires the caller to remember a number is a safety
+    check that does not run.
+
+    So derive it from the artifact, which already records Hancom's last layout:
+    every laid-out line carries ``<hp:lineseg vertpos=...>``, a HWPUNIT offset
+    from the TOP OF ITS PAGE, so page boundaries are exactly the points where
+    ``vertpos`` stops increasing. Linesegs inside a table cell
+    (``hp:tc``/``hp:subList``) are cell-relative and must be excluded — counting
+    them turns a 1-page form into 216 pages (measured on
+    ``saeopja-deungnok-sinchengseo``).
+
+    Returns ``(pages, note)``. ``pages`` is None when the artifact carries no
+    readable layout cache at all (not an .hwpx, or an XML-engine output whose
+    sections have no ``linesegarray``), and ``note`` then says which.
+
+    ACCURACY, measured against the ten rendered corpus forms: 5/10 exact, and
+    every disagreement is an UNDER-count (a form whose body lives entirely
+    inside tables caches no top-level linesegs) except ``nrf-gyeolgwa-bogoseo-
+    yangsik``, which derives 4 against a 2-page PDF — and that one is the real
+    W6.2 incident (``PrintMethod=4``). Hence the directional rule in
+    ``check_imposition``: n-up imposition can only FOLD pages, so
+    ``pages_pdf < pages_document`` is HARD while the under-count direction is a
+    WARN naming both explanations. See ``check_imposition``.
+    """
+    path = Path(artifact)
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return None, ("page_parity: pages_document could not be derived — "
+                      f"{path.suffix or 'the artifact'} carries no hwpx layout "
+                      "cache")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = sorted(n for n in archive.namelist()
+                           if re.match(r"Contents/section\d+\.xml$", n))
+            if not names:
+                return None, ("page_parity: pages_document could not be "
+                              "derived — the artifact has no Contents/"
+                              "section*.xml member")
+            total, seen_any = 0, False
+            for name in names:
+                positions = _section_lineseg_vertpos(archive.read(name))
+                if not positions:
+                    continue
+                seen_any = True
+                pages, previous = 1, None
+                for vertpos in positions:
+                    if previous is not None and vertpos < previous:
+                        pages += 1
+                    previous = vertpos
+                total += pages
+    except (OSError, zipfile.BadZipFile, ET.ParseError):
+        return None, ("page_parity: pages_document could not be derived — the "
+                      "artifact's sections are not readable (see "
+                      "artifact_malformed)")
+    if not seen_any:
+        return None, ("page_parity: pages_document could not be derived — no "
+                      "top-level <hp:lineseg> in any section, so this artifact "
+                      "carries no layout cache to count pages from")
+    return total, None
+
+
+def _section_lineseg_vertpos(xml_bytes):
+    """``vertpos`` of every lineseg OUTSIDE a table cell, in document order."""
+    out = []
+
+    def walk(node, in_cell):
+        for child in node:
+            if not isinstance(child.tag, str):
+                continue
+            name = _localname(child.tag)
+            if name in ("tc", "subList"):
+                walk(child, True)
+                continue
+            if name == "lineseg" and not in_cell:
+                raw = child.get("vertpos")
+                if raw is not None:
+                    try:
+                        out.append(int(raw))
+                    except ValueError:
+                        pass
+            walk(child, in_cell)
+
+    walk(ET.fromstring(xml_bytes), False)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -551,6 +690,54 @@ def run_layout_qa(pdf_path, guide_strings=None):
 load_fill_map = check_residue.load_fill_map
 
 
+def reconcile_fill_map(expectations, fill_map_path):
+    """ONE user-visible fill map, whichever surface it arrives on.
+
+    ``--fill-map`` and ``expectations.fill_map`` used to be two different
+    inputs with materially different effects and nothing saying so: the CLI
+    flag drove the residue keep derivation, while the expectations MEMBER was
+    what activated the fill-value presence check and the T30 post-flight. A
+    caller who passed the flag (the v0.17 clean-room luna tier did) got a
+    verdict with both of those checks in ``skipped[]`` — and, before this fix,
+    ``acceptance: true`` anyway.
+
+    They are the same fact — "label -> value that was filled" — so they are now
+    one concept: the CLI map SEEDS ``expectations.fill_map`` when the
+    expectations file does not carry one. Declaring both is fine when they
+    agree (passing one expectations file to both flags is the T35-blessed
+    invocation); declaring both DIFFERENTLY is a usage error rather than a
+    silent precedence rule, because there is no honest answer to "which map did
+    you actually fill with".
+
+    Returns ``(expectations, source, error)`` where ``source`` is one of
+    ``expectations``, ``cli``, ``cli+expectations`` (both, agreeing) or None.
+    """
+    declared = expectations.get("fill_map")
+    if declared is not None and not isinstance(declared, dict):
+        return expectations, None, (
+            "expectations.fill_map must be a JSON object of {label: value}, "
+            f"got {type(declared).__name__}")
+    if fill_map_path is None:
+        return expectations, ("expectations" if declared else None), None
+    mapping, error = load_fill_map(fill_map_path)
+    if error:
+        return expectations, None, error
+    if declared:
+        if declared != mapping:
+            return expectations, None, (
+                f"--fill-map ({fill_map_path}) and expectations.fill_map "
+                "declare DIFFERENT maps, so it is not decidable which one the "
+                "artifact was filled with. They are one concept: pass the map "
+                "on one surface only, or pass the same expectations file to "
+                "both flags. "
+                f"--fill-map keys={sorted(mapping)}; "
+                f"expectations.fill_map keys={sorted(declared)}")
+        return expectations, "cli+expectations", None
+    seeded = dict(expectations)
+    seeded["fill_map"] = mapping
+    return seeded, "cli", None
+
+
 def artifact_haystack(artifact):
     """The gate's own normalized view of the artifact text, or None.
 
@@ -749,8 +936,21 @@ def check_blank(records, blank_pages):
 
 
 def check_imposition(records, print_method, pages_document, pages_pdf,
-                     normalized):
-    """The W6.2 mechanism, both legs."""
+                     normalized, pages_source=None):
+    """The W6.2 mechanism, both legs.
+
+    ``pages_source`` names where ``pages_document`` came from and decides how
+    much the parity leg is allowed to claim:
+
+    * ``conversion`` (Hancom's own ``PageCount``) and ``expectations`` (an
+      operator declaration) are AUTHORITATIVE — any inequality is HARD, as it
+      has always been;
+    * ``artifact_layout_cache`` is DERIVED (``derive_pages_document``), and the
+      cache under-counts on table-heavy forms and goes stale after an offline
+      XML edit (T24). Imposition can only FOLD pages, so only
+      ``pages_pdf < pages_document`` is HARD there; the other direction is a
+      WARN that names both explanations instead of pretending to know.
+    """
     out = []
     if print_method not in (None, 0) and not normalized:
         out.append(finding(
@@ -760,11 +960,24 @@ def check_imposition(records, print_method, pages_document, pages_pdf,
                       "note": "source stores n-up print imposition; Hancom "
                               "SaveAs(PDF) honours it (XC-1 §9.3)"}))
     if pages_document and pages_pdf and pages_document != pages_pdf:
+        derived = pages_source == "artifact_layout_cache"
+        folded = pages_pdf < pages_document
+        evidence = {"pages_document": pages_document,
+                    "pages_pdf": pages_pdf,
+                    "pages_document_source": pages_source}
+        if derived and not folded:
+            evidence["note"] = (
+                "derived from the artifact's layout cache, which under-counts "
+                "when the body lives inside tables and goes stale after an "
+                "offline XML edit (T24); the PDF has MORE pages than the cache "
+                "records, which n-up imposition cannot cause — so this is "
+                "reported, not failed. Declare expectations.pages_document (or "
+                "let this script do the conversion) for an authoritative "
+                "comparison")
         out.append(finding(
-            "imposition_mismatch", "hard", cls="imposition_mismatch",
-            detector="visual_verify.page_parity",
-            evidence={"pages_document": pages_document,
-                      "pages_pdf": pages_pdf}))
+            "imposition_mismatch", "warn" if (derived and not folded)
+            else "hard", cls="imposition_mismatch",
+            detector="visual_verify.page_parity", evidence=evidence))
     landscape = [r["page"] for r in records if r["landscape"]]
     if landscape and print_method not in (None, 0):
         out.append(finding(
@@ -1098,11 +1311,44 @@ def load_vision_verdict(path, page_count):
 # driver
 # --------------------------------------------------------------------------
 
+def _out_target_error(out):
+    """``--out`` refused BEFORE the work, so it cannot destroy a real verdict.
+
+    An unwritable ``--out`` used to escape as an uncaught ``PermissionError``
+    from ``emit_verdict`` — a traceback and process exit 1, which is not in this
+    script's contract at all and is exactly how the v0.17 clean-room sol/terra
+    tiers saw 1 where the contract says 3.
+    """
+    if not out:
+        return None
+    target = Path(out).expanduser()
+    if target.is_dir():
+        return (f"--out is an existing directory, not a file: {target} — "
+                "name the verdict JSON file to write")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"--out parent directory is not creatable: {exc}"
+    if not os.access(target.parent, os.W_OK):
+        return f"--out directory is not writable: {target.parent}"
+    return None
+
+
 def verify(args):
     artifact = Path(args.artifact).expanduser()
     if not artifact.is_file():
         return usage_error(str(artifact), "visual_verify",
                            f"artifact not found: {artifact}")
+    out_error = _out_target_error(getattr(args, "out", None))
+    if out_error:
+        return usage_error(str(artifact), "visual_verify", out_error)
+    waivers = sorted(set(getattr(args, "accept_without", None) or ()))
+    unknown = [w for w in waivers if w not in SAFETY_CHECKS]
+    if unknown:
+        return usage_error(
+            str(artifact), "visual_verify",
+            f"--accept-without: unknown check(s) {unknown} — the vocabulary is "
+            f"closed: {', '.join(SAFETY_CHECKS)}")
     expectations = {}
     if args.expectations:
         try:
@@ -1114,6 +1360,14 @@ def verify(args):
         if not isinstance(expectations, dict):
             return usage_error(str(artifact), "visual_verify",
                                "expectations must be a JSON object")
+
+    # ONE fill map, whichever flag carried it (see reconcile_fill_map): a CLI
+    # --fill-map now seeds expectations.fill_map, so it can no longer leave the
+    # fill-value presence check and the T30 post-flight silently inactive.
+    expectations, fill_map_source, error = reconcile_fill_map(
+        expectations, args.fill_map)
+    if error:
+        return usage_error(str(artifact), "visual_verify", error)
 
     fitz = _import_fitz()
     if fitz is None:
@@ -1158,12 +1412,27 @@ def verify(args):
 
     # -- deterministic backstops --------------------------------------------
     det = check_blank(records, blank_pages)
-    pages_document = (conversion or {}).get(
-        "pages_document", expectations.get("pages_document"))
+    # Page parity needs a document-side page count, and it must not depend on
+    # the caller remembering to declare one: prefer the conversion this script
+    # performed (Hancom's own PageCount), then an explicit declaration, then the
+    # artifact's own layout cache. Only when all three are unavailable does
+    # parity skip, and then ``pages_document_note`` says which leg was missing.
+    pages_document_note = None
+    if (conversion or {}).get("pages_document") is not None:
+        pages_document = conversion["pages_document"]
+        pages_document_source = "conversion"
+    elif expectations.get("pages_document") is not None:
+        pages_document = expectations["pages_document"]
+        pages_document_source = "expectations"
+    else:
+        pages_document, pages_document_note = derive_pages_document(artifact)
+        pages_document_source = ("artifact_layout_cache"
+                                 if pages_document is not None else None)
     pages_pdf = (conversion or {}).get("pages_pdf", page_count)
     det += check_imposition(
         records, print_method, pages_document, pages_pdf,
-        normalized=bool((conversion or {}).get("print_method_normalized")))
+        normalized=bool((conversion or {}).get("print_method_normalized")),
+        pages_source=pages_document_source)
     det += check_page_budget(expectations, page_count)
     det += check_format(records, expectations)
     det += check_fill_map(records, expectations)
@@ -1187,11 +1456,15 @@ def verify(args):
             return usage_error(str(artifact), "visual_verify", error)
         delegates.append(_delegate(
             _SCRIPTS_DIR / "check_residue.py", residue_argv, "check_residue"))
-    elif args.fill_map or args.keep or args.keep_pattern is not None:
+    elif args.keep or args.keep_pattern is not None:
+        # --fill-map is NOT in this list any more: since it seeds
+        # expectations.fill_map it is meaningful on its own (it activates the
+        # fill-value presence check and the T30 post-flight). --keep and
+        # --keep-pattern really are residue-delegate-only.
         return usage_error(
             str(artifact), "visual_verify",
-            "--keep / --keep-pattern / --fill-map only apply to the "
-            "check_residue delegate; pass --form-profile too")
+            "--keep / --keep-pattern only apply to the check_residue "
+            "delegate; pass --form-profile too")
     if args.content:
         delegates.append(_delegate(
             _SCRIPTS_DIR / "check_density.py",
@@ -1291,6 +1564,14 @@ def verify(args):
         for item in vision_findings:
             (hard if item["severity"] == "hard" else warn).append(item)
 
+    # -- what did NOT run, and may acceptance still be claimed? --------------
+    skipped = _skipped(expectations, pages_document, layout_raw, script_report,
+                       baseline_skip, form_profile=args.form_profile,
+                       xml_members=xml_members,
+                       pages_document_note=pages_document_note)
+    blockers = [row for row in skipped
+                if row["check"] in SAFETY_CHECKS and row["check"] not in waivers]
+
     # -- verdict -------------------------------------------------------------
     loop = {"attempt": args.attempt, "max_fix_attempts": args.max_fix_attempts,
             "exhausted": False}
@@ -1300,6 +1581,28 @@ def verify(args):
         state = "deterministic_pass"
     elif not vision["supplied"] and vision_required:
         state = "vision_pending"
+    elif blockers:
+        # Nothing failed — but a SAFETY check never RAN, so "accepted" would be
+        # a claim about work that was not done. This is the ONLY state that can
+        # turn a would-be pass into a finding, which is why it sits after the
+        # states that are already not acceptances (deterministic_pass is a
+        # declared smoke check; vision_pending still owes the vision half and
+        # will land here on the merge run if the input is still missing).
+        state = "safety_incomplete"
+        hard.append(finding(
+            "acceptance_safety_skipped", "hard", cls=None,
+            detector="visual_verify.acceptance",
+            evidence={
+                "skipped_safety_checks": [row["check"] for row in blockers],
+                "reasons": [f"{row['check']}: {row['reason']}"
+                            for row in blockers],
+                "safety_checks": list(SAFETY_CHECKS),
+                "waivers": waivers,
+                "note": "acceptance claims every SAFETY check RAN; supply the "
+                        "missing input, or waive each one explicitly with "
+                        "--accept-without CHECK (recorded in "
+                        "acceptance_waivers)",
+            }))
     else:
         state = "pass"
     if (args.max_fix_attempts is not None and state != "pass"
@@ -1328,21 +1631,27 @@ def verify(args):
             "rubric": RUBRIC_POINTER,
             "rubric_path": resolve_rubric(),
             "acceptance": accepted,
+            "acceptance_waivers": waivers,
+            "acceptance_blockers": blockers,
             "pages": [{k: v for k, v in r.items() if k != "_text"}
                       for r in records],
             "deterministic": {
+                "safety_checks": list(SAFETY_CHECKS),
                 "xml_members_parsed": xml_members,
                 "stored_print_method": print_method,
                 "pages_document": pages_document,
+                "pages_document_source": pages_document_source,
                 "pages_pdf": pages_pdf,
                 "conversion": conversion,
+                "fill_map_source": fill_map_source,
                 "layout_qa": layout_summary,
                 "fill_charpr_script": script_report,
                 "residue_keep": residue_keep,
                 "delegates": delegates,
                 "baseline_diff": baseline_report,
-                "skipped": _skipped(expectations, pages_document, layout_raw,
-                                    script_report, baseline_skip),
+                "skipped": [f"{row['check']}: {row['reason']}"
+                            for row in skipped],
+                "skipped_checks": sorted({row["check"] for row in skipped}),
             },
             "vision": vision,
             "vision_required": vision_required,
@@ -1352,32 +1661,61 @@ def verify(args):
 
 
 def _skipped(expectations, pages_document, layout_raw, script_report=None,
-             baseline_skip=None):
-    """What the machine half could NOT check, stated out loud."""
+             baseline_skip=None, *, form_profile=None, xml_members=None,
+             pages_document_note=None):
+    """What the machine half could NOT check, stated out loud.
+
+    Returns ``[{"check": KEY, "reason": TEXT}]``. ``KEY`` is machine-readable on
+    purpose: it is what the acceptance rule matches against ``SAFETY_CHECKS``
+    and what ``--accept-without`` names. The verdict still publishes the flat
+    ``"KEY: REASON"`` strings under ``deterministic.skipped`` — the human view
+    — plus ``deterministic.skipped_checks`` for the keys alone.
+    """
     out = []
+
+    def skip(check, reason):
+        out.append({"check": check, "reason": reason})
+
     if baseline_skip:
-        out.append(baseline_skip)
+        # resolve_baseline already formats "baseline_pixel_diff: <reason>", and
+        # baseline_diff.skipped carries that exact string, so split rather than
+        # re-word it. Not a SAFETY check: T35 decided a renderer-less machine
+        # loses the pixel diff, not the run.
+        check, _, reason = baseline_skip.partition(": ")
+        skip(check, reason or baseline_skip)
+    if not xml_members:
+        skip("xml_wellformedness",
+             "no Contents/section*.xml or header.xml member was parsed (not an "
+             ".hwpx, or unreadable) — T23's blank-render trap is unchecked")
+    if form_profile is None:
+        skip("check_residue",
+             "no --form-profile, so the residue gate did not run: surviving "
+             "guide text, placeholders and unfilled anchors are unchecked")
     if expectations.get("fill_map") and script_report is None:
-        out.append("fill_charpr_script_mismatch: charPr definitions were not "
-                   "readable (not an .hwpx, or no run carries a declared "
-                   "fill value) — the T30 trap is unchecked on this run")
+        skip("fill_charpr_script_mismatch",
+             "charPr definitions were not readable (not an .hwpx, or no run "
+             "carries a declared fill value) — the T30 trap is unchecked on "
+             "this run")
     if pages_document is None:
-        out.append("page_parity: pages_document unknown (no conversion JSON "
-                   "and no expectations.pages_document)")
+        skip("page_parity",
+             pages_document_note.partition(": ")[2] if pages_document_note
+             else "pages_document unknown (no conversion JSON, no "
+                  "expectations.pages_document and no derivable layout cache)")
     if not expectations.get("base_pt"):
-        out.append("format_noncompliance/base_pt: not declared")
+        skip("format_noncompliance/base_pt", "not declared")
     if not expectations.get("line_spacing_pct"):
-        out.append("format_noncompliance/line_spacing: not declared")
+        skip("format_noncompliance/line_spacing", "not declared")
     if not expectations.get("margins_mm"):
-        out.append("format_noncompliance/margins: not declared")
+        skip("format_noncompliance/margins", "not declared")
     if not expectations.get("fill_map"):
-        out.append("empty_cell_expected_fill: no fill_map declared")
-        out.append("fill_charpr_script_mismatch: no fill_map declared, so no "
-                   "run is known to be fill-modified (T30)")
+        skip("empty_cell_expected_fill", "no fill_map declared")
+        skip("fill_charpr_script_mismatch",
+             "no fill_map declared, so no run is known to be fill-modified "
+             "(T30)")
     if not (expectations.get("page_budget") or expectations.get("max_pages")):
-        out.append("page_budget_violation: no budget declared")
+        skip("page_budget_violation", "no budget declared")
     if layout_raw is None:
-        out.append("layout_qa: unavailable")
+        skip("layout_qa", "unavailable")
     return out
 
 
@@ -1394,8 +1732,10 @@ def main(argv=None):
     parser.add_argument("--expectations", default=None,
                         help="JSON: pages_document, page_budget{min,max}/"
                              "max_pages, base_pt, line_spacing_pct, "
-                             "margins_mm{top,bottom,left,right}, fill_map, "
-                             "intentionally_blank, blank_pages, forbidden_text")
+                             "margins_mm{top,bottom,left,right}, fill_map "
+                             "(the same map --fill-map takes — one concept, "
+                             "either surface), intentionally_blank, "
+                             "blank_pages, forbidden_text")
     parser.add_argument("--png-dir", default=None,
                         help="where page PNGs are written "
                              "(default: <pdf>_pages/ next to the PDF)")
@@ -1420,12 +1760,17 @@ def main(argv=None):
                              "(omitted = the checker's own default)")
     parser.add_argument("--fill-map", default=None,
                         help="JSON fill mapping ({key: value}, or an object "
-                             "with a 'fill_map' member) -> derive the "
-                             "form-fill keep list (anchors ∪ placeholders "
-                             "minus the entries the fill targeted) instead of "
-                             "hand-building repeated --keep, and forward the "
-                             "map so a prefix-preserving fill (label kept "
-                             "inside the value) is not read as residue")
+                             "with a 'fill_map' member) — THE map of what was "
+                             "filled, and the SAME concept as "
+                             "expectations.fill_map: passing it here seeds that "
+                             "member, so it drives all three consumers at once "
+                             "— the form-fill keep list (anchors ∪ placeholders "
+                             "minus the entries the fill targeted, instead of "
+                             "hand-building repeated --keep), the declared-value "
+                             "presence check (empty_cell_expected_fill) and the "
+                             "T30 charPr post-flight. Declaring it on both "
+                             "surfaces is fine when the maps agree; declaring "
+                             "two DIFFERENT maps is a usage error")
     parser.add_argument("--content", default=None,
                         help="bundle/content.md -> also run check_density")
     parser.add_argument("--vision-verdict", default=None,
@@ -1439,6 +1784,16 @@ def main(argv=None):
     parser.add_argument("--deterministic-only", action="store_true",
                         help="cap the run at the machine half; can exit 0 but "
                              "the verdict says acceptance:false")
+    parser.add_argument("--accept-without", action="append", default=[],
+                        choices=SAFETY_CHECKS, metavar="CHECK",
+                        help="allow acceptance even though this SAFETY check "
+                             "could not run (repeatable; closed vocabulary: "
+                             + ", ".join(SAFETY_CHECKS) + "). Every waiver is "
+                             "recorded in the verdict as acceptance_waivers, so "
+                             "it is auditable and never implicit; without one, "
+                             "a skipped SAFETY check makes the verdict "
+                             "'safety_incomplete' (exit 3) instead of an "
+                             "acceptance")
     parser.add_argument("--attempt", type=int, default=None,
                         help="1-based fix-loop attempt number (caller-tracked)")
     parser.add_argument("--max-fix-attempts", type=int, default=None,
@@ -1452,7 +1807,30 @@ def main(argv=None):
         verdict, code = usage_error(
             str(args.artifact), "visual_verify",
             f"visual_verify crashed: {type(exc).__name__}: {exc}")
-    return emit_verdict(verdict, code, args.out, create_parent=True)
+    # A refused --out must not be written to on the way out: ``verify`` already
+    # turned it into the usage verdict, and handing the same bad path to
+    # ``emit_verdict`` would raise over the top of that verdict.
+    out = None if _out_target_error(args.out) else args.out
+    try:
+        return emit_verdict(verdict, code, out, create_parent=True)
+    except Exception as exc:
+        # EMISSION MUST NOT INVENT AN EXIT CODE. Serializing or writing the
+        # verdict used to sit outside every guard, so an unwritable --out or an
+        # unserializable value escaped as a traceback and process exit 1 — a
+        # code this script's contract does not define, which is how the v0.17
+        # clean-room sol/terra tiers saw 1 where the table says 3. Degrade to
+        # the usage row (2) and say what was lost.
+        fallback, usage_code = usage_error(
+            str(args.artifact), "visual_verify",
+            f"could not emit the verdict (it said "
+            f"{verdict.get('verdict')!r}, exit {code}): "
+            f"{type(exc).__name__}: {exc}")
+        try:
+            print(dump_json(fallback))
+        except Exception:  # even the fallback must not raise
+            print('{"ok": false, "checker": "visual_verify", '
+                  '"verdict": "usage_error"}')
+        return usage_code
 
 
 if __name__ == "__main__":
