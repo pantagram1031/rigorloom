@@ -55,6 +55,10 @@ shape.
    `modules/grant/references/visual_expectations/grant.json`. The checker judges
    structure; visual_verify judges the render — and it is visual_verify, not the
    checker, that owns a page count (§5).
+   `--fill-map` takes either shape, at the checker and at `visual_verify`
+   alike — a bare `{key: value}` map or a wrapper object with a `fill_map`
+   member — so ONE file serves both halves (T35). `visual_verify --baseline`
+   takes the blank `FORM.hwpx` directly and converts it itself.
 
 ## 3. Document state, and what it cannot know
 

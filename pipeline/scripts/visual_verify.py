@@ -31,7 +31,11 @@ Rendering rules (non-negotiable):
     ``engine/scripts/com_backend.py convert`` — ONE serial subprocess, and
     never with ``--kill-stale`` (killing a live Hancom belongs to an operator,
     not to a verification loop);
-  * no Hancom and no ``--pdf`` is a usage error, never a silent pass.
+  * no Hancom and no ``--pdf`` is a usage error, never a silent pass;
+  * ``--baseline`` names the BLANK FORM, so it takes one: an ``.hwpx``/``.hwp``
+    baseline goes through the SAME serial conversion, and with no renderer the
+    pixel diff is a skip-with-reason (``deterministic.skipped``) rather than a
+    failure — losing one check, not the run (T35).
 
 ``--max-fix-attempts N`` semantics for callers: this script does not loop.
 The loop lives in the skill/playbook, which re-runs the script after each
@@ -205,17 +209,21 @@ def _import_fitz():
     return fitz
 
 
+def render_capable():
+    """Whether this machine can convert a Hancom document to PDF at all."""
+    try:
+        import render_probe  # noqa: PLC0415
+        return bool(render_probe.probe()["capabilities"]["hancom_com"])
+    except Exception:  # probe never raises, but never let it gate on a crash
+        return False
+
+
 def convert_to_pdf(artifact, out_pdf):
     """One serial ``com_backend.py convert`` call. Never ``--kill-stale``.
 
     Returns (pdf_path, conversion_json, error_message).
     """
-    try:
-        import render_probe  # noqa: PLC0415
-        capable = bool(render_probe.probe()["capabilities"]["hancom_com"])
-    except Exception:  # probe never raises, but never let it gate on a crash
-        capable = False
-    if not capable:
+    if not render_capable():
         return None, None, (
             "no --pdf supplied and Hancom COM is unavailable on this machine "
             "— render the artifact on the operator machine and pass "
@@ -353,6 +361,49 @@ def _overlap_ratio(lines):
 # --------------------------------------------------------------------------
 # pixel diff
 # --------------------------------------------------------------------------
+
+#: Document suffixes ``--baseline`` converts itself rather than refusing.
+BASELINE_DOC_SUFFIXES = (".hwpx", ".hwp")
+#: One sentence naming everything ``--baseline`` accepts, for the usage string
+#: and for every error message about the flag (T35 nit (b)).
+BASELINE_SOURCES = (
+    "--baseline accepts the BLANK FORM itself (.hwpx/.hwp — converted here, "
+    "serially, on a render-capable machine), an already-rendered .pdf, or a "
+    "directory of page images (.png/.ppm/.pnm)")
+
+
+def resolve_baseline(baseline, out_dir):
+    """Turn a ``--baseline`` argument into something ``_baseline_pixmaps`` reads.
+
+    The flag NAMES the blank form, so it must take one: an ``.hwpx``/``.hwp``
+    baseline goes through the very conversion path the artifact already takes
+    (one serial ``com_backend.py convert``, never ``--kill-stale``). A PDF or an
+    image directory is passed through untouched.
+
+    Returns ``(path, conversion_json, skip_reason, error)``. ``skip_reason`` is
+    set — and ``error`` is not — when the baseline is a document and this machine
+    has no renderer: the pixel diff is then reported as skipped-with-reason, so
+    an unrenderable machine loses one check instead of the whole run.
+    """
+    path = Path(baseline).expanduser()
+    if not path.exists():
+        return None, None, None, f"--baseline not found: {baseline}. " \
+                                 f"{BASELINE_SOURCES}"
+    if path.is_file() and path.suffix.lower() in BASELINE_DOC_SUFFIXES:
+        if not render_capable():
+            return None, None, (
+                "baseline_pixel_diff: --baseline is a document "
+                f"({path.suffix}) and Hancom COM is unavailable on this "
+                "machine, so it could not be rendered for comparison — "
+                "re-run on the operator machine, or pass the blank form's "
+                "already-rendered PDF as --baseline"), None
+        out_pdf = Path(out_dir) / f"{path.stem}_baseline.pdf"
+        pdf_path, conversion, error = convert_to_pdf(path, out_pdf)
+        if error:
+            return None, conversion, None, f"--baseline conversion failed: {error}"
+        return Path(pdf_path), conversion, None, None
+    return path, None, None, None
+
 
 def _baseline_pixmaps(fitz, baseline, dpi, count):
     """Baseline pages as pixmaps, from a PDF or a directory of page PNGs."""
@@ -1164,13 +1215,29 @@ def verify(args):
     # -- pixel diff ----------------------------------------------------------
     changed_pages = set()
     baseline_report = None
+    baseline_skip = None
     if args.baseline:
-        base_pix = _baseline_pixmaps(fitz, args.baseline, args.dpi, page_count)
+        base_source, base_conversion, baseline_skip, error = resolve_baseline(
+            args.baseline, Path(pdf_path).parent)
+        if error:
+            return usage_error(str(artifact), "visual_verify", error)
+    if args.baseline and baseline_skip:
+        baseline_report = {"baseline": str(args.baseline),
+                           "baseline_pages": None, "skipped": baseline_skip,
+                           "pages": []}
+    elif args.baseline:
+        base_pix = _baseline_pixmaps(fitz, base_source, args.dpi, page_count)
         if base_pix is None:
             return usage_error(str(artifact), "visual_verify",
-                               f"--baseline is neither a PDF nor a directory "
-                               f"of page images: {args.baseline}")
+                               f"--baseline is neither a document, a PDF nor a "
+                               f"directory of page images: {args.baseline}. "
+                               f"{BASELINE_SOURCES}")
+        converted = (Path(args.baseline).suffix.lower()
+                     in BASELINE_DOC_SUFFIXES)
         baseline_report = {"baseline": str(args.baseline),
+                           "baseline_pdf": (str(base_source) if converted
+                                            else None),
+                           "baseline_conversion": base_conversion,
                            "baseline_pages": len(base_pix), "pages": []}
         if len(base_pix) != page_count:
             warn.append(finding(
@@ -1275,7 +1342,7 @@ def verify(args):
                 "delegates": delegates,
                 "baseline_diff": baseline_report,
                 "skipped": _skipped(expectations, pages_document, layout_raw,
-                                    script_report),
+                                    script_report, baseline_skip),
             },
             "vision": vision,
             "vision_required": vision_required,
@@ -1284,9 +1351,12 @@ def verify(args):
     return verdict, code
 
 
-def _skipped(expectations, pages_document, layout_raw, script_report=None):
+def _skipped(expectations, pages_document, layout_raw, script_report=None,
+             baseline_skip=None):
     """What the machine half could NOT check, stated out loud."""
     out = []
+    if baseline_skip:
+        out.append(baseline_skip)
     if expectations.get("fill_map") and script_report is None:
         out.append("fill_charpr_script_mismatch: charPr definitions were not "
                    "readable (not an .hwpx, or no run carries a declared "
@@ -1332,9 +1402,13 @@ def main(argv=None):
     parser.add_argument("--dpi", type=float, default=DEFAULT_DPI,
                         help=f"page raster dpi (default {DEFAULT_DPI})")
     parser.add_argument("--baseline", default=None,
-                        help="pixel-diff baseline: a PDF or a directory of "
-                             "page images; reports changed-region bboxes so a "
-                             "caller can assert unchanged regions stayed so")
+                        help="pixel-diff baseline — the BLANK FORM as .hwpx/"
+                             ".hwp (converted here, serially), an "
+                             "already-rendered .pdf, or a directory of page "
+                             "images; reports changed-region bboxes so a "
+                             "caller can assert unchanged regions stayed so. "
+                             "With no renderer available an .hwpx baseline is "
+                             "reported under deterministic.skipped, not failed")
     parser.add_argument("--form-profile", default=None,
                         help="form_profile.json -> also run check_residue")
     parser.add_argument("--keep", action="append", default=[],

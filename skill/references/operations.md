@@ -167,6 +167,14 @@ python pipeline/scripts/check_residue.py --form-profile profile.json --artifact 
     [--keep-pattern REGEX] [--keep "exact anchor"]... [--fill-map MAP.json] [--out verdict.json]
 ```
 
+`MAP.json` takes **either shape, at every consumer of the flag** (T35): a bare
+`{key: value}` object (the `preedit replace --map` file) or a wrapper object
+carrying a `fill_map` member (a `visual_verify --expectations` file). One
+loader — `check_residue.load_fill_map` — serves `check_residue`,
+`visual_verify` and every module checker, so one file works for all of them. A
+wrapper whose `fill_map` member is not an object is a usage error naming both
+shapes; it is never read as a bare map.
+
 The form scan's anchor+guide inventory IS the forbidden list. Exit 0 clean,
 3 residue found / artifact malformed / pinned target missing, 2 usage.
 Validity precedes scanning: every `section*.xml`+`header.xml` is XML-parsed
@@ -290,7 +298,7 @@ is you, reading page PNGs against `references/visual-rubric.md`.
 # pass 1 — machine half + vision task
 python pipeline/scripts/visual_verify.py --artifact OUT.hwpx \
     [--pdf verify.pdf] [--expectations exp.json] [--png-dir DIR] [--dpi 130] \
-    [--baseline BASE.pdf|DIR] \
+    [--baseline BLANK.hwpx|BASE.pdf|DIR] \
     [--form-profile profile.json [--fill-map MAP.json] \
                     [--keep TEXT ...] [--keep-pattern REGEX]] \
     [--content bundle/content.md] [--vision-scope all|targeted] \
@@ -319,6 +327,14 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   preserved verbatim); `check_residue` with `--form-profile`; `check_density`
   with `--content`; pixel diff with `--baseline` (changed-region bboxes per
   page, so a caller can assert unchanged regions stayed unchanged).
+- **`--baseline` names the BLANK FORM, so it takes one** (T35). Pass the
+  `.hwpx`/`.hwp` blank and it is converted through the same ONE serial
+  `com_backend.py convert` the artifact takes (never `--kill-stale`); an
+  already-rendered `.pdf` or a directory of page images is used as-is. With no
+  renderer on the machine, the pixel diff is reported under
+  `deterministic.skipped` with a reason (and `baseline_diff.skipped`) — one
+  check lost, not the whole run, and never a crash. The converted PDF is
+  recorded as `baseline_diff.baseline_pdf`.
 - **Residue on a FORM FILL needs a keep list.** The residue gate's forbidden
   list is auto-derived from the form scan, so on a fill every surviving label
   reads as residue and the delegate can never return 0. Forward one:
@@ -326,8 +342,10 @@ Exit 0 = accepted, 2 = usage, 3 = finding **or** vision still pending.
   `check_residue`, and `--fill-map MAP.json` derives the standard form-fill
   keep list for you — `(anchors ∪ placeholders)` minus the entries the fill
   mapping targeted (whitespace-normalized substring match, either direction).
-  `MAP.json` is the `preedit replace --map` file, or any JSON object with a
-  `fill_map` member. Guide text is never keepable. The derivation is recorded
+  `MAP.json` is the `preedit replace --map` file (a bare `{key: value}`
+  object) or a wrapper object with a `fill_map` member — either shape, here and
+  at every other consumer of the flag (T35). Guide text is never keepable. The
+  derivation is recorded
   under `deterministic.residue_keep` (`derived_keep`, `consumed`, `unfilled`,
   `explicit_keep`, `keep_pattern`, `keep_total`) so the invocation is
   auditable. These flags without `--form-profile` are a usage error.
