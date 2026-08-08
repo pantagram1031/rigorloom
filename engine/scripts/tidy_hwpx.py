@@ -86,7 +86,13 @@ from cli_io import utf8_stdio  # noqa: E402
 NS = r'[A-Za-z0-9]+'
 P_TAG_RE = re.compile(r'<(' + NS + r'):p\b[^>]*>.*?</\1:p>', re.S)
 P_OPEN_RE = re.compile(r'<(' + NS + r'):p\b([^>]*)>', re.S)
-T_RE = re.compile(r'<' + NS + r':t\b[^>]*>(.*?)</' + NS + r':t>', re.S)
+# 자기닫힘 <hp:t/>는 텍스트가 없는 완결 요소다 — [^>]*>(.*?)</ns:t> 형태로
+# 잡으면 /> 를 attrs로 삼켜버리고 다음 형제 hp:t의 닫는 태그까지 스캔해
+# 그 텍스트를 훔친다(T37, docs/trouble-table.md). /> | >(.*?)</ns:t> 분기로
+# 자기닫힘을 텍스트 없는 완결 매치로 인식한다. 네임스페이스는 논캡처 유지 —
+# 그룹 수가 바뀌면 findall/group(n) 호출부가 조용히 어긋난다.
+T_RE = re.compile(
+    r'<' + NS + r':t\b[^>]*?(?:/>|>(.*?)</' + NS + r':t>)', re.S)
 TAG_RE = re.compile(r'<(/?)(' + NS + r'):([A-Za-z0-9]+)\b[^>]*?(/?)>', re.S)
 PARAPR_OPEN_RE = re.compile(r'<' + NS + r':paraPr\b[^>]*?\bid\s*=\s*"(\d+)"[^>]*>')
 PARAPROPERTIES_RE = re.compile(r'<' + NS + r':paraProperties\b([^>]*)>')
