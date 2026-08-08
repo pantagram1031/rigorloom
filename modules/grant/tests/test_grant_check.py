@@ -494,6 +494,38 @@ class TestNeverInventAPersonalNumber:
         assert code == 3
         assert "account_number_invented" in codes(verdict)
 
+    @pytest.mark.parametrize("wrap", [False, True])
+    def test_either_fill_map_shape_declares_the_same_values(
+            self, tmp_path, blank, wrap):
+        """T35: ONE file must serve this checker and visual_verify alike.
+
+        ``--fill-map`` is one flag name, so both shapes it is documented to
+        accept must work here too — a bare ``{key: value}`` map and a wrapper
+        object carrying a ``fill_map`` member (a visual_verify expectations
+        file). Shape handling is core's ``check_residue.load_fill_map``.
+        """
+        grid = [["구    분", "성    명", "생년월일"],
+                ["지원 신청자", "이서준", "900101-1234567"],
+                ["소    속", "한빛정밀 주식회사", ""]]
+        path = mutate(tmp_path, f"shape{int(wrap)}", applicant_grid=grid)
+        mapping = {"생년월일": "900101-1234567"}
+        fill_map = fx.write_fill_map(
+            tmp_path / f"fill{int(wrap)}.json",
+            {"fill_map": mapping, "base_pt": 10} if wrap else mapping)
+        verdict, code = cg.check(path, baseline=blank, fill_map=fill_map)
+        assert code == 0, verdict
+        assert verdict["document"]["fill_map_declared"] == 1
+
+    def test_a_wrapper_with_a_non_object_fill_map_is_a_usage_refusal(
+            self, tmp_path, filled):
+        """The wrapper must not degrade into "the wrapper IS the map"."""
+        path = fx.write_fill_map(tmp_path / "nullmap.json",
+                                 {"fill_map": None, "base_pt": 10})
+        verdict, code = cg.check(filled, fill_map=path)
+        assert code == 2
+        assert "'fill_map' member" in verdict["error"]
+        assert "BARE" in verdict["error"] and "WRAPPER" in verdict["error"]
+
     def test_a_declared_value_passes(self, tmp_path, blank):
         grid = [["구    분", "성    명", "생년월일"],
                 ["지원 신청자", "이서준", "900101-1234567"],

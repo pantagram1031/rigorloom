@@ -45,6 +45,7 @@ SCRIPT = REPO_ROOT / "pipeline" / "scripts" / "visual_verify.py"
 RUBRIC = REPO_ROOT / "skill" / "references" / "visual-rubric.md"
 
 sys.path.insert(0, str(REPO_ROOT / "pipeline" / "scripts"))
+import check_residue  # noqa: E402
 import visual_verify  # noqa: E402
 
 
@@ -523,6 +524,118 @@ def test_pixel_diff_identical_render_has_no_changed_regions(tmp_path):
     page = verdict["deterministic"]["baseline_diff"]["pages"][0]
     assert page["comparable"] is True
     assert page["changed_regions"] == []
+    # a PDF baseline is passed through, never converted
+    assert verdict["deterministic"]["baseline_diff"]["baseline_pdf"] is None
+
+
+# -- T35 nit (b): --baseline names the BLANK FORM, so it must take one -------
+#
+# The round-3 agent read "--baseline" as "the blank form", handed it the
+# .hwpx, got a refusal that wanted a PDF, and dropped pixel-diff entirely
+# rather than converting. The flag now converts a document baseline through
+# the same serial COM path the artifact takes, and says so in its usage
+# string; with no renderer it is a skip-with-reason, never a crash.
+
+def _verify_args(artifact, **overrides):
+    """The ``verify()`` argument namespace, so a test can monkeypatch."""
+    fields = {
+        "artifact": str(artifact), "pdf": None, "expectations": None,
+        "png_dir": None, "dpi": 130, "baseline": None,
+        "form_profile": None, "content": None, "vision_verdict": None,
+        "vision_scope": "all", "deterministic_only": True,
+        "keep": [], "keep_pattern": None, "fill_map": None,
+        "attempt": None, "max_fix_attempts": None, "out": None}
+    fields.update({k: (str(v) if isinstance(v, Path) else v)
+                   for k, v in overrides.items()})
+    return type("A", (), fields)()
+
+
+def test_an_hwpx_baseline_is_converted_and_the_pixel_diff_runs(
+        tmp_path, monkeypatch):
+    """The blank form goes in; changed-region bboxes come out."""
+    artifact = make_hwpx(tmp_path / "filled.hwpx")
+    blank = make_hwpx(tmp_path / "blank.hwpx")
+    base_pdf = make_pdf(tmp_path / "rendered_blank.pdf",
+                        [_body_page(n_lines=6)])
+    changed = _body_page(n_lines=6)
+    changed["lines"].append((72.0, 400.0, "an inserted extra line", 10.0))
+    after = make_pdf(tmp_path / "after.pdf", [changed])
+
+    calls = []
+
+    def fake_convert(source, out_pdf):
+        calls.append((Path(source), Path(out_pdf)))
+        Path(out_pdf).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_pdf).write_bytes(base_pdf.read_bytes())
+        return str(out_pdf), {"pages_document": 1, "pages_pdf": 1}, None
+
+    monkeypatch.setattr(visual_verify, "render_capable", lambda: True)
+    monkeypatch.setattr(visual_verify, "convert_to_pdf", fake_convert)
+
+    verdict, code = visual_verify.verify(_verify_args(
+        artifact, pdf=after, baseline=blank, png_dir=tmp_path / "png"))
+    diff = verdict["deterministic"]["baseline_diff"]
+    assert code == 0, verdict
+    assert "skipped" not in diff
+    assert diff["baseline"] == str(blank)
+    assert diff["baseline_pdf"], "the converted baseline PDF must be reported"
+    assert diff["baseline_pages"] == 1
+    assert diff["pages"][0]["comparable"] is True
+    assert diff["pages"][0]["changed_regions"], (
+        "the inserted line must show up as a changed region")
+    # converted through the artifact's own path, and only the baseline
+    assert [c[0] for c in calls] == [blank]
+    # the converted PDF must not collide with the artifact's own render
+    assert calls[0][1].name.endswith("_baseline.pdf")
+
+
+def test_an_hwpx_baseline_with_no_renderer_is_a_skip_with_reason(
+        tmp_path, monkeypatch):
+    """One check lost, not the whole run — and never a traceback."""
+    artifact = make_hwpx(tmp_path / "filled.hwpx")
+    blank = make_hwpx(tmp_path / "blank.hwpx")
+    pdf = make_pdf(tmp_path / "after.pdf", [_body_page(n_lines=6)])
+
+    monkeypatch.setattr(visual_verify, "render_capable", lambda: False)
+
+    def never(*_a, **_k):  # pragma: no cover - must not be reached
+        raise AssertionError("convert_to_pdf must not run without a renderer")
+
+    monkeypatch.setattr(visual_verify, "convert_to_pdf", never)
+
+    verdict, code = visual_verify.verify(_verify_args(
+        artifact, pdf=pdf, baseline=blank, png_dir=tmp_path / "png"))
+    assert code == 0, verdict
+    assert verdict["verdict"] == "deterministic_pass"
+    diff = verdict["deterministic"]["baseline_diff"]
+    assert diff["baseline_pages"] is None
+    assert diff["pages"] == []
+    reason = diff["skipped"]
+    assert reason.startswith("baseline_pixel_diff:")
+    assert reason in verdict["deterministic"]["skipped"], (
+        "a skipped check must be stated out loud in deterministic.skipped")
+
+
+def test_a_missing_baseline_names_every_accepted_shape(tmp_path):
+    artifact = make_hwpx(tmp_path / "b.hwpx")
+    pdf = make_pdf(tmp_path / "p.pdf", [_body_page(n_lines=4)])
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--baseline", tmp_path / "nope.hwpx",
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    for token in (".hwpx", ".pdf", "directory of page images"):
+        assert token in verdict["error"], token
+
+
+def test_the_baseline_usage_string_states_what_the_flag_accepts():
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(REPO_ROOT))
+    help_text = " ".join(proc.stdout.split())
+    assert "--baseline" in help_text
+    for token in (".hwpx", ".pdf", "directory of page images"):
+        assert token in help_text, token
 
 
 # --------------------------------------------------------------------------
@@ -795,6 +908,49 @@ def test_unreadable_fill_map_is_a_usage_error(tmp_path):
                            "--png-dir", tmp_path / "png")
     assert code == 2, verdict
     assert "--fill-map" in verdict["error"]
+
+
+# -- T35: --fill-map is ONE flag with ONE loader ----------------------------
+#
+# The round-3 Opus run built one file for both consumers and ate a usage_error
+# retry, because visual_verify documented the wrapper shape and check_residue
+# wanted the bare map. Both shapes must work at every consumer of the flag,
+# and the shape error must name both shapes so a wrong guess costs no retry.
+
+def test_visual_verify_shares_the_core_fill_map_loader(tmp_path):
+    """Not a copy: the same function object, so the shape rule cannot fork."""
+    assert visual_verify.load_fill_map is check_residue.load_fill_map
+
+
+@pytest.mark.parametrize("wrap", [False, True])
+def test_the_delegate_run_accepts_both_fill_map_shapes(tmp_path, wrap):
+    artifact, pdf, profile, _ = _labeled(tmp_path)
+    payload = dict(_LABELED_MAP)
+    path = tmp_path / f"map_{int(wrap)}.json"
+    path.write_text(json.dumps({"fill_map": payload, "base_pt": 10}
+                               if wrap else payload, ensure_ascii=False),
+                    encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", path,
+                           "--png-dir", tmp_path / f"png{int(wrap)}",
+                           "--deterministic-only")
+    assert code == 0, verdict
+    keep = verdict["deterministic"]["residue_keep"]
+    assert keep["fill_map"] == sorted(payload)
+
+
+def test_a_wrapper_with_a_non_object_fill_map_is_a_usage_error(tmp_path):
+    artifact, pdf, profile, _ = _labeled(tmp_path)
+    path = tmp_path / "nullmap.json"
+    path.write_text(json.dumps({"fill_map": None, "base_pt": 10}),
+                    encoding="utf-8")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", path,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "'fill_map' member" in verdict["error"]
+    # names BOTH shapes, so the caller does not have to guess again
+    assert "BARE" in verdict["error"] and "WRAPPER" in verdict["error"]
 
 
 # --------------------------------------------------------------------------

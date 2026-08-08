@@ -210,13 +210,18 @@ def load_vocabulary(path: Path | str | None = None) -> dict:
 def load_fill_map(path: Path | str | None) -> dict | None:
     """The values the OPERATOR declared for this packet, or None.
 
-    Shape is the engine's own fill mapping (``preedit.py replace --map``): a
-    flat ``{placeholder: value}`` object. Only the values matter here — they are
-    what makes an identity or account number "declared" rather than "invented".
+    Shape handling is core's (``check_residue.load_fill_map``): a bare
+    ``{placeholder: value}`` object (the ``preedit.py replace --map`` shape) OR
+    a wrapper object carrying a ``fill_map`` member, so ONE file serves this
+    checker and ``visual_verify`` alike (T35). Only the values matter here —
+    they are what makes an identity or account number "declared" rather than
+    "invented".
     """
     if path is None:
         return None
-    payload = _load_json(Path(path), "fill map")
+    payload, error = check_residue.load_fill_map(Path(path))
+    if error:
+        raise GrantError(error)
     for key, value in payload.items():
         if not isinstance(key, str) or not isinstance(value, (str, int, float)):
             raise GrantError(
@@ -1273,7 +1278,9 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--fill-map", dest="fill_map", default=None,
         help="the {placeholder: value} map the OPERATOR declared for this "
-             "packet (preedit.py replace --map). Values here are what makes a "
+             "packet — a bare map (preedit.py replace --map) or an object "
+             "with a 'fill_map' member (visual_verify --expectations); "
+             "either shape is accepted. Values here are what makes a "
              "personal number declared rather than invented")
     return cli_main(
         parser,
