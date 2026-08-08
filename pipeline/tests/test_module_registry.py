@@ -210,6 +210,7 @@ provides:
 # ``modules/`` created, edited, or naming the module.
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+MODULES_ROOT = REPO_ROOT / "modules"
 SWEEP = REPO_ROOT / "scripts" / "py_compile_sweep.py"
 
 NEW_MODULE = "brandnew"
@@ -364,7 +365,39 @@ class TestHarnessIsModuleAgnostic:
 # Absence is not failure
 # ---------------------------------------------------------------------------
 
-class TestAbsenceIsNotFailure:
+    def test_module_test_basenames_are_unique_across_modules(self):
+        """No two distribution modules may ship the same test filename.
+
+        pytest's default prepend import mode names a test module after its
+        basename alone, so a duplicate collides with 'import file mismatch'
+        and interrupts collection. Found by CI on PR #68 (gongmun and minwon
+        both shipped tests/test_module_contract.py) — invisible to
+        per-module targeted runs. importlib mode would sidestep it but drops
+        the test dir from sys.path and breaks tests/_module_gating.py
+        imports, so the rule is enforced here instead.
+        """
+        seen: dict[str, list[str]] = {}
+        for path in sorted(MODULES_ROOT.glob("*/tests/test_*.py")):
+            seen.setdefault(path.name, []).append(path.parent.parent.name)
+        collisions = {n: m for n, m in seen.items() if len(m) > 1}
+        assert not collisions, (
+            "module test basenames must be unique across modules "
+            f"(prefix them with the module name): {collisions}")
+        assert seen, "no module tests found — the scan is vacuous"
+
+    def test_the_basename_rule_bites_on_a_planted_duplicate(self, tmp_path):
+        """Negative control: the scan must catch a duplicate it is shown."""
+        root = tmp_path / "modules"
+        for name in ("alpha", "beta"):
+            d = root / name / "tests"
+            d.mkdir(parents=True)
+            (d / "test_module_contract.py").write_text("", encoding="utf-8")
+        seen: dict[str, list[str]] = {}
+        for path in sorted(root.glob("*/tests/test_*.py")):
+            seen.setdefault(path.name, []).append(path.parent.parent.name)
+        collisions = {n: m for n, m in seen.items() if len(m) > 1}
+        assert collisions == {"test_module_contract.py": ["alpha", "beta"]}
+
     def test_missing_modules_root_is_core_only(self, tmp_path):
         registry = registry_for(tmp_path / "does-not-exist")
         assert registry.discover() == {}

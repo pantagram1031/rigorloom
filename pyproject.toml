@@ -31,4 +31,10 @@ testpaths = [
     "engine/tests",
     "modules/*/tests",
 ]
+# Test basenames must be unique across the whole suite: the default prepend
+# import mode names a test module after its basename alone, so two modules
+# shipping the same filename collide ("import file mismatch"). importlib mode
+# would fix that but drops the test dir from sys.path, breaking the suite's
+# sibling imports (tests/_module_gating.py). The property is enforced instead
+# by pipeline/tests/test_module_registry.py::TestHarnessIsModuleAgnostic.
 addopts = "-ra"
