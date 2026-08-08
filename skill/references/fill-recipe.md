@@ -28,6 +28,7 @@ exactly one of four branches, decided by **what the cell already stores**:
 | **a printed skeleton you must KEEP**, blank at the end — `" http://"`, `" 우(     -     )"` | `preedit replace --at-cell-append 'ROW,COL=값'` | the label is a prefix of the value; keeping it is the normal shape of a labeled field, not an edge case (T31) |
 | **printed text to be wholly REPLACED** — a template whose blanks are *interior*, like a date skeleton | `preedit replace --at-cell 'ROW,COL=값'` | appending would leave the empty template printed in front of the real value |
 | **several text runs** | the refusal tells you: re-issue as `ROW,COL#RUN` | `exit 2`, `at_cell_run_ambiguous`, with every run's index and exact text. Neither "first run wins" nor "flatten the cell" is offered |
+| **an empty run in a cell that must hold several lines** — a 공문 본문, a multi-item 내용 box | `preedit fill-cells --cell-line ROW,COL=… --cell-line ROW,COL=…` (once per paragraph) | one paragraph per line is the *regulated* shape of 공문 본문, not a formatting preference (T39); see §1.2 |
 
 `classification: spacer` is a fifth answer: **do not write there at all.** It
 is an empty cell the grid needs — a separator band or a matrix stub head — and
@@ -85,6 +86,106 @@ Contrast, same form, same command family:
 - (15,0) 신청일 → multi-run cell. The refusal lists 8 runs; the 신청일 line is
   run 2, so `--at-cell '15,0#2=…'`. Guessing "first run" would have deleted the
   regulation sentence.
+
+### 1.1 `script_anomaly` is a *question*, not a verdict — and the usual answer is "the form designed it that way"
+
+A `script_anomaly` says only *this cell's charPr differs from the body baseline
+on one of five properties*. Two different things produce that, and they take
+opposite actions:
+
+| what it is | how it looks | what to pass |
+|---|---|---|
+| **a T30 trap** — the fill inherits body formatting *plus* a script/scale/offset modifier | `differing` is `supscript`/`subscript`/`offset`, or a `relSz` shrink; `nominal_height_pt` **equals** the baseline; `rendered_pt_estimate` is well below it | `--charpr-per-cell ROW,COL=<charpr_suggested>` — normalize to body |
+| **the form's own typography** — a label, or a 본문 area the 서식 deliberately sets at another size or width | `differing` is a small `ratio` delta; `nominal_height_pt` **differs** from the baseline; the same charPr is already used by *printed* text in the blank form | `--charpr-per-cell ROW,COL=<that cell's own charpr>` — keep the design, explicitly |
+
+The two numbers the refusal prints side by side are what separates them: a trap
+keeps the baseline's nominal height and loses rendered height; a design decision
+has a different nominal height to begin with.
+
+**Worked example — the 기안문 별지 제1호서식.** Its body baseline is charPr
+**23: 10pt, ratio 100%**, which is the *fine print* — the 비고 block and the
+210㎜×297㎜ line carry the most characters on the page, so they win the
+character-count weighting. Every visible field on the form is a different,
+larger id:
+
+```
+charPr 12  16pt  ratio 97%   행정기관명
+charPr 13  13pt  ratio 97%   두문 spacer line
+charPr 14  12pt  ratio 97%   수신 / (경유) / 제목 labels, and the 본문 cell (2,0)
+charPr 15  14pt  ratio 97%   제목 value
+charPr 23  10pt  ratio 100%  ← body baseline (비고 fine print)
+```
+
+So `form_inspect` reports exactly one `script_anomaly_target`, (2,0), with
+`charpr: "14"`, `differing: ["ratio"]`, `charpr_suggested: "23"`,
+`nominal_height_pt: 12.0` against `baseline_height_pt: 10.0`. Pasting the
+suggested flag would set the 본문 to the fine print's 10pt/100%. The 97% ratio
+is the whole form's design — it is on the 행정기관명 title and every 두문 label
+in the **untouched blank** — and the nominal heights differ, so this is the
+second row of the table. Pass the cell's own id, and say why:
+
+```
+--charpr-per-cell 2,0=14        # the form's 12pt/97% 본문 face, not the 비고 face
+```
+
+The refusal is still right to fire, and the post-flight
+(`visual_verify`'s `fill_charpr_script_mismatch`) compares the same five
+properties, so it will flag this cell too — declare it on the record as the
+form's own design, the way you would any other waiver. What is *not* acceptable
+is pasting `suggested_flags` unread: on this form that silently reformats the
+본문 to fine print.
+
+### 1.2 A multi-line cell: the 공문 본문 (T39)
+
+`행정업무의 운영 및 혁신에 관한 규정 시행규칙` makes 공문 본문 hierarchical —
+`1.`, then `가.`, then `1)`, then `가)`, each level its own paragraph indented two
+more spaces ("2타"). So a 본문 cell takes **one `--cell-line` per paragraph**, in
+order, and the indent is leading spaces in the value:
+
+```
+python engine/scripts/preedit.py fill-cells $W/form.hwpx --out $W/step1.hwpx \
+    --cell-line "2,0=1. 관련: 국가유산청 문화유산정책과-1234(2026. 7. 30.)" \
+    --cell-line "2,0=" \
+    --cell-line "2,0=2. 위 호와 관련하여 다음 자료를 요청하오니 협조하여 주시기 바랍니다." \
+    --cell-line "2,0=" \
+    --cell-line "2,0=  가. 제출 자료" \
+    --cell-line "2,0=    1) 2020년 이후 지정·등록 근대건조물 목록" \
+    --cell-line "2,0=      가) 평면도·입면도·단면도" \
+    --cell-line "2,0=  나. 제출 기한: 2026. 9. 30.(화)" \
+    --cell-line "2,0=" \
+    --cell-line "2,0=붙임  자료 제출 서식 1부.  끝." \
+    --charpr-per-cell 2,0=14 --parapr-per-cell 2,0=18
+```
+
+→ `{"paragraphs": 10, "paragraphs_reused": 10, "paragraphs_created": 0}`.
+
+Three things about that call are not optional:
+
+- **`--cell-line`, not a newline.** From PowerShell you cannot put a literal
+  newline inside a quoted argument. (A `--map` value may be a JSON **array**
+  instead, and a newline inside any value works wherever your shell can produce
+  one — same rule either way.) An empty `--cell-line "2,0="` is a blank line,
+  which is how 공문 separates 항목. If you script this in a `.ps1`, save it as
+  UTF-8 **with BOM**: Windows PowerShell 5.1 reads a BOM-less script as cp949
+  and the Korean arguments fail to parse.
+- **`--parapr-per-cell 2,0=18`.** The 기안문 본문 cell's reserved blank
+  paragraphs are CENTER-aligned (paraPr 15) because that cell also holds
+  발신명의 and 직인. Fill it faithfully and the whole hierarchy renders centred
+  with the indents gone — read that off the render, then name a justified id
+  (18 on this form: JUSTIFY, 100% line spacing, the form's own def).
+- **`--charpr-per-cell 2,0=14`** for the reason in §1.1 — the pre-flight's
+  suggestion (23) is the 비고 fine print, not the 본문 face.
+
+`paragraphs_reused` vs `paragraphs_created` is worth reading. This form reserves
+18 blank lines in that cell and they are used first; anything beyond them is a
+clone of the target paragraph *appended*, which lengthens the cell — 24
+paragraphs into that 20-slot run rendered as one content page **plus an empty
+spill page**. If `paragraphs_created` is not 0, check the page count.
+
+**Page parity after a multi-paragraph fill**: every paragraph written or created
+loses its cached lineseg, so Hancom re-layouts on open — which is what makes it
+render correctly. Take `pages_document` from the conversion, or declare
+`expectations.pages_document`; the `artifact_layout_cache` source under-counts.
 
 ---
 
@@ -179,7 +280,9 @@ script_anomaly_targets=1 fill_target=13 spacer=6
 Read `script_anomaly_targets` now: it is the T30 pre-flight. Here it names
 (10,2) with `charpr_suggested: "7"` — its empty run carries body formatting
 *plus* `<hh:supscript/>`, and a fill that inherited it would render ~6.35pt
-raised while every height-based proof passed.
+raised while every height-based proof passed. On this form the suggestion is
+the right answer; on many forms it is not, so decide it with §1.1 rather than
+pasting `suggested_flags` unread.
 
 **2. Read the seats you are about to edit** (per-cell opt-in; do not read
 `section0.xml`):

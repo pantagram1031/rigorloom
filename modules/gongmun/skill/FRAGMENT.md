@@ -12,6 +12,8 @@ never rebuild it.
 python engine/scripts/form_inspect.py FORM.hwpx --out blank.profile.json
 python engine/scripts/preedit.py fill-cells FORM.hwpx --out filled.hwpx \
     --table 0 --cell 1,0="…"            # empty form cells have NO hp:t: use fill-cells
+    --cell-line 2,0="1. …" --cell-line 2,0="  가. …" \
+    --charpr-per-cell 2,0=14 --parapr-per-cell 2,0=18   # 본문: one paragraph per level
 python engine/scripts/preedit.py replace filled.hwpx --out filled.hwpx \
     --map guide_terms.json               # replace a surviving guide term by its content
 python modules/gongmun/scripts/check_gongmun.py filled.hwpx \
@@ -30,6 +32,20 @@ those guide terms are **placeholders to consume**, not labels to keep. The
 section labels (수신 / 경유 / 제목 / 협조자 / 시행 / 접수 / 우 / 전화번호 / 직인)
 legitimately stay. The 비고 block itself must not ship
 (`이 난은 서식에 포함하지 아니한다`).
+
+**본문 is hierarchical by regulation, so it is multi-paragraph.** `1.` / `가.` /
+`1)` / `가)`, each level its own paragraph, each indented two more spaces —
+one `--cell-line` per paragraph, in that order, indent as leading spaces
+(T39). Two per-cell flags belong in that same call on 별지 제1호서식:
+`--charpr-per-cell 2,0=14` (the form's 12pt/97% 본문 face — the pre-flight
+suggests 23, which is the 비고 fine print) and `--parapr-per-cell 2,0=18`
+(the cell's own blanks are CENTER-aligned because it shares the cell with
+발신명의, so a faithful fill centres the whole hierarchy and the indents
+vanish). The 본문 cell also **contains** the 직인 and 발신명의 nested tables;
+the writable paragraphs stop before them, so a 본문 line can never land under
+발신명의. `paragraphs_created > 0` means you exceeded the lines the form
+reserved and the table grew — check the page count. Details and the worked
+call: the core skill's fill recipe, section 1.2.
 
 **The 직인 rule.** The red-bordered 직인 box is a *placement for a physical
 impression*. It survives untouched and is never a fill target — writing a name
