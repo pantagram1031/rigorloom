@@ -124,7 +124,7 @@ overprint at old coordinates).
 ```
 python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
 python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx [--table 0] --at-cell 'ROW,COL[#RUN]=TEXT' ... --at-cell-append 'ROW,COL[#RUN]=TEXT' ... [--at-cell-map AT.json] [--at-cell-expect 'ROW,COL[#RUN]=SUBSTR' ...] [--at-cell-charpr 'ROW,COL[#RUN]=ID' ...]
-python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--map CELLS.json] [--overwrite] [--charpr ID] [--charpr-per-cell ROW,COL=ID ...]
+python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx [--table 0] --cell ROW,COL=TEXT ... [--cell-line ROW,COL=TEXT ...] [--map CELLS.json] [--overwrite] [--charpr ID] [--charpr-per-cell ROW,COL=ID ...] [--parapr-per-cell ROW,COL=ID ...]
 python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '#0000FF'|blue] [--charpr-ids 5,6]
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
@@ -207,7 +207,43 @@ skeleton to keep → `replace --at-cell-append`; printed text to replace wholly 
   unless `--overwrite`; a refusal anywhere in the batch writes nothing at all.
   Output JSON: `{"ok": true, "table": n, "tables_total": n, "filled": n,
   "body_baseline_charpr_id": "0", "cells": [{"addr": [r, c], "hits": 1,
-  "action": "filled"|"overwritten", "previous": "…", "charpr": "0"|null}]}`.
+  "action": "filled"|"overwritten", "previous": "…", "charpr": "0"|null,
+  "parapr": "18"|null, "paragraphs": n, "paragraphs_reused": n,
+  "paragraphs_created": n}]}`.
+  - **A value is a list of paragraphs, not a line** (T39). 공문 본문 is
+    hierarchical by regulation — `1.` / `가.` / `1)` / `가)`, each level its own
+    paragraph indented two spaces further — so multi-paragraph is the normal
+    case for a 본문 cell and one paragraph is the exception. Three spellings,
+    one rule: a `--map` value that is a **JSON array** (one element per
+    paragraph), a **newline** inside any value, or **`--cell-line ROW,COL=TEXT`
+    (repeatable; the order you give is the paragraph order)**. Use
+    `--cell-line` from PowerShell — a literal newline inside a quoted argument
+    is not typable there. `--cell` still rejects a duplicated address, so
+    multi-paragraph stays an explicit opt-in; naming one address with both
+    `--cell` and `--cell-line` is a usage error (their relative order is
+    undefined). Indentation is **leading spaces in the value**, which is what
+    the regulation describes ("2타"); it is not a paraPr setting.
+  - **Where the paragraphs go.** The blank paragraphs the form already reserves
+    in that cell are used first, and only the remainder is created by cloning
+    the **target paragraph whole** — same `paraPrIDRef`, same run `charPrIDRef`,
+    never a fabricated default, never a `linesegarray`. Reuse-first is not an
+    optimization: the 기안문 본문 cell reserves 18 blank lines, so creating
+    instead of reusing lengthens the cell by the reserved amount, grows the
+    table and spills a page (measured: 24 paragraphs into a 20-slot cell gives
+    one content page plus an empty page). The slots stop at the first paragraph
+    holding a **nested table** — that same cell holds 직인 and 발신명의 as
+    nested tables with more blanks after them, and counting past them would put
+    a 본문 line under 발신명의. `paragraphs_reused`/`paragraphs_created` report
+    which happened.
+  - **`--parapr-per-cell ROW,COL=ID` (repeatable)** repoints the `paraPrIDRef`
+    of the paragraphs this call **writes** (indent, alignment, line spacing);
+    paragraphs it does not write are untouched. You need it when the form's own
+    paraPr for those blanks is not a body format: the 기안문 본문 cell's blanks
+    are CENTER-aligned because they share the cell with 발신명의, so a faithful
+    fill centres the whole `1./가./1)` hierarchy and the indent disappears —
+    repoint to the form's justified def (id 18 on that form) and the levels read
+    correctly. Per-cell only, deliberately no batch-wide form (T32). A paraPr id
+    with no definition is caught before writing (the T22 assertion's sister).
   - **`--charpr-per-cell ROW,COL=ID` (repeatable) is the charPr flag you will
     actually need**, and it belongs in the fill command you type — not only in
     the T30/T32 prose below. It sets **one** target's charPr and wins over
@@ -222,6 +258,14 @@ skeleton to keep → `replace --at-cell-append`; printed text to replace wholly 
     left alone). Prefer `--charpr-per-cell`.
   - Either flag then also runs the T22 dangling-charPr assertion before
     writing.
+  - **Hancom must re-layout, and that is deliberate.** Every paragraph this
+    command writes or creates loses its `linesegarray` (T24), so the artifact's
+    own layout cache is incomplete until Hancom opens the file. Convert with
+    `com_backend.py convert` (or let `visual_verify` do it) and let page parity
+    take `pages_document` from `conversion`, or declare
+    `expectations.pages_document`. Do **not** rely on the
+    `artifact_layout_cache` source after a multi-paragraph fill — it
+    under-counts.
 
 ### The charPr pre-flight before any fill (T30)
 

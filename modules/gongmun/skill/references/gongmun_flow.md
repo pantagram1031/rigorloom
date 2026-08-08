@@ -34,6 +34,15 @@ truth, and both are in the blank-form corpus.
    empty cell. Use `preedit.py replace` for the seats where a guide term *is*
    the placeholder (`행정기관명`, `도로명주소`, …) — there the old text exists
    and must be consumed.
+   **본문 takes `--cell-line` once per paragraph** (T39): the regulation puts
+   `1.` / `가.` / `1)` / `가)` each on its own paragraph, indented two more
+   spaces per level, so a single-paragraph 본문 is the exception rather than
+   the norm. On 별지 제1호서식 the 본문 cell is (2,0) and the call also needs
+   `--charpr-per-cell 2,0=14` and `--parapr-per-cell 2,0=18` — the cell shares
+   itself with the 발신명의/직인 nested tables, so its own blanks are
+   centre-aligned and its charPr is the 12pt/97% label face rather than the
+   비고 baseline. The core skill's fill recipe carries both decisions
+   (sections 1.1 and 1.2).
 4. **Check, then verify.**
    `modules/gongmun/scripts/check_gongmun.py filled.hwpx --baseline FORM.hwpx`
    then `pipeline/scripts/visual_verify.py` with
