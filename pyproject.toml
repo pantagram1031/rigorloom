@@ -31,4 +31,10 @@ testpaths = [
     "engine/tests",
     "modules/*/tests",
 ]
-addopts = "-ra"
+# importlib import mode: two distribution modules may legitimately ship a
+# test file with the same basename (modules/*/tests/test_module_contract.py).
+# The default prepend mode derives a module name from the basename alone and
+# collides ("import file mismatch"); importlib keeps them distinct without
+# forcing __init__.py into every module's tests dir. Regression:
+# pipeline/tests/test_module_registry.py::TestHarnessIsModuleAgnostic.
+addopts = "-ra --import-mode=importlib"

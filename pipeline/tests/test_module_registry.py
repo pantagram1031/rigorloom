@@ -364,6 +364,35 @@ class TestHarnessIsModuleAgnostic:
 # Absence is not failure
 # ---------------------------------------------------------------------------
 
+    def test_same_test_basename_in_two_modules_both_collect(self, tmp_path):
+        """Two modules may ship tests/test_module_contract.py; both must collect.
+
+        The default prepend import mode names a test module after its basename
+        alone, so the second one fails with 'import file mismatch' — which is
+        how this was found (CI on PR #68, invisible to per-module targeted
+        runs). addopts pins --import-mode=importlib; this test is the property.
+        """
+        root = tmp_path / "repo"
+        (root / "modules" / "alpha" / "tests").mkdir(parents=True)
+        (root / "modules" / "beta" / "tests").mkdir(parents=True)
+        (root / "pyproject.toml").write_text(
+            _pytest_ini_block(PYPROJECT.read_text(encoding="utf-8")),
+            encoding="utf-8")
+        for name in ("alpha", "beta"):
+            (root / "modules" / name / "tests" / "test_module_contract.py"
+             ).write_text(
+                f'''def test_{name}_marker():
+    assert True
+''',
+                encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+            cwd=root, capture_output=True, text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "test_alpha_marker" in proc.stdout, proc.stdout
+        assert "test_beta_marker" in proc.stdout, proc.stdout
+        assert "import file mismatch" not in (proc.stdout + proc.stderr)
+
 class TestAbsenceIsNotFailure:
     def test_missing_modules_root_is_core_only(self, tmp_path):
         registry = registry_for(tmp_path / "does-not-exist")
