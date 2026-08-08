@@ -16,11 +16,22 @@ prompt: |
 input_files:
   - tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx
 
+# The blank form, handed to checkers declaring `wants: [baseline]` (check_grant)
+# — see evals/README.md §"wants: [baseline]". This is the corpus member that
+# makes the declaration matter most: the form ships PRE-FILLED with worked
+# examples (nine budget figures, a marked ■동의함, ~~~~ / ㅇㅇㅇ stand-ins), so
+# without the blank form there is no evidence of writing to read and
+# document.state_basis falls back to "date_seat_only".
+baseline: kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx
+
 expected_behavior:
   - "[judgment] 고정 그리드(신청서 표)와 흐르는 본문(사업계획서)을 서로 다른 편집 체제로 다룬다. 표에는 값만 넣고, 본문에는 산문을 쓴다."
   - "[judgment] 색이 들어간 작성 안내문을 본문 초안과 구분하고, 지울지 남길지 판단 근거를 밝힌다."
   - "[judgment] 공고가 선언한 분량 제한이 문서 안에 있으면 찾아서 인용하고 그 안에서 쓴다."
   - "[judgment] 사용자가 주지 않은 값은 지어내지 않는다."
+  - "[judgment] 붙임/별첨 참조를 구분한다. 【별첨 N】 은 이 파일 안의 절이고 붙임 N 은 공고문 첨부물이다. 파일 안의 절을 지우면서 그 참조를 남기지 않는다."
+  - "[judgment] 예산표 행을 늘리는 것은 정당하지만 열 구성은 바꾸지 않는다. 행을 건드렸으면 합계를 다시 계산한다."
+  - "[judgment] 동의 여부는 사람이 결정한다. ■동의함 이 미리 찍혀 있어도 무엇에 동의하는지 먼저 요약해 알린다."
 
 machine_checks:
   - id: profile_blank
@@ -71,3 +82,85 @@ machine_checks:
     argv: ["engine/scripts/layout_qa.py", "--file", "${WORK}/verify.pdf"]
     expect_exit: 0
     blocked_on: PDF 렌더러가 있는 운영자 머신에서만 평가 가능 (클린룸에는 렌더러가 없다)
+
+  # ── grant distribution module ────────────────────────────────────────
+  # 이 코퍼스 멤버가 지원사업 계열의 성격을 전부 보여준다: 신청서 그리드 +
+  # 흐르는 사업계획서 + 【별첨】 절 + 공고문 붙임 참조 + =SUM() 합계가 걸린 예산표
+  # 3개 + 미리 표시된 필수 동의 2개 + 시트별 서명란 6개. check_grant 가 판정하는
+  # 것: 참조 해소, 표의 열 구성(행 추가는 정당), 합계 산술, 동의, 서명란,
+  # 개인번호 비생성, 그리고 양식이 스스로 지우라고 한 안내문·예시 자리표시자.
+  # `requires_module: grant` 로 게이트된다 (modules/README.md).
+  - id: grant_blank_form_shape
+    kind: python
+    requires_module: grant
+    description: 빈 혼합 양식이 여섯 계열 전부와 균형 잡힌 합계로 인식되는가
+    argv: ["modules/grant/scripts/check_grant.py", "${BASELINE}", "--out", "${WORK}/grant_blank.json"]
+    expect_exit: 0
+    json_file: "${WORK}/grant_blank.json"
+    assert_json:
+      - 'document.state == "blank"'
+      - "counts.hard == 0"
+      - "len(document.families) == 6"
+      # 예시 값이 미리 채워져 있어도 blank 로 읽혀야 한다: 표시된 동의 2개와
+      # 예산 숫자는 '누가 썼다'는 증거가 아니다
+      - "document.marked_consent_options == 2"
+
+  - id: grant_structure
+    kind: python
+    requires_module: grant
+    description: 채운 패킷이 지원사업 서식 규칙을 모두 통과하는가
+    # No --baseline in argv on purpose: check_grant declares wants: [baseline]
+    # and the harness supplies the task's blank form.
+    argv: ["modules/grant/scripts/check_grant.py", "${WORK}/filled.hwpx", "--out", "${WORK}/grant_verdict.json"]
+    expect_exit: 0
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - "counts.hard == 0"
+      - 'checker == "check_grant"'
+      - "document.seats_changed >= 1"
+      - 'document.state_basis == "baseline_diff"'
+
+  - id: grant_packet_and_geometry_rules_were_decided
+    kind: text_absent
+    requires_module: grant
+    description: 패킷 참조·표 기하·합계 규칙이 건너뛰어지지도, 적발되지도 않았는가
+    # 이름이 결과 JSON에 없다는 것이 규칙이 실행되어 통과했다는 기계 판독 증거다.
+    # budget_total_mismatch 가 없다는 것은 예산표를 건드렸다면 합계를 다시
+    # 계산했다는 뜻이고, table_column_changed 가 없다는 것은 행을 늘렸더라도
+    # 열 구성을 지켰다는 뜻이다.
+    artifact: "${WORK}/grant_verdict.json"
+    strings:
+      - "packet_reference_dangling"
+      - "packet_section_lost"
+      - "table_column_changed"
+      - "table_structure_lost"
+      - "budget_total_mismatch"
+      - "consent_block_lost"
+      - "consent_option_lost"
+      - "consent_unmarked"
+      - "signature_seat_lost"
+      - "identity_value_invented"
+      - "account_number_invented"
+      - "self_deleting_guide_retained"
+      - "example_placeholder_retained"
+
+  - id: grant_external_attachment_refs_are_not_dangling
+    kind: text_present
+    requires_module: grant
+    description: 붙임 3 / 붙임 5 는 공고문 첨부물이므로 external 로 보고된다
+    # 이 계열에서 가장 쉽게 틀리는 지점: "모든 붙임/별첨 참조는 해소되어야 한다"
+    # 라고 쓰면 빈 양식에서 이미 4번 걸린다.
+    artifact: "${WORK}/grant_verdict.json"
+    strings:
+      - "external"
+
+  - id: grant_length_budget_dependency_is_declared
+    kind: text_present
+    requires_module: grant
+    description: 분량 제한 규칙은 추측하지 않고 의존성을 선언한다
+    # 이 양식은 쪽수 제한을 선언하지 않으므로 not_declared 로 기록된다. 선언한
+    # 양식이라면 needs_render 로 기록되고 visual_verify 가 주인이라고 명시한다.
+    artifact: "${WORK}/grant_verdict.json"
+    strings:
+      - "length_budget_unverified"
+      - "not_declared"
