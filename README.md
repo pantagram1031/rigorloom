@@ -363,9 +363,10 @@ alpha: authors, authors' machine, one form-family lineage, empty forms only.
 **v0.17.0 is the validation release.** Autonomous verification (visual rubric
 + render-judge loop, an acceptance safety set, a pinned exit-code contract), the
 clean-room harness, four new work-type modules, and a fill path that reaches a
-form's genuinely empty cells and its printed seats offline. Twenty-five defects
-were found by clean-room runs rather than by the suite, including two the
-independent Codex harness found that ours could not see. The evidence record —
+form's genuinely empty cells and its printed seats offline. Forty defects and
+harness lessons were found by validation rather than by the suite, including
+verdict defects the independent Codex harness found that ours could not see and
+work-type blockers found only after G1/P1/H1 family runs. The evidence record —
 bundle hashes, the validation ledger, and the limits stated as limits — is
 [docs/release-v0.17.0.md](docs/release-v0.17.0.md). Known capability
 boundaries are stated per form family in

@@ -8,6 +8,29 @@ the kernel's contract shape.
 
 ## Unreleased
 
+_None._
+
+## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
+
+v0.16.0 shipped as an **alpha**: written by its authors, run on its authors'
+machine, exercised on one form-family lineage, and only ever against empty
+forms. v0.17 is the release that turned that into a product someone else can
+install and use. The product tree contains 30 commits, PRs #57–#86; the final
+release-record PR changes documentation only. Three things changed in kind:
+the system now judges its own rendered output with no human in the acceptance
+loop (#57, #61, #64, #75); a clean-room harness installs the product the way a
+buyer would and refuses to fall back to the checkout, which is what found the
+defects the repo suite structurally could not see (#58, #59); and the module
+contract carried four new work types (공문, 민원, 인사, 지원사업) with zero core
+edits, taking the product to **six distribution modules and seven bundles**
+(#65, #68, #69, #70).
+
+Forty defects and harness lessons were found by validation rather than by the
+suite: three Claude clean-room rounds, three tiers of an independent Codex
+harness, three work-type family runs, and the fresh-root G1 acceptance chain.
+The ledger, and the honest limits of what those runs prove, is
+`docs/release-v0.17.0.md`.
+
 ### Added
 
 - `preedit fill-cells` writes **multiple paragraphs** into one cell (T39). A
@@ -42,6 +65,13 @@ the kernel's contract shape.
   troubleshooting distillate.
 ### Fixed
 
+- **T37 — self-closing XML elements do not steal a sibling's text.** Six
+  shared patterns treated `<hp:run/>` as if it opened a paired run and
+  captured the next sibling's body. The arity-preserving fix recognizes the
+  self-closing branch explicitly. A first repair also exposed the reusable
+  rule: changing a shared regex's capture-group count is an interface change
+  whose blast radius is every caller in the tree, not only the edited
+  directory. Fourteen regressions pin both the XML shape and group arity.
 - **T38 — conversion provenance survives the step boundary.** A correctly
   filled 기안문 별지 (and every gongmun-family form whose blank stores
   `PrintInfo/PrintMethod=4`) could not reach `verdict: pass` by any shipped
@@ -154,25 +184,6 @@ the kernel's contract shape.
   `<hp:cellAddr>` at the END of `<hp:tc>`, after the `<hp:subList>` holding the
   paragraphs, so a single forward scan reaches every run in a cell before it
   learns the cell's address.
-
-## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
-
-v0.16.0 shipped as an **alpha**: written by its authors, run on its authors'
-machine, exercised on one form-family lineage, and only ever against empty
-forms. v0.17 is the release that turned that into a product someone else can
-install and use — 21 commits, PRs #57–#77. Three things changed in kind:
-the system now judges its own rendered output with no human in the acceptance
-loop (#57, #61, #64, #75); a clean-room harness installs the product the way a
-buyer would and refuses to fall back to the checkout, which is what found the
-defects the repo suite structurally could not see (#58, #59); and the module
-contract carried four new work types (공문, 민원, 인사, 지원사업) with zero core
-edits, taking the product to **six distribution modules and seven bundles**
-(#65, #68, #69, #70).
-
-Twenty-five defects were found by validation runs rather than by the suite —
-three Claude clean-room rounds and, at the end, three tiers of an independent
-Codex harness. The ledger, and the honest limits of what those runs prove, is
-`docs/release-v0.17.0.md`.
 
 ### Autonomous verification — the machine judges the render
 
@@ -682,10 +693,11 @@ floor), with a negative control that plants a corpus family with no task.
 
 ### Trouble table
 
-Rows **T26–T36** added, each with the run class that surfaced it: T26–T30 the
+Rows **T26–T46** added, each with the run class that surfaced it: T26–T30 the
 first clean-room cross-model round, T31–T32 the second, T33 the module-wiring
-class, T34–T35 the third, and T36 the independent Codex harness across three
-model tiers.
+class, T34–T35 the third, T36 the independent Codex harness across three model
+tiers, and T37–T46 the work-type family runs and fresh-root G1 acceptance
+chain.
 
 ## v0.16.0 — unified core and modules
 
