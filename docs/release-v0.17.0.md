@@ -189,7 +189,7 @@ module disabled, suite green, module entry points refuse loudly by design.
 - **Profile store**: `privacy_scan`'s `profile_store_content` /
   `profile_store_path` HARD markers make a bundle that stages personalization
   store content unbuildable.
-- **`py_compile_sweep`**: `python scripts/py_compile_sweep.py` — 64 files, 0 failures, exit 0.
+- **`py_compile_sweep`**: `python scripts/py_compile_sweep.py` — 83 files, 0 failures, exit 0.
 
 ## The validation ledger
 
