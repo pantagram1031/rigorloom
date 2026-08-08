@@ -1095,7 +1095,9 @@ _SEAT_FINE_PRINT = " ".join(
 
 
 def make_seat_form_hwpx(path: Path, *, seat, seat_charpr: int = 9,
-                        seat_extra_run: tuple[int, str] | None = None) -> Path:
+                        seat_extra_run: tuple[int, str] | None = None,
+                        seat_empty_runs: int = 1,
+                        seat_paragraphs: tuple[str, ...] | None = None) -> Path:
     """A form with ONE labelled seat cell (0,0) and a fine-print cell (1,0).
 
     ``seat`` is the seat cell's run text; ``None`` writes the genuinely empty
@@ -1106,9 +1108,15 @@ def make_seat_form_hwpx(path: Path, *, seat, seat_charpr: int = 9,
     writes it.
     """
     value_run = (_run(seat_charpr, seat) if seat is not None
-                 else f'<hp:run charPrIDRef="{seat_charpr}"/>')
+                 else f'<hp:run charPrIDRef="{seat_charpr}"/>'
+                 * seat_empty_runs)
     if seat_extra_run is not None:
         value_run += _run(*seat_extra_run)
+    seat_body = ("".join(
+        f'<hp:p id="{10 + index}">{_run(seat_charpr, line)}</hp:p>'
+        for index, line in enumerate(seat_paragraphs))
+        if seat_paragraphs is not None
+        else f'<hp:p id="10">{value_run}</hp:p>')
 
     def cell(row, body):
         return ('<hp:tc name="" header="0"><hp:subList>' + body +
@@ -1120,7 +1128,7 @@ def make_seat_form_hwpx(path: Path, *, seat, seat_charpr: int = 9,
         '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
         ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
         '<hp:p id="1"><hp:tbl id="20" rowCnt="2" colCnt="1">'
-        '<hp:tr>' + cell(0, f'<hp:p id="10">{value_run}</hp:p>') + '</hp:tr>'
+        '<hp:tr>' + cell(0, seat_body) + '</hp:tr>'
         '<hp:tr>' + cell(1, f'<hp:p id="11">{_run(0, _SEAT_FINE_PRINT)}</hp:p>')
         + '</hp:tr></hp:tbl></hp:p>'
         # a genuinely superscripted footnote marker no fill produced: the
@@ -1268,7 +1276,7 @@ def test_t40_still_catches_a_script_written_into_a_genuinely_empty_seat(
     artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
                                    seat=_FILL_VALUE, seat_charpr=7)
     expectations = tmp_path / "exp.json"
-    expectations.write_text(json.dumps({"fill_map": {"product": _FILL_VALUE}}),
+    expectations.write_text(json.dumps({"fill_map": {"0,0": _FILL_VALUE}}),
                             encoding="utf-8")
     verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
                               baseline=blank, pdf_value=_FILL_VALUE,
@@ -1284,6 +1292,156 @@ def test_t40_still_catches_a_script_written_into_a_genuinely_empty_seat(
     assert evidence["form_baseline_charpr_id"] is None
     assert "genuinely empty run" in evidence["form_baseline_note"]
     assert _script_findings(verdict, "warn") == []
+
+
+def test_t42_address_keyed_reserved_body_runs_inherit_safe_form_typography(
+        tmp_path, monkeypatch):
+    """The canonical gongmun path: fill-cells writes the address-keyed body
+    into a block of reserved blank runs. The form chose one non-script charPr
+    for that whole block, so a filled run with the same signature inherits the
+    form's typography even though no blank run carried visible text."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=9, seat_empty_runs=3)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
+                                   seat=_FILL_VALUE, seat_charpr=9)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": {"0,0": _FILL_VALUE}}),
+                            encoding="utf-8")
+    verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
+                              baseline=blank, pdf_value=_FILL_VALUE,
+                              expectations=str(expectations))
+
+    assert code == 0, verdict
+    assert _script_findings(verdict, "hard") == []
+    warns = _script_findings(verdict, "warn")
+    assert [row["code"] for row in warns] == ["fill_charpr_script_inherited"]
+    evidence = warns[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] == "9"
+    assert evidence["form_baseline_match"] == "cell_address_reserved_runs"
+    assert evidence["form_baseline_reserved_runs"] == 3
+
+
+def test_t42_multiple_reserved_runs_do_not_excuse_a_script_trap(
+        tmp_path, monkeypatch):
+    """Still-catches: repetition alone is not authority. A reserved block whose
+    charPr has a script/scale/offset anomaly remains the T30 trap."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=7, seat_empty_runs=3)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
+                                   seat=_FILL_VALUE, seat_charpr=7)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": {"0,0": _FILL_VALUE}}),
+                            encoding="utf-8")
+    verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
+                              baseline=blank, pdf_value=_FILL_VALUE,
+                              expectations=str(expectations))
+    assert code == 3, verdict
+    hards = _script_findings(verdict, "hard")
+    assert [row["code"] for row in hards] == ["fill_charpr_script_mismatch"]
+    assert hards[0]["evidence"]["form_baseline_charpr_id"] is None
+    assert "script/scale/offset" in hards[0]["evidence"]["form_baseline_note"]
+
+
+def test_t42_filled_signature_must_match_the_reserved_block(
+        tmp_path, monkeypatch):
+    """Still-catches: the form reserves a safe ratio-only face, but the fill
+    changed it to a superscript charPr. Reserved typography is evidence only
+    for the exact signature the blank carried."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=9, seat_empty_runs=3)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
+                                   seat=_FILL_VALUE, seat_charpr=7)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": {"0,0": _FILL_VALUE}}),
+                            encoding="utf-8")
+    verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
+                              baseline=blank, pdf_value=_FILL_VALUE,
+                              expectations=str(expectations))
+    assert code == 3, verdict
+    evidence = _script_findings(verdict, "hard")[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] is None
+    assert "does not match" in evidence["form_baseline_note"]
+
+
+def test_t42_mixed_reserved_charprs_are_ambiguous_and_stay_hard(
+        tmp_path, monkeypatch):
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=9, seat_empty_runs=2,
+                                seat_extra_run=(7, ""))
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx",
+                                   seat=_FILL_VALUE, seat_charpr=9)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({"fill_map": {"0,0": _FILL_VALUE}}),
+                            encoding="utf-8")
+    verdict, code = _seat_run(tmp_path, monkeypatch, artifact=artifact,
+                              baseline=blank, pdf_value=_FILL_VALUE,
+                              expectations=str(expectations))
+    assert code == 3, verdict
+    evidence = _script_findings(verdict, "hard")[0]["evidence"]
+    assert evidence["form_baseline_charpr_id"] is None
+    assert evidence["form_baseline_empty_charpr_ids"] == ["7", "9"]
+    assert "several charPr ids" in evidence["form_baseline_note"]
+
+
+_MULTILINE_FILL = (
+    "1. 귀 기관의 무궁한 발전을 기원합니다.",
+    "2. 요청 자료를 기한까지 제출하여 주시기 바랍니다.",
+)
+
+
+@pytest.mark.parametrize(
+    "mapped_value",
+    [list(_MULTILINE_FILL), "\n".join(_MULTILINE_FILL)],
+    ids=["json_array", "newline_string"],
+)
+def test_t44_multiline_address_values_run_the_t42_charpr_check(
+        tmp_path, monkeypatch, mapped_value):
+    """A multi-paragraph declaration must feed each authored paragraph to
+    T30/T42; it may not turn the safety check into an un-runnable skip."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=9, seat_empty_runs=3)
+    artifact = make_seat_form_hwpx(
+        tmp_path / "filled.hwpx", seat=None, seat_charpr=9,
+        seat_paragraphs=_MULTILINE_FILL)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(
+        json.dumps({"fill_map": {"0,0": mapped_value}}, ensure_ascii=False),
+        encoding="utf-8")
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        pdf_value=" ".join(_MULTILINE_FILL),
+        expectations=str(expectations))
+
+    assert code == 0, verdict
+    assert not any(row["check"] == "fill_charpr_script_mismatch"
+                   for row in verdict["acceptance_blockers"])
+    warns = _script_findings(verdict, "warn")
+    assert [row["code"] for row in warns] == [
+        "fill_charpr_script_inherited"]
+    assert verdict["deterministic"]["fill_charpr_script"][
+        "fill_modified_runs"] == 2
+
+
+def test_t44_multiline_fill_with_changed_charpr_still_hards(
+        tmp_path, monkeypatch):
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=None,
+                                seat_charpr=9, seat_empty_runs=3)
+    artifact = make_seat_form_hwpx(
+        tmp_path / "filled.hwpx", seat=None, seat_charpr=7,
+        seat_paragraphs=_MULTILINE_FILL)
+    expectations = tmp_path / "exp.json"
+    expectations.write_text(json.dumps({
+        "fill_map": {"0,0": "\n".join(_MULTILINE_FILL)}}), encoding="utf-8")
+    verdict, code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        pdf_value=" ".join(_MULTILINE_FILL),
+        expectations=str(expectations))
+
+    assert code == 3, verdict
+    assert [row["code"] for row in _script_findings(verdict, "hard")] == [
+        "fill_charpr_script_mismatch"]
+    assert not any(row["check"] == "fill_charpr_script_mismatch"
+                   for row in verdict["acceptance_blockers"])
 
 
 def test_t40_a_baseline_that_is_not_this_form_excuses_nothing(
@@ -1742,6 +1900,24 @@ def test_t31_prefix_preserving_fill_passes_with_only_a_fill_map(tmp_path):
     assert keep["consumed"] == [_URL_KEY, _ZIP_KEY]
     assert keep["unfilled"] == []
     assert set(keep["derived_keep"]) == {"기관명", "I.  서론"}
+
+
+def test_t43_consumed_requires_the_label_inside_a_declared_value_span():
+    """A mapped fragment appearing after a label is not a prefix-preserving
+    value. Reporting the label as consumed contradicts the residue delegate,
+    which correctly HARDs the label outside that fragment's span."""
+    profile = {"anchors": ["수신"], "placeholders": []}
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        profile, {"수신": "국가유산청장"}, "수신 국가유산청장")
+    assert keep == []
+    assert consumed == []
+    assert unfilled == ["수신"]
+
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        profile, {"수신": "수신 국가유산청장"}, "수신 국가유산청장")
+    assert keep == []
+    assert consumed == ["수신"]
+    assert unfilled == []
 
 
 def test_t31_still_catches_a_key_that_was_never_filled(tmp_path):

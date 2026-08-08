@@ -313,6 +313,11 @@ skeleton to keep → `replace --at-cell-append`; printed text to replace wholly 
     nested tables with more blanks after them, and counting past them would put
     a 본문 line under 발신명의. `paragraphs_reused`/`paragraphs_created` report
     which happened.
+  - **The post-flight uses the same paragraph split** (T44). JSON-array and
+    newline fill-map values feed every non-empty paragraph to T30/T42, and an
+    exact `ROW,COL` key scopes those matches to that seat. The render-presence
+    leg joins the same paragraphs, so neither spelling turns the charPr safety
+    check into an unavailable skip.
   - **`--parapr-per-cell ROW,COL=ID` (repeatable)** repoints the `paraPrIDRef`
     of the paragraphs this call **writes** (indent, alignment, line spacing);
     paragraphs it does not write are untouched. You need it when the form's own
@@ -393,7 +398,11 @@ superscript trap. So treat it as a decision, not a rubber stamp:
 Keeping the cell's own style no longer costs you the post-flight (T40). Given
 `--baseline BLANK.hwpx`, `visual_verify` compares each filled run against the
 blank run named by the fill-map key in the SAME seat as well as against the
-document body, and a
+document body. An exact `ROW,COL` key may also inherit from a repeated block of
+reserved empty runs in that seat, but only when at least two runs share one
+charPr, the filled signature matches it exactly, and its only difference from
+body is `ratio` (T42); one empty run, mixed ids or any script/scale/offset trap
+still HARDs. A
 signature the printed form already had is a WARN
 (`fill_charpr_script_inherited`) naming the seat — it HARDs only on a difference
 the fill actually introduced. Without an `.hwpx` baseline the HARD stands, and
@@ -430,6 +439,12 @@ loader — `check_residue.load_fill_map` — serves `check_residue`,
 `visual_verify` and every module checker, so one file works for all of them. A
 wrapper whose `fill_map` member is not an object is a usage error naming both
 shapes; it is never read as a bare map.
+
+For a prefix-preserving label fill, the value is the complete resulting span,
+not only the appended payload (T43): `{"수신": "수신 국가유산청장"}` is
+attributable; `{"수신": "국가유산청장"}` leaves `수신` outside the value span
+and correctly HARDs as residue. The keep derivation and residue delegate use
+the same per-occurrence span rule.
 
 The form scan's anchor+guide inventory IS the forbidden list. Exit 0 clean,
 3 residue found / artifact malformed / pinned target missing, 2 usage.

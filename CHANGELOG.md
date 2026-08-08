@@ -102,11 +102,37 @@ the kernel's contract shape.
   usage error until `other_occurrences: form_text|seats` states which semantics
   apply. Scoped maps work from either `--fill-map` or expectations-only and are
   flattened for every other consumer.
+- **T42 — address-keyed reserved form runs are a strict seat baseline.** The
+  canonical 기안문 body fill uses key `"2,0"` and writes into a block of 23
+  blank paragraphs, all carrying the form's deliberate 12pt/97% charPr. T40
+  could prove inheritance only from visible text, so this correct fill still
+  HARDed. For exact `ROW,COL` keys, the post-flight now accepts at least two
+  empty runs in that exact seat only when they share one defined charPr, the
+  filled signature matches it exactly, and its sole body difference is
+  `ratio`; the result is the existing named inheritance WARN. A single empty
+  run, mixed ids, changed signature, or script/scale/offset anomaly remains
+  HARD. No safety check or waiver changed.
+- **T43 — residue consumption uses the gate's value spans.** A mapped payload
+  appearing after a surviving form label no longer makes the keep report call
+  that label consumed. The targeted occurrence itself must lie wholly inside
+  a declared value span, using `check_residue`'s own span and occurrence
+  primitives. Prefix-preserving or COM fills therefore declare the complete
+  resulting line (`{"수신": "수신 국가유산청장"}`); payload-only declarations
+  remain `unfilled` and HARD. Key-absence replacement fallback is unchanged.
+- **T44 — multi-paragraph fill declarations reach T30/T42.** The authoring
+  path split JSON arrays and newline strings into one run per paragraph, but
+  the post-flight searched each run for the unsplit whole. That made the
+  charPr safety check unavailable on the documented multi-line body shape;
+  JSON arrays also failed render presence by being stringified as a Python
+  list. `visual_verify` now reuses `preedit.split_fill_lines`: render presence
+  compares the joined paragraphs, charPr verification checks every non-empty
+  paragraph, and exact `ROW,COL` keys are scoped to that seat. Regressions pin
+  array/newline inheritance and a changed-charPr multi-paragraph HARD.
 
 ### Changed
 
 - `engine/scripts/charpr_script.py` gains the seat layer: `iter_seat_runs`,
-  `seat_addresses`, `seat_label_runs`. `iter_runs` now
+  `iter_seat_empty_runs`, `seat_addresses`, `seat_label_runs`. `iter_runs` now
   delegates to `iter_seat_runs` and drops the seat, so the seat-aware and
   seat-blind readings of a document cannot report different runs, text or
   order. Seat resolution takes two passes on purpose: OWPML puts
