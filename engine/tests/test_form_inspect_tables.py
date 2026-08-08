@@ -359,3 +359,45 @@ def test_spacer_criterion_is_geometric_not_addressed():
     marked2 = form_inspect._mark_spacers(taller, col_cnt)
     assert (18, 0) not in {(c["addr"]["row"], c["addr"]["col"])
                            for c in marked2}
+
+
+def test_habit_flags_get_a_hint_naming_what_to_use_instead():
+    """--pretty/--indent/--json are unsupported; the error must say why.
+
+    The habit has an in-repo source: probe.py is the only script whose default
+    output is compact single-line (SKILL.md injects it inline), so it alone
+    carries --pretty. Every other script emits indent=2 unconditionally. A
+    clean-room agent tried --pretty on form_inspect from that habit; a bare
+    'unrecognized arguments' told it nothing.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).parents[1] / "scripts" / "form_inspect.py"
+    form = (Path(__file__).parents[2] / "tests" / "corpus" / "forms"
+            / "grant" / "pps-hyeopeop-seungin-sinchengseo.hwpx")
+    for flag, needle in (("--pretty", "--pretty"),
+                         ("--indent", "--indent"),
+                         ("--json", "--json")):
+        proc = subprocess.run(
+            [sys.executable, str(script), str(form), flag],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        assert proc.returncode != 0, flag
+        combined = proc.stdout + proc.stderr
+        assert needle in combined, (flag, combined)
+        assert "indent=2" in combined or "JSON" in combined, (flag, combined)
+
+
+def test_the_help_epilog_states_the_output_contract():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).parents[1] / "scripts" / "form_inspect.py"
+    proc = subprocess.run([sys.executable, str(script), "--help"],
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    assert proc.returncode == 0
+    assert "indent=2" in proc.stdout
+    assert "probe.py" in proc.stdout

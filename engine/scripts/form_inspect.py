@@ -1155,11 +1155,40 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
     return profile, baseline
 
 
+# 습관에서 오는 미지원 플래그 → 무엇을 쓰라는 안내로 바꾼다.
+# 출처가 리포 안에 있다: engine/scripts/probe.py 만 기본 출력이 단일행
+# 압축이라 --pretty 를 갖는다(SKILL.md 인라인 주입 계약). 나머지 스크립트는
+# 전부 indent=2 가 기본이므로 --pretty/--indent 는 이미 가진 동작을 요청하는
+# 셈이고, --json 은 유일 출력 형식을 다시 고르는 셈이다. 세 클린룸 라운드 중
+# 한 에이전트가 --pretty 를 습관으로 시도했다(T35 계열: 이름은 같은데 의미가
+# 스크립트마다 다른 것).
+_HABIT_FLAGS = {
+    "--pretty": "출력은 항상 indent=2 JSON이다 — --pretty 는 없다",
+    "--indent": "출력은 항상 indent=2 JSON이다 — --indent 는 없다",
+    "--json": "출력 형식은 JSON뿐이다 — --json 은 없다",
+}
+
+
+class _HabitAwareParser(argparse.ArgumentParser):
+    """미지원 플래그가 습관 목록에 있으면 대안을 함께 알려준다."""
+
+    def error(self, message):
+        for flag, hint in _HABIT_FLAGS.items():
+            if flag in message:
+                message = f"{message} ({hint})"
+                break
+        super().error(message)
+
+
 def main():
     # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
     utf8_stdio()
-    ap = argparse.ArgumentParser(description=__doc__,
-                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = _HabitAwareParser(description=__doc__,
+                                  formatter_class=argparse.RawDescriptionHelpFormatter,
+                                  epilog="출력은 항상 indent=2 JSON이다"
+                                         "(--pretty/--indent/--json 없음). "
+                                         "단일행 압축이 필요하면 probe.py 만 "
+                                         "그 계약을 갖는다.")
     ap.add_argument("form", help=".hwpx 양식 경로")
     ap.add_argument("--out", help="form_profile.json 출력 경로(생략 시 stdout)")
     ap.add_argument("--baseline", help="form_baseline.json 출력 경로(지정 시 생성)")

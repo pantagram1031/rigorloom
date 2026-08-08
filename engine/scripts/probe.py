@@ -145,7 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true",
                     help="compact single-line JSON (default output is the same; "
                          "flag kept for the SKILL.md injection contract)")
-    ap.add_argument("--pretty", action="store_true", help="indented JSON")
+    ap.add_argument("--pretty", action="store_true",
+                    help="indented JSON. This script is the ONLY one whose "
+                         "default output is compact single-line, because "
+                         "SKILL.md injects it inline; every other script "
+                         "emits indent=2 unconditionally and has no such flag")
     ap.add_argument("--backends", default=None,
                     help="backends YAML/JSON config for backend_precheck "
                          "(default: RIGORLOOM_BACKENDS env; absent = 'unconfigured')")
