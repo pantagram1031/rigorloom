@@ -12,22 +12,41 @@ default.**
 
 Rigorloom is an agent-neutral document engine for Korean HWP/HWPX forms —
 recognition, fill, assembly, verification, and delivery — with an optional,
-resumable report pipeline on top. Current release: **v0.16.0** (pending
+resumable report pipeline on top. Current release: **v0.17.0** (pending
 tag). See [CHANGELOG.md](CHANGELOG.md) for the version history and
 [docs/golden-path.md](docs/golden-path.md) for an end-to-end, Hancom-free
 walkthrough.
 
-**One core, N modules.** Since v0.16 the repo is a monorepo with a single
-general-purpose core (the `engine/` document backends, form recognition,
-render proof ladder, privacy scan, module registry, base Studio) and
-capability that ships as separately installable **distribution modules**
-behind one contract (`modules/README.md`): `report` (stage machine, report
-checkers, compose resolver, playbooks), `style` (translationese removal and
-voice consistency — never AI-detection evasion), and general
-personalization pack types in core with report-flavored packs supplied by
-the report module. Core never imports a module; absence is not failure (the
-suite is green with every module disabled); bundles are built per module by
+**One core, six modules, seven bundles.** Since v0.16 the repo is a monorepo
+with a single general-purpose core (the `engine/` document backends, form
+recognition, render proof ladder, privacy scan, module registry, base Studio)
+and capability that ships as separately installable **distribution modules**
+behind one contract (`modules/README.md`). Six modules ship today: `report`
+(stage machine, report checkers, compose resolver, playbooks), `style`
+(translationese removal and voice consistency — never AI-detection evasion),
+and four **work-type** modules added in v0.17 — `gongmun` (공문/기안문),
+`minwon` (민원·신고 서식), `hr` (계약·인사 서식), and `grant` (지원사업 신청
+packets) — each a deterministic checker set plus a skill fragment for its task
+flow. General personalization pack types live in core, with report-flavored
+packs supplied by the report module. Core never imports a module; absence is
+not failure (the suite is green with every module disabled); the seven bundles
+(`rigorloom-core` plus one per module) are built by
 `scripts/package_module.py` at the same version.
+
+**Validated from outside the checkout.** A repo test suite proves the code is
+correct; it cannot prove that the *thing we ship* is complete. The clean-room
+harness at [`evals/`](evals/README.md) installs the product the way a buyer
+would — dist zips only, into a fresh temp root, enabled and skill-installed
+through the shipped CLIs — and asserts containment on five independent axes,
+with no code path that falls back to the checkout. That harness is what found
+the v0.16.0 core bundle shipping no skill surface at all. Measured tier
+guidance ships *with the product* at
+[skill/references/model-routing.md](skill/references/model-routing.md): which
+model tier to run which task class on, what was measured, and what is
+explicitly unmeasured. The end-to-end form-fill procedure is one document,
+[skill/references/fill-recipe.md](skill/references/fill-recipe.md) — the
+branch-per-cell decision rule, the four artifacts and the flag that eats each,
+the literal command sequence, and what an accepted verdict looks like.
 
 Since 2026-05-18, Korean government systems accept HWPX-only attachments
 while published blanks are still mostly `.hwp` — rigorloom's hwp→hwpx
@@ -89,7 +108,20 @@ for the full stage graph and gate contracts.
 
 - A config-driven pipeline kernel (stage schema version `0.6`, unchanged
   since v0.7) with hard and human gates. The kernel is stable; everything
-  below has been layered on top of it through the v0.7–v0.16 waves.
+  below has been layered on top of it through the v0.7–v0.17 waves.
+- **Autonomous verification** (`pipeline/scripts/visual_verify.py`, v0.17): the
+  render-judge loop merges every deterministic backstop into one findings list,
+  then prepares a vision task against a closed 12-class defect rubric
+  (`skill/references/visual-rubric.md`) and consumes the handback. It never
+  calls a model itself, an unknown rubric class is a usage error rather than a
+  finding, and `acceptance: true` is impossible while any of the five
+  `SAFETY_CHECKS` sits unwaived in `skipped[]`.
+- **A clean-room validation harness** (`evals/`, v0.17) that installs from dist
+  zips into a throwaway root, self-checks through the *packaged* verifier, and
+  treats any reference back to the source tree as a hard failure.
+- **A shipped model-routing table** (`skill/references/model-routing.md`,
+  v0.17): per-task-class tier guidance from three measured clean-room rounds,
+  with the unmeasured task classes named as unmeasured.
 - A distribution-module contract (`modules/README.md`): modules declare
   checkers, CLI commands, pack types, run modes, gate kinds, studio
   panels, and skill fragments in `module.yaml`; the registry enforces
@@ -279,8 +311,11 @@ Studio has two modes (`studio/main.py`):
 engine/      HWP/HWPX document engine (COM + XML backends, form inspect,
              layout QA, eqn converter; absorbed from hwp-master in v0.16)
 pipeline/    core contracts, checkers, registry, render proof, tests
-modules/     distribution modules behind one contract (report, style)
-skill/       router skill surface (SKILL.md + references incl. forms.md)
+modules/     distribution modules behind one contract (report, style,
+             gongmun, minwon, hr, grant — one bundle each)
+evals/       clean-room validation harness (bundles only, containment-asserted)
+skill/       router skill surface (SKILL.md + references: forms, operations,
+             fill-recipe, visual-rubric, model-routing, troubleshooting)
 studio/      optional read-only local viewer, extended by module panels
 scripts/     bootstrap, scaffolder, installer, packaging (package_module)
 adapters/    optional document/backend integrations
@@ -318,15 +353,26 @@ workspaces/  local run data; ignored by Git
   without Hancom present on the build machine itself.
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
-v0.16.0 completes the unified-core-and-modules program (engine absorption,
+v0.16.0 completed the unified-core-and-modules program (engine absorption,
 the distribution-module contract, report/style as modules, the blank-form
 corpus and skill surface, and the XC-1 conversion bench — see
 [docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md)
-and [docs/release-v0.16.0.md](docs/release-v0.16.0.md)). Known capability
+and [docs/release-v0.16.0.md](docs/release-v0.16.0.md)), and shipped as an
+alpha: authors, authors' machine, one form-family lineage, empty forms only.
+
+**v0.17.0 is the validation release.** Autonomous verification (visual rubric
++ render-judge loop, an acceptance safety set, a pinned exit-code contract), the
+clean-room harness, four new work-type modules, and a fill path that reaches a
+form's genuinely empty cells and its printed seats offline. Twenty-five defects
+were found by clean-room runs rather than by the suite, including two the
+independent Codex harness found that ours could not see. The evidence record —
+bundle hashes, the validation ledger, and the limits stated as limits — is
+[docs/release-v0.17.0.md](docs/release-v0.17.0.md). Known capability
 boundaries are stated per form family in
-[skill/references/forms.md](skill/references/forms.md). See
-[CHANGELOG.md](CHANGELOG.md) for what shipped in each release, and
-[docs/plans/](docs/plans/) for the design history behind each wave.
+[skill/references/forms.md](skill/references/forms.md); the two families with
+no corpus at all (school, corporate) are documented boundaries, not gaps in
+progress. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release,
+and [docs/plans/](docs/plans/) for the design history behind each wave.
 
 ## Docs
 
@@ -336,6 +382,14 @@ boundaries are stated per form family in
   graph and gate contract, read this before running a stage.
 - [docs/extensions.md](docs/extensions.md) — installable, data-only local
   knowledge packs with immutable receipts and deterministic precedence.
+- [skill/references/fill-recipe.md](skill/references/fill-recipe.md) — the
+  canonical end-to-end form fill: which command per cell, one map, verify.
+- [skill/references/model-routing.md](skill/references/model-routing.md) —
+  measured per-task-class tier guidance, and what is unmeasured.
+- [evals/README.md](evals/README.md) — the clean-room harness: what a
+  clean-room run is, the evidence it must produce, containment mechanics.
+- [docs/release-v0.17.0.md](docs/release-v0.17.0.md) — the v0.17.0 evidence
+  record: bundle hashes, validation ledger, honest limits.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 - [docs/plans/](docs/plans/) — design docs and hardening-wave reports.
 - [docs/lessons-learned.md](docs/lessons-learned.md),
@@ -359,6 +413,24 @@ edit to either (`modules/README.md`, rule 4).
 CI runs the suite at two module-set matrix points — core-only (every
 distribution module disabled) and all-modules — so "absence is not
 failure" is continuously proven.
+
+Beyond the suite, the product is validated from *outside* the checkout. Build
+the bundles, then install and self-check them the way a buyer would:
+
+```sh
+for m in core report style gongmun minwon hr grant; do
+  python scripts/package_module.py --module "$m" --out dist
+done
+python scripts/package_module.py --verify dist/rigorloom-core-0.17.0.zip
+
+python evals/cleanroom.py prepare --root /path/to/empty/dir --enable all \
+  --bundle dist/rigorloom-core-0.17.0.zip \
+  --bundle dist/rigorloom-report-0.17.0.zip   # ... one --bundle per module
+```
+
+`prepare` refuses a non-empty root, installs from zips only, and ends with a
+five-axis containment report; any finding is exit 3. See
+[evals/README.md](evals/README.md).
 
 ## Contributing
 

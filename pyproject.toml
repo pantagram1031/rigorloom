@@ -1,6 +1,6 @@
 [project]
 name = "rigorloom"
-version = "0.16.0"
+version = "0.17.0"
 description = "Agent-neutral, resumable report workflow"
 requires-python = ">=3.10"
 license = {text = "MIT"}

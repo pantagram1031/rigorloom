@@ -6,354 +6,520 @@ stages.yaml`'s `version: "0.6"`) has not changed since v0.7 — these releases
 add gates, backends, and tooling on top of a stable kernel, they do not change
 the kernel's contract shape.
 
-## Unreleased
+## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
 
-### Skill — one canonical fill recipe, one spacer class, one fewer permanent warning
+v0.16.0 shipped as an **alpha**: written by its authors, run on its authors'
+machine, exercised on one form-family lineage, and only ever against empty
+forms. v0.17 is the release that turned that into a product someone else can
+install and use — 21 commits, PRs #57–#77. Three things changed in kind:
+the system now judges its own rendered output with no human in the acceptance
+loop (#57, #61, #64, #75); a clean-room harness installs the product the way a
+buyer would and refuses to fall back to the checkout, which is what found the
+defects the repo suite structurally could not see (#58, #59); and the module
+contract carried four new work types (공문, 민원, 인사, 지원사업) with zero core
+edits, taking the product to **six distribution modules and seven bundles**
+(#65, #68, #69, #70).
 
-The independent Codex harness reported three defects that share a shape: the
-product knew things it never said, so every reader re-derived them.
+Twenty-five defects were found by validation runs rather than by the suite —
+three Claude clean-room rounds and, at the end, three tiers of an independent
+Codex harness. The ledger, and the honest limits of what those runs prove, is
+`docs/release-v0.17.0.md`.
 
-- **`skill/references/fill-recipe.md`** — the canonical mixed-storage fill,
-  worked end to end on the real PPS 협업승인신청서 and replayed verbatim to
-  `acceptance: true`. Three harnesses filling that form picked three different
-  strategies for the *same* 협업기간 cell, and one built three separate maps.
-  So the recipe states the branch-per-cell decision rule first (empty run →
-  `fill-cells`; skeleton to keep → `--at-cell-append`; template to replace
-  wholly → `--at-cell`; multi-run → the `#RUN` the refusal hands you; `spacer`
-  → do not write there), works 협업기간 as the example *because* it is the
-  field that fractured, names the four artifacts and the exact flag that eats
-  each, gives the literal sequence including the previously-undocumented
-  `com_backend.py convert --file … --to …` and the `tasklist` check before COM,
-  and closes with what an accepted verdict looks like versus each partial.
-  Linked one level deep from SKILL.md's routing table; the superseded
-  "which one fills a form" table in `operations.md` §3 is now a pointer, not a
-  second account.
-- **`form_inspect`: `classification: spacer`.** Six cells on the PPS form were
-  reported as `fill_target` when nothing is ever written in them, so Codex and
-  the round-3 Opus run each reasoned them away by hand. A spacer is empty, has
-  no label neighbour, and has one of two filler geometries derived from the
-  table itself — `full_width_band` (spans every column AND is shorter than the
-  shortest cell in that table that prints text) or `stub_head` (the corner
-  where a header row crosses a label column). No addresses, no absolute
-  heights, no tuned ratios. Excluded from the new `fill_target_count`, reported
-  under `spacer_cells`. PPS: 19 empty cells → 13 + 6.
-- **`empty_cell_expected_fill` stops firing on correct runs.** Every accepted
-  tier emitted the same two warns for by-design-blank or unsupplied cells, with
-  a page y-coordinate as the only evidence. `layout_qa` now emits one finding
-  per empty header cell carrying its column, its header row and a `label`, plus
-  `spacer_pattern` for the two by-design shapes; `visual_verify` suppresses
-  those and any seat named in **`declared_blank`** (in expectations or in the
-  wrapper-shaped fill map — `intentionally_blank` is an accepted alias, folded
-  into one list), recording every suppression under
+### Autonomous verification — the machine judges the render
+
+- **#57 — `visual_verify`, the render-judge loop, and a closed rubric
+  vocabulary.** `skill/references/visual-rubric.md` is the defect-class
+  vocabulary an agent applies when READING a rendered page PNG: 12 classes,
+  each with what it looks like, what it is NOT (the false-positive guard), and
+  which deterministic check already covers it (FULL / PARTIAL / NONE). §4
+  records the rubric's own gaps (colour fidelity, font substitution,
+  equation-scale overprint) rather than pretending to cover them.
+  `pipeline/scripts/visual_verify.py` is the loop driver: it renders pages
+  (fitz 130 dpi; hwpx goes through ONE serial `com_backend convert`, never
+  `--kill-stale`) and merges every deterministic backstop into a single
+  findings list — hwpx section/header XML validity (T23), zero-text document
+  and zero-content page (T25), stored `PrintMethod` plus
+  `pages_document`/`pages_pdf` parity (W6.2), declared page budget / base_pt /
+  line spacing / margins / fill map / forbidden text, `layout_qa` mapped onto
+  rubric classes, `check_residue` and `check_density` delegates, and a
+  `--baseline` pixel diff reporting changed-region bboxes. **It never calls a
+  model**: it prepares the vision task (`vision_required`: page, PNG, reasons,
+  rubric pointer) and consumes the handback through `--vision-verdict`,
+  validating every class against the rubric vocabulary — an unknown class is a
+  usage error, not a finding. No vision verdict means verdict `vision_pending`;
+  `--deterministic-only` can exit 0 but sets `acceptance: false`;
+  `--max-fix-attempts N` + `--attempt M` adds a HARD `loop_exhausted` so a
+  caller escalates instead of grinding. The ship gate is rubric calibration:
+  synthetic reproductions of all four historical incidents with
+  false-positive guards, and `INCIDENT_MATRIX` pins the
+  deterministic-vs-vision attribution so the rubric document and
+  `RUBRIC_CLASSES` cannot drift apart.
+- **#61 — three defects that were invisible from inside the repo.** *V1/T29*:
+  the shipped skill pointed at `docs/research/visual-rubric.md`, which was in
+  no bundle — the MANDATORY vision half reached a buyer with no class
+  definitions, and both clean-room agents recovered the vocabulary by reading
+  `RUBRIC_CLASSES` out of source. The rubric now has ONE home inside the
+  shipped surface, and the packaging guard is generalized rather than another
+  filename: `package_module` extracts every doc path named by every shipped
+  surface document and refuses the build (exit 3) unless it resolves inside
+  the staged bundle. Four further dangling references it immediately found are
+  now named in prose instead of as paths a buyer cannot open. *V2*:
+  `--form-profile` could not forward a keep list, so on a form fill every
+  surviving legitimate anchor read as residue and the delegate could never
+  return pass — added `--keep`, `--keep-pattern` and `--fill-map` (which
+  derives the standard form-fill keep list), auditable under
+  `deterministic.residue_keep`. *V3/T30*: a filled value inheriting a charPr
+  identical to body text except for a trailing `<hh:supscript/>` kept its
+  nominal 10pt height, so `charpr_check` and `style_diff` both passed it while
+  Hancom rendered it at ~6.35pt raised. `visual_verify` now compares the
+  script/scale/offset profile of every FILL-MODIFIED run against the
+  document's body-baseline charPr and HARDs on a difference
+  (`fill_charpr_script_mismatch`); scope is the false-positive guard, so an
+  intentionally superscripted footnote marker is never compared.
+- **#64 — T31: the keep list treats a prefix-preserving fill as consumed.** A
+  CORRECT form fill could not pass the residue gate through `--fill-map`
+  alone. The derivation computed "consumed" as "the mapping named this key"
+  and then relied on the key TEXT HAVING VANISHED — which is not what a
+  correct fill does. Filling a labeled field semantically KEEPS the label as a
+  prefix (`" http://"` → `" http://host"`; a zip field keeps its
+  `" 우(     -     )"` skeleton and appends the address), so the key survives
+  inside the value by construction. Now: a key is CONSUMED when its mapped
+  VALUE is present (whitespace-normalized, through `check_residue`'s own
+  normalization and text extractor so the derivation and the gate cannot
+  disagree); a key whose value is absent while the key text is still there is
+  UNFILLED and still HARDs, named in `residue_keep.unfilled`; and surviving
+  key text inside a value is attributed to that value's SPAN, per occurrence,
+  not suppressed document-wide (`occurrences`, `attributed`, `at_offsets`,
+  `context`, plus `fill_attribution` on the verdict). Guide text is never
+  attributable, for the same reason it is never keepable.
+- **#75 — T36: acceptance now requires the safety set, and no path exits 1.**
+  Two P0 correctness-of-VERDICT defects found by the independent Codex
+  clean-room harness. First, **`acceptance: true` while safety checks sat in
+  `skipped[]`**: the luna tier supplied a CLI `--fill-map` and still got
+  `empty_cell_expected_fill`, `fill_charpr_script_mismatch` AND page parity
+  into `deterministic.skipped[]`, then exit 0 with `acceptance: true`, because
+  acceptance was computed as "no HARD finding" and never read the skip list.
+  `visual_verify.SAFETY_CHECKS` now names in ONE place the five checks whose
+  absence invalidates acceptance (`page_parity`, `xml_wellformedness`,
+  `check_residue`, `empty_cell_expected_fill`,
+  `fill_charpr_script_mismatch`); `_skipped()` returns `{check, reason}`
+  records so a rule can match on them; and a skipped safety check makes the
+  verdict `safety_incomplete` with a HARD `acceptance_safety_skipped` naming
+  which and why, exit 3. `--accept-without CHECK` (repeatable, closed
+  vocabulary) is the only way past it, recorded as `acceptance_waivers` — per
+  check, never a blanket switch, and the skip is still reported. The pixel
+  diff stays OUT of the set (T35: a renderer-less machine loses one check, not
+  the run). Second, **`--fill-map` and `expectations.fill_map` were two inputs,
+  not one concept** — the flag drove the residue keep derivation while the
+  expectations member activated the declared-value presence check and the T30
+  post-flight, so the flag looked sufficient and was not. The CLI map now
+  SEEDS `expectations.fill_map` (`fill_map_source` records which surface it
+  arrived on); two DIFFERENT maps are a usage error rather than a silent
+  precedence rule. Third, **`pages_document` is no longer the caller's to
+  remember**: parity takes the first of conversion → expectations → the
+  artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
+  excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
+  `pages_document_source`, and skips only when all three fail. Fourth, the
+  **exit-code contract, all six rows**: sol and terra both saw exit **1** for
+  `vision_pending` where the contract says **3**. 1 was not a code at all but
+  an unhandled path — `emit_verdict` sat outside every guard in `main`, so an
+  unwritable `--out` escaped as a traceback after a perfectly good verdict.
+  `--out` is validated before the run and the emission is wrapped, so **no
+  path exits 1**; `test_exit_code_matrix` pins one row per terminal state
+  (`pass` 0, `deterministic_pass` 0, `vision_pending` 3, `fail` 3,
+  `safety_incomplete` 3, `usage_error` 2) and the docs table is asserted
+  against the code.
+- **#76 — `empty_cell_expected_fill` stops firing on correct runs.** Every
+  accepted tier emitted the same two warns for by-design-blank or unsupplied
+  cells, with a page y-coordinate as the only evidence — a warning every
+  correct run emits trains people to ignore warnings. `layout_qa` now emits
+  one finding per empty header cell carrying its column, its header row and a
+  `label`, plus `spacer_pattern` for the two by-design shapes;
+  `visual_verify` suppresses those and any seat named in **`declared_blank`**
+  (in expectations or in the wrapper-shaped fill map; `intentionally_blank` is
+  an accepted alias folded into one list), recording every suppression under
   `deterministic.layout_qa.empty_cell_suppressed` and the declaration under
   `deterministic.declared_blank` / `declared_blank_source`.
-- **Ragged shipped tables fail the build.** In GFM a raw `|` splits a cell even
-  inside a code span, so `com_backend.py inspect|edit` gave SKILL.md's routing
-  table one four-cell row among three-cell rows — in the first table a router
-  reads. Escaped, and `package_module` now asserts every table in every shipped
-  surface document is rectangular (core bundle and each module fragment).
 
-### Engine — the seat-text gap the third clean-room round left open (T34)
+### Clean-room validation — does the product work for someone who is not us
 
-Round 3 measured the already-fixed product and both tiers — Sonnet and Opus,
-independently — hit the same wall: a form's **printed seat** (a skeleton the
-form typeset for a value: `" 우(     -     )"`, `" http://"`,
-`"20   .    .    .  ~  20   .    .    .   (     개월)"`) could only be edited
-with a `replace` key reproducing the run's exact internal whitespace, and
-nothing shipped yielded that string. So both agents read
-`Contents/section0.xml` by hand — precisely the contact the shipped skill
-forbids. Opus hand-assembled two keys; the Sonnet tier's 30-char
-`text_preview` cut the 협업기간 skeleton right before its `(     개월)` blank
-and so HID it, costing a second replace pass.
+- **#58 — `evals/`, the clean-room harness.** `evals/cleanroom.py` installs
+  rigorloom the way a buyer would: dist zips only, into a fresh temp root
+  outside the checkout; modules enabled through the shipped registry CLI; the
+  skill installed through the shipped installer. It self-checks (per-bundle
+  `--verify` run by the *packaged* verifier, capability probe cross-checked
+  against the registry, `--help` smoke over core plus module-registered CLIs)
+  and then asserts containment on five independent axes — static path scan of
+  every sandbox text file, reported-path resolution, runtime import origin and
+  `sys.path` of a sandbox subprocess, environment scrub, and symlink escape.
+  Any finding is exit 3, and `verify-containment` re-runs the same assertions
+  after an agent has been in the sandbox. **There is deliberately no code path
+  that copies product files out of the checkout** — a surface missing from the
+  bundles is a `gap` recorded at HARD severity, and `--allow-gap`
+  acknowledges it without hiding it. `evals/tasks/*.yaml` ships task
+  definitions derived from `docs/research/form-eval-scenarios.md`, one per
+  corpus-backed family, referencing corpus forms by path so the eval tree
+  embeds no binaries; `run_record.schema.json` + `score.py` join a launcher's
+  run record with the machine-check results into a scorecard and fold several
+  scorecards into a cross-tier table. The model-invocation layer is a
+  documented seam, not a hardcoded launcher.
+- **#59 — the first thing it found: the core bundle shipped no skill
+  surface.** `rigorloom-core-0.16.0.zip` carried the document engine and no
+  `skill/SKILL.md`, no `skill/references/`, no `scripts/sync_local.py`
+  installer — a buyer had no way to install the router skill an agent loads,
+  and the `skill:` fragments the report and style modules declare had nothing
+  to merge into. The repo suite could not see it: it runs against the
+  checkout, where those files simply exist. `_CORE_COMPONENTS` now includes the
+  skill surface and the installer, and two staged-tree assertions (both exit 3)
+  stop the gap returning through an edit to the component list. Recorded in
+  full, with the corrected v0.16.0 inventory, under "Post-release fix" in
+  `docs/release-v0.16.0.md`.
+- **#63, #72 — cross-model measurement and a shipped routing table.**
+  `skill/references/model-routing.md` ships *with the product* so a buyer can
+  run the cheap tier by default and escalate only where a measurement says to.
+  Three rounds of two Claude tiers each, every run built from bundles alone
+  with containment verified afterwards. **Round 1 measured defect-workaround
+  cost, not tiers** — both tiers completed only by working around five product
+  defects. Round 2 (after #59–#62) measures tiers: identical machine verdicts,
+  within 6% on tokens, so Sonnet wins decisively on price for
+  inspect/fill/verify. Round 3 ran the same task against the full product with
+  all six modules enabled, and produced the result that changed the table: the
+  charPr pre-flight removed the one quality difference that had separated the
+  tiers, so **both tiers now avoid the superscript trap on the first attempt
+  without knowing it exists** — the fill class is Sonnet-sufficient by
+  mechanism rather than by luck. Opus's measured advantage is diagnosis
+  (it root-caused the charPr trap and found the shipped cp949 `--help` crash
+  that Sonnet reported only as friction). `assemble` and `prose/humanize` are
+  explicitly **unmeasured, no claim**. The document's own limits section names
+  the confounds: one task, one form family, one machine, two tiers, our own
+  harness, and — added in #72 — that every measured run is a Claude agent. At
+  release preparation that last limit was corrected rather than left standing:
+  the non-Claude axis now has **exactly one** data point (the independent Codex
+  harness of #75), recorded in the document with what it does and does not
+  support — luna produced an accepted document, so a second vendor *can* drive
+  the shipped surface, but it needed more retries and an auditing harness to
+  get there, and its numbers are not comparable with the table's.
 
-Fixed in three layers, most important first:
+### Four new work-type modules — six modules, seven bundles
 
-- **`preedit replace --at-cell ROW,COL[#RUN]=TEXT`** and
-  **`--at-cell-append ROW,COL[#RUN]=TEXT`** (both repeatable, plus
-  `--at-cell-map JSON` whose values are a string or `{text, mode}`): an
-  address-keyed variant that removes the need for the exact string entirely.
-  The two modes are explicit, never inferred — `--at-cell` replaces the run's
-  whole text, `--at-cell-append` keeps the printed prefix and appends
-  (`" http://"` → `" http://host"`, the normal shape of a labeled field,
-  T31). A cell holding more than one text run **refuses** (exit 2,
-  `at_cell_run_ambiguous`) and the refusal lists every run index with its
-  exact text, so neither "first run wins" nor "flatten the cell" can silently
-  destroy content — PPS (15,0) carries the regulation sentence, the
-  `년 월 일` 신청일 line, `신청인`, `(서명 또는 인)` and `조달청장 귀하` as
-  separate runs. A cell with no text run at all routes to `fill-cells`, so the
-  two operations partition "already prints something" vs "genuinely empty"
-  (T27). Addressing reuses `hwpx_tables`' scanner, so `--table N` agrees with
-  `form_inspect` and `fill-cells`, and every guard is shared: stale-lineseg
-  strip on changed paragraphs only (T24), well-formedness of modified members
-  before writing, the T30 charPr pre-flight (its refusal names
-  `--at-cell-charpr ROW,COL#RUN=ID`, accepted even when the edit was written
-  without `#RUN` — a ready-to-paste flag that does not paste is worse than
-  none), and the T22 dangling-charPr assertion when a charPr is repointed.
-  `--at-cell-expect ROW,COL[#RUN]=SUBSTRING` is a pre-write precondition
-  compared with all whitespace removed on both sides, so an operator asserts
-  `우(-)` without counting spaces. Re-runs are no-ops in both modes, so append
-  never doubles. `--map` together with `--at-cell*` in one call is a usage
-  error. Geometry is byte-identical apart from the edited text and the touched
-  paragraphs' linesegarray, fixed by regression on the real PPS seats.
-- **`table_map[].text_preview` now reports `truncated`.** The failure was not
-  that the preview is short but that nothing said there was more, which is why
-  a competent agent concluded the skeleton ended at the cut.
-- **`form_inspect --full-text [TABLE:]ROW,COL`** (repeatable): the documented,
-  per-cell opt-in escape from the structure-only contract. It emits the exact
-  run text for the cells you name and no others — absent from the profile
-  unless requested, with no whole-body path — because a byte-exact string is
-  only needed for a `replace --map` key or a `check_residue --fill-map` entry.
-  Its `runs[].index` IS `--at-cell`'s `#RUN` (`form_inspect` imports
-  `preedit.cell_text_runs`), and the string round-trips: fed back as a
-  `replace` key it hits exactly once — the regression that proves the gap is
-  closed.
+Each ships as its own installable bundle at the same version as core, and each
+was built with **zero edits outside its own directory** (plus `evals/`), which
+is the module contract's rule 4 exercised for real rather than asserted.
 
-Also: `--charpr-per-cell` is now documented in the **fill section** of
-`skill/references/operations.md` and in the SKILL.md routing row, not only
-inside the T30/T32 prose — round 3 found the fill path showing a bare
-`fill-cells --cell` call while the flag it actually needs lived three
-paragraphs away.
+- **#65 — `gongmun` (공문/기안문, family ②).** One deterministic checker
+  (`check_gongmun`), the `gongmun_org` pack type its issuing-organization seats
+  are filled from, and a skill fragment for the 공문 task flow; no
+  `requires_modules`. **The rules come from the 서식, not from a string list**:
+  「행정업무의 운영 및 혁신에 관한 규정 시행규칙」별지 제1호·제2호서식 state
+  their own rule in the 비고 block — the guide vocabulary must not be
+  displayed, its content must be. The checker carries no Korean literal it
+  matches on: the vocabulary is data and each form's own 비고 block is parsed
+  at run time and unioned into the term list. Seat state
+  (`blank_by_design`/`filled`/`emptied`/`half_filled`) is one mechanism applied
+  to 두문 / 결재란 / 결문 / 발신명의; half-filled — not "empty" — is the failure
+  mode a 결재란 row must never ship as. The 직인 slot is a placement, never a
+  fill target, and border colours are read only from borders whose `type` is
+  not `NONE` (the corpus 발신명의 box declares `#FF0000` on an undrawn border,
+  and a naive colour scan calls it a seal). A blank form is not a failed
+  공문: document state is classified from the form's own evidence, so both
+  corpus 기안문 forms pass untouched and report the unfilled shape. Rules that
+  cannot be decided from the inputs given are listed under `skipped` with a
+  reason — never silently passed.
+- **#68 — `minwon` (민원·신고 서식, family ①).** The highest-prevalence HWP
+  work type, and the one the fixed-grid table-fill capability was built for.
+  **Its rules are the INVERSE of gongmun's**: a 기안문's 비고 declares that its
+  guide vocabulary must be replaced by content, while a 민원 서식 declares the
+  opposite — its printed 유의사항 / 수수료 / 제출서류 / 동의 text is part of
+  the document the applicant submits. So the headline rule is
+  `guide_block_lost` and there is no residue class at all. Thirteen structural
+  rules in seven groups, every one derived from what the four corpus forms
+  themselves declare. Two mechanisms carried the design: **shading only means
+  "staff-only" where the form SAYS so** (정보공개 청구서 paints its
+  접수번호/접수일/처리기간 `#B2B2B2` and prints the declaration; 주민등록
+  등초본 신청서 paints cells the same colour, one of which is an instruction
+  block carrying the `[ ]` boxes the applicant must mark), and **an identity
+  seat is a label, not prose** (no checkbox glyph, at most 40 squeezed
+  characters). R6, the privacy rule, is deliberately NOT gated behind
+  `--baseline`: a 주민등록번호-shaped value the operator did not declare in
+  `--fill-map` is HARD on its own evidence. **No `pack_types`, and that is a
+  finding rather than an omission** — everything the applicant supplies is
+  per-document personal data, so a pack here would create the very store of
+  personal data the identity rules exist to prevent.
+- **#69 — `hr` (계약·인사 서식, family ⑦).** Chosen third for the one thing no
+  other family offers: the corpus holds a **versioned pair** of the same
+  instrument (고용노동부 표준근로계약서 2013 and its 2025 revision). Every rule
+  was verified against BOTH baselines before it was written, and candidates the
+  corpus does not support were dropped rather than shipped half-applicable.
+  This is also the one work type whose document IS the legal instrument — a
+  표준근로계약서 is numbered clause prose carrying the 근로기준법 제17조 서면
+  명시 의무 in its own words — so the twenty rules in eight groups are
+  preservation rules over PROSE. The corpus forced the design: the `'______'`
+  underline-blank premise does not hold (the 2013 pack has exactly one
+  underscore run, 2025 has none; the family's blanks are runs of spaces and
+  `년 월 일` skeletons); the stencil rule splits on colons as well as blank
+  runs because this family letter-spaces its labels; state classification
+  needs a NARROW mark class (the broad option-slot class matches 32 printed
+  parentheticals on the pristine 2013 pack and 66 on 2025, so every blank form
+  read as a draft); and `clause_renumbered` reads its inventory from the
+  baseline, never `1..N`, because the 2013 단시간 sheet legitimately runs
+  1,2,3,4,5,6,8,9 on the PRISTINE form. The 2013 → 2025 drift table is
+  re-derived by a test so it cannot rot. No `pack_types`, and again that is a
+  finding: a repository store of one party's 사업체명 · 대표자 ·
+  사업자등록번호 would be a standing supply of exactly the half-filled
+  contract `party_half_filled` exists to catch.
+- **#70 — `grant` (지원사업 신청, family ⑥).** The last of the planned
+  work-type set, and the one whose distinguishing property breaks an
+  assumption the other three share: **a 지원사업 submission is an application
+  PACKET, not a document** — one file carries a 신청서 grid, a flowing
+  사업계획서, 붙임/별첨 parts cited by number, per-programme budget tables and
+  standalone 동의서 sheets, and the applicant is *supposed* to change its
+  shape. Seventeen rules in nine groups, six declaring `wants: [baseline]`.
+  Two make this module different: the extendable-table geometry rule compares
+  COLUMN structure and the header row, never a cell count (adding rows is what
+  this family's applicant does — the form says `견적서 1개 초과시 표 추가`), so
+  a moved row count is reported as an extension while a changed column count
+  is HARD; and packet integrity needs no baseline, because whether a marker
+  class is INTERNAL is read off the document (a class with at least one
+  `【… N】` header is internal and every citation of it must resolve).
+  `budget_total_mismatch` is this family's one genuinely numeric invariant —
+  each 합계 equals the sum of its column, verified 8 times over on the
+  pristine kstartup form, whose totals are Hancom `=SUM()` fields, which is
+  exactly why an XML edit that skips recalculation leaves a stale printed
+  total. Four candidates were dropped, each recorded as a corpus assertion
+  rather than prose. `length_budget_unverified` is a declared dependency, not
+  a check: it reports `not_declared` / `needs_render` / `needs_section_scoping`
+  and names `visual_verify` as the owner of a page count instead of guessing
+  one.
 
-### Engine — fill defects found by the first clean-room cross-model run
+### Engine — the offline fill path becomes complete
 
-Two independent clean-room agents (Sonnet and Opus) hit all three of these on
-the same procurement form, so each is reproduced before it is fixed and
-locked by a failing-before test.
-
-- **T26 — `preedit replace` double-applied a value containing its own key.**
-  Tier B (raw substring) ran over the span tier A (whole-run) had just
-  rewritten. Measured with `operations.md`'s OWN documented example:
-  `{" http://": " http://example.kr"}` produced
-  `" http://example.krexample.kr"` with `hits: 2` — following the shipped
-  docs corrupted the cell. Replacement is now single-pass: every span a tier
-  writes is protected for the rest of the call, and spans already equal to
-  the value are protected before any tier runs. This also restores re-run
-  idempotence for such mappings and stops a later key from rewriting an
-  earlier key's value.
-- **T27 — new `preedit fill-cells`, the offline path to a genuinely empty
-  cell.** A form's empty cell is `<hp:run charPrIDRef="N"/>` with no `<hp:t>`
-  at all (19 of 19 empty cells on the PPS 협업승인신청서), so the text-keyed
-  `replace` could never reach it even though the skill routed form-filling
-  there. `fill-cells` addresses cells by the `cellAddr` that `form_inspect`'s
-  `table_map` reports (`--cell ROW,COL=TEXT` / `--map`, `--table N`), creates
-  the `<hp:t>` inside the empty run preserving its charPr (`--charpr`
-  overrides and then asserts no dangling charPr, T22), refuses a non-empty
-  target unless `--overwrite`, strips the modified paragraph's stale
-  linesegarray (T24), validates well-formedness before writing, and reports
-  per-cell hits. Table scanning moved to a shared tag-stack scanner
-  (`engine/scripts/hwpx_tables.py`) so `--table N` and `table_map[N]` are the
-  same table: the old non-greedy `<hp:tbl>(.*?)</hp:tbl>` mis-paired nested
-  tables and got the table/cell counts wrong on 6 of the 12 corpus forms
-  (gianmun-byeolji-1ho: 3 tables/34 cells reported as 2/6). `table_map` cells
-  now also carry `span`, and tables carry `depth`.
-- **T28 — `com_backend set_cell` addressed cells by keypress count.**
-  `TableRightCell` wraps across rows and `TableLowerCell` jumps over
-  rowSpans, so on any form with a rowspan label column (the norm in
-  government forms) the old `row`/`col` wrote to the wrong cell — targeting
+- **#60 — T26/T27/T28, the fill defects both round-1 clean-room agents hit.**
+  *T26*: `preedit replace` double-applied a value containing its own key — tier
+  B (raw substring) ran over the span tier A (whole-run) had just rewritten.
+  Measured with `operations.md`'s OWN documented example:
+  `{" http://": " http://example.kr"}` produced `" http://example.krexample.kr"`
+  with `hits: 2`, so following the shipped docs corrupted the cell.
+  Replacement is now single-pass: every span a tier writes is protected for
+  the rest of the call, which also restores re-run idempotence and stops a
+  later key rewriting an earlier key's value. *T27*: **new `preedit
+  fill-cells`, the offline path to a genuinely empty cell** — a form's empty
+  cell is `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (19 of 19 empty
+  cells on the PPS 협업승인신청서), so the text-keyed `replace` could never
+  reach it even though the skill routed form-filling there. `fill-cells`
+  addresses cells by the `cellAddr` that `form_inspect`'s `table_map` reports,
+  creates the `<hp:t>` inside the empty run preserving its charPr, refuses a
+  non-empty target unless `--overwrite`, strips the modified paragraph's stale
+  linesegarray (T24) and validates well-formedness before writing. Table
+  scanning moved to a shared tag-stack scanner (`engine/scripts/hwpx_tables.py`)
+  so `--table N` and `table_map[N]` are the same table: the old non-greedy
+  `<hp:tbl>(.*?)</hp:tbl>` mis-paired nested tables and got table/cell counts
+  wrong on 6 of the 12 corpus forms. *T28*: `com_backend set_cell` addressed
+  cells by keypress count — `TableRightCell` wraps across rows and
+  `TableLowerCell` jumps over rowSpans, so on any form with a rowspan label
+  column (the norm in government forms) it wrote to the wrong cell; targeting
   cellAddr (2,3) on the PPS form landed on (2,6), the `법인등록번호` label.
   `addr: [row, col]` now means cellAddr and is translated by a wrapping
   `TableRightCell` walk that verifies `get_cell_addr()` after every move and
-  aborts without writing on any mismatch; `expect_empty` / `expect TEXT`
-  refuse when the target's current content disagrees; the legacy keypress
-  mode survives only behind an explicit `raw_traversal: true` and the
-  validator rejects bare `row`/`col` before Hancom starts. A new
-  `com_backend.py set-cell --addr ROW,COL` subcommand is one session per cell
-  — the documented mitigation for the observed `get_into_nth_table(n)` drift
-  across repeated calls in a single Hancom session. COM-verified on the PPS
-  form: (2,3) reached in 4 steps from entry `A1`, label cells untouched.
-
-### Modules — `gongmun`, the first work-type module beyond report
-
-`modules/gongmun/` ships the 공문/기안문 work type (HWP usage landscape family
-②) as its own distribution bundle: one deterministic checker
-(`check_gongmun`), the `gongmun_org` pack type its issuing-organization seats
-are filled from, and a skill fragment for the 공문 task flow. No
-`requires_modules` — nothing in the payload touches report or style, and
-`modules/gongmun/tests/test_module_contract.py` asserts the module enables
-alone.
-
-- **The rules come from the 서식, not from a string list.** 「행정업무의 운영 및
-  혁신에 관한 규정 시행규칙」별지 제1호·제2호서식 state their own rule in the
-  비고 block — the guide vocabulary (`행정기관명`, `발신명`, `기안자`, `직위(직급)
-  서명`, `처리과명-연도별 일련번호(시행일)`, …) must not be displayed, its content
-  must be. That is the residue class; the section labels (`수신` / `경유` /
-  `제목` / `협조자` / `시행` / `접수` / `직인`) are the keep-list. The checker
-  carries no Korean literal it matches on: the vocabulary is data
-  (`references/gongmun_vocabulary.json`) and each form's own 비고 block is
-  parsed at run time and unioned into the term list.
-- **Seat state is one mechanism, applied to 두문 / 결재란 / 결문 / 발신명의.**
-  `blank_by_design` / `filled` / `emptied` / `half_filled` from the seat's own
-  text; ○ runs and layout punctuation are stripped before "a value is present"
-  is decided. Half-filled — not "empty" — is the failure mode a 결재란 row must
-  never ship as, and the row check reads the table row rather than the seat
-  list so a filled sibling beside a blank one is visible.
-- **The 직인 slot is a placement, never a fill target.** The red-bordered 1×1
-  box must survive carrying nothing but its label (`seal_slot_overwritten`,
-  `seal_slot_removed`). Border colours are read only from borders whose `type`
-  is not `NONE` — the corpus 발신명의 box declares `color="#FF0000"` on an
-  undrawn border and a naive colour scan calls it a seal.
-- **A blank form is not a failed 공문.** Document state is classified from the
-  form's own evidence (비고 present + nothing written = `blank`), so both
-  corpus 기안문 forms pass in their untouched state and report the unfilled
-  shape. Rules that cannot be decided from the inputs given are listed under
-  `skipped` with a reason (`no_baseline`, `seat_absent`,
-  `pack_vocabulary_empty`) — never silently passed.
-- **Evals**: `G1-gianmun-body-edit` gained two `check_gongmun` machine checks
-  (blank-form shape, produced-draft structure).
-
-### Engine — defects found by the second clean-room cross-model run (Opus)
-
-- **T30 becomes preventable: a charPr pre-flight for fill targets.** T30 was
-  detectable (`visual_verify`'s `fill_charpr_script_mismatch`) but not
-  avoidable: `fill-cells` "preserves the run's charPr" is documented as the
-  safe behavior, and on the PPS form cell (10,2)'s empty run carried a charPr
-  identical to body text plus `<hh:supscript/>` — a correct-looking fill
-  rendered at ~6.35pt raised, and finding the right `--charpr` id meant
-  reading `header.xml` by hand, which the shipped "structure only, never dump
-  body" contract actively discourages. Now: `form_inspect` reports
-  `body_baseline_charpr` once at the top level and, on every `fill_target`
-  cell, the `charpr` the fill would inherit, a `script_anomaly` flag, and
-  `charpr_suggested` (plus `script_anomaly_targets` for the anomalies alone);
-  `fill-cells` refuses an anomalous target that was given no explicit id
-  (exit 3, `code_name` `fill_charpr_script_anomaly`, naming the cell, the
-  anomalous charPr, the suggested id and the exact flag to pass) instead of
-  silently producing the 6pt fill. The comparison itself — profile
-  extraction, signature, body-baseline choice, difference test — moved to
-  `engine/scripts/charpr_script.py` and is imported by BOTH the pre-flight
-  and `visual_verify`, so the two halves cannot disagree; `preedit`'s
-  `fill_target_run_charpr` is likewise shared with `form_inspect` so they
-  cannot disagree about *which* run gets written. Non-target runs are never
-  compared, so an intentionally superscripted footnote marker stays out of
-  scope by construction. Corpus calibration (pinned by tests, not folklore):
-  6 of the 10 converted corpus forms carry at least one anomalous target and
-  `jeongbo-gonggae-cheongguseo` carries 18 of 19 — mostly a 2–5 pp `ratio`
-  delta that is the form's own typography. The refusal stands anyway, because
-  the post-flight gate compares the same five properties and would HARD on
-  those fills later; loosening the pre-flight alone would produce the worst
-  combination (pre-flight clean, gate refuses). To keep it workable the
-  refusal names every anomalous target at once and carries `suggested_flags`,
-  the ready-to-paste `--charpr-per-cell` argument list.
-- **T32 — `--charpr` is batch-wide; new `--charpr-per-cell`.** `--charpr`
-  applies to every target in the call, an undocumented constraint that is
-  only safe when all targets share a charPr — exactly what the T30 pre-flight
-  breaks. `--charpr-per-cell ROW,COL=ID` (repeatable) sets one target's id and
-  wins over `--charpr`; an address it names that is not in the fill list, or a
-  duplicate address, is a usage error rather than a silent no-op. The
-  batch-wide scope is now stated in the CLI help, the docstring and
-  `operations.md`.
-- **cp949-safe `--help` on every shipped entry point.** `com_backend.py
-  --help` died with `UnicodeEncodeError` (cp949, an em-dash in the top-level
-  parser description) on a Korean-locale Windows console — the platform the
-  COM path exists for. Subcommand help worked, which is why it went unnoticed:
-  only the top-level `--help` prints the parser description. The stdout/stderr
-  UTF-8 guard now runs at entry (before `parse_args`) in every shipped CLI —
-  12 in `engine/scripts` via the new `engine/scripts/cli_io.py`, and in
-  `pipeline/scripts` via `checker_base._utf8_stdio`, including inside
-  `checker_base.cli_main` so every checker routed through it is covered by
-  construction. 11 CLIs were broken and 8 more were latently unguarded. The
-  real deliverable is `tests/test_cli_cp949_help.py`: it DISCOVERS every
-  argparse entry point in both shipped trees and runs `--help` in a subprocess
-  under `PYTHONIOENCODING=cp949`, asserting exit 0 with no traceback — so the
+  aborts without writing on any mismatch; the legacy keypress mode survives
+  only behind an explicit `raw_traversal: true`.
+- **#62 — the 12-form recognition table re-derived after the scanner fix.**
+  7 of 12 forms had reported low table/cell counts, worst case
+  `gianmun-byeolji-1ho` (2 tables / 5 cells for a document carrying 3 / 34).
+  Anchors and guide_text were unaffected — the defect was purely structural.
+  Superseded values are retained per form under `superseded_pre_pr60`, the
+  bench doc carries an explicit correction block, and the `donguiseo` floor in
+  the shipped `forms.md` moved 3/16 → 4/17.
+- **#66 — T30 becomes preventable (charPr pre-flight), T32, and cp949-safe
+  `--help` everywhere.** T30 was detectable but not *avoidable*: `fill-cells`
+  "preserves the run's charPr" is documented as the safe behavior, and finding
+  the right `--charpr` id meant reading `header.xml` by hand — exactly the
+  contact the shipped "structure only, never dump body" contract discourages.
+  Now `form_inspect` reports `body_baseline_charpr` once and, on every
+  `fill_target` cell, the charPr the fill would inherit, a `script_anomaly`
+  flag and `charpr_suggested`; `fill-cells` **refuses** an anomalous target
+  given no explicit id (exit 3, `fill_charpr_script_anomaly`, naming the cell,
+  the anomalous charPr, the suggested id and the exact flag to pass) instead of
+  silently producing the 6pt fill. The comparison itself moved to
+  `engine/scripts/charpr_script.py` and is imported by BOTH the pre-flight and
+  `visual_verify`, so the two halves cannot disagree. Corpus calibration is
+  pinned by tests, not folklore: 6 of the 10 converted corpus forms carry at
+  least one anomalous target and `jeongbo-gonggae-cheongguseo` carries 18 of
+  19. T32: `--charpr` is batch-wide, an undocumented constraint the T30
+  pre-flight breaks, so `--charpr-per-cell ROW,COL=ID` sets one target's id and
+  wins over `--charpr`. And **`com_backend.py --help` died with
+  `UnicodeEncodeError`** on a Korean-locale Windows console — the platform the
+  COM path exists for — because an em-dash sat in the top-level parser
+  description, and only the top-level `--help` prints it. The UTF-8 stdio guard
+  now runs at entry in every shipped CLI (12 in `engine/scripts` via the new
+  `engine/scripts/cli_io.py`, and in `pipeline/scripts` via
+  `checker_base._utf8_stdio`, including inside `checker_base.cli_main` so every
+  checker routed through it is covered by construction). 11 CLIs were broken
+  and 8 more were latently unguarded; the real deliverable is
+  `tests/test_cli_cp949_help.py`, which DISCOVERS every argparse entry point in
+  both shipped trees and runs `--help` under `PYTHONIOENCODING=cp949`, so the
   whole class cannot be reintroduced by the next docstring.
+- **#74 — T34: address-keyed replace closes the seat-text gap.** Round 3
+  measured the already-fixed product and both tiers, independently, hit the
+  same wall: a form's **printed seat** (a skeleton the form typeset for a
+  value — `" 우(     -     )"`, `" http://"`,
+  `"20   .    .    .  ~  20   .    .    .   (     개월)"`) could only be
+  edited with a `replace` key reproducing the run's exact internal whitespace,
+  and nothing shipped yielded that string. So both agents read
+  `Contents/section0.xml` by hand — precisely the contact the shipped skill
+  forbids. Fixed in three layers. **`preedit replace --at-cell
+  ROW,COL[#RUN]=TEXT`** and **`--at-cell-append`** (both repeatable, plus
+  `--at-cell-map JSON`) remove the need for the exact string entirely; the two
+  modes are explicit, never inferred. A cell holding more than one text run
+  **refuses** (exit 2, `at_cell_run_ambiguous`) and the refusal lists every run
+  index with its exact text, so neither "first run wins" nor "flatten the cell"
+  can silently destroy content — PPS (15,0) carries the regulation sentence,
+  the 신청일 line, `신청인`, `(서명 또는 인)` and `조달청장 귀하` as separate
+  runs. A cell with no text run at all routes to `fill-cells`, so the two
+  operations partition "already prints something" vs "genuinely empty" (T27).
+  Every guard is shared with the rest of the engine (T24 stale-lineseg strip,
+  well-formedness before write, the T30 pre-flight, the T22 dangling-charPr
+  assertion), and `--at-cell-expect ROW,COL[#RUN]=SUBSTRING` compares with all
+  whitespace removed on both sides so an operator asserts `우(-)` without
+  counting spaces. Also: **`table_map[].text_preview` now reports
+  `truncated`** — the failure was not that the preview is short but that
+  nothing said there was more, which is why a competent agent concluded the
+  협업기간 skeleton ended at the 30-character cut and lost a second replace
+  pass; and **`form_inspect --full-text [TABLE:]ROW,COL`** is the documented,
+  per-cell opt-in escape from the structure-only contract, emitting exact run
+  text for the cells you name and no others, whose `runs[].index` IS
+  `--at-cell`'s `#RUN`.
+- **#73 — T35: one `--fill-map` loader for every consumer, and `--baseline`
+  takes the blank form.** `--fill-map` was one flag name with two incompatible
+  payloads: each consumer had grown its own loader, so `visual_verify`
+  documented the wrapper shape while the module checkers and `check_residue`
+  wanted a bare `{key: value}` map, and each refusal named only its own shape —
+  the caller learned one shape per retry. `check_residue` now hosts THE shape
+  rule (`load_fill_map`, `normalize_fill_map`, and `FILL_MAP_SHAPES` appended
+  to every shape error, naming BOTH shapes); `visual_verify.load_fill_map` IS
+  that function object, asserted, so the rule cannot fork again. A wrapper
+  whose `fill_map` member is not an object is now a usage error instead of
+  being read as a bare map. Second nit: `--baseline` reads as "the blank form"
+  but refused an `.hwpx`, so the round-3 agent dropped pixel-diff rather than
+  converting — it now routes an `.hwpx`/`.hwp` through the artifact's own
+  `convert_to_pdf`, and with no renderer it is a skip-with-reason (one check
+  lost, not the run, and never a crash).
+- **#76 — `form_inspect`: `classification: spacer`.** Six cells on the PPS
+  form were reported as `fill_target` when nothing is ever written in them, so
+  the Codex harness and the round-3 Opus run each reasoned them away by hand —
+  classification was pushing its own job onto the reader. A spacer is empty,
+  has no label neighbour, and has one of two filler geometries derived from
+  the table itself: `full_width_band` (spans every column AND is shorter than
+  the shortest cell in that table that prints text) or `stub_head` (the corner
+  where a header row crosses a label column). No addresses, no absolute
+  heights, no tuned ratios. Excluded from the new `fill_target_count`,
+  reported under `spacer_cells`. PPS: 19 empty cells → 13 + 6. A corpus sweep
+  over all 12 forms reclassifies only separator bands and matrix stub heads.
 
-### Module contract — the three gaps gongmun exposed
+### Module contract — the three gaps `gongmun` exposed
 
-Shipping gongmun as the first module nobody had planned for disproved one of
-the four contract rules and left two harness gaps. All three are closed.
+Shipping the first module nobody had planned for disproved one of the four
+contract rules and left two harness gaps (**#67**). All three are closed.
 
 - **Rule 4 was false for the test harness.** "Adding a module later requires no
   core change" held for the registry and not for the suite: pyproject's
   `testpaths` and CI's `py_compile` invocation were both hardcoded per-module
   lists. `testpaths` is now one glob (`modules/*/tests`), and the compile step
   is `scripts/py_compile_sweep.py`, whose pattern set includes
-  `modules/*/scripts/*.py` and names no module (it also exits 2 rather than
-  passing vacuously when nothing matches, and no longer needs `shell: bash` to
-  get globs expanded on Windows). The W3-S1 acceptance test now proves the
-  property instead of the mechanism: a brand-new module dropped into a
-  synthetic checkout that carries the repo's real pytest ini block *verbatim*
-  has its tests collected and its scripts compiled, with `pyproject.toml` as
-  the only file outside `modules/` — plus a negative control (a broken script
-  in the new module must fail the sweep) and guards against either
+  `modules/*/scripts/*.py` and names no module (it exits 2 rather than passing
+  vacuously when nothing matches). The acceptance test now proves the property
+  instead of the mechanism: a brand-new module dropped into a synthetic
+  checkout carrying the repo's real pytest ini block *verbatim* has its tests
+  collected and its scripts compiled, with `pyproject.toml` as the only file
+  outside `modules/` — plus a negative control and guards against either
   configuration naming a module again.
 - **Eval machine checks gained a per-module gate.** `machine_checks[]` accepts
-  `requires_module: NAME`; where the sandbox's enabled set lacks it the check
+  `requires_module: NAME`; where the sandbox's enabled set lacks it, the check
   is skipped with a recorded reason instead of failing, with `blocked_on`'s
   semantics exactly (counted in `counts.skipped`, never in `counts.pass`, so
   neither `check`'s exit code nor `score.py` can read a skip as a pass). The
-  enabled set is asked of the *sandbox's own* shipped registry CLI and recorded
-  in `checks.json` as `enabled_modules`. Before this, a core-only sandbox
-  *failed* G1's two gongmun checks — a red finding about a configuration the
-  contract explicitly supports.
+  enabled set is asked of the *sandbox's own* shipped registry CLI. Before
+  this, a core-only sandbox *failed* G1's two gongmun checks — a red finding
+  about a configuration the contract explicitly supports.
 - **A checker can declare that it needs the blank baseline.**
   `provides.checkers[].wants: [baseline]` (closed vocabulary; schema, README,
-  validator and `enabled_checkers()` accessor) says out loud what gongmun's
-  `dumun_label_missing` / `seal_slot_removed` / `rank_not_in_pack` /
-  `seat_emptied` rules only imply — they need the unfilled form, and without it
-  they self-skip while the checker still exits 0. The clean-room eval harness is
-  the wired consumer: a task declares `baseline: <input basename>`, and `check`
-  resolves each `python` check's `argv[0]` by path against the sandbox registry
-  and appends `--baseline <path>` for a declaring checker. A baseline already in
-  the argv (explicit, or because the check targets the blank form itself — a
-  document is never its own baseline) is left alone; a declaring checker in a
-  task with *no* baseline is skipped with a reason rather than run for a silent
-  pass. `declared_gates.py` is deliberately not wired: it only reaches checkers
-  bound to a `gate_kind`, every input a delegated gate needs is already a
-  declared value in the workspace's `gates.yaml`, and no module registers a gate
-  kind whose checker wants a baseline.
+  validator and an `enabled_checkers()` accessor) says out loud what gongmun's
+  preservation rules only implied. The clean-room harness is the wired
+  consumer: a task declares `baseline: <input basename>` and `check` appends
+  `--baseline <path>` for a declaring checker. A baseline already in the argv
+  is left alone (a document is never its own baseline); a declaring checker in
+  a task with *no* baseline is skipped with a reason rather than run for a
+  silent pass.
 
-### Engine — `visual_verify` acceptance and exit-code contract (T36)
+### Test harness — an inventory pin is a defect class, not a nit (T33)
 
-Two P0 defects the CODEX clean-room A1 harness found across three model tiers.
-Both are correctness-of-VERDICT: the verdict claimed more than it checked.
+**#71.** Three v0.17 modules were blocked by one bug shape: a core test
+asserting `== N` on something the repo GROWS, so shipping a module, an eval
+task or a gated check turns a working product red. #68 was the per-module
+`testpaths`/`py_compile` lists; #26 was `len(tasks) == 7`, which meant shipping
+an eval task required editing a core test; #27 was
+`tests/test_cleanroom_evals.py` pinning eval task A1's skipped-check count at
+`1` in two places — every `requires_module` check skips by design in a
+core-only sandbox, so the grant module could not put its A1 checks on A1 and
+wired them onto A2/A3 instead. **A module reshaping its payload to satisfy an
+integer in core is contract rule 4 inverted.** Fixed by deriving:
+`declared_skips(task, enabled_modules)` mirrors the two declared gates and both
+sites take the count from `len()`, and A1 gained the gated check the grant
+module wanted there (verified to PASS with the grant bundle installed and SKIP
+with a reason without it, taking A1's core-only skip count to 2 — which the old
+`== 1` could not survive). A class sweep derived three more inventory-coupled
+pins and commented the genuinely fixed-arity ones with why they are not
+inventory. The durable guard is **`tests/test_no_inventory_pins.py`**, which
+walks the syntax tree of every core test file and fails on `== <int>` against a
+check tally, a `len()`/`count()` over an inventory identifier or a discovery
+call, or a subscript on an inventory key. `>=` floors are never flagged and
+`modules/*/tests` is out of scope; fixed arity is admitted only as a REASONED
+allowlist row, with meta-tests refusing a thin reason, a stale row, or a row
+the guard would not have flagged. Also shipped in the eval harness: the task
+inventory became a property rather than a count (#26 — every shipped definition
+validates against the schema, every corpus-backed family has at least one task
+with the family list DERIVED from the corpus manifest, plus a non-vacuity
+floor), with a negative control that plants a corpus family with no task.
 
-- **`acceptance: true` while safety checks were silently skipped.** The luna
-  tier supplied a CLI `--fill-map` and still got `empty_cell_expected_fill`,
-  `fill_charpr_script_mismatch` AND page parity into
-  `deterministic.skipped[]` — then exit 0 with `acceptance: true`, because
-  acceptance was computed as "no HARD finding" and never read the skip list.
-  Now: `visual_verify.SAFETY_CHECKS` names, in ONE place, the five checks whose
-  absence invalidates acceptance (`page_parity`, `xml_wellformedness`,
-  `check_residue`, `empty_cell_expected_fill`,
-  `fill_charpr_script_mismatch`); `_skipped()` returns `{check, reason}`
-  records so a rule can match on them (the flat strings are still published for
-  humans, plus `skipped_checks[]`); and a skipped SAFETY check makes the
-  verdict `safety_incomplete` with a HARD `acceptance_safety_skipped` naming
-  which and why, exit 3. `--accept-without CHECK` (repeatable, closed
-  vocabulary) is the only way past it, recorded as `acceptance_waivers` — per
-  check, never a blanket switch, and the skip is still reported. The pixel diff
-  stays OUT of the set (T35: a renderer-less machine loses one check, not the
-  run), as do the `format_noncompliance/*` tolerance legs.
-- **`--fill-map` and `expectations.fill_map` were two inputs, not one
-  concept.** The flag drove the residue keep derivation; the expectations
-  MEMBER activated the declared-value presence check and the T30 charPr
-  post-flight — so the flag looked sufficient and was not. The CLI map now
-  SEEDS `expectations.fill_map` (`deterministic.fill_map_source` records which
-  surface it arrived on); two DIFFERENT maps are a usage error rather than a
-  silent precedence rule; `--fill-map` alone no longer requires
-  `--form-profile`.
-- **`pages_document` is no longer the caller's to remember.** The sol tier only
-  got page parity because it hand-declared it: on the `--pdf` path there was no
-  source at all. Parity now takes the first of conversion → expectations → the
-  artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
-  excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
-  `pages_document_source`, and skips only when all three fail. Calibrated and
-  pinned against the ten rendered corpus forms: the derived count never
-  over-counts a form that stores no imposition, so on that source only the fold
-  direction (`pages_pdf < pages_document`) is HARD and the under-count
-  direction is a WARN naming both explanations — `nrf-gyeolgwa-bogoseo-yangsik`
-  (`PrintMethod=4`, derives 4 against a 2-page PDF) is caught with nothing
-  declared.
-- **Exit-code contract, all six rows.** sol and terra both saw exit **1** for
-  `vision_pending` where the contract says **3**. 3 is right (it is
-  `checker_base.EXIT_HARD`, the finding/pending code of every checker); 1 was
-  not a code at all but an unhandled path — `emit_verdict` sat outside every
-  guard in `main`, so an unwritable `--out` escaped as a traceback after a
-  perfectly good verdict. `--out` is now validated before the run and the
-  emission is wrapped (an emission failure degrades to the usage row, 2), so
-  **no path exits 1**. `test_exit_code_matrix` pins one row per terminal state
-  — `pass` 0, `deterministic_pass` 0, `vision_pending` 3, `fail` 3,
-  `safety_incomplete` 3, `usage_error` 2 — and the docstring/`operations.md`
-  table is asserted against the code.
+### Skill surface — the product says out loud what it already knew
+
+- **#76 — `skill/references/fill-recipe.md`, one canonical fill.** Three
+  harnesses filling the same PPS 협업승인신청서 picked three different
+  strategies for the *same* 협업기간 cell, one built three separate maps, and
+  `operations.md` never gave the `com_backend.py convert --file … --to …`
+  syntax at all. The product knew the answer; nothing said it, so every reader
+  re-derived it differently. The recipe states the branch-per-cell decision
+  rule first (empty run → `fill-cells`; skeleton to keep →
+  `--at-cell-append`; template to replace wholly → `--at-cell`; multi-run →
+  the `#RUN` the refusal hands you; `spacer` → do not write there), works
+  협업기간 as the example *because* it is the field that fractured, names the
+  four artifacts and the exact flag that eats each, gives the literal sequence
+  including the `tasklist` check before COM, and closes with what an accepted
+  verdict looks like versus each partial. It was worked end to end on the real
+  form and replayed verbatim to `acceptance: true`. Linked one level deep from
+  SKILL.md's routing table; the superseded "which one fills a form" table in
+  `operations.md` §3 is now a pointer, not a second account. Also:
+  **ragged shipped tables fail the build** — in GFM a raw `|` splits a cell
+  even inside a code span, so `com_backend.py inspect|edit` gave SKILL.md's
+  routing table one four-cell row among three-cell rows, in the first table a
+  router reads. Escaped, and `package_module` now asserts every table in every
+  shipped surface document is rectangular. `--charpr-per-cell` is documented in
+  the **fill section** of `operations.md` and in the SKILL.md routing row, not
+  only inside the T30/T32 prose.
+- **#77 — an unsupported habit flag explains itself.** A clean-room agent
+  tried `form_inspect --pretty` from habit, and the habit has an in-repo
+  source: `probe.py` is the ONLY script whose default output is compact
+  single-line, because SKILL.md injects it inline. Probe's flag is a justified
+  exception, not an inconsistency to remove; what was missing was an error
+  message saying so. `form_inspect` now answers `--pretty`/`--indent`/`--json`
+  with what to use instead and states its output contract in the help epilog,
+  and probe's `--pretty` help explains why it is the exception.
+
+### Trouble table
+
+Rows **T26–T36** added, each with the run class that surfaced it: T26–T30 the
+first clean-room cross-model round, T31–T32 the second, T33 the module-wiring
+class, T34–T35 the third, and T36 the independent Codex harness across three
+model tiers.
 
 ## v0.16.0 — unified core and modules
 
