@@ -30,6 +30,17 @@ exactly one of four branches, decided by **what the cell already stores**:
 | **several text runs** | the refusal tells you: re-issue as `ROW,COL#RUN` | `exit 2`, `at_cell_run_ambiguous`, with every run's index and exact text. Neither "first run wins" nor "flatten the cell" is offered |
 | **an empty run in a cell that must hold several lines** — a 공문 본문, a multi-item 내용 box | `preedit fill-cells --cell-line ROW,COL=… --cell-line ROW,COL=…` (once per paragraph) | one paragraph per line is the *regulated* shape of 공문 본문, not a formatting preference (T39); see §1.2 |
 
+Some families are not grids at all. In 계약·인사 서식 almost everything lives in
+**top-level paragraphs** (`2. 근 무 장 소 : `), so there is no `cellAddr` to
+address and the branch is:
+
+| the paragraph | command | why |
+|---|---|---|
+| **carries a clause line that occurs once in the document** | `preedit replace --map` with a plain string value | nothing to disambiguate; unchanged behaviour |
+| **carries a line the form prints on several sheets** — a variant pack, 6 contracts in one file | the refusal tells you: re-issue as `{"text": 값, "at_para": N}` | `exit 2`, `replace_key_ambiguous`, with every occurrence's `at_para` and recent prior context including the variant title. Silently writing all of them destroyed the sibling sheets and no offline gate saw it (T41) |
+| **must change on every sheet** (deleting a clause from the whole pack) | `{"text": 값, "all_occurrences": true}` | every-occurrence is a decision you state, not a default |
+| **is reachable through Hancom and you want the first sheet only** | `com_backend edit` `goto_text` / `find_delete` | both hard-reset to `MoveDocBegin()` before searching, so "first occurrence" is a defined contract — this is the scoping mechanism for paragraph packs, not a `.hwp`-only heavy backend |
+
 `classification: spacer` is a fifth answer: **do not write there at all.** It
 is an empty cell the grid needs — a separator band or a matrix stub head — and
 it is already excluded from `fill_target_count` (operations.md §2). On this

@@ -34,13 +34,24 @@ a decidable question — see §5.
    - **signature**: `(서명)` / `(인)`. The human's.
    - **identity**: 주민등록번호 / 생년월일 / 사업자등록번호 / 계좌 — never
      fabricated.
-3. **Fill.** `preedit.py replace FORM.hwpx --out filled.hwpx --map fill.json`.
-   Keys are run texts, and this family's runs are generous — a whole clause line
-   is usually one run, so `"2. 근 무 장 소 : "` → `"2. 근 무 장 소 : 경기도 …"`
-   works directly. A key that is whitespace only is refused by `preedit`, so
-   anchor the key on the label or on the text that follows the blank run.
-   `fill-cells` is rarely needed here: the only fillable cells are the 2025
-   근로일별 근로시간 grid.
+3. **Fill — and say WHICH sheet.** This is the step that used to destroy
+   documents, so read §1.1 before writing a map. The pack holds **six variant
+   contracts in one file** and prints every clause label verbatim on each of
+   them, so a bare text key is not a location.
+
+   `preedit.py replace FORM.hwpx --out filled.hwpx --map fill.json`. Keys are
+   run texts, and this family's runs are generous — a whole clause line is
+   usually one run — but the value must carry a paragraph address:
+
+   ```json
+   { "2. 근 무 장 소 : ": { "text": "2. 근 무 장 소 : 경기도 화성시 동탄산단로 15",
+                          "at_para": 4 } }
+   ```
+
+   A key that is whitespace only is refused, so anchor the key on the label or
+   on the text that follows the blank run. `fill-cells` is rarely needed here:
+   the only fillable cells are the 2025 근로일별 근로시간 grid.
+
 4. **Check, then verify.**
    `modules/hr/scripts/check_hr.py filled.hwpx --baseline FORM.hwpx
    --fill-map fill.json`, then `pipeline/scripts/visual_verify.py` with
@@ -50,6 +61,65 @@ a decidable question — see §5.
    alike — a bare `{key: value}` map or a wrapper object with a `fill_map`
    member — so ONE file serves both halves (T35). `visual_verify --baseline`
    takes the blank `FORM.hwpx` directly and converts it itself.
+
+### 1.1 The pack repeats clause labels across variant sheets
+
+`preedit replace --map` matches by whole-run strip-compare and by raw
+substring, and **neither carries a position qualifier**. Measured on
+`moel-pyojun-geunrogyeyakseo-2025`, every key of a realistic eleven-key fill
+map resolves to 3–5 places:
+
+| key | places |
+|---|---|
+| `(이하 “사업주”라 함)과(와) ` | 5 |
+| `1. 근로개시일 :      년   월   일부터` | 3 |
+| `2. 근 무 장 소 : ` | 5 |
+| `3. 업무의 내용 : ` | 4 |
+| `      년      월      일` / `사업체명 :` / `대 표 자 :` / `(근로자) 주    소 :` / `성    명 :` | 5 each |
+
+Writing all of them puts one employer's terms on five contracts, and **the
+module's own rules cannot see it**: the clause label survives as a prefix, so
+`clause_block_lost`, `clause_lost`, `clause_text_consumed` and
+`contract_variant_lost` all pass on the corrupted document. Only the residue
+gate afterwards, or a human reading the pages, would notice.
+
+So `preedit` now **refuses** an unscoped repeated key (exit 2,
+`replace_key_ambiguous`) and the refusal is how you get the addresses: each
+occurrence comes with `at_para`, the paragraph's own text, `preceded_by`, and
+`context_before` — recent prior non-empty paragraphs including the variant
+title even when the immediately preceding clause is identical
+(`표준근로계약서(기간의 정함이 없는 경우)` vs `단시간근로자 표준근로계약서`).
+Paste the number you want into the value object. For the 2025 pack the first
+contract's paragraphs are 2–30; `all_occurrences: true` is available when you
+really do mean the whole pack (deleting a clause from every sheet, say), and
+it is a declaration, never a default.
+
+`tests/test_hr_corpus.py::TestUnscopedFillOverwritesTheSiblingContracts`
+pins the refusal, the reproduced corruption, and a surgical scoped edit on the
+real form, so this section cannot rot.
+
+### 1.2 The other way to touch one sheet: `com_backend edit`
+
+`com_backend edit` is not a `.hwp`-only heavy backend — it is the **scoping
+mechanism for paragraph packs**. `goto_text` and `find_delete` both hard-reset
+to `MoveDocBegin()` before searching, so "the first occurrence" is a defined
+contract rather than a guess, and an edit anchored that way structurally lands
+on one sheet:
+
+```json
+[ {"op": "goto_text", "text": "2. 근 무 장 소 :", "after": true},
+  {"op": "insert_text", "text": " 경기도 화성시 동탄산단로 15"} ]
+```
+
+`find_delete` deletes the first occurrence unless you pass `"all": true`. Use
+this path when Hancom is available and you want the form's own layout engine to
+reflow; use the offline `at_para` path when it is not, or when you need a
+sheet other than the first.
+
+Also add the `--fill-map` scope the gate reads when a label repeats:
+`{"text": V, "other_occurrences": "form_text"}` says the occurrences you did
+not fill are the form printing itself, `"seats"` says they must be filled or
+they HARD. One file still carries both halves' members (T35).
 
 ## 2. Document state decides severity
 

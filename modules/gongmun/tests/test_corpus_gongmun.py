@@ -47,8 +47,9 @@ _BIGO_SENTENCE = (
     "아니하고 그 내용을 적는다."
 )
 
-#: What an agent filling 별지 제1호서식 writes. Ordered: the 비고 goes first so
-#: its quoted copies of the guide terms are consumed before the seat keys run.
+#: What an agent filling 별지 제1호서식 writes. The 비고 quotes five seat labels
+#: in one later paragraph. T41 requires the real seat to be named explicitly;
+#: map order may not hide that ambiguity by deleting the quote first.
 FILL_MAP = {
     _BIGO_SENTENCE: "",
     _BIGO_MARKER: "",
@@ -58,12 +59,14 @@ FILL_MAP = {
     "기안자  직위(직급) 서명": "주무관 홍길동",
     "검토자  직위(직급) 서명": "과장 김영희",
     "결재권자  직위(직급) 서명": "청장 이철수",
-    "처리과명-연도별 일련번호(시행일)": "문화유산정책과-1234(2026. 8. 20.)",
+    "처리과명-연도별 일련번호(시행일)": {
+        "text": "문화유산정책과-1234(2026. 8. 20.)", "at_para": 48},
     "처리과명-연도별 일련번호(접수일)": "",
-    "도로명주소": "서울특별시 종로구 삼봉로 81",
-    "홈페이지 주소": "www.khs.go.kr",
-    "공무원의 전자우편주소": "gongmun@example.com",
-    "공개 구분": "대외공개",
+    "도로명주소": {"text": "서울특별시 종로구 삼봉로 81", "at_para": 52},
+    "홈페이지 주소": {"text": "www.khs.go.kr", "at_para": 54},
+    "공무원의 전자우편주소": {
+        "text": "gongmun@example.com", "at_para": 58},
+    "공개 구분": {"text": "대외공개", "at_para": 60},
     "발신명의": "국가유산청장",
 }
 
@@ -184,7 +187,7 @@ class TestSyntheticallyFilledCorpusForm:
     def test_a_fill_that_wipes_a_seat_is_caught(self, tmp_path, blank_1ho):
         """Still-catches: the same pipeline, one seat deleted instead of filled."""
         broken_map = dict(FILL_MAP)
-        broken_map["도로명주소"] = ""
+        broken_map["도로명주소"] = {"text": "", "at_para": 52}
         out = tmp_path / "wiped.hwpx"
         preedit.replace_placeholders(blank_1ho, out, broken_map,
                                     on_zero_hits="error")

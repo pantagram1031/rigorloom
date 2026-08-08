@@ -169,6 +169,23 @@ def _json_typename(value) -> str:
     return type(value).__name__
 
 
+#: What a SCOPED fill-map value object may carry — the **union** of both
+#: halves, on purpose. One file serves ``preedit replace --map`` and
+#: ``--fill-map`` alike (T35), so each side accepts the other's members and
+#: interprets only its own. The engine half is
+#: ``engine/scripts/preedit.py``'s ``MAP_SCOPE_MEMBERS``; if either side
+#: rejected the other's members as unknown, "one file for both" would break.
+FILL_SCOPE_MEMBERS = ("text", "at_para", "all_occurrences",
+                      "other_occurrences")
+
+#: The only member this side interprets, and its two legal answers (T41). A
+#: bare label that repeats — 성명 three times on a 민원 form — leaves the keep
+#: derivation with a question only the operator can answer: are the
+#: occurrences you did NOT fill form text, or unfilled seats? Both answers are
+#: honest; guessing either one is not.
+OTHER_OCCURRENCES = ("form_text", "seats")
+
+
 def normalize_fill_map(payload) -> tuple[dict | None, str | None]:
     """``(mapping, error)`` for an already-decoded ``--fill-map`` payload.
 
@@ -177,6 +194,12 @@ def normalize_fill_map(payload) -> tuple[dict | None, str | None]:
     whose ``fill_map`` member is not an object is a usage error rather than
     being read as a bare map — otherwise an expectations file with
     ``"fill_map": null`` would silently be scanned as ``{base_pt: 10, ...}``.
+
+    Scoped values are FLATTENED here: ``{"text": v, ...}`` becomes ``v``, so
+    every downstream consumer (``value_spans``, the fill-value presence check,
+    each module's declared-value privacy rules) keeps seeing a plain string
+    and none of them had to learn the scope vocabulary. Read the scope itself
+    with :func:`fill_map_scopes`.
     """
     if not isinstance(payload, dict):
         return None, (f"--fill-map must be a JSON object, got "
@@ -187,8 +210,42 @@ def normalize_fill_map(payload) -> tuple[dict | None, str | None]:
             return None, (
                 f"--fill-map: the wrapper's 'fill_map' member must be a JSON "
                 f"object, got {_json_typename(inner)}. {FILL_MAP_SHAPES}")
-        return inner, None
-    return payload, None
+        payload = inner
+    flat, error = {}, None
+    for key, value in payload.items():
+        if not isinstance(value, dict):
+            flat[key] = value
+            continue
+        unknown = sorted(set(value) - set(FILL_SCOPE_MEMBERS))
+        if unknown:
+            return None, (f"--fill-map[{key!r}]: unknown scope member(s) "
+                          f"{unknown}; allowed: {list(FILL_SCOPE_MEMBERS)}")
+        if "text" not in value:
+            return None, (f"--fill-map[{key!r}]: a scoped value object needs "
+                          f"a 'text' member (the value you wrote)")
+        other = value.get("other_occurrences")
+        if other is not None and other not in OTHER_OCCURRENCES:
+            return None, (f"--fill-map[{key!r}]: other_occurrences must be "
+                          f"one of {list(OTHER_OCCURRENCES)}, got {other!r}")
+        flat[key] = value["text"]
+    return flat, error
+
+
+def fill_map_scopes(payload) -> dict:
+    """``{key: other_occurrences}`` for the keys that declared one.
+
+    Only the member THIS side interprets. Shape errors are not re-reported
+    here: :func:`normalize_fill_map` runs first on the same payload and is the
+    single place that refuses a malformed scope.
+    """
+    if isinstance(payload, dict) and isinstance(payload.get("fill_map"), dict):
+        payload = payload["fill_map"]
+    if not isinstance(payload, dict):
+        return {}
+    return {key: value["other_occurrences"]
+            for key, value in payload.items()
+            if isinstance(value, dict)
+            and value.get("other_occurrences") in OTHER_OCCURRENCES}
 
 
 def load_fill_map(path: str | Path) -> tuple[dict | None, str | None]:
@@ -211,6 +268,20 @@ def load_fill_map(path: str | Path) -> tuple[dict | None, str | None]:
     return normalize_fill_map(payload)
 
 
+def load_fill_scopes(path: str | Path) -> dict:
+    """:func:`fill_map_scopes` for a file, ``{}`` when it cannot be read.
+
+    A separate read rather than a second return value from
+    :func:`load_fill_map`: every existing consumer wants the flattened map and
+    nothing else, and only the keep derivation needs the scope.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    return fill_map_scopes(payload)
+
+
 def _occurrences(haystack: str, needle: str) -> list[int]:
     """Every start offset of ``needle`` in ``haystack``, overlaps included."""
     if not needle:
@@ -221,6 +292,12 @@ def _occurrences(haystack: str, needle: str) -> list[int]:
         out.append(start)
         start = haystack.find(needle, start + 1)
     return out
+
+
+#: Public alias, for the same reason ``normalize_text`` is one: whatever
+#: decides that a form label is "repeated" must count occurrences EXACTLY the
+#: way this gate does, or the ambiguity refusal and the gate disagree (T41).
+occurrences = _occurrences
 
 
 def value_spans(haystack: str, fill_map) -> list[dict]:
