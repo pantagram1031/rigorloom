@@ -210,6 +210,7 @@ provides:
 # ``modules/`` created, edited, or naming the module.
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+MODULES_ROOT = REPO_ROOT / "modules"
 SWEEP = REPO_ROOT / "scripts" / "py_compile_sweep.py"
 
 NEW_MODULE = "brandnew"
@@ -364,36 +365,39 @@ class TestHarnessIsModuleAgnostic:
 # Absence is not failure
 # ---------------------------------------------------------------------------
 
-    def test_same_test_basename_in_two_modules_both_collect(self, tmp_path):
-        """Two modules may ship tests/test_module_contract.py; both must collect.
+    def test_module_test_basenames_are_unique_across_modules(self):
+        """No two distribution modules may ship the same test filename.
 
-        The default prepend import mode names a test module after its basename
-        alone, so the second one fails with 'import file mismatch' — which is
-        how this was found (CI on PR #68, invisible to per-module targeted
-        runs). addopts pins --import-mode=importlib; this test is the property.
+        pytest's default prepend import mode names a test module after its
+        basename alone, so a duplicate collides with 'import file mismatch'
+        and interrupts collection. Found by CI on PR #68 (gongmun and minwon
+        both shipped tests/test_module_contract.py) — invisible to
+        per-module targeted runs. importlib mode would sidestep it but drops
+        the test dir from sys.path and breaks tests/_module_gating.py
+        imports, so the rule is enforced here instead.
         """
-        root = tmp_path / "repo"
-        (root / "modules" / "alpha" / "tests").mkdir(parents=True)
-        (root / "modules" / "beta" / "tests").mkdir(parents=True)
-        (root / "pyproject.toml").write_text(
-            _pytest_ini_block(PYPROJECT.read_text(encoding="utf-8")),
-            encoding="utf-8")
-        for name in ("alpha", "beta"):
-            (root / "modules" / name / "tests" / "test_module_contract.py"
-             ).write_text(
-                f'''def test_{name}_marker():
-    assert True
-''',
-                encoding="utf-8")
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8")
-        assert proc.returncode == 0, proc.stdout + proc.stderr
-        assert "test_alpha_marker" in proc.stdout, proc.stdout
-        assert "test_beta_marker" in proc.stdout, proc.stdout
-        assert "import file mismatch" not in (proc.stdout + proc.stderr)
+        seen: dict[str, list[str]] = {}
+        for path in sorted(MODULES_ROOT.glob("*/tests/test_*.py")):
+            seen.setdefault(path.name, []).append(path.parent.parent.name)
+        collisions = {n: m for n, m in seen.items() if len(m) > 1}
+        assert not collisions, (
+            "module test basenames must be unique across modules "
+            f"(prefix them with the module name): {collisions}")
+        assert seen, "no module tests found — the scan is vacuous"
 
-class TestAbsenceIsNotFailure:
+    def test_the_basename_rule_bites_on_a_planted_duplicate(self, tmp_path):
+        """Negative control: the scan must catch a duplicate it is shown."""
+        root = tmp_path / "modules"
+        for name in ("alpha", "beta"):
+            d = root / name / "tests"
+            d.mkdir(parents=True)
+            (d / "test_module_contract.py").write_text("", encoding="utf-8")
+        seen: dict[str, list[str]] = {}
+        for path in sorted(root.glob("*/tests/test_*.py")):
+            seen.setdefault(path.name, []).append(path.parent.parent.name)
+        collisions = {n: m for n, m in seen.items() if len(m) > 1}
+        assert collisions == {"test_module_contract.py": ["alpha", "beta"]}
+
     def test_missing_modules_root_is_core_only(self, tmp_path):
         registry = registry_for(tmp_path / "does-not-exist")
         assert registry.discover() == {}
