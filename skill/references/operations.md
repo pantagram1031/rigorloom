@@ -11,6 +11,7 @@ looks like. This file is the per-CLI contract each of those steps invokes.
 
 ## TOC
 
+0. [Text-match scoping](#0-text-match-scoping) — which surfaces refuse an ambiguous match
 1. [probe](#1-probe) — capability probe
 2. [form_inspect](#2-form_inspect) — offline form profiling (+ `--full-text`)
 3. [preedit](#3-preedit) — replace (`--map` / `--at-cell`) / fill-cells / delete-guides / normalize-clones
@@ -21,6 +22,61 @@ looks like. This file is the per-CLI contract each of those steps invokes.
 8. [com_backend / build_report / xml_backend](#8-com_backend--build_report--xml_backend) — assembly
 9. [render_probe / privacy_scan](#9-render_probe--privacy_scan)
 10. [visual_verify](#10-visual_verify) — the render→judge loop
+
+## 0. Text-match scoping
+
+Every operation that resolves a string YOU supplied against document content
+has to answer "and if that string is in the document more than once?". Three
+answers are legitimate — **refuse**, **scope**, **all, by name** — and one is
+not: silently picking. This table says which answer each surface gives, so you
+can see it without reading source (T41).
+
+| surface | ambiguous match is | how you scope it |
+|---|---|---|
+| `preedit replace --map` (tier A run strip-compare, tier B raw substring) | **REFUSED** — exit 2, `replace_key_ambiguous`, payload names every occurrence with `at_para`, the paragraph's text and recent prior context | map value object: `{"text": V, "at_para": N}` for that one paragraph, or `{"text": V, "all_occurrences": true}` for every occurrence, explicitly |
+| `preedit replace --at-cell` / `--at-cell-append` / `--at-cell-map` | **SCOPED by construction** — `cellAddr` + `#RUN`, no string key exists. A multi-run cell is REFUSED (exit 2, `at_cell_run_ambiguous`) | `ROW,COL#RUN` from the refusal listing |
+| `preedit replace --at-cell-expect` | **SCOPED** — a precondition on the same address; it never searches the document | the address you are already editing |
+| `preedit fill-cells --cell` / `--cell-line` / `--map` | **SCOPED** — `cellAddr` only, never text | `--table N` + `ROW,COL` |
+| `preedit delete-guides` | **not text-keyed** — selects by guide charPr colour/id | `--color` / `--charpr-ids` |
+| `preedit normalize-clones --repoint-scope TO:ANCHOR` | **ALL matching paragraphs**, and the count is reported (`paragraphs`, `runs`). Repoints a charPr; never deletes or rewrites text | use a longer anchor; check the reported count |
+| `tidy_hwpx` before/after anchors | **REFUSED** — `앵커가 모호함(문단 N개에서 발견)`; the precedent this table generalizes | a longer, unique anchor |
+| `com_backend edit` `goto_text` | **FIRST OCCURRENCE, by construction** — hard `MoveDocBegin()` then `find()`, so it is a defined behaviour, not a guess | this IS the scoping mechanism for paragraph packs: it structurally touches one place |
+| `com_backend edit` `find_delete` | **FIRST OCCURRENCE** by the same reset; every occurrence only with `"all": true` | `"all": true` to opt in |
+| `com_backend edit` other anchored ops (`delete_blank_after/before`, `insert_blank_before`, `page_break_before`, `set_para_align --anchor`) | **FIRST OCCURRENCE** — same `MoveDocBegin()` + `find()` contract | a unique anchor, or `page_break_before` + a distinct heading |
+| `com_backend edit` `replace_all` / `xml_backend` `replace_all` | **ALL, by name** — the op is called `replace_all` and reports `replaced: n` | use `preedit replace --map` with `at_para` when you want one |
+| `check_residue` forbidden-string scan | **EXHAUSTIVE, never resolved** — every occurrence is reported with its offset and surrounding context | nothing to scope; read `at_offsets` |
+| `check_residue --fill-map` value attribution | **PER OCCURRENCE** — an occurrence inside a declared value's span is attributed, one outside it still HARDs (T31). Never a global suppression | `--keep` for a string that legitimately survives everywhere |
+| `visual_verify` residue keep derivation (`--fill-map` key → anchor/placeholder inventory, normalized substring **either direction**) | **REFUSED when one key claims more than one inventory string** — exit 2, `usage_error`, `ambiguous_fill_keys` names each claimed string and how often it is present. A key claiming one string that repeats is NOT refused: that case is per-occurrence and honest (T31) | a key that names exactly one string, or `{"text": V, "other_occurrences": "form_text"}` (the form prints the rest) / `"seats"` (the rest must be filled or they HARD) |
+| `visual_verify` `declared_blank` / `intentionally_blank` | **ALL matching seats** — normalized containment either direction, so one entry can cover several seats; every suppression is recorded in `deterministic.declared_blank` with its source | name the seat exactly; read the recorded list back |
+| `visual_verify --expectations` `fill_map` presence check | **presence anywhere** — asks "is this value visible in the render", not "where" | it is an existence proof by design; location is `check_residue`'s job |
+| `visual_verify --expectations` `forbidden_text` | **EXHAUSTIVE per page** — one finding per page the string appears on | nothing to scope |
+| `form_inspect --full-text` | **address-keyed**, read-only (`[TABLE:]ROW,COL`) | the address |
+
+**The scoped form for paragraph text is `at_para`.** It is to a paragraph what
+`--at-cell`'s `ROW,COL` is to a cell: a 0-based document-order address
+(sections in name order, then every `<hp:p>` open tag in document order,
+outer paragraph before the cell paragraphs inside it). You do not have to
+derive it — issue the unscoped map, read the refusal, paste the number:
+
+```json
+{ "2. 근 무 장 소 : ": { "text": "2. 근 무 장 소 : 경기도 화성시", "at_para": 35 } }
+```
+
+The refusal's `context_before` is what makes that choice possible on a pack:
+five occurrences of the same clause label may have the same immediately
+preceding clause, so each occurrence carries recent prior non-empty paragraphs
+including the variant title (`표준근로계약서(기간의 정함이 없는 경우)` vs
+`단시간근로자 표준근로계약서`).
+`replace` also now always reports `occurrences` (how many places each key
+resolves to, before scoping) next to `hits` (how many it wrote).
+
+**One file still serves both `--map` and `--fill-map`** (T35). The value object
+accepts the union of both halves' members — `text`, `at_para`,
+`all_occurrences` (engine) and `other_occurrences` (gate) — each side reads
+only its own and neither rejects the other's. An unknown member is a usage
+error on both sides, so a typo cannot quietly mean "unscoped". Every other
+consumer of `--fill-map` (the value-presence check, `value_spans`, each
+module's declared-personal-number rules) sees the flattened plain string.
 
 ## 1. probe
 
@@ -139,15 +195,37 @@ skeleton to keep → `replace --at-cell-append`; printed text to replace wholly 
 
 - `replace`: MAP.json is `{"placeholder text": "value", ...}`. Two tiers per
   key: (A) run-text strip-compare (whole-run match, whitespace-tolerant),
-  (B) raw substring over the section XML — so **keys must be
-  document-unique strings**: a generic key like `http://` also hits xmlns
-  namespace URIs in the markup (measured: 15 hits on a 1-table form; the
-  unique-run key `" http://"` hits once). Check the reported hit count
-  against your expectation. Values are XML-escaped. Output JSON:
-  `{"ok": true, "hits": {key: n}}`. 0-hit key = hard error, no output written
-  (`--allow-missing` reports 0 instead — idempotent re-run mode). Replaced
-  text inherits the run's original charPr (possibly guide-colored) — color
-  normalization is `normalize-clones`' job, not `replace`'s.
+  (B) raw substring over the section XML — neither has a position qualifier,
+  so **a key must resolve to exactly one place or the call is refused**
+  (exit 2, `replace_key_ambiguous`; a generic key like `http://` also hits
+  xmlns namespace URIs — measured 15 hits on a 1-table form). Values are
+  XML-escaped. Output JSON: `{"ok": true, "hits": {key: n},
+  "occurrences": {key: n}}` — `hits` is what was written, `occurrences` is how
+  many places the key resolves to before scoping. 0-hit key = hard error, no
+  output written (`--allow-missing` reports 0 instead — idempotent re-run
+  mode). Replaced text inherits the run's original charPr (possibly
+  guide-colored) — color normalization is `normalize-clones`' job.
+  - **A repeated key is refused, not resolved** (T41). The 표준근로계약서 pack
+    holds six variant contracts in one file and prints
+    `2. 근 무 장 소 : ` on five of them, so the unscoped map wrote one
+    employer's terms onto five contracts and **no offline gate caught it** —
+    the label survives as a prefix, so `clause_block_lost`,
+    `clause_lost` and `clause_text_consumed` all pass on the corrupted
+    document. The refusal payload carries `keys[].occurrences[]` with
+    `at_para`, `section`, `tier`, `matched`, `para_text`, `preceded_by` and
+    `context_before` (recent prior non-empty paragraphs, including the variant
+    title when the immediate predecessor is the same clause on every sheet) plus a
+    ready-to-paste `suggested_map`.
+  - **Scope with a value object.** `{"text": V, "at_para": N}` writes that one
+    paragraph — the paragraph-text analogue of `--at-cell`. `{"text": V,
+    "all_occurrences": true}` writes every occurrence, which is a decision you
+    state rather than a default you inherit. The two together are a usage
+    error, and an `at_para` that does not carry the key (or carries it twice)
+    is a usage error naming the paragraphs that do.
+  - The value object also accepts the gate's `other_occurrences` member so one
+    file can be passed to `--fill-map` unchanged (T35); `preedit` ignores it.
+    Any member outside that union is a usage error — a typo must never read as
+    "unscoped".
   **Each span is written once** (T26): a value that contains its own key
   (`{" http://": " http://example.kr"}`) is applied exactly once and re-runs
   are no-ops — tier B never rewrites what tier A (or an earlier key, or an

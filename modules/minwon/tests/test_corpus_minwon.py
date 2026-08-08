@@ -57,14 +57,19 @@ MINWON_FORMS = (
 #: cells, so the fill keys deliberately target runs that hold a whole group.
 #: 주민등록번호 is ABSENT on purpose — the operator supplied no identity number,
 #: so the seat stays empty and check_minwon must not complain about that.
+#: 민원 is the family where a repeated label is NORMAL — 성명 sits in the 신청인
+#: block and again in the 위임 note, 연락처 in three seats, and 교부 통수 has one
+#: `[  ]통` per 등본/초본 block. Those keys name a seat only with an address, so
+#: they carry one (T41); the numbers come from the refusal payload, whose
+#: `preceded_by` says which block each occurrence belongs to.
 FILL_MAP = {
-    "성명 ": "성명 김도현 ",
+    "성명 ": {"text": "성명 김도현 ", "at_para": 9},
     "                (시ㆍ도)                   (시ㆍ군ㆍ구)":
         "                서울특별시                   강남구",
-    "연락처": "연락처 010-0000-0000",
+    "연락처": {"text": "연락처 010-0000-0000", "at_para": 17},
     " [  ]등본 사항 전부 포함                  [  ]초본 사항 전부 포함":
         " [√]등본 사항 전부 포함                  [  ]초본 사항 전부 포함",
-    "[  ]통": "[1]통",
+    "[  ]통": {"text": "[1]통", "at_para": 50},
     "     년      월      일": "     2026년      8월      20일",
 }
 
@@ -315,14 +320,16 @@ class TestSyntheticallyFilledCorpusForm:
     def test_an_invented_rrn_is_caught(self, tmp_path, blank_jumin):
         verdict, code = self._variant(
             tmp_path, blank_jumin, "rrn",
-            {**FILL_MAP, "주민등록번호": "주민등록번호 900101-1234567"})
+            {**FILL_MAP, "주민등록번호": {
+                "text": "주민등록번호 900101-1234567", "at_para": 12}})
         assert code == 3
         assert {"identity_value_invented", "identity_seat_autofilled"} <= {
             row["code"] for row in verdict["hard"]}
 
     def test_the_same_rrn_passes_once_the_operator_declares_it(
             self, tmp_path, blank_jumin):
-        mapping = {**FILL_MAP, "주민등록번호": "주민등록번호 900101-1234567"}
+        mapping = {**FILL_MAP, "주민등록번호": {
+            "text": "주민등록번호 900101-1234567", "at_para": 12}}
         out = tmp_path / "rrn-ok.hwpx"
         preedit.replace_placeholders(blank_jumin, out, mapping,
                                     on_zero_hits="error")
@@ -334,7 +341,9 @@ class TestSyntheticallyFilledCorpusForm:
 
     def test_a_deleted_signature_marker_is_caught(self, tmp_path, blank_jumin):
         verdict, code = self._variant(tmp_path, blank_jumin, "sig",
-                                      {**FILL_MAP, "(서명 또는 인)": ""})
+                                      {**FILL_MAP, "(서명 또는 인)": {
+                                          "text": "",
+                                          "all_occurrences": True}})
         assert code == 3
         assert "signature_marker_lost" in {row["code"]
                                           for row in verdict["hard"]}
@@ -356,7 +365,9 @@ class TestSyntheticallyFilledCorpusForm:
 
     def test_a_lost_addressee_line_is_caught(self, tmp_path, blank_jumin):
         verdict, code = self._variant(tmp_path, blank_jumin, "addr",
-                                      {**FILL_MAP, "귀하": ""})
+                                      {**FILL_MAP, "귀하": {
+                                          "text": "",
+                                          "all_occurrences": True}})
         assert code == 3
         assert "addressee_line_lost" in {row["code"] for row in verdict["hard"]}
 
@@ -375,7 +386,7 @@ class TestSyntheticallyFilledCorpusForm:
         final document is HARD on the form's own authority."""
         verdict, code = self._variant(
             tmp_path, blank_jumin, "nosel",
-            {"성명 ": "성명 김도현 ",
+            {"성명 ": {"text": "성명 김도현 ", "at_para": 9},
              "     년      월      일": "     2026년      8월      20일"})
         assert code == 3
         finding = next(row for row in verdict["hard"]
@@ -395,7 +406,8 @@ class TestStaffSeatsOnTheRealForm:
             self, tmp_path, blank_jeongbo):
         out = tmp_path / "staff.hwpx"
         preedit.replace_placeholders(blank_jeongbo, out,
-                                    {"접수번호": "접수번호 2026-1234"},
+                                    {"접수번호": {"text": "접수번호 2026-1234",
+                                              "at_para": 7}},
                                     on_zero_hits="error")
         verdict, code = cm.check(out, baseline=blank_jeongbo)
         assert code == 3

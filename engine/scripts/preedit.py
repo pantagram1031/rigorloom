@@ -48,8 +48,20 @@ T34 seat-text(주소로 잡는 치환): 양식이 **인쇄해 둔 자리표**(" 
 없음, content_extract는 공백을 접는다). 그래서 정확한 문자열을 **필요 없게**
 만든다: replace가 셀 주소로 대상 런을 잡는다(--at-cell / --at-cell-append).
 
+T41 모호한 키(문단 텍스트에도 주소가 있어야 한다): replace의 tier A/B에는
+--at-cell과 달리 **위치 한정자가 없었다**. 표준근로계약서 팩은 6종 계약서가
+한 파일에 있고 조항 라벨("2. 근 무 장 소 :")이 장마다 똑같이 인쇄돼 있어서,
+문서가 안내하던 --map 경로가 형제 5장을 같은 값으로 덮어썼다 — 그리고 그
+파괴를 잡는 오프라인 게이트가 없다(라벨은 접두로 살아남으므로 구조 규칙이
+전부 통과한다). 그래서 무스코프 키가 두 곳 이상이면 **거부**하고(exit 2,
+replace_key_ambiguous) 발생 위치를 전부 이름 붙여 나열한다. 좁히는 형식은
+값 객체다 — {"키": {"text": "값", "at_para": N}}(그 문단만) /
+{"text": "값", "all_occurrences": true}(정말 전부, 명시적으로).
+
 CLI(얇은 래퍼):
     python preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json [--allow-missing]
+                      # MAP 값은 문자열 또는 {"text": …, "at_para": N} /
+                      # {"text": …, "all_occurrences": true}
     python preedit.py replace IN.hwpx --out OUT.hwpx [--table 0]     # 주소 키(T34)
                       --at-cell 'ROW,COL[#RUN]=TEXT' ...      # 런 텍스트 전체 교체
                       --at-cell-append 'ROW,COL[#RUN]=TEXT' ...  # 인쇄된 접두 보존
@@ -195,6 +207,152 @@ class AmbiguousCellRunError(PreeditError):
             f" 셀 텍스트 전체를 밀지 않는다): {listing}")
 
 
+#: 스코프를 붙인 ``replace --map`` 값 객체가 가질 수 있는 멤버 — **합집합**이다.
+#: 한 파일이 `preedit replace --map`과 게이트의 `--fill-map`을 동시에 섬긴다(T35).
+#: 그래서 양쪽 모두 상대편 멤버를 **받아들이되 자기 멤버만 해석**한다. 게이트
+#: 절반은 pipeline/scripts/check_residue.py의 FILL_SCOPE_MEMBERS에 있다 —
+#: 한쪽이 상대 멤버를 unknown으로 거부하면 "한 파일" 계약이 깨진다.
+MAP_SCOPE_MEMBERS = ("text", "at_para", "all_occurrences", "other_occurrences")
+
+#: preedit이 실제로 해석하는 멤버(나머지는 게이트 소관 — 받아들이고 무시).
+_MAP_SCOPE_OWN = ("at_para", "all_occurrences")
+
+
+class AmbiguousReplaceKeyError(PreeditError):
+    """``replace --map`` 키가 문서에서 두 곳 이상에 걸린다 — 어디인지 말해야 한다.
+
+    tier A(런 strip-비교)도 tier B(raw 부분문자열)도 **위치 한정자가 없다**.
+    그래서 6종 계약서가 한 파일에 들어 있는 표준근로계약서 팩에서
+    ``"2. 근 무 장 소 : "`` 한 키가 5장 전부를 같은 값으로 덮어쓴다 — 그리고
+    그 파괴를 잡는 오프라인 도구는 없다(라벨은 접두로 살아남으므로
+    clause_block_lost도 clause_text_consumed도 울리지 않는다). 조용히
+    '전부'를 고르는 것은 선택지가 아니다.
+
+    ``keys``: [{key, occurrences:[{occurrence, at_para, section, tier,
+    matched, para_text, preceded_by, context_before}], ...}] — 몇 번째가 어느
+    문단인지, 그 문단의 텍스트와 최근 앞 문단 문맥(variant 제목 포함)까지
+    들어 있다. 이 목록 자체가 탈출구다 — section XML을 열 이유가 없다.
+    ``suggested_map``: 그대로 붙여넣을 수 있는 map 조각.
+    exit code 2(사용법: 키가 덜 특정됐다).
+    """
+
+    exit_code = 2
+
+    def __init__(self, keys):
+        self.keys = list(keys)
+        self.suggested_map = {}
+        lines = []
+        for row in self.keys:
+            occ = row["occurrences"]
+            where = " | ".join(
+                f"#{o['occurrence']}(at_para={o['at_para']},"
+                f" 앞문맥={' ← '.join(o.get('context_before', [])[-4:])[:80]!r})"
+                for o in occ)
+            lines.append(f"키 {row['key']!r}가 {len(occ)}곳에 걸림: {where}")
+            first = occ[0]
+            self.suggested_map[row["key"]] = {
+                "text": "<VALUE>", "at_para": first["at_para"]}
+        super().__init__(
+            f"replace --map 키 {len(self.keys)}개가 문서에서 한 곳으로"
+            " 좁혀지지 않는다 — 어느 곳인지 값 객체로 말할 것"
+            ' ({"키": {"text": "값", "at_para": N}}), 전부를 정말 원하면'
+            ' {"text": "값", "all_occurrences": true}로 명시할 것'
+            "(조용히 전부 덮어쓰지 않는다): " + " / ".join(lines))
+
+
+def _split_map_scopes(mapping):
+    """``--map`` 을 (값 매핑, 스코프 매핑)으로 분리 + 값 객체 형식 검증.
+
+    값이 문자열/스칼라면 예전과 완전히 동일한 무스코프 키다. 값이 객체면
+    ``text``(필수) + :data:`MAP_SCOPE_MEMBERS` 만 허용한다 — 오타를 조용히
+    '무스코프'로 읽으면 스코프를 붙였다고 믿는 호출자가 전부 덮어쓴다.
+    """
+    values, scopes = {}, {}
+    for key, value in (mapping or {}).items():
+        if not isinstance(value, dict):
+            values[key] = value
+            continue
+        unknown = sorted(set(value) - set(MAP_SCOPE_MEMBERS))
+        if unknown:
+            raise PreeditError(
+                f"--map[{key!r}] 값 객체에 알 수 없는 멤버 {unknown} —"
+                f" 허용: {list(MAP_SCOPE_MEMBERS)}")
+        if "text" not in value:
+            raise PreeditError(
+                f'--map[{key!r}] 값 객체에 "text"가 없음'
+                ' (스코프만 있고 쓸 값이 없다)')
+        values[key] = value["text"]
+        scope = {}
+        if value.get("all_occurrences"):
+            scope["all_occurrences"] = True
+        if value.get("at_para") is not None:
+            if isinstance(value["at_para"], bool) or \
+                    not isinstance(value["at_para"], int):
+                raise PreeditError(
+                    f"--map[{key!r}]의 at_para는 정수(문단 주소): "
+                    f"{value['at_para']!r}")
+            scope["at_para"] = value["at_para"]
+        if len(scope) > 1:
+            raise PreeditError(
+                f"--map[{key!r}]에 at_para와 all_occurrences가 함께 있음 —"
+                " 하나만 고를 것(주소로 좁히는 것과 전부를 원하는 것은"
+                " 서로 다른 의도다)")
+        if scope:
+            scopes[key] = scope
+    return values, scopes
+
+
+class _ReplaceCtx:
+    """치환 1회분 문맥 — 문단 주소 부여 + (스캔 패스에서) 발생 위치 기록.
+
+    ``para_index``(= 값 객체의 ``at_para``)는 이 클래스가 부여한다: 섹션 이름
+    사전순 → 각 섹션 안 ``<hp:p>`` 여는 태그 **문서 순서**(바깥 문단 먼저,
+    그 안 셀 문단은 그다음)로 0부터 센다. 스캔 패스와 쓰기 패스는 같은 원본
+    구조를 같은 순서로 걷기 때문에 두 패스의 번호가 어긋날 수 없다.
+    """
+
+    def __init__(self, scopes=None, record=None):
+        self.scopes = scopes or {}
+        self.record = record          # 스캔 패스만 list, 쓰기 패스는 None
+        self.section = None
+        self.para_count = 0
+        self.last_nonempty = None
+        self.recent_nonempty = []
+
+    def next_para(self):
+        idx = self.para_count
+        self.para_count += 1
+        return idx
+
+    def allowed(self, mapping, at_para):
+        """이 문단(또는 문단 밖 gap)에서 쓸 수 있는 키만 남긴 매핑."""
+        if not self.scopes:
+            return mapping
+        out = {}
+        for key, value in mapping.items():
+            scope = self.scopes.get(key)
+            if not scope or scope.get("all_occurrences") \
+                    or scope.get("at_para") == at_para:
+                out[key] = value
+        return out
+
+    def logger(self, at_para, para_text):
+        """``_apply_tiers`` 에 넘길 기록 콜백(스캔 패스 전용, 아니면 None)."""
+        if self.record is None:
+            return None
+        section, preceded_by = self.section, self.last_nonempty
+        context_before = list(self.recent_nonempty[-12:])
+
+        def _log(key, tier, matched):
+            self.record.append({
+                "key": key, "tier": tier, "matched": matched[:80],
+                "section": section, "at_para": at_para,
+                "para_text": (para_text or "")[:90] or None,
+                "preceded_by": preceded_by,
+                "context_before": context_before})
+        return _log
+
+
 # ---------------------------------------------------------------------------
 # zip 공통 유틸 — 원본 비파괴(읽기 전용) + 원자적 쓰기(temp → move)
 # ---------------------------------------------------------------------------
@@ -312,9 +470,14 @@ def _apply_edits(text, edits, protected):
     return "".join(out), sorted(remapped + written)
 
 
-def _apply_tiers(text, mapping, hits):
+def _apply_tiers(text, mapping, hits, log=None):
     """치환 2단(tier A: 런 strip-비교 / tier B: raw 부분문자열)을 문자열
     조각에 적용하고 새 문자열을 돌려준다. hit는 hits dict에 누적.
+
+    ``log``(선택, ``ctx.logger()``)가 주어지면 실제로 고친 스팬마다
+    ``log(key, tier, matched)``를 부른다 — 스캔 패스가 "이 키가 어디에 걸리나"
+    를 **쓰기와 똑같은 규칙으로** 세는 유일한 경로다(두 경로로 세면 언젠가
+    어긋난다).
 
     D1(값이 키를 포함하면 이중 적용): tier B는 tier A가 이미 다시 쓴 스팬 위를
     또 훑었다. operations.md가 스스로 문서화한 예제
@@ -356,6 +519,9 @@ def _apply_tiers(text, mapping, hits):
             edits.append((m.start(2), m.end(2), value_esc))
         if edits:
             hits[key] += len(edits)
+            if log is not None:
+                for start, end, _repl in sorted(edits):
+                    log(key, "A", unescape(_strip_tags(text[start:end])))
             text, protected = _apply_edits(text, edits, protected)
 
         # tier B — raw 부분문자열. protected 스팬(방금 쓴 값 포함)은 불가침.
@@ -373,11 +539,14 @@ def _apply_tiers(text, mapping, hits):
                 pos = j
             if edits:
                 hits[key] += len(edits)
+                if log is not None:
+                    for _ in edits:
+                        log(key, "B", unescape(_strip_tags(needle)))
                 text, protected = _apply_edits(text, edits, protected)
     return text
 
 
-def _replace_in_paragraph(p_xml, mapping, hits):
+def _replace_in_paragraph(p_xml, mapping, hits, ctx):
     """문단 하나에 치환 적용(중첩 셀 문단은 재귀). 자신의 텍스트가 바뀐
     문단만 자기 linesegarray를 제거한다(stale-lineseg P0).
 
@@ -386,24 +555,42 @@ def _replace_in_paragraph(p_xml, mapping, hits):
     있으므로 gap 치환은 문단 구조를 깨지 않는다. gap이 바뀌면 이 문단
     '자신의' 텍스트가 바뀐 것 — 자기 gap의 linesegarray만 제거하고, 중첩
     문단은 각자 재귀에서 판단한다(바뀌지 않은 문단의 lineseg는 바이트
-    그대로 보존 — byte-fidelity)."""
+    그대로 보존 — byte-fidelity).
+
+    ``ctx``가 이 문단의 주소(``at_para``)를 부여한다: 자기 번호를 먼저 받고
+    그다음 중첩 문단이 받는다(= 문서 순서). 스코프가 걸린 키는 자기 번호와
+    맞을 때만 이 문단에서 쓰인다."""
     open_m = P_OPEN_RE.match(p_xml)
     if not open_m:  # 방어 — _find_paragraphs 조각이면 항상 매치
-        return _apply_tiers(p_xml, mapping, hits)
+        return _apply_tiers(p_xml, ctx.allowed(mapping, None), hits,
+                            ctx.logger(None, None))
     close_idx = p_xml.rfind("</")
     open_tag = p_xml[:open_m.end()]
     inner = p_xml[open_m.end():close_idx]
     close_tag = p_xml[close_idx:]
 
+    at_para = ctx.next_para()
     nested = _find_paragraphs(inner)
-    gaps, nested_out, last = [], [], 0
-    for start, end, np_xml in nested:
+    gaps, last = [], 0
+    for start, end, _np_xml in nested:
         gaps.append(inner[last:start])
-        nested_out.append(_replace_in_paragraph(np_xml, mapping, hits))
         last = end
     gaps.append(inner[last:])
+    # 자기 텍스트(중첩 셀 문단 제외) — 거부 payload가 "몇 번째 문단"이 아니라
+    # "무슨 문단"인지 말할 수 있어야 한다. gap 치환 전 원본에서 읽는다.
+    own_text = unescape(_strip_tags("".join(gaps))).strip()
+    log = ctx.logger(at_para, own_text)
+    if own_text:
+        ctx.last_nonempty = own_text
+        ctx.recent_nonempty.append(own_text[:90])
+        if len(ctx.recent_nonempty) > 12:
+            del ctx.recent_nonempty[:-12]
 
-    new_gaps = [_apply_tiers(g, mapping, hits) for g in gaps]
+    nested_out = [_replace_in_paragraph(np_xml, mapping, hits, ctx)
+                  for _s, _e, np_xml in nested]
+
+    local = ctx.allowed(mapping, at_para)
+    new_gaps = [_apply_tiers(g, local, hits, log) for g in gaps]
     if new_gaps != gaps:  # 이 문단 자신의 텍스트가 바뀜 → 캐시 레이아웃 제거
         new_gaps = [LINESEG_RE.sub("", g) for g in new_gaps]
 
@@ -415,15 +602,21 @@ def _replace_in_paragraph(p_xml, mapping, hits):
     return open_tag + "".join(out) + close_tag
 
 
-def _replace_in_section(xml, mapping, hits):
-    """섹션 XML 전체에 문단 단위 치환 적용(문단 밖 영역은 raw tier만)."""
+def _replace_in_section(xml, mapping, hits, ctx):
+    """섹션 XML 전체에 문단 단위 치환 적용(문단 밖 영역은 raw tier만).
+
+    문단 밖 영역의 ``at_para``는 None이다 — 주소로 좁힐 수 없는 자리이므로
+    스코프가 걸린 키는 거기서 쓰이지 않고, 무스코프 키는 (한 곳이 아니면)
+    애초에 거부된다."""
     paras = _find_paragraphs(xml)
     out, last = [], 0
     for start, end, p_xml in paras:
-        out.append(_apply_tiers(xml[last:start], mapping, hits))
-        out.append(_replace_in_paragraph(p_xml, mapping, hits))
+        out.append(_apply_tiers(xml[last:start], ctx.allowed(mapping, None),
+                                hits, ctx.logger(None, None)))
+        out.append(_replace_in_paragraph(p_xml, mapping, hits, ctx))
         last = end
-    out.append(_apply_tiers(xml[last:], mapping, hits))
+    out.append(_apply_tiers(xml[last:], ctx.allowed(mapping, None), hits,
+                            ctx.logger(None, None)))
     return "".join(out)
 
 
@@ -459,21 +652,48 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
     한컴이 열 때 재계산한다. 바뀌지 않은 문단(중첩 셀 문단 포함)의
     linesegarray는 바이트 그대로 보존.
 
-    반환: {"ok": True, "hits": {key: n}}
+    모호한 키는 **거부**한다(T41). tier A도 tier B도 위치 한정자가 없어서
+    무스코프 키는 문서의 **모든** 발생을 같은 값으로 덮어쓴다 — 6종 계약서가
+    한 파일에 들어 있는 표준근로계약서 팩에서는 그게 형제 5장을 조용히
+    파괴하는 동작이고, 잡아내는 오프라인 게이트가 없다. 그래서 발생 위치가
+    둘 이상인 무스코프 키는 AmbiguousReplaceKeyError(exit 2)로 거부하며,
+    거부 payload가 발생 위치를 전부 이름 붙여 나열한다. 좁히는 방법(값 객체):
+
+      {"2. 근 무 장 소 : ": {"text": "…", "at_para": 61}}   # 그 문단만
+      {"…": {"text": "…", "all_occurrences": true}}          # 정말 전부
+
+    ``at_para``는 문서 순서 문단 주소(0-based) — ``--at-cell``의 ``ROW,COL``과
+    같은 역할을 문단 텍스트에 대해 한다. 값은 거부 payload에서 읽으면 된다.
+
+    반환: {"ok": True, "hits": {key: n}, "occurrences": {key: n},
+           "scope": {key: "at_para:N"|"all_occurrences"}}
+    ``occurrences``는 스코프를 적용하지 **않았을 때** 그 키가 걸리는 곳의 수다
+    (= "hit 수를 예상과 맞춰 보라"는 지침의 기계 판독 형태).
     """
     if on_zero_hits not in ("error", "ignore"):
         raise ValueError(f"on_zero_hits는 'error'|'ignore': {on_zero_hits!r}")
+    mapping, scopes = _split_map_scopes(mapping)
     for key in mapping:
         if not str(key).strip():
             raise PreeditError(f"빈(공백뿐인) 키는 치환 불가: {key!r}")
 
     infos, contents = _read_zip(hwpx_in)
+
+    # 패스 1(스캔) — 아무것도 쓰지 않고, 키마다 원본 위에서 쓰기와 **같은
+    # 코드**로 발생 위치를 센다. 스코프 없이 세야 거부 payload가 전부를
+    # 나열할 수 있고, at_para가 실제로 존재하는 문단인지도 여기서 검증된다.
+    occurrences = _scan_occurrences(contents, mapping)
+    _assert_map_keys_unambiguous(occurrences, scopes)
+
     hits = {key: 0 for key in mapping}
     modified = set()
-
+    ctx = _ReplaceCtx(scopes=scopes)
     for sname in _section_names(contents):
         original = contents[sname]
-        xml = _replace_in_section(original.decode("utf-8"), mapping, hits)
+        ctx.section = sname
+        ctx.last_nonempty = None
+        ctx.recent_nonempty = []
+        xml = _replace_in_section(original.decode("utf-8"), mapping, hits, ctx)
         data = xml.encode("utf-8")
         if data != original:
             contents[sname] = data
@@ -487,7 +707,73 @@ def replace_placeholders(hwpx_in, hwpx_out, mapping, *, on_zero_hits="error"):
 
     _assert_members_well_formed(contents, modified)
     _write_zip(hwpx_out, infos, contents)
-    return {"ok": True, "hits": hits}
+    result = {"ok": True, "hits": hits,
+              "occurrences": {k: len(v) for k, v in occurrences.items()}}
+    if scopes:
+        result["scope"] = {
+            key: ("all_occurrences" if scope.get("all_occurrences")
+                  else f"at_para:{scope['at_para']}")
+            for key, scope in scopes.items()}
+    return result
+
+
+def _scan_occurrences(contents, mapping):
+    """{key: [{occurrence, at_para, section, tier, matched, para_text,
+    preceded_by, context_before}]} — 스코프를 적용하지 않은 전체 발생 목록.
+
+    각 키를 원본에 대해 **독립적으로**, 쓰기 패스와 같은
+    ``_replace_in_section``으로 센다(결과 XML은 버린다). 여러 키를 한 복사본에
+    차례로 적용하면 앞 키가 뒤 키의 원래 발생을 지워서, 특히 앞 키에 at_para
+    스코프가 있을 때 스캔과 실제 쓰기가 서로 다른 문서를 보게 된다. 독립 스캔은
+    `occurrences`가 약속한 그대로 "스코프 전 원본에서 이 키가 걸리는 곳"이다.
+    원본은 건드리지 않는다(``contents``는 읽기만).
+    """
+    out = {}
+    for key, value in mapping.items():
+        record = []
+        hits = {key: 0}
+        ctx = _ReplaceCtx(record=record)
+        for sname in _section_names(contents):
+            ctx.section = sname
+            ctx.last_nonempty = None
+            ctx.recent_nonempty = []
+            _replace_in_section(contents[sname].decode("utf-8"),
+                                {key: value}, hits, ctx)
+        bucket = []
+        for row in record:
+            entry = {k: v for k, v in row.items() if k != "key"}
+            entry["occurrence"] = len(bucket) + 1
+            bucket.append(entry)
+        out[key] = bucket
+    return out
+
+
+def _assert_map_keys_unambiguous(occurrences, scopes):
+    """무스코프 키가 두 곳 이상이면 거부. 스코프 키는 정확히 한 곳으로
+    좁혀지는지 검증한다(0곳/여러 곳 모두 사용법 오류)."""
+    ambiguous = []
+    for key, found in occurrences.items():
+        scope = scopes.get(key) or {}
+        if scope.get("all_occurrences"):
+            continue
+        if "at_para" in scope:
+            here = [o for o in found if o["at_para"] == scope["at_para"]]
+            if len(here) == 1:
+                continue
+            if not here:
+                raise PreeditError(
+                    f"--map[{key!r}]의 at_para={scope['at_para']} 문단에 그 키가"
+                    f" 없음 — 실제로 걸리는 문단: "
+                    f"{sorted({o['at_para'] for o in found})}")
+            raise PreeditError(
+                f"--map[{key!r}]가 at_para={scope['at_para']} 한 문단 안에서만"
+                f" {len(here)}번 걸림 — 문단 주소로는 더 좁힐 수 없다."
+                " 키를 더 길게 잡거나(그 문단에서 유일한 문자열),"
+                ' all_occurrences: true 로 전부를 명시할 것')
+        elif len(found) > 1:
+            ambiguous.append({"key": key, "occurrences": found})
+    if ambiguous:
+        raise AmbiguousReplaceKeyError(ambiguous)
 
 
 # ---------------------------------------------------------------------------
@@ -2110,6 +2396,14 @@ def main(argv=None):
              code_name="at_cell_run_ambiguous",
              addr=exc.addr, runs=exc.runs,
              suggested_flags=exc.suggested_flags)
+    except AmbiguousReplaceKeyError as exc:
+        # exit 2 = 사용법(키가 덜 특정됐다). payload가 그 키의 모든 발생 위치를
+        # at_para·문단 텍스트·최근 앞 문맥까지 붙여 나열하므로, 이 JSON만 읽고
+        # at_para를 골라 다시 부르면 된다 — section XML을 열 이유가 없다
+        # (at_cell_run_ambiguous와 같은 모양, 같은 이유).
+        _die(str(exc), code=exc.exit_code,
+             code_name="replace_key_ambiguous",
+             keys=exc.keys, suggested_map=exc.suggested_map)
     except ScriptAnomalyError as exc:
         # exit 3 = '발견'. 거부 메시지에 셀 주소·이상 charPr·권장 id·정확히
         # 넘겨야 하는 플래그가 다 들어 있어야 한다 — 이 거부를 읽고 header.xml을

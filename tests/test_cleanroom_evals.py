@@ -634,10 +634,13 @@ class TestTaskRun:
         copy of preedit and every non-skipped check must come back green."""
         work = Path(materialized["payload"]["work_dir"])
         source = Path(materialized["payload"]["inputs"][0]["sandbox_path"])
+        # "기 업 명" is printed in TWO blocks of this form (신청기업 / 협업기업),
+        # so it is scoped by paragraph address — an unscoped key would be
+        # refused, and the assertion below proves that is what happens (T41).
         mapping = {
             "우(     -     )": "우 서울특별시 강남구 테헤란로 100",
             "년      월      일": "2026년   8월   20일",
-            "기 업 명": "기 업 명 한빛정밀",
+            "기 업 명": {"text": "기 업 명 한빛정밀", "at_para": 6},
             "협업제품명": "협업제품명 저진동 정밀 이송 스테이지",
         }
         (work / "map.json").write_text(
@@ -648,6 +651,20 @@ class TestTaskRun:
             ["replace", str(source), "--out", str(work / "filled.hwpx"),
              "--map", str(work / "map.json")])
         assert proc.returncode == 0, proc.stderr
+
+        # the same map with that one key left unscoped: refused, not written
+        loose = dict(mapping, **{"기 업 명": "기 업 명 한빛정밀"})
+        (work / "loose.json").write_text(
+            json.dumps(loose, ensure_ascii=False), encoding="utf-8")
+        refused = sandbox.run_python(
+            sandbox.install / "engine" / "scripts" / "preedit.py",
+            ["replace", str(source), "--out", str(work / "loose.hwpx"),
+             "--map", str(work / "loose.json")])
+        assert refused.returncode == 2, refused.stdout
+        payload = json.loads(refused.stdout.strip().splitlines()[-1])
+        assert payload["code_name"] == "replace_key_ambiguous"
+        assert [row["key"] for row in payload["keys"]] == ["기 업 명"]
+        assert not (work / "loose.hwpx").exists()
 
         results = cleanroom.run_checks(
             materialized["root"], materialized["task"])

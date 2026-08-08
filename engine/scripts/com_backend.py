@@ -372,6 +372,21 @@ def _cursor_para_text(hwp):
 
 
 def op_goto_text(hwp, o):
+    """앵커 문구의 **첫 번째** 발생으로 이동한다 — 정의된 계약이다(T41).
+
+    MoveDocBegin()으로 커서를 문서 맨 앞에 **강제 리셋**한 뒤 find()를 부르므로,
+    앞선 op가 커서를 어디에 두었든 결과는 "문서 순서로 첫 발생"이다. 추측이
+    아니라 명시된 동작이므로 모호성 거부(preedit의 replace_key_ambiguous)의
+    대상이 아니다 — 대신 그 계약을 문서화한다. 같은 문구가 여러 장에 인쇄된
+    문단 팩(6종 계약서가 한 파일인 표준근로계약서 등)에서 **첫 장만** 편집하는
+    스코프 메커니즘이 바로 이것이다: preedit --map은 위치 한정자가 없어 전부를
+    덮어썼지만, goto_text/find_delete는 구조적으로 한 곳만 잡는다.
+
+    둘째·셋째 발생을 잡아야 한다면 이 op로는 안 된다 — 오프라인
+    `preedit replace --map {"키": {"text": …, "at_para": N}}`(문단 주소)를 쓰거나,
+    앞선 고유 문구로 앵커를 바꿔야 한다. find_delete만 "all": true로 전부를
+    명시할 수 있다.
+    """
     hwp.MoveDocBegin()
     found = hwp.find(o["text"]) if hasattr(hwp, "find") else False
     if not found:
@@ -423,6 +438,11 @@ def op_find_delete(hwp, o):
 
     find_replace_all은 FindString을 콤마 기준 다중 검색어로 분리하므로 콤마가
     든 안내문/문구 삭제에 부적합하다. find()는 단일 문자열로 매칭하므로 안전.
+
+    범위 계약(T41): 매 회차마다 MoveDocBegin()으로 리셋하므로 기본값은 **첫
+    발생 하나**다 — 추측이 아니라 정의된 동작. 전부를 지우려면 "all": true 로
+    **명시**해야 한다(그 플래그가 없으면 나머지 발생은 그대로 남는다). 같은
+    문구가 여러 장에 인쇄된 문단 팩에서 한 장만 손대는 스코프가 이것이다.
     """
     n = 0
     while o.get("all", False) or n == 0:

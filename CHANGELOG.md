@@ -88,6 +88,20 @@ the kernel's contract shape.
   `.pdf`/image-directory one → HARD **and the finding says the inheritance
   question was not checked**. `fill_charpr_script_mismatch` stays in
   `SAFETY_CHECKS` and `--accept-without` was not widened.
+- **T41 — an ambiguous text match refuses instead of choosing.** The HR
+  module's documented `preedit replace --map` path rewrote the same clause on
+  five sibling contracts because a paragraph key had no position scope, and
+  every module structural gate still passed the corrupted pack. Unscoped keys
+  that resolve more than once now exit 2 as `replace_key_ambiguous`, naming
+  each `at_para` plus recent prior context including the variant title; use
+  `{"text": V, "at_para": N}` for one paragraph or
+  `{"text": V, "all_occurrences": true}` for all. Occurrences are scanned
+  independently per key against the original document, so overlapping keys
+  cannot erase each other's evidence. The same doctrine now guards residue
+  keep derivation: a fill-map key that claims several inventory strings is a
+  usage error until `other_occurrences: form_text|seats` states which semantics
+  apply. Scoped maps work from either `--fill-map` or expectations-only and are
+  flattened for every other consumer.
 
 ### Changed
 
