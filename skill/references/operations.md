@@ -4,6 +4,11 @@ All paths are checkout-relative. Every operation is non-destructive (reads
 the input, writes `--out`/`--save-as`). Exit codes follow the checker
 convention where noted: 0 = pass/clean, 2 = usage/config error, 3 = finding.
 
+Filling a form is a **sequence**, not a lookup: read
+[`fill-recipe.md`](fill-recipe.md) for the branch-per-cell decision rule, the
+four artifacts and the flags that consume them, and what an accepted verdict
+looks like. This file is the per-CLI contract each of those steps invokes.
+
 ## TOC
 
 1. [probe](#1-probe) — capability probe
@@ -124,14 +129,13 @@ python engine/scripts/preedit.py delete-guides IN.hwpx --out OUT.hwpx [--color '
 python engine/scripts/preedit.py normalize-clones IN.hwpx --out OUT.hwpx --clone SRC:NEW [--set textColor=#000000] [--repoint FROM:TO:TEXT]
 ```
 
-**Which one fills a form.** Look at `table_map` first, and split on whether
-the cell already prints something:
-
-| the cell | use |
-|---|---|
-| `classification: fill_target` — *genuinely empty*: `<hp:run charPrIDRef="N"/>` with no `<hp:t>` at all (all 19 empty cells on the PPS 협업승인신청서; 13 of them are `fill_target`, the other 6 are `spacer`) | **`fill-cells --cell ROW,COL=값`** (T27). There is no string to key on, so `replace --map` structurally cannot reach it |
-| already prints a **seat**: a skeleton the form typeset for you to write over or into — `" 우(     -     )"`, `" http://"`, `"20   .    .    .  ~  20   .    .    .   (     개월)"` | **`replace --at-cell ROW,COL=값`** or **`--at-cell-append`** (T34). Address-keyed, so you never need the skeleton's exact internal whitespace |
-| a literal, document-unique placeholder string you already hold (`[제목]`) | **`replace --map`** |
+**Which one fills a form** — the decision rule, the worked 협업기간 example
+and the whole end-to-end sequence live in **`references/fill-recipe.md`**.
+Read it before your first fill; do not re-derive the branch from the CLI
+contracts below. In one line: genuinely empty run → `fill-cells`; printed
+skeleton to keep → `replace --at-cell-append`; printed text to replace wholly →
+`replace --at-cell`; multi-run cell → the `#RUN` the refusal hands you;
+`classification: spacer` → do not write there at all.
 
 - `replace`: MAP.json is `{"placeholder text": "value", ...}`. Two tiers per
   key: (A) run-text strip-compare (whole-run match, whitespace-tolerant),
@@ -375,6 +379,7 @@ CLIs, not auto-fired.
 python engine/scripts/com_backend.py inspect --file FORM.hwp
 python engine/scripts/com_backend.py edit --file FORM.hwp --ops ops.json --save-as OUT.hwpx --export-pdf verify.pdf
 python engine/scripts/com_backend.py set-cell --file FORM.hwp --addr ROW,COL --text "값" [--table 0] --save-as OUT.hwpx [--expect-empty | --expect TEXT]
+python engine/scripts/com_backend.py convert --file IN.hwp[x] --to OUT.hwpx|OUT.pdf   # format by --to's extension
 python engine/scripts/build_report.py --content bundle/content.md --form FORM.hwp > ops.json   # --dry-run: no Hancom
 ```
 
@@ -395,7 +400,7 @@ behind an explicit `"raw_traversal": true`; the validator rejects bare
 session, so prefer the `set-cell` subcommand: **one invocation = one session =
 one cell**, run serially, never `--kill-stale` (T21). The walk itself is
 entry-point independent (it wraps), so drift cannot silently retarget it.
-For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
+`convert` is the one PDF/format path: `--to` decides the target by extension, one serial invocation, never `--kill-stale`. It is exactly what `visual_verify` shells out to when handed an `.hwpx` without a `--pdf`. For `.hwpx` prefer the offline `preedit fill-cells` — no Hancom, no drift. `build_report` refuses on
 any SECTION-anchor mismatch (fix content.md, never bypass). ops JSON schema:
 `engine/references/ops_schema.md`; equation syntax:
 `engine/references/hwpeqn_cheatsheet.md` (brace every script: `x^{2}`, T13).

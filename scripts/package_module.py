@@ -190,6 +190,102 @@ def _assert_skill_surface_references(staging: Path, skill_root: Path,
             "naming a path the reader cannot open.", exit_code=3)
 
 
+# ── shipped-surface table integrity ──────────────────────────────────
+#
+# In GitHub-flavoured markdown a `|` splits cells even inside a code span; the
+# only way to put one in a cell is `\|`. So `com_backend.py inspect|edit` in
+# the SKILL.md routing table silently gave that row FOUR cells where every
+# other row had three — the last column fell off for readers, and the routing
+# table is the first thing a router reads. Cell counts are cheap to check and
+# nobody will remember to; so the build checks them.
+
+
+def markdown_table_cells(line: str) -> list[str]:
+    """Cells of one GFM table row, honouring `\\|` and nothing else.
+
+    Deliberately NOT code-span aware: GFM is not either. That is the whole
+    point of the check.
+    """
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and index + 1 < len(line):
+            current.append(line[index:index + 2])
+            index += 2
+            continue
+        if char == "|":
+            cells.append("".join(current))
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    cells.append("".join(current))
+    # Leading/trailing pipes are delimiters, not empty cells.
+    if cells and not cells[0].strip():
+        cells = cells[1:]
+    if cells and not cells[-1].strip():
+        cells = cells[:-1]
+    return cells
+
+
+def markdown_table_defects(text: str) -> list[dict]:
+    """Rows whose cell count disagrees with their table's header row.
+
+    Returns ``[{table_line, line, cells, expected, row}]`` — one entry per
+    offending row, so the message can name the row a reader would lose.
+    """
+    defects: list[dict] = []
+    block: list[tuple[int, str]] = []
+
+    def _flush() -> None:
+        if len(block) < 2:
+            return
+        header_line, header = block[0]
+        expected = len(markdown_table_cells(header))
+        for number, row in block:
+            count = len(markdown_table_cells(row))
+            if count != expected:
+                defects.append({"table_line": header_line, "line": number,
+                                "cells": count, "expected": expected,
+                                "row": row.strip()[:120]})
+
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.strip().startswith("|"):
+            block.append((number, line.strip()))
+            continue
+        _flush()
+        block = []
+    _flush()
+    return defects
+
+
+def _assert_skill_surface_tables(staging: Path, skill_root: Path,
+                                 label: str) -> None:
+    """Every table in the shipped skill surface must be rectangular."""
+    broken: list[str] = []
+    for doc in _surface_docs(staging, skill_root):
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue          # the reference guard already reports this
+        name = doc.relative_to(staging).as_posix()
+        for defect in markdown_table_defects(text):
+            broken.append(
+                f"{name}:{defect['line']} has {defect['cells']} cells, "
+                f"header (line {defect['table_line']}) has "
+                f"{defect['expected']}: {defect['row']}")
+    if broken:
+        listed = "\n".join(f"  {row}" for row in broken)
+        raise PackageError(
+            f"{label}: the shipped skill surface has "
+            f"{len(broken)} ragged table row(s):\n{listed}\n"
+            "A raw '|' splits a cell even inside a code span — write it as "
+            "'\\|'.", exit_code=3)
+
+
 class PackageError(Exception):
     """Loud packaging refusal; ``exit_code`` follows the checker convention."""
 
@@ -458,10 +554,12 @@ def _stage_module(name: str, staging: Path,
     if declared_skill:
         # The fragment's own directory is the module's skill root — derived
         # from the declaration, never assumed to be called "skill/".
+        skill_root = (Path("modules") / name
+                      / Path(declared_skill["fragment"]).parent)
         _assert_skill_surface_references(
-            staging,
-            Path("modules") / name / Path(declared_skill["fragment"]).parent,
-            f"distribution module '{name}'")
+            staging, skill_root, f"distribution module '{name}'")
+        _assert_skill_surface_tables(
+            staging, skill_root, f"distribution module '{name}'")
     return {
         "requires": {"rigorloom": spec.requires},
         "provides": _provides_summary(spec.provides),
@@ -489,6 +587,7 @@ def _stage_core(staging: Path, repo_root: Path, version: str) -> dict:
     shutil.copy2(Path(__file__).resolve(), scripts_dir / "package_module.py")
     _assert_core_skill_surface(staging)
     _assert_skill_surface_references(staging, Path("skill"), "core bundle")
+    _assert_skill_surface_tables(staging, Path("skill"), "core bundle")
     return {
         "requires": None,
         "provides": {"core_components": list(_CORE_COMPONENTS),

@@ -38,6 +38,7 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
+| **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |
 | fill an **empty** form cell (`table_map` says `fill_target`) | `python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx --cell ROW,COL=값 [--charpr-per-cell ROW,COL=ID]` (ROW,COL = the cellAddr `table_map` reports; `--charpr-per-cell` takes the pre-flight's `charpr_suggested`, see references/operations.md §3) | LOW |
 | write over/into a **printed seat** the form typeset (`" 우(     -     )"`, `" http://"`, a date skeleton) | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --at-cell 'ROW,COL=값'` — or `--at-cell-append 'ROW,COL=값'` to keep the printed prefix. Address-keyed, so you never need the seat's exact internal whitespace (T34) | LOW |
 | replace a literal placeholder string that exists in the document | `python engine/scripts/preedit.py replace IN.hwpx --out OUT.hwpx --map MAP.json` | LOW |
@@ -51,7 +52,7 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 | measure PDF layout (whitespace/gaps) | `python engine/scripts/layout_qa.py --file verify.pdf` | LOW |
 | **verify a rendered artifact (render→judge loop)** | `python pipeline/scripts/visual_verify.py --artifact OUT.hwpx [--pdf verify.pdf] [--expectations exp.json]` then read the `vision_required` PNGs against `references/visual-rubric.md` and re-run with `--vision-verdict vision.json` | LOW (script) + HIGH (reading the pages) |
 | tidy blank paragraphs near anchors | `python engine/scripts/tidy_hwpx.py FILE.hwpx --before "앵커" --out OUT.hwpx` | LOW |
-| COM edit / assemble / export PDF (Windows+Hancom) | `python engine/scripts/com_backend.py inspect|edit --file ... --ops ops.json --save-as ... --export-pdf ...` | LOW |
+| COM edit / assemble / export PDF (Windows+Hancom) | `python engine/scripts/com_backend.py inspect\|edit --file ... --ops ops.json --save-as ... --export-pdf ...` | LOW |
 | decide WHAT to fill, which cells are staff-only, what the form means | read the profile + document text, judge | HIGH |
 | layout judgment (is this gap designed or a defect?) | layout_qa numbers first, then judge; form families differ | HIGH |
 
@@ -173,6 +174,9 @@ Do not auto-start them from a casual mention of a file.
 
 ## References (one level deep)
 
+- `references/fill-recipe.md` — the canonical mixed-storage form
+  fill, worked end to end on the real PPS form: which command each
+  cell takes, the ONE fill map, and the acceptance verdict.
 - `references/operations.md` — CLI contracts + JSON verdict shapes.
 - `references/forms.md` — form-family notes (① 민원 … ⑦ 인사/노무), Bench-0
   floors, per-family gotchas.
