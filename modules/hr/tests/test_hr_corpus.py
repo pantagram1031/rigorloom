@@ -58,19 +58,44 @@ HR_FORMS = (HR_2013, HR_2025)
 #: Keys are run texts / substrings from the form. 생년월일 and any account number
 #: are ABSENT on purpose — the operator supplied none, so those seats stay empty
 #: and check_hr must not complain about that.
+#: The pack holds SIX variant contracts in one file and repeats these clause
+#: labels across its variants, so every key below resolves to 3–5 places
+#: (T41). Filling one contract means saying WHICH sheet — `at_para` addresses
+#: the paragraph the way `--at-cell` addresses a cell, and the numbers come
+#: straight out of the refusal payload (`context_before` includes the variant
+#: title even when the immediately preceding clause is identical). The
+#: unscoped spelling of this very map is what silently rewrote sibling
+#: contracts; the `TestUnscopedFillOverwritesTheSiblingContracts` tests pin the
+#: refusal, reproduced corruption, and surgical scoped edit.
+_SHEET_1 = "표준근로계약서(기간의 정함이 없는 경우)"
 FILL_MAP = {
-    "(이하 “사업주”라 함)과(와) ": "한빛정밀 주식회사(이하 “사업주”라 함)과(와) ",
-    "(이하 “근로자”라 함)은": "이서준(이하 “근로자”라 함)은",
-    "1. 근로개시일 :      년   월   일부터": "1. 근로개시일 :  2026년 9월 1일부터",
-    "2. 근 무 장 소 : ": "2. 근 무 장 소 : 경기도 화성시 동탄산단로 15",
-    "3. 업무의 내용 : ": "3. 업무의 내용 : 정밀 이송 스테이지 조립 및 검사",
-    "- 월(일, 시간)급 : ": "- 월(일, 시간)급 : 2,800,000 ",
-    "      년      월      일": "     2026년   8월   20일",
-    "사업체명 :                   (전화": "사업체명 : 한빛정밀 주식회사 (전화",
-    "대 표 자 :                   (서명)": "대 표 자 : 김도현 (서명)",
-    "(근로자) 주    소 :": "(근로자) 주    소 : 경기도 수원시 영통구 반달로 7",
-    "성    명 :                   (서명)": "성    명 : 이서준 (서명)",
+    "(이하 “사업주”라 함)과(와) ": {
+        "text": "한빛정밀 주식회사(이하 “사업주”라 함)과(와) ", "at_para": 2},
+    "(이하 “근로자”라 함)은": {
+        "text": "이서준(이하 “근로자”라 함)은", "at_para": 2},
+    "1. 근로개시일 :      년   월   일부터": {
+        "text": "1. 근로개시일 :  2026년 9월 1일부터", "at_para": 3},
+    "2. 근 무 장 소 : ": {
+        "text": "2. 근 무 장 소 : 경기도 화성시 동탄산단로 15", "at_para": 4},
+    "3. 업무의 내용 : ": {
+        "text": "3. 업무의 내용 : 정밀 이송 스테이지 조립 및 검사", "at_para": 5},
+    "- 월(일, 시간)급 : ": {
+        "text": "- 월(일, 시간)급 : 2,800,000 ", "at_para": 10},
+    "      년      월      일": {
+        "text": "     2026년   8월   20일", "at_para": 28},
+    "사업체명 :                   (전화": {
+        "text": "사업체명 : 한빛정밀 주식회사 (전화", "at_para": 29},
+    "대 표 자 :                   (서명)": {
+        "text": "대 표 자 : 김도현 (서명)", "at_para": 29},
+    "(근로자) 주    소 :": {
+        "text": "(근로자) 주    소 : 경기도 수원시 영통구 반달로 7", "at_para": 30},
+    "성    명 :                   (서명)": {
+        "text": "성    명 : 이서준 (서명)", "at_para": 30},
 }
+
+#: The same map with every scope stripped — the shape `hr_flow.md` used to
+#: recommend, kept as a fixture because it is the thing being refused.
+UNSCOPED_FILL_MAP = {key: value["text"] for key, value in FILL_MAP.items()}
 
 
 def _sha256(path: Path) -> str:
@@ -87,6 +112,11 @@ def corpus_form(slug: str) -> Path:
 def raw_text(slug: str) -> str:
     """Every seat's text, as written — for asserting what a form does NOT have."""
     return ch.haystack(ch.document_model(corpus_form(slug)))
+
+
+def raw_text_of(path) -> str:
+    """The same view for a produced artifact rather than a corpus slug."""
+    return ch.haystack(ch.document_model(path))
 
 
 @pytest.fixture()
@@ -321,6 +351,65 @@ class TestDroppedRulePremises:
             assert "√" not in raw_text(slug)
 
 
+class TestUnscopedFillOverwritesTheSiblingContracts:
+    """T41, both directions, on the real 2025 pack.
+
+    Before: the `--map` path `hr_flow.md` recommended writes ONE employer's
+    terms onto all five sibling contracts, and no offline gate catches it — the
+    clause label survives as a prefix, so `clause_block_lost`,
+    `clause_lost` and `clause_text_consumed` all pass on a corrupted document.
+    After: the same map is refused, and the refusal says which sheets.
+    """
+
+    def test_the_documented_unscoped_map_corrupted_every_sibling_sheet(
+            self, tmp_path, blank_2025):
+        """Reproduced with the ambiguity check bypassed — this is what shipped."""
+        out = tmp_path / "corrupt.hwpx"
+        result = preedit.replace_placeholders(
+            blank_2025, out,
+            {key: {"text": value, "all_occurrences": True}
+             for key, value in UNSCOPED_FILL_MAP.items()},
+            on_zero_hits="error")
+        # one employer's 근무장소 now printed on five contracts
+        assert result["hits"]["2. 근 무 장 소 : "] == 5
+        assert raw_text_of(out).count("경기도 화성시 동탄산단로 15") == 5
+        # and every structural rule of this module still passes on it
+        verdict, code = ch.check(out, baseline=blank_2025)
+        assert code == 0, verdict["hard"]
+        assert verdict["hard"] == []
+
+    def test_the_unscoped_map_is_now_refused_and_names_the_sheets(
+            self, tmp_path, blank_2025):
+        out = tmp_path / "refused.hwpx"
+        with pytest.raises(preedit.AmbiguousReplaceKeyError) as excinfo:
+            preedit.replace_placeholders(blank_2025, out, UNSCOPED_FILL_MAP,
+                                         on_zero_hits="error")
+        exc = excinfo.value
+        assert exc.exit_code == 2
+        assert not out.exists()
+        # every one of the eleven documented keys is ambiguous on this pack
+        assert len(exc.keys) == len(UNSCOPED_FILL_MAP)
+        row = next(r for r in exc.keys if r["key"] == "2. 근 무 장 소 : ")
+        assert [o["at_para"] for o in row["occurrences"]] == [4, 35, 67, 130,
+                                                             163]
+        # The immediate previous paragraph is clause 1 on every sheet, so it
+        # cannot distinguish them. Recent context must carry the variant title.
+        assert row["occurrences"][0]["preceded_by"].startswith("1. 근로개시일")
+        assert _SHEET_1 in row["occurrences"][0]["context_before"]
+        assert _SHEET_1 in str(exc)           # message stays actionable too
+
+    def test_the_scoped_map_touches_one_sheet_only(self, tmp_path, blank_2025):
+        out = tmp_path / "scoped.hwpx"
+        result = preedit.replace_placeholders(blank_2025, out, FILL_MAP,
+                                             on_zero_hits="error")
+        assert result["hits"]["2. 근 무 장 소 : "] == 1
+        assert result["occurrences"]["2. 근 무 장 소 : "] == 5
+        text = raw_text_of(out)
+        assert text.count("경기도 화성시 동탄산단로 15") == 1
+        # the other four sheets still print the blank clause skeleton
+        assert text.count("근 무 장 소") == 5
+
+
 class TestSyntheticallyFilledCorpusForm:
     @pytest.fixture()
     def filled(self, tmp_path, blank_2025):
@@ -406,9 +495,12 @@ class TestSyntheticallyFilledCorpusForm:
                                                        blank_2025, victim,
                                                        expected):
         broken = tmp_path / "broken.hwpx"
-        result = preedit.replace_placeholders(blank_2025, broken,
-                                              {victim: " "},
-                                              on_zero_hits="error")
+        # deleting the clause from EVERY sheet is the damage under test, so it
+        # is declared as such rather than happening by default (T41)
+        result = preedit.replace_placeholders(
+            blank_2025, broken,
+            {victim: {"text": " ", "all_occurrences": True}},
+            on_zero_hits="error")
         assert result["hits"][victim] >= 1
         verdict, code = ch.check(broken, baseline=blank_2025)
         assert code == 3
@@ -419,7 +511,9 @@ class TestSyntheticallyFilledCorpusForm:
         broken = tmp_path / "broken.hwpx"
         preedit.replace_placeholders(
             blank_2025, broken,
-            {"(근로자) 주    소 :": "(근로자) 계좌 : 110-234-567890 주    소 :"},
+            {"(근로자) 주    소 :": {
+                "text": "(근로자) 계좌 : 110-234-567890 주    소 :",
+                "at_para": 30}},
             on_zero_hits="error")
         verdict, code = ch.check(broken)
         assert code == 3

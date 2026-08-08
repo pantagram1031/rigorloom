@@ -117,9 +117,12 @@ class TestReplacePlaceholders:
                             P(R(0, "제목 자리"))))
         before = content_fingerprint(src)
         out = tmp_path / "out.hwpx"
-        result = replace_placeholders(src, out, {"20101": "20822",
-                                                 "제목 자리": "진짜 제목"})
+        # "20101"은 두 문단에 있다 — 전부를 원한다고 **명시**해야 한다(T41).
+        result = replace_placeholders(
+            src, out, {"20101": {"text": "20822", "all_occurrences": True},
+                       "제목 자리": "진짜 제목"})
         assert result["hits"] == {"20101": 2, "제목 자리": 1}
+        assert result["occurrences"] == {"20101": 2, "제목 자리": 1}
         assert "20822" in section_xml(out)
         assert "진짜 제목" in section_xml(out)
         assert content_fingerprint(src) == before  # 원본 비파괴
@@ -188,6 +191,155 @@ class TestReplacePlaceholders:
         src = make_hwpx(tmp_path, make_header([CP_BLACK]), SEC(P(R(0, "x"))))
         with pytest.raises(PreeditError):
             replace_placeholders(src, tmp_path / "o.hwpx", {"  ": "y"})
+
+
+# ---------------------------------------------------------------------------
+# 1a) T41 — 모호한 --map 키는 거부한다(문단 텍스트에도 주소가 있다)
+# ---------------------------------------------------------------------------
+
+class TestAmbiguousMapKey:
+    """tier A/B에는 --at-cell과 달리 위치 한정자가 없었다. 6종 계약서가 한
+    파일에 있는 팩에서 조항 라벨 한 개가 5장을 같은 값으로 덮어썼다."""
+
+    def _pack(self, tmp_path):
+        """조항 라벨이 세 장에 똑같이 인쇄된 '팩' — 계약서 팩의 축소판."""
+        return make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC(P(R(0, "표준근로계약서(기간의 정함이 없는 경우)")),
+                P(R(0, "2. 근 무 장 소 : ")),
+                P(R(0, "표준근로계약서(기간의 정함이 있는 경우)")),
+                P(R(0, "2. 근 무 장 소 : ")),
+                P(R(0, "연소근로자 표준근로계약서")),
+                P(R(0, "2. 근 무 장 소 : ")),
+                P(R(0, "위 계약서는 유일한 문단이다"))))
+
+    def test_repeated_key_is_refused_and_names_every_occurrence(self, tmp_path):
+        src = self._pack(tmp_path)
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(preedit.AmbiguousReplaceKeyError) as excinfo:
+            replace_placeholders(src, out,
+                                 {"2. 근 무 장 소 : ": "2. 근 무 장 소 : 화성"})
+        exc = excinfo.value
+        assert exc.exit_code == 2
+        assert not out.exists()            # 거부는 아무것도 쓰지 않는다
+        assert [row["key"] for row in exc.keys] == ["2. 근 무 장 소 : "]
+        occ = exc.keys[0]["occurrences"]
+        assert [o["occurrence"] for o in occ] == [1, 2, 3]
+        assert [o["at_para"] for o in occ] == [1, 3, 5]
+        # 그 목록 자체가 탈출구다: 어느 장인지 앞 문단이 말해 준다
+        assert [o["preceded_by"] for o in occ] == [
+            "표준근로계약서(기간의 정함이 없는 경우)",
+            "표준근로계약서(기간의 정함이 있는 경우)",
+            "연소근로자 표준근로계약서"]
+        assert [o["context_before"][-1] for o in occ] == [
+            "표준근로계약서(기간의 정함이 없는 경우)",
+            "표준근로계약서(기간의 정함이 있는 경우)",
+            "연소근로자 표준근로계약서"]
+        assert exc.suggested_map == {
+            "2. 근 무 장 소 : ": {"text": "<VALUE>", "at_para": 1}}
+
+    def test_a_unique_key_is_unaffected(self, tmp_path):
+        """still-catches: 진짜 유일한 키는 아무 표기 없이 예전 그대로 동작한다."""
+        src = self._pack(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(
+            src, out, {"위 계약서는 유일한 문단이다": "치환됨"})
+        assert result["hits"] == {"위 계약서는 유일한 문단이다": 1}
+        assert result["occurrences"] == {"위 계약서는 유일한 문단이다": 1}
+        assert "scope" not in result
+        assert "치환됨" in section_xml(out)
+
+    def test_at_para_writes_exactly_one_sheet(self, tmp_path):
+        src = self._pack(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(
+            src, out, {"2. 근 무 장 소 : ": {
+                "text": "2. 근 무 장 소 : 화성", "at_para": 3}})
+        assert result["hits"] == {"2. 근 무 장 소 : ": 1}
+        assert result["occurrences"] == {"2. 근 무 장 소 : ": 3}
+        assert result["scope"] == {"2. 근 무 장 소 : ": "at_para:3"}
+        xml = section_xml(out)
+        assert xml.count("화성") == 1
+        assert xml.count("<hp:t>2. 근 무 장 소 : </hp:t>") == 2  # 형제는 무사
+
+    def test_all_occurrences_is_the_explicit_every_sheet_form(self, tmp_path):
+        src = self._pack(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(
+            src, out, {"2. 근 무 장 소 : ": {
+                "text": "2. 근 무 장 소 : 화성", "all_occurrences": True}})
+        assert result["hits"] == {"2. 근 무 장 소 : ": 3}
+        assert section_xml(out).count("화성") == 3
+
+    def test_at_para_that_does_not_carry_the_key_is_a_usage_error(self,
+                                                                 tmp_path):
+        src = self._pack(tmp_path)
+        with pytest.raises(PreeditError, match="at_para=2"):
+            replace_placeholders(
+                src, tmp_path / "o.hwpx",
+                {"2. 근 무 장 소 : ": {"text": "x", "at_para": 2}})
+
+    def test_two_occurrences_inside_one_paragraph_cannot_be_scoped_by_address(
+            self, tmp_path):
+        """문단 주소로 좁힐 수 없는 경우는 그렇다고 말한다(추측하지 않는다)."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(P(R(0, "코드 AB 그리고 코드 AB 끝"))))
+        with pytest.raises(PreeditError, match="all_occurrences"):
+            replace_placeholders(src, tmp_path / "o.hwpx",
+                                 {"AB": {"text": "AB-99", "at_para": 0}})
+
+    def test_a_typo_in_a_scope_member_is_not_read_as_unscoped(self, tmp_path):
+        src = self._pack(tmp_path)
+        with pytest.raises(PreeditError, match="all_occurences"):
+            replace_placeholders(
+                src, tmp_path / "o.hwpx",
+                {"2. 근 무 장 소 : ": {"text": "x", "all_occurences": True}})
+
+    def test_a_value_object_without_text_is_a_usage_error(self, tmp_path):
+        src = self._pack(tmp_path)
+        with pytest.raises(PreeditError, match="text"):
+            replace_placeholders(src, tmp_path / "o.hwpx",
+                                 {"2. 근 무 장 소 : ": {"at_para": 1}})
+
+    def test_at_para_and_all_occurrences_together_are_a_usage_error(self,
+                                                                   tmp_path):
+        src = self._pack(tmp_path)
+        with pytest.raises(PreeditError, match="하나만"):
+            replace_placeholders(
+                src, tmp_path / "o.hwpx",
+                {"2. 근 무 장 소 : ": {"text": "x", "at_para": 1,
+                                    "all_occurrences": True}})
+
+    def test_the_gate_half_of_the_shared_map_shape_is_accepted_here(self,
+                                                                   tmp_path):
+        """한 파일이 --map과 --fill-map을 함께 섬긴다(T35): preedit은 게이트
+        멤버(other_occurrences)를 받아들이되 해석하지 않는다."""
+        src = self._pack(tmp_path)
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(
+            src, out, {"위 계약서는 유일한 문단이다": {
+                "text": "치환됨", "other_occurrences": "form_text"}})
+        assert result["hits"] == {"위 계약서는 유일한 문단이다": 1}
+        assert "scope" not in result
+
+    def test_occurrence_scan_is_independent_per_key_before_scoping(self,
+                                                                  tmp_path):
+        """An earlier key may cover a later key's text in an occurrence the
+        earlier key will NOT actually edit because of at_para. Scanning the
+        whole map over one discarded copy erases that later occurrence and
+        falsely rejects its valid address."""
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]),
+                        SEC(P(R(0, "AB")), P(R(0, "AB"))))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {
+            "AB": {"text": "XX", "at_para": 0},
+            "B": {"text": "BY", "at_para": 1},
+        })
+        assert result["occurrences"] == {"AB": 2, "B": 2}
+        assert result["hits"] == {"AB": 1, "B": 1}
+        xml = section_xml(out)
+        assert "<hp:t>XX</hp:t>" in xml
+        assert "<hp:t>ABY</hp:t>" in xml
 
 
 # ---------------------------------------------------------------------------
@@ -726,7 +878,8 @@ class TestValueContainsKeyDoubleApply:
         src = make_hwpx(tmp_path, make_header([CP_BLACK]),
                         SEC(P(R(0, "코드 AB 그리고 코드 AB 끝"))))
         out = tmp_path / "out.hwpx"
-        result = replace_placeholders(src, out, {"AB": "AB-99"})
+        result = replace_placeholders(
+            src, out, {"AB": {"text": "AB-99", "all_occurrences": True}})
         assert result["hits"] == {"AB": 2}
         assert "코드 AB-99 그리고 코드 AB-99 끝" in section_xml(out)
 

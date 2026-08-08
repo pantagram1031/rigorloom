@@ -1838,6 +1838,164 @@ def _clean_run(tmp_path):
     return artifact, pdf
 
 
+# --------------------------------------------------------------------------
+# T41 — a fill-map key that claims several form strings is refused
+#
+# The keep derivation matches keys against the inventory by normalized
+# substring in EITHER direction, so a bare-label key claims every string it
+# contains or is contained by. On a 민원 form "[  ]통" also claims the generic
+# "[ ]" checkbox, both leave the keep list, and every untouched "[ ]" on the
+# sheet came back HARD — a false HARD only readable from this source.
+# --------------------------------------------------------------------------
+
+_BRACKET_PROFILE = {
+    "form_hash": "sha256:synthetic-bracket",
+    "anchors": ["성    명", "I.  서론"],
+    "guide_text": [],
+    # the generic checkbox AND the specific one — the over-claim in one profile
+    "placeholders": ["[  ]", "[  ]통", "[  ]부"],
+}
+
+
+def test_a_key_claiming_several_form_strings_is_refused(tmp_path):
+    with pytest.raises(visual_verify.AmbiguousFillKeyError) as excinfo:
+        visual_verify.derive_form_keep(
+            _BRACKET_PROFILE, {"[  ]통": "[√]통"},
+            "성 명 이하율 [ ]통 [ ] [ ]부 I. 서론")
+    exc = excinfo.value
+    assert [row["key"] for row in exc.keys] == ["[  ]통"]
+    assert exc.keys[0]["normalized_key"] == "[]통"
+    # the refusal NAMES both strings it claimed, with how often each is present
+    assert exc.keys[0]["matched"] == [{"text": "[  ]", "occurrences": 3},
+                                      {"text": "[  ]통", "occurrences": 1}]
+    assert "other_occurrences" in str(exc)
+
+
+def test_a_key_naming_exactly_one_form_string_is_unaffected(tmp_path):
+    """still-catches: the unambiguous key behaves exactly as before, even
+    though the string it names is present three times (that repetition is
+    T31's per-occurrence business, not an ambiguity)."""
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        _BRACKET_PROFILE, {"성    명": "성    명 : 이하율"},
+        "성 명 : 이하율 [ ]통 [ ] [ ]부 성 명 성 명 I. 서론")
+    assert consumed == ["성    명"]      # the declared value landed
+    assert unfilled == []
+    assert keep == ["I.  서론", "[  ]", "[  ]통", "[  ]부"]
+
+
+@pytest.mark.parametrize("declared,expect_keep", [
+    ("form_text", True),
+    ("seats", False),
+])
+def test_other_occurrences_is_the_declaration_that_resolves_it(declared,
+                                                               expect_keep):
+    """Both answers are honest and neither is guessed. ``seats`` reproduces the
+    pre-T41 behavior exactly — now said out loud."""
+    haystack = "성 명 이하율 [ ]통 [ ] [ ]부 I. 서론"
+    keep, consumed, unfilled = visual_verify.derive_form_keep(
+        _BRACKET_PROFILE, {"[  ]통": "[√]통"}, haystack,
+        {"[  ]통": declared})
+    assert (("[  ]" in keep) and ("[  ]통" in keep)) is expect_keep
+    if not expect_keep:
+        assert set(unfilled) == {"[  ]", "[  ]통"}
+
+
+def test_the_scoped_value_object_flattens_for_every_other_consumer(tmp_path):
+    """ONE file serves --map and --fill-map (T35): the gate sees a plain
+    string value and only the keep derivation reads the scope."""
+    path = tmp_path / "fill.json"
+    path.write_text(json.dumps(
+        {"[  ]통": {"text": "[√]통", "other_occurrences": "form_text",
+                   "at_para": 4}}, ensure_ascii=False), encoding="utf-8")
+    mapping, error = visual_verify.load_fill_map(path)
+    assert error is None
+    assert mapping == {"[  ]통": "[√]통"}          # flattened, scope stripped
+    assert check_residue.load_fill_scopes(path) == {"[  ]통": "form_text"}
+
+
+def test_one_scoped_file_on_both_surfaces_is_not_two_different_maps(tmp_path):
+    """T35's blessed invocation (same file to --fill-map and --expectations)
+    must survive scoping: the equality test compares flattened maps."""
+    payload = {"fill_map": {"20101": {"text": _FILL_VALUE, "at_para": 3}},
+               "base_pt": 10}
+    path = tmp_path / "exp.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    expectations = json.loads(path.read_text(encoding="utf-8"))
+    reconciled, source, error = visual_verify.reconcile_fill_map(
+        expectations, path)
+    assert error is None
+    assert source == "cli+expectations"
+    assert reconciled["fill_map"] == {"20101": _FILL_VALUE}
+
+
+def test_expectations_only_preserves_the_scope_for_the_residue_delegate(
+        tmp_path):
+    """T36 permits a map on either surface. A scoped map supplied only inside
+    --expectations must still reach both residue consumers; otherwise
+    `other_occurrences` is dropped and the valid declaration is refused."""
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps(_BRACKET_PROFILE, ensure_ascii=False),
+                       encoding="utf-8")
+    expectations = tmp_path / "expectations.json"
+    expectations.write_text(json.dumps({
+        "fill_map": {"[  ]통": {
+            "text": "[√]통", "other_occurrences": "form_text"}}
+    }, ensure_ascii=False), encoding="utf-8")
+
+    code, verdict, _ = run(
+        "--artifact", artifact, "--pdf", pdf,
+        "--form-profile", profile, "--expectations", expectations,
+        "--png-dir", tmp_path / "png", "--deterministic-only")
+
+    assert code != 2, verdict
+    assert verdict["deterministic"]["fill_map_source"] == "expectations"
+    keep = verdict["deterministic"]["residue_keep"]
+    assert {"[  ]", "[  ]통"} <= set(keep["derived_keep"])
+    assert "ambiguous_fill_keys" not in verdict
+
+
+def test_an_unknown_scope_member_is_a_usage_error_not_a_silent_unscoped_key(
+        tmp_path):
+    path = tmp_path / "fill.json"
+    path.write_text(json.dumps({"[  ]통": {"text": "x", "other_occurence": 1}}),
+                    encoding="utf-8")
+    mapping, error = visual_verify.load_fill_map(path)
+    assert mapping is None
+    assert "other_occurence" in error
+
+
+def test_a_bad_other_occurrences_answer_is_a_usage_error(tmp_path):
+    path = tmp_path / "fill.json"
+    path.write_text(json.dumps(
+        {"[  ]통": {"text": "x", "other_occurrences": "maybe"}}),
+        encoding="utf-8")
+    mapping, error = visual_verify.load_fill_map(path)
+    assert mapping is None
+    assert "form_text" in error
+
+
+def test_the_refusal_reaches_the_cli_as_a_usage_error_with_its_payload(
+        tmp_path):
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx")
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps(_BRACKET_PROFILE, ensure_ascii=False),
+                       encoding="utf-8")
+    fill_map = tmp_path / "fill.json"
+    fill_map.write_text(json.dumps({"[  ]통": "[√]통"}, ensure_ascii=False),
+                        encoding="utf-8")
+
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--form-profile", profile, "--fill-map", fill_map,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 2, verdict
+    assert verdict["verdict"] == "usage_error"
+    assert [row["key"] for row in verdict["ambiguous_fill_keys"]] == ["[  ]통"]
+
+
 #: These vision-contract fixtures are a bare document with no form profile and
 #: no fill map, so three SAFETY checks genuinely cannot run. Acceptance now says
 #: so (``safety_incomplete``), and the only way to an acceptance is to waive

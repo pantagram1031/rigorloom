@@ -848,6 +848,15 @@ def reconcile_fill_map(expectations, fill_map_path):
         return expectations, None, (
             "expectations.fill_map must be a JSON object of {label: value}, "
             f"got {type(declared).__name__}")
+    if declared:
+        # Scoped values are flattened on BOTH surfaces or the equality test
+        # below compares a scoped map against a flattened one and reports two
+        # identical maps as different (T41).
+        declared, error = check_residue.normalize_fill_map(declared)
+        if error:
+            return expectations, None, error.replace("--fill-map",
+                                                     "expectations.fill_map")
+        expectations = dict(expectations, fill_map=declared)
     if fill_map_path is None:
         return expectations, ("expectations" if declared else None), None
     mapping, error = load_fill_map(fill_map_path)
@@ -977,7 +986,59 @@ def artifact_haystack(artifact):
         return None
 
 
-def derive_form_keep(profile, fill_map, haystack=None):
+class AmbiguousFillKeyError(ValueError):
+    """A ``--fill-map`` key does not name ONE thing in the form (T41).
+
+    ``derive_form_keep`` matches keys against the anchor/placeholder inventory
+    by whitespace-normalized substring **in either direction**, so a bare label
+    key claims every inventory string that contains it or is contained by it,
+    and the claimed strings leave the keep list. On a 민원 form 성명/연락처 sit
+    in three seats and ``[  ]통`` also claims the generic ``[ ]`` checkbox, so
+    every OTHER untouched occurrence came back as HARD residue — a false HARD
+    the operator could only diagnose by reading this source.
+
+    The refusal is about ONE key claiming SEVERAL inventory strings, which is
+    where the derivation guesses. It is deliberately NOT about a key whose one
+    string repeats in the document: that case is already per-occurrence and
+    honest — the value's own occurrence is attributed to its span and a second,
+    genuinely unfilled occurrence still HARDs with its offset and context
+    (T31). Turning that into a usage error would trade a working gate for a
+    prompt.
+
+    Keep-listing and forbidding are STRING-level in ``check_residue``: either
+    no occurrence of a claimed label is residue, or every unattributed one is.
+    There is no third answer for the tool to compute, so it must ask.
+
+    ``keys``: ``[{key, normalized_key, matched}]`` — the exact user key, the
+    comparison key, every inventory string it claimed, and how many times each
+    is present in the artifact.
+    """
+
+    def __init__(self, keys):
+        self.keys = list(keys)
+        lines = []
+        for row in self.keys:
+            claimed = ", ".join(
+                f"{entry['text']!r}"
+                + (f"×{entry['occurrences']}"
+                   if entry["occurrences"] is not None else "")
+                for entry in row["matched"])
+            lines.append(
+                f"key {row['key']!r} claims {len(row['matched'])} inventory "
+                f"strings: {claimed}")
+        super().__init__(
+            f"--fill-map: {len(self.keys)} key(s) each claim more than one "
+            "form string, so the residue keep derivation cannot tell which of "
+            "them you actually filled and which the form still prints "
+            "untouched. Either use a key that names exactly one of them (no "
+            "declaration needed then), or say what the rest are, per key: "
+            '{"KEY": {"text": VALUE, "other_occurrences": "form_text"}} '
+            "keep-lists every string that key claims (the form prints them), "
+            '"seats" forbids them (every occurrence outside a declared value '
+            f"still HARDs — the pre-T41 behavior). {' / '.join(lines)}")
+
+
+def derive_form_keep(profile, fill_map, haystack=None, scopes=None):
     """Form-fill keep list: ``(anchors ∪ placeholders) − targeted``.
 
     The residue gate's forbidden list is auto-derived from the form scan, and
@@ -1006,13 +1067,29 @@ def derive_form_keep(profile, fill_map, haystack=None):
     With ``haystack=None`` (no document to probe) every targeted entry counts
     as consumed, the pre-T31 behavior.
 
+    A key whose claim is AMBIGUOUS raises :class:`AmbiguousFillKeyError`
+    (T41) — it claimed more than one distinct inventory string. One claimed
+    string repeating in the artifact remains T31's per-occurrence case and is
+    deliberately not refused. ``scopes``
+    (``{key: "form_text"|"seats"}``, from ``check_residue.fill_map_scopes``)
+    is the operator's answer: ``form_text`` keep-lists every string that key
+    claimed, ``seats`` runs the three-way split above unchanged — which is
+    exactly the pre-T41 behavior, now said out loud.
+
     Returns (keep, consumed, unfilled).
     """
     keys = {}
+    key_labels = {}
     for key, value in (fill_map or {}).items():
         if str(key).strip():
-            keys.setdefault(_norm(str(key)), []).append(value)
-    keep, consumed, unfilled, seen = [], [], [], set()
+            normalized_key = _norm(str(key))
+            keys.setdefault(normalized_key, []).append(value)
+            key_labels.setdefault(normalized_key, []).append(str(key))
+    scope_by_norm = {_norm(str(key)): value
+                     for key, value in (scopes or {}).items()
+                     if str(key).strip()}
+    entries = []
+    seen = set()
     for field in ("anchors", "placeholders"):
         for entry in profile.get(field) or []:
             text = entry if isinstance(entry, str) else (
@@ -1023,17 +1100,54 @@ def derive_form_keep(profile, fill_map, haystack=None):
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            matched = [key for key in keys
-                       if normalized in key or key in normalized]
-            if not matched:
-                keep.append(text)
-            elif haystack is None or _fill_landed(keys, matched, haystack):
-                consumed.append(text)
-            elif check_residue.normalize_text(text) not in haystack:
-                consumed.append(text)          # key-absence fallback
-            else:
-                unfilled.append(text)
+            entries.append((text, normalized, [
+                key for key in keys
+                if normalized in key or key in normalized]))
+
+    # Ambiguity is a property of the KEY, not of one entry, so it is decided
+    # over the whole inventory before any entry is classified: a key that
+    # claims two strings must be refused even if the first one looks fine.
+    claims = {}
+    for text, _normalized, matched in entries:
+        for key in matched:
+            claims.setdefault(key, []).append(text)
+    ambiguous = []
+    for key, texts in sorted(claims.items()):
+        if key in scope_by_norm or len(texts) < 2:
+            continue
+        ambiguous.append({"key": key_labels[key][0],
+                          "normalized_key": key, "matched": [
+            {"text": text,
+             "occurrences": (_occurrence_count(haystack, text)
+                             if haystack is not None else None)}
+            for text in texts]})
+    if ambiguous:
+        raise AmbiguousFillKeyError(ambiguous)
+
+    keep, consumed, unfilled = [], [], []
+    for text, _normalized, matched in entries:
+        if not matched:
+            keep.append(text)
+        elif any(scope_by_norm.get(key) == "form_text" for key in matched):
+            keep.append(text)              # declared: the form prints this
+        elif haystack is None or _fill_landed(keys, matched, haystack):
+            consumed.append(text)
+        elif check_residue.normalize_text(text) not in haystack:
+            consumed.append(text)          # key-absence fallback
+        else:
+            unfilled.append(text)
     return keep, consumed, unfilled
+
+
+def _occurrence_count(haystack, text):
+    """How many times an inventory string is present, the gate's own way.
+
+    ``check_residue`` counts overlapping occurrences of the SAME normalized
+    string it will scan for, so the ambiguity test and the gate agree about
+    what "repeated" means.
+    """
+    needle = check_residue.normalize_text(text)
+    return len(check_residue.occurrences(haystack, needle)) if needle else 0
 
 
 def _fill_landed(keys, matched, haystack):
@@ -1072,8 +1186,16 @@ def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
             return None, report, f"form profile unreadable: {exc}"
         if not isinstance(profile, dict):
             return None, report, "form profile must be a JSON object"
-        derived, consumed, unfilled = derive_form_keep(
-            profile, mapping, artifact_haystack(artifact))
+        try:
+            derived, consumed, unfilled = derive_form_keep(
+                profile, mapping, artifact_haystack(artifact),
+                check_residue.load_fill_scopes(fill_map))
+        except AmbiguousFillKeyError as exc:
+            # The refusal payload IS the escape hatch (the T34 shape): it names
+            # every inventory string the key claimed and how often each is
+            # present, so the operator answers from this JSON alone.
+            report["ambiguous_fill_keys"] = exc.keys
+            return None, report, str(exc)
         report.update(derived_keep=derived, consumed=consumed,
                       unfilled=unfilled, fill_map=sorted(mapping))
         argv += ["--fill-map", str(fill_map)]
@@ -1777,6 +1899,14 @@ def verify(args):
         expectations, args.fill_map)
     if error:
         return usage_error(str(artifact), "visual_verify", error)
+    # The residue delegate needs the SAME map path for per-occurrence value
+    # attribution and T41 scopes. When the map arrived only inside
+    # --expectations, that file is the map source; dropping it here would make
+    # `other_occurrences` disappear and turn a valid declaration back into an
+    # ambiguity refusal.
+    residue_fill_map = args.fill_map
+    if residue_fill_map is None and fill_map_source == "expectations":
+        residue_fill_map = args.expectations
     # Same discipline for "I deliberately left this blank": one list, however
     # it is spelled, recorded in the verdict with where it came from.
     declared_blank, declared_blank_sources, error = reconcile_declared_blank(
@@ -1888,9 +2018,12 @@ def verify(args):
     if args.form_profile:
         residue_argv, residue_keep, error = build_residue_argv(
             args.form_profile, artifact, keep=args.keep,
-            keep_pattern=args.keep_pattern, fill_map=args.fill_map)
+            keep_pattern=args.keep_pattern, fill_map=residue_fill_map)
         if error:
-            return usage_error(str(artifact), "visual_verify", error)
+            extra = ({"ambiguous_fill_keys": residue_keep["ambiguous_fill_keys"]}
+                     if "ambiguous_fill_keys" in residue_keep else None)
+            return usage_error(str(artifact), "visual_verify", error,
+                               extra=extra)
         delegates.append(_delegate(
             _SCRIPTS_DIR / "check_residue.py", residue_argv, "check_residue"))
     elif args.keep or args.keep_pattern is not None:
