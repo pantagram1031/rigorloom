@@ -308,12 +308,18 @@ whole point: anything the pre-flight lets through, the gate lets through.
 converted corpus forms: 6 forms have at least one anomalous target and
 `jeongbo-gonggae-cheongguseo` has 18 of 19. Most are a 2–5 percentage-point
 `ratio` (character-width) delta — the form's own typography, not the
-superscript trap. The refusal is still correct, because the post-flight gate
-compares the same five properties and would HARD on those fills afterwards; a
-pre-flight that passed what the gate rejects is the worst of both. So treat it
-as a decision, not a rubber stamp: `suggested_flags` normalizes the cell to
-body formatting, and if the cell is *meant* to carry a different style, pass
-that style's id instead.
+superscript trap. So treat it as a decision, not a rubber stamp:
+`suggested_flags` normalizes the cell to body formatting, and if the cell is
+*meant* to carry a different style, pass that style's id instead.
+
+Keeping the cell's own style no longer costs you the post-flight (T40). Given
+`--baseline BLANK.hwpx`, `visual_verify` compares each filled run against the
+blank run named by the fill-map key in the SAME seat as well as against the
+document body, and a
+signature the printed form already had is a WARN
+(`fill_charpr_script_inherited`) naming the seat — it HARDs only on a difference
+the fill actually introduced. Without an `.hwpx` baseline the HARD stands, and
+says that the inheritance question was not checked.
 - `delete-guides`: deletes paragraphs referencing guide charPr (by color or
   explicit ids) with the T18 guard built in: table/secPr/ctrl/object
   paragraphs are never deleted.
@@ -591,7 +597,10 @@ produces it is a bug (T36).
   renderer on the machine, the pixel diff is reported under
   `deterministic.skipped` with a reason (and `baseline_diff.skipped`) — one
   check lost, not the whole run, and never a crash. The converted PDF is
-  recorded as `baseline_diff.baseline_pdf`.
+  recorded as `baseline_diff.baseline_pdf`. An `.hwpx` baseline feeds a SECOND
+  consumer that needs no renderer at all: the T30 seat comparison (T40, below),
+  reported under `deterministic.fill_charpr_script.form_baseline`. That is why
+  the flag is worth passing even on a machine that cannot render.
 - **Residue on a FORM FILL needs a keep list.** The residue gate's forbidden
   list is auto-derived from the form scan, so on a fill every surviving label
   reads as residue and the delegate can never return 0. Forward one:
@@ -648,6 +657,26 @@ produces it is a bug (T36).
   POST-flight half; the pre-flight (`form_inspect` `script_anomaly` →
   `fill-cells --charpr-per-cell`) is under §3 and shares this comparison
   code, so a fill that passed the pre-flight cannot fail here for this reason.
+  **The body baseline is not the only baseline (T40).** On a mostly-empty form
+  the heaviest charPr is boilerplate — the 기안문 별지's body baseline is its
+  비고 fine print — so every real seat differs from it and the check inverts.
+  Pass the blank `.hwpx` as `--baseline` and each fill-modified run is also
+  compared against the **exact blank run named by the fill-map key inside its
+  own seat**, addressed by `cellAddr`. The seat cannot be keyed by the filled
+  text because an `--at-cell-append` fill changes that text on purpose; the
+  fill-map key supplies the pre-fill label. An unrelated sibling run in a
+  multi-run cell is never a baseline. A run HARDs only when it differs from
+  BOTH baselines, so the
+  seat can only downgrade a finding, never create one:
+  - the blank form's same seat already carries this signature → WARN
+    `fill_charpr_script_inherited`, with `seat` and `form_baseline_charpr_id`;
+  - it carries a different one → HARD, `form_baseline_differing` naming which;
+  - it carries no text at all (a genuinely empty run) → HARD; an empty seat has
+    nothing to inherit, which is the trap's own shape;
+  - no `.hwpx` baseline (none given, or a `.pdf`/image directory) → HARD with
+    `form_baseline_checked: false` and the reason. The check never weakens when
+    it cannot see the form, and `fill_charpr_script_mismatch` stays in the
+    SAFETY set either way.
 - **A cell that is blank ON PURPOSE is declared, not inferred** —
   `declared_blank`. A form's signature line, a staff-only box and a field you
   simply have no value for look identical in the render, so before this every
