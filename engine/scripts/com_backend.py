@@ -53,6 +53,8 @@ ops.json 형식 (순서대로 실행):
 """
 
 import argparse
+import datetime
+import hashlib
 import json
 import re
 import sys
@@ -234,6 +236,102 @@ def _pdf_page_count(path):
             return doc.page_count
     except Exception:
         return None
+
+
+CONVERSION_RECORD_SCHEMA = "rigorloom/conversion-record/v1"
+
+#: Sidecar suffix appended to the OUTPUT PDF's full name, so the record for
+#: ``filled.pdf`` is ``filled.pdf.conversion.json`` — one obvious neighbour,
+#: never a name that could collide with a second artifact in the same folder.
+CONVERSION_RECORD_SUFFIX = ".conversion.json"
+
+
+def conversion_record_path(pdf_path):
+    """Where the sidecar for ``pdf_path`` lives. One rule, both scripts."""
+    return Path(str(pdf_path) + CONVERSION_RECORD_SUFFIX)
+
+
+def sha256_file(path, _chunk=1024 * 1024):
+    """Streaming sha256 of a file, or None if it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with open(str(path), "rb") as handle:
+            while True:
+                block = handle.read(_chunk)
+                if not block:
+                    break
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def write_conversion_record(record_path, *, source, pdf, normalized,
+                            source_print_method, pages_document, pages_pdf):
+    """Persist what this conversion DID, bound to the bytes it did it to.
+
+    The reason this file exists (T38): ``_stage_print_normalized_hwpx`` already
+    neutralises a stored n-up ``PrintMethod`` before ``SaveAs(PDF)``, and the
+    convert subcommand already reports it — but the canonical recipe converts
+    in one step and verifies in another, so that report died at the step
+    boundary. ``visual_verify`` then saw no evidence of normalisation and, per
+    its own (correct) rule, HARDed on a PDF that is demonstrably not folded.
+    Absence of the report is not absence of the normalisation; this record is
+    how the second step learns the difference.
+
+    Both sha256s are load-bearing, not decoration. A provenance claim that can
+    be pointed at a different PDF is worse than no claim at all, so the record
+    names the exact source bytes it read and the exact PDF bytes it produced,
+    and the consumer refuses the record outright when either has moved on.
+    """
+    record = {
+        "schema": CONVERSION_RECORD_SCHEMA,
+        "tool": "com_backend.py convert",
+        "created_utc": datetime.datetime.now(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": str(Path(source).resolve()),
+        "source_sha256": sha256_file(source),
+        "pdf": str(Path(pdf).resolve()),
+        "pdf_sha256": sha256_file(pdf),
+        "source_print_method": source_print_method,
+        "print_method_normalized": normalized,
+        "pages_document": pages_document,
+        "pages_pdf": pages_pdf,
+    }
+    record_path = Path(record_path)
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+    return record
+
+
+def stored_print_method(path):
+    """The source's own ``PrintInfo/PrintMethod``, or None when unreadable.
+
+    Same value ``visual_verify.stored_print_method`` reads; duplicated here
+    (rather than imported) because engine/ must not depend on pipeline/.
+
+    NB: reads ``group(2)`` because THIS module's ``PRINT_METHOD_RE`` wraps the
+    digits as the middle of three groups (the outer two exist so
+    ``_stage_print_normalized_hwpx`` can substitute around them);
+    ``visual_verify``'s copy of the pattern has a single group and reads
+    ``group(1)``. Change either pattern's group arity and both readers here
+    must move with it.
+    """
+    import zipfile
+    path = Path(path)
+    if path.suffix.lower() != ".hwpx" or not path.is_file():
+        return None
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if "settings.xml" not in archive.namelist():
+                return None
+            match = PRINT_METHOD_RE.search(
+                archive.read("settings.xml").decode("utf-8", "replace"))
+    except (OSError, zipfile.BadZipFile, UnicodeDecodeError):
+        return None
+    return int(match.group(2)) if match else None
 
 
 # ---------------------------------------------------------------------------
@@ -1544,6 +1642,15 @@ def main():
     p_cv = sub.add_parser("convert", help="형식 변환 (hwp<->hwpx, ->pdf)")
     p_cv.add_argument("--file", required=True)
     p_cv.add_argument("--to", required=True)
+    p_cv.add_argument("--record", default=None,
+                      help="conversion record 경로 (기본: <--to>"
+                           f"{CONVERSION_RECORD_SUFFIX} 사이드카). PDF 변환일 "
+                           "때만 쓰인다. visual_verify가 이 파일을 읽어 "
+                           "인쇄방식 표준화가 실제로 일어났음을 안다.")
+    p_cv.add_argument("--no-record", action="store_true",
+                      help="사이드카를 쓰지 않는다. 그러면 별도 단계의 "
+                           "visual_verify는 PrintMethod!=0 원본에 대해 "
+                           "imposition_mismatch HARD를 그대로 낸다.")
 
     args = ap.parse_args()
     hwp = None
@@ -1636,6 +1743,7 @@ def main():
                 Path(dst).suffix.lower().lstrip("."), None)
             src = args.file
             out = {"ok": True, "converted": dst}
+            normalized = None
             if fmt == "PDF" and Path(src).suffix.lower() == ".hwpx":
                 # 문서 저장 인쇄방식(모아찍기 등)이 PDF에 imposition으로 적용
                 # 되는 것을 차단 — helper docstring(XC-1 §4) 참조.
@@ -1645,8 +1753,8 @@ def main():
                     src, tmp_ctx.name)
                 if staged:
                     src = staged
-                    out["print_method_normalized"] = {
-                        "from": original, "to": 0}
+                    normalized = {"from": original, "to": 0}
+                    out["print_method_normalized"] = normalized
             hwp = open_hwp(src)
             hwp.save_as(dst, fmt) if fmt else hwp.save_as(dst)
             if fmt == "PDF":
@@ -1665,6 +1773,20 @@ def main():
                             " (print imposition or export page drop)")
                     out["warn"] = [warn]
                     print(f"WARN: {warn}", file=sys.stderr)
+                # 변환 사실을 파일로 남긴다 — 다음 단계(visual_verify)가
+                # 별도 프로세스라 이 stdout JSON을 못 본다. 기본 동작으로
+                # 남기는 이유: 레시피를 그대로 따라 한 사람이 아무것도
+                # 신경 쓰지 않아도 증거가 따라와야 하기 때문.
+                if not args.no_record:
+                    record_path = (Path(args.record) if args.record
+                                   else conversion_record_path(dst))
+                    write_conversion_record(
+                        record_path,
+                        source=args.file, pdf=dst, normalized=normalized,
+                        source_print_method=stored_print_method(args.file),
+                        pages_document=out.get("pages_document"),
+                        pages_pdf=out.get("pages_pdf"))
+                    out["record"] = str(record_path)
             print(json.dumps(out, ensure_ascii=False))
 
     except SystemExit:

@@ -335,12 +335,30 @@ python engine/scripts/com_backend.py convert \
     --file $W/filled.hwpx --to $W/filled.pdf
 ```
 
-→ `{"ok": true, "converted": "...filled.pdf"}`. You may skip this step and let
-`visual_verify` do the conversion itself — it runs the identical command — but
-then re-running pass 2 re-converts, so converting once here and passing
-`--pdf` to both passes is cheaper. With no Hancom on the machine, render on the
-operator machine and bring the PDF; a verification loop that cannot render must
-not report a pass.
+→ `{"ok": true, "converted": "...filled.pdf", "record": "...filled.pdf.conversion.json"}`.
+You may skip this step and let `visual_verify` do the conversion itself — it
+runs the identical command — but then re-running pass 2 re-converts, so
+converting once here and passing `--pdf` to both passes is cheaper. With no
+Hancom on the machine, render on the operator machine and bring the PDF; a
+verification loop that cannot render must not report a pass.
+
+**Keep the `.conversion.json` next to the PDF.** The convert step does more
+than export: when the source stores a non-zero `PrintInfo/PrintMethod` (n-up
+"모아찍기" — the whole gongmun family does, 기안문 별지 stores 4) it rewrites
+that to 0 in a temporary copy first, because Hancom's `SaveAs(PDF)` otherwise
+bakes the print imposition into the PDF. The sidecar is how the NEXT step
+learns that this happened. Without it `visual_verify` sees a source that stores
+imposition and no evidence that anything neutralised it, and HARDs
+`imposition_mismatch` — correctly, on its own information, and unwaivably
+(`imposition_mismatch` is not in `SAFETY_CHECKS`). That is T38: a gate cannot
+tell "did not happen" from "was not told". The record is written by default, so
+following this recipe verbatim is enough; move it with `--record PATH` only if
+you also pass `--conversion-record` in steps 7 and 9. Copy the PDF somewhere
+else and you must copy the sidecar with it.
+
+The record is bound to the bytes it describes — it carries the sha256 of both
+`filled.hwpx` and `filled.pdf`. If you edit the artifact you must re-convert;
+verifying against a stale record is a usage error (exit 2), not a pass.
 
 **7. Verify, pass 1 — the machine half.** Note the one map on **both** flags:
 
@@ -356,6 +374,13 @@ python pipeline/scripts/visual_verify.py \
 Exits **3** with `verdict: vision_pending` when the machine half is clean —
 that is the expected result of pass 1, not a failure. It prints the pages you
 owe under `vision_required`.
+
+No flag names the conversion record: `visual_verify` picks up
+`$W/filled.pdf.conversion.json` on its own. Confirm it did — the verdict's
+`deterministic.conversion.provenance` reads `conversion_record`, and
+`deterministic.pages_document_source` reads `conversion` rather than
+`artifact_layout_cache`. If the sidecar lives elsewhere, add
+`--conversion-record PATH` to **both** passes.
 
 **8. Read the pages.** Open each PNG in `vision_required[].png` and judge it
 against `references/visual-rubric.md` — a closed class vocabulary; an invented
