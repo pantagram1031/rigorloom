@@ -215,7 +215,7 @@ task claims a family the corpus does not back, and a non-vacuity floor so the
 scan cannot pass on zero tasks. Adding a task here requires no core edit; adding
 a *family* to the corpus obliges a task for it.
 
-Three tasks additionally run a work-type distribution module's checker over the
+Four tasks additionally run a work-type distribution module's checker over the
 blank form and over the produced artifact:
 
 | task | module | checker | what it adds |
@@ -223,10 +223,12 @@ blank form and over the produced artifact:
 | `G1-gianmun-body-edit` | gongmun | `check_gongmun` | 두문/결재란/결문/발신명의/직인 seats and the 별지서식 guide vocabulary that must not survive |
 | `P1-jumin-recognize-fill` | minwon | `check_minwon` | the 별지서식 frame, 선택 항목 slot preservation, the 서명 markers, the 유의사항/수수료/제출서류 blocks that must survive, and that no 주민등록번호 was invented |
 | `P2-jeongbo-staff-seats` | minwon | `check_minwon` | the 접수·처리 기관 seats a citizen must not fill — the two rules P1 structurally cannot reach |
+| `H1-labor-contract-fill` | hr | `check_hr` | the numbered-clause skeleton, the contract-variant banners the pack ships with, the clause text a filled seat must not consume, the 근로기준법 citations that must survive verbatim, the two-party 사업주/근로자 block, the template revision (the corpus is a VERSIONED PAIR), and that no 주민등록번호 / 계좌번호 was invented |
 
 Every one of those checks declares `requires_module` (below), so a sandbox
-without the module skips them with a reason instead of failing them. All three
-tasks declare a `baseline`, because both checkers declare `wants: [baseline]`.
+without the module skips them with a reason instead of failing them. All four
+tasks declare a `baseline`, because all three checkers declare
+`wants: [baseline]`.
 
 `P1`'s minwon checks are worth one note: the prompt supplies no 주민등록번호 and
 the check deliberately passes **no** `--fill-map`, so any identity-number-shaped
@@ -244,6 +246,15 @@ two checks pin that down without needing a filter expression: the rule names mus
 be *absent* from the verdict (present only when skipped or when they fire), while
 `untouched` and `shaded` must be *present* (states only a recognized staff seat
 is reported in).
+
+`H1` uses the same absent/present pair for the one thing family ⑦ has and no
+other family does: a **versioned pair** of the same form
+(`moel-pyojun-geunrogyeyakseo-2013` and `-2025`). `template_version_changed` and
+`template_version_mixed` must be absent from the verdict, and `v2025` must be
+present — so "the fill did not quietly migrate the contract to another revision"
+is a machine check rather than a hope. Like `P1`, `H1` passes **no** `--fill-map`:
+the prompt supplies no 주민등록번호, no 계좌번호 and no 전화번호, so any
+personal-number-shaped value in the artifact is undeclared and fires.
 
 Family ③ 학교 서식 has no task (corpus gap) and family ⑤ 기업 내부 문서 has no
 task (documented capability boundary) — both are statements in
