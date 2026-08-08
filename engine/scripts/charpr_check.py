@@ -26,7 +26,13 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from cli_io import utf8_stdio  # noqa: E402
 
-RUN_RE = re.compile(r'charPrIDRef="(\d+)"(.*?)>(.*?)</hp:run>', re.S)
+# 자기닫힘 <hp:run charPrIDRef="..."/>는 텍스트 없는 완결 매치다 —
+# (.*?)>(.*?)</hp:run> 형태는 />를 attrs로 삼켜 다음 형제 run의 닫는
+# 태그까지 스캔해 그 텍스트를 훔친다(T37, docs/trouble-table.md). /> 갈래를
+# 먼저 시도해 자기닫힘을 body 없는 매치로 인식한다. 그룹 수는 3개 그대로 —
+# 늘리면 findall 호출부가 조용히 어긋난다.
+RUN_RE = re.compile(
+    r'charPrIDRef="(\d+)"(.*?)(?:/>|>(.*?)</hp:run>)', re.S)
 T_RE = re.compile(r'<hp:t>(.*?)</hp:t>', re.S)
 
 
@@ -55,6 +61,8 @@ def _runs(hwpx):
     for n in names:
         xml = z.read(n).decode("utf-8")
         for cid, _attrs, body in RUN_RE.findall(xml):
+            if not body:
+                continue  # self-closing run: no text by construction
             txt = re.sub(r"<[^>]+>", "", "".join(T_RE.findall(body)))
             if txt.strip():
                 d = defs.get(cid, {})

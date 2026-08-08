@@ -79,9 +79,18 @@ NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
 
 # 태그를 통째로 잡은 뒤 속성은 태그 문자열 안에서 별도 탐색 → 속성 순서 무관.
-RUN_TAG_RE = re.compile(r'<' + NS + r':run\b([^>]*)>(.*?)</' + NS + r':run>', re.S)
+# 자기닫힘 요소(<hp:run .../>, <hp:t/>)는 텍스트가 없는 완결 매치다 —
+# [^>]*>(.*?)</ns:tag> 형태로 잡으면 /> 를 attrs로 삼켜버리고 다음 형제
+# 요소의 닫는 태그까지 스캔해 그 텍스트를 훔친다(T37, docs/trouble-table.md).
+# /> | >(.*?)</ns:tag> 분기로 자기닫힘을 body 없는 매치로 인식한다.
+# 네임스페이스는 일부러 논캡처로 둔다: 그룹 수는 이 패턴의 공개 인터페이스이고
+# (style_diff·check_gongmun이 findall/group(n)으로 직접 쓴다), 늘리면 호출부가
+# 조용히 어긋난다 — T37 1차 수정이 정확히 그렇게 깨졌다.
+RUN_TAG_RE = re.compile(
+    r'<' + NS + r':run\b([^>]*?)(?:/>|>(.*?)</' + NS + r':run>)', re.S)
 P_TAG_RE = re.compile(r'<' + NS + r':p\b([^>]*)>(.*?)</' + NS + r':p>', re.S)
-T_RE = re.compile(r'<' + NS + r':t\b[^>]*>(.*?)</' + NS + r':t>', re.S)
+T_RE = re.compile(
+    r'<' + NS + r':t\b[^>]*?(?:/>|>(.*?)</' + NS + r':t>)', re.S)
 BRACKET_RE = re.compile(r'\[([^\[\]]{1,40})\]')
 ROMAN_HEAD_RE = re.compile(r'^\s*([IVXⅠ-Ⅻ]+)[.\)]\s*\S')
 NUM_HEAD_RE = re.compile(r'^\s*\d+\.\s*\S')
@@ -215,8 +224,13 @@ def _paragraphs(xml, defs):
             if cid is None:
                 continue
             run_body = rm.group(2)
+            # 자기닫힘 런(빈 셀 fill target)은 텍스트가 없다 — id는 T30
+            # 사전 점검을 위해 그대로 charPrs에 넣되, 본문에는 아무것도
+            # 보태지 않는다(T37).
             cids.append(cid)
-            text_parts.append(re.sub(r"<[^>]+>", "", "".join(T_RE.findall(run_body))))
+            if run_body:
+                text_parts.append(re.sub(
+                    r"<[^>]+>", "", "".join(T_RE.findall(run_body))))
         text = "".join(text_parts)
         out.append({"text": text, "paraPr": para_pr, "charPrs": cids})
     return out
@@ -256,7 +270,8 @@ def _find_top_level_paragraphs(xml):
                 if is_top:
                     end = m.end()
                     p_xml = xml[open_start:end]
-                    text = "".join(re.sub(r"<[^>]+>", "", t) for t in T_RE.findall(p_xml))
+                    text = "".join(re.sub(r"<[^>]+>", "", t)
+                                   for t in T_RE.findall(p_xml))
                     paras.append((open_start, end, text))
         pos = m.end()
     return paras

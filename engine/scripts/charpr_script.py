@@ -46,10 +46,26 @@ SIGNATURE_KEYS = (*SCRIPT_FLAG_TAGS, *SCRIPT_SCALE_TAGS)
 SCRIPT_RENDER_FACTOR = 0.635
 
 _NS = r"[A-Za-z0-9]+"
+#: A self-closing element (``<hp:run .../>``, ``<hp:t/>``) owns no body text.
+#: ``[^>]*?`` (lazy) followed by the ``/>`` | ``>...</ns:tag>`` alternation
+#: recognises the self-close as a complete match with no body, instead of
+#: letting a naive ``[^>]*>(.*?)</ns:tag>`` swallow the ``/>`` as ordinary
+#: attribute text and keep scanning into the FOLLOWING sibling element for
+#: the closing tag (T37 — see docs/trouble-table.md).
+#:
+#: The namespace prefix stays NON-capturing on purpose. Binding the closing
+#: tag with a ``\1`` backreference would be marginally stricter, but it costs
+#: a group, and a module-level pattern's group COUNT is part of its public
+#: interface: ``findall`` silently changes shape and every ``.group(n)`` in
+#: every caller shifts by one. That is how the first attempt at this fix
+#: crashed ``check_gongmun`` and silently fed ``style_diff`` an attribute
+#: string where it wanted a body. Arity is preserved here for that reason;
+#: a mismatched ``<hp:t>…</hh:t>`` is not a shape HWPX produces.
 _RUN_RE = re.compile(
-    r"<" + _NS + r":run\b[^>]*\bcharPrIDRef=\"(\d+)\"[^>]*>(.*?)</"
-    + _NS + r":run>", re.S)
-_RUN_TEXT_RE = re.compile(r"<" + _NS + r":t\b[^>]*>(.*?)</" + _NS + r":t>", re.S)
+    r"<" + _NS + r":run\b[^>]*\bcharPrIDRef=\"(\d+)\"[^>]*?"
+    r"(?:/>|>(.*?)</" + _NS + r":run>)", re.S)
+_RUN_TEXT_RE = re.compile(
+    r"<" + _NS + r":t\b[^>]*?(?:/>|>(.*?)</" + _NS + r":t>)", re.S)
 
 
 def localname(tag: str) -> str:
@@ -103,6 +119,11 @@ def iter_runs(section_xml: str):
     """
     out = []
     for cid, body in _RUN_RE.findall(section_xml):
+        if not body:
+            # Self-closing run (``<hp:run charPrIDRef="..."/>``): no body,
+            # so by construction it carries no text — skip without even
+            # looking for ``hp:t`` children (there cannot be any).
+            continue
         text = "".join(_RUN_TEXT_RE.findall(body))
         text = re.sub(r"<[^>]+>", "", text)
         if text.strip():

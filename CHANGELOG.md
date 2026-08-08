@@ -549,6 +549,23 @@ floor), with a negative control that plants a corpus family with no task.
   with what to use instead and states its output contract in the help epilog,
   and probe's `--pretty` help explains why it is the exception.
 
+### Packaging — bundle builds are reproducible
+
+- **Same tree in, same bytes out.** Found while preparing the tag: building
+  `core` twice from an unchanged tree gave two different zip sha256 values,
+  because `ZipFile.write` stamps each member with the staging file's mtime and
+  st_mode — so a published hash table was invalidated by any rebuild, no-op
+  included, and a hash a reader cannot re-derive is not evidence.
+  `scripts/package_module.py` now pins everything a member records besides its
+  name and content: timestamps to a fixed 1980-01-01 (a constant on purpose —
+  a commit-derived stamp is unreproducible for a reader who has the tree but
+  not the history), permissions to 0o644, `create_system` to Unix, deflate
+  level 9, and member order sorted by path. `MANIFEST.json` was audited for the
+  same failure and its `files` list is sorted by path.
+  `--verify` is unaffected: it hashes member content, not the container.
+  `TestBundlesAreReproducible` builds every bundle twice per run and asserts
+  byte-identity, including after an mtime-only change to the payload.
+
 ### Trouble table
 
 Rows **T26–T36** added, each with the run class that surfaced it: T26–T30 the
