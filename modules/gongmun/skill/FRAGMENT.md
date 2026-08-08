@@ -17,7 +17,7 @@ python engine/scripts/preedit.py fill-cells FORM.hwpx --out filled.hwpx \
 python engine/scripts/preedit.py replace filled.hwpx --out filled.hwpx \
     --map guide_terms.json               # replace a surviving guide term by its content
 python modules/gongmun/scripts/check_gongmun.py filled.hwpx \
-    --baseline FORM.hwpx --out gongmun_verdict.json
+    --baseline FORM.hwpx [--mode draft] --out gongmun_verdict.json
 python pipeline/scripts/visual_verify.py … \
     --expectations modules/gongmun/references/visual_expectations/gongmun.json
 ```
@@ -32,6 +32,11 @@ those guide terms are **placeholders to consume**, not labels to keep. The
 section labels (수신 / 경유 / 제목 / 협조자 / 시행 / 접수 / 우 / 전화번호 / 직인)
 legitimately stay. The 비고 block itself must not ship
 (`이 난은 서식에 포함하지 아니한다`).
+
+`--mode draft` names **task intent**, not permission to retain that block. Use
+it when the user asked for a draft whose approval/signature/sender furniture
+deliberately remains for humans; auto-state cannot recover that intent after
+the out-of-form 비고 has correctly been removed (T45).
 
 **본문 is hierarchical by regulation, so it is multi-paragraph.** `1.` / `가.` /
 `1)` / `가)`, each level its own paragraph, each indented two more spaces —

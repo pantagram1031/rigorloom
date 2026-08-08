@@ -21,7 +21,7 @@ baseline: gianmun-byeolji-1ho.hwpx
 
 expected_behavior:
   - "[judgment] 본문이 두문/본문/결문 구성과 서식이 이미 암시하는 항목 번호 체계(1. 가. 1))를 따른다."
-  - "[judgment] 비고 블록(이 난은 서식에 포함하지 아니한다)을 서식 안내로 인식하고 완성 공문에는 포함하지 않는다고 판단 근거와 함께 말한다."
+  - "[judgment] 비고 블록(이 난은 서식에 포함하지 아니한다)을 서식 밖 작성 안내로 인식하고 초안 산출물에서도 제거했다고 판단 근거와 함께 말한다."
   - "[judgment] 직인 위치와 발신명의 칸을 건드리지 않는다."
   - "[judgment] 수신자 표기 관례(수신자 뒤 경유 칸 처리)를 문서에서 읽어 따른다."
 
@@ -78,6 +78,13 @@ machine_checks:
       - "국가유산청장"
       - "자료 제출 협조 요청"
 
+  - id: bigo_removed
+    kind: text_absent
+    description: 서식 밖 작성 안내인 비고 블록이 초안 산출물에 남지 않았는가
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "이 난은 서식에 포함하지 아니한다"
+
   # ── gongmun distribution module ──────────────────────────────────────
   # check_gongmun judges the 공문 structure itself: 두문 seats, 결재란 rows,
   # 결문 numbering, 발신명의, the 직인 slot, and the 별지서식 guide vocabulary
@@ -105,11 +112,15 @@ machine_checks:
     description: 채운 기안문이 공문 구조 규칙을 모두 통과하는가
     # No --baseline here on purpose: check_gongmun declares wants: [baseline],
     # so the harness supplies the task's blank form.
-    argv: ["modules/gongmun/scripts/check_gongmun.py", "${WORK}/filled.hwpx", "--out", "${WORK}/gongmun_verdict.json"]
+    # The prompt, not a surviving guide block, says this artifact is a draft.
+    # Force that requested state explicitly: auto-state treats removal of the
+    # out-of-form 비고 as final evidence, which made the old task require the
+    # very guide text that visual verification correctly rejects (T45).
+    argv: ["modules/gongmun/scripts/check_gongmun.py", "${WORK}/filled.hwpx", "--mode", "draft", "--out", "${WORK}/gongmun_verdict.json"]
     expect_exit: 0
     json_file: "${WORK}/gongmun_verdict.json"
     assert_json:
       - "counts.hard == 0"
       - 'checker == "check_gongmun"'
       # 결재란과 발신명의를 그대로 두라고 했으므로 완성 공문이 아니라 기안 초안
-      - 'document.state == "draft"'
+      - 'document.state_used == "draft"'

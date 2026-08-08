@@ -60,6 +60,12 @@ The document says which state it is in, so a blank 서식 is not "a failed 공�
 | `final` | no 비고 block | everything HARD |
 
 `--mode blank|draft|final` forces a state. `--mode auto` (default) reads it.
+These are two different claims: auto records evidence in the artifact, while a
+forced mode records the user's requested deliverable state. A requested draft
+may remove the out-of-form 비고 yet deliberately preserve 결재란/발신명의 for a
+human; invoke `--mode draft` in that case and still require the 비고 marker
+absent. Never retain visible guide instructions merely to make auto say draft
+(T45).
 
 ## 3. Rules
 
