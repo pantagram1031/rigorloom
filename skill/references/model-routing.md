@@ -36,12 +36,31 @@ Two rounds, because the first round measured the wrong thing:
 | 1 (alpha) | Sonnet | completed | 8 pass / 0 fail / 1 skip | 288k | 30 / 78 / 2 |
 | 1 (alpha) | Opus | completed | 8 pass / 0 fail / 1 skip | 184k | 24 / 64 / 4 |
 | 2 (fixed) | Sonnet | completed | 8 pass / 0 fail / 1 skip | **132k** | 9 / 22 / 2 |
-| 2 (fixed) | Opus | completed | 8 pass / 0 fail / 1 skip | **124k** | 12 / 39 / 1 |
+| 2 (fixed) | Opus | completed | 8 pass / 0 fail / 1 skip | 124k | 12 / 39 / 1 |
+| 3 (full product) | Sonnet | completed | 9 pass / 0 fail / 1 skip of 10 | **182k** | 10 / 78 / 3 |
+| 3 (full product) | Opus | completed | 9 pass / 0 fail / 1 skip of 10 | **159k** | 16 / 43 / 1 |
 
 The fixes cut Sonnet's session cost by 54% and Opus's by 33%. In round 2 the
 two tiers land within 6% of each other on tokens — and Sonnet's list price is
 roughly a fifth of Opus's, so on the measured task Sonnet is the cheaper tier
 by a wide margin for an identical machine-verified result.
+
+**Round 3** ran the same task against the full product: all nine round-1/2
+defects fixed, the charPr pre-flight in place, and all six modules enabled
+(so the verification path is longer — a work-type checker now runs too, and
+the machine-check count went 9 → 10 because A1 gained a module-gated check).
+Both tiers completed with identical verdicts. Costs rose from round 2 because
+the work grew, not because the tiers regressed: Sonnet 132k → 182k, Opus
+124k → 159k, with Sonnet again ~1/5 the price per token.
+
+**The round-3 result that changes the routing table**: in round 2 the only
+quality difference between tiers was the superscript-charPr trap — Opus
+root-caused it by reading `header.xml`; Sonnet did not and shipped a 6.35pt
+raised fill. In round 3 `form_inspect`'s pre-flight named the anomalous cell
+and the suggested charPr id, and **both tiers avoided the trap on the first
+attempt without knowing the trap existed**. That is the surface-fix rule
+paying off: the escalation point disappeared because the surface stopped
+requiring judgement, not because the cheap tier got smarter.
 
 **Caveat on self-reported numbers.** They are inconsistent: the Sonnet round-2
 agent's narrative said 51 tool calls while its own `run.json` said 22. Treat
@@ -54,7 +73,7 @@ trust.
 | task class | tier | basis |
 |---|---|---|
 | **inspect** (profile a form, report fillable fields) | Sonnet | measured, round 2 — both tiers identical output; anchors/tables/cells matched the pinned floors exactly |
-| **fill** (values into cells, prefix-preserving edits) | Sonnet | measured, round 2 — with `fill-cells` + `--addr` guards this is exact-CLI work; both tiers passed all fill checks |
+| **fill** (values into cells, prefix-preserving edits) | Sonnet | measured, rounds 2 **and 3** — with `fill-cells`, `--addr` guards and the charPr pre-flight this is exact-CLI work. Round 3 is the stronger evidence: the one trap that previously separated the tiers is now caught by the tool, so both tiers fill correctly unaided |
 | **verify / judge** (render → rubric → verdict) | Sonnet | measured, round 2 — Sonnet drove the render→judge loop to `acceptance: true` unaided |
 | **diagnosis** (why is this output wrong, what is this document doing) | **Opus** | measured, both rounds — Opus produced causal explanations Sonnet did not: it root-caused the superscript-charPr trap to a specific charPr id, identified the missing pre-flight as a design gap, and found a shipped `--help` crash on cp949 consoles. Sonnet hit the same defects but reported them as friction |
 | assemble (multi-section build, page budgets) | **not measured** | the measured task is single-page form fill; no claim |
@@ -93,5 +112,15 @@ tiers a retry.
 4. **Authors' harness.** The tasks, rubric, and machine checks are ours. An
    independent party writing their own task would be a stronger proof and has
    not happened.
-5. **Round-2 numbers still include one known defect** (the keep-list
-   derivation). Expect both tiers to drop slightly again after that lands.
+5. **Round-2 numbers included one known defect** (the keep-list derivation);
+   round 3 ran after it landed. Round 3 in turn still carries one open gap
+   that cost both tiers work: nothing shipped yields the exact text of a
+   printed non-anchor seat, so both agents ended up reading the artifact's
+   own XML — Opus to build two replace keys, Sonnet because
+   `text_preview` truncates at 30 characters with no flag and hid a
+   `(     개월)` blank. Expect both tiers to drop again once that is closed.
+6. **Every run so far is a Claude agent.** A different agent harness has not
+   been measured, and the skill leans on at least one Claude-Code-specific
+   mechanism (the capability probe is injected by an inline-command syntax).
+   Whether the shipped surface works outside one vendor's harness is a
+   separate axis of this table and is currently blank.
