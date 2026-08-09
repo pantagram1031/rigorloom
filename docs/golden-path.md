@@ -178,11 +178,34 @@ For every successful PDF renderer, the dispatcher also runs the receipt-bound
 assembled HWPX/PDF pair. On advisory/certified preview paths, a Hangul source
 with no extracted Hangul or an insufficient embedded glyph capacity is
 `failed/missing_hangul_glyphs` and retains `proof_grade: none`;
-duplicate/Type3/nonembedded/unavailable font mappings are `unknown` and never
-promote those preview grades. ASCII-only sources are `not_applicable`. Stage 6
-reruns this check, requires `converged: true`, a matching PDF hash, and all
-existing deterministic visual/layout HARD checks; extracted text is not
-visible-glyph proof, and `advisory` is not Hancom parity.
+duplicate/nonembedded/unavailable mappings remain `unknown` and never promote
+those preview grades. Hangul-used Type3 fonts have a narrower bounded path:
+the checker parses page codes and CharProcs and requires ToUnicode, Encoding
+Differences, finite nonzero metrics, path construction and paint, plus distinct
+Unicode-to-code-to-program identities. Identity collapse or missing geometry
+fails; unsupported graphics/Do, malformed, oversized, or otherwise
+uninspectable Type3 content remains `unknown`. Symbol-only Type3 resources are
+ignored, code 0 is valid, and `ActualText` alone is not proof. ASCII-only
+sources are `not_applicable`. Stage 6 reruns this check, requires `converged:
+true`, a matching PDF hash, and all existing deterministic visual/layout HARD
+checks; extracted text is not visible-glyph proof, and `advisory` is not Hancom
+parity. This bounded Type3 path is not full PDF certification.
+When a rawdict span exposes both Hangul `chars` and `text`/ActualText, the
+checker resolves one ordered claim: identical claims are accepted, a strictly
+longer text claim is retained for the identity check, and an equal/shorter
+disagreement is `unknown/semantic_text_ambiguous` rather than being unioned.
+Its page clip/transform subset only guards glyph visibility; the existing
+visual/layout HARD gates still own full-page intersection and composition.
+When a target Type3 page uses a finite `cm` or polygon clip, the bounded gate
+also requires PyMuPDF `Page.get_texttrace()` and `Page.get_bboxlog()` evidence:
+the trace font must resolve to the page-local resource, have positive opacity,
+finite in-page geometry, and align exactly with the ordered page code groups.
+Type3 path evidence is limited to adjacent `fill-path`/`stroke-path` entries
+whose boxes overlap the trace, and every active transformed clip must contain
+the trace box; missing or ambiguous trace, bboxlog, matrix, or clip evidence
+is `unknown`. The API references are the official
+[PyMuPDF `Page.get_texttrace()` docs](https://pymupdf.readthedocs.io/en/latest/functions.html#Page.get_texttrace)
+and [PyMuPDF `Page.get_bboxlog()` docs](https://pymupdf.readthedocs.io/en/latest/functions.html#Page.get_bboxlog).
 
 The native Hancom route has a separate provenance boundary: a hash-bound
 `native_render` receipt remains `hancom` when this checker is `unknown` or
