@@ -203,7 +203,12 @@ def test_xml_fill_loop_external_renderer_emits_com_contract(tmp_path, monkeypatc
     renderer = _write_fake_renderer(tmp_path / "render.py")
     verdict = _run_xml_fill_loop(tmp_path, monkeypatch, renderer)
 
-    assert verdict["proof_grade"] == "advisory"
+    # The test's synthetic source is intentionally not a valid HWPX package;
+    # quality must fail closed rather than treating unreadable source as
+    # ASCII-only/not-applicable.
+    assert verdict["proof_grade"] == "none"
+    assert verdict["render_quality"]["state"] == "unknown"
+    assert verdict["render_quality"]["reason_code"] == "source_unreadable"
     assert verdict["engine"] == "xml"
     assert {
         "converged", "state", "gappy_pages", "bottom_white_worst",
@@ -224,10 +229,88 @@ def test_xml_fill_loop_calibration_relaxes_advisory_threshold(tmp_path, monkeypa
     verdict = _run_xml_fill_loop(
         tmp_path, monkeypatch, renderer, calibration=str(calibration))
 
-    assert verdict["proof_grade"] == "advisory"
+    assert verdict["proof_grade"] == "none"
+    assert verdict["render_quality"]["state"] == "unknown"
+    assert verdict["render_quality"]["reason_code"] == "source_unreadable"
     assert verdict["thresholds"]["bottom_white_max"] == pytest.approx(35.0)
     assert verdict["thresholds"]["max_gap_lines"] == 6.0
     assert verdict["calibration"]["max_gap_scale"] == 2.0
+
+
+def test_direct_fill_report_advisory_quality_pass_stays_on_shared_hold(
+    tmp_path, monkeypatch
+):
+    renderer = _write_fake_renderer(tmp_path / "render.py")
+    quality = {
+        "schema": fr.render_quality.QUALITY_SCHEMA,
+        "checker": fr.render_quality.CHECKER_ID,
+        "version": fr.render_quality.QUALITY_VERSION,
+        "artifact_sha256": "a" * 64,
+        "artifact_bytes": 1,
+        "state": "passed",
+        "reason_code": "passed",
+        "source_hangul_count": 1,
+        "pdf_hangul_count": 1,
+        "page_count": 1,
+        "mapped_font_xrefs": 1,
+        "checked_font_xrefs": 1,
+        "max_unique_hangul_per_xref": 1,
+        "min_glyph_capacity": 2,
+    }
+    monkeypatch.setattr(fr.render_quality, "inspect", lambda *a, **k: quality)
+    gate_calls = []
+
+    def fake_apply_layout_gate(result, **kwargs):
+        gate_calls.append(kwargs)
+        assert kwargs["advisory_hold"] is True
+        held = dict(result)
+        held["state"] = "failed"
+        held["reason_code"] = "visual_quality_gate_pending"
+        return held
+
+    monkeypatch.setattr(fr.render_quality, "apply_layout_gate", fake_apply_layout_gate)
+    verdict = _run_xml_fill_loop(tmp_path, monkeypatch, renderer)
+    assert fr.document_evidence.ADVISORY_PROOF_RELEASE_ENABLED is False
+    assert len(gate_calls) == 1
+    assert verdict["proof_grade"] == "none"
+    assert verdict["render_quality"]["state"] == "failed"
+    assert verdict["render_quality"]["reason_code"] == "visual_quality_gate_pending"
+
+
+def test_fill_report_native_type3_quality_unknown_keeps_hancom_provenance(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.hwpx"
+    rendered = tmp_path / "rendered.pdf"
+    source.write_bytes(b"assembled")
+    rendered.write_bytes(b"pdf")
+    quality = {
+        "schema": fr.render_quality.QUALITY_SCHEMA,
+        "checker": fr.render_quality.CHECKER_ID,
+        "version": fr.render_quality.QUALITY_VERSION,
+        "artifact_sha256": "a" * 64,
+        "artifact_bytes": 1,
+        "state": "unknown",
+        "reason_code": "type3_font",
+        "source_hangul_count": 1,
+        "pdf_hangul_count": 1,
+        "page_count": 1,
+        "mapped_font_xrefs": 1,
+        "checked_font_xrefs": 0,
+        "max_unique_hangul_per_xref": 1,
+        "min_glyph_capacity": 0,
+    }
+    monkeypatch.setattr(fr.render_quality, "inspect", lambda *a, **k: quality)
+    verdict = {
+        "proof_grade": "hancom",
+        "converged": True,
+        "checks": {},
+        "style_anomalies": [],
+    }
+    result = fr._apply_render_quality(verdict, source, rendered)
+    assert result["state"] == "unknown"
+    assert verdict["proof_grade"] == "hancom"
+    assert verdict["quality_reason"] == "type3_font"
 
 
 def test_xml_fill_loop_renderer_failure_is_never_a_pass(tmp_path, monkeypatch):
@@ -238,7 +321,17 @@ def test_xml_fill_loop_renderer_failure_is_never_a_pass(tmp_path, monkeypatch):
     assert verdict["status"] == "renderer_failed"
     assert verdict["ok"] is False
     assert verdict["converged"] is False
-    assert verdict["proof_grade"] == "advisory"
+    assert verdict["proof_grade"] == "none"
+
+
+def test_xml_fill_loop_no_renderer_writes_structural_receipt(tmp_path, monkeypatch):
+    verdict = _run_xml_fill_loop(tmp_path, monkeypatch, None)
+
+    receipt = fr.document_evidence.load_and_validate_receipt(tmp_path)
+    assert verdict["proof_grade"] == "none"
+    assert receipt["proof_grade"] == "none"
+    assert receipt["execution"]["backend"] == "xml_only"
+    assert receipt["execution"]["state"] == "succeeded"
 
 
 def test_xml_no_renderer_verdict_keeps_contract_and_grade_none(tmp_path):

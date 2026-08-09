@@ -130,7 +130,7 @@ It never writes `output/out.hwpx`, so Stage 5.3 `format_check` will fail HARD
 with `output_missing` if you try to advance past it on a bundle-only build.
 Stop here if you only wanted to see the pipeline run end to end.
 
-## 4B. Assemble without Hancom (hwpx — reaches a graded artifact)
+## 4B. Assemble without Hancom (hwpx — assembled artifact; grade requires an executed renderer)
 
 Set `doc_backend: hwpx` in `<WS>/build.yaml`, or pass `--backend hwpx`
 explicitly:
@@ -148,48 +148,52 @@ on any OS. If the engine cannot be resolved (corrupted install, or an invalid
 `HWP_MASTER_SCRIPTS` override), the dispatcher exits 4 and prints the exact
 fix instead of guessing.
 
-**Where the proof grade comes from:** `doc_backend.py` probes this machine's
-render capabilities (`render_probe.py`: Hancom COM, `soffice` local/WSL,
-H2Orestart) and picks a renderer:
+**Where the proof grade comes from:** read the shipped
+[`platform-backends.md`](../skill/references/platform-backends.md) matrix.
+`render_probe.py` reports capabilities only; it never upgrades an XML
+assembly to Hancom proof. `fill_report.py` and post-assembly renderer paths
+write the current, hash-bound receipt at
+`<WS>/output/proof/backend/receipt.json`. Stage 6 validates that receipt and
+requires its derived `proof_grade` to equal `output/verdict_v06.json`.
 
-- Hancom COM available → `proof_grade: hancom` (always outranks other grades).
-- No Hancom, but a probe-verified document-scoped certificate is configured
-  and `build.yaml` explicitly sets `certified_render: true` plus
-  `render_certificate: <path>` → eligible documents may receive
-  `proof_grade: certified`. This grade sits above advisory and below Hancom.
-- No Hancom, `soffice`+H2Orestart available, and the document has **no**
-  equations → `proof_grade: advisory` (a LibreOffice-rendered PDF, not
-  print-grade proof).
-- No Hancom and the document **has** equations → `proof_grade: none`.
-  H2Orestart's equation fidelity is unverified, so the dispatcher refuses to
-  call it proof at all rather than risk a false pass.
-- No usable renderer at all → `proof_grade: none`.
+The XML path therefore produces `proof_grade: none` unless a named renderer
+actually succeeds. Successful named LibreOffice, `rhwp`, certified, and
+Windows COM executions have distinct closed evidence classes. A failed,
+refused, stale, or hash-drifted execution always derives `none`; a receipt
+recorded on Windows remains historically valid when inspected on Linux, while
+the current host's capability probe is only informational.
 
-This decision is echoed in the dispatcher's own JSON output and is expected
-to land in `<WS>/output/verdict_v06.json` (written by the engine assembly
-loop itself) as the `proof_grade` field — that is exactly what Stage 6
-`submission_preflight.py` reads later.
+The adapter's stdout is parsed as one bounded JSON object: harmless prefix or
+suffix diagnostics are discarded, while malformed, truncated, oversized, or
+ambiguous output fails closed. LibreOffice advisory promotion remains behind
+the independent visual-quality release gate; a valid child JSON plus a PDF is
+not by itself a submission claim. That release hold is shared by direct
+`fill_report`, receipt derivation, dispatch, and Stage 6, so a quality-passed
+LibreOffice run currently remains terminal `proof_grade: none` on every
+entrypoint. Any `renderer_decision.candidate_proof_grade` is only an internal
+routing candidate; the top-level terminal `proof_grade` is authoritative.
 
-### Equation documents on Linux (experimental)
+For every successful PDF renderer, the dispatcher also runs the receipt-bound
+`pipeline/scripts/render_quality.py` Hangul glyph checker against the exact
+assembled HWPX/PDF pair. On advisory/certified preview paths, a Hangul source
+with no extracted Hangul or an insufficient embedded glyph capacity is
+`failed/missing_hangul_glyphs` and retains `proof_grade: none`;
+duplicate/Type3/nonembedded/unavailable font mappings are `unknown` and never
+promote those preview grades. ASCII-only sources are `not_applicable`. Stage 6
+reruns this check, requires `converged: true`, a matching PDF hash, and all
+existing deterministic visual/layout HARD checks; extracted text is not
+visible-glyph proof, and `advisory` is not Hancom parity.
 
-When there's no Hancom and the document has equations (or no `soffice`
-renderer is installed at all), `doc_backend.py` can route to `rhwp_svg`
-instead of leaving `proof_grade: none`. To enable it: install `rhwp`, point
-`RHWP_BIN` at it (or leave it on `PATH`), and set `RHWP_SHA256` to the
-SHA-256 of that exact executable file — the pin is mandatory; an unpinned or
-mismatched binary is never treated as available
-(`render_probe.verify_rhwp_binary`). The probe then runs `rhwp export-svg`
-against a canonical-immutable render surrogate and writes a fail-closed
-receipt to `output/proof/rhwp/receipt.json`, reporting an SVG page count and
-an overflow/pagination check (`layout_overflow`, `parity_verdict`).
+The native Hancom route has a separate provenance boundary: a hash-bound
+`native_render` receipt remains `hancom` when this checker is `unknown` or
+`not_applicable` (for example, Type3 fonts it cannot inspect), and downgrades
+only on a confirmed quality failure. This is renderer provenance, not a
+readability certification; Stage 6 still requires converged assembly, clean
+layout/style HARD checks, and canonical artifact hashes.
 
-What you do **not** get: submission grade. `proof_grade: experimental-rhwp`
-is hard-blocked by `submission_preflight.py` (`P5`: "diagnostic render
-evidence, not a submission proof grade") and, unlike `advisory`, cannot be
-waived with `--allow-advisory`. Pixel-level parity with Hancom rendering has
-not been achieved — see
-[`docs/plans/p0-parity-report.md`](plans/p0-parity-report.md) for the honest
-status.
+`rhwp` remains a diagnostic SVG path and `experimental-rhwp` is hard-blocked
+from submission. It may write its renderer-specific diagnostic receipt under
+`output/proof/rhwp/`, but the generic backend receipt is the Stage 6 authority.
 
 ## 5. Post-assembly gates
 
@@ -217,14 +221,17 @@ python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
 - `submission_preflight` composes `check_saeteuk.py`, checks the canonical
   artifact's identity fields against `request.yaml`, recomputes and compares
   the assembled HWPX's form-structure hash against `form_baseline.json`, and
-  requires `proof_grade` to be `hancom`, `certified`, or `advisory`.
+  requires a current artifact-bound receipt for every non-`none` `proof_grade`,
+  checks that the receipt derives the same grade, and for advisory proof
+  reruns the hash-bound Hangul quality contract. Advisory is HARD-rejected when
+  quality is missing, failed, unknown, stale, or not tied to `converged: true`.
   `certified` additionally requires the build opt-in, a passing live
   `render_cert check`, and a certificate whose operator-key HMAC, embedded
   measurements, manifest-derived envelope, corpus manifest, renderer binary,
-  and pinned versions re-verify. Hancom/advisory grades are
-  cross-checked against this machine's actual render capabilities, so a recorded `hancom` grade
-  that can't be reproduced here (no Hancom on this delivery machine) is
-  rejected rather than trusted blindly.
+  and pinned versions re-verify. The current host's renderer capabilities are
+  reported as informational `reproducible_here` facts; a historically valid
+  Windows receipt is not invalidated merely because the delivery host lacks
+  Hancom.
 
 ## 6. Where you land
 

@@ -271,12 +271,11 @@ def merge_assembly_verdict(
     )
     if rhwp_grade not in PROOF_GRADE_RANK:
         rhwp_grade = "none"
-    existing_grade = payload.get("proof_grade")
-    existing_rank = PROOF_GRADE_RANK.get(
-        str(existing_grade).strip().lower(), -1
-    )
-    if existing_grade is None or PROOF_GRADE_RANK[rhwp_grade] > existing_rank:
-        payload["proof_grade"] = rhwp_grade
+    # The terminal rhwp receipt is the active evidence for this run.  A stale
+    # higher grade from an older verdict must not survive a failed/diagnostic
+    # rerun through max(old, new) merging.
+    payload["proof_grade"] = rhwp_grade
+    payload["proof_unavailable"] = rhwp_grade == "none"
     _write_json(path, payload)
     return payload
 

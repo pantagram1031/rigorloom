@@ -6,10 +6,12 @@ Exit 0 = pass, 3 = HARD finding, 2 = usage error. ``request.yaml`` is parsed
 with a deliberately small top-level line scanner; absent optional keys produce
 notes, while artifact extension/size/reopen and proof-grade checks always run.
 
-The current proof handshake compares the recorded grade with local renderer
-capabilities. Full artifact-bound proof receipts are deferred to later
-attestation work. Until then, ``--allow-advisory`` is an explicit draft escape
-that requires a non-empty reason and records it in the verdict JSON.
+Proof grades are accepted only when the canonical artifact-bound execution
+receipt under ``output/proof/backend/receipt.json`` validates against current
+bytes and derives the same grade.  Current-host renderer capabilities remain
+informational (``reproducible_here``); they never establish historical proof.
+``--allow-advisory`` remains an explicit draft escape for locally unverifiable
+delivery conditions and requires a non-empty reason.
 
 Form baselines in ``form_baseline.json`` or ``build.yaml`` are trusted-on-record,
 not cryptographically proven: recording a baseline after a mutation cannot
@@ -38,10 +40,19 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
+_ENGINE_SCRIPTS = Path(__file__).resolve().parents[2] / "engine" / "scripts"
+if str(_ENGINE_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_SCRIPTS))
+_PIPELINE_SCRIPTS = Path(__file__).resolve().parent
+if str(_PIPELINE_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_PIPELINE_SCRIPTS))
+
 import render_probe
 import render_cert
 import module_registry
 import verdict_schema
+import document_evidence
+import render_quality
 
 
 SUPPORTED_EXTENSIONS = {".hwpx", ".pdf"}
@@ -282,6 +293,121 @@ def _proof_grade(ws: Path):
     if not isinstance(payload, dict) or "proof_grade" not in payload:
         return None, source
     return str(payload["proof_grade"]).strip().lower(), source
+
+
+def _proof_verdict_payload(ws: Path) -> dict | None:
+    try:
+        payload = json.loads((ws / ASSEMBLY_VERDICT_REL).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _receipt_canonical_binding(
+    workspace: Path,
+    canonical: Path | None,
+    receipt: dict,
+) -> dict | None:
+    """Require the validated receipt to describe the canonical artifact bytes.
+
+    A copied/renamed artifact is acceptable when its SHA-256 and byte count
+    match the canonical file.  An unrelated decoy path or role is not proof,
+    even though the receipt itself may be internally hash-valid.
+    """
+    if canonical is None or not canonical.is_file():
+        return None
+    execution = receipt.get("execution") or {}
+    if execution.get("state") != "succeeded":
+        return None
+    evidence_class = receipt.get("evidence_class")
+    if evidence_class == "structural_only":
+        descriptor = execution.get("output")
+        expected_role = "assembled_hwpx"
+        if canonical.suffix.casefold() != ".hwpx":
+            return {
+                "code": "proof_receipt_canonical_unbound",
+                "msg": "structural receipt cannot bind a non-HWPX canonical artifact",
+                "at": canonical.relative_to(workspace).as_posix(),
+            }
+    elif evidence_class in {"native_render", "advisory_render",
+                            "certified_render", "diagnostic_render"}:
+        if canonical.suffix.casefold() == ".hwpx":
+            descriptor = execution.get("input")
+            expected_role = "assembled_hwpx"
+        elif canonical.suffix.casefold() == ".pdf":
+            descriptor = execution.get("output")
+            expected_role = "rendered_pdf"
+        else:
+            return {
+                "code": "proof_receipt_canonical_unbound",
+                "msg": "render receipt cannot bind this canonical extension",
+                "at": canonical.relative_to(workspace).as_posix(),
+            }
+    else:
+        return None
+    if not isinstance(descriptor, dict) or descriptor.get("role") != expected_role:
+        return {
+            "code": "proof_receipt_canonical_unbound",
+            "msg": "receipt artifact role does not match the canonical submission",
+            "at": document_evidence.RECEIPT_REL.as_posix(),
+            "expected_role": expected_role,
+        }
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with canonical.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+    except OSError as exc:
+        return {
+            "code": "proof_receipt_canonical_unbound",
+            "msg": f"canonical artifact could not be hashed: {exc}",
+            "at": canonical.relative_to(workspace).as_posix(),
+        }
+    if (descriptor.get("sha256") != digest.hexdigest()
+            or descriptor.get("bytes") != size):
+        return {
+            "code": "proof_receipt_canonical_unbound",
+            "msg": "receipt artifact hashes do not bind the canonical submission",
+            "at": canonical.relative_to(workspace).as_posix(),
+            "expected_role": expected_role,
+        }
+    return None
+
+
+def _rerun_receipt_quality(
+    workspace: Path,
+    receipt: dict,
+    assembly_payload: dict | None,
+) -> dict | None:
+    """Recompute the quality contract from the receipt-bound HWPX/PDF."""
+    execution = receipt.get("execution") or {}
+    input_descriptor = execution.get("input")
+    output_descriptor = execution.get("output")
+    if not isinstance(input_descriptor, dict) or not isinstance(output_descriptor, dict):
+        return None
+    if (input_descriptor.get("role") != "assembled_hwpx"
+            or output_descriptor.get("role") != "rendered_pdf"):
+        return None
+    input_path = input_descriptor.get("path")
+    output_path = output_descriptor.get("path")
+    if not isinstance(input_path, str) or not isinstance(output_path, str):
+        return None
+    source = workspace / input_path
+    rendered = workspace / output_path
+    quality = render_quality.inspect(source, rendered)
+    payload = assembly_payload if isinstance(assembly_payload, dict) else {}
+    quality = render_quality.apply_layout_gate(
+        quality,
+        converged=payload.get("converged") is True,
+        hard_checks=isinstance(payload.get("checks"), dict)
+        and not bool(payload.get("checks")),
+        style_clean=isinstance(payload.get("style_anomalies"), list)
+        and not payload.get("style_anomalies"),
+        advisory_hold=False,
+    )
+    return quality
 
 
 def _build_scalar(path: Path, key: str) -> str | None:
@@ -654,6 +780,113 @@ def check(
     hard.extend(verdict_schema.validate_verdict_file(
         ws / ASSEMBLY_VERDICT_REL, at=ASSEMBLY_VERDICT_REL.as_posix(),
     ))
+    assembly_payload = _proof_verdict_payload(ws)
+    if grade in SUBMISSION_PROOF_GRADES and (
+            not isinstance(assembly_payload, dict)
+            or assembly_payload.get("converged") is not True):
+        hard.append({
+            "code": "proof_not_converged",
+            "msg": "submission-grade proof requires assembly_payload.converged:true",
+            "at": ASSEMBLY_VERDICT_REL.as_posix(),
+        })
+    if (grade == "advisory"
+            and not document_evidence.ADVISORY_PROOF_RELEASE_ENABLED):
+        hard.append({
+            "code": "advisory_proof_release_hold",
+            "msg": "advisory proof release is held pending independent visual quality evidence",
+            "at": ASSEMBLY_VERDICT_REL.as_posix(),
+        })
+    evidence_receipt = None
+    receipt_path = ws / document_evidence.RECEIPT_REL
+    if assembly_payload and assembly_payload.get("proof_unavailable") is True \
+            and grade != "none":
+        hard.append({
+            "code": "proof_unavailable_non_none",
+            "msg": "proof_unavailable:true is incompatible with a non-none proof grade",
+            "at": ASSEMBLY_VERDICT_REL.as_posix(),
+        })
+    if grade not in {None, "none"}:
+        if not receipt_path.is_file():
+            hard.append({
+                "code": "proof_receipt_missing",
+                "msg": "every non-none proof grade requires a current artifact-bound receipt",
+                "at": document_evidence.RECEIPT_REL.as_posix(),
+            })
+        else:
+            try:
+                evidence_receipt = document_evidence.load_and_validate_receipt(ws)
+            except document_evidence.EvidenceError as exc:
+                hard.append({
+                    "code": "proof_receipt_invalid",
+                    "msg": "artifact-bound proof receipt failed validation",
+                    "at": document_evidence.RECEIPT_REL.as_posix(),
+                    "errors": exc.errors,
+                })
+            else:
+                derived = evidence_receipt.get("proof_grade")
+                if derived != grade:
+                    hard.append({
+                        "code": "proof_receipt_grade_mismatch",
+                        "msg": "verdict proof_grade differs from the active receipt grade",
+                        "at": document_evidence.RECEIPT_REL.as_posix(),
+                        "expected": derived,
+                        "actual": grade,
+                    })
+    elif receipt_path.is_file():
+        # A draft may explicitly allow no proof, but a present receipt must not
+        # be malformed or silently disagree with the canonical verdict.
+        try:
+            evidence_receipt = document_evidence.load_and_validate_receipt(ws)
+        except document_evidence.EvidenceError as exc:
+            hard.append({
+                "code": "proof_receipt_invalid",
+                "msg": "present artifact-bound receipt failed validation",
+                "at": document_evidence.RECEIPT_REL.as_posix(),
+                "errors": exc.errors,
+            })
+        else:
+            if evidence_receipt.get("proof_grade") != "none":
+                hard.append({
+                    "code": "proof_receipt_grade_mismatch",
+                    "msg": "none verdict cannot conceal a graded active receipt",
+                    "at": document_evidence.RECEIPT_REL.as_posix(),
+                    "expected": evidence_receipt.get("proof_grade"),
+                    "actual": grade,
+                })
+    if evidence_receipt is not None:
+        binding_finding = _receipt_canonical_binding(ws, artifact, evidence_receipt)
+        if binding_finding is not None:
+            hard.append(binding_finding)
+        if grade == "advisory":
+            recorded_quality = evidence_receipt.get("quality")
+            if not isinstance(recorded_quality, dict):
+                hard.append({
+                    "code": "proof_quality_missing",
+                    "msg": "advisory proof requires a current render-quality object",
+                    "at": document_evidence.RECEIPT_REL.as_posix(),
+                })
+            elif recorded_quality.get("state") != "passed":
+                hard.append({
+                    "code": "proof_quality_failed",
+                    "msg": "advisory proof quality is not passed",
+                    "at": document_evidence.RECEIPT_REL.as_posix(),
+                    "reason_code": recorded_quality.get("reason_code"),
+                })
+            else:
+                rerun_quality = _rerun_receipt_quality(
+                    ws, evidence_receipt, assembly_payload)
+                if rerun_quality is None:
+                    hard.append({
+                        "code": "proof_quality_unverifiable",
+                        "msg": "advisory quality cannot be rerun from receipt-bound artifacts",
+                        "at": document_evidence.RECEIPT_REL.as_posix(),
+                    })
+                elif rerun_quality != recorded_quality:
+                    hard.append({
+                        "code": "proof_quality_mismatch",
+                        "msg": "receipt quality differs from a fresh bound-artifact check",
+                        "at": document_evidence.RECEIPT_REL.as_posix(),
+                    })
     delivery_capabilities = None
     render_certificate_rel = None
     render_certificate_verification = None
@@ -766,9 +999,10 @@ def check(
             "h2orestart": capabilities.get("h2orestart"),
         }
         reasons = []
-        if grade == "hancom" and not delivery_capabilities["hancom_com"]:
-            reasons.append(
-                "recorded Hancom proof cannot be reproduced on this delivery machine")
+        if grade in SUBMISSION_PROOF_GRADES:
+            notes.append(
+                "current-host renderer capabilities are informational; "
+                "historical proof comes from the validated artifact receipt")
         if grade == "advisory" and document_has_equations:
             reasons.append(
                 "advisory proof is not meaningful for an equation-bearing document")
@@ -804,6 +1038,14 @@ def check(
         "proof_grade": grade,
         "proof_grade_source": (grade_source.relative_to(ws).as_posix()
                                if grade_source else None),
+        "proof_receipt": (document_evidence.RECEIPT_REL.as_posix()
+                          if evidence_receipt is not None else None),
+        "proof_receipt_reproducible_here": (
+            evidence_receipt.get("reproducible_here")
+            if evidence_receipt is not None else None),
+        "proof_quality": (
+            evidence_receipt.get("quality")
+            if evidence_receipt is not None else None),
         "delivery_capabilities": delivery_capabilities,
         "document_has_equations": document_has_equations,
         "form_structure_sha256": form_structure_sha256,

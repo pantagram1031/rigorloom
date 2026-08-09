@@ -164,7 +164,7 @@ class RhwpProofTests(unittest.TestCase):
                 self.assertEqual(receipt["proof_grade"], "none")
                 run.assert_not_called()
 
-    def test_verdict_merge_preserves_higher_advisory_grade(self):
+    def test_verdict_merge_active_diagnostic_grade_supersedes_stale_advisory(self):
         with tempfile.TemporaryDirectory() as tmp:
             verdict_path = Path(tmp) / "verdict_v06.json"
             verdict_path.write_text(json.dumps({"ok": True, "proof_grade": "advisory"}), encoding="utf-8")
@@ -181,7 +181,7 @@ class RhwpProofTests(unittest.TestCase):
 
             merged = rhwp_proof.merge_assembly_verdict(verdict_path, receipt)
 
-            self.assertEqual(merged["proof_grade"], "advisory")
+            self.assertEqual(merged["proof_grade"], "experimental-rhwp")
             self.assertFalse(merged["rhwp_proof"]["submission_grade"])
             on_disk = json.loads(verdict_path.read_text(encoding="utf-8"))
             self.assertEqual(on_disk, merged)

@@ -27,6 +27,12 @@ operation; `modules.enabled` gates module vocabulary (fragments below);
 
 ## Backend rule
 
+Read `references/platform-backends.md` before selecting a platform or claiming
+render evidence. It is the shipped support/evidence matrix: supported is not
+parity, unknown is not unsupported, and a capability probe never establishes
+proof. Successful terminal execution must leave a current receipt at
+`output/proof/backend/receipt.json`.
+
 - `.hwpx` — offline XML engine (default, works everywhere, byte-preserving).
 - `.hwp` — Hancom COM only (`render.hancom_com: true`). No COM → cannot edit;
   ask for `.hwpx` or convert on the operator machine. Never parse `.hwp` bytes.
@@ -185,6 +191,10 @@ Do not auto-start them from a casual mention of a file.
   symptom → cause → fix matching.
 - `references/visual-rubric.md` — the defect classes you apply when
   READING a rendered page image (the vision half of the verify step).
+
+The shipped `pipeline/scripts/render_quality.py` checker is the receipt-bound
+quality route for rendered PDF glyphs; text extraction alone is not visible
+glyph proof, and an `advisory` grade is never Hancom parity.
 
 Module skill fragments (report pipeline, style/humanize, gongmun/공문) are
 appended below by the installer when their distribution modules are enabled.

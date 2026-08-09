@@ -9,7 +9,8 @@ per-file sha256, provides summary) and an ``INSTALL.md`` (drop into
 ``modules/<name>/``, enable via the module_registry CLI).
 
 ``--module core`` emits the core bundle: ``engine/`` + the pipeline core
-(``pipeline/scripts``, ``pipeline/references``) + ``studio/`` + the router
+(``pipeline/scripts``, ``pipeline/adapters_impl``,
+ ``pipeline/references``) + ``studio/`` + the router
 skill surface (``skill/SKILL.md`` + ``skill/references/``) + the skill
 installer (``scripts/sync_local.py`` + ``scripts/sync_manifest.example.yaml``)
 + ``modules/README.md`` (the distribution-module contract; no module
@@ -127,6 +128,10 @@ _ZIP_COMPRESS_LEVEL = 9
 _CORE_COMPONENTS = (
     "engine",
     "pipeline/scripts",
+    # doc_backend.py runs from pipeline/scripts and imports this package via
+    # the sibling pipeline directory.  Keep it in the core zip; sync_local's
+    # flattened install mapping handles the separate target path.
+    "pipeline/adapters_impl",
     "pipeline/references",
     "studio",
     "skill",
@@ -148,6 +153,9 @@ _CORE_REQUIRED_FILES = (
     "scripts/sync_manifest.example.yaml",
     "scripts/package_module.py",
     "pipeline/scripts/module_registry.py",
+    "pipeline/adapters_impl/__init__.py",
+    "pipeline/adapters_impl/bundle_backend.py",
+    "pipeline/adapters_impl/docx_backend.py",
     "engine/scripts/probe.py",
 )
 _CORE_REQUIRED_GLOBS = (
@@ -493,7 +501,8 @@ def _core_install_md(version: str) -> str:
     return f"""# rigorloom-core {version} — core bundle
 
 The core document engine: `engine/`, the pipeline core
-(`pipeline/scripts`, `pipeline/references`), `studio/`, the router skill
+(`pipeline/scripts`, `pipeline/adapters_impl`, `pipeline/references`),
+`studio/`, the router skill
 surface (`skill/SKILL.md` + `skill/references/`), the skill installer
 (`scripts/sync_local.py` + `scripts/sync_manifest.example.yaml`), and the
 distribution-module contract (`modules/README.md`). No distribution-module
@@ -536,6 +545,8 @@ enabling modules, so their skill fragments are merged in.
        to: "engine/scripts"
      - from: "pipeline/scripts"
        to: "pipeline/scripts"
+     - from: "pipeline/adapters_impl"
+       to: "pipeline/adapters_impl"
    exclude:
      - "__pycache__"
      - "*.pyc"

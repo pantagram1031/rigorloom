@@ -123,6 +123,24 @@ class PreflightRejectsContradictionTests(unittest.TestCase):
                 '<?xml version="1.0" encoding="UTF-8"?>'
                 '<doc xmlns:hp="urn:hancom"><p>31415 Lee</p></doc>',
             )
+        (self.ws / "output" / "rendered.pdf").write_bytes(b"native pdf")
+        (self.ws / "output" / "proof" / "backend").mkdir(parents=True)
+        receipt = submission_preflight.document_evidence.build_receipt(
+            self.ws,
+            backend="native_hancom_windows",
+            evidence_class="native_render",
+            terminal_state="succeeded",
+            input_path=self.ws / "output" / "submission.hwpx",
+            output_path=self.ws / "output" / "rendered.pdf",
+            input_role="assembled_hwpx",
+            output_role="rendered_pdf",
+            exit_code=0,
+            reason_code="render_succeeded",
+            renderer_id="hancom_com",
+            reproducible_here=True,
+        )
+        submission_preflight.document_evidence.write_receipt(
+            self.ws, receipt)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -154,6 +172,8 @@ class PreflightRejectsContradictionTests(unittest.TestCase):
         ), verdict)
 
     def test_consistent_assembly_verdict_still_passes(self):
+        # This schema-consistency test also supplies the current native
+        # receipt required by the independent Stage 6 evidence contract.
         verdict, code = self.run_preflight({
             "proof_grade": "hancom",
             "converged": True,
@@ -161,6 +181,20 @@ class PreflightRejectsContradictionTests(unittest.TestCase):
         })
         self.assertEqual(code, 0, verdict)
         self.assertTrue(verdict["ok"])
+
+    def test_non_none_without_current_receipt_still_hard_fails(self):
+        receipt = self.ws / "output" / "proof" / "backend" / "receipt.json"
+        receipt.unlink()
+        verdict, code = self.run_preflight({
+            "proof_grade": "hancom",
+            "converged": True,
+            "status": "awaiting_judge",
+        })
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "proof_receipt_missing"
+            for item in verdict["hard"]
+        ), verdict)
 
     def test_escalated_but_not_converged_verdict_is_not_a_contradiction(self):
         # A truthful escalation (converged:false) is not a schema violation —
