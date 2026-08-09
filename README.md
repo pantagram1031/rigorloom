@@ -12,8 +12,8 @@ default.**
 
 Rigorloom is an agent-neutral document engine for Korean HWP/HWPX forms —
 recognition, fill, assembly, verification, and delivery — with an optional,
-resumable report pipeline on top. Current release: **v0.17.0** (pending
-tag). See [CHANGELOG.md](CHANGELOG.md) for the version history and
+resumable report pipeline on top. Current release: **v0.17.0**. See
+[CHANGELOG.md](CHANGELOG.md) for the version history and
 [docs/golden-path.md](docs/golden-path.md) for an end-to-end, Hancom-free
 walkthrough.
 

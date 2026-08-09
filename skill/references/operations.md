@@ -94,7 +94,7 @@ sources appear as `{"error": ...}`. Injected into SKILL.md at load.
 ```
 python engine/scripts/form_inspect.py FORM.hwpx --out profile.json
     [--baseline baseline.json] [--base-pt 10] [--line-spacing 160]
-    [--full-text [TABLE:]ROW,COL ...]
+    [--full-text [TABLE:]ROW,COL|PARA:N ...]
 ```
 
 Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
@@ -107,7 +107,9 @@ fixed-grid forms; the fill gate there is layout immutability, not budget),
 `charpr`/`script_anomaly`/`charpr_suggested` on `fill_target` cells),
 `body_baseline_charpr`, `script_anomaly_targets`, `spacer_cells`,
 `fill_target_count`,
-`break_audit`. `--baseline` additionally writes the font/size/color/spacing
+`break_audit`. `anchor_records[].text` is descriptive legacy evidence, not an
+exact edit key: it may combine several runs and its whitespace is not a layout
+instruction. `--baseline` additionally writes the font/size/color/spacing
 distribution `baseline.json` consumed by `style_diff`. Exit 2 on file error;
 otherwise 0 (diagnostic tool, never a gate).
 
@@ -155,18 +157,19 @@ pre-flight fields, because nothing will ever be written into them.
 **Contract: structure only.** The profile carries anchor/guide strings, not
 the document body. Do not dump section XML into context.
 
-**`--full-text [TABLE:]ROW,COL` is the one documented escape from that
-contract** (repeatable; `TABLE:` defaults to 0). It emits `full_text`
-`[{table, addr, text, truncated_preview, runs:[{index, text, charpr}]}]` —
-the **exact** run text, whitespace intact — for the cells you name and no
-others. It is opt-in **per cell** on purpose: the key absent from the profile
-unless requested, no flag that dumps the body, and each request is a decision
-you can justify. Reach for it only when you need a byte-exact string, which
-in practice means a `replace --map` key or a `check_residue --fill-map`
-entry. To *edit* a printed skeleton you do not need the string at all — use
-`preedit replace --at-cell ROW,COL=값` (§3), which addresses the run instead.
-`runs[].index` IS `--at-cell`'s `#RUN` (one shared enumerator), and the
-string round-trips: fed back as a `replace` key it hits exactly once.
+**`--full-text [TABLE:]ROW,COL|PARA:N` is the one documented escape from that
+contract** (repeatable; `TABLE:` defaults to 0). It emits `full_text` with the
+**exact** run text, whitespace intact, for only the cells or paragraphs named.
+For an `anchor_records` entry, use its preedit-aligned `at_para` as
+`--full-text PARA:at_para`; do not treat the descriptive `anchor_records[].text`
+as a complete run key. It is opt-in per address on purpose: no flag dumps the
+body, and each request is a decision you can justify. When fixed-padding
+furniture lives in a separate run (for example, spaces before a trailing
+`(인)` marker), inspect every run in that paragraph and update the affected
+run(s) explicitly with the same `at_para`, preserving the marker/charPr, then
+run the Hancom/PDF visual loop. Hit counts and other text gates prove targeting
+and content, not whether a line wrapped or fit; there is no automatic-fit
+guarantee.
 
 ## 3. preedit
 

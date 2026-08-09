@@ -422,6 +422,32 @@ def _strip_tags(xml_text):
     return re.sub(r"<[^>]+>", "", xml_text)
 
 
+def _iter_document_paragraphs(xml, base_offset=0):
+    """Yield paragraphs in the same depth-first order as replacement.
+
+    ``replace_placeholders`` gives an outer paragraph its ``at_para`` before
+    recursing into paragraphs nested in that paragraph's table/cell.  Keep the
+    iterator here, next to that implementation, so inspection can bind a
+    paragraph address to its actual XML start rather than guessing from a
+    legacy regex index.  ``base_offset`` is only used while recursing into a
+    paragraph fragment and keeps yielded starts absolute to the section XML.
+    """
+    for start, end, p_xml in _find_paragraphs(xml):
+        absolute_start = base_offset + start
+        absolute_end = base_offset + end
+        yield absolute_start, absolute_end, p_xml
+
+        open_m = P_OPEN_RE.match(p_xml)
+        if not open_m:
+            continue
+        close_idx = p_xml.rfind("</")
+        if close_idx <= open_m.end():
+            continue
+        inner = p_xml[open_m.end():close_idx]
+        yield from _iter_document_paragraphs(
+            inner, base_offset + start + open_m.end())
+
+
 # ---------------------------------------------------------------------------
 # 1) replace_placeholders — dict 기반 치환, whitespace-tolerant, 0-hit=ERROR
 # ---------------------------------------------------------------------------
@@ -1307,6 +1333,103 @@ def _no_ws(text):
     `_scope_repoint_paragraph`의 anchor 매칭과 같은 정규화다.
     """
     return re.sub(r"\s+", "", text)
+
+
+_PARA_XML_TAG_RE = re.compile(
+    r'<(?P<close>/)?(?P<prefix>' + NS + r'):(?P<local>[A-Za-z0-9]+)\b'
+    r'(?P<attrs>[^>]*?)(?P<self>/)?>', re.S)
+
+
+def paragraph_text_runs(p_xml):
+    """Return the outer paragraph's text runs, excluding nested paragraphs.
+
+    A valid HWPX run may wrap a table (and therefore nested ``hp:p``
+    elements), with more ``hp:t`` children after that table.  Fragmenting the
+    paragraph around nested paragraphs loses the run opener and its
+    ``charPrIDRef``.  Instead, walk the local XML while carrying the active
+    run frame across nested elements.  Only text whose paragraph depth is the
+    outer paragraph's depth is attributed to that run; nested paragraph text
+    is ignored.  One returned record therefore preserves one run's identity
+    and concatenates its own ``hp:t`` segments in document order.
+
+    The returned run shape matches ``cell_text_runs`` for the fields consumed
+    by form inspection.  Offsets are relative to ``p_xml`` because this helper
+    receives one paragraph rather than a cell body.
+    """
+    runs = []
+    active_runs = []
+    text_frames = []
+    paragraph_depth = 0
+
+    def finish_run(frame):
+        if frame is None or not frame["t_spans"]:
+            return
+        spans = frame["t_spans"]
+        runs.append({
+            "index": len(runs),
+            "text": unescape(_strip_tags(
+                "".join(p_xml[s:e] for s, e in spans))),
+            "charpr": frame["charpr"],
+            "para_start": 0,
+            "para_end": len(p_xml),
+            "open_start": frame["open_start"],
+            "open_end": frame["open_end"],
+            "t_spans": spans,
+        })
+
+    for token in _PARA_XML_TAG_RE.finditer(p_xml):
+        is_close = token.group("close")
+        local = token.group("local")
+        self_closing = bool(token.group("self"))
+
+        if is_close:
+            if local == "t" and text_frames:
+                owner, capture, start = text_frames.pop()
+                if capture and owner is not None:
+                    owner["t_spans"].append((start, token.start()))
+            elif local == "run" and active_runs:
+                finish_run(active_runs.pop())
+            elif local == "p":
+                paragraph_depth = max(0, paragraph_depth - 1)
+            continue
+
+        if local == "p":
+            paragraph_depth += 1
+        elif local == "run":
+            frame = None
+            # ``p_xml`` is one paragraph; depth one is its own content.
+            # Runs opened deeper belong to a nested paragraph and must not
+            # become part of the outer record, even though they are valid XML.
+            if paragraph_depth == 1 and not self_closing:
+                cm = re.search(
+                    r'\bcharPrIDRef\s*=\s*(["\'])(\d+)\1',
+                    token.group("attrs") or "")
+                frame = {
+                    "charpr": cm.group(2) if cm else None,
+                    "open_start": token.start(),
+                    "open_end": token.end(),
+                    "t_spans": [],
+                }
+            active_runs.append(frame)
+        elif local == "t":
+            owner = next((frame for frame in reversed(active_runs)
+                          if frame is not None), None)
+            capture = owner is not None and paragraph_depth == 1
+            if not self_closing:
+                text_frames.append((owner, capture, token.end()))
+
+        if self_closing:
+            if local == "run" and active_runs:
+                active_runs.pop()
+            elif local == "p":
+                paragraph_depth = max(0, paragraph_depth - 1)
+
+    # Well-formed HWPX closes all runs, but sorting protects document order if
+    # an unusual nested wrapper causes close-order differences.
+    runs.sort(key=lambda row: row["open_start"])
+    for index, row in enumerate(runs):
+        row["index"] = index
+    return runs
 
 
 def cell_text_runs(body):

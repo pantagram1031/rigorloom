@@ -648,7 +648,9 @@ class DelegationTests(Base):
         self.write_json("refs/form_profile.json", {
             "form_hash": form_hash,
             "anchors": ["I.  서론"],
-            "guide_text": ["여기에 탐구 동기를 서술하시오"],
+            "guide_text": [{"text": "여기에 탐구 동기를 서술하시오",
+                            "para_idx": 0}],
+            "removal_targets": [{"para_idx": 0, "confidence": "high"}],
         })
 
     def test_residue_delegation_catches_guide_text(self):
