@@ -49,11 +49,16 @@ if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+_ENGINE_SCRIPTS = os.path.join(os.path.dirname(_PIPELINE_DIR), "engine", "scripts")
+if _ENGINE_SCRIPTS not in sys.path:
+    sys.path.insert(0, _ENGINE_SCRIPTS)
 
 from adapters_impl import read_build_yaml_key  # noqa: E402
 from checker_base import _utf8_stdio  # noqa: E402
 import rhwp_proof  # noqa: E402
 import render_cert  # noqa: E402
+import document_evidence  # noqa: E402
+import render_quality  # noqa: E402
 
 _HWP_POINTER = (
     "hwp backend is the COM assembly loop (Windows + Hancom), bundled at\n"
@@ -84,9 +89,70 @@ _HWPX_POINTER = (
 # marker check just catches misconfiguration (e.g. the env var pointing at
 # the wrong directory) — it is not a security boundary.
 _HWP_MASTER_MARKERS = ("fill_report.py", "eqn.py", "xml_backend.py")
-_ENGINE_SCRIPTS = os.path.join(os.path.dirname(_PIPELINE_DIR), "engine", "scripts")
 _CONTENT_EQ_RE = re.compile(r"\[\[\s*EQ\b", re.IGNORECASE)
 _XML_EQ_RE = re.compile(br"<(?:[A-Za-z_][\w.-]*:)?equation\b", re.IGNORECASE)
+_MAX_ADAPTER_STDOUT_CHARS = 1_000_000
+# A valid advisory child payload is not sufficient for submission proof until
+# the independent visual-quality decision is released.  Keep this safety hold
+# explicit so the parser can be tested without silently promoting tofu/broken
+# PDFs; a later release may flip this only with that evidence.
+
+
+def _reject_json_constant(value):
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
+_ADAPTER_JSON_DECODER = json.JSONDecoder(parse_constant=_reject_json_constant)
+
+
+def _parse_adapter_stdout(raw: str | None) -> dict | None:
+    """Parse exactly one bounded top-level adapter JSON object.
+
+    ``fill_report`` normally emits one object, but optional PDF/layout
+    libraries can append human diagnostics to stdout.  We accept that
+    diagnostic suffix/prefix only when there is exactly one unambiguous JSON
+    object.  Nested objects belong to their enclosing candidate; a second
+    object, malformed/truncated object, or oversized stream fails closed.
+    Diagnostics are intentionally discarded rather than copied into a verdict.
+    """
+    if not isinstance(raw, str) or len(raw) > _MAX_ADAPTER_STDOUT_CHARS:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        whole = _ADAPTER_JSON_DECODER.decode(stripped)
+    except (ValueError, json.JSONDecodeError):
+        whole = None
+    else:
+        return whole if isinstance(whole, dict) else None
+
+    candidates: list[tuple[int, int, dict]] = []
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            value, end = _ADAPTER_JSON_DECODER.raw_decode(raw, index)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            candidates.append((index, end, value))
+    maximal = [candidate for candidate in candidates if not any(
+        other[0] <= candidate[0] and candidate[1] <= other[1]
+        and other != candidate
+        and (other[0] < candidate[0] or other[1] > candidate[1])
+        for other in candidates
+    )]
+    if len(maximal) != 1:
+        return None
+    start, end, payload = maximal[0]
+    # A stray brace outside the selected object is either another (possibly
+    # truncated) JSON value or an ambiguous diagnostic.  Fail closed rather
+    # than selecting the first parseable object.
+    outside = raw[:start] + raw[end:]
+    if "{" in outside or "}" in outside:
+        return None
+    return payload
 
 
 def _resolve_hwpx_fill_report() -> str | None:
@@ -181,15 +247,9 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
     renderers = result.get("renderers", [])
     available = [renderer.get("name") for renderer in renderers
                  if renderer.get("name")]
-    capabilities = result.get("capabilities", {})
-    hancom_available = bool(capabilities.get("hancom_com")) or "hancom" in available
-    if hancom_available:
-        return {
-            "target": target, "equations": has_equations,
-            "available": available, "selected": "hancom",
-            "proof_grade": "hancom", "reason": "hancom_com_available",
-            "pdf_cmd_argv": None,
-        }
+    # ``hancom_com`` is a capability observation only.  This backend is the
+    # XML assembly route and never executes Hancom, so availability cannot
+    # select a native renderer or establish a Hancom proof grade.
 
     certified_renderer = _certified_renderer_for_workspace(ws, renderers)
 
@@ -256,8 +316,36 @@ def _fill_report_help(fill_report: str) -> str:
 
 
 def _public_renderer_decision(decision: dict) -> dict:
-    return {key: value for key, value in decision.items()
-            if key not in {"pdf_cmd_argv", "rhwp_renderer", "certified_renderer"}}
+    public = {key: value for key, value in decision.items()
+              if key not in {"pdf_cmd_argv", "rhwp_renderer", "certified_renderer",
+                             "_quality", "quality_gate_passed", "proof_grade"}}
+    if "proof_grade" in decision:
+        # This is a route candidate only; terminal proof comes from the
+        # artifact-bound receipt and must never be inferred from this field.
+        public["candidate_proof_grade"] = decision["proof_grade"]
+    return public
+
+
+def _dispatch_render_quality(
+    assembled: Path,
+    rendered_pdf: Path,
+    adapter_payload: dict,
+) -> dict:
+    """Run the shared Hangul checker and the child layout contract."""
+    quality = render_quality.inspect(assembled, rendered_pdf)
+    checks = adapter_payload.get("checks")
+    style_anomalies = adapter_payload.get("style_anomalies")
+    quality = render_quality.apply_layout_gate(
+        quality,
+        converged=adapter_payload.get("converged") is True,
+        hard_checks=isinstance(checks, dict) and not bool(checks),
+        style_clean=isinstance(style_anomalies, list) and not style_anomalies,
+        advisory_hold=(
+            adapter_payload.get("proof_grade") == "advisory"
+            and not document_evidence.ADVISORY_PROOF_RELEASE_ENABLED
+        ),
+    )
+    return quality
 
 
 def _render_proof_summary(receipt: dict) -> dict:
@@ -275,28 +363,59 @@ def _render_proof_summary(receipt: dict) -> dict:
 
 def _emit_hwpx_result(completed, decision: dict, proof_receipt: dict | None = None) -> None:
     """Emit one JSON object while preserving a JSON adapter result's fields."""
-    raw = completed.stdout or ""
-    try:
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            raise ValueError("adapter result is not an object")
-    except (json.JSONDecodeError, ValueError):
+    payload = _parse_adapter_stdout(completed.stdout or "")
+    if payload is None:
         payload = {
             "ok": completed.returncode == 0,
             "backend": "hwpx",
-            "adapter_stdout": raw,
+            "reason": "adapter_output_invalid",
         }
 
     payload["renderer_decision"] = _public_renderer_decision(decision)
+    quality = decision.get("_quality")
+    if isinstance(quality, dict):
+        payload["render_quality"] = dict(quality)
     if proof_receipt is not None:
         payload["render_proof"] = _render_proof_summary(proof_receipt)
+    if completed.returncode != 0:
+        # A failed adapter process cannot carry forward a grade from a stale
+        # child JSON payload.  The active failed receipt below is authoritative
+        # and derives `none`.
+        payload["proof_grade"] = "none"
+        payload["proof_unavailable"] = True
+        if decision.get("terminal_failed"):
+            payload["reason"] = decision.get("reason", "renderer_failed")
     if completed.returncode == 0:
-        payload["proof_grade"] = decision["proof_grade"]
-        if (decision["reason"] == "renderer_cannot_eqn"
-                or proof_receipt is not None):
+        # The child owns terminal execution truth.  A route decision is only a
+        # plan; in particular, Hancom capability must never overwrite an XML
+        # child's ``proof_grade:none``.  Post-render receipts are authoritative
+        # only when their runtime actually succeeded.
+        if proof_receipt is not None:
+            payload["proof_grade"] = (
+                decision["proof_grade"] if proof_receipt.get("ok") is True else "none")
+            payload["proof_unavailable"] = proof_receipt.get("ok") is not True
             payload["reason"] = decision["reason"]
         else:
-            payload.setdefault("reason", decision["reason"])
+            selected = decision.get("selected")
+            # Only a successful named LibreOffice child can carry an advisory
+            # grade without a dispatcher-side proof fragment.  XML-only,
+            # unavailable, and stale/unknown child claims all fail closed.
+            if (decision.get("terminal_failed")
+                    or decision.get("quality_gate_passed") is not True) \
+                    or selected not in {"soffice_local", "soffice_wsl"} \
+                    or payload.get("proof_grade") != "advisory":
+                payload["proof_grade"] = "none"
+                payload["proof_unavailable"] = True
+            else:
+                payload["proof_unavailable"] = False
+            if decision.get("quality_gate_passed") is not True and isinstance(quality, dict):
+                payload["reason"] = quality.get("reason_code", "quality_unknown")
+            elif decision.get("terminal_failed"):
+                payload["reason"] = decision.get("reason", "renderer_failed")
+            elif decision["reason"] == "renderer_cannot_eqn":
+                payload["reason"] = decision["reason"]
+            else:
+                payload.setdefault("reason", decision["reason"])
     print(json.dumps(payload, ensure_ascii=False))
 
 
@@ -454,12 +573,57 @@ def _run_certified_renderer(
             verdict = None
         if isinstance(verdict, dict):
             verdict["certified_proof"] = _render_proof_summary(receipt)
-            existing = str(verdict.get("proof_grade", "none")).strip().lower()
-            if (rhwp_proof.PROOF_GRADE_RANK["certified"]
-                    > rhwp_proof.PROOF_GRADE_RANK.get(existing, -1)):
-                verdict["proof_grade"] = "certified"
+            # The current terminal receipt supersedes any stale grade in an
+            # older verdict.  Never preserve a higher historical grade with a
+            # max(old, new) merge.
+            verdict["proof_grade"] = "certified"
             render_cert.write_json(verdict_path, verdict)
     return receipt
+
+
+def _write_dispatch_receipt(
+    ws: str,
+    *,
+    backend: str,
+    evidence_class: str,
+    terminal_state: str,
+    input_path: Path,
+    output_path: Path | None,
+    input_role: str = "assembled_hwpx",
+    reason_code: str | None = None,
+    exit_code: int | None = None,
+    renderer_id: str | None = None,
+    quality: dict | None = None,
+) -> dict | None:
+    """Persist a generic receipt for a post-assembly dispatcher runtime."""
+    if output_path is None:
+        output_role = "rendered_pdf"
+    else:
+        suffix = output_path.suffix.casefold()
+        output_role = {
+            ".pdf": "rendered_pdf",
+            ".svg": "diagnostic_svg",
+            ".hwpx": "assembled_hwpx",
+        }.get(suffix, "rendered_pdf")
+    try:
+        receipt = document_evidence.build_receipt(
+            ws,
+            backend=backend,
+            evidence_class=evidence_class,
+            terminal_state=terminal_state,
+            input_path=input_path,
+            output_path=output_path,
+            input_role=input_role,
+            output_role=output_role,
+            reason_code=reason_code,
+            exit_code=exit_code,
+            renderer_id=renderer_id,
+            quality=quality,
+        )
+        document_evidence.write_receipt(ws, receipt)
+        return receipt
+    except document_evidence.EvidenceError:
+        return None
 
 
 def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
@@ -473,9 +637,11 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     command = [
         sys.executable, fill_report,
         "--engine", "xml",
+        "--assemble",
         "--form", os.path.join(ws, "output", "form_copy.hwpx"),
         "--content", os.path.join(ws, "bundle", "content.md"),
         "--out-dir", out_dir or os.path.join(ws, "output"),
+        "--out", os.path.join(ws, "output", "verdict_v06.json"),
     ]
 
     decision = _hwpx_renderer_decision(ws, out_dir)
@@ -483,6 +649,8 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     pdf_cmd_argv = decision["pdf_cmd_argv"]
     if pdf_cmd_argv and "--pdf-cmd" in help_text:
         command += ["--pdf-cmd", shlex.join(pdf_cmd_argv)]
+        if decision.get("selected") and "--renderer-id" in help_text:
+            command += ["--renderer-id", str(decision["selected"])]
     elif pdf_cmd_argv:
         decision.update({
             "selected": None,
@@ -510,6 +678,16 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
         return 4
     if completed.stderr:
         sys.stderr.write(completed.stderr)
+    if (completed.returncode != 0
+            and decision.get("selected") in {"soffice_local", "soffice_wsl"}):
+        # ``equation_free`` is only a routing plan.  Once the selected
+        # renderer process fails, expose terminal execution truth instead of
+        # carrying that pre-route reason into the verdict.
+        decision["terminal_failed"] = True
+        decision["reason"] = "renderer_failed"
+    adapter_payload = _parse_adapter_stdout(completed.stdout or "")
+    if adapter_payload is None:
+        adapter_payload = {}
     proof_receipt = None
     if completed.returncode == 0 and decision.get("certified_renderer"):
         try:
@@ -551,6 +729,143 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
             decision["proof_grade"] = "none"
             decision["reason"] = proof_receipt.get("reason", "rhwp_proof_failed")
             decision["fallback"] = "canonical_hwpx_without_render_proof"
+    output = Path(out_dir or os.path.join(ws, "output"))
+    assembled = output / "out.hwpx"
+    if completed.returncode != 0:
+        selected = decision.get("selected")
+        if selected in {"soffice_local", "soffice_wsl"}:
+            _write_dispatch_receipt(
+                ws,
+                backend="oss_preview_libreoffice",
+                evidence_class="advisory_render",
+                terminal_state="failed",
+                input_path=assembled,
+                output_path=None,
+                reason_code="renderer_failed",
+                exit_code=completed.returncode,
+                renderer_id=str(selected),
+            )
+        elif selected == "rhwp_svg":
+            _write_dispatch_receipt(
+                ws,
+                backend="oss_preview_rhwp",
+                evidence_class="diagnostic_render",
+                terminal_state="failed",
+                input_path=assembled,
+                output_path=None,
+                reason_code="renderer_failed",
+                exit_code=completed.returncode,
+                renderer_id="rhwp_svg",
+            )
+        else:
+            _write_dispatch_receipt(
+                ws,
+                backend="xml_only",
+                evidence_class="structural_only",
+                terminal_state="failed",
+                input_path=assembled,
+                output_path=None,
+                reason_code="xml_assembly_failed",
+                exit_code=completed.returncode,
+            )
+    if proof_receipt is not None:
+        if decision.get("selected") == "rhwp_svg":
+            svg_candidates = sorted((output / "proof" / "rhwp" / "svg").glob("*.svg"))
+            diagnostic = svg_candidates[0] if svg_candidates else None
+            _write_dispatch_receipt(
+                ws,
+                backend="oss_preview_rhwp",
+                evidence_class="diagnostic_render",
+                terminal_state=("succeeded" if proof_receipt.get("ok") is True else "failed"),
+                input_path=assembled,
+                output_path=diagnostic,
+                reason_code=("rhwp_render_succeeded"
+                             if proof_receipt.get("ok") is True
+                             else "rhwp_render_failed"),
+                exit_code=(0 if proof_receipt.get("ok") is True
+                           else proof_receipt.get("exit_code")),
+                renderer_id="rhwp_svg",
+            )
+        elif decision.get("selected"):
+            _write_dispatch_receipt(
+                ws,
+                backend="certified_renderer",
+                evidence_class="certified_render",
+                terminal_state=("succeeded" if proof_receipt.get("ok") is True else "failed"),
+                input_path=assembled,
+                output_path=output / "out.pdf",
+                reason_code=("certified_render_succeeded"
+                             if proof_receipt.get("ok") is True
+                             else "certified_render_failed"),
+                exit_code=(0 if proof_receipt.get("ok") is True
+                           else proof_receipt.get("exit_code")),
+                renderer_id=str(decision.get("selected")),
+            )
+    elif completed.returncode == 0:
+        selected = str(decision.get("selected") or "")
+        if selected in {"soffice_local", "soffice_wsl"}:
+            rendered_pdf = output / "out.pdf"
+            child_grade = str(adapter_payload.get("proof_grade", "none")).lower()
+            renderer_failed = bool(adapter_payload.get("renderer_attempted"))
+            if rendered_pdf.is_file() and not renderer_failed:
+                quality = _dispatch_render_quality(
+                    assembled, rendered_pdf, adapter_payload)
+                # The process and PDF succeeded even when quality rejects the
+                # proof.  Keep that execution fact distinct from a renderer
+                # nonzero/missing-output failure.
+                decision["terminal_failed"] = False
+                decision["_quality"] = quality
+                decision["quality_gate_passed"] = (
+                    quality.get("state") == "passed"
+                    and child_grade == "advisory")
+                if quality.get("state") == "passed":
+                    reason_code = "render_succeeded"
+                else:
+                    reason_code = quality.get("reason_code", "quality_unknown")
+                _write_dispatch_receipt(
+                    ws,
+                    backend="oss_preview_libreoffice",
+                    evidence_class="advisory_render",
+                    terminal_state="succeeded",
+                    input_path=assembled,
+                    output_path=rendered_pdf,
+                    reason_code=reason_code,
+                    exit_code=0,
+                    renderer_id=selected,
+                    quality=quality,
+                )
+            else:
+                # A zero adapter exit with no current PDF is not a renderer
+                # success.  Keep the failure reason truthful and replace any
+                # stale advisory receipt with an active failed terminal row.
+                decision["terminal_failed"] = True
+                decision["reason"] = (
+                    "renderer_failed" if rendered_pdf.is_file()
+                    else "renderer_output_missing"
+                )
+                _write_dispatch_receipt(
+                    ws,
+                    backend="oss_preview_libreoffice",
+                    evidence_class="advisory_render",
+                    terminal_state="failed",
+                    input_path=assembled,
+                    output_path=None,
+                    reason_code=decision["reason"],
+                    exit_code=0,
+                    renderer_id=selected,
+                )
+        else:
+            _write_dispatch_receipt(
+                ws,
+                backend="xml_only",
+                evidence_class="structural_only",
+                terminal_state="succeeded",
+                input_path=Path(ws) / "output" / "form_copy.hwpx",
+                output_path=assembled,
+                input_role="source_form",
+                exit_code=0,
+                reason_code=decision.get("reason", "xml_verified_no_proof"),
+            )
     _emit_hwpx_result(completed, decision, proof_receipt)
     return completed.returncode
 

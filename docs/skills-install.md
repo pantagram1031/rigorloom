@@ -51,6 +51,10 @@ overlay_root: "<PROFILE_ROOT>/skill-overlay"
 source_map:
   - from: "pipeline/scripts"                                # kernel CLIs
     to: "scripts"
+  - from: "pipeline/adapters_impl"                           # bundle/docx backend package
+    to: "adapters_impl"
+  - from: "engine/scripts/document_evidence.py"              # hash-bound evidence helper
+    to: "scripts/document_evidence.py"
   - from: "pipeline/references"                             # playbooks, prompts, packs, contracts
     to: "references"
   - from: "adapters/claude-code/SKILL.report-pipeline.md"   # router skill entry
@@ -68,6 +72,13 @@ different root (for example the harness `agents/` directory for
 same `install_root` / `overlay_root` / `source_map` / `exclude` fields with its own
 root. The overlay wins on conflict, so a private voice pack layered into the
 humanizer target supplies persona content the public base never carries.
+
+The core distribution bundle carries the same `pipeline/adapters_impl` package
+shown above. This sibling package is required by the shipped dispatcher at
+runtime; a clean extracted core bundle must pass both `doc_backend.py --help`
+and `submission_preflight.py --help` before it is considered installable. The
+generated core `INSTALL.md` repeats this mapping, so following the bundle's
+own instructions keeps the installed dispatcher import-complete.
 
 Each sync writes a per-file receipt (`.sync_receipt.json`, origin + sha256) and
 swaps the install in atomically, archiving the previous tree to

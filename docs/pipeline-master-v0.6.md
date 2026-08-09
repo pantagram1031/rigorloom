@@ -264,7 +264,7 @@ dispatched by `python pipeline/scripts/doc_backend.py <WS>`. Four shipped tiers:
 |---|---|---|
 | `bundle` (default) | none — stdlib only | frozen bundle + single-file `preview.html` |
 | `docx` | `pip install python-docx` | styled `output/out.docx` |
-| `hwpx` | bundled XML engine (engine/scripts, any OS) | COM-free `output/out.hwpx` + advisory PDF proof |
+| `hwpx` | bundled XML engine (engine/scripts, any OS) | COM-free `output/out.hwpx` + structural receipt; named PDF preview is advisory |
 | `hwp` | Windows + Hancom (engine/scripts) | assembled `out.hwpx` + proof PDF |
 
 The `bundle` backend is the any-machine floor: it needs no HWP and no network,
@@ -272,6 +272,31 @@ so the pipeline runs to a real deliverable from a plain clone on any OS; the
 proof loop and `verify_format` apply only to `hwp`, while the Stage 4.5
 `content_audit` entry gate is identical for all four. The rest of this section
 describes the `hwp` proof loop.
+
+Every HWPX/HWP assembly must persist the generic execution receipt at
+`output/proof/backend/receipt.json`. The receipt records only workspace-relative
+artifact paths, current SHA-256/byte counts, a closed runtime backend, terminal
+state, and the derived evidence class/legacy grade. `render_probe` capability
+facts are informational and cannot establish proof. Stage 6 requires a valid
+receipt for every non-`none` grade and rejects grade mismatch, missing output,
+path escape, self-hash drift, or current artifact hash drift. See
+`skill/references/platform-backends.md` for the cross-platform boundaries.
+Receipt v1 has closed top-level, execution, and artifact fields, exact
+UTC-second timestamps, and closed artifact roles; every successful terminal
+execution, including structural XML assembly, records native `exit_code: 0`.
+Rendered PDF paths additionally persist the closed, privacy-safe
+`rigorloom/render-quality/v1` result. The deterministic Hangul checker proves
+only bounded glyph availability: extracted text alone is not visible-glyph
+proof. Missing/insufficient glyphs are HARD `missing_hangul_glyphs`; ambiguous
+or uninspectable mappings remain `unknown`. Stage 6 reruns the checker and
+requires passed quality, `converged: true`, matching PDF bytes, and the
+existing visual/layout HARD gates before an advisory grade; advisory is not
+Hancom parity. Native Hancom receipts use a separate provenance boundary:
+`unknown`/`not_applicable` glyph quality (including an uninspectable Type3
+font) is retained diagnostically while `hancom` remains the hash-bound native
+renderer grade; a confirmed quality failure still downgrades. Native
+provenance is not a readability certification, and Stage 6 convergence,
+layout/style HARDs, and canonical hash gates remain mandatory.
 
 For HWP, use the single assembly loop from the separate adapter:
 

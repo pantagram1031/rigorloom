@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from types import SimpleNamespace
@@ -126,8 +127,62 @@ def test_example_manifest_parses():
     t = targets[0]
     assert t.name == "primary"
     tos = {m["to"] for m in t.source_map}
-    assert {"scripts", "references"} <= tos
+    assert {"scripts", "adapters_impl", "references"} <= tos
+    assert any(
+        item["from"] == "pipeline/adapters_impl"
+        and item["to"] == "adapters_impl"
+        for item in t.source_map
+    )
+    assert any(
+        item["from"] == "engine/scripts/document_evidence.py"
+        and item["to"] == "scripts/document_evidence.py"
+        for item in t.source_map
+    )
     assert "__pycache__" in t.exclude
+
+
+def test_flattened_report_install_imports_document_evidence(tmp_path, monkeypatch):
+    install = tmp_path / "install"
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    target = sl.Target(
+        name="primary",
+        install_root=str(install),
+        overlay_root=str(overlay),
+        source_map=[
+            {"from": "pipeline/scripts", "to": "scripts"},
+            {"from": "pipeline/adapters_impl", "to": "adapters_impl"},
+            {"from": "engine/scripts/document_evidence.py",
+             "to": "scripts/document_evidence.py"},
+        ],
+        exclude=["__pycache__", "*.pyc", ".pytest_cache", ".sync*"],
+    )
+    kernel_rev = "0123456789abcdef0123456789abcdef01234567"
+    real_run = subprocess.run
+
+    def fake_git_run(argv, **kwargs):
+        assert argv == ["git", "-C", ROOT, "rev-parse", "HEAD"]
+        return SimpleNamespace(returncode=0, stdout=kernel_rev + "\n")
+
+    monkeypatch.setattr(sl.subprocess, "run", fake_git_run)
+    sl.run_target(target, ROOT, dry_run=False, force=False)
+    assert (install / "scripts" / "document_evidence.py").is_file()
+    assert (install / "adapters_impl" / "__init__.py").is_file()
+    assert not list(install.rglob("corpus"))
+    assert not list(install.rglob("private"))
+    installed = install / "scripts" / "submission_preflight.py"
+    proc = real_run(
+        [sys.executable, str(installed), "--help"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "submission" in proc.stdout.lower()
+    backend_proc = real_run(
+        [sys.executable, str(install / "scripts" / "doc_backend.py"), "--help"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert backend_proc.returncode == 0, backend_proc.stderr
+    assert "backend" in backend_proc.stdout.lower()
 
 
 # --------------------------------------------------------------------------- #

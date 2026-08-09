@@ -9,7 +9,7 @@ chosen in `build.yaml` (`doc_backend:`) and dispatched by
 |---|---|---|---|
 | `bundle` (default) | none (stdlib) | frozen bundle + `preview.html` | §BUNDLE |
 | `docx` | `pip install python-docx` | `output/out.docx` | §DOCX |
-| `hwpx` | bundled XML engine (engine/scripts, any OS) | `output/out.hwpx` | §HWPX (advisory proof) |
+| `hwpx` | bundled XML engine (engine/scripts, any OS) | `output/out.hwpx` + evidence receipt | §HWPX (named previews are advisory) |
 | `hwp` | Windows + Hancom (engine/scripts) | `out.hwpx`/PDF | §HWP (full loop) |
 
 Backend resolution: `--backend` flag > `build.yaml` `doc_backend:` > default
@@ -98,10 +98,12 @@ python pipeline/scripts/doc_backend.py <WS> --backend hwpx
 
 The dispatcher invokes `fill_report.py --engine xml` with the workspace form,
 content bundle, and output directory. This tier fills `output/out.hwpx` without
-Hancom or COM on any OS. A PDF made on Linux with headless LibreOffice plus the
-H2Orestart extension is advisory render evidence only; it is not print-grade
-proof. Use the `hwp`/Hancom tier below for the full convergence and print-grade
-proof loop.
+Hancom or COM on any OS. Every terminal route also writes the generic,
+workspace-bound `output/proof/backend/receipt.json`; a non-`none` legacy grade
+is valid only when that receipt validates against the current artifact hashes.
+A PDF made on Linux with headless LibreOffice plus the H2Orestart extension is
+advisory render evidence only; it is not print-grade proof. Use the `hwp`/Hancom
+tier below for the full convergence and print-grade proof loop.
 
 When render_probe detects rhwp through RHWP_BIN or PATH, RHWP_SHA256 must contain
 the SHA-256 of that executable file (not the release archive). Unset pins are

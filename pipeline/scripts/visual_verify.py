@@ -137,6 +137,7 @@ RUBRIC_CLASSES = (
     "guide_text_visible",
     "empty_cell_expected_fill",
     "format_noncompliance",
+    "missing_glyphs",
     "overprint",
     "text_clipped",
     "alignment_drift",
@@ -144,6 +145,10 @@ RUBRIC_CLASSES = (
     "figure_overlap",
 )
 VISION_SEVERITIES = ("hard", "warn")
+# The rubric fixes this class at HARD: a vision agent may corroborate the
+# deterministic Hangul checker, but it cannot downgrade a missing-glyph defect
+# to a warning and still leave the render eligible for acceptance.
+VISION_HARD_CLASSES = frozenset({"missing_glyphs"})
 
 #: THE SAFETY SET — deterministic checks whose ABSENCE invalidates acceptance,
 #: named by the exact key each one reports itself under in
@@ -1937,6 +1942,9 @@ def load_vision_verdict(path, page_count):
             return None, [], (
                 f"findings[{i}] unknown severity {severity!r} — expected one "
                 f"of {', '.join(VISION_SEVERITIES)}")
+        if cls in VISION_HARD_CLASSES and severity != "hard":
+            return None, [], (
+                f"findings[{i}] rubric class {cls!r} requires severity 'hard'")
         page = item.get("page")
         if page is not None and not (isinstance(page, int)
                                      and 1 <= page <= page_count):

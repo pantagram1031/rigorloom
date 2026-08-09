@@ -18,6 +18,82 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T53:** backend capability probes no longer promote XML assembly to Hancom
+  proof. Every non-`none` legacy grade is derived from a terminal execution
+  receipt bound to the current artifact hashes; current-host capabilities are
+  informational only.
+- **T54:** the XML adapter dispatch now passes its explicit `--assemble` mode
+  and canonical `--out output/verdict_v06.json`, so a real adapter invocation
+  cannot silently exit with usage 2 while leaving a stale verdict behind.
+- **T55:** renderer failures and stale higher-grade verdicts fail closed to
+  `none`; the active terminal receipt, rather than a max-grade merge, owns the
+  current proof grade. Receipt invalidation now fails loudly if a stale file
+  cannot be removed before a new execution.
+- **T56:** flattened installs ship the pure-stdlib `document_evidence` helper
+  alongside the pipeline scripts, with an installed `--help` import check.
+- **T57:** XML renderer templates accept both `{out_dir}` and the historical
+  `{outdir}` spelling used by the WSL probe.
+- **T58:** receipt validation closes backend/evidence pairs, artifact roles and
+  extensions, distinct input/output bindings, successful exit code 0, and
+  canonical submission hashes; decoy artifacts cannot establish proof.
+- **T59:** receipt reason/renderer metadata is bounded to machine tokens and
+  capability facts are allowlisted booleans, preventing user paths or prose
+  from entering evidence artifacts.
+- **T60:** flattened report installs now carry the in-tree `adapters_impl`
+  package required by `doc_backend.py`, with import/help and no-private-payload
+  regression coverage.
+- **T61:** document-evidence v1 now rejects unknown top-level, execution, and
+  artifact fields; validates exact UTC-second timestamps and closed artifact
+  roles; and requires native exit code 0 for successful structural as well as
+  rendered evidence. Producers and the golden path now describe XML assembly
+  as an artifact, not a graded proof.
+- **T62:** the XML dispatcher now parses one bounded, unambiguous adapter JSON
+  object even when a PDF/layout dependency adds prefix or suffix diagnostics;
+  malformed, ambiguous, oversized, or non-object output fails closed without
+  recording raw stdout. Renderer terminal failures use truthful
+  `renderer_failed`/`renderer_output_missing` reasons. Advisory promotion stays
+  behind the independent visual-quality release decision while the known
+  LibreOffice tofu/layout risk is investigated.
+- **T63:** successful renderer execution now records a hash-bound,
+  privacy-safe Hangul glyph-quality result. Missing/insufficient glyphs fail
+  closed as `missing_hangul_glyphs`; ambiguous, Type3, nonembedded, or
+  unavailable font buffers remain `unknown`. Stage 6 reruns the checker and
+  requires `converged:true`, passed quality, matching PDF bytes, and the
+  existing visual/layout HARD gates before any advisory grade; extracted text
+  alone is not visible-glyph proof, and advisory is not Hancom parity.
+- **T64:** the Hangul quality checker now compares the complete source syllable
+  set from visible section run text with the extracted PDF set before checking
+  font capacity. Partial coverage is conservatively
+  `unknown/source_visibility_ambiguous`; a PDF with zero extracted Hangul
+  remains the definitive `failed/missing_hangul_glyphs` case. Header and
+  metadata text remain outside the source boundary.
+- **T65:** advisory proof release is governed by one shared, currently closed
+  policy across document evidence, direct `fill_report`, dispatch, and Stage 6.
+  Quality-passed LibreOffice output therefore remains terminal `none` until the
+  independent visual contract is released, including for forged receipts.
+- **T66:** public renderer decisions no longer expose an internal
+  `proof_grade` candidate. The bounded `candidate_proof_grade` field is
+  informational; the top-level terminal grade remains authoritative.
+- **T67:** native Hancom provenance remains `hancom` when the bounded glyph
+  checker is `unknown`/`not_applicable` (including Type3 or unavailable font
+  buffers), and downgrades only on confirmed quality failure. Stage 6 still
+  independently requires converged, clean layout/style evidence and canonical
+  hash bindings; native provenance is not a readability certification.
+- **T68:** core bundles now stage `pipeline/adapters_impl` alongside the
+  dispatcher scripts. A clean extracted bundle can run both
+  `doc_backend.py --help` and `submission_preflight.py --help` under CP949
+  without an import failure; corpus and private payload exclusions remain
+  enforced.
+- **T69:** generated core `INSTALL.md` manifests now sync the sibling
+  `pipeline/adapters_impl` package as well as the dispatcher scripts. The
+  shipped instructions are regression-tested by syncing a freshly extracted
+  bundle and running both installed help paths under CP949.
+- **T70:** contradiction-only preflight fixtures now carry a current,
+  hash-bound native receipt. Missing receipts remain a separate HARD regression;
+  the non-`none` receipt contract is not weakened.
+- **T71:** `missing_glyphs` is now a closed visual-rubric class with a HARD
+  severity floor. Vision findings of that class are accepted only as HARD and
+  block acceptance; unknown classes remain usage errors.
 - **T47:** guide/removal residue policy is paragraph-addressed when the
   records are structurally valid; missing, malformed, or mismatched evidence
   keeps the legacy strict all-anchor/all-guide fallback.
