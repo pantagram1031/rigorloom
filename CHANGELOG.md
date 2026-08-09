@@ -56,8 +56,9 @@ the kernel's contract shape.
   LibreOffice tofu/layout risk is investigated.
 - **T63:** successful renderer execution now records a hash-bound,
   privacy-safe Hangul glyph-quality result. Missing/insufficient glyphs fail
-  closed as `missing_hangul_glyphs`; ambiguous, Type3, nonembedded, or
-  unavailable font buffers remain `unknown`. Stage 6 reruns the checker and
+  closed as `missing_hangul_glyphs`; ambiguous, uninspectable Type3,
+  nonembedded, or unavailable font buffers remain `unknown` (inspectable
+  Type3 is covered by T72). Stage 6 reruns the checker and
   requires `converged:true`, passed quality, matching PDF bytes, and the
   existing visual/layout HARD gates before any advisory grade; extracted text
   alone is not visible-glyph proof, and advisory is not Hancom parity.
@@ -94,6 +95,31 @@ the kernel's contract shape.
 - **T71:** `missing_glyphs` is now a closed visual-rubric class with a HARD
   severity floor. Vision findings of that class are accepted only as HARD and
   block acceptance; unknown classes remain usage errors.
+- **T72:** Hangul-used Type3 fonts now receive a bounded, code-aware quality
+  check. The checker requires ToUnicode, Encoding Differences, CharProcs,
+  finite nonzero metrics, path construction and paint, and distinct
+  Unicode-to-code-to-program identities; `ActualText` alone cannot pass.
+  Identity collapse and missing geometry fail closed, while Do/XObject,
+  unsupported graphics state, malformed, oversized, duplicate, or otherwise
+  uninspectable mappings remain `unknown`. Symbol-only Type3 resources are
+  ignored, code 0 is valid, TTF/OTF behavior is unchanged, and coverage is
+  limited to synthetic/public fixtures rather than full PDF certification.
+- **T73–T76:** Type3 checks now prefer decoded streams, scope `Tf` resources
+  and identity budgets per page, model only balanced finite transforms and
+  closed nonzero polygon clips, and reject duplicate CMap keys or non-injective
+  Unicode/code/CharProc identities. Full-page visual/layout intersection
+  remains a separate HARD gate.
+- **T77:** Type3 pages that use `cm` or polygon clips now require bounded
+  PyMuPDF `Page.get_texttrace()`/`Page.get_bboxlog()` evidence, exact ordered
+  code/trace alignment, positive in-page opacity, adjacent fill/stroke path
+  boxes, and full trace-box containment in active transformed clips. Missing,
+  far, zero-opacity, late/nonoverlap, and repeated-occurrence mismatches stay
+  `unknown`; this is a glyph-visibility guard, not full layout certification.
+- **T78:** conflicting Hangul claims in a rawdict span's `chars` and
+  `text`/ActualText fields are no longer merged. Equal claims are accepted, a
+  strictly longer text claim remains visible to the Type3 identity check, and
+  equal/shorter disagreement is `unknown/semantic_text_ambiguous`. The
+  checker still does not treat ActualText alone as visible-glyph proof.
 - **T47:** guide/removal residue policy is paragraph-addressed when the
   records are structurally valid; missing, malformed, or mismatched evidence
   keeps the legacy strict all-anchor/all-guide fallback.
