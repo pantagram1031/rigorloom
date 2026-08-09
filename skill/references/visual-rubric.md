@@ -30,6 +30,7 @@ otherwise. Do not downgrade a `hard` because it "looks minor".
 | `guide_text_visible` | hard | PARTIAL — `layout_qa` body_markers + `check_residue` |
 | `empty_cell_expected_fill` | hard | PARTIAL — fill-map value absent from PDF text |
 | `format_noncompliance` | hard | PARTIAL — measured pt/spacing vs declared; **script/scale/offset inheritance on fill-modified runs (`fill_charpr_script_mismatch`) is FULL** |
+| `missing_glyphs` | hard | FULL for the deterministic Hangul quality checker (`render_quality`); text extraction does not prove visible glyphs |
 | `overprint` | hard | NONE (targeting only — glyph-bbox overlap ratio) |
 | `text_clipped` | hard | NONE |
 | `alignment_drift` | warn | NONE |
@@ -41,6 +42,29 @@ corroborate or to catch a variant the mechanism cannot see. "NONE" means the
 verdict is yours; nothing else in the system can see it.
 
 ## 2. Per class
+
+### `missing_glyphs` (hard)
+**Looks like:** Korean syllables render as empty boxes/tofu, disappear, or use
+an embedded font whose Hangul capacity is smaller than the distinct syllables
+the PDF maps to it.
+
+**NOT:** a source with no Hangul (the checker reports `not_applicable`), or a
+font mapping that cannot be inspected safely (the checker reports `unknown`).
+Unknown quality never promotes an advisory/certified claim; native Hancom
+keeps only its renderer provenance for that diagnostic boundary. A passed
+checker only establishes this bounded glyph property; it is not Hancom visual
+parity.
+
+**Deterministic:** FULL for the receipt-bound HWPX/PDF pair. The checker keeps
+only aggregate counts and font xrefs: when source Hangul is present, zero PDF
+Hangul or more unique syllables than an embedded font's glyph capacity is a
+HARD `missing_hangul_glyphs` result. Partial source/PDF syllable coverage is
+`unknown/source_visibility_ambiguous` until a visibility-aware source parser
+can distinguish deleted or hidden section text. Duplicate xrefs,
+Type3/nonembedded fonts, or unavailable buffers are `unknown`; raw text, font
+names, paths, and stdout are never stored. Stage 6 reruns this result and
+HARDs on missing, failed, unknown, or hash-mismatched quality for an advisory
+claim.
 
 ### `blank_render` (hard)
 **Looks like:** an entirely white page, or a page carrying only the form's

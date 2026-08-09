@@ -184,13 +184,13 @@ class TestDispatcher(unittest.TestCase):
         self.assertIn("--engine xml", stderr.getvalue())
         self.assertEqual(json.loads(stdout.getvalue())["backend"], "hwpx")
 
-    def test_hwpx_dispatches_xml_engine_and_propagates_json_and_exit(self):
+    def test_hwpx_dispatches_xml_engine_with_assemble_and_canonical_out(self):
         scripts = Path(self._tmp.name) / "hwp-master-scripts"
         scripts.mkdir()
         fake = scripts / "fill_report.py"
         fake.write_text(
             "import json, sys\n"
-            "print(json.dumps({'ok': False, 'argv': sys.argv[1:]}))\n"
+            "print(json.dumps({'ok': False, 'proof_grade': 'hancom', 'argv': sys.argv[1:]}))\n"
             "raise SystemExit(7)\n",
             encoding="utf-8",
         )
@@ -210,10 +210,13 @@ class TestDispatcher(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["argv"], [
             "--engine", "xml",
+            "--assemble",
             "--form", str(self.ws / "output" / "form_copy.hwpx"),
             "--content", str(self.ws / "bundle" / "content.md"),
             "--out-dir", str(out_dir),
+            "--out", str(self.ws / "output" / "verdict_v06.json"),
         ])
+        self.assertEqual(payload["proof_grade"], "none")
 
     def test_hwpx_with_missing_marker_siblings_exits_4(self):
         # fill_report.py alone is not enough — eqn.py and xml_backend.py must
@@ -257,6 +260,112 @@ class TestDispatcher(unittest.TestCase):
                                  "--out-dir", str(inside)])
         self.assertEqual(code, 0)
         self.assertTrue((inside / "preview.html").is_file())
+
+
+class TestAdapterStdoutParser(unittest.TestCase):
+    """Adapter stdout is one bounded JSON object plus optional diagnostics."""
+
+    def test_whole_json_object_is_preferred(self):
+        payload = doc_backend._parse_adapter_stdout(
+            '{"ok":true,"proof_grade":"advisory"}'
+        )
+        self.assertEqual(payload, {"ok": True, "proof_grade": "advisory"})
+
+    def test_json_with_trailing_layout_diagnostic_is_unambiguous(self):
+        payload = doc_backend._parse_adapter_stdout(
+            '{"ok":true,"proof_grade":"advisory"}\n'
+            "Consider using the pymupdf_layout package for a greatly "
+            "improved page layout analysis.\n"
+        )
+        self.assertEqual(payload, {"ok": True, "proof_grade": "advisory"})
+
+    def test_json_with_leading_diagnostic_is_unambiguous(self):
+        payload = doc_backend._parse_adapter_stdout(
+            "layout probe: using fallback\n"
+            '{"ok":true,"proof_grade":"advisory"}\n'
+        )
+        self.assertEqual(payload, {"ok": True, "proof_grade": "advisory"})
+
+    def test_nested_objects_are_one_top_level_candidate(self):
+        payload = doc_backend._parse_adapter_stdout(
+            'prefix {"ok":true,"metrics":{"pages":2}} suffix'
+        )
+        self.assertEqual(payload["metrics"], {"pages": 2})
+
+    def test_two_top_level_objects_are_ambiguous(self):
+        self.assertIsNone(
+            doc_backend._parse_adapter_stdout('{"ok":true} {"ok":false}')
+        )
+
+    def test_truncated_or_malformed_json_fails_closed(self):
+        for raw in (
+            '{"ok":true',
+            'prefix {"ok":true',
+            '{"ok":true,}',
+            '{"ok":NaN}',
+            "diagnostic only",
+            "[1, 2, 3]",
+        ):
+            with self.subTest(raw=raw):
+                self.assertIsNone(doc_backend._parse_adapter_stdout(raw))
+
+    def test_stray_braces_are_not_treated_as_harmless_noise(self):
+        self.assertIsNone(
+            doc_backend._parse_adapter_stdout(
+                'prefix {"ok":true} trailing {truncated'
+            )
+        )
+
+    def test_oversized_stdout_fails_closed(self):
+        self.assertIsNone(
+            doc_backend._parse_adapter_stdout(
+                '{"ok":true}' + "x" * doc_backend._MAX_ADAPTER_STDOUT_CHARS
+            )
+        )
+
+    def test_emitter_discards_diagnostic_and_true_failure_reason_wins(self):
+        completed = mock.Mock(
+            returncode=0,
+            stdout=(
+                'prefix {"ok":true,"proof_grade":"advisory"}\n'
+                "Consider using pymupdf_layout.\n"
+            ),
+            stderr="",
+        )
+        decision = {
+            "selected": "soffice_wsl",
+            "proof_grade": "advisory",
+            "reason": "renderer_failed",
+            "terminal_failed": True,
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            doc_backend._emit_hwpx_result(completed, decision)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertTrue(payload["proof_unavailable"])
+        self.assertEqual(payload["reason"], "renderer_failed")
+        self.assertNotIn("adapter_stdout", payload)
+        self.assertNotIn("pymupdf_layout", output.getvalue())
+
+    def test_emitter_nonzero_renderer_does_not_keep_equation_free_reason(self):
+        completed = mock.Mock(
+            returncode=7,
+            stdout='{"ok":false,"proof_grade":"advisory","reason":"equation_free"}',
+            stderr="",
+        )
+        decision = {
+            "selected": "soffice_wsl",
+            "proof_grade": "advisory",
+            "reason": "renderer_failed",
+            "terminal_failed": True,
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            doc_backend._emit_hwpx_result(completed, decision)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["reason"], "renderer_failed")
+        self.assertNotEqual(payload["reason"], "equation_free")
 
 
 class TestPdfCmdWiring(unittest.TestCase):
@@ -329,6 +438,137 @@ class TestPdfCmdWiring(unittest.TestCase):
 
         self.assertEqual(code, 0)
         return json.loads(stdout.getvalue()), completed.args
+
+    def test_nonzero_soffice_adapter_reports_renderer_failure_not_route_hint(self):
+        (self.ws / "output").mkdir(parents=True, exist_ok=True)
+        (self.ws / "output" / "out.hwpx").write_bytes(b"synthetic assembled hwpx")
+        completed = mock.Mock(
+            returncode=7,
+            stdout='{"ok":false,"proof_grade":"advisory","reason":"equation_free"}',
+            stderr="",
+        )
+
+        def fake_run(command, **kwargs):
+            if "--help" in command:
+                return mock.Mock(
+                    returncode=0,
+                    stdout="usage: fill_report.py [--pdf-cmd PDF_CMD]",
+                    stderr="",
+                )
+            completed.args = command
+            return completed
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(doc_backend, "_resolve_hwpx_fill_report",
+                              return_value=str(self.scripts / "fill_report.py")),
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [{
+                        "name": "soffice_wsl", "wsl": True,
+                        "argv": ["wsl", "soffice", "--headless"],
+                    }],
+                },
+            ),
+            mock.patch.object(self.render_probe, "hwpx_has_equations",
+                              return_value=False),
+            mock.patch.object(doc_backend.subprocess, "run", side_effect=fake_run),
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend._run_hwpx_adapter(str(self.ws), None)
+
+        self.assertEqual(code, 7)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertEqual(payload["reason"], "renderer_failed")
+        self.assertNotEqual(payload["reason"], "equation_free")
+        receipt = doc_backend.document_evidence.load_and_validate_receipt(self.ws)
+        self.assertEqual(receipt["execution"]["backend"],
+                         "oss_preview_libreoffice")
+        self.assertEqual(receipt["execution"]["state"], "failed")
+        self.assertEqual(receipt["execution"]["reason_code"], "renderer_failed")
+
+    def test_successful_pdf_quality_failure_keeps_execution_and_downgrades_grade(self):
+        output_dir = self.ws / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        assembled = output_dir / "out.hwpx"
+        rendered = output_dir / "out.pdf"
+        assembled.write_bytes(b"synthetic assembled hwpx")
+        rendered.write_bytes(b"synthetic pdf")
+        quality = {
+            "schema": doc_backend.render_quality.QUALITY_SCHEMA,
+            "checker": doc_backend.render_quality.CHECKER_ID,
+            "version": doc_backend.render_quality.QUALITY_VERSION,
+            "artifact_sha256": hashlib.sha256(rendered.read_bytes()).hexdigest(),
+            "artifact_bytes": rendered.stat().st_size,
+            "state": "failed",
+            "reason_code": "missing_hangul_glyphs",
+            "source_hangul_count": 3,
+            "pdf_hangul_count": 0,
+            "page_count": 1,
+            "mapped_font_xrefs": 0,
+            "checked_font_xrefs": 0,
+            "max_unique_hangul_per_xref": 0,
+            "min_glyph_capacity": 0,
+        }
+        completed = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({
+                "ok": True,
+                "proof_grade": "advisory",
+                "converged": True,
+                "checks": {},
+                "style_anomalies": [],
+            }),
+            stderr="",
+        )
+
+        def fake_run(command, **kwargs):
+            if "--help" in command:
+                return mock.Mock(
+                    returncode=0,
+                    stdout="usage: fill_report.py [--pdf-cmd PDF_CMD]",
+                    stderr="",
+                )
+            return completed
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(doc_backend, "_resolve_hwpx_fill_report",
+                              return_value=str(self.scripts / "fill_report.py")),
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [{
+                        "name": "soffice_wsl", "wsl": True,
+                        "argv": ["wsl", "soffice", "--headless"],
+                    }],
+                },
+            ),
+            mock.patch.object(self.render_probe, "hwpx_has_equations",
+                              return_value=False),
+            mock.patch.object(doc_backend.subprocess, "run", side_effect=fake_run),
+            mock.patch.object(doc_backend.render_quality, "inspect",
+                              return_value=quality),
+            redirect_stdout(stdout),
+        ):
+            code = doc_backend._run_hwpx_adapter(str(self.ws), None)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertTrue(payload["proof_unavailable"])
+        self.assertEqual(payload["reason"], "missing_hangul_glyphs")
+        self.assertTrue(rendered.is_file())
+        receipt = doc_backend.document_evidence.load_and_validate_receipt(self.ws)
+        self.assertEqual(receipt["execution"]["state"], "succeeded")
+        self.assertEqual(receipt["proof_grade"], "none")
+        self.assertEqual(receipt["quality"]["reason_code"], "missing_hangul_glyphs")
 
     def test_pdf_cmd_passed_when_renderer_usable_and_flag_advertised(self):
         self._write_fake_fill_report(advertises_pdf_cmd=True)
@@ -423,8 +663,31 @@ class TestPdfCmdWiring(unittest.TestCase):
         )
 
         self.assertIn("--pdf-cmd", command)
-        self.assertEqual(payload["proof_grade"], "advisory")
+        self.assertEqual(payload["proof_grade"], "none")
         self.assertEqual(payload["renderer_decision"]["selected"], "soffice_local")
+
+    def test_hancom_capability_does_not_upgrade_xml_child(self):
+        payload, command = self._run_mocked_decision(
+            {"capabilities": {"hancom_com": True}, "renderers": []},
+            has_equations=False,
+        )
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertIsNone(payload["renderer_decision"]["selected"])
+
+    def test_soffice_child_without_advisory_artifact_writes_failed_receipt(self):
+        self._run_mocked_decision(
+            {
+                "capabilities": {"hancom_com": False},
+                "renderers": [
+                    {"name": "soffice_local", "wsl": False,
+                     "argv": ["soffice", "--headless"]},
+                ],
+            },
+            has_equations=False,
+        )
+        receipt = doc_backend.document_evidence.load_and_validate_receipt(self.ws)
+        self.assertEqual(receipt["proof_grade"], "none")
+        self.assertEqual(receipt["execution"]["state"], "failed")
 
     def test_hancom_with_equations_is_preferred_over_soffice(self):
         payload, command = self._run_mocked_decision(
@@ -440,8 +703,8 @@ class TestPdfCmdWiring(unittest.TestCase):
         )
 
         self.assertNotIn("--pdf-cmd", command)
-        self.assertEqual(payload["proof_grade"], "hancom")
-        self.assertEqual(payload["renderer_decision"]["selected"], "hancom")
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertIsNone(payload["renderer_decision"]["selected"])
 
     def test_equation_free_prefers_soffice_over_rhwp_in_either_probe_order(self):
         rhwp_renderer = {
@@ -600,9 +863,10 @@ class TestPdfCmdWiring(unittest.TestCase):
 
         self.assertEqual(decision["proof_grade"], "advisory")
         self.assertEqual(decision["certified_renderer"], certified)
-        self.assertNotIn(
-            "certified_renderer", doc_backend._public_renderer_decision(decision)
-        )
+        public = doc_backend._public_renderer_decision(decision)
+        self.assertNotIn("certified_renderer", public)
+        self.assertNotIn("proof_grade", public)
+        self.assertEqual(public["candidate_proof_grade"], "advisory")
 
     def test_certified_post_render_promotes_verdict_and_preserves_candidate(self):
         certificate = self.ws / "render-certificate.json"

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from unittest import mock
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import submission_preflight  # noqa: E402
+import document_evidence  # noqa: E402
 
 
 class SubmissionPreflightTestCase(unittest.TestCase):
@@ -54,7 +56,70 @@ class SubmissionPreflightTestCase(unittest.TestCase):
 
     def write_proof_grade(self, grade="hancom"):
         (self.ws / "output" / "verdict_v06.json").write_text(
-            json.dumps({"proof_grade": grade}), encoding="utf-8")
+            json.dumps({
+                "proof_grade": grade,
+                "converged": True,
+                "checks": {},
+                "style_anomalies": [],
+            }), encoding="utf-8")
+        if grade == "none":
+            return
+        # Non-none grades now have a deliberately explicit receipt contract.
+        # Keep the legacy fixture helper honest by binding its synthetic proof
+        # to the artifact written by the test, rather than weakening the
+        # production preflight for old fixtures.
+        candidates = sorted(
+            path for path in (self.ws / "output").iterdir()
+            if path.is_file() and path.suffix.lower() in {".hwpx", ".pdf"}
+        )
+        if not candidates:
+            return
+        canonical = None
+        try:
+            pipeline_text = (self.ws / "PIPELINE.md").read_text(encoding="utf-8")
+            match = re.search(
+                r'''canonical_output:\s*["']?([^"'\r\n]+)''', pipeline_text)
+            if match:
+                canonical = self.ws / match.group(1).strip()
+        except OSError:
+            canonical = None
+        artifact = canonical if canonical is not None and canonical.is_file() else candidates[0]
+        backend, evidence_class = {
+            "hancom": ("native_hancom_windows", "native_render"),
+            "certified": ("certified_renderer", "certified_render"),
+            "advisory": ("oss_preview_libreoffice", "advisory_render"),
+            "experimental-rhwp": ("oss_preview_rhwp", "diagnostic_render"),
+        }[grade]
+        if artifact.suffix.lower() == ".pdf":
+            input_path = self.ws / "output" / "receipt-input.hwpx"
+            if not input_path.exists():
+                with zipfile.ZipFile(input_path, "w") as archive:
+                    archive.writestr(
+                        "Contents/section0.xml",
+                        '<doc xmlns:hp="urn:hancom"><hp:p>receipt input</hp:p></doc>',
+                    )
+            output_path = artifact
+        else:
+            input_path = artifact
+            output_path = self.ws / "output" / (
+                "receipt-render.svg" if grade == "experimental-rhwp"
+                else "receipt-render.pdf"
+            )
+            output_path.write_bytes(b"rendered bytes")
+        receipt = document_evidence.build_receipt(
+            self.ws,
+            backend=backend,
+            evidence_class=evidence_class,
+            terminal_state="succeeded",
+            input_path=input_path,
+            output_path=output_path,
+            input_role="assembled_hwpx",
+            output_role=("diagnostic_svg" if grade == "experimental-rhwp"
+                         else "rendered_pdf"),
+            exit_code=0,
+            reproducible_here=False,
+        )
+        document_evidence.write_receipt(self.ws, receipt)
 
     def write_hwpx(
         self, name="submission.hwpx", text="31415 Lee", *, equations=False,
@@ -194,7 +259,11 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.write_hwpx()
         self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 0, verdict)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
         self.assertTrue(any("output_filename" in note for note in verdict["notes"]))
 
     def test_malformed_request_structure_is_note_p0_is_module_contribution(self):
@@ -213,7 +282,11 @@ class SubmissionPreflightTestCase(unittest.TestCase):
 
         verdict, code = submission_preflight.check(self.ws)
 
-        self.assertEqual(code, 0, verdict)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
         self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
         self.assertTrue(any("request.yaml unusable" in note
                             for note in verdict["notes"]))
@@ -230,14 +303,22 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         document.close()
         self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 0, verdict)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
 
     def test_missing_request_yaml_is_note_in_core(self):
         self.write_header("output/submission.hwpx")
         self.write_hwpx()
         self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 0, verdict)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
         self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
         self.assertTrue(any("request.yaml unusable" in note
                             for note in verdict["notes"]))
@@ -249,7 +330,11 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.write_hwpx()
         self.write_proof_grade("advisory")
         verdict, code = submission_preflight.check(self.ws)
-        self.assertEqual(code, 0, verdict)
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
         self.assertFalse(any(item["code"] == "P0" for item in verdict["hard"]))
 
     def test_none_proof_grade_requires_explicit_draft_escape(self):
@@ -283,7 +368,7 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         self.assertEqual(code, 3, verdict)
         self.assertTrue(any(item["code"] == "P5" for item in verdict["hard"]))
 
-    def test_hancom_grade_without_local_hancom_is_unverifiable_here(self):
+    def test_hancom_grade_remains_historically_valid_without_local_hancom(self):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(
             'output_filename: "submission.hwpx"\n', encoding="utf-8")
@@ -297,11 +382,11 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         ):
             verdict, code = submission_preflight.check(self.ws)
 
-        self.assertEqual(code, 3, verdict)
-        self.assertTrue(any(
-            item["code"] == "proof_grade_unverifiable_here"
-            for item in verdict["hard"]
-        ), verdict)
+        self.assertEqual(code, 0, verdict)
+        self.assertIn(
+            "current-host renderer capabilities are informational; historical proof comes from the validated artifact receipt",
+            verdict["notes"],
+        )
 
     def test_advisory_grade_with_equations_is_unverifiable(self):
         self.write_header("output/submission.hwpx")
@@ -341,8 +426,13 @@ class SubmissionPreflightTestCase(unittest.TestCase):
                 reason="delivery host lacks the print-grade renderer",
             )
 
-        self.assertEqual(code, 0, verdict)
-        self.assertTrue(any("draft" in note for note in verdict["notes"]))
+        # A draft flag cannot bypass the T63 quality contract: advisory
+        # requires a current, hash-bound passed quality result.
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            finding.get("code") == "proof_quality_missing"
+            for finding in verdict["hard"]
+        ), verdict)
         self.assertEqual(
             verdict["advisory_reason"],
             "delivery host lacks the print-grade renderer",
@@ -412,9 +502,10 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             'output_filename: "submission.hwpx"\n', encoding="utf-8")
         structure = '<hp:secPr landscape="false"/>'
         artifact = self.write_hwpx(structure=structure)
-        self.write_proof_grade()
         digest = submission_preflight._hwpx_form_structure_sha256(artifact)
         self.write_hwpx(text="changed inserted body text", structure=structure)
+        # The receipt must bind the final bytes, not the pre-baseline fixture.
+        self.write_proof_grade()
         (self.ws / "form_baseline.json").write_text(
             json.dumps({"structure_sha256": digest}), encoding="utf-8"
         )

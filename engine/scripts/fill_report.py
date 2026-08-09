@@ -83,15 +83,21 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+_PIPELINE_SCRIPTS = HERE.parents[1] / "pipeline" / "scripts"
+if _PIPELINE_SCRIPTS.is_dir():
+    sys.path.insert(0, str(_PIPELINE_SCRIPTS))
 from cli_io import utf8_stdio  # noqa: E402
 import layout_qa  # noqa: E402
 import build_report  # noqa: E402
 import tidy_hwpx  # noqa: E402
+import document_evidence  # noqa: E402
+import render_quality  # noqa: E402
 
 # fill 기본값: build.yaml에 fill 블록이 없을 때만 사용(임계는 인자/파일로만).
 FILL_DEFAULTS = {
@@ -118,7 +124,21 @@ def die(msg, code=2):
 def _emit(obj, out=None):
     text = json.dumps(obj, ensure_ascii=False, indent=2)
     if out:
-        Path(out).write_text(text, encoding="utf-8")
+        target = Path(out)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{target.name}-", suffix=".tmp", dir=str(target.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
     sys.stdout.buffer.write(text.encode("utf-8"))
 
 
@@ -441,7 +461,8 @@ def run_xml_edit(form, ops_path, out_hwpx):
 def run_pdf_command(argv_template, src_hwpx, dst_pdf, timeout=120.0):
     """Render HWPX with a shell-free argv template.
 
-    Placeholders: {in}/{input}, {out}/{output}, {out_dir}, and {stem}.  A string
+    Placeholders: {in}/{input}, {out}/{output}, {out_dir}/{outdir}, and {stem}.
+    A string
     is split with shlex; callers may also pass an already-tokenized list/tuple.
     Runtime failures are returned to the caller so loop mode can emit an honest
     ``renderer_failed`` verdict instead of exiting with a generic CLI error.
@@ -458,7 +479,8 @@ def run_pdf_command(argv_template, src_hwpx, dst_pdf, timeout=120.0):
     dst_pdf = Path(dst_pdf)
     values = {"in": str(src_hwpx), "out": str(dst_pdf),
               "input": str(src_hwpx), "output": str(dst_pdf),
-              "out_dir": str(dst_pdf.parent), "stem": src_hwpx.stem}
+              "out_dir": str(dst_pdf.parent), "outdir": str(dst_pdf.parent),
+              "stem": src_hwpx.stem}
     try:
         argv = [token.format(**values) for token in argv]
     except (KeyError, ValueError) as exc:
@@ -835,6 +857,162 @@ def xml_only_verdict(out_hwpx, verification, iteration=1):
     }
 
 
+def _evidence_workspace(form, out_dir):
+    """Infer the report workspace root from form/output paths.
+
+    Canonical runs place both under ``<WS>/output``.  Unit and direct engine
+    runs often use a temporary directory with a sibling ``fill`` output; the
+    common-path fallback keeps those runs receipt-capable without inventing
+    absolute paths in the receipt itself.
+    """
+    paths = []
+    for value in (form, out_dir):
+        try:
+            paths.append(str(Path(value).expanduser().resolve()))
+        except OSError:
+            continue
+    if not paths:
+        return None
+    try:
+        common = Path(os.path.commonpath(paths))
+    except ValueError:
+        return None
+    return common.parent if common.name.casefold() == "output" else common
+
+
+def _renderer_backend(renderer_id=None, engine="xml"):
+    """Map an executed renderer name to the closed evidence backend enum."""
+    if engine != "xml":
+        return "native_hancom_windows", "native_render"
+    name = str(renderer_id or "").casefold()
+    if "rhwp" in name:
+        return "oss_preview_rhwp", "diagnostic_render"
+    if "soffice" in name or "libreoffice" in name:
+        return "oss_preview_libreoffice", "advisory_render"
+    if "certif" in name:
+        return "certified_renderer", "certified_render"
+    return "xml_only", "structural_only"
+
+
+def _apply_render_quality(verdict, source_hwpx, rendered_pdf):
+    """Attach quality evidence and close the grade on quality/layout gates."""
+    quality = render_quality.inspect(source_hwpx, rendered_pdf)
+    quality = render_quality.apply_layout_gate(
+        quality,
+        converged=verdict.get("converged") is True,
+        hard_checks=not bool(verdict.get("checks") or {}),
+        style_clean=not bool(verdict.get("style_anomalies") or []),
+        advisory_hold=(
+            verdict.get("proof_grade") == "advisory"
+            and not document_evidence.ADVISORY_PROOF_RELEASE_ENABLED
+        ),
+    )
+    verdict["render_quality"] = dict(quality)
+    if quality.get("state") != "passed":
+        # Native Hancom's receipt is renderer provenance.  The Hangul checker
+        # intentionally cannot classify every native font (for example
+        # Type3), so an unknown/not-applicable result is diagnostic only and
+        # must not erase a successful native grade.  A confirmed failed
+        # quality result still downgrades, as do all non-native proof routes.
+        native_unknown = (
+            verdict.get("proof_grade") == "hancom"
+            and quality.get("state") in {"unknown", "not_applicable"}
+        )
+        if not native_unknown:
+            verdict["proof_grade"] = "none"
+            verdict["proof_unavailable"] = True
+        verdict["quality_reason"] = quality.get("reason_code")
+    return quality
+
+
+def _infer_renderer_id(pdf_cmd, explicit=None):
+    if explicit:
+        return str(explicit)
+    if isinstance(pdf_cmd, str):
+        try:
+            tokens = shlex.split(pdf_cmd, posix=True)
+        except ValueError:
+            tokens = []
+    elif isinstance(pdf_cmd, (list, tuple)):
+        tokens = [str(item) for item in pdf_cmd]
+    else:
+        tokens = []
+    return Path(tokens[0]).name if tokens else None
+
+
+def _write_evidence_receipt(
+    form,
+    out_dir,
+    out_hwpx,
+    out_pdf=None,
+    *,
+    engine="xml",
+    renderer_id=None,
+    terminal_state="succeeded",
+    exit_code=None,
+    reason_code=None,
+    reproducible_here=None,
+    capability_facts=None,
+    quality=None,
+):
+    """Persist one generic receipt; return it or ``None`` for non-canonical paths."""
+    workspace = _evidence_workspace(form, out_dir)
+    if workspace is None:
+        return None
+    backend, evidence_class = _renderer_backend(renderer_id, engine)
+    input_path = out_hwpx if out_pdf is not None else form
+    output_path = out_pdf if out_pdf is not None else out_hwpx
+    try:
+        receipt = document_evidence.build_receipt(
+            workspace,
+            backend=backend,
+            evidence_class=evidence_class,
+            terminal_state=terminal_state,
+            input_path=input_path,
+            output_path=output_path,
+            input_role="assembled_hwpx" if out_pdf is not None else "source_form",
+            output_role="rendered_pdf" if out_pdf is not None else "assembled_hwpx",
+            exit_code=exit_code,
+            reason_code=reason_code,
+            renderer_id=renderer_id,
+            reproducible_here=reproducible_here,
+            capability_facts=capability_facts,
+            quality=quality,
+        )
+        document_evidence.write_receipt(workspace, receipt)
+        return receipt
+    except document_evidence.EvidenceError:
+        # A caller may intentionally assemble from a form outside a report
+        # workspace in an operator scratch run.  Do not turn that path error
+        # into a false proof claim; the verdict remains truthful and the
+        # submission preflight will require a valid receipt for any grade.
+        return None
+
+
+def _invalidate_evidence_receipt(form, out_dir):
+    """Remove a prior run's receipt before a new terminal execution.
+
+    If COM/XML setup fails before it can emit a verdict, a previous successful
+    receipt must not remain eligible for that new run.  The next preflight will
+    then fail closed on a non-`none` stale verdict instead of accepting old
+    bytes as current evidence.
+    """
+    workspace = _evidence_workspace(form, out_dir)
+    if workspace is None:
+        return
+    target = workspace / document_evidence.RECEIPT_REL
+    try:
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+    except OSError as exc:
+        # A failed cleanup leaves a previous terminal receipt eligible for a
+        # new attempt.  Stop before execution rather than allowing stale
+        # evidence to survive behind a fresh verdict.
+        raise RuntimeError(
+            f"could not invalidate prior evidence receipt: {target}"
+        ) from exc
+
+
 def renderer_failed_verdict(out_hwpx, iteration, render_result):
     """Return the measured-loop contract for an unusable external render."""
     error = render_result.get("error") or "external renderer failed"
@@ -858,7 +1036,7 @@ def renderer_failed_verdict(out_hwpx, iteration, render_result):
         "style_anomalies": [],
         "needs": [{"kind": "renderer_failed", "directive": error}],
         "reason": error,
-        "proof_grade": "advisory",
+        "proof_grade": "none",
         "proof_unavailable": True,
         "engine": "xml",
         "hwpx": str(Path(out_hwpx).resolve()),
@@ -1153,6 +1331,7 @@ def mode_loop(args):
         die(f"content.md 없음: {content}")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _invalidate_evidence_receipt(form, out_dir)
     preview_dir = out_dir / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1162,6 +1341,7 @@ def mode_loop(args):
     events_path = out_dir / "fill_events.jsonl"
     engine = getattr(args, "engine", "com") or "com"
     pdf_cmd = getattr(args, "pdf_cmd", None)
+    renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
     proof_grade = "advisory" if engine == "xml" else "hancom"
     calibration = (load_calibration(getattr(args, "calibration", None))
                    if proof_grade == "advisory" else None)
@@ -1184,6 +1364,7 @@ def mode_loop(args):
     tidy_soft = bool(derived_tidy_anchors)  # 유도 앵커는 모호/없음을 fatal 대신 skip.
 
     result = None
+    quality = None
     prev_sig = None
     trouble_retried = False
     for i in range(1, max_loops + 1):
@@ -1213,7 +1394,12 @@ def mode_loop(args):
                 event = {"iter": i, "ts": time.time(), "verdict": verdict}
                 with open(events_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(event, ensure_ascii=False) + "\n")
-                _emit(verdict, args.out)
+                _write_evidence_receipt(
+                    form, out_dir, out_hwpx, engine=engine,
+                    renderer_id=renderer_id, exit_code=0,
+                    reason_code="xml_verified_no_proof",
+                    capability_facts=getattr(args, "capability_facts", None))
+                _emit(verdict, args.out or str(out_dir / "verdict_v06.json"))
                 return
             render_result = run_pdf_command(
                 pdf_cmd, out_hwpx, out_pdf, timeout=pdf_timeout)
@@ -1228,7 +1414,13 @@ def mode_loop(args):
                 event = {"iter": i, "ts": time.time(), "verdict": failed}
                 with open(events_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(event, ensure_ascii=False) + "\n")
-                _emit(failed, args.out)
+                _write_evidence_receipt(
+                    form, out_dir, out_hwpx, out_pdf,
+                    engine=engine, renderer_id=renderer_id,
+                    terminal_state="failed", exit_code=render_result.get("returncode"),
+                    reason_code="renderer_failed",
+                    capability_facts=getattr(args, "capability_facts", None))
+                _emit(failed, args.out or str(out_dir / "verdict_v06.json"))
                 return
         elif use_tidy:
             # edit(save hwpx만, PDF 아직 아님) -> tidy_hwpx(오프라인) ->
@@ -1265,7 +1457,12 @@ def mode_loop(args):
             event = {"iter": i, "ts": time.time(), "verdict": failed}
             with open(events_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
-            _emit(failed, args.out)
+            _write_evidence_receipt(
+                form, out_dir, out_hwpx, out_pdf,
+                engine=engine, renderer_id=renderer_id,
+                terminal_state="failed", reason_code="renderer_output_unmeasurable",
+                capability_facts=getattr(args, "capability_facts", None))
+            _emit(failed, args.out or str(out_dir / "verdict_v06.json"))
             return
 
         style_anomalies = run_style_diff(out_hwpx, args.baseline, args.build_yaml)
@@ -1278,6 +1475,8 @@ def mode_loop(args):
             verdict["derived_keep_map"] = tidy_keep_map
         if tidy_warnings:
             verdict["tidy_warnings"] = tidy_warnings
+
+        quality = _apply_render_quality(verdict, out_hwpx, out_pdf)
 
         iter_pdf = preview_dir / f"iter_{i}.pdf"
         shutil.copyfile(out_pdf, iter_pdf)
@@ -1338,6 +1537,8 @@ def mode_loop(args):
     final = dict(result)
     final.setdefault("needs", result.get("needs", []))
     out_obj = finalize_loop_verdict(final, engine, max_loops)
+    if quality is not None:
+        out_obj["render_quality"] = dict(quality)
 
     # PROOF 단계: phase-1이 converged로 끝났고 --proof가 설정된 경우에만.
     # 미수렴 상태에서 컨택트시트를 만들어봐야 needs가 이미 phase-1에서
@@ -1353,7 +1554,17 @@ def mode_loop(args):
             out_obj["phase"] = "fill"
             out_obj["proof_skipped_reason"] = "phase-1 not converged — resolve needs first"
 
-    _emit(out_obj, args.out)
+    _write_evidence_receipt(
+        form, out_dir, out_hwpx, out_pdf,
+        engine=engine, renderer_id=renderer_id,
+        exit_code=0,
+        reason_code=("fill_loop_complete" if out_obj.get("converged")
+                     else (quality.get("reason_code") if quality
+                           and quality.get("state") != "passed"
+                           else "fill_loop_not_converged")),
+        capability_facts=getattr(args, "capability_facts", None),
+        quality=quality)
+    _emit(out_obj, args.out or str(out_dir / "verdict_v06.json"))
 
 
 def mode_measure(args):
@@ -1392,12 +1603,14 @@ def mode_assemble(args):
         die(f"content.md 없음: {content}")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _invalidate_evidence_receipt(form, out_dir)
 
     ops_path = out_dir / "ops.json"
     out_hwpx = out_dir / "out.hwpx"   # 단일 정규 이름(버전 누적 금지, 항상 덮어씀).
     out_pdf = out_dir / "out.pdf"
     engine = getattr(args, "engine", "com") or "com"
     pdf_cmd = getattr(args, "pdf_cmd", None)
+    renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
     proof_grade = "advisory" if engine == "xml" else "hancom"
     calibration = (load_calibration(getattr(args, "calibration", None))
                    if proof_grade == "advisory" else None)
@@ -1414,6 +1627,7 @@ def mode_assemble(args):
     use_tidy = (bool(tidy_before or tidy_after) or use_restore
                 or bool(keep_with_next) or bool(form_profile))
     verdicts = []
+    quality = None
     for _ in range(iters):
         # 매 반복 pristine FORM에서 시작(FORM 제자리 편집 금지; save-as≠file 가드).
         run_build_report(content, form, args.build_yaml, ops_path,
@@ -1494,6 +1708,7 @@ def mode_assemble(args):
             v["derived_tidy_anchors"] = derived_tidy_anchors
         if tidy_keep_map:
             v["derived_keep_map"] = tidy_keep_map
+        quality = _apply_render_quality(v, out_hwpx, out_pdf)
         verdicts.append(v)
 
     result = verdicts[-1]
@@ -1504,7 +1719,29 @@ def mode_assemble(args):
         sigs = [tuple(v[k] for k in keys) for v in verdicts]
         result["idempotent"] = all(s == sigs[0] for s in sigs)
         result["iterations"] = iters
-    _emit(result, args.out)
+    if pdf_cmd and result.get("renderer_attempted"):
+        terminal_state = "failed"
+        reason_code = "renderer_failed"
+    elif pdf_cmd and not result.get("pdf"):
+        terminal_state = "failed"
+        reason_code = "renderer_output_missing"
+    else:
+        terminal_state = "succeeded"
+        reason_code = (
+            quality.get("reason_code")
+            if quality and quality.get("state") != "passed"
+            else ("assembly_render_succeeded" if pdf_cmd or engine != "xml"
+                  else "xml_assembly_succeeded")
+        )
+    receipt_output = out_pdf if pdf_cmd or engine != "xml" else None
+    _write_evidence_receipt(
+        form, out_dir, out_hwpx, receipt_output,
+        engine=engine, renderer_id=renderer_id,
+        terminal_state=terminal_state, reason_code=reason_code,
+        exit_code=(0 if terminal_state == "succeeded" else None),
+        capability_facts=getattr(args, "capability_facts", None),
+        quality=quality)
+    _emit(result, args.out or str(out_dir / "verdict_v06.json"))
 
 
 def main():
@@ -1529,6 +1766,9 @@ def main():
                          "--convert-to pdf --outdir {out_dir} {input}'")
     ap.add_argument("--pdf-timeout", type=float, default=120.0,
                     help="(xml --pdf-cmd) renderer timeout in seconds (default 120)")
+    ap.add_argument("--renderer-id",
+                    help="(xml --pdf-cmd) named runtime for evidence routing "
+                         "(soffice_local, rhwp_svg, certified_renderer)")
     ap.add_argument("--calibration",
                     help="(xml advisory proof) JSON threshold relaxations, e.g. "
                          "bottom_white_tolerance_pt and max_gap_scale")

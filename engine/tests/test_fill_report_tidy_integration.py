@@ -463,7 +463,7 @@ def test_run_pdf_command_expands_argv_template(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fr.subprocess, "run", fake_run)
     fr.run_pdf_command(
-        'renderer --input "{input}" --output "{output}" --outdir "{out_dir}"',
+        'renderer --input "{input}" --output "{output}" --outdir "{outdir}"',
         source, destination)
     assert seen == [["renderer", "--input", str(source), "--output", str(destination),
                      "--outdir", str(tmp_path)]]

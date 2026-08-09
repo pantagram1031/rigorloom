@@ -2251,6 +2251,46 @@ def test_vision_verdict_vocabulary_is_closed(tmp_path, bad):
     assert verdict["verdict"] == "usage_error"
 
 
+def test_missing_glyphs_vision_finding_is_hard_and_blocks(tmp_path):
+    artifact, pdf = _clean_run(tmp_path)
+    vision = tmp_path / "missing-glyphs.json"
+    vision.write_text(json.dumps({
+        "schema": "rigorloom/visual-vision-verdict/v1",
+        "pages_reviewed": [1, 2],
+        "findings": [{
+            "page": 1,
+            "class": "missing_glyphs",
+            "severity": "hard",
+            "evidence": "synthetic glyph defect",
+        }],
+    }), encoding="utf-8")
+    code, verdict, _ = run(
+        "--artifact", artifact, "--pdf", pdf,
+        "--png-dir", tmp_path / "png",
+        "--vision-verdict", vision, *_CLEAN_WAIVERS)
+    assert code == 3, verdict
+    assert any(item["class"] == "missing_glyphs"
+               and item["severity"] == "hard"
+               for item in verdict["hard"])
+
+
+def test_missing_glyphs_cannot_be_downgraded_to_warning(tmp_path):
+    artifact, pdf = _clean_run(tmp_path)
+    vision = tmp_path / "missing-glyphs-warn.json"
+    vision.write_text(json.dumps({
+        "schema": "rigorloom/visual-vision-verdict/v1",
+        "pages_reviewed": [1, 2],
+        "findings": [{"page": 1, "class": "missing_glyphs",
+                      "severity": "warn"}],
+    }), encoding="utf-8")
+    code, verdict, _ = run(
+        "--artifact", artifact, "--pdf", pdf,
+        "--png-dir", tmp_path / "png",
+        "--vision-verdict", vision, *_CLEAN_WAIVERS)
+    assert code == 2, verdict
+    assert verdict["verdict"] == "usage_error"
+
+
 def test_every_rubric_class_is_accepted_from_vision(tmp_path):
     """The closed vocabulary is exactly the rubric's, in both directions."""
     artifact, pdf = _clean_run(tmp_path)
@@ -2258,15 +2298,21 @@ def test_every_rubric_class_is_accepted_from_vision(tmp_path):
     vision.write_text(json.dumps({
         "schema": "rigorloom/visual-vision-verdict/v1",
         "pages_reviewed": [1, 2],
-        "findings": [{"page": 1, "class": cls, "severity": "warn",
+        "findings": [{"page": 1, "class": cls,
+                      "severity": ("hard" if cls == "missing_glyphs"
+                                    else "warn"),
                       "evidence": "synthetic"}
                      for cls in visual_verify.RUBRIC_CLASSES]}),
         encoding="utf-8")
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
                            "--png-dir", tmp_path / "png",
                            "--vision-verdict", vision, *_CLEAN_WAIVERS)
-    assert code == 0, verdict
-    assert set(classes(verdict, "warn")) >= set(visual_verify.RUBRIC_CLASSES)
+    # Every class is parsed, but the HARD missing-glyph class must make the
+    # merged visual verdict fail rather than being treated as a warning.
+    assert code == 3, verdict
+    assert set(classes(verdict, "warn")) >= (
+        set(visual_verify.RUBRIC_CLASSES) - {"missing_glyphs"})
+    assert "missing_glyphs" in classes(verdict, "hard")
 
 
 def test_rubric_document_and_code_vocabulary_agree():

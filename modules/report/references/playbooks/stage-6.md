@@ -14,9 +14,21 @@ EXACT actions:
 1. Confirm `canonical_output`, proof verdict, scorecard, sources, and provenance.
    The assembly verdict must record
    `proof_grade: hancom|certified|advisory|experimental-rhwp|none`.
+   Every non-`none` grade must also have a current, workspace-relative
+   `output/proof/backend/receipt.json` whose input/output hashes validate and
+   whose derived grade equals the verdict. Current-host renderer probes are
+   informational; they do not replace historical receipt evidence.
    `certified` is accepted only with explicit `build.yaml` opt-in, a passing
    live document-envelope check, and full certificate re-verification;
    `experimental-rhwp` remains diagnostic-only.
+   A native Hancom receipt is renderer provenance, not a readability
+   certification: its bound glyph-quality result may be `unknown` for an
+   uninspectable Type3 font and still retain `hancom`, while a confirmed
+   `failed` result downgrades. The independent `converged:true`, deterministic
+   layout/style HARDs, and canonical hash checks remain mandatory. Advisory
+   release is currently held by the shared document-evidence policy, so a
+   quality-passed LibreOffice candidate remains terminal `none` until that
+   policy is explicitly released.
 2. Resolve the Stage 6 `submission_preflight` script gate before delivery. It
    always checks extension, sane size, and file reopen (HWPX ZIP + XML parse;
    PDF PyMuPDF open + nonzero text). When `request.yaml` declares
