@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Form-scan auto-derived residue gate for final artifacts.
 
-The anchor/guide-text inventory recorded by the form scan (form_profile.json)
-IS the forbidden list for the final artifact — auto-derivation instead of a
-hand-written residue vocabulary (variant-audit "Gate architecture" row:
+The anchor/removable-guide inventory recorded by the form scan
+(form_profile.json) IS the forbidden list for the final artifact —
+auto-derivation instead of a hand-written residue vocabulary (variant-audit
+"Gate architecture" row:
 "스캔이 아는 것 = 게이트가 검사하는 것"). Anchors that legitimately remain in
 a filled report (section headings such as "I.  서론" / "1.  연구설계") are
 excluded via an explicit keep-list: a regex pattern (default matches Roman or
@@ -11,7 +12,8 @@ Arabic numbered headings) plus optional exact keep strings.
 
 Placeholder names/ids from the form (e.g. the 20101/김선덕 family) are part of
 the anchor inventory and therefore count as residue when they survive into a
-final.
+final. Removable guide text follows the same rule; reader-facing guide text
+that is absent from ``removal_targets`` is retained form content, not residue.
 
 ``--fill-map`` covers the shape a keep-list cannot express. Filling a labeled
 field semantically means keeping the label as a prefix — a URL field goes
@@ -22,8 +24,9 @@ occurrence of a forbidden string that lies wholly inside an occurrence of a
 declared value is attributed to that value's span instead of counted as
 residue. Attribution is per-occurrence, never a global suppression of the
 string: a second, genuinely unfilled occurrence of the same key elsewhere
-still HARDs, and its offset plus surrounding context is reported. Guide text
-is never attributable — instruction prose is not something a fill keeps.
+still HARDs, and its offset plus surrounding context is reported. A removable
+guide target is never attributable — instruction prose is not something a fill
+keeps; retained reader-facing guide text is not forbidden in the first place.
 
 Loud-failure contract (shared-miss #4): a missing pinned artifact is a HARD
 error (exit 3, finding ``pinned_target_missing``), never a silent pass. A
@@ -46,6 +49,7 @@ import json
 import re
 import sys
 import zipfile
+from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -66,11 +70,13 @@ CHECKER = "check_residue"
 # Section-heading anchors that legitimately remain in a filled report:
 # Roman-numeral headings ("I.  서론", "VI.  참고문헌") and Arabic numbered
 # sub-headings ("1.  연구설계"). Everything else in the scan inventory is
-# guide/placeholder material that must not survive into the final.
+# removable-guide/placeholder material that must not survive into the final;
+# reader-facing guide text is excluded by the profile's removal policy.
 DEFAULT_KEEP_PATTERN = r"^[IVX]+\.|^\d+\."
 
 _WS_RE = re.compile(r"\s+")
 _TAG_RE = re.compile(r"<[^>]+>")
+_MISSING_POLICY = object()
 
 # Members whose well-formedness decides whether Hancom can render the
 # document at all: every section body plus the style/metadata header.
@@ -90,16 +96,135 @@ def _normalize(text: str) -> str:
 normalize_text = _normalize
 
 
+def _validated_removal_policy(guide_entries, raw_policy):
+    """Return target paragraph ids, or ``None`` for legacy fail-closed mode.
+
+    A policy is only trustworthy when the diagnostic guide inventory itself is
+    paragraph-addressed and both sides are unique, non-negative integer ids.
+    This deliberately treats string/partial guide entries and malformed target
+    references as legacy input rather than silently relaxing residue checks.
+    """
+    if (not isinstance(guide_entries, list)
+            or raw_policy is _MISSING_POLICY
+            or not isinstance(raw_policy, list)):
+        return None
+    guide_ids = set()
+    for entry in guide_entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("text"), str):
+            return None
+        para_idx = entry.get("para_idx")
+        if (isinstance(para_idx, bool) or not isinstance(para_idx, int)
+                or para_idx < 0 or para_idx in guide_ids):
+            return None
+        guide_ids.add(para_idx)
+    target_ids = set()
+    for target in raw_policy:
+        if not isinstance(target, dict):
+            return None
+        para_idx = target.get("para_idx")
+        if (isinstance(para_idx, bool) or not isinstance(para_idx, int)
+                or para_idx < 0 or para_idx in target_ids):
+            return None
+        target_ids.add(para_idx)
+    if not target_ids <= guide_ids:
+        return None
+    return target_ids
+
+
+def _validated_anchor_records(profile):
+    """Return address-bound anchors, or ``None`` for legacy fail-closed mode.
+
+    ``anchor_records`` is an additive field: old profiles keep their
+    text-only ``anchors`` behavior.  Identity mode is enabled only when every
+    record has a unique non-negative legacy ``para_idx``, a section, and a
+    text whose multiset exactly matches the legacy anchor list.  A present
+    ``at_para`` is the newer preedit address and is validated independently;
+    T47 residue identity continues to use legacy ``para_idx``.
+    """
+    anchors = profile.get("anchors", _MISSING_POLICY)
+    records = profile.get("anchor_records", _MISSING_POLICY)
+    if (not isinstance(anchors, list) or not isinstance(records, list)
+            or any(not isinstance(anchor, str) for anchor in anchors)):
+        return None
+    seen_para = set()
+    seen_at_para = set()
+    record_texts = []
+    for record in records:
+        if not isinstance(record, dict):
+            return None
+        text = record.get("text")
+        section = record.get("section")
+        para_idx = record.get("para_idx")
+        at_para = record.get("at_para")
+        if (not isinstance(text, str) or not isinstance(section, str)
+                or not section or isinstance(para_idx, bool)
+                or not isinstance(para_idx, int) or para_idx < 0
+                or para_idx in seen_para):
+            return None
+        # ``para_idx`` remains the legacy T47 identity.  When the additive
+        # preedit address is present, validate it too; malformed or duplicate
+        # addresses fail closed instead of becoming a trusted scope hint.
+        if at_para is not None:
+            if (isinstance(at_para, bool) or not isinstance(at_para, int)
+                    or at_para < 0 or at_para in seen_at_para):
+                return None
+            seen_at_para.add(at_para)
+        seen_para.add(para_idx)
+        record_texts.append(text)
+    if Counter(record_texts) != Counter(anchors):
+        return None
+    return records
+
+
 def _profile_inventory(profile: dict) -> list[dict]:
-    """Flatten the form scan into (text, source) rows, in scan order."""
+    """Flatten the *forbidden* form-scan inventory into rows.
+
+    ``guide_text`` is a diagnostic inventory, not an assertion that every
+    guide paragraph must be deleted.  The form scanner's explicit
+    ``removal_targets`` policy is the authority for which guide entries are
+    forbidden.  With a valid explicit policy, a guide entry without a matching
+    ``para_idx`` is retained reader-facing text. Missing/malformed policy is
+    treated as legacy and keeps the old all-guide behavior, so a broken
+    profile cannot silently relax the gate.
+    """
     rows: list[dict] = []
-    for anchor in profile.get("anchors") or []:
-        if isinstance(anchor, str):
-            rows.append({"text": anchor, "source": "anchor"})
-    for entry in profile.get("guide_text") or []:
+    raw_guides = profile.get("guide_text") or []
+    guide_entries = raw_guides if isinstance(raw_guides, list) else [raw_guides]
+    removal_para_idxs = _validated_removal_policy(
+        raw_guides if isinstance(raw_guides, list) else None,
+        profile.get("removal_targets", _MISSING_POLICY))
+    anchor_records = _validated_anchor_records(profile)
+    # Paragraph identity is trusted only when all three inventories validate.
+    # Otherwise preserve the legacy fail-closed behavior: every anchor and
+    # every guide remains forbidden, regardless of a partial policy.
+    if removal_para_idxs is None or anchor_records is None:
+        removal_para_idxs = None
+
+    if anchor_records is not None and removal_para_idxs is not None:
+        retained_para_idxs = {
+            entry["para_idx"] for entry in guide_entries
+            if entry["para_idx"] not in removal_para_idxs
+        }
+        for record in anchor_records:
+            if record["para_idx"] in retained_para_idxs:
+                continue
+            rows.append({"text": record["text"], "source": "anchor"})
+    else:
+        for anchor in profile.get("anchors") or []:
+            if isinstance(anchor, str):
+                rows.append({"text": anchor, "source": "anchor"})
+    for entry in guide_entries:
         if isinstance(entry, str):
+            if removal_para_idxs is not None:
+                # A string guide entry has no paragraph identity to match
+                # against removal_targets. Under an explicit, valid policy it
+                # is retained; legacy fallback above keeps it fail-closed.
+                continue
             rows.append({"text": entry, "source": "guide_text"})
         elif isinstance(entry, dict) and isinstance(entry.get("text"), str):
+            if (removal_para_idxs is not None
+                    and entry.get("para_idx") not in removal_para_idxs):
+                continue
             rows.append({"text": entry["text"], "source": "guide_text"})
     for entry in profile.get("placeholders") or []:
         if isinstance(entry, str):
@@ -117,7 +242,11 @@ def derive_forbidden(
     """Split the scan inventory into (forbidden rows, kept strings).
 
     ``keep_pattern`` is matched against the raw scan string; ``keep_exact``
-    entries are compared after whitespace normalization.
+    entries are compared after whitespace normalization.  For a profile with
+    a valid ``removal_targets`` list, only named guide entries are in the
+    inventory; retained reader-facing guide text is never made residue merely
+    because it was detected. Legacy/malformed profiles retain the historical
+    all-guide fallback.
     """
     keep_re = re.compile(keep_pattern) if keep_pattern else None
     keep_normalized = {_normalize(item) for item in keep_exact}
@@ -355,9 +484,10 @@ def scan_residue(
         hits = _occurrences(haystack, needle)
         if not hits:
             continue
-        # Guide text is never attributable, the same reason it is never
-        # keepable: a correct fill REPLACES instruction prose, it never keeps
-        # it as a prefix, so a declared value containing guide text is a leak.
+        # Removable guide text is never attributable, the same reason it is
+        # never keepable: a correct fill REPLACES instruction prose, it never
+        # keeps it as a prefix, so a declared value containing guide text is a
+        # leak. Reader-facing guide text never reached ``forbidden`` above.
         usable = list(spans) if row["source"] != "guide_text" else []
         unattributed = [
             start for start in hits
@@ -592,7 +722,8 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--form-profile", required=True,
-        help="form scan JSON (form_profile.json: form_hash + anchors + guide_text)",
+        help=("form scan JSON (form_profile.json: form_hash + anchors + "
+              "removal_targets + guide_text + placeholders)"),
     )
     parser.add_argument(
         "--artifact", required=True,

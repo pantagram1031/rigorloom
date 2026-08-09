@@ -8,7 +8,31 @@ the kernel's contract shape.
 
 ## Unreleased
 
-_None._
+### Added
+
+- `form_inspect` now emits additive, backward-compatible `anchor_records`
+  (legacy `para_idx` plus the preedit-aligned `at_para` when identity is
+  proven) as internal evidence, and accepts opt-in `--full-text PARA:N`,
+  returning only the requested paragraph's own exact text/runs in preedit's
+  document order.
+
+### Fixed
+
+- **T47:** guide/removal residue policy is paragraph-addressed when the
+  records are structurally valid; missing, malformed, or mismatched evidence
+  keeps the legacy strict all-anchor/all-guide fallback.
+- **T48:** long signature seats are anchors only for the narrow
+  label/colon/trailing-marker shape; arbitrary long prose remains non-anchor.
+- **T49:** `--full-text PARA:N` uses preedit's global depth-first `at_para`
+  order and own-run text, while retaining the table-address syntax; its
+  optional `para_idx` field is only an alias for that address, not the legacy
+  profile index.
+- **T51:** anchor records preserve the legacy profile `para_idx` for T47
+  residue identity and add a start/identity-bound preedit `at_para`; nested
+  and multi-section drift refuses to guess when identity cannot be proven.
+- **T52:** the PPS signature workflow now documents that fixed-padding marker
+  runs must be inspected and scoped explicitly, then checked in a Hancom/PDF
+  visual loop; text hit gates do not prove line fit.
 
 ## v0.17.0 — validated product: autonomous verification, clean-room proof, six modules
 

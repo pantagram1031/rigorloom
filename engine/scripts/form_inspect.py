@@ -7,20 +7,21 @@ section*.xml(문단/런) 을 대조해, 조립(build_report.py) 전에 알아야
 (글자크기·줄간격·분량) — 를 결정론적으로 뽑아낸다.
 
     python form_inspect.py FORM.hwpx [--out form_profile.json] [--baseline form_baseline.json]
-        [--base-pt 10] [--line-spacing 160] [--full-text ROW,COL ...]
+        [--base-pt 10] [--line-spacing 160]
+        [--full-text [TABLE:]ROW,COL | PARA:N ...]
 
 --baseline: form_profile.json에 더해 폰트/크기/색/줄간격/사용빈도 분포를
             form_baseline.json으로 추가 기록한다(style_diff.py의 기준선).
 --base-pt/--line-spacing: page_metrics의 lines_per_page/chars_per_line 계산에
             쓰는 가정값(각각 기본 10pt/160%).
---full-text: 구조-전용 계약의 **의도적 탈출구**. 이름 붙인 셀만 의 정확한 런
-            텍스트를 `full_text`로 emit한다(반복 가능, `TABLE:ROW,COL`도 허용).
-            셀 단위 opt-in인 이유: 자리표의 정확한 내부 공백은 문자열 키가
-            필요한 소수 경로에서만 쓰고, 그 밖에는 profile이 본문 텍스트를
-            담지 않아야 한다. 요청하지 않은 셀은 한 글자도 나오지 않고 문서
-            본문 전체를 뽑는 경로는 없다. 자리표를 **고치는** 것이 목적이면
-            보통 문자열이 아예 필요 없다 — `preedit replace --at-cell
-            ROW,COL=값` 이 주소로 대상을 잡는다(T34).
+--full-text: 구조-전용 계약의 **의도적 탈출구**. 이름 붙인 셀
+            (`TABLE:ROW,COL`) 또는 문단(`PARA:N`)만 정확한 텍스트/런을
+            `full_text`로 emit한다(반복 가능). 셀/문단 단위 opt-in인 이유:
+            자리표의 정확한 내부 공백이나 `preedit`의 `at_para` 주소가 필요한
+            소수 경로에서만 쓰고, 그 밖에는 profile이 본문 전체를 담지 않아야
+            한다. 요청하지 않은 셀·문단은 한 글자도 나오지 않는다. 자리표를
+            **고치는** 것이 목적이면 보통 문자열이 아예 필요 없다 —
+            `preedit replace --at-cell ROW,COL=값` 이 주소로 대상을 잡는다(T34).
 
 v2 추가 섹션(form_profile.json):
   page_metrics — section0.xml의 hp:pagePr/margin에서 페이지 여백/가용영역과
@@ -34,6 +35,10 @@ v2 추가 섹션(form_profile.json):
                  함께 보고한다(T34 — 무표시 잘림이 스켈레톤 중간의 빈칸을
                  숨겼다). 정확한 전문은 --full-text ROW,COL.
   break_audit  — header.xml paraPr들의 hh:breakSetting 플래그 집계.
+  anchor_records — 기존 anchors의 legacy `para_idx`/text/section을 보존하면서
+                   preedit과 같은 depth-first 문단 주소 `at_para`를 추가한다.
+                   `at_para`는 scoped replacement와 PARA:N 조회용이며, 기존
+                   `para_idx`를 재번호화하지 않는다(신원 매핑 불가 시 생략).
 
 T30 사전 점검(fill 대상 charPr):
   body_baseline_charpr    — 문서 자신의 본문 baseline charPr(id/height_pt/
@@ -73,7 +78,10 @@ from hwpx_tables import find_cell, scan_tables  # noqa: E402
 import charpr_script  # noqa: E402
 # --full-text의 런 색인은 `preedit replace --at-cell ROW,COL#RUN`이 편집하는
 # 런과 **같은 열거**여야 한다(T34) — 그래서 같은 함수를 쓴다.
-from preedit import cell_text_runs, fill_target_run_charpr  # noqa: E402
+from preedit import (_find_paragraphs,
+                     _iter_document_paragraphs as _iter_document_paragraphs_with_offsets,
+                     cell_text_runs, fill_target_run_charpr,
+                     paragraph_text_runs)  # noqa: E402
 
 NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
@@ -94,6 +102,16 @@ T_RE = re.compile(
 BRACKET_RE = re.compile(r'\[([^\[\]]{1,40})\]')
 ROMAN_HEAD_RE = re.compile(r'^\s*([IVXⅠ-Ⅻ]+)[.\)]\s*\S')
 NUM_HEAD_RE = re.compile(r'^\s*\d+\.\s*\S')
+
+# A long signature seat is still an anchor, but only when its shape says so:
+# a known party/signature label, a field colon, and a trailing parenthetical
+# signature marker. Requiring all three keeps arbitrary long prose out of
+# ``anchors`` while admitting seats such as ``업체명(성명) : ... (인)``.
+SIGNATURE_ANCHOR_RE = re.compile(
+    r'^\s*(?:업체명\s*\(\s*성명\s*\)|업체명|성명|대표자|신청인|담당자|'
+    r'상호|기관명)\s*[:：][\s._＿\-·…]*'
+    r'\(\s*(?:인|서명(?:\s*또는\s*인)?|날인)\s*\)\s*$'
+)
 
 
 def _attr(tag_attrs, name):
@@ -232,7 +250,12 @@ def _paragraphs(xml, defs):
                 text_parts.append(re.sub(
                     r"<[^>]+>", "", "".join(T_RE.findall(run_body))))
         text = "".join(text_parts)
-        out.append({"text": text, "paraPr": para_pr, "charPrs": cids})
+        # ``para_idx`` is a historical profile index.  Retain the regex
+        # match's XML span privately so new address records can bind the same
+        # paragraph to preedit's depth-first ``at_para`` without changing the
+        # legacy index or its consumers.
+        out.append({"text": text, "paraPr": para_pr, "charPrs": cids,
+                    "_start": pm.start(), "_end": pm.end()})
     return out
 
 
@@ -358,6 +381,8 @@ def _looks_like_anchor(text, para_pr, heading_parapr_ids):
     if ROMAN_HEAD_RE.match(stripped):
         return True
     if para_pr in heading_parapr_ids:
+        return True
+    if SIGNATURE_ANCHOR_RE.match(stripped):
         return True
     return False
 
@@ -794,11 +819,11 @@ def _table_map(section_names, z, defs, borderfill_shaded,
 
 
 def _full_text(section_names, z, wanted):
-    """--full-text로 **이름 붙여 요청한 셀만** 의 정확한 런 텍스트.
+    """--full-text로 **이름 붙인 셀/문단만** 정확한 텍스트를 반환.
 
     구조-전용 계약(profile은 본문 텍스트를 담지 않는다)의 **의도적** 탈출구다.
-    그래서 opt-in이고, 셀 단위다: 요청하지 않은 셀은 한 글자도 나오지 않고,
-    문서 본문 전체를 뽑는 경로는 여기에 없다.
+    그래서 opt-in이고, 셀/문단 단위다: 요청하지 않은 셀·문단은 한 글자도
+    나오지 않고, 문서 본문 전체를 뽑는 경로는 여기에 없다.
 
     왜 필요한가(T34): `preedit replace`의 문자열 키는 런의 내부 공백까지 정확히
     같아야 한다. 양식이 인쇄해 둔 자리표(" 우(     -     )")는 30자
@@ -808,9 +833,14 @@ def _full_text(section_names, z, wanted):
     문자열 키가 꼭 필요할 때(check_residue --fill-map의 키 등) 이 플래그가
     그 문자열을 준다.
 
-    wanted: [(table_index|None, row, col), ...] — table_index None은 표 0.
-    반환: [{table, addr:{row,col}, text, truncated_preview, runs:[{index, text,
-            charpr}]}] — runs[].index가 `--at-cell ROW,COL#RUN`의 #RUN이다.
+    wanted: [(table_index|None, row, col), ...] (table_index None은 표 0),
+        또는 [("para", at_para), ...].
+    반환: 셀 요청에는 [{table, addr:{row,col}, text, truncated_preview,
+        runs:[{index, text, charpr}]}], 문단 요청에는 [{at_para, para_idx,
+        section, text, runs:[{index, text, charpr}]}]. 문단 ``at_para``가
+        ``preedit``와 같은 0-based 문서 순서 주소다. ``para_idx``는
+        이 결과 안에서만 유지하는 backward-compatible alias이며, profile의
+        legacy ``para_idx``가 아니다.
     반환 순서는 요청 순서. 없는 표/셀은 ValueError.
     """
     tables = []                       # [(index, xml, table dict)]
@@ -820,8 +850,47 @@ def _full_text(section_names, z, wanted):
         for tbl in scan_tables(xml):
             tables.append((idx, xml, tbl))
             idx += 1
+    paragraph_records = None
     out = []
-    for table_index, row, col in wanted:
+    for request in wanted:
+        if (isinstance(request, tuple) and len(request) == 2
+                and request[0] == "para"):
+            if paragraph_records is None:
+                paragraph_records = []
+                for sname in section_names:
+                    xml = z.read(sname).decode("utf-8")
+                    for _start, _end, p_xml in _iter_document_paragraphs_with_offsets(xml):
+                        runs = paragraph_text_runs(p_xml)
+                        paragraph_records.append({
+                            "section": sname,
+                            "text": "".join(r["text"] for r in runs),
+                            "runs": runs,
+                        })
+            para_idx = request[1]
+            if isinstance(para_idx, bool) or not isinstance(para_idx, int):
+                raise ValueError(
+                    f"--full-text: PARA address must be a non-negative integer: "
+                    f"{para_idx!r}")
+            if para_idx < 0 or para_idx >= len(paragraph_records):
+                raise ValueError(
+                    f"--full-text: PARA:{para_idx} out of range "
+                    f"(document has {len(paragraph_records)} paragraphs)")
+            record = paragraph_records[para_idx]
+            out.append({
+                "at_para": para_idx,
+                # T49 consumers may still read this name; it aliases the
+                # requested at_para and must not be confused with the
+                # profile's historical para_idx.
+                "para_idx": para_idx,
+                "section": record["section"],
+                "text": record["text"],
+                "runs": [{"index": r["index"], "text": r["text"],
+                           "charpr": r["charpr"]}
+                          for r in record["runs"]],
+            })
+            continue
+
+        table_index, row, col = request
         t = 0 if table_index is None else table_index
         match = next((x for x in tables if x[0] == t), None)
         if match is None:
@@ -846,6 +915,48 @@ def _full_text(section_names, z, wanted):
                       "charpr": r["charpr"]} for r in runs],
         })
     return out
+
+
+def _iter_document_paragraphs(xml):
+    """Backward-compatible p_xml-only view of the shared depth-first walk."""
+    for _start, _end, p_xml in _iter_document_paragraphs_with_offsets(xml):
+        yield p_xml
+
+
+def _own_paragraph_text(p_xml):
+    """Return only the runs owned by this paragraph, excluding nested ``p``."""
+    return "".join(run["text"] for run in paragraph_text_runs(p_xml))
+
+
+def _resolve_at_para(legacy, depth_records):
+    """Bind one legacy paragraph scan row to a depth-first address.
+
+    The historical regex can stop at a nested paragraph's closing tag.  A
+    start-only lookup would then assign a nested anchor to its outer table
+    paragraph.  First require exact start *and* own-text identity; otherwise
+    accept the unique descendant whose closing boundary and own text are both
+    identical to the legacy match.  Any ambiguity remains unresolved rather
+    than becoming a text-first guess.
+    """
+    start, end, legacy_text = (legacy.get("_start"), legacy.get("_end"),
+                               legacy.get("text", ""))
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    def same_text(row):
+        own = _own_paragraph_text(row["xml"])
+        return own == legacy_text or own.strip() == legacy_text.strip()
+
+    direct = [row for row in depth_records
+              if row["start"] == start and row["end"] == end
+              and same_text(row)]
+    if len(direct) == 1:
+        return direct[0]["at_para"]
+    candidates = [row for row in depth_records
+                  if row["start"] > start and row["end"] == end
+                  and same_text(row)]
+    if len(candidates) == 1:
+        return candidates[0]["at_para"]
+    return None
 
 
 def _break_audit(header_xml):
@@ -972,10 +1083,24 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
                            script_profiles=script_profiles,
                            baseline_id=script_baseline_id)
 
-    anchors, placeholders, guide_text, para_formats = [], [], [], []
+    anchors, anchor_records = [], []
+    placeholders, guide_text, para_formats = [], [], []
     anchor_para_idx = set()
     table_count = 0
     global_para_idx = 0
+    # ``global_para_idx`` below is deliberately legacy: it counts only the
+    # paragraphs accepted by the historical regex scanner.  New scoped
+    # replacement addresses come from the exact preedit depth-first walk,
+    # bound by paragraph XML identity within its section.
+    depth_records = {}
+    next_at_para = 0
+    for sname in section_names:
+        xml = z.read(sname).decode("utf-8")
+        rows = depth_records.setdefault(sname, [])
+        for start, end, p_xml in _iter_document_paragraphs_with_offsets(xml):
+            rows.append({"start": start, "end": end, "xml": p_xml,
+                         "at_para": next_at_para})
+            next_at_para += 1
     charpr_hist, parapr_hist = Counter(), Counter()
     # guide-only-color 산출용: guide 문단이 쓴 charPr id 집합(비-guide는 별도 집계).
     guide_charpr_ids, guide_parapr_ids = set(), set()
@@ -1028,7 +1153,20 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
                 nonguide_parapr_hist[para_pr] += 1
 
             if is_anchor:
-                anchors.append(text.strip())
+                anchor_text = text.strip()
+                anchors.append(anchor_text)
+                record = {
+                    "text": anchor_text,
+                    "para_idx": global_para_idx,
+                    "section": sname,
+                }
+                # Start identity is the only safe bridge between the legacy
+                # regex result and preedit's global address.  If it cannot be
+                # proven, omit the new field rather than guessing.
+                at_para = _resolve_at_para(p, depth_records.get(sname, []))
+                if at_para is not None:
+                    record["at_para"] = at_para
+                anchor_records.append(record)
                 anchor_para_idx.add(global_para_idx)
 
             # para_formats: 앵커/제목-패턴/bracket-placeholder 문단만 기록
@@ -1091,6 +1229,10 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
         "file": str(path),
         "form_hash": form_hash,
         "anchors": anchors,
+        # Keep the historical text-only list for consumers that use it as a
+        # keep-list, while exposing paragraph identity for residue attribution.
+        # Records are emitted in the same section/document order as ``anchors``.
+        "anchor_records": anchor_records,
         "anchors_blanks_before": anchors_blanks_before,
         "placeholders": sorted(set(placeholders)),
         "guide_text": guide_text,
@@ -1212,14 +1354,11 @@ def main():
     ap.add_argument("--line-spacing", type=int, default=160,
                      help="page_metrics 계산에 쓸 줄간격(%%, 기본 160)")
     ap.add_argument("--full-text", action="append", default=[],
-                     metavar="[TABLE:]ROW,COL",
-                     help="**이름 붙인 셀만** 의 정확한 런 텍스트를 emit"
-                          "(반복 가능, 기본 표 0). 구조-전용 계약의 의도적"
-                          " 탈출구이므로 셀 단위 opt-in 이다 — 요청하지 않은"
-                          " 셀은 한 글자도 나오지 않고, 본문 전체를 뽑는"
-                          " 경로는 없다. 자리표의 정확한 내부 공백이 필요할"
-                          " 때만 쓴다(보통은 preedit replace --at-cell"
-                          " ROW,COL=값 이 정답이고 문자열이 필요 없다, T34)")
+                    metavar="[TABLE:]ROW,COL|PARA:N",
+                    help="이름 붙인 셀([TABLE:]ROW,COL) 또는 문단(PARA:N)만"
+                         " 정확한 텍스트/런을 emit (PARA는 preedit at_para;"
+                         " 반복 가능, opt-in;"
+                         " 요청하지 않은 본문 전체는 뽑지 않음)")
     args = ap.parse_args()
 
     if not Path(args.form).exists():
@@ -1227,9 +1366,15 @@ def main():
 
     wanted = []
     for spec in args.full_text:
+        para = re.fullmatch(r'\s*PARA\s*:\s*(\d+)\s*', spec,
+                            flags=re.IGNORECASE)
+        if para:
+            wanted.append(("para", int(para.group(1))))
+            continue
         m = re.fullmatch(r'\s*(?:(\d+)\s*:\s*)?(\d+)\s*,\s*(\d+)\s*', spec)
         if not m:
-            die(f"--full-text 형식은 ROW,COL 또는 TABLE:ROW,COL: {spec!r}")
+            die(f"--full-text 형식은 ROW,COL, TABLE:ROW,COL 또는 PARA:N: "
+                f"{spec!r}")
         wanted.append((None if m.group(1) is None else int(m.group(1)),
                        int(m.group(2)), int(m.group(3))))
 

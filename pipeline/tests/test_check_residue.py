@@ -18,6 +18,14 @@ _spec = importlib.util.spec_from_file_location("check_residue", SCRIPT)
 check_residue = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_residue)
 
+FORM_INSPECT_SCRIPT = Path(__file__).parents[2] / "engine" / "scripts" / "form_inspect.py"
+_form_spec = importlib.util.spec_from_file_location("form_inspect_for_residue",
+                                                    FORM_INSPECT_SCRIPT)
+form_inspect = importlib.util.module_from_spec(_form_spec)
+_form_spec.loader.exec_module(form_inspect)
+
+CORPUS_FORMS = Path(__file__).parents[2] / "tests" / "corpus" / "forms"
+
 
 FORM_PROFILE = {
     "ok": True,
@@ -38,11 +46,23 @@ FORM_PROFILE = {
             "text": "(연구의 필요성 및 목적, 연구를 수행하게 된 동기, "
                     "연구문제 및 가설을 기술합니다.)",
             "reason": "colored",
+            "para_idx": 40,
         },
-        {"text": "(자료분석의 방법을 구체적으로 기술합니다.)"},
+        {"text": "(자료분석의 방법을 구체적으로 기술합니다.)",
+         "para_idx": 41},
     ],
     "placeholders": [],
+    "removal_targets": [
+        {"para_idx": 40, "confidence": "high"},
+        {"para_idx": 41, "confidence": "medium"},
+    ],
 }
+FORM_PROFILE["anchor_records"] = [
+    {"text": text, "para_idx": 100 + index,
+     "at_para": 200 + index,
+     "section": "Contents/section0.xml"}
+    for index, text in enumerate(FORM_PROFILE["anchors"])
+]
 
 
 class CheckResidueTests(unittest.TestCase):
@@ -140,6 +160,177 @@ class CheckResidueTests(unittest.TestCase):
         self.assertIn("20101", forbidden_texts)  # id has no dot: not a heading
         self.assertIn("김선덕", forbidden_texts)
         self.assertIn("(초록: 논문의 주요 내용의 요약)", forbidden_texts)
+
+    def test_removal_policy_forbids_only_named_guide_targets(self):
+        profile = self.write_profile(
+            anchors=[],
+            guide_text=[
+                {"text": "remove this instruction", "para_idx": 7},
+                {"text": "reader notice stays", "para_idx": 8},
+            ],
+            removal_targets=[{"para_idx": 7, "confidence": "high"}],
+            anchor_records=[],
+            placeholders=[],
+        )
+        artifact = self.base / "policy.txt"
+        artifact.write_text("remove this instruction reader notice stays",
+                            encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile, artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+        residue_at = {item["at"] for item in verdict["hard"]
+                      if item["code"] == "form_residue"}
+        self.assertEqual(residue_at, {"remove this instruction"})
+
+    def test_missing_removal_policy_keeps_legacy_all_guide_fail_closed(self):
+        profile = self.write_profile(
+            anchors=[], guide_text=["legacy guide"], placeholders=[])
+        artifact = self.base / "legacy.txt"
+        artifact.write_text("legacy guide", encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile, artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(verdict["residue"][0]["text"], "legacy guide")
+
+    def test_explicit_empty_policy_does_not_relax_string_or_partial_guides(self):
+        cases = [
+            "string guide",
+            {"text": "partial guide", "reason": "note_prefix"},
+        ]
+        for guide in cases:
+            with self.subTest(guide=guide):
+                profile = {
+                    "anchors": [], "guide_text": [guide],
+                    "removal_targets": [], "placeholders": [],
+                }
+                forbidden, _ = check_residue.derive_forbidden(
+                    profile, keep_pattern="")
+                self.assertEqual(
+                    [row["text"] for row in forbidden],
+                    [guide if isinstance(guide, str) else guide["text"]],
+                )
+
+    def test_malformed_removal_policy_keeps_all_guides_fail_closed(self):
+        base_guides = [
+            {"text": "guide zero", "para_idx": 0},
+            {"text": "guide one", "para_idx": 1},
+        ]
+        invalid_policies = [
+            ([{"text": "duplicate", "para_idx": 0},
+              {"text": "duplicate", "para_idx": 0}],
+             [{"para_idx": 0}]),
+            (base_guides, [{"para_idx": 0}, {"para_idx": 0}]),
+            (base_guides, [{"para_idx": -1}]),
+            (base_guides, [{"para_idx": True}]),
+            (base_guides, [{"para_idx": 9}]),
+        ]
+        for guides, targets in invalid_policies:
+            with self.subTest(guides=guides, targets=targets):
+                profile = {
+                    "anchors": [], "guide_text": guides,
+                    "removal_targets": targets, "placeholders": [],
+                }
+                forbidden, _ = check_residue.derive_forbidden(
+                    profile, keep_pattern="")
+                self.assertEqual(
+                    {row["text"] for row in forbidden},
+                    {entry["text"] for entry in guides},
+                )
+
+    def test_same_text_retained_guides_skip_only_address_bound_anchor(self):
+        profile_path = self.write_profile(
+            anchors=["retained note"],
+            anchor_records=[{"text": "retained note", "para_idx": 9,
+                             "section": "Contents/section0.xml"}],
+            guide_text=[{"text": "retained note", "para_idx": 0},
+                        {"text": "retained note", "para_idx": 1}],
+            removal_targets=[], placeholders=[])
+        artifact = self.base / "duplicate-anchor.txt"
+        artifact.write_text("retained note", encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile_path, artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+        self.assertEqual(
+            [row["at"] for row in verdict["hard"]
+             if row["code"] == "form_residue"],
+            ["retained note"],
+        )
+
+    def test_old_profile_without_anchor_records_remains_strict(self):
+        profile_path = self.write_profile(
+            anchors=["retained note"],
+            guide_text=[{"text": "retained note", "para_idx": 0}],
+            removal_targets=[], placeholders=[])
+        artifact = self.base / "legacy-anchor.txt"
+        artifact.write_text("retained note", encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile_path, artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+
+    def test_malformed_at_para_keeps_legacy_residue_fallback(self):
+        profile = self.write_profile(
+            anchors=["retained note"],
+            anchor_records=[{"text": "retained note", "para_idx": 9,
+                             "at_para": "not-an-address",
+                             "section": "Contents/section0.xml"}],
+            guide_text=[{"text": "retained note", "para_idx": 0}],
+            removal_targets=[], placeholders=[])
+        artifact = self.base / "malformed-at-para.txt"
+        artifact.write_text("retained note", encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile, artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+
+    def test_real_gianmun_profile_preserves_removal_target_fail_closed(self):
+        form = CORPUS_FORMS / "converted" / "gianmun-byeolji-2ho.hwpx"
+        if not form.is_file():
+            self.skipTest("corpus absent")
+        profile, _ = form_inspect.analyze(form, want_baseline=False)
+        self.assertEqual(len(profile["guide_text"]), 2)
+        self.assertEqual(len(profile["removal_targets"]), 1)
+        profile_path = self.base / "gianmun.profile.json"
+        profile_path.write_text(json.dumps(profile, ensure_ascii=False),
+                                encoding="utf-8")
+        retained = next(g for g in profile["guide_text"]
+                        if g["para_idx"] not in {
+                            t["para_idx"] for t in profile["removal_targets"]
+                        })
+        retained_artifact = self.base / "gianmun-retained.txt"
+        retained_artifact.write_text(retained["text"], encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile_path, retained_artifact, keep_pattern="")
+        self.assertEqual(code, 0, verdict)
+
+        target_artifact = self.base / "gianmun-target.txt"
+        target_artifact.write_text(profile["guide_text"][0]["text"],
+                                    encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile_path, target_artifact, keep_pattern="")
+        self.assertEqual(code, 3, verdict)
+        target_idx = profile["removal_targets"][0]["para_idx"]
+        target_text = next(g["text"] for g in profile["guide_text"]
+                           if g["para_idx"] == target_idx)
+        residue_at = {item["at"] for item in verdict["hard"]
+                      if item["code"] == "form_residue"}
+        self.assertIn(target_text, residue_at)
+
+    def test_real_pps_retained_guide_is_not_residue(self):
+        form = CORPUS_FORMS / "grant" / "pps-hyeopeop-seungin-sinchengseo.hwpx"
+        if not form.is_file():
+            self.skipTest("corpus absent")
+        profile, _ = form_inspect.analyze(form, want_baseline=False)
+        self.assertEqual(len(profile["guide_text"]), 1)
+        self.assertEqual(profile["removal_targets"], [])
+        profile_path = self.base / "pps.profile.json"
+        profile_path.write_text(json.dumps(profile, ensure_ascii=False),
+                                encoding="utf-8")
+        artifact = self.base / "pps-retained.txt"
+        artifact.write_text(profile["guide_text"][0]["text"],
+                            encoding="utf-8")
+        verdict, code = check_residue.check(
+            profile_path, artifact, keep_pattern="")
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["residue"], [])
 
     def test_explicit_keep_string_suppresses_a_finding(self):
         artifact = self.write_hwpx("titled.hwpx", "논문제목 실제 본문")
