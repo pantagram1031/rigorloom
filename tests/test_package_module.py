@@ -13,6 +13,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
+import textwrap
 import types
 import zipfile
 from pathlib import Path
@@ -203,6 +206,7 @@ class TestCoreBundle:
         assert manifest["requires"] is None
         assert manifest["provides"]["core_components"]
         assert any(n.startswith("engine/scripts/") for n in names)
+        assert "engine/scripts/document_evidence.py" in names
         assert any(n.startswith("pipeline/scripts/") for n in names)
         assert "studio/main.py" in names
         assert "modules/README.md" in names
@@ -213,6 +217,122 @@ class TestCoreBundle:
 
         report, code = package_module.verify_bundle(bundle)
         assert code == 0, report
+
+    def test_packaged_runtime_help_imports_adapter_package_under_cp949(
+            self, tmp_path: Path):
+        """A clean extracted core bundle must run its shipped CLIs.
+
+        ``doc_backend.py`` executes from ``pipeline/scripts`` and imports the
+        sibling ``pipeline/adapters_impl`` package.  This is an installed
+        runtime check (not merely a zip-member assertion) and reproduces the
+        Windows CP949 console mode that exposed the missing package.
+        """
+        bundle = package_module.build_bundle(
+            "core", tmp_path / "dist", version="0.16.0")
+        install = tmp_path / "installed"
+        install.mkdir()
+        with zipfile.ZipFile(bundle) as archive:
+            archive.extractall(install)
+
+        env = os.environ.copy()
+        env.pop("PYTHONUTF8", None)
+        env["PYTHONIOENCODING"] = "cp949"
+        for script in (
+                install / "pipeline" / "scripts" / "doc_backend.py",
+                install / "pipeline" / "scripts" / "submission_preflight.py"):
+            completed = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=install,
+                env=env,
+                capture_output=True,
+                encoding="cp949",
+                errors="replace",
+                timeout=30,
+            )
+            assert completed.returncode == 0, (
+                script.name, completed.stdout, completed.stderr)
+            assert "ModuleNotFoundError" not in completed.stderr
+            assert "adapters_impl" not in completed.stderr
+
+        names = set()
+        with zipfile.ZipFile(bundle) as archive:
+            names.update(archive.namelist())
+        assert "pipeline/adapters_impl/__init__.py" in names
+        assert "pipeline/adapters_impl/bundle_backend.py" in names
+        assert "pipeline/adapters_impl/docx_backend.py" in names
+        assert not any("tests/corpus" in name for name in names)
+        assert not any(Path(name).name in {"secret.hwpx", "private.pdf"}
+                       for name in names)
+
+    def test_generated_install_manifest_syncs_adapter_package_under_cp949(
+            self, tmp_path: Path):
+        """Follow the generated INSTALL.md instructions, not a test copy."""
+        bundle = package_module.build_bundle(
+            "core", tmp_path / "dist", version="0.16.0")
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        with zipfile.ZipFile(bundle) as archive:
+            archive.extractall(checkout)
+            install_md = archive.read("INSTALL.md").decode("utf-8")
+
+        # The YAML block is the actual generated manifest shown to operators.
+        # Extract it from INSTALL.md so this regression cannot drift into a
+        # second hand-written source_map contract.
+        match = re.search(
+            r"(?ms)^[ \t]*```yaml\r?\n(?P<body>.*?)^[ \t]*```",
+            install_md,
+        )
+        assert match, "generated INSTALL.md must carry its router manifest"
+        manifest_text = textwrap.dedent(match.group("body"))
+        assert manifest_text.startswith("install_root:"), manifest_text
+        destination = tmp_path / "skill-install"
+        manifest_text = manifest_text.replace(
+            "<YOUR SKILLS DIR>/rigorloom-hwp",
+            str(destination).replace("\\", "/"),
+        )
+        manifest = checkout / "generated-install.yaml"
+        manifest.write_text(manifest_text, encoding="utf-8")
+
+        env = os.environ.copy()
+        env.pop("PYTHONUTF8", None)
+        env["PYTHONIOENCODING"] = "cp949"
+        installer = checkout / "scripts" / "sync_local.py"
+        synced = subprocess.run(
+            [sys.executable, str(installer), "--manifest", str(manifest),
+             "--checkout-root", str(checkout)],
+            cwd=checkout,
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        assert synced.returncode == 0, (synced.stdout, synced.stderr)
+
+        for script_name in ("doc_backend.py", "submission_preflight.py"):
+            script = destination / "pipeline" / "scripts" / script_name
+            completed = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=destination,
+                env=env,
+                capture_output=True,
+                encoding="cp949",
+                errors="replace",
+                timeout=30,
+            )
+            assert completed.returncode == 0, (
+                script_name, completed.stdout, completed.stderr)
+            assert "ModuleNotFoundError" not in completed.stderr
+            assert "adapters_impl" not in completed.stderr
+
+        installed_files = [
+            path.relative_to(destination).as_posix()
+            for path in destination.rglob("*") if path.is_file()
+        ]
+        assert "pipeline/adapters_impl/__init__.py" in installed_files
+        assert not any("tests/corpus" in name for name in installed_files)
+        assert not any(Path(name).suffix.lower() in {".hwp", ".hwpx"}
+                       for name in installed_files)
 
 
 class TestCoreBundleShipsTheSkillSurface:

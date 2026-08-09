@@ -24,6 +24,14 @@ source_map:
   # upstream checkout dir/file        ->  install-relative destination
   - from: "pipeline/scripts"
     to: "scripts"
+  # doc_backend also imports the in-tree bundle/docx adapter package. Keep the
+  # package at the install root so its relative imports remain valid.
+  - from: "pipeline/adapters_impl"
+    to: "adapters_impl"
+  # submission_preflight/doc_backend import this pure-stdlib helper. Keep it
+  # beside the flattened pipeline scripts in a report-pipeline install.
+  - from: "engine/scripts/document_evidence.py"
+    to: "scripts/document_evidence.py"
   - from: "pipeline/references"
     to: "references"          # prompts/, packs, contracts
   # Report distribution-module payload (v0.16 W3-S2b: the stage machine,

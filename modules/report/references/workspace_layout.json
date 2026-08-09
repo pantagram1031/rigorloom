@@ -117,7 +117,8 @@
       "outputs": [
         {"pattern": "output/out.*", "required": true},
         {"pattern": "output/verdict*.json", "required": true},
-        {"pattern": "output/proof/contact_*.png", "required": false}
+        {"pattern": "output/proof/contact_*.png", "required": false},
+        {"pattern": "output/proof/backend/receipt.json", "required": false}
       ]
     },
     "5.5": {
