@@ -517,14 +517,13 @@ def test_table_label_guard_splits_and_uses_justify(tmp_path):
     assert paras[1].attrib["paraPrIDRef"] == "0"
 
 
-def test_unsupported_op_exits_4_and_lists_it(tmp_path):
+def test_latex_equation_is_converted_and_inserted(tmp_path):
     result, dst, _ = run_cli(tmp_path, [
-        {"op": "insert_equation", "latex": "x=1"}])
-    assert result.returncode == 4
-    assert json.loads(result.stdout) == {
-        "ok": False, "applied": 0, "unsupported": ["insert_equation"],
-        "anchors_missing": []}
-    assert not dst.exists()
+        {"op": "goto_text", "text": "Generic anchor"},
+        {"op": "insert_equation", "latex": r"\frac{1}{2}"}])
+    assert result.returncode == 0, result.stdout
+    assert dst.exists()
+    assert local_nodes(section(dst), "script")[0].text == "{1}over{2}"
 
 
 def test_inline_equation_is_inserted_in_anchor_paragraph_verbatim(tmp_path):

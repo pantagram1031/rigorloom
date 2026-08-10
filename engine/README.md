@@ -69,7 +69,7 @@ git clone https://github.com/pantagram1031/hwp-master %USERPROFILE%\.agents\skil
 
 ```bash
 python scripts/eqn.py "\frac{-b \pm \sqrt{b^2-4ac}}{2a}"
-# → {"hwpeqn": "{-b +- sqrt{b^2-4ac}}over{2a}", "warnings": [], "sanity": "ok"}
+# → {"ok": true, "contract": "rigorloom/hwpeqn/v1", "warnings": [], ...}
 ```
 순수 파이썬이라 어느 환경에서나 동작. 문법은 [references/hwpeqn_cheatsheet.md](references/hwpeqn_cheatsheet.md).
 
@@ -89,7 +89,25 @@ Example renderer template: `--engine xml --pdf-cmd 'soffice --headless --convert
 ## 알려진 한계
 - COM 백엔드는 한컴오피스 라이선스 필요, GUI 프로세스 기반이라 대량 배치엔 느릴 수 있음
 - 암호화된 문서 미지원
-- LaTeX→HwpEqn 변환은 실용적 커버리지 목표 — 미지원 명령은 warnings로 보고됨
+- LaTeX→HwpEqn conversion is bounded by the T92 lexical contract; unsupported
+  commands and conversion warnings refuse the operation rather than degrade.
+- T92 contract note: unknown commands, unsupported environments, malformed
+  arguments, raw HwpEqn punctuation in the LaTeX lane, and any conversion
+  warning are terminal refusals (CLI 0=warning-free, 2=usage, 3=refusal).
+  `base_pt` is shared/quantized to 0.1pt with the conservative contract bound
+  1≤pt≤100.
+  Warning-free conversion proves only a bounded lexical envelope; it is not
+  HwpEqn semantic validity, native/render/layout/PDF parity, or proof.
+
+### Equation contract (T92)
+
+`scripts/eqn.py` implements `rigorloom/hwpeqn/v1`: a bounded lexical
+preflight shared by the COM and XML backends. Unknown LaTeX commands,
+unsupported environments, malformed required arguments, unmatched delimiters,
+controls, and conversion warnings are terminal refusals. CLI exits are 0 for
+warning-free conversion, 2 for usage, and 3 for refusal; refusal JSON never
+contains source equation text or generated HwpEqn. This is not an HwpEqn
+semantic, native-render, layout, PDF, or parity proof.
 
 ## License
 MIT

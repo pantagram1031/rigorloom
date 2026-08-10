@@ -10,6 +10,15 @@ the kernel's contract shape.
 
 ### Added
 
+- **T92:** tightened the shared `rigorloom/hwpeqn/v1` equation lane with a
+  closed LaTeX/HwpEqn XOR envelope, static case-folded origin-refusal
+  vocabulary, bounded lexical/argument/control checks, exact matrix row
+  separators, shared deterministic `base_pt` quantization, and terminal
+  conversion warnings. COM and XML now use the same operation keys and
+  preflight before document work; base_pt is quantized at 0.1pt in [1,100]pt.
+  This remains a lexical envelope only, with
+  no HwpEqn semantic, native/render/layout, PDF, or parity proof.
+
 - **T91:** added the separate `rigorloom/hwp-equation-diagnostic/v1`
   receipt-only HWPX equation-envelope inventory. It resolves section order
   from the validated OPF spine and recognizes the official paragraph

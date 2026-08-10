@@ -15,8 +15,8 @@
 | `find_delete` | find | required(기본 true) | 문구 문단 삭제. required:false면 미발견 시 skip |
 | `move` | | to(doc_end/doc_start/line_end) | 커서 이동 |
 | `insert_text` | text | pt, break_after | 커서 위치에 텍스트 삽입(pt=글자크기 강제, break_after=삽입 뒤 BreakPara로 새 문단 — 리터럴 "\r\n"과 달리 인접 서식 오염 없음) |
-| `insert_equation` | | latex/hwpeqn, display, base_pt | 수식 삽입(latex→HwpEqn 변환) |
-| `edit_equation` | | index, hwpeqn | 기존 수식 편집 |
+| `insert_equation` | | exactly one of `latex`/`hwpeqn`; `display`, `base_pt`, `font` | `rigorloom/hwpeqn/v1` shared preflight; closed keys only (`op`, source, `display`, `base_pt`, `font`), deterministic 0.1pt base_pt quantization ([1,100]pt), terminal conversion warnings |
+| `edit_equation` | | exactly one of `latex`/`hwpeqn`; non-negative integer `index` | same shared preflight; closed keys only (`op`, source, `index`) |
 | `insert_table` | data | treat_as_char, caption, col_ratios, font_pt | 표 삽입(data=행렬 리스트). col_ratios=정규화 비율 리스트(합=1.0, len==열개수) — HTableCreation WidthType=2 직접 경로. font_pt=셀 텍스트 크기(insert-then-select) |
 | `insert_picture` | path | width_mm, own_paragraph | 그림 삽입 |
 | `set_cell` | text | **addr=[row,col]**, table, expect_empty, expect, (레거시) raw_traversal+row+col | 표 셀 값. `addr`은 **cellAddr**(form_inspect table_map의 addr) — 이동은 걸음마다 `get_cell_addr()`로 검증하고 어긋나면 쓰지 않는다. `expect_empty`/`expect`는 선행조건 가드(권장). `row`/`col`은 **키 입력 횟수**이지 주소가 아니다(T28) → `raw_traversal: true` 없이는 거부 |

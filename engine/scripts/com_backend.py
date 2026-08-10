@@ -64,7 +64,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cli_io import utf8_stdio  # noqa: E402
-from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
+from eqn import (base_pt_to_hwpunit, validate_equation_operation)  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -808,14 +808,16 @@ def op_set_para_align(hwp, o):
     return {"align": align}
 
 
-def op_insert_equation(hwp, o):
-    if "hwpeqn" in o:
-        script, warns = o["hwpeqn"], []
-    else:
-        script, warns = latex_to_hwpeqn(o["latex"])
-    ok, msg = hwpeqn_sanity_check(script)
+def _checked_equation_script(o):
+    """Resolve exactly one equation input and apply the shared preflight."""
+    script, warns, ok, msg = validate_equation_operation(o)
     if not ok:
-        raise RuntimeError(f"수식 스크립트 검증 실패({msg}): {script}")
+        raise RuntimeError(f"equation preflight failed ({msg})")
+    return script, warns
+
+
+def op_insert_equation(hwp, o):
+    script, warns = _checked_equation_script(o)
     # display=true: 큰 수식은 본문 문단에 끼지 않고 자기 문단(가운데)에 둔다.
     # 커서가 문단 중간이면 새 문단을 열고, 이미 문단 맨 앞(앞 문단이 \r\n로 끝남)이면
     # 새로 열지 않는다 — 안 그러면 lead-in과 수식 사이에 빈 문단이 끼어 빈 줄이 쌓인다.
@@ -825,7 +827,8 @@ def op_insert_equation(hwp, o):
     pset = hwp.HParameterSet.HEqEdit
     hwp.HAction.GetDefault("EquationCreate", pset.HSet)
     pset.string = script
-    pset.BaseUnit = int(o.get("base_pt", 10) * 100)  # 1pt = 100 HwpUnit
+    pset.BaseUnit = (base_pt_to_hwpunit(o["base_pt"])
+                     if "base_pt" in o else base_pt_to_hwpunit())
     if o.get("font"):
         pset.EqFontName = o["font"]
     hwp.HAction.Execute("EquationCreate", pset.HSet)
@@ -844,10 +847,7 @@ def op_insert_equation(hwp, o):
 
 
 def op_edit_equation(hwp, o):
-    if "hwpeqn" in o:
-        script, warns = o["hwpeqn"], []
-    else:
-        script, warns = latex_to_hwpeqn(o["latex"])
+    script, warns = _checked_equation_script(o)
     idx, cur = o["index"], 0
     ctrl = hwp.HeadCtrl
     while ctrl:
@@ -1586,6 +1586,7 @@ OP_REQUIRED_KEYS = {
     "insert_blank_before": ("text",),
     "page_break_before": ("text",),
     "set_cell": ("text",),
+    "edit_equation": ("index",),
 }
 
 
@@ -1638,6 +1639,13 @@ def _validate_ops(payload):
         for k in OP_REQUIRED_KEYS.get(name, ()):
             if k not in o:
                 _die(f"ops[{i}] ({name}): 필수 키 {k!r} 없음")
+        if name in ("insert_equation", "edit_equation"):
+            try:
+                _checked_equation_script(o)
+            except (RuntimeError, TypeError, ValueError):
+                # Do not include LaTeX/HwpEqn input in a public validation
+                # error, and reject before starting the COM process.
+                _die(f"ops[{i}] ({name}): equation preflight failed")
         if name == "set_cell":
             _validate_set_cell(i, o)
     return ops

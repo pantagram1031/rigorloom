@@ -1076,7 +1076,7 @@ base_pt: 10
 
 본문.
 
-[[EQ latex="\\\\frac{1}{2}mv^2"]]
+[[EQ latex="\\frac{1}{2}mv^2"]]
 
 본문 뒤.
 """
@@ -1091,7 +1091,7 @@ base_pt: 10
 
 본문.
 
-[[EQ display latex="\\\\frac{1}{2}mv^2"]]
+[[EQ display latex="\\frac{1}{2}mv^2"]]
 
 본문 뒤.
 """
@@ -1662,7 +1662,7 @@ base_pt: 10
 
 ## SECTION: I.  서론
 
-앞부분 [[EQ latex="x[n] = \\\\sin(n)"]] 뒷부분입니다.
+앞부분 [[EQ latex="x[n] = \\sin(n)"]] 뒷부분입니다.
 """
 
 

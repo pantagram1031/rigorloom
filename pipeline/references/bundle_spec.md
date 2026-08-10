@@ -48,7 +48,10 @@ bundle/
 - **v2 기본값 = inline** (CONTRACT_v0.6 §O, S1 검증: COM `EquationCreate` 문장 중간
   `treatAsChar="1"`). 예시 편집 관습 = 수식이 문장 흐름에 붙음. `display` 키워드가 있을 때만
   자기 문단(가운데) 블록. (v1.1은 display가 기본이었음 — 반대로 뒤집혔다.)
-- latex 또는 hwpeqn 중 하나. latex면 eqn.py 변환 + sanity check를 거친다.
+- `latex` 또는 `hwpeqn` 중 정확히 하나만 허용한다. 두 입력은
+  `rigorloom/hwpeqn/v1` 공용 bounded preflight를 거치며, 변환 warning이나
+  원점이 모호한 native 토큰은 terminal refusal이다. 이는 HwpEqn 의미론,
+  native 실행, render/layout/PDF 또는 parity를 증명하지 않는다.
 - inline 식은 한 줄에 확실히 들어가는 짧은 식이어야 자연스럽다(집필 책임).
 - display를 쓸 때 앞 문장은 "...다음과 같다." 류로 끝나야 자연스럽다 (집필 시 책임).
 

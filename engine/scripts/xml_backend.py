@@ -20,6 +20,8 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from cli_io import utf8_stdio  # noqa: E402
+from eqn import (base_pt_to_hwpunit, count_hweqn_identifier,
+                 hwpeqn_sanity_check, validate_equation_operation)  # noqa: E402
 
 
 SUPPORTED_OPS = {
@@ -131,17 +133,7 @@ def has_visible_table_borders(border_fill):
 
 
 def balanced_equation_script(script):
-    if not isinstance(script, str) or not script.strip():
-        return False
-    pairs = {"}": "{", "]": "["}
-    stack = []
-    for char in script:
-        if char in "{[":
-            stack.append(char)
-        elif char in pairs:
-            if not stack or stack.pop() != pairs[char]:
-                return False
-    return not stack
+    return hwpeqn_sanity_check(script)[0]
 
 
 def load_ops(path):
@@ -603,20 +595,17 @@ class HwpxDocument:
         return result
 
     def insert_equation(self, cursor, op):
-        script = op.get("hwpeqn")
-        if not balanced_equation_script(script):
+        script, _warnings, ok, _reason = validate_equation_operation(op)
+        if not ok:
             raise LookupError("insert_equation")
-        base_pt = op.get("base_pt")
-        equation_charpr = cursor["charpr"]
-        requested_height = None
-        if base_pt is not None:
-            if (not isinstance(base_pt, (int, float)) or isinstance(base_pt, bool)
-                    or base_pt <= 0):
-                raise LookupError("insert_equation")
-            requested_height = round(base_pt * 100)
-            equation_charpr = self._nearest_charpr(self.normal_charprs, requested_height)
-            if equation_charpr is None:
-                raise LookupError("insert_equation")
+        try:
+            requested_height = (base_pt_to_hwpunit(op["base_pt"])
+                                if "base_pt" in op else base_pt_to_hwpunit())
+        except ValueError:
+            raise LookupError("insert_equation")
+        equation_charpr = self._nearest_charpr(self.normal_charprs, requested_height)
+        if equation_charpr is None:
+            raise LookupError("insert_equation")
         if op.get("display"):
             if self.center_parapr is None or self.justify_parapr is None:
                 raise LookupError("insert_equation")
@@ -644,7 +633,7 @@ class HwpxDocument:
         usable_width = self._section_usable_width(cursor)
         if usable_width:
             equation_width = min(equation_width, usable_width)
-        over_count = script.count("over")
+        over_count = count_hweqn_identifier(script, "over")
         if over_count == 0:
             equation_height = round(height * 1.365)
             equation_baseline = "76"
@@ -1142,7 +1131,7 @@ def main(argv=None):
             name = op["op"]
             if name not in SUPPORTED_OPS and name not in unsupported:
                 unsupported.append(name)
-            elif name == "insert_equation" and not balanced_equation_script(op.get("hwpeqn")):
+            elif name == "insert_equation" and not validate_equation_operation(op)[2]:
                 if name not in unsupported:
                     unsupported.append(name)
         if unsupported:
