@@ -111,12 +111,15 @@ blocker; pass 2 requires an all-pages vision verdict. Missing required text,
 visible forbidden text, malformed/non-empty XML, or invalid parity remains a
 failure.
 
-The current native evidence is one public/sanitized header fixture converted
-with Windows Hancom and reviewed on its single rendered page. Footer,
-footnote, and endnote success paths have synthetic structural coverage only;
-they are not native-render parity claims. The independent render-quality
-checker classified that header as `unknown/unsupported_graphics_state`, not as
-a quality pass.
+The current native evidence includes one public/sanitized header plus
+disposable synthetic-donor footer, footnote, and endnote probes converted with
+Windows Hancom and reviewed on every rendered page. The three donor probes
+prove bounded story execution/render placement, not Hancom-authored note
+anchors, numbering, continuation, or native insertion. The independent
+render-quality checker classified all of these runs as
+`unknown/unsupported_graphics_state`, never as a quality pass. Exact hashes,
+page deltas, and the evidence-class boundary are recorded in
+[`docs/research/story-role-native-evidence.md`](research/story-role-native-evidence.md).
 
 ## 1. Clone and bootstrap
 
