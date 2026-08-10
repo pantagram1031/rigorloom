@@ -20,7 +20,7 @@ LaTeX와 유사하나 **백슬래시 없음**, 분수는 `over`, 그룹은 `{}`.
 
 ## 연산자/기호
 `+-`(±) `-+`(∓) `times` `div` `cdot` `leq` `geq` `neq` `approx` `equiv`
-`prop`(∝) `inf`(∞) `partial` `del`(∇) `therefore` `because` `angle`
+`propto`(∝) `inf`(∞) `partial` `del`(∇) `therefore` `because` `angle`
 `rarrow`(→) `larrow`(←) `lrarrow`(↔) `RARROW`(⇒) `LRARROW`(⇔)
 `in` `notin` `subset` `cup` `cap` `forall` `exist` `emptyset`
 `cdots` `ldots` `vdots` `ddots` `prime` `hbar`
@@ -55,15 +55,19 @@ eqalign{y &= ax+b # &= 2x+1}    & 위치에서 정렬
 가우스 적분:    int _{0} ^{inf} e^{-x^{2}} `dx = {sqrt {pi}} over {2}
 음압 레벨:      L_{p} = 10 log {p^{2}} over {p_{0}^{2}} ~rm{[dB]}
 운동에너지:     E_{k} = {1} over {2} mv^{2}
-미분 정의:      f'(x) = lim _{h rarrow 0} {f(x+h)-f(x)} over {h}
+미분 정의:      f^{prime}(x) = lim _{h rarrow 0} {f(x+h)-f(x)} over {h}
 ```
 
 ## LaTeX→HwpEqn 자동 변환
-`python scripts/eqn.py "<latex>"` — warnings가 비어 있으면 그대로 사용 가능.
-warnings가 있으면 해당 부분만 이 치트시트로 수동 보정.
+`python scripts/eqn.py "<latex>"` — conversion warnings are terminal
+refusals; do not manually patch a warningful result into an operation.
+Warning-free output clears only the bounded conversion/lexical envelope and
+still requires backend and render verification.
 
 ## 주의
-- 글꼴 기본값은 HancomEQN. `EqFontName`으로 HYhwpEQ 등 변경 가능.
+- The shared v1 operation envelope permits only `HancomEQN` (or an omitted
+  font).  Alternate `EqFontName` values are a COM-only implementation detail,
+  outside this lexical contract.
 - BaseUnit은 HwpUnit(1pt=100) — 본문 10pt 문서에는 1000~1100이 자연스럽다.
-- 중괄호 짝과 `"` 짝이 안 맞으면 수식 전체가 깨진다 (eqn.py의 sanity check 활용).
+- 중괄호 짝과 `"` 짝이 안 맞으면 T92 bounded preflight가 terminal refusal한다.
 - `log{A}over{B}` 형태에서 over는 직전 그룹에만 적용되어 log가 분자에 묶이지 않음 (2026-06-11 PDF 검증 완료).

@@ -97,8 +97,9 @@ ops 예시 (위에서 아래로 순차 실행):
 ### 수식 (한글 수식 편집기 형식)
 - `insert_equation`에 `latex`를 주면 내장 변환기(`scripts/eqn.py`)가 HwpEqn 스크립트로
   변환해 `EquationCreate` 액션으로 삽입한다. 글꼴은 기본 HancomEQN.
-- 변환이 의심스러우면 먼저 단독 실행으로 확인:
-  `python SKILL_DIR/scripts/eqn.py "\frac{1}{2}mv^2"` → warnings 비어 있는지 확인.
+- 변환은 `rigorloom/hwpeqn/v1` bounded lexical contract를 따른다. 단독 실행:
+  `python SKILL_DIR/scripts/eqn.py "\frac{1}{2}mv^2"` — CLI 0은 warning-free
+  lexical envelope만 뜻하며, 2는 usage, 3은 terminal refusal이다.
 - 복잡한 수식은 `hwpeqn` 키로 스크립트를 직접 줄 것 (문법: references/hwpeqn_cheatsheet.md).
 - 기존 수식 수정은 `edit_equation` + `index` (inspect 출력의 equations 배열 인덱스).
 
@@ -114,7 +115,8 @@ ops 예시 (위에서 아래로 순차 실행):
   ```
   `--dry-run`은 한글 미실행, ops만 출력(단위 테스트). `--form`은 inspect로 SECTION 앵커를
   양식 항목 제목과 대조하고 **하나라도 불일치하면 중단**(우회 금지 — content.md를 고친다).
-- 생성 규칙: 수식=`insert_equation`(display 기본, latex는 eqn.py+sanity), 그림=
+- 생성 규칙: 수식=`insert_equation`(display 기본, latex는 eqn.py bounded
+  preflight), 그림=
   `insert_picture`(own_paragraph+width_mm), 표=`insert_table`(plain). 인라인 객체 원칙과
   동일. 조립 후 검증은 위의 레이아웃 QA + 시각 이중 게이트 그대로 적용.
 - **v0.3.0 메타/동작**(bundle_spec 참고): `base_pt`(기본 10, 본문·수식·캡션·URL에 글자크기
@@ -165,10 +167,10 @@ ops 예시 (위에서 아래로 순차 실행):
 | 삽입 본문이 파란색(또는 안내문 색) | 색 안내문 위치 상속. `set_char_color`로 일괄 검정. PDF에서 색 글자 0 확인 |
 | 표에 숫자 헤더·인덱스 열 오염 | DataFrame 경유 삽입. 순수 2D 리스트로 `insert_table`(plain). 기존 표는 `delete_ctrls`(tbl) 후 재삽입 |
 | 콤마 든 문구가 일부만 지워짐(콤마 잔존) | `replace_all`이 콤마로 분리. `find_delete` 사용 |
-| 수식이 깨져 보임 | HwpEqn 문법 오류. eqn.py 단독 실행으로 warnings 확인 후 hwpeqn 직접 작성 |
+| equation preflight refuses or looks broken | conversion warnings are terminal under `rigorloom/hwpeqn/v1`; fix the source and rerun the bounded preflight, then verify backend/render output. Direct `hwpeqn` is an explicit separate input lane |
 | 저장 후 한글에서 "복구" 경고 | XML 백엔드에서 DOM 재직렬화를 했을 가능성 — 바이트 보존 경로만 사용 |
 | COM이 응답 없음 | 작업관리자에서 Hwp.exe 잔존 프로세스 종료 후 재시도 |
-| 수식이 `\frac`·`≤ ft`처럼 raw로 렌더 | bundle latex 속성이 이중 백슬래시(`\\frac`). eqn.py가 v0.2.1부터 정규화하지만 content.md는 단일 백슬래시 권장 |
+| equation renders raw (for example `\\frac`) | use one decoded backslash in LaTeX; decoded double-backslashes are not globally normalized. Matrix row separators must be exactly two backslashes inside a supported matrix environment |
 | 섹션 본문이 마지막 섹션(Ⅵ 참고문헌) 뒤로 밀림 | 옛 insert_table이 MoveDocEnd로 커서를 문서 끝으로 보냄. v0.2.1에서 표 바로 뒤로 복귀하도록 수정 |
 | 제목과 본문이 한 줄에 붙음("Ⅵ.참고문헌David…") | build_report가 goto 후 본문을 같은 문단에 삽입. v0.2.1에서 제목 뒤 새 문단 분리 |
 | 캡션이 그림과 떨어져 페이지가 갈림 | 객체 op의 leading `\r\n`이 캡션과 객체 사이 빈 문단을 만듦. v0.2.1에서 문단 맨 앞이면 생략(`_para_offset`) |
@@ -182,6 +184,6 @@ ops 예시 (위에서 아래로 순차 실행):
 | 초록을 빼고 싶다 | bundle `abstract: false` → `delete_ctrls`(tbl, abstract_table_index 기본1=초록표). content.md에서 초록 섹션 제거 |
 
 ## 5. 참고 문서
-- `references/hwpeqn_cheatsheet.md` — 한글 수식 스크립트 문법 전체
+- `references/hwpeqn_cheatsheet.md` — 한글 수식 스크립트의 주요/지원 문법
 - `references/com_api_reference.md` — pyhwpx/HAction 패턴 모음
 - `INSTALL.md` — Claude Code / Codex / Cowork / claude.ai 배포 방법
