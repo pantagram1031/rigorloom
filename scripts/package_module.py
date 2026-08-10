@@ -154,6 +154,7 @@ _CORE_REQUIRED_FILES = (
     "scripts/package_module.py",
     "pipeline/scripts/module_registry.py",
     "pipeline/scripts/hwp_ingress.py",
+    "pipeline/scripts/hwp_diagnostic_candidate.py",
     "pipeline/adapters_impl/__init__.py",
     "pipeline/adapters_impl/bundle_backend.py",
     "pipeline/adapters_impl/docx_backend.py",

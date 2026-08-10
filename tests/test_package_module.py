@@ -258,12 +258,30 @@ class TestCoreBundle:
             assert "ModuleNotFoundError" not in completed.stderr
             assert "adapters_impl" not in completed.stderr
 
+        diagnostic_help = subprocess.run(
+            [sys.executable,
+             str(install / "pipeline" / "scripts" / "hwp_diagnostic_candidate.py"),
+             "--help"],
+            cwd=install,
+            env=env,
+            capture_output=True,
+            encoding="cp949",
+            errors="replace",
+            timeout=30,
+        )
+        assert diagnostic_help.returncode == 0, (
+            diagnostic_help.stdout, diagnostic_help.stderr)
+        assert "rhwp" in diagnostic_help.stdout.lower()
+        assert "Traceback" not in diagnostic_help.stderr
+        assert "ModuleNotFoundError" not in diagnostic_help.stderr
+
         names = set()
         with zipfile.ZipFile(bundle) as archive:
             names.update(archive.namelist())
         assert "pipeline/scripts/story_graph.py" in names
         assert "pipeline/scripts/story_edit.py" in names
         assert "pipeline/scripts/hwp_ingress.py" in names
+        assert "pipeline/scripts/hwp_diagnostic_candidate.py" in names
         assert "pipeline/adapters_impl/__init__.py" in names
         assert "pipeline/adapters_impl/bundle_backend.py" in names
         assert "pipeline/adapters_impl/docx_backend.py" in names

@@ -6,6 +6,20 @@ table map, break state) and draft build.yaml. Feeds §N cast-off.
 
 ENTRY: `pipeline_ctl resume` → stage 0. request.yaml complete.
 
+T86 is a separate diagnostic branch for a binary HWP that needs an explicit
+`rhwp` probe. It is optional and never changes this Stage-0 intake contract:
+pre-create `work/stage-0/scratch/hwp-diagnostic`, supply an opaque run id plus
+an explicit `--rhwp` binary and mandatory `--rhwp-sha256`, and run
+`pipeline/scripts/hwp_diagnostic_candidate.py`. The only allowed result is a
+quarantine-relative `<run-id>/candidate.hwpx` with
+`rigorloom/hwp-diagnostic-candidate/v1`; comparison is `unknown`, render is
+`not_run`, and proof is `none`. Do not copy it to `output/form_copy.hwpx`, do
+not create an ingress/backend receipt, and do not call
+`new_report --ingress-receipt`. T86 has no pyhwp or LibreOffice fallback; a
+refusal leaves no owned candidate or receipt and does not advance this stage.
+An unowned empty reservation or raced foreign path may be preserved for safety;
+it cannot verify and must never be treated as Stage-0 input.
+
 For the `conditions-only` alias, the agent first derives a short set of topic
 candidates from the recorded constraints and pauses for the human
 `topic_pick`; write the selected topic to `request.yaml` before normal form
