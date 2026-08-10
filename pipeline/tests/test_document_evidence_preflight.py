@@ -1,7 +1,6 @@
 import json
 import hashlib
 import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -13,18 +12,13 @@ sys.path.insert(0, str(ENGINE))
 
 import document_evidence  # noqa: E402
 import submission_preflight  # noqa: E402
+from hwpx_test_utils import write_hwpx  # noqa: E402
 
 
 def _workspace(tmp_path: Path, grade: str = "hancom") -> tuple[Path, Path]:
     ws = tmp_path / "ws"
     (ws / "output" / "proof" / "backend").mkdir(parents=True)
-    with zipfile.ZipFile(ws / "output" / "submission.hwpx", "w") as archive:
-        archive.writestr(
-            "Contents/section0.xml",
-            '<doc xmlns:hp="urn:hancom"><hp:p>content</hp:p></doc>',
-        )
-    # Artifact reopen is patched below; this file is only used to exercise the
-    # receipt handshake without a corpus or a renderer.
+    write_hwpx(ws / "output" / "submission.hwpx", body="content")
     (ws / "PIPELINE.md").write_text(
         '```yaml\ncanonical_output: "output/submission.hwpx"\n```\n',
         encoding="utf-8")
@@ -51,11 +45,7 @@ def _valid_receipt(ws: Path, artifact: Path, grade: str = "hancom"):
     if artifact.suffix.lower() == ".pdf":
         input_path = ws / "output" / "receipt-input.hwpx"
         if not input_path.exists():
-            with zipfile.ZipFile(input_path, "w") as archive:
-                archive.writestr(
-                    "Contents/section0.xml",
-                    '<doc xmlns:hp="urn:hancom"><hp:p>receipt input</hp:p></doc>',
-                )
+            write_hwpx(input_path, body="receipt input")
         output_path = artifact
     else:
         input_path = artifact

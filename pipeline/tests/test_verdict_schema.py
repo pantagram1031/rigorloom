@@ -20,7 +20,6 @@ import json
 import sys
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -29,6 +28,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 import submission_preflight  # noqa: E402
 import verdict_schema  # noqa: E402
+from hwpx_test_utils import write_hwpx  # noqa: E402
 
 
 class ContradictionFindingsTests(unittest.TestCase):
@@ -117,12 +117,8 @@ class PreflightRejectsContradictionTests(unittest.TestCase):
             'output_filename: "submission.hwpx"\nrequired_fields: []\n',
             encoding="utf-8",
         )
-        with zipfile.ZipFile(self.ws / "output" / "submission.hwpx", "w") as z:
-            z.writestr(
-                "Contents/section0.xml",
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<doc xmlns:hp="urn:hancom"><p>31415 Lee</p></doc>',
-            )
+        write_hwpx(
+            self.ws / "output" / "submission.hwpx", body="31415 Lee")
         (self.ws / "output" / "rendered.pdf").write_bytes(b"native pdf")
         (self.ws / "output" / "proof" / "backend").mkdir(parents=True)
         receipt = submission_preflight.document_evidence.build_receipt(
