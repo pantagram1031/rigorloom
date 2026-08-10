@@ -250,6 +250,29 @@ unknown, render is not_run, proof none, and submission false. Never route this
 receipt to ingress, Stage 0, canonical output, rendering, or `new_report`; no
 syhwp installation, execution, or download occurs.
 
+## 0A.5. T90 bounded HWP DocInfo coverage
+
+T90 is a second source-side receipt, not an eligibility gate. Pre-create the
+exact `work/stage-0/scratch/hwp-docinfo-coverage` leaf:
+
+```sh
+python pipeline/scripts/hwp_docinfo_coverage.py inspect INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-docinfo-coverage --run-id HEX
+python pipeline/scripts/hwp_docinfo_coverage.py verify INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-docinfo-coverage --run-id HEX
+```
+
+The scanner reuses the immutable T85/T89 source snapshot, checks the exact
+DocInfo record envelope, binds IDMappings counts to physical definition groups,
+and range-checks zero-based BodyText ParaShape, Style, and CharShape IDs.
+ParaCharShape positions use HWP WCHAR/control-stream units; they are not visible
+text offsets. Definition payload meaning, numbering/bullet state, style
+redirects, split state, and versioned tails remain explicitly unscanned.
+Only `<root>/<run-id>/receipt.json` is published. Eligibility and comparison
+remain unknown, render not run, proof none, and submission false; analyzed and
+refused results exit 3 and cannot enter ingress, Stage 0, canonical output,
+rendering, `new_report`, or submission.
+
 ## 1. story_graph
 
 ```

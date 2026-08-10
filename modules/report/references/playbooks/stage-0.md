@@ -42,6 +42,14 @@ are not compared. Its ceiling is `diagnostic_only`; source fidelity is not estab
 receipt into canonical output, ingress/backend evidence, Stage 0, or
 `new_report`; do not substitute `syhwp`.
 
+T89 and T90 are receipt-only source diagnostics and likewise cannot satisfy a
+Stage-0 entry condition. T89 inventories bounded BodyText record/control
+coverage under `hwp-source-coverage`; T90 binds DocInfo definition cardinality
+and zero-based BodyText IDs under `hwp-docinfo-coverage`. Both preserve
+comparison unknown, render not run, proof none, submission false, and exit 3
+after every analysis/refusal. Do not copy either receipt into canonical output
+or reinterpret count/reference coverage as source fidelity or native proof.
+
 For the `conditions-only` alias, the agent first derives a short set of topic
 candidates from the recorded constraints and pauses for the human
 `topic_pick`; write the selected topic to `request.yaml` before normal form

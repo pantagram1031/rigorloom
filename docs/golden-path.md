@@ -177,6 +177,28 @@ source fidelity, conversion parity, native execution, render, or submission
 evidence. Never route it to Stage 0, canonical output, rendering, or
 `new_report`; syhwp is not installed or executed.
 
+## 0A.5 Bounded HWP DocInfo reference coverage (T90)
+
+To check whether the source's zero-based DocInfo definition counts and
+BodyText ID references are internally bounded, pre-create the separate leaf:
+
+```sh
+python pipeline/scripts/hwp_docinfo_coverage.py inspect INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-docinfo-coverage --run-id HEX
+python pipeline/scripts/hwp_docinfo_coverage.py verify INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-docinfo-coverage --run-id HEX
+```
+
+T90 checks one direct-root DocInfo record envelope, the detailed
+DocumentProperties/IDMappings forms, physical definition-group cardinality,
+and ParaShape/Style/CharShape ID bounds from the same captured bytes. ID 0 is
+the first actual definition, never a null shortcut. Definition payload
+semantics, generated numbering/bullets, style redirects, split state, and
+versioned tails remain unscanned; all results therefore keep eligibility and
+comparison unknown, render not run, proof none, and submission false. The
+receipt is not source fidelity, conversion parity, native execution, render,
+or submission evidence and must never enter Stage 0 or canonical output.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table
