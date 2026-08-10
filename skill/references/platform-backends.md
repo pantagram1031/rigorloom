@@ -65,6 +65,7 @@ matching render artifact.
 | `hwplib` / `hwpxlib` | Apache-2 Java readers/writers provide structural HWP/HWPX operations. | No renderer/PDF proof and no broad Hancom parity certification. | Structural conversion quorum only; not an evidence backend. |
 | `rhwp` | MIT open-source HWP/HWPX read/write/conversion and SVG diagnostics. | Upstream claims and small fixture probes do not establish universal fidelity; complex layout/PDF performance remain below the release ceiling. | `oss_preview_rhwp` is diagnostic and hard-blocked from submission. |
 | T86 `hwp_diagnostic_candidate.py` | Explicit, pinned `rhwp export-hwpx` candidate under `work/stage-0/scratch/hwp-diagnostic`; no automatic discovery. | It is an independent diagnostic oracle with comparison `unknown`, render `not_run`, and proof `none`; the quarantined receipt is not an executable evidence backend. | Keep it outside `output/proof/backend/receipt.json`, `output/form_copy.hwpx`, Stage 0, and `new_report --ingress-receipt`; no pyhwp or LibreOffice fallback. |
+| T87 `hwp_java_diagnostic_candidate.py` | Explicit Java launcher pin plus one fat JAR matching the shipped hwp2hwpx/hwplib/hwpxlib lock; fixed source bridge; bounded quarantine only. | Launcher rehash does not bind the surrounding JRE. JAR execution, package reopen, and structural counts do not prove independent semantic, page, native-Hancom, render, or submission parity. | Keep `runtime_binding=launcher_rehashed_runtime_unbound`, comparison `unknown`, render `not_run`, proof `none`; never feed the Java candidate/receipt to T85, Stage 0, backend evidence, or `new_report`. |
 | Poppler / MuPDF / Ghostscript | Cross-platform PDF parsing, rasterization, and PDF conversion utilities. | They do not edit or understand HWP/HWPX semantics. | `pdf_only` is a downstream PDF utility/refusal, never an HWP proof route. |
 
 ## Source register
@@ -79,7 +80,7 @@ matching render artifact.
 - [Hancom HWP SDK](https://download.hancom.com/product/sdk/hwpSdk)
 - [LibreOffice HWP filter warning (silent corruption for newer formats)](https://github.com/LibreOffice/core/blob/master/hwpfilter/README.md)
 - [`pyhwp` repository](https://github.com/mete0r/pyhwp) and [PyPI package](https://pypi.org/project/pyhwp/)
-- [`hwplib`](https://github.com/neolord0/hwplib) and [`hwpxlib`](https://github.com/neolord0/hwpxlib)
+- [`hwp2hwpx`](https://github.com/neolord0/hwp2hwpx), [`hwplib`](https://github.com/neolord0/hwplib), and [`hwpxlib`](https://github.com/neolord0/hwpxlib); T87 pins exact commits and an audited third-party fat-JAR mapping in its research note
 - [`rhwp` English README](https://github.com/edwardkim/rhwp/blob/main/README_EN.md)
 - [`rhwp` v0.8.2 source tree](https://github.com/edwardkim/rhwp/tree/v0.8.2), [release](https://github.com/edwardkim/rhwp/releases/tag/v0.8.2), and [CLI usage](https://github.com/edwardkim/rhwp/blob/v0.8.2/README_EN.md#cli-usage)
 - [Poppler](https://poppler.freedesktop.org/), [MuPDF](https://mupdf.com/), and [Ghostscript](https://www.ghostscript.com/)

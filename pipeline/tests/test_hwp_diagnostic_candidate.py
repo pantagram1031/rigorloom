@@ -812,3 +812,31 @@ def test_verify_rejects_receipt_symlink_without_following(tmp_path: Path,
     except (OSError, NotImplementedError):
         pytest.skip("file symlinks unavailable")
     assert diagnostic.verify_diagnostic(root, RUN_ID)["reason"] == "receipt_invalid"
+
+
+def test_t86_runtime_delegates_snapshot_to_extracted_core(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The T87 extraction keeps bounded snapshot logic in the shared core."""
+    target = tmp_path / "snapshot.bin"
+    target.write_bytes(b"core-hook")
+    seen: list[tuple[Path, int, str]] = []
+    original = diagnostic._core.read_regular_once
+
+    def hook(path: Path, limit: int, reason: str):
+        seen.append((Path(path), limit, reason))
+        return original(path, limit, reason)
+
+    monkeypatch.setattr(diagnostic._core, "read_regular_once", hook)
+    assert diagnostic._read_regular_once(target, 64, "snapshot_invalid") == b"core-hook"
+    assert seen == [(target, 64, "snapshot_invalid")]
+
+
+def test_core_root_helper_supports_explicit_java_leaf_without_broadening_t86(
+        tmp_path: Path):
+    java_root = tmp_path / "hwp-java-diagnostic"
+    java_root.mkdir()
+    assert diagnostic._core.prepare_root(
+        java_root, expected_leaf="hwp-java-diagnostic") == java_root.resolve()
+    with pytest.raises(diagnostic._core.CoreError) as exc:
+        diagnostic._core.prepare_root(java_root)
+    assert exc.value.reason == "diagnostic_root_invalid"

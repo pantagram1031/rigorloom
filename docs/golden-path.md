@@ -116,6 +116,30 @@ foreign path may remain and blocks that run id; it never verifies or enters
 canonical processing. `verify` rechecks the exact receipt and current
 candidate bytes.
 
+## 0A.2 Quarantined Java diagnostic candidate (T87)
+
+T87 is a separate operator-supplied Java experiment, not another ingress
+adapter. Create the exact leaf and use only the release-approved fat-JAR hash:
+
+```sh
+mkdir -p work/stage-0/scratch/hwp-java-diagnostic
+python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp \
+  --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef \
+  --java <explicit-java> --java-sha256 <64-lowercase-hex> \
+  --tool-jar <approved-hwp2hwpx-fat-jar>
+```
+
+The source first passes T85. The fixed source bridge runs with one staged JAR,
+closed JVM flags/environment, process-tree containment, bounded output, and
+no network/Maven discovery. The Java launcher is rehashed but the surrounding
+runtime is deliberately labeled unbound. The wrapper canonicalizes only the
+known ZIP envelope and closed absent auxiliary-rootfile defect, records that
+count, then requires the unchanged T85 HWPX validator. The receipt is
+`rigorloom/hwp-java-diagnostic-candidate/v1` with comparison `unknown`, render
+`not_run`, proof `none`, and submission false. Both raw candidate layout and
+receipt are rejected by `new_report`; no JAR/JRE/class/corpus bytes ship.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

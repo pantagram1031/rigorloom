@@ -1,0 +1,32 @@
+{
+  "adapter": "hwp2hwpx_java",
+  "bridge": {
+    "bytes": 1176,
+    "path": "Hwp2HwpxBridge.java",
+    "sha256": "df8cf8df7e54e9aaec50817e817afe19f8d7e2c423ff2a043e60d2714d999245"
+  },
+  "main_class": "Hwp2HwpxBridge",
+  "provenance": {
+    "embedded_hwplib": {
+      "coordinate": "kr.dogfoot:hwplib:1.1.10",
+      "jar_sha256": "fce557a7b4aff0c626c544558e0939459601a008d9378457b6183f7f3ae9d1b9",
+      "upstream_commit": "d9e073d6899d947f8f583492e00a5e1062381d7e"
+    },
+    "embedded_hwpxlib": {
+      "coordinate": "kr.dogfoot:hwpxlib:1.0.9",
+      "jar_sha256": "c2461bde566d200770100b8572ae5e944e9d63bb92642d2840affb7cd88b8566",
+      "upstream_commit": "473d9d6aa82d8896f4f464b52d801e5691dc7cf3"
+    },
+    "hwp2hwpx_upstream_commit": "50ae71bbaf98ec7a00192f72492d6a130a755ac1",
+    "source_jar_sha256": "a8c4edcc7e1a689a0c1faf81e1e4846bb86590cd6478c1bf98a06fb46aef8fc4",
+    "source_mapping": "project_sources_exact_embedded_dependency_classes_exact"
+  },
+  "runtime_binding": "launcher_rehashed_runtime_unbound",
+  "schema": "rigorloom/hwp-java-toolchain-lock/v1",
+  "tool": {
+    "bytes": 2542126,
+    "coordinate": "io.github.spah1879:hwp2hwpx:2026.6.25-jdk11",
+    "filename": "hwp2hwpx-2026.6.25-jdk11.jar",
+    "sha256": "06ba7071b9ee2f2256fa62398b5d32dc07496cb47cf764b4cf0b7c6119bd11cd"
+  }
+}
