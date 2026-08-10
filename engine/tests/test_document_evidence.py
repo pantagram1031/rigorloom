@@ -76,6 +76,43 @@ def test_advisory_release_switch_is_shared_and_default_closed(monkeypatch):
         "advisory_render", "succeeded", quality) == "advisory"
 
 
+def test_certified_release_switch_is_shared_and_default_closed(monkeypatch):
+    """The twin of the advisory switch, which was the only one pinned by value.
+
+    A flip of this flag was already caught before this test existed, by
+    ``test_closed_enums_and_grade_derivation_fail_closed`` and by the
+    ``certified_renderer`` case of ``test_successful_named_runtime_is_hash_bound``
+    — both assert the behaviour rather than the value. This test adds the value
+    pin for parity with ``ADVISORY_PROOF_RELEASE_ENABLED``, so that someone
+    grepping the flag finds a runtime guard and not only a docs-string
+    assertion, and it makes the flag's load-bearing role explicit: the mapping
+    DOES yield "certified", so this flag is the only thing holding the
+    quarantine.
+    """
+    assert evidence.CERTIFIED_PROOF_RELEASE_ENABLED is False
+    assert evidence.derive_proof_grade("certified_render", "succeeded") == "none"
+    quality = {"state": "passed"}
+    assert evidence.derive_proof_grade(
+        "certified_render", "succeeded", quality) == "none"
+    monkeypatch.setattr(evidence, "CERTIFIED_PROOF_RELEASE_ENABLED", True)
+    assert evidence.derive_proof_grade(
+        "certified_render", "succeeded") == "certified"
+
+
+def test_certified_switch_never_promotes_a_non_success_state(monkeypatch):
+    """Opening the switch must not turn a non-success state into a grade.
+
+    Guards the direction a future release flip is most likely to get wrong:
+    the switch governs promotion of a SUCCEEDED certified render, never the
+    terminal-state gate that precedes it. Asserted with the switch OPEN, since
+    with it closed every state trivially returns "none" and the test would
+    prove nothing.
+    """
+    monkeypatch.setattr(evidence, "CERTIFIED_PROOF_RELEASE_ENABLED", True)
+    for state in ("failed", "refused", "not_run", "unknown", "hash_mismatch"):
+        assert evidence.derive_proof_grade("certified_render", state) == "none"
+
+
 def test_native_unknown_type3_keeps_renderer_provenance_but_failed_downgrades(
     tmp_path,
 ):
