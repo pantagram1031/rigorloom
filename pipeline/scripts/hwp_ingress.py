@@ -639,25 +639,44 @@ def _json_bytes(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def _write_manifest(path: Path, payload: dict[str, Any]) -> tuple[int, int]:
+@dataclass(frozen=True)
+class _FileIdentity:
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    sha256: str
+
+
+def _identity_from_stat(stat: os.stat_result, digest: str) -> _FileIdentity:
+    return _FileIdentity(
+        device=getattr(stat, "st_dev", 0),
+        inode=getattr(stat, "st_ino", 0),
+        size=stat.st_size,
+        mtime_ns=getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)),
+        ctime_ns=getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000)),
+        sha256=digest,
+    )
+
+
+def _write_manifest(path: Path, payload: dict[str, Any]) -> _FileIdentity:
     if path.exists():
         raise IngressError("manifest_exists")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         raise IngressError("manifest_write_failed")
-    created_identity: tuple[int, int] | None = None
+    created_identity: _FileIdentity | None = None
+    content = _json_bytes(payload)
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
-        try:
-            stat = os.fstat(fd)
-            created_identity = (getattr(stat, "st_dev", 0), getattr(stat, "st_ino", 0))
-        except OSError:
-            created_identity = None
         with os.fdopen(fd, "wb") as stream:
-            stream.write(_json_bytes(payload))
+            stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
+            created_identity = _identity_from_stat(
+                os.fstat(stream.fileno()), sha256_bytes(content))
         if created_identity is None:
             raise IngressError("manifest_write_failed")
         return created_identity
@@ -666,20 +685,18 @@ def _write_manifest(path: Path, payload: dict[str, Any]) -> tuple[int, int]:
     except OSError:
         if created_identity is not None:
             try:
-                current = path.stat()
-                if (getattr(current, "st_dev", 0), getattr(current, "st_ino", 0)) == created_identity:
-                    path.unlink()
+                _remove_identity(path, created_identity)
             except OSError:
                 pass
         raise IngressError("manifest_write_failed")
 
 
-def _remove_identity(path: Path, identity: tuple[int, int] | None) -> None:
+def _remove_identity(path: Path, identity: _FileIdentity | None) -> None:
     if identity is None:
         return
     try:
         current = path.stat()
-        current_identity = (getattr(current, "st_dev", 0), getattr(current, "st_ino", 0))
+        current_identity = _identity_from_stat(current, sha256_file(path))
         if current_identity == identity:
             path.unlink()
     except OSError:

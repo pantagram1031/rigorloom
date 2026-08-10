@@ -26,6 +26,9 @@ the kernel's contract shape.
   the exact HWPX bytes/counts; `new_report --ingress-receipt` verifies both the
   supplied artifact and workspace copy and retains the receipt for claimed
   binary-HWP provenance.
+  Rollback removes a receipt only when its full creation identity and content
+  hash still match, so immediate POSIX inode reuse cannot delete a path that
+  another writer replaced after publication began.
   The separate `rigorloom/hwp-ingress/v1` receipt is conversion-only and
   always has `proof_grade: none`; it is never native-render evidence. Missing
   Hancom, protected input, unavailable parity, or any mismatch exits 3. No
