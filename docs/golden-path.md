@@ -83,6 +83,39 @@ binary-ingress provenance is claimed. The receipt's source hash names the
 immutable source snapshot used during conversion; it does not retain or later
 re-prove the caller's original HWP bytes if that source is deleted or changed.
 
+## 0A.1 Quarantined `rhwp` diagnostic candidate (T86)
+
+This route is deliberately separate from canonical ingress. Create the
+`hwp-diagnostic` scratch directory first, then use only an explicit binary and
+its mandatory lowercase SHA-256 pin:
+
+```sh
+mkdir -p work/stage-0/scratch/hwp-diagnostic
+python pipeline/scripts/hwp_diagnostic_candidate.py run FORM.hwp \
+  --diagnostic-root work/stage-0/scratch/hwp-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef \
+  --rhwp <explicit-rhwp-binary> --rhwp-sha256 <64-lowercase-hex>
+```
+
+The runner snapshots the source and binary, invokes the exact list
+`rhwp export-hwpx INPUT OUTPUT --verify --verify-pages` with bounded timeout
+and output, validates the HWPX with T85, and publishes only the quarantined
+`rigorloom/hwp-diagnostic-candidate/v1` pair under
+`work/stage-0/scratch/hwp-diagnostic/<opaque-run-id>/`. The receipt binds only
+the run-local candidate hash, bytes, and tables/pictures/equations counts;
+comparison is always `unknown/independent_oracle_not_run`, render is
+`not_run`, and `proof_grade` is `none`.
+
+Do not copy this candidate to `output/form_copy.hwpx`, do not write an ingress
+or backend receipt, and do not call `new_report --ingress-receipt` with it.
+T86 has no `pyhwp` or LibreOffice fallback. Source/binary drift, timeout,
+overflow, invalid output, races, and receipt mismatch exit 3 and leave no
+owned candidate or receipt. If ownership cannot be established after an
+exclusive directory reservation, an empty quarantined reservation or a raced
+foreign path may remain and blocks that run id; it never verifies or enters
+canonical processing. `verify` rechecks the exact receipt and current
+candidate bytes.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

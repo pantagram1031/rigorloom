@@ -123,6 +123,42 @@ conversion run. It does not embed or retain the source HWP, so long-term source
 custody is an operator/workspace responsibility rather than a property of
 `verify`.
 
+## 0A.1. T86 `rhwp` diagnostic candidate
+
+T86 is not a second ingress adapter. Pre-create the exact leaf
+`work/stage-0/scratch/hwp-diagnostic`; the runner refuses missing roots,
+`output` ancestors, symlinks, and arbitrary leaves. Use an opaque lowercase
+hex run id and an explicit binary plus mandatory SHA-256 pin:
+
+```sh
+python pipeline/scripts/hwp_diagnostic_candidate.py run FORM.hwp \
+  --diagnostic-root work/stage-0/scratch/hwp-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef \
+  --rhwp <explicit-rhwp-binary> --rhwp-sha256 <64-lowercase-hex>
+python pipeline/scripts/hwp_diagnostic_candidate.py verify \
+  --diagnostic-root work/stage-0/scratch/hwp-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef
+```
+
+The child argv is exactly `rhwp export-hwpx INPUT OUTPUT --verify
+--verify-pages`; source and binary snapshots are immutable, execution has a
+bounded timeout/output budget and isolated cwd, and source/binary/output are
+rehashed before exclusive receipt-first/candidate-last publication. The only
+success artifact pair is `<run-id>/candidate.hwpx` plus a closed
+`rigorloom/hwp-diagnostic-candidate/v1` receipt. Its comparison is always
+`unknown/independent_oracle_not_run`, render is `not_run`, and
+`proof_grade`/`submission_grade` are `none`/`false`.
+
+This receipt is quarantine evidence only. Do not copy it to
+`output/form_copy.hwpx`, `output/proof/ingress/receipt.json`, or a backend
+receipt, and do not pass it to `new_report --ingress-receipt`. There is no
+automatic binary discovery, `pyhwp`, or LibreOffice fallback. Missing or
+invalid HWP, pin mismatch, binary/source drift, timeout, overflow, child
+failure, invalid HWPX, receipt race, or verification drift exits 3 and leaves
+no owned candidate or receipt. If ownership cannot be proven after an
+exclusive run-directory reservation, the empty reservation or raced foreign
+path is preserved, blocks that run id, and cannot pass `verify`.
+
 ## 1. story_graph
 
 ```
