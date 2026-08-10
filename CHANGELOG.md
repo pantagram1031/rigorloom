@@ -10,6 +10,17 @@ the kernel's contract shape.
 
 ### Added
 
+- **T87:** added a separate Java HWP diagnostic-candidate lane for the
+  release-approved `hwp2hwpx` fat-JAR hash and source-visible fixed bridge.
+  It reuses the T86 bounded process/publication core, strips JVM option
+  injection variables, rehashes the explicit Java launcher while declaring
+  its surrounding runtime unbound, canonicalizes the known hwpxlib ZIP
+  envelope defect, records any pruned missing auxiliary rootfile, and publishes
+  only `rigorloom/hwp-java-diagnostic-candidate/v1` below
+  `work/stage-0/scratch/hwp-java-diagnostic`. Comparison remains `unknown`,
+  render `not_run`, proof `none`, and submission grade false. The bundle ships
+  the lock and bridge source but no JAR, JRE, class, HWP/HWPX, or corpus copy;
+  raw/receipt candidates are rejected by `new_report`.
 - **T86:** added the separate, strictly quarantined `rhwp` diagnostic-candidate
   runner. It accepts only an explicit binary plus mandatory SHA-256 pin, runs
   `rhwp export-hwpx INPUT OUTPUT --verify --verify-pages` from immutable

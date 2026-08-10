@@ -48,6 +48,13 @@ proof. Successful terminal execution must leave a current receipt at
   `new_report --ingress-receipt`, or a backend receipt. Its comparison is
   `unknown`, render is `not_run`, and proof is `none`. It has no `pyhwp` or
   LibreOffice fallback.
+- T87 `hwp_java_diagnostic_candidate.py` is a separate quarantine for one
+  release-approved hwp2hwpx fat-JAR hash and fixed source bridge. Require the
+  exact `hwp-java-diagnostic` leaf, explicit Java path/hash, and approved
+  operator-supplied JAR. The receipt declares the surrounding runtime unbound,
+  comparison unknown, render not run, proof none, and submission false. Never
+  route it through T85, Stage 0, `new_report`, or backend evidence; the bundle
+  contains no JAR/JRE/class/corpus bytes.
 - Originals are immutable: every operation writes a new file (`--out` /
   `--save-as`). Editing in place is a defect, not a shortcut.
 
@@ -74,6 +81,7 @@ receipt is local privacy-safe evidence only and always reports
 | inspect a binary HWP candidate without reading its body | `python pipeline/scripts/hwp_ingress.py inspect FORM.hwp` | LOW — CFB/FileHeader capability only |
 | canonically convert HWP to HWPX | `python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom --out OUT.hwpx --manifest RECEIPT.json` | LOW — Windows Hancom only; conversion proof is never render proof |
 | quarantine an explicit `rhwp` diagnostic candidate (T86) | `python pipeline/scripts/hwp_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-diagnostic --run-id HEX --rhwp BIN --rhwp-sha256 SHA256` | LOW — diagnostic only; never canonical or submission evidence |
+| quarantine an approved Java diagnostic candidate (T87) | `python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic --run-id HEX --java JAVA --java-sha256 SHA256 --tool-jar APPROVED.jar` | LOW — diagnostic only; runtime unbound, no parity/render/submission claim |
 | edit exactly one inventoried story paragraph (T80 structural mechanics) | `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json --out OUTPUT.hwpx --receipt RECEIPT.json` | LOW — closed ops only; no render claim |
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
 | **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |

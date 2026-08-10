@@ -159,6 +159,33 @@ no owned candidate or receipt. If ownership cannot be proven after an
 exclusive run-directory reservation, the empty reservation or raced foreign
 path is preserved, blocks that run id, and cannot pass `verify`.
 
+## 0A.2. T87 Java diagnostic candidate
+
+T87 is also quarantine-only and is not a T85 adapter. Pre-create the exact
+`work/stage-0/scratch/hwp-java-diagnostic` leaf and supply an explicit Java
+launcher plus SHA-256 and the one fat JAR whose bytes match the shipped lock:
+
+```sh
+python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp \
+  --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef \
+  --java <explicit-java> --java-sha256 <64-lowercase-hex> \
+  --tool-jar <approved-hwp2hwpx-fat-jar>
+python pipeline/scripts/hwp_java_diagnostic_candidate.py verify \
+  --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic \
+  --run-id 0123456789abcdef0123456789abcdef
+```
+
+The fixed bridge and tool snapshot run in the shared bounded process core.
+JVM option environment variables are removed. The launcher is rehashed but
+its surrounding JRE remains explicitly unbound. The wrapper canonicalizes the
+known hwpxlib ZIP envelope and records any pruned declared-but-missing Preview/
+RDF auxiliary rootfile before the unchanged T85 HWPX validator runs.
+Comparison remains `unknown`, render `not_run`, proof `none`, and submission
+false. Never copy this result into canonical output, T85/backend receipts,
+Stage 0, or `new_report`; do not install/download Maven/JAR/JRE dependencies as
+part of this runtime command.
+
 ## 1. story_graph
 
 ```
