@@ -190,6 +190,21 @@ def _same_identity(left: tuple[int, ...], right: tuple[int, ...]) -> bool:
     return tuple(left) == tuple(right)
 
 
+def _same_filesystem_node(left: Path, right: Path) -> bool:
+    """Compare two existing path spellings by filesystem identity."""
+    try:
+        return os.path.samefile(str(left), str(right))
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+
+
+def _same_bound_path(left: Path, right: Path) -> bool:
+    """Accept spelling aliases only when both names bind the same live node."""
+    left_text = os.path.normcase(os.path.normpath(str(left)))
+    right_text = os.path.normcase(os.path.normpath(str(right)))
+    return left_text == right_text or _same_filesystem_node(left, right)
+
+
 def _opened_real_path(fd: int) -> Path | None:
     """Return the kernel-resolved path for an already opened descriptor.
 
@@ -303,9 +318,7 @@ def _open_regular(path: Path, reason: str) -> tuple[int, os.stat_result]:
                     actual_value = value
                 else:
                     expected_value = value
-            actual_text = os.path.normcase(os.path.normpath(actual_value))
-            expected_text = os.path.normcase(os.path.normpath(expected_value))
-            if actual_text != expected_text:
+            if not _same_bound_path(Path(actual_value), Path(expected_value)):
                 os.close(fd)
                 raise EvidenceError({
                     "code": "artifact_parent_changed",
@@ -533,8 +546,30 @@ def _safe_relative_path(workspace: Path, value: Path | str, *, require_exists: b
             # later resolves the target.
             candidate = candidate.absolute().relative_to(workspace.absolute())
         except (OSError, ValueError) as exc:
-            raise EvidenceError({"code": "path_escape", "path": str(value),
-                                 "message": "path is outside the workspace"}) from exc
+            # Windows may expose one directory through both its 8.3 and long
+            # spellings (for example RUNNER~1 and runneradmin).  Preserve the
+            # lexical tail below the workspace instead of resolving it, so an
+            # interior junction/reparse point remains visible to the custody
+            # checks.  Only a real, non-reparse ancestor that is the same
+            # filesystem node as the workspace can bridge the two spellings.
+            relative_alias: Path | None = None
+            if os.name == "nt":
+                absolute = candidate.absolute()
+                for ancestor in absolute.parents:
+                    try:
+                        info = ancestor.lstat()
+                    except OSError:
+                        continue
+                    if (not stat.S_ISDIR(info.st_mode)
+                            or stat.S_ISLNK(info.st_mode) or _is_reparse(info)):
+                        continue
+                    if _same_filesystem_node(ancestor, workspace):
+                        relative_alias = absolute.relative_to(ancestor)
+                        break
+            if relative_alias is None:
+                raise EvidenceError({"code": "path_escape", "path": str(value),
+                                     "message": "path is outside the workspace"}) from exc
+            candidate = relative_alias
     raw = candidate.as_posix()
     if raw in {"", "."} or any(part in {"", ".", ".."} for part in candidate.parts):
         raise EvidenceError({"code": "path_escape", "path": raw,
@@ -1640,8 +1675,8 @@ class _DestinationDirectoryBinding:
                     "path": RECEIPT_REL.as_posix(),
                     "message": "receipt directory handle path unavailable",
                 })
-            expected = os.path.abspath(str(self.path))
-            if self._norm_bound(str(opened_real)) != self._norm_bound(expected):
+            expected = Path(os.path.abspath(str(self.path)))
+            if not _same_bound_path(opened_real, expected):
                 raise EvidenceError({
                     "code": "artifact_parent_changed",
                     "path": RECEIPT_REL.as_posix(),

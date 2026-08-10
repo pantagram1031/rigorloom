@@ -993,6 +993,62 @@ def test_artifact_parent_symlink_is_refused(tmp_path):
         )
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows path aliases only")
+def test_safe_relative_path_accepts_same_node_windows_spelling_alias(
+    tmp_path, monkeypatch,
+):
+    workspace = tmp_path / "workspace-short"
+    alias_root = tmp_path / "workspace-long"
+    workspace.mkdir()
+    (alias_root / "output").mkdir(parents=True)
+    candidate = alias_root / "output" / "out.hwpx"
+    candidate.write_bytes(b"artifact")
+    original = evidence._same_filesystem_node
+
+    def same_node(left, right):
+        if {Path(left), Path(right)} == {alias_root, workspace}:
+            return True
+        return original(Path(left), Path(right))
+
+    monkeypatch.setattr(evidence, "_same_filesystem_node", same_node)
+    assert evidence._safe_relative_path(workspace, candidate) == "output/out.hwpx"
+
+
+def test_open_regular_accepts_same_node_handle_spelling_alias(
+    tmp_path, monkeypatch,
+):
+    artifact = tmp_path / "artifact.hwpx"
+    artifact.write_bytes(b"artifact")
+    alternate = tmp_path / "alternate-spelling.hwpx"
+    monkeypatch.setattr(evidence, "_opened_real_path", lambda _fd: alternate)
+    monkeypatch.setattr(
+        evidence, "_same_filesystem_node",
+        lambda left, right: {Path(left), Path(right)} == {alternate, artifact},
+    )
+    fd, _info = evidence._open_regular(artifact, "regular artifact required")
+    os.close(fd)
+
+
+def test_destination_binding_accepts_same_node_handle_spelling_alias(
+    tmp_path, monkeypatch,
+):
+    destination = tmp_path / "output" / "proof" / "backend"
+    destination.mkdir(parents=True)
+    alternate = tmp_path / "alternate-backend-spelling"
+    original_opened = evidence._opened_real_path
+    monkeypatch.setattr(evidence, "_opened_real_path", lambda _fd: alternate)
+    monkeypatch.setattr(
+        evidence, "_same_filesystem_node",
+        lambda left, right: {Path(left), Path(right)} == {alternate, destination},
+    )
+    binding = evidence._DestinationDirectoryBinding.open(destination)
+    try:
+        binding.validate()
+    finally:
+        binding.close()
+    monkeypatch.setattr(evidence, "_opened_real_path", original_opened)
+
+
 def test_open_regular_requires_handle_path_binding(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
     source = _write_bound(ws, "form_copy.hwpx", b"source")

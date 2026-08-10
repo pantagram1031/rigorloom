@@ -15,7 +15,9 @@ the kernel's contract shape.
   reject interior symlink/reparse parents, bind hash/size/identity from one
   descriptor, and perform two final input/output rebind passes before the
   final receipt raw/payload/identity read. Owned rollback preserves a foreign
-  receipt replacement, and public errors remain workspace-relative. Automatic
+  receipt replacement, Windows 8.3/long path spellings are accepted only when
+  they identify the same non-reparse filesystem node, and public errors remain
+  workspace-relative. Automatic
   certified-renderer execution and promotion are quarantined behind the closed
   `certified_runtime_unbound` release gate; certificate measure/verify/check is
   diagnostic-only and derives proof grade `none`.

@@ -19,6 +19,8 @@ def test_t93_docs_pin_receipt_custody_and_certified_quarantine():
     assert "CERTIFIED_PROOF_RELEASE_ENABLED" in text
     assert "certified_runtime_unbound" in text
     assert "one-link" in text
+    assert "8.3" in text
+    assert "same-node" in text
     assert "final" in text.casefold() and "receipt" in text.casefold()
     assert "proof grade" in text.casefold() or "proof_grade" in text.casefold()
     platform = (ROOT / "skill" / "references" / "platform-backends.md").read_text(
