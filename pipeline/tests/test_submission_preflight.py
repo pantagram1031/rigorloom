@@ -680,7 +680,7 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             cert_path.write_text("{}\n", encoding="utf-8")
         return artifact, cert_path
 
-    def test_certified_grade_requires_opt_in_check_pass_and_certificate_reverify(self):
+    def test_certified_grade_is_quarantined_before_certificate_reverify(self):
         artifact, cert_path = self._prepare_certified_workspace()
         valid = {"ok": True, "reason_code": "certificate_valid"}
         eligible = {"ok": True, "eligible": True, "reason_code": "eligible"}
@@ -697,12 +697,14 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         ):
             verdict, code = submission_preflight.check(self.ws)
 
-        self.assertEqual(code, 0, verdict)
-        verify.assert_called_once_with(cert_path)
-        check_document.assert_called_once_with(artifact, cert_path)
+        self.assertEqual(code, 3, verdict)
+        verify.assert_not_called()
+        check_document.assert_not_called()
+        self.assertTrue(any(
+            item["code"] == "certified_runtime_unbound"
+            for item in verdict["hard"]
+        ))
         self.assertEqual(verdict["proof_grade"], "certified")
-        self.assertEqual(verdict["render_certificate"], "render-certificate.json")
-        self.assertEqual(verdict["render_cert_check"]["reason_code"], "eligible")
 
     def test_certified_grade_without_build_opt_in_is_today_style_p5_failure(self):
         self._prepare_certified_workspace(opt_in=False, certificate=False)
@@ -710,7 +712,10 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         verdict, code = submission_preflight.check(self.ws)
 
         self.assertEqual(code, 3, verdict)
-        self.assertTrue(any(item["code"] == "P5" for item in verdict["hard"]), verdict)
+        self.assertTrue(any(
+            item["code"] == "certified_runtime_unbound"
+            for item in verdict["hard"]
+        ), verdict)
 
     @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
     def test_certified_pdf_submission_rechecks_the_assembled_hwpx(self):
@@ -737,8 +742,8 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         with (
             mock.patch.object(
                 submission_preflight.render_cert, "verify_certificate",
-                return_value={"ok": True, "reason_code": "certificate_valid"},
-            ),
+                side_effect=AssertionError("quarantined preflight must not verify"),
+            ) as verify,
             mock.patch.object(
                 submission_preflight.render_cert, "check_document",
                 return_value={
@@ -748,9 +753,13 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         ):
             verdict, code = submission_preflight.check(self.ws)
 
-        self.assertEqual(code, 0, verdict)
-        check_document.assert_called_once_with(assembled, cert_path)
-        self.assertEqual(verdict["render_cert_document"], "output/out.hwpx")
+        self.assertEqual(code, 3, verdict)
+        verify.assert_not_called()
+        check_document.assert_not_called()
+        self.assertTrue(any(
+            item["code"] == "certified_runtime_unbound"
+            for item in verdict["hard"]
+        ), verdict)
 
     def test_certified_grade_fails_when_certificate_reverify_or_check_fails(self):
         self._prepare_certified_workspace()
@@ -777,7 +786,7 @@ class SubmissionPreflightTestCase(unittest.TestCase):
                 verdict, code = submission_preflight.check(self.ws)
             self.assertEqual(code, 3, verdict)
             self.assertTrue(any(
-                item["code"] == "P5" and expected in item["msg"]
+                item["code"] == "certified_runtime_unbound"
                 for item in verdict["hard"]
             ), verdict)
 

@@ -10,6 +10,16 @@ the kernel's contract shape.
 
 ### Added
 
+- **T93:** hardened the generic document-evidence receipt and artifact
+  custody boundary. Captures now require no-follow regular one-link files,
+  reject interior symlink/reparse parents, bind hash/size/identity from one
+  descriptor, and perform two final input/output rebind passes before the
+  final receipt raw/payload/identity read. Owned rollback preserves a foreign
+  receipt replacement, and public errors remain workspace-relative. Automatic
+  certified-renderer execution and promotion are quarantined behind the closed
+  `certified_runtime_unbound` release gate; certificate measure/verify/check is
+  diagnostic-only and derives proof grade `none`.
+
 - **T92:** tightened the shared `rigorloom/hwpeqn/v1` equation lane with a
   closed LaTeX/HwpEqn XOR envelope, static case-folded origin-refusal
   vocabulary, bounded lexical/argument/control checks, exact matrix row

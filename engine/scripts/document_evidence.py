@@ -18,9 +18,11 @@ import hashlib
 import json
 import os
 import re
-import tempfile
+import stat
+import sys
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 RECEIPT_SCHEMA = "rigorloom/document-evidence/v1"
@@ -111,6 +113,11 @@ _QUALITY_ALLOWED = _QUALITY_REQUIRED
 # it false until independent visual/layout and real LibreOffice evidence are
 # shipped; callers must not maintain local copies.
 ADVISORY_PROOF_RELEASE_ENABLED = False
+# Certified renderer execution/promotion is deliberately quarantined.  The
+# certificate tooling remains diagnostic-only until a separately reviewed
+# runtime/root/receipt contract is released; no forged or legacy certified
+# verdict may become a submission grade in the meantime.
+CERTIFIED_PROOF_RELEASE_ENABLED = False
 _CAPABILITY_KEYS = frozenset({
     "hancom_com", "h2orestart", "soffice", "rhwp", "certified_renderer",
 })
@@ -161,6 +168,219 @@ _FORBIDDEN_KEYS = frozenset({
 })
 _FORBIDDEN_ABS = re.compile(
     r"(?:^[A-Za-z]:[\\/]|^[\\/]{1,2}|^\\\\|^file://)", re.IGNORECASE)
+_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+_MAX_RECEIPT_BYTES = 4 * 1024 * 1024
+
+
+def _is_reparse(info: os.stat_result) -> bool:
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(info, "st_file_attributes", 0) & reparse)
+
+
+def _node_identity(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Return a local-only identity; it is never serialized in receipts."""
+    return (
+        int(getattr(info, "st_dev", 0)), int(getattr(info, "st_ino", 0)),
+        int(getattr(info, "st_size", 0)), int(getattr(info, "st_mtime_ns", 0)),
+        int(getattr(info, "st_ctime_ns", 0)), int(getattr(info, "st_nlink", 0)),
+    )
+
+
+def _same_identity(left: tuple[int, ...], right: tuple[int, ...]) -> bool:
+    return tuple(left) == tuple(right)
+
+
+def _opened_real_path(fd: int) -> Path | None:
+    """Return the kernel-resolved path for an already opened descriptor.
+
+    This is a second custody binding for the interior-parent race: a parent
+    component can be swapped to a symlink after the lexical lstat walk and
+    restored before the next capture.  The descriptor's final path still
+    points outside the intended tree and must be refused.
+    """
+    try:
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+
+            handle = msvcrt.get_osfhandle(fd)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            fn = kernel32.GetFinalPathNameByHandleW
+            fn.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+                           ctypes.c_uint32, ctypes.c_uint32]
+            fn.restype = ctypes.c_uint32
+            size = 512
+            while size <= 32768:
+                buf = ctypes.create_unicode_buffer(size)
+                used = fn(handle, buf, size, 0)
+                if used == 0:
+                    return None
+                if used < size - 1:
+                    value = buf.value
+                    if value.startswith("\\\\?\\UNC\\"):
+                        # GetFinalPathNameByHandleW uses an extended UNC
+                        # spelling; compare it with the ordinary UNC path
+                        # produced by ``abspath``.
+                        value = "\\\\" + value[8:]
+                    elif value.startswith("\\\\?\\"):
+                        value = value[4:]
+                    return Path(value)
+                size *= 2
+            return None
+        proc_link = Path(f"/proc/self/fd/{fd}")
+        if proc_link.exists():
+            return proc_link.resolve(strict=True)
+        if sys.platform == "darwin":
+            import fcntl
+
+            getpath = getattr(fcntl, "F_GETPATH", 50)
+            raw = fcntl.fcntl(fd, getpath, b"\0" * 1024)
+            if isinstance(raw, bytes):
+                value = raw.split(b"\0", 1)[0]
+                if value:
+                    return Path(value.decode(sys.getfilesystemencoding(),
+                                             errors="surrogateescape"))
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return None
+    return None
+
+
+def _open_regular(path: Path, reason: str) -> tuple[int, os.stat_result]:
+    """Open one regular, one-link file and bind its path to the opened inode."""
+    try:
+        before = path.lstat()
+        if (not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode)
+                or _is_reparse(before) or getattr(before, "st_nlink", 1) != 1):
+            raise EvidenceError({
+                "code": "artifact_not_single_link",
+                "path": path.as_posix(),
+                "message": reason,
+            })
+        if before.st_size < 0 or before.st_size > _MAX_ARTIFACT_BYTES:
+            raise EvidenceError({
+                "code": "artifact_too_large",
+                "path": path.as_posix(),
+                "message": "artifact exceeds the bounded receipt capture",
+            })
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(path), flags)
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode) or _is_reparse(opened)
+                or getattr(opened, "st_nlink", 1) != 1
+                or _node_identity(opened)[:2] != _node_identity(before)[:2]
+                or opened.st_size != before.st_size):
+            os.close(fd)
+            raise EvidenceError({
+                "code": "artifact_replaced",
+                "path": path.as_posix(),
+                "message": "artifact changed while it was opened",
+            })
+        opened_real = _opened_real_path(fd)
+        if opened_real is None:
+            os.close(fd)
+            raise EvidenceError({
+                "code": "artifact_parent_binding_unavailable",
+                "path": path.as_posix(),
+                "message": "opened artifact path could not be custody-bound",
+            })
+        try:
+            # ``resolve()`` here would follow a swapped parent and make the
+            # attacker's outside target look expected.  Compare the handle
+            # against the lexical absolute path instead; all components were
+            # already required to be non-reparse dirs.
+            expected_real = Path(os.path.abspath(str(path)))
+            actual_value = str(opened_real)
+            expected_value = str(expected_real)
+            for value_name, value in (("actual", actual_value),
+                                      ("expected", expected_value)):
+                if value.startswith("\\\\?\\UNC\\"):
+                    value = "\\\\" + value[8:]
+                elif value.startswith("\\\\?\\"):
+                    value = value[4:]
+                if value_name == "actual":
+                    actual_value = value
+                else:
+                    expected_value = value
+            actual_text = os.path.normcase(os.path.normpath(actual_value))
+            expected_text = os.path.normcase(os.path.normpath(expected_value))
+            if actual_text != expected_text:
+                os.close(fd)
+                raise EvidenceError({
+                    "code": "artifact_parent_changed",
+                    "path": path.as_posix(),
+                    "message": "artifact parent changed during open",
+                })
+        except EvidenceError:
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            os.close(fd)
+            raise EvidenceError({
+                "code": "artifact_parent_changed",
+                "path": path.as_posix(),
+                "message": "artifact parent could not be rebound",
+            }) from exc
+        return fd, opened
+    except EvidenceError:
+        raise
+    except (OSError, ValueError, TypeError) as exc:
+        raise EvidenceError({
+            "code": "artifact_unreadable",
+            "path": path.as_posix(),
+            "message": str(exc),
+        }) from exc
+
+
+def _read_regular_once(
+    path: Path, *, max_bytes: int = _MAX_RECEIPT_BYTES,
+) -> tuple[bytes, tuple[int, ...]]:
+    fd, opened = _open_regular(path, "artifact must be a regular one-link file")
+    try:
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, max_bytes - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise EvidenceError({
+                    "code": "artifact_too_large",
+                    "path": path.as_posix(),
+                    "message": "artifact exceeds the bounded receipt capture",
+                })
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        if (_node_identity(after)[:2] != _node_identity(opened)[:2]
+                or after.st_size != total
+                or getattr(after, "st_nlink", 1) != 1
+                or after.st_mtime_ns != opened.st_mtime_ns
+                or after.st_ctime_ns != opened.st_ctime_ns):
+            raise EvidenceError({
+                "code": "artifact_changed_during_read",
+                "path": path.as_posix(),
+                "message": "artifact changed during one-link capture",
+            })
+        return b"".join(chunks), _node_identity(after)
+    finally:
+        os.close(fd)
+
+
+def _capture_identity(path: Path) -> tuple[int, ...]:
+    """Capture identity through a no-follow open, without serializing it."""
+    fd, opened = _open_regular(path, "artifact must be a regular one-link file")
+    try:
+        after = os.fstat(fd)
+        if not _same_identity(_node_identity(opened), _node_identity(after)):
+            raise EvidenceError({
+                "code": "artifact_changed_during_capture",
+                "path": path.as_posix(),
+                "message": "artifact identity changed during capture",
+            })
+        return _node_identity(after)
+    finally:
+        os.close(fd)
 
 
 class EvidenceError(ValueError):
@@ -198,21 +418,109 @@ def _canonical_bytes(payload: dict[str, Any], *, omit_hash: bool = False) -> byt
 
 
 def _sha256_file(path: Path) -> tuple[str, int]:
+    digest, size, _identity = _capture_file(path)
+    return digest, size
+
+
+def _capture_file(path: Path) -> tuple[str, int, tuple[int, ...]]:
+    """Hash and bind one file from the same opened descriptor."""
+    fd, opened = _open_regular(path, "artifact must be a regular one-link file")
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+    try:
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, _MAX_ARTIFACT_BYTES - size + 1))
+            if not chunk:
+                break
             digest.update(chunk)
             size += len(chunk)
-    return digest.hexdigest(), size
+            if size > _MAX_ARTIFACT_BYTES:
+                raise EvidenceError({
+                    "code": "artifact_too_large",
+                    "path": path.as_posix(),
+                    "message": "artifact exceeds the bounded receipt capture",
+                })
+        after = os.fstat(fd)
+        if (_node_identity(after)[:2] != _node_identity(opened)[:2]
+                or after.st_size != size
+                or getattr(after, "st_nlink", 1) != 1
+                or after.st_mtime_ns != opened.st_mtime_ns
+                or after.st_ctime_ns != opened.st_ctime_ns):
+            raise EvidenceError({
+                "code": "artifact_changed_during_read",
+                "path": path.as_posix(),
+                "message": "artifact changed during one-link hash capture",
+            })
+        return digest.hexdigest(), size, _node_identity(after)
+    finally:
+        os.close(fd)
 
 
 def _normalise_workspace(workspace: Path | str) -> Path:
     try:
-        return Path(workspace).expanduser().resolve()
-    except OSError as exc:
+        supplied = Path(workspace).expanduser()
+        info = supplied.lstat()
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) \
+                or _is_reparse(info):
+            raise EvidenceError({
+                "code": "workspace_root_invalid",
+                "path": "workspace",
+                "message": "workspace root must be a non-reparse directory",
+            })
+        return supplied.resolve(strict=True)
+    except EvidenceError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
         raise EvidenceError({"code": "workspace_unreadable", "path": "workspace",
                              "message": str(exc)}) from exc
+
+
+def _workspace_guard(workspace: Path) -> tuple[tuple[Path, tuple[int, ...]], ...]:
+    rows: list[tuple[Path, tuple[int, ...]]] = []
+    probe = workspace.absolute()
+    while True:
+        try:
+            info = probe.lstat()
+        except OSError as exc:
+            raise EvidenceError({
+                "code": "workspace_root_changed",
+                "path": "workspace",
+                "message": str(exc),
+            }) from exc
+        if stat.S_ISLNK(info.st_mode) or _is_reparse(info):
+            raise EvidenceError({
+                "code": "workspace_root_changed",
+                "path": "workspace",
+                "message": "workspace root or ancestor became a reparse point",
+            })
+        rows.append((probe, _node_identity(info)[:2]))
+        if probe == probe.parent:
+            break
+        probe = probe.parent
+    return tuple(rows)
+
+
+def _check_workspace_guard(
+    guard: tuple[tuple[Path, tuple[int, ...]], ...],
+) -> None:
+    try:
+        for path, expected in guard:
+            info = path.lstat()
+            if (stat.S_ISLNK(info.st_mode) or _is_reparse(info)
+                    or _node_identity(info)[:2] != expected):
+                raise EvidenceError({
+                    "code": "workspace_root_changed",
+                    "path": "workspace",
+                    "message": "workspace root or ancestor changed during capture",
+                })
+    except EvidenceError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise EvidenceError({
+            "code": "workspace_root_changed",
+            "path": "workspace",
+            "message": str(exc),
+        }) from exc
 
 
 def _safe_relative_path(workspace: Path, value: Path | str, *, require_exists: bool = False) -> str:
@@ -220,7 +528,10 @@ def _safe_relative_path(workspace: Path, value: Path | str, *, require_exists: b
     candidate = Path(value)
     if candidate.is_absolute():
         try:
-            candidate = candidate.resolve().relative_to(workspace)
+            # Preserve the caller's lexical components (notably an interior
+            # symlink) for the custody check below.  Only the containment test
+            # later resolves the target.
+            candidate = candidate.absolute().relative_to(workspace.absolute())
         except (OSError, ValueError) as exc:
             raise EvidenceError({"code": "path_escape", "path": str(value),
                                  "message": "path is outside the workspace"}) from exc
@@ -243,8 +554,62 @@ def _safe_relative_path(workspace: Path, value: Path | str, *, require_exists: b
     return raw
 
 
+def _check_directory_chain(workspace: Path, directory: Path) -> None:
+    """Reject symlink/reparse/non-directory components under ``workspace``.
+
+    ``Path.resolve`` alone is not a custody check: an interior symlink can
+    still resolve to another directory inside the workspace.  Receipt and
+    artifact paths therefore require every existing parent component to be a
+    real directory in the canonical workspace tree.
+    """
+    try:
+        relative = directory.absolute().relative_to(workspace.absolute())
+    except ValueError as exc:
+        raise EvidenceError({
+            "code": "path_escape",
+            "path": directory.as_posix(),
+            "message": "directory escapes the workspace",
+        }) from exc
+    current = workspace
+    for part in relative.parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            # The caller may create the remaining directory chain.  Existing
+            # components have still been checked, and mkdir is rechecked by
+            # the publication path after creation.
+            break
+        except OSError as exc:
+            raise EvidenceError({
+                "code": "artifact_parent_unreadable",
+                "path": "workspace",
+                "message": str(exc),
+            }) from exc
+        if (stat.S_ISLNK(info.st_mode) or _is_reparse(info)
+                or not stat.S_ISDIR(info.st_mode)):
+            raise EvidenceError({
+                "code": "artifact_parent_not_directory",
+                "path": "workspace",
+                "message": "artifact parent contains a symlink or non-directory",
+            })
+
+
 def _artifact_descriptor(workspace: Path, path: Path | str | None,
                         role: str, *, require_exists: bool = False) -> dict[str, Any] | None:
+    capture = _capture_artifact(
+        workspace, path, role, require_exists=require_exists)
+    return capture[0] if capture is not None else None
+
+
+def _capture_artifact(
+    workspace: Path,
+    path: Path | str | None,
+    role: str,
+    *,
+    require_exists: bool = False,
+) -> tuple[dict[str, Any], tuple[int, ...]] | None:
+    """Capture bytes and local identity from one regular one-link artifact."""
     if path is None:
         return None
     if not isinstance(role, str) or role not in ARTIFACT_ROLES:
@@ -254,13 +619,108 @@ def _artifact_descriptor(workspace: Path, path: Path | str | None,
             "message": "artifact role is not a closed value",
             "actual": role,
         })
-    relative = _safe_relative_path(workspace, path, require_exists=require_exists)
+    relative = _safe_relative_path(workspace, path, require_exists=False)
     candidate = workspace / relative
+    expected_leaf: tuple[int, ...] | None = None
+    try:
+        before_leaf = candidate.lstat()
+        expected_leaf = _node_identity(before_leaf)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        if require_exists:
+            raise EvidenceError({
+                "code": "artifact_unreadable", "path": relative,
+                "message": str(exc),
+            }) from exc
+    _check_directory_chain(workspace, candidate.parent)
     descriptor: dict[str, Any] = {"role": str(role), "path": relative}
-    if candidate.is_file() and not candidate.is_symlink():
-        digest, size = _sha256_file(candidate)
-        descriptor.update({"sha256": digest, "bytes": size})
-    return descriptor
+    try:
+        candidate.lstat()
+    except FileNotFoundError:
+        if require_exists:
+            raise EvidenceError({
+                "code": "artifact_missing", "path": relative,
+                "message": "bound artifact is missing",
+            })
+        return descriptor, tuple()
+    except OSError as exc:
+        if require_exists:
+            raise EvidenceError({
+                "code": "artifact_unreadable", "path": relative,
+                "message": str(exc),
+            }) from exc
+        return descriptor, tuple()
+    if expected_leaf is not None:
+        try:
+            after_leaf = _node_identity(candidate.lstat())
+        except OSError as exc:
+            raise EvidenceError({
+                "code": "artifact_parent_changed", "path": relative,
+                "message": "artifact changed during parent custody check",
+            }) from exc
+        if after_leaf != expected_leaf:
+            raise EvidenceError({
+                "code": "artifact_parent_changed", "path": relative,
+                "message": "artifact changed during parent custody check",
+            })
+    digest, size, identity = _capture_file(candidate)
+    descriptor.update({"sha256": digest, "bytes": size})
+    return descriptor, identity
+
+
+def _captures_match(
+    first: tuple[dict[str, Any], tuple[int, ...]] | None,
+    second: tuple[dict[str, Any], tuple[int, ...]] | None,
+) -> bool:
+    if first is None or second is None:
+        return first is second
+    descriptor_a, identity_a = first
+    descriptor_b, identity_b = second
+    return (descriptor_a == descriptor_b and _same_identity(identity_a, identity_b))
+
+
+def _capture_receipt_artifacts(
+    workspace: Path,
+    receipt: dict[str, Any],
+) -> dict[str, tuple[dict[str, Any], tuple[int, ...]]]:
+    execution = receipt.get("execution")
+    if not isinstance(execution, dict):
+        return {}
+    required = execution.get("state") == "succeeded"
+    captures: dict[str, tuple[dict[str, Any], tuple[int, ...]]] = {}
+    # Capture the produced output first and the source last.  The source is
+    # the custody anchor and therefore gets the closest possible rebind to the
+    # final receipt read.  Callers perform a second pass to close a mutation
+    # seam between the two descriptors.
+    for key in ("output", "input"):
+        descriptor = execution.get(key)
+        if not isinstance(descriptor, dict):
+            continue
+        role = descriptor.get("role")
+        rel = descriptor.get("path")
+        if not isinstance(role, str) or not isinstance(rel, str):
+            continue
+        # Refused/failed receipts may retain a diagnostic path without a
+        # captured artifact.  ``validate_receipt`` deliberately does not bind
+        # such a missing optional file, so the final rebind set must not grow
+        # a synthetic empty capture here.
+        if (not required and "sha256" not in descriptor
+                and "bytes" not in descriptor):
+            continue
+        capture = _capture_artifact(workspace, rel, role, require_exists=required)
+        if capture is not None:
+            captures[f"execution.{key}"] = capture
+    return captures
+
+
+def _capture_sets_match(
+    first: dict[str, tuple[dict[str, Any], tuple[int, ...]]],
+    second: dict[str, tuple[dict[str, Any], tuple[int, ...]]],
+) -> bool:
+    if set(first) != set(second):
+        return False
+    return all(_captures_match(first[key], second[key]) for key in first)
 
 
 def derive_proof_grade(
@@ -275,6 +735,8 @@ def derive_proof_grade(
     renderer-probe input.
     """
     if terminal_state != "succeeded":
+        return "none"
+    if evidence_class == "certified_render" and not CERTIFIED_PROOF_RELEASE_ENABLED:
         return "none"
     grade = _GRADE_BY_EVIDENCE.get(evidence_class, "none")
     if grade != "none":
@@ -632,6 +1094,7 @@ def build_receipt(
     states may omit an output because a failed renderer need not produce one.
     """
     workspace_path = _normalise_workspace(workspace)
+    root_guard = _workspace_guard(workspace_path)
     errors: list[dict[str, Any]] = []
     _validate_enum(backend, BACKEND_IDS, "unknown_backend", "execution.backend", errors)
     _validate_enum(evidence_class, EVIDENCE_CLASSES,
@@ -641,13 +1104,12 @@ def build_receipt(
     if errors:
         raise EvidenceError(errors)
     succeeded = terminal_state == "succeeded"
-    try:
-        input_descriptor = _artifact_descriptor(
-            workspace_path, input_path, input_role, require_exists=succeeded)
-        output_descriptor = _artifact_descriptor(
-            workspace_path, output_path, output_role, require_exists=succeeded)
-    except EvidenceError:
-        raise
+    input_capture = _capture_artifact(
+        workspace_path, input_path, input_role, require_exists=succeeded)
+    output_capture = _capture_artifact(
+        workspace_path, output_path, output_role, require_exists=succeeded)
+    input_descriptor = input_capture[0] if input_capture is not None else None
+    output_descriptor = output_capture[0] if output_capture is not None else None
     if succeeded and (input_descriptor is None or output_descriptor is None):
         raise EvidenceError({
             "code": "artifact_binding_missing", "path": "execution",
@@ -715,6 +1177,23 @@ def build_receipt(
         raise EvidenceError(receipt_errors)
     receipt["receipt_sha256"] = hashlib.sha256(
         _canonical_bytes(receipt, omit_hash=True)).hexdigest()
+    _check_workspace_guard(root_guard)
+    initial_bound: dict[str, tuple[dict[str, Any], tuple[int, ...]]] = {}
+    if input_capture is not None and "sha256" in input_capture[0]:
+        initial_bound["execution.input"] = input_capture
+    if output_capture is not None and "sha256" in output_capture[0]:
+        initial_bound["execution.output"] = output_capture
+    # Two complete output-then-source passes close a mutation seam between
+    # sibling descriptors (and keep the source capture closest to return).
+    final_bound = _capture_receipt_artifacts(workspace_path, receipt)
+    final_bound_again = _capture_receipt_artifacts(workspace_path, receipt)
+    if (not _capture_sets_match(initial_bound, final_bound)
+            or not _capture_sets_match(final_bound, final_bound_again)):
+        raise EvidenceError({
+            "code": "artifact_rebind_mismatch",
+            "path": "execution",
+            "message": "input/output changed during receipt capture",
+        })
     return receipt
 
 
@@ -735,7 +1214,9 @@ def _walk_forbidden(value: Any, path: str, errors: list[dict[str, Any]]) -> None
 
 
 def _validate_artifact(workspace: Path, descriptor: Any, path: str,
-                       *, required: bool, errors: list[dict[str, Any]]) -> None:
+                       *, required: bool, errors: list[dict[str, Any]],
+                       capture_out: dict[str, tuple[dict[str, Any], tuple[int, ...]]] | None = None,
+                       ) -> None:
     if descriptor is None:
         if required:
             errors.append({"code": "artifact_binding_missing", "path": path,
@@ -771,9 +1252,9 @@ def _validate_artifact(workspace: Path, descriptor: Any, path: str,
         errors.append({"code": "invalid_artifact_path", "path": f"{path}.path",
                        "message": "artifact path is not canonical POSIX-relative"})
         return
-    candidate = workspace / safe_rel
     expected_hash = descriptor.get("sha256")
     expected_bytes = descriptor.get("bytes")
+    candidate = workspace / safe_rel
     # A failed/refused/not-run terminal may legitimately have no output.  The
     # path remains useful diagnostic context, but there are no bytes to bind.
     if not required and not candidate.is_file() and expected_hash is None \
@@ -787,17 +1268,28 @@ def _validate_artifact(workspace: Path, descriptor: Any, path: str,
         errors.append({"code": "invalid_artifact_size", "path": f"{path}.bytes",
                        "message": "artifact bytes must be a non-negative integer"})
         return
-    if not candidate.is_file() or candidate.is_symlink():
+    try:
+        capture = _capture_artifact(
+            workspace, candidate, role, require_exists=required)
+    except EvidenceError as exc:
+        errors.extend({
+            **item,
+            # Never expose an absolute workspace/temp path through a public
+            # Stage-6 finding.  The descriptor location is sufficient for
+            # diagnosis and remains stable across workspaces.
+            "path": path,
+        } for item in exc.errors)
+        return
+    if capture is None:
         if required:
             errors.append({"code": "artifact_missing", "path": f"{path}.path",
                            "message": "bound artifact is missing or symlinked"})
         return
-    try:
-        actual_hash, actual_bytes = _sha256_file(candidate)
-    except OSError as exc:
-        errors.append({"code": "artifact_unreadable", "path": f"{path}.path",
-                       "message": str(exc)})
-        return
+    if capture_out is not None:
+        capture_out[path] = capture
+    actual_descriptor, _identity = capture
+    actual_hash = actual_descriptor.get("sha256")
+    actual_bytes = actual_descriptor.get("bytes")
     if actual_hash != expected_hash or actual_bytes != expected_bytes:
         errors.append({"code": "artifact_hash_mismatch", "path": path,
                        "message": "current artifact bytes differ from the receipt",
@@ -807,9 +1299,15 @@ def _validate_artifact(workspace: Path, descriptor: Any, path: str,
                        "actual_bytes": actual_bytes})
 
 
-def validate_receipt(workspace: Path | str, receipt: Any) -> dict[str, Any]:
+def validate_receipt(
+    workspace: Path | str,
+    receipt: Any,
+    *,
+    _capture_out: dict[str, tuple[dict[str, Any], tuple[int, ...]]] | None = None,
+) -> dict[str, Any]:
     """Validate a receipt and current bound bytes, raising ``EvidenceError``."""
     workspace_path = _normalise_workspace(workspace)
+    root_guard = _workspace_guard(workspace_path)
     errors: list[dict[str, Any]] = []
     if not isinstance(receipt, dict):
         raise EvidenceError({"code": "invalid_receipt", "path": "receipt",
@@ -880,9 +1378,9 @@ def validate_receipt(workspace: Path | str, receipt: Any) -> dict[str, Any]:
     _validate_quality(quality, evidence_class, execution.get("output"), errors)
     required = state == "succeeded"
     _validate_artifact(workspace_path, execution.get("input"), "execution.input",
-                       required=required, errors=errors)
+                       required=required, errors=errors, capture_out=_capture_out)
     _validate_artifact(workspace_path, execution.get("output"), "execution.output",
-                       required=required, errors=errors)
+                       required=required, errors=errors, capture_out=_capture_out)
     self_hash = receipt.get("receipt_sha256")
     if not isinstance(self_hash, str) or not _SHA256_RE.fullmatch(self_hash):
         errors.append({"code": "invalid_receipt_hash", "path": "receipt_sha256",
@@ -892,57 +1390,683 @@ def validate_receipt(workspace: Path | str, receipt: Any) -> dict[str, Any]:
                        "message": "receipt self-hash does not match its canonical content"})
     if errors:
         raise EvidenceError(errors)
+    _check_workspace_guard(root_guard)
     return receipt
 
 
-def write_receipt(workspace: Path | str, receipt: dict[str, Any]) -> Path:
-    """Validate and atomically write ``output/proof/backend/receipt.json``."""
-    workspace_path = _normalise_workspace(workspace)
-    validate_receipt(workspace_path, receipt)
-    target = workspace_path / RECEIPT_REL
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic replacement in the destination directory prevents readers from
-    # observing a truncated JSON document.  Never leave the temporary path in
-    # the receipt directory after a failed write.
-    fd, temporary = tempfile.mkstemp(prefix=".receipt-", suffix=".tmp",
-                                     dir=str(target.parent))
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(_canonical_bytes(receipt))
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
+def _remove_owned_receipt(
+    target: Path,
+    identity: tuple[int, ...] | None,
+    expected_raw: bytes | None = None,
+) -> None:
+    """Rollback only the inode published by this call, without unlink races.
+
+    A plain ``lstat``/``read``/``unlink`` sequence can unlink a foreign
+    replacement that wins the final race.  First move the pathname to a
+    private same-directory quarantine (rename is atomic), inspect that moved
+    inode, and only unlink it when its stable identity and canonical bytes
+    still match the receipt we wrote.  A foreign replacement is restored with
+    a no-clobber hard-link; if another process has recreated the public name,
+    the quarantine is retained rather than deleting either object.
+    """
+    if identity is None:
+        return
+
+    def _read_quarantine(path: Path) -> tuple[bytes, tuple[int, ...]] | None:
         try:
-            os.unlink(temporary)
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode)
+                    or stat.S_ISLNK(info.st_mode)
+                    or _is_reparse(info)):
+                return None
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(str(path), flags)
+            try:
+                opened = os.fstat(fd)
+                if (_node_identity(opened)[:2] != _node_identity(info)[:2]
+                        or not stat.S_ISREG(opened.st_mode)
+                        or _is_reparse(opened)):
+                    return None
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = os.read(fd, min(1024 * 1024,
+                                            _MAX_RECEIPT_BYTES - total + 1))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_RECEIPT_BYTES:
+                        return None
+                    chunks.append(chunk)
+                after = os.fstat(fd)
+                if (_node_identity(after)[:2] != _node_identity(opened)[:2]
+                        or after.st_size != total
+                        or after.st_mtime_ns != opened.st_mtime_ns):
+                    return None
+                return b"".join(chunks), _node_identity(after)
+            finally:
+                os.close(fd)
+        except (OSError, ValueError, TypeError):
+            return None
+
+    def _restore_no_clobber(path: Path) -> None:
+        """Restore a quarantined foreign inode only if the public name is free."""
+        try:
+            target.lstat()
+            return
         except FileNotFoundError:
             pass
-    return target
+        except OSError:
+            return
+        try:
+            # Hard-linking is atomic and fails when a concurrent actor has
+            # recreated ``target``; it therefore cannot clobber that actor's
+            # replacement.  Unlinking the quarantine leaves a one-link file.
+            os.link(str(path), str(target), follow_symlinks=False)
+        except (OSError, ValueError, TypeError):
+            return
+        try:
+            path.unlink()
+        except (OSError, ValueError):
+            pass
+
+    quarantine: Path | None = None
+    try:
+        for _ in range(8):
+            quarantine = target.with_name(
+                f".{target.name}.rollback-{uuid.uuid4().hex}")
+            try:
+                # The random destination is private to this rollback.  A
+                # collision is retried; rename itself is the atomic custody
+                # operation, unlike a check followed by unlink.
+                os.rename(str(target), str(quarantine))
+                break
+            except FileExistsError:
+                quarantine = None
+                continue
+            except FileNotFoundError:
+                return
+        if quarantine is None or not quarantine.exists():
+            return
+        captured = _read_quarantine(quarantine)
+        if captured is None:
+            _restore_no_clobber(quarantine)
+            return
+        raw, current = captured
+        # A callback may create a hardlink to our owned inode. Public reads
+        # reject nlink != 1, but rollback must still recognize that inode.
+        # Link creation updates ctime and nlink, so ownership compares the
+        # stable device/inode/size/mtime fields and then canonical bytes.
+        owned = current[:4] == tuple(identity)[:4]
+        if expected_raw is not None:
+            owned = owned and raw == expected_raw
+        if owned:
+            try:
+                quarantine.unlink()
+            except (OSError, ValueError):
+                pass
+        else:
+            _restore_no_clobber(quarantine)
+    except (EvidenceError, OSError, ValueError, TypeError):
+        if quarantine is not None:
+            _restore_no_clobber(quarantine)
+        return
+
+
+class _DestinationDirectoryBinding:
+    """Hold the receipt directory while creating and publishing its leaf.
+
+    POSIX uses an ``O_DIRECTORY|O_NOFOLLOW`` descriptor and ``*at`` operations
+    so a renamed parent cannot redirect a relative create/replace.  Windows
+    holds a ``CreateFileW`` directory handle without ``FILE_SHARE_DELETE``;
+    this prevents a parent rename while path-based child operations run.
+    """
+
+    def __init__(self, path: Path, fd: int, *, posix: bool,
+                 identity: tuple[int, int], opened_real: Path):
+        self.path = path
+        self.fd = fd
+        self.posix = posix
+        self.identity = identity
+        self.opened_real = opened_real
+        self.closed = False
+
+    @classmethod
+    def open(cls, path: Path) -> "_DestinationDirectoryBinding":
+        posix = os.name != "nt"
+        if posix:
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                fd = os.open(str(path), flags)
+            except (OSError, ValueError, TypeError) as exc:
+                raise EvidenceError({
+                    "code": "artifact_parent_binding_unavailable",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory could not be held",
+                }) from exc
+        else:
+            try:
+                import ctypes
+                import msvcrt
+
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                create = kernel32.CreateFileW
+                create.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32,
+                                   ctypes.c_uint32, ctypes.c_void_p,
+                                   ctypes.c_uint32, ctypes.c_uint32,
+                                   ctypes.c_void_p]
+                create.restype = ctypes.c_void_p
+                # FILE_LIST_DIRECTORY; share read/write but deliberately no
+                # FILE_SHARE_DELETE, so an ancestor cannot be renamed while
+                # this binding is live.
+                handle = create(str(path), 0x0001, 0x0001 | 0x0002, None,
+                                0x0003, 0x02000000, None)
+                invalid = ctypes.c_void_p(-1).value
+                if handle in (None, invalid):
+                    raise OSError(ctypes.get_last_error(),
+                                  "receipt directory could not be opened")
+                try:
+                    fd = msvcrt.open_osfhandle(int(handle), os.O_RDONLY)
+                except (OSError, ValueError, TypeError):
+                    kernel32.CloseHandle(handle)
+                    raise
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                raise EvidenceError({
+                    "code": "artifact_parent_binding_unavailable",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory could not be held",
+                }) from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode) or _is_reparse(info):
+                raise EvidenceError({
+                    "code": "artifact_parent_not_directory",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory is not a real directory",
+                })
+            opened_real = _opened_real_path(fd)
+            if opened_real is None:
+                raise EvidenceError({
+                    "code": "artifact_parent_binding_unavailable",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory handle path unavailable",
+                })
+            binding = cls(path, fd, posix=posix,
+                          identity=_node_identity(info)[:2],
+                          opened_real=opened_real)
+            binding.validate()
+            return binding
+        except EvidenceError:
+            os.close(fd)
+            raise
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            os.close(fd)
+            raise EvidenceError({
+                "code": "artifact_parent_binding_unavailable",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "receipt directory handle could not be validated",
+            }) from exc
+
+    def _relative_path(self, name: str) -> Path:
+        return self.path / name
+
+    @staticmethod
+    def _norm_bound(value: str) -> str:
+        if value.startswith("\\\\?\\UNC\\"):
+            value = "\\\\" + value[8:]
+        elif value.startswith("\\\\?\\"):
+            value = value[4:]
+        return os.path.normcase(os.path.normpath(value))
+
+    def validate(self) -> None:
+        try:
+            info = self.path.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                    or _is_reparse(info)
+                    or _node_identity(info)[:2] != self.identity):
+                raise EvidenceError({
+                    "code": "artifact_parent_changed",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory changed during publication",
+                })
+            opened_real = _opened_real_path(self.fd)
+            if opened_real is None:
+                raise EvidenceError({
+                    "code": "artifact_parent_binding_unavailable",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory handle path unavailable",
+                })
+            expected = os.path.abspath(str(self.path))
+            if self._norm_bound(str(opened_real)) != self._norm_bound(expected):
+                raise EvidenceError({
+                    "code": "artifact_parent_changed",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt directory handle escaped its path",
+                })
+        except EvidenceError:
+            raise
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            raise EvidenceError({
+                "code": "artifact_parent_changed",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "receipt directory could not be rebound",
+            }) from exc
+
+    def _open_relative(self, name: str, flags: int, mode: int = 0o600) -> int:
+        if self.posix:
+            return os.open(name, flags, mode, dir_fd=self.fd)
+        return os.open(str(self._relative_path(name)), flags, mode)
+
+    def create_temp(self, raw: bytes) -> tuple[str, tuple[int, ...]]:
+        for _ in range(16):
+            name = f".receipt-{uuid.uuid4().hex}.tmp"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_BINARY", 0)
+            try:
+                fd = self._open_relative(name, flags)
+            except FileExistsError:
+                continue
+            complete = False
+            identity: tuple[int, ...] | None = None
+            try:
+                offset = 0
+                while offset < len(raw):
+                    written = os.write(fd, raw[offset:])
+                    if written <= 0:
+                        raise OSError("receipt temporary write made no progress")
+                    offset += written
+                os.fsync(fd)
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or _is_reparse(info)
+                        or info.st_size != len(raw)
+                        or getattr(info, "st_nlink", 1) != 1):
+                    raise OSError("receipt temporary identity is invalid")
+                identity = _node_identity(info)
+                complete = True
+            finally:
+                close_error: OSError | None = None
+                try:
+                    os.close(fd)
+                except OSError as exc:
+                    close_error = exc
+                if not complete or close_error is not None:
+                    self.remove(name)
+                if close_error is not None:
+                    raise close_error
+            assert identity is not None
+            return name, identity
+        raise EvidenceError({
+            "code": "receipt_publish_failed",
+            "path": RECEIPT_REL.as_posix(),
+            "message": "could not allocate a private receipt temporary",
+        })
+
+    def replace(self, temporary: str, target: str) -> None:
+        self.validate()
+        if self.posix:
+            os.replace(temporary, target, src_dir_fd=self.fd,
+                       dst_dir_fd=self.fd)
+        else:
+            os.replace(str(self._relative_path(temporary)),
+                       str(self._relative_path(target)))
+
+    def read_receipt(self, name: str) -> tuple[bytes, tuple[int, ...]]:
+        if not self.posix:
+            return _read_regular_once(self._relative_path(name))
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_BINARY", 0)
+        try:
+            fd = self._open_relative(name, flags)
+        except (OSError, ValueError, TypeError) as exc:
+            raise EvidenceError({
+                "code": "receipt_missing",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "canonical receipt is missing or unreadable",
+            }) from exc
+        try:
+            opened = os.fstat(fd)
+            if (not stat.S_ISREG(opened.st_mode) or _is_reparse(opened)
+                    or getattr(opened, "st_nlink", 1) != 1):
+                raise EvidenceError({
+                    "code": "receipt_not_single_link",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "canonical receipt must be one regular link",
+                })
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(1024 * 1024,
+                                        _MAX_RECEIPT_BYTES - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_RECEIPT_BYTES:
+                    raise EvidenceError({
+                        "code": "artifact_too_large",
+                        "path": RECEIPT_REL.as_posix(),
+                        "message": "receipt exceeds the bounded capture",
+                    })
+                chunks.append(chunk)
+            after = os.fstat(fd)
+            if (_node_identity(after)[:2] != _node_identity(opened)[:2]
+                    or after.st_size != total
+                    or getattr(after, "st_nlink", 1) != 1
+                    or after.st_mtime_ns != opened.st_mtime_ns
+                    or after.st_ctime_ns != opened.st_ctime_ns):
+                raise EvidenceError({
+                    "code": "receipt_changed_during_read",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "receipt changed during one-link capture",
+                })
+            return b"".join(chunks), _node_identity(after)
+        finally:
+            os.close(fd)
+
+    def remove(self, name: str) -> None:
+        try:
+            if self.posix:
+                os.unlink(name, dir_fd=self.fd)
+            else:
+                self._relative_path(name).unlink()
+        except FileNotFoundError:
+            pass
+
+    def _read_loose(self, name: str) -> tuple[bytes, tuple[int, ...]] | None:
+        """Read a moved receipt while allowing a callback-created hardlink."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_BINARY", 0)
+        try:
+            fd = self._open_relative(name, flags)
+        except (OSError, ValueError, TypeError):
+            return None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or _is_reparse(info):
+                return None
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(1024 * 1024,
+                                        _MAX_RECEIPT_BYTES - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_RECEIPT_BYTES:
+                    return None
+                chunks.append(chunk)
+            after = os.fstat(fd)
+            if (_node_identity(after)[:2] != _node_identity(info)[:2]
+                    or after.st_size != total
+                    or after.st_mtime_ns != info.st_mtime_ns):
+                return None
+            return b"".join(chunks), _node_identity(after)
+        except (OSError, ValueError, TypeError):
+            return None
+        finally:
+            os.close(fd)
+
+    def remove_owned(
+        self, name: str, identity: tuple[int, ...] | None,
+        expected_raw: bytes | None = None,
+    ) -> None:
+        """Rollback through this held directory, never through a swapped path."""
+        if identity is None:
+            return
+        if not self.posix:
+            _remove_owned_receipt(self._relative_path(name), identity, expected_raw)
+            return
+        quarantine: str | None = None
+        try:
+            for _ in range(8):
+                candidate = f".{name}.rollback-{uuid.uuid4().hex}"
+                try:
+                    os.rename(name, candidate, src_dir_fd=self.fd,
+                              dst_dir_fd=self.fd)
+                    quarantine = candidate
+                    break
+                except FileExistsError:
+                    continue
+                except FileNotFoundError:
+                    return
+            if quarantine is None:
+                return
+            captured = self._read_loose(quarantine)
+            if captured is None:
+                self._restore_loose(quarantine, name)
+                return
+            raw, current = captured
+            owned = current[:4] == tuple(identity)[:4]
+            if expected_raw is not None:
+                owned = owned and raw == expected_raw
+            if owned:
+                try:
+                    os.unlink(quarantine, dir_fd=self.fd)
+                except (OSError, ValueError):
+                    pass
+            else:
+                self._restore_loose(quarantine, name)
+        except (OSError, ValueError, TypeError):
+            if quarantine is not None:
+                self._restore_loose(quarantine, name)
+
+    def _restore_loose(self, quarantine: str, name: str) -> None:
+        try:
+            os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+            return
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError):
+            return
+        try:
+            os.link(quarantine, name, src_dir_fd=self.fd,
+                    dst_dir_fd=self.fd, follow_symlinks=False)
+        except (OSError, ValueError, TypeError):
+            return
+        try:
+            os.unlink(quarantine, dir_fd=self.fd)
+        except (OSError, ValueError):
+            pass
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            try:
+                os.close(self.fd)
+            except OSError:
+                # Once the receipt is committed, directory-handle cleanup is
+                # not evidence state and must not rewrite success as failure.
+                pass
+
+
+def _decode_receipt_bytes(raw: bytes) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise EvidenceError({
+            "code": "receipt_malformed",
+            "path": RECEIPT_REL.as_posix(),
+            "message": "receipt is not valid UTF-8 JSON",
+        }) from exc
+    if not isinstance(payload, dict):
+        raise EvidenceError({
+            "code": "invalid_receipt",
+            "path": RECEIPT_REL.as_posix(),
+            "message": "receipt must be a JSON object",
+        })
+    return payload
+
+
+def write_receipt(
+    workspace: Path | str,
+    receipt: dict[str, Any],
+    *,
+    before_final_rebind: Callable[[], None] | None = None,
+) -> Path:
+    """Validate and atomically publish a receipt with final identity rebinding."""
+    workspace_path = _normalise_workspace(workspace)
+    root_guard = _workspace_guard(workspace_path)
+    initial_captures: dict[str, tuple[dict[str, Any], tuple[int, ...]]] = {}
+    validate_receipt(workspace_path, receipt, _capture_out=initial_captures)
+    _check_workspace_guard(root_guard)
+    target = workspace_path / RECEIPT_REL
+    _check_directory_chain(workspace_path, target.parent)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _check_directory_chain(workspace_path, target.parent)
+    try:
+        if target.exists() or target.is_symlink():
+            old = target.lstat()
+            if stat.S_ISLNK(old.st_mode) or _is_reparse(old) \
+                    or not stat.S_ISREG(old.st_mode) \
+                    or getattr(old, "st_nlink", 1) != 1:
+                raise EvidenceError({
+                    "code": "receipt_not_single_link",
+                    "path": RECEIPT_REL.as_posix(),
+                    "message": "canonical receipt must be a regular one-link file",
+                })
+    except FileNotFoundError:
+        pass
+    # Hold the destination directory across temporary creation, replacement,
+    # and final receipt reads.  Path-only ``mkstemp``/``replace`` is vulnerable
+    # to an interior parent swap between the second chain check and creation.
+    binding = _DestinationDirectoryBinding.open(target.parent)
+    temporary: str | None = None
+    owned_identity: tuple[int, ...] | None = None
+    expected_raw = _canonical_bytes(receipt)
+    try:
+        temporary, owned_identity = binding.create_temp(expected_raw)
+        binding.replace(temporary, target.name)
+        # The temporary name was consumed atomically.  Do not touch that
+        # pathname again: a concurrent actor could legitimately recreate it.
+        temporary = None
+        raw, owned_identity = binding.read_receipt(target.name)
+        if raw != expected_raw:
+            raise EvidenceError({
+                "code": "receipt_raw_mismatch",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "published receipt bytes differ from the canonical payload",
+            })
+        payload = _decode_receipt_bytes(raw)
+        if payload != receipt:
+            raise EvidenceError({
+                "code": "receipt_payload_mismatch",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "published receipt payload differs from the requested receipt",
+            })
+        if before_final_rebind is not None:
+            before_final_rebind()
+        _check_workspace_guard(root_guard)
+        binding.validate()
+        final_captures = _capture_receipt_artifacts(workspace_path, payload)
+        final_captures_again = _capture_receipt_artifacts(workspace_path, payload)
+        if (not _capture_sets_match(initial_captures, final_captures)
+                or not _capture_sets_match(final_captures, final_captures_again)):
+            raise EvidenceError({
+                "code": "artifact_rebind_mismatch",
+                "path": "execution",
+                "message": "bound artifact changed during final publication checks",
+            })
+        try:
+            binding.validate()
+            final_raw, final_identity = binding.read_receipt(target.name)
+        except EvidenceError as exc:
+            raise EvidenceError([
+                {**item, "path": RECEIPT_REL.as_posix()}
+                for item in exc.errors
+            ]) from exc
+        if (final_raw != expected_raw
+                or not _same_identity(final_identity, owned_identity)):
+            raise EvidenceError({
+                "code": "receipt_rebind_mismatch",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "receipt changed during final publication checks",
+            })
+        final_payload = _decode_receipt_bytes(final_raw)
+        if final_payload != receipt:
+            raise EvidenceError({
+                "code": "receipt_payload_mismatch",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "receipt payload changed during final publication checks",
+            })
+        return target
+    except EvidenceError:
+        binding.remove_owned(target.name, owned_identity, expected_raw)
+        raise
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        binding.remove_owned(target.name, owned_identity, expected_raw)
+        raise EvidenceError({
+            "code": "receipt_publish_failed",
+            "path": RECEIPT_REL.as_posix(),
+            "message": str(exc),
+        }) from exc
+    finally:
+        if temporary is not None:
+            binding.remove(temporary)
+        binding.close()
 
 
 def load_and_validate_receipt(workspace: Path | str) -> dict[str, Any]:
     """Load the canonical receipt and validate it against current workspace bytes."""
     workspace_path = _normalise_workspace(workspace)
+    root_guard = _workspace_guard(workspace_path)
     target = workspace_path / RECEIPT_REL
-    if target.is_symlink():
-        raise EvidenceError({"code": "path_escape", "path": RECEIPT_REL.as_posix(),
-                             "message": "canonical receipt may not be a symlink"})
     try:
-        raw = target.read_text(encoding="utf-8")
+        raw, identity = _read_regular_once(target)
+    except EvidenceError as exc:
+        if any(item.get("code") == "artifact_unreadable" for item in exc.errors):
+            raise EvidenceError({
+                "code": "receipt_missing", "path": RECEIPT_REL.as_posix(),
+                "message": "canonical receipt is missing or unreadable",
+            }) from exc
+        raise EvidenceError([
+            {**item, "path": RECEIPT_REL.as_posix()}
+            for item in exc.errors
+        ]) from exc
     except (OSError, UnicodeError) as exc:
         raise EvidenceError({"code": "receipt_missing", "path": RECEIPT_REL.as_posix(),
                              "message": str(exc)}) from exc
+    payload = _decode_receipt_bytes(raw)
+    initial_captures: dict[str, tuple[dict[str, Any], tuple[int, ...]]] = {}
+    validate_receipt(workspace_path, payload, _capture_out=initial_captures)
+    _check_workspace_guard(root_guard)
+    final_captures = _capture_receipt_artifacts(workspace_path, payload)
+    final_captures_again = _capture_receipt_artifacts(workspace_path, payload)
+    if (not _capture_sets_match(initial_captures, final_captures)
+            or not _capture_sets_match(final_captures, final_captures_again)):
+        raise EvidenceError({
+            "code": "artifact_rebind_mismatch",
+            "path": "execution",
+            "message": "bound artifact changed during final validation checks",
+        })
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise EvidenceError({"code": "receipt_malformed",
-                             "path": RECEIPT_REL.as_posix(),
-                             "message": str(exc)}) from exc
-    return validate_receipt(workspace_path, payload)
+        final_raw, final_identity = _read_regular_once(target)
+    except EvidenceError as exc:
+        raise EvidenceError([
+            {**item, "path": RECEIPT_REL.as_posix()}
+            for item in exc.errors
+        ]) from exc
+    if (final_raw != raw or not _same_identity(final_identity, identity)):
+        raise EvidenceError({
+            "code": "receipt_rebind_mismatch",
+            "path": RECEIPT_REL.as_posix(),
+            "message": "receipt changed during final validation checks",
+        })
+    final_payload = _decode_receipt_bytes(final_raw)
+    if final_payload != payload:
+        raise EvidenceError({
+            "code": "receipt_payload_mismatch",
+            "path": RECEIPT_REL.as_posix(),
+            "message": "receipt payload changed during final validation checks",
+        })
+    return final_payload
 
 
 __all__ = [
     "ADVISORY_PROOF_RELEASE_ENABLED",
+    "CERTIFIED_PROOF_RELEASE_ENABLED",
     "ARTIFACT_ROLES", "BACKEND_IDS", "EVIDENCE_CLASSES", "EvidenceError", "RECEIPT_REL",
     "QUALITY_REASON_CODES", "QUALITY_SCHEMA", "QUALITY_STATES",
     "RECEIPT_SCHEMA", "TERMINAL_STATES", "build_receipt",

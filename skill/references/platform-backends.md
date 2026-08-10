@@ -25,26 +25,39 @@ successful, artifact-hash-bound terminal receipt can create an evidence grade.
 These closed IDs are shared with `engine/scripts/document_evidence.py` and are
 the only runtime backends that may appear in `output/proof/backend/receipt.json`:
 
+Certified-runtime quarantine (T93): `CERTIFIED_PROOF_RELEASE_ENABLED` is
+false in this release. A `certified_render` configuration is diagnostic-only;
+automatic certificate checks, renderer execution, and PDF promotion are not
+performed, and the derived grade is `none` with reason
+`certified_runtime_unbound`.
+
 | ID | Route | Evidence ceiling | Automatic proof rule |
 |---|---|---|---|
 | `xml_only` | Rigorloom byte-preserving HWPX/XML assembly | `structural_only` → `none` | XML success does not imply a render or Hancom proof. |
 | `native_hancom_windows` | Windows Hancom desktop through COM | `native_render` → `hancom` | Requires actual COM execution and matching HWPX/PDF bytes; `hancom_com: true` alone is informational. |
 | `oss_preview_libreoffice` | Named LibreOffice/H2Orestart preview | `advisory_render` → `advisory` | Requires a successful equation-safe runtime and matching HWPX/PDF bytes; no general parity claim. |
 | `oss_preview_rhwp` | Pinned `rhwp` diagnostic SVG preview | `diagnostic_render` → `experimental-rhwp` | Requires successful named execution and a current HWPX/SVG binding; never a submission grade. |
-| `certified_renderer` | Explicitly configured renderer with the existing certificate ladder | `certified_render` → `certified` | Requires certificate eligibility plus successful matching runtime bytes; HMAC/certificate semantics remain `render_cert`. |
+| `certified_renderer` | Explicitly configured renderer with the existing certificate ladder | `certified_render` → `none` (quarantined) | Automatic verification, execution, and promotion are disabled until a runtime-v2 binding is released; `render_cert` remains an explicit diagnostic tool. |
 | `none` | No renderer, refusal, or unknown route | `none` | Fail closed. |
 
-Evidence classes and legacy grades are deliberately closed: `structural_only`
+Evidence classes and active grades are deliberately closed: `structural_only`
 (`none`), `diagnostic_render` (`experimental-rhwp`), `advisory_render`
-(`advisory`), `certified_render` (`certified`), and `native_render`
-(`hancom`). Failure, refusal, not-run, missing output, or hash drift derives
-`none`. For advisory/certified/diagnostic receipts, an attached quality result
+(`advisory`), quarantined `certified_render` (`none`), and `native_render`
+(`hancom`). The historical v1 schema mapping for `certified_render` was
+`certified`, but it is not an active automatic route in this release. Failure,
+refusal, not-run, missing output, or hash drift derives `none`. For
+advisory/certified/diagnostic receipts, an attached quality result
 must remain `passed`; a native receipt keeps its `hancom` renderer provenance
 when the bounded glyph checker is `unknown` or `not_applicable` (for example,
 an uninspectable Type3 font), and downgrades only on confirmed `failed`
 quality. This provenance is not a readability or Hancom-parity certification;
 Stage 6 still enforces convergence, deterministic layout/style HARDs, and
 artifact hashes.
+
+T93 custody note: the shipped runtime keeps
+`CERTIFIED_PROOF_RELEASE_ENABLED` false. Automatic certificate verify/check,
+renderer execution, and PDF promotion therefore remain quarantined with
+`certified_runtime_unbound` and proof grade `none`.
 
 Receipt artifact roles are closed as well: `source_form`, `assembled_hwpx`,
 `rendered_pdf`, and `diagnostic_svg`. Successful structural assembly records

@@ -131,19 +131,15 @@ SVG pages leaves the canonical XML output intact and records proof_grade none
 with an explicit fallback reason. Equation-bearing HWPX is never routed to
 LibreOffice as a substitute proof path.
 
-An operator-issued renderer certificate is configured with
-`RIGORLOOM_RENDER_CERTIFICATE=<certificate.json>`. `render_probe` advertises it
-only after the operator-key HMAC, embedded measurement hash, manifest-derived
-envelope, corpus-manifest hash, renderer binary hash, and pinned
-renderer/Hancom versions re-verify. Certification and runtime verification
-require `RIGORLOOM_PROFILE_ROOT=<PRIVATE_ROOT>`; first certification creates
-`keys/render_cert.key` there with owner-only permissions. A workspace must
-also set top-level `certified_render: true` and `render_certificate: <same path>` in
-`build.yaml`. After assembly, the dispatcher runs `render_cert check` against
-`output/out.hwpx`; only an envelope match with no `unknown:*` feature may run
-the certified PDF command. The candidate is reopened and atomically replaces
-the fallback PDF only on success. Any missing, mismatched, failed, or altered
-condition leaves the existing advisory/experimental/none behavior unchanged.
+An operator-issued renderer certificate remains diagnostic configuration only.
+`RIGORLOOM_RENDER_CERTIFICATE=<certificate.json>` is not probed or executed by
+the automatic XML route while the shared `CERTIFIED_PROOF_RELEASE_ENABLED`
+switch is false. The dispatcher records the closed
+`certified_runtime_unbound` reason and keeps the canonical XML output and
+receipt grade `none`; it does not call `render_cert check`, launch a certified
+command, or promote a PDF. `render_cert measure`, `certify`, `verify`, and
+`check` remain explicit operator diagnostics until a separately reviewed
+runtime-v2/root/receipt contract is released.
 
 ---
 
