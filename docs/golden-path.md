@@ -154,6 +154,29 @@ are outside coverage. An agreement is never native parity, render proof,
 canonical ingress, Stage 0 input, or submission evidence, and `syhwp` is
 explicitly deferred.
 
+## 0A.4 Bounded HWP source coverage (T89)
+
+For a source-side BodyText wire inventory, pre-create
+`work/stage-0/scratch/hwp-source-coverage` and run the receipt-only route:
+
+```sh
+python pipeline/scripts/hwp_source_coverage.py inspect INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-source-coverage --run-id HEX
+python pipeline/scripts/hwp_source_coverage.py verify INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-source-coverage --run-id HEX
+```
+
+T89 reuses T85 preflight and exact direct `BodyText/Section0..N` record
+coverage, including the exact 24-byte v1 ParaHeader and canonical supported
+paragraph-child order. It does not scan paragraph-header auxiliary fields or
+DocInfo reference/numbering/style semantics, so a
+clean BodyText envelope remains `eligibility: unknown`; unsupported controls,
+objects, and malformed grammar are ineligible or refused. No v1 eligible
+outcome exists, every analyzed/refused result exits 3, and the receipt is not
+source fidelity, conversion parity, native execution, render, or submission
+evidence. Never route it to Stage 0, canonical output, rendering, or
+`new_report`; syhwp is not installed or executed.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

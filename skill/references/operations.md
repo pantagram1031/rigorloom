@@ -224,6 +224,32 @@ text/equation/picture hashes, IDs, names, paths, argv, stdout/stderr, or raw
 candidate. Never feed it to T85, Stage 0, canonical output, rendering,
 submission, or `new_report`; `syhwp` remains deferred.
 
+## 0A.4. T89 bounded HWP source coverage
+
+T89 is a BodyText-only wire-coverage receipt, not a converter or semantic
+oracle. Pre-create the exact `work/stage-0/scratch/hwp-source-coverage` leaf
+and supply an opaque run id:
+
+```sh
+python pipeline/scripts/hwp_source_coverage.py inspect INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-source-coverage --run-id HEX
+python pipeline/scripts/hwp_source_coverage.py verify INPUT.hwp \
+  --coverage-root work/stage-0/scratch/hwp-source-coverage --run-id HEX
+```
+
+Only `<root>/<run-id>/receipt.json` is published. T85 CFB/FileHeader
+preflight, exact direct `BodyText/Section0..N` naming, record hierarchy,
+an exact 24-byte v1 ParaHeader, canonical paragraph-child order,
+UTF-16/count checks, and raw-deflate EOF (or a validated eight-byte CRC32/ISIZE
+trailer) are bounded and fail closed. Paragraph-header auxiliary fields and
+DocInfo reference/numbering/style graphs remain explicitly unscanned. Clean BodyText coverage remains
+`eligibility: unknown` because DocInfo reference/numbering/style semantics are
+not scanned; known unsupported surfaces are `ineligible`, and no v1 eligible
+outcome exists. All analyzed/refused outcomes exit 3. Comparison remains
+unknown, render is not_run, proof none, and submission false. Never route this
+receipt to ingress, Stage 0, canonical output, rendering, or `new_report`; no
+syhwp installation, execution, or download occurs.
+
 ## 1. story_graph
 
 ```

@@ -310,6 +310,7 @@ def publish_owner_token_receipt(
         remove_owned_fn: RemoveOwned,
         rollback_fn: Callable[..., None],
         validate_receipt_fn: Callable[[Path], None],
+        before_commit_fn: Callable[[], None] | None = None,
         token_prefix: str = ".oracle-owner-",
 ) -> dict[str, Any]:
     """Publish a receipt-only run using the same owner-token commit protocol."""
@@ -351,6 +352,13 @@ def publish_owner_token_receipt(
                 or stat.S_ISLNK(receipt_info.st_mode)
                 or getattr(receipt_info, "st_nlink", 1) != 1
                 or not same_identity_fn(node_identity_fn(receipt_target), receipt_identity)):
+            raise CoreError("diagnostic_publish_failed")
+        validate_receipt_fn(receipt_target)
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        if before_commit_fn is not None:
+            before_commit_fn()
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
             raise CoreError("diagnostic_publish_failed")
         validate_receipt_fn(receipt_target)
         if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
