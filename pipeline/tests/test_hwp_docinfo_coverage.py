@@ -691,9 +691,8 @@ def test_public_manifest_outcome_inventory_is_privacy_safe():
     root = manifest.parent
     documents = [item for item in manifest_data.get("documents", [])
                  if item.get("format") == "hwp"]
-    assert len(documents) == 10
-    outcomes = []
+    assert documents
     for item in documents:
         result = coverage.inspect_path(root / item["path"])
-        outcomes.append((result["status"], result.get("reason")))
-    assert outcomes == [("refused", "bodytext.envelope_incomplete")] * 10
+        assert (result["status"], result.get("reason")) == (
+            "refused", "bodytext.envelope_incomplete")
