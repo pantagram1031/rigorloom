@@ -64,6 +64,7 @@ matching render artifact.
 | `pyhwp` | AGPL parser/extractor for HWP v5-era input. | No supported writer or HWPX editing path; old/experimental ODT conversion does not establish document fidelity. | Parser-only; not a render/edit backend. |
 | `hwplib` / `hwpxlib` | Apache-2 Java readers/writers provide structural HWP/HWPX operations. | No renderer/PDF proof and no broad Hancom parity certification. | Structural conversion quorum only; not an evidence backend. |
 | `rhwp` | MIT open-source HWP/HWPX read/write/conversion and SVG diagnostics. | Upstream claims and small fixture probes do not establish universal fidelity; complex layout/PDF performance remain below the release ceiling. | `oss_preview_rhwp` is diagnostic and hard-blocked from submission. |
+| T86 `hwp_diagnostic_candidate.py` | Explicit, pinned `rhwp export-hwpx` candidate under `work/stage-0/scratch/hwp-diagnostic`; no automatic discovery. | It is an independent diagnostic oracle with comparison `unknown`, render `not_run`, and proof `none`; the quarantined receipt is not an executable evidence backend. | Keep it outside `output/proof/backend/receipt.json`, `output/form_copy.hwpx`, Stage 0, and `new_report --ingress-receipt`; no pyhwp or LibreOffice fallback. |
 | Poppler / MuPDF / Ghostscript | Cross-platform PDF parsing, rasterization, and PDF conversion utilities. | They do not edit or understand HWP/HWPX semantics. | `pdf_only` is a downstream PDF utility/refusal, never an HWP proof route. |
 
 ## Source register
@@ -80,6 +81,7 @@ matching render artifact.
 - [`pyhwp` repository](https://github.com/mete0r/pyhwp) and [PyPI package](https://pypi.org/project/pyhwp/)
 - [`hwplib`](https://github.com/neolord0/hwplib) and [`hwpxlib`](https://github.com/neolord0/hwpxlib)
 - [`rhwp` English README](https://github.com/edwardkim/rhwp/blob/main/README_EN.md)
+- [`rhwp` v0.8.2 source tree](https://github.com/edwardkim/rhwp/tree/v0.8.2), [release](https://github.com/edwardkim/rhwp/releases/tag/v0.8.2), and [CLI usage](https://github.com/edwardkim/rhwp/blob/v0.8.2/README_EN.md#cli-usage)
 - [Poppler](https://poppler.freedesktop.org/), [MuPDF](https://mupdf.com/), and [Ghostscript](https://www.ghostscript.com/)
 
 The source register above is the link list for the checked claims and dates;

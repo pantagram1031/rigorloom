@@ -10,6 +10,20 @@ the kernel's contract shape.
 
 ### Added
 
+- **T86:** added the separate, strictly quarantined `rhwp` diagnostic-candidate
+  runner. It accepts only an explicit binary plus mandatory SHA-256 pin, runs
+  `rhwp export-hwpx INPUT OUTPUT --verify --verify-pages` from immutable
+  snapshots with bounded timeout/output, validates the candidate through T85,
+  and publishes only an exclusive
+  `rigorloom/hwp-diagnostic-candidate/v1` receipt and
+  `<run-id>/candidate.hwpx` below
+  `work/stage-0/scratch/hwp-diagnostic`. Comparison remains
+  `unknown/independent_oracle_not_run`, render remains `not_run`, and
+  `proof_grade` remains `none`; no Stage-0 `form_copy.hwpx`, canonical
+  ingress/backend receipt, `new_report --ingress-receipt`, pyhwp, or
+  LibreOffice fallback is involved. Operator-local v0.8.2 archive/binary
+  hashes and one public-form probe are evidence notes only; no corpus bytes or
+  private runtime artifacts are shipped.
 - **T85:** added a fail-closed, standard-library HWP5 ingress boundary. The
   read-only `hwp_ingress.py inspect` route validates closed CFB v3 FAT,
   mini-FAT, directory and stream allocation; direct-root DocInfo and
