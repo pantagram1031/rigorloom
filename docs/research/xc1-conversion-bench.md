@@ -473,8 +473,9 @@ counts (tables/pictures/equations) must match exactly (HARD
 `convert_structural_drift`); text char totals are recorded **advisory
 only** (the §2 normalization mismatch is a documented property, not a
 gate). On non-Windows / no-pyhwpx environments the check emits verdict
-`skip` with a `hwp_source_leg_unavailable` warn — a skip, never a silent
-pass. Tests: `pipeline/tests/test_check_convert_parity.py` (skip path,
+`skip` with a `hwp_source_leg_unavailable` warn and exits 3 — the source leg
+did not run, so the process must not look like a successful gate. Tests:
+`pipeline/tests/test_check_convert_parity.py` (non-pass skip path,
 pass path, drift path — COM leg mocked). Live runs: jumin pair 3/1/0 ==
 3/1/0 pass; kstartup pair — the formerly divergent one — now 42/0/0 ==
 42/0/0 pass.

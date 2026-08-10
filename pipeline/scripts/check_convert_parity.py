@@ -9,7 +9,7 @@ Two modes, routed on the A-side suffix:
   cannot be fingerprinted offline, so the source leg comes from COM
   (engine/scripts/com_backend.py inspect — GetTextFile char total + native
   control counts). Guarded: Windows + pyhwpx only; elsewhere the check SKIPS
-  loudly (verdict "skip"), it never silently passes. Structural counts
+  loudly with a non-pass exit, never process-success. Structural counts
   (tables / pictures / equations) must match the converted .hwpx exactly;
   text char totals are ADVISORY only — the two extraction paths normalize
   differently (COM GetTextFile includes field/UI chrome; the XML walk does
@@ -97,7 +97,10 @@ def check_hwp_conversion(src_hwp: str | Path,
             }],
             extra={"mode": "hwp_conversion", "src_hwp": str(src.resolve())},
             verdict="skip")
-        return verdict, EXIT_PASS
+        # No source leg means no conversion-parity evidence.  Keep the
+        # explicit ``skip`` verdict for machine readers, but never let a shell
+        # or pipeline mistake an unavailable check for a successful gate.
+        return verdict, EXIT_HARD
     try:
         com = _com_inspect(src)
         hwpx = semantic_fingerprint(dst)

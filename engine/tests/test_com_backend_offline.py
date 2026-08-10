@@ -16,8 +16,10 @@ Two mechanism fixes are locked here with pure-Python tests:
    temp copy with PrintMethod normalized to 0 and reports page-count parity.
    (COM-verified 2026-08-07: nrf 2→4 pages, parity 4==4.)
 """
+import hashlib
 import os
 import re
+import subprocess
 import sys
 import zipfile
 
@@ -71,6 +73,49 @@ def test_inspect_real_picture_still_counted():
     assert info["pictures"] == 1
     assert info["shapes"] == 1
     assert info["tables"] == 1
+
+
+def test_inspect_privacy_safe_is_hash_and_counts_only():
+    hwp = _FakeHwp([("gso", "그림"), ("tbl", "표")])
+    hwp.get_field_list = lambda: "SECRET_FIELD"
+
+    info = com_backend.inspect(hwp, privacy_safe=True)
+
+    assert info["text_sha256"] == hashlib.sha256(
+        "synthetic body".encode("utf-8")
+    ).hexdigest()
+    assert info["text_chars_total"] == len("synthetic body")
+    assert info["equations"] == 0
+    assert info["shapes"] == 0
+    assert info["pages"] == 1
+    assert info["controls_total"] == 2
+    assert info["field_count"] == 1
+    assert "text_preview" not in info
+    assert "fields" not in info
+    assert "SECRET_FIELD" not in repr(info)
+
+
+def test_inspect_cli_exposes_privacy_safe_fingerprint_mode():
+    completed = subprocess.run(
+        [sys.executable, com_backend.__file__, "inspect", "--help"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=10)
+    assert completed.returncode == 0
+    assert "--privacy-safe" in completed.stdout
+    assert "Traceback" not in completed.stderr
+
+
+def test_inspect_privacy_safe_failure_does_not_echo_source_path(tmp_path):
+    missing = tmp_path / "PRIVATE-CANARY.hwp"
+    completed = subprocess.run(
+        [sys.executable, com_backend.__file__, "inspect", "--file",
+         str(missing), "--privacy-safe"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=10)
+    assert completed.returncode == 3
+    assert completed.stdout.strip() == '{"ok": false, "reason": "inspect_failed"}'
+    assert "PRIVATE-CANARY" not in completed.stdout + completed.stderr
+    assert "Traceback" not in completed.stdout + completed.stderr
 
 
 # ---------------------------------------------------------------------------
