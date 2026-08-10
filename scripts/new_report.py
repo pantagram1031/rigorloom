@@ -125,7 +125,7 @@ def _assert_safe_workspace(root: Path, slug: str) -> Path:
 
 
 def _is_quarantined_diagnostic_candidate(form: Path) -> bool:
-    """Recognize the schema-owned T86 layout without opening its receipt."""
+    """Recognize schema-owned diagnostic layouts without opening receipts."""
     try:
         path = form.resolve()
     except (OSError, RuntimeError, ValueError):
@@ -133,7 +133,8 @@ def _is_quarantined_diagnostic_candidate(form: Path) -> bool:
     return (
         path.name == "candidate.hwpx"
         and DIAGNOSTIC_RUN_ID_RE.fullmatch(path.parent.name) is not None
-        and path.parent.parent.name.casefold() == "hwp-diagnostic"
+        and path.parent.parent.name.casefold()
+        in {"hwp-diagnostic", "hwp-java-diagnostic"}
     )
 
 

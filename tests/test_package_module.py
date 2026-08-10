@@ -275,13 +275,54 @@ class TestCoreBundle:
         assert "Traceback" not in diagnostic_help.stderr
         assert "ModuleNotFoundError" not in diagnostic_help.stderr
 
+        java_diagnostic_help = subprocess.run(
+            [sys.executable,
+             str(install / "pipeline" / "scripts"
+                 / "hwp_java_diagnostic_candidate.py"),
+             "--help"],
+            cwd=install,
+            env=env,
+            capture_output=True,
+            encoding="cp949",
+            errors="replace",
+            timeout=30,
+        )
+        assert java_diagnostic_help.returncode == 0, (
+            java_diagnostic_help.stdout, java_diagnostic_help.stderr)
+        assert "java" in java_diagnostic_help.stdout.lower()
+        assert "Traceback" not in java_diagnostic_help.stderr
+        assert "ModuleNotFoundError" not in java_diagnostic_help.stderr
+
+        java_lock_check = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; "
+             "sys.path.insert(0, r'pipeline/scripts'); "
+             "import hwp_java_diagnostic_candidate as m; "
+             "print(m._load_toolchain()[1])"],
+            cwd=install,
+            env=env,
+            capture_output=True,
+            encoding="cp949",
+            errors="replace",
+            timeout=30,
+        )
+        assert java_lock_check.returncode == 0, (
+            java_lock_check.stdout, java_lock_check.stderr)
+        assert java_lock_check.stdout.strip() == (
+            "6be2ef8320f8987c7b8025682f4ede5e921cac3cfebc105f1c2fd5abc9f9a017")
+
         names = set()
         with zipfile.ZipFile(bundle) as archive:
             names.update(archive.namelist())
         assert "pipeline/scripts/story_graph.py" in names
         assert "pipeline/scripts/story_edit.py" in names
         assert "pipeline/scripts/hwp_ingress.py" in names
+        assert "pipeline/scripts/diagnostic_candidate_core.py" in names
         assert "pipeline/scripts/hwp_diagnostic_candidate.py" in names
+        assert "pipeline/scripts/hwp_java_diagnostic_candidate.py" in names
+        assert "pipeline/references/hwp_java/Hwp2HwpxBridge.java" in names
+        assert "pipeline/references/hwp_java/toolchain-lock.json" in names
+        assert not any(name.lower().endswith((".jar", ".class")) for name in names)
         assert "pipeline/adapters_impl/__init__.py" in names
         assert "pipeline/adapters_impl/bundle_backend.py" in names
         assert "pipeline/adapters_impl/docx_backend.py" in names
