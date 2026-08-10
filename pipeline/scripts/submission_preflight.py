@@ -48,6 +48,7 @@ if str(_PIPELINE_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_SCRIPTS))
 
 import render_probe
+import hwp_equation_diagnostic
 import render_cert
 import module_registry
 import verdict_schema
@@ -719,7 +720,8 @@ def check(
                 extracted_text = _hwpx_text(artifact) if suffix == ".hwpx" else _pdf_text(artifact)
                 if suffix == ".hwpx":
                     document_has_equations = render_probe.hwpx_has_equations(artifact)
-            except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+            except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError,
+                    hwp_equation_diagnostic.CoverageError) as exc:
                 hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
                              "at": artifact_rel})
 

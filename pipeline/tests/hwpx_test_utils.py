@@ -7,8 +7,11 @@ import zipfile
 
 
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+HS = "http://www.hancom.co.kr/hwpml/2011/section"
 HH = "http://www.hancom.co.kr/hwpml/2011/head"
 HC = "http://www.hancom.co.kr/hwpml/2011/core"
+OPF = "http://www.idpf.org/2007/opf/"
+OCF = "urn:oasis:names:tc:opendocument:xmlns:container"
 IMAGE = b"\x89PNG\r\n\x1a\nsynthetic-image"
 
 
@@ -104,7 +107,7 @@ def write_hwpx(
     picture = picture_control()
     extra = '<hp:ctrl type="extra"/>' if extra_structure else ""
     section = (
-        f'<hp:section xmlns:hp="{HP}">'
+        f'<hs:sec xmlns:hs="{HS}" xmlns:hp="{HP}">'
         '<hp:secPr id="1"><hp:pagePr width="59528" height="84188"/></hp:secPr>'
         + _p(1, "Ⅰ. Introduction")
         + _p(2, body, extra)
@@ -124,17 +127,33 @@ def write_hwpx(
         )
         + _p(7, "Figure 1. Plot")
         + _p(8, "Omega.")
-        + "</hp:section>"
+        + "</hs:sec>"
     )
     content_hpf = (
-        '<opf:package xmlns:opf="urn:opf"><opf:manifest>'
+        f'<opf:package xmlns:opf="{OPF}" id="package" '
+        'unique-identifier="uid" version="1.0">'
+        '<opf:metadata><opf:title/><opf:language>ko</opf:language>'
+        '<opf:meta name="creator" content="test"/></opf:metadata>'
+        '<opf:manifest>'
+        '<opf:item id="header" href="Contents/header.xml" '
+        'media-type="application/xml"/>'
+        '<opf:item id="section0" href="Contents/section0.xml" '
+        'media-type="application/xml"/>'
         '<opf:item id="image1" href="BinData/image1.png" media-type="image/png"/>'
-        "</opf:manifest></opf:package>"
+        '</opf:manifest><opf:spine><opf:itemref idref="section0"/>'
+        '</opf:spine></opf:package>'
+    )
+    container = (
+        f'<ocf:container xmlns:ocf="{OCF}"><ocf:rootfiles>'
+        '<ocf:rootfile full-path="Contents/content.hpf" '
+        'media-type="application/hwpml-package+xml"/>'
+        '</ocf:rootfiles></ocf:container>'
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("mimetype", "application/hwp+zip",
                          compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container)
         archive.writestr("Contents/header.xml", header)
         archive.writestr("Contents/section0.xml", section)
         archive.writestr("Contents/content.hpf", content_hpf)
