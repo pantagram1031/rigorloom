@@ -32,6 +32,47 @@ Two things this doc is honest about up front:
   Office HWP install, plus the engine's optional `[windows]`/`[proof]` extras.
   This doc calls out each place that path diverges.
 
+## 0A. Inspect story topology without reading text
+
+When a workflow needs to understand headers, footers, notes, or nested table
+ancestry before editing, run the bounded privacy-safe inventory:
+
+```sh
+python pipeline/scripts/story_graph.py FORM.hwpx --out story-graph.json
+```
+
+The inventory first validates the exact HWPX mimetype as the first stored,
+extra-free ZIP entry and validates every local ZIP header against its central
+record, including version-needed and DOS date/time. Its v1 ZIP envelope permits only empty extras and flags `0` or the
+public-corpus-proven DEFLATE option `0x0004` (only with DEFLATED); encryption,
+data descriptors, all other flags, non-ASCII paths, and any mismatch refuse.
+It then validates every safe, present OCF rootfile, then
+derives section order from the `Contents/content.hpf` OPF spine and actual
+section roots (there is no manifest-order fallback: every actual section must
+appear exactly once in a nonempty spine), validates the documented closed Hancom OWPML parent pairs used
+by this inventory,
+and models only nested `hp:ctrl` `header`/`footer`/`footNote`/`endNote` owners
+with their `hp:subList` paragraphs. A table-cell owner is represented with its
+closed table ordinal and cell encounter ordinal ancestry (raw cell coordinates
+remain internal for duplicate validation only); a story inside
+another story refuses. Its JSON contains manifest-order member
+ordinals and role/ordinal structural addresses, closed roles, counts, topology,
+and schema-only structural hashes;
+it never contains a source member name, control ID, body text, author metadata,
+URL, corpus content, absolute path, raw byte hash, or template fingerprint.
+ZIP/XML availability bounds, unsafe or
+ambiguous OPF references/media/coverage, foreign namespaces and the documented
+closed-pair transplants (including nested `hh:head`, `hh:bold` under `head`,
+and `hc:img` under `hp:run`), invalid
+`applyPageType`/`treatAsChar`, duplicate note instances or same-table cells,
+and unsupported field/hidden-comment/drawText/caption/masterPage/paragraph10
+structures refuse. Header/settings XML and section core vocabulary are closed;
+foreign/future members refuse. A spine can reference only definition and
+section roles. This T79 slice is inventory-only: it provides no selector, edit, or render
+claim. Exit codes are 0 passed, 2 usage/argparse/output error, and 3
+refused/unknown package. The owner facts are grounded in the public
+[Hancom OWPML model](https://github.com/hancom-io/hwpx-owpml-model).
+
 ## 1. Clone and bootstrap
 
 ```sh
