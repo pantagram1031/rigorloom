@@ -48,8 +48,18 @@ the output. The result uses manifest-order member ordinals and role/ordinal
 addresses, never source names, control IDs, raw-byte fingerprints, or template
 fingerprints; it makes no edit or render claim.
 
+For the separate T80 structural edit slice, first obtain that inventory, then
+run `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json
+--out OUTPUT.hwpx --receipt RECEIPT.json`. The closed selector ends at
+`/paragraph[n]` and the paragraph must have one direct text-bearing run with
+one direct `hp:t`; stale/private source SHA, ambiguous/text-first/raw-ID/
+`/run[n]`/noncanonical selectors, unsupported XML, and raw CR refuse. The
+receipt is local privacy-safe evidence only and always reports
+`render: "not_run"`; no native/Hancom/PDF result is implied.
+
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
+| edit exactly one inventoried story paragraph (T80 structural mechanics) | `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json --out OUTPUT.hwpx --receipt RECEIPT.json` | LOW — closed ops only; no render claim |
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
 | **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |
 | fill an **empty** form cell (`table_map` says `fill_target`) | `python engine/scripts/preedit.py fill-cells IN.hwpx --out OUT.hwpx --cell ROW,COL=값 [--charpr-per-cell ROW,COL=ID]` (ROW,COL = the cellAddr `table_map` reports; `--charpr-per-cell` takes the pre-flight's `charpr_suggested`, see references/operations.md §3) | LOW |
@@ -132,7 +142,7 @@ URLs, absolute paths, raw-byte hashes, or template fingerprints. The exact
 physical mimetype is first/stored/extra-free; every local ZIP header must match
 its central record, including version-needed and DOS date/time, with empty
 extras and only flags `0` or corpus-proven
-DEFLATE `0x0004` (DEFLATED only); OCF rootfiles and declared XML roots are
+DEFLATE fast flag `0x0004` (PKWARE APPNOTE bit 2, DEFLATED only); OCF rootfiles and declared XML roots are
 closed before bounded
 ZIP/XML availability, OPF grammar/media/coverage, foreign namespaces and the
 documented closed-pair transplants (including nested `hh:head`, `hh:bold`
