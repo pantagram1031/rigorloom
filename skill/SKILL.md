@@ -65,6 +65,13 @@ proof. Successful terminal execution must leave a current receipt at
   diagnostic-only (`source_fidelity` not established, render `not_run`, proof
   `none`, submission false); never route it to T85, Stage 0, canonical output,
   rendering, or `new_report`.
+- T90 `hwp_docinfo_coverage.py` is a separate receipt-only DocInfo
+  cardinality/zero-based BodyText ID-bound diagnostic. Require the exact
+  pre-created `work/stage-0/scratch/hwp-docinfo-coverage` leaf. Definition
+  semantics and generated numbering remain unscanned, so eligibility and
+  comparison are unknown, render not run, proof none, and submission false;
+  never route it to ingress, Stage 0, canonical output, rendering, or
+  `new_report`.
 - Originals are immutable: every operation writes a new file (`--out` /
   `--save-as`). Editing in place is a defect, not a shortcut.
 
@@ -94,6 +101,7 @@ receipt is local privacy-safe evidence only and always reports
 | quarantine an approved Java diagnostic candidate (T87) | `python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic --run-id HEX --java JAVA --java-sha256 SHA256 --tool-jar APPROVED.jar` | LOW — diagnostic only; runtime unbound, no parity/render/submission claim |
 | compare current T86/T87 candidates (T88) | `python pipeline/scripts/hwp_semantic_oracle.py compare T86_RECEIPT.json T87_RECEIPT.json --diagnostic-root work/stage-0/scratch/hwp-semantic-oracle --run-id HEX` | LOW — paired diagnostic agreement only; no canonical, render, or submission claim |
 | inspect bounded HWP source coverage (T89) | `python pipeline/scripts/hwp_source_coverage.py inspect INPUT.hwp --coverage-root work/stage-0/scratch/hwp-source-coverage --run-id HEX` then `verify` with the same source/root/run | LOW — receipt-only BodyText coverage; complete coverage is not source fidelity, conversion parity, native execution, render, or submission evidence |
+| inspect bounded HWP DocInfo coverage (T90) | `python pipeline/scripts/hwp_docinfo_coverage.py inspect INPUT.hwp --coverage-root work/stage-0/scratch/hwp-docinfo-coverage --run-id HEX` then `verify` with the same source/root/run | LOW — receipt-only cardinality/reference bounds; payload meaning remains unscanned and eligibility stays unknown |
 | edit exactly one inventoried story paragraph (T80 structural mechanics) | `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json --out OUTPUT.hwpx --receipt RECEIPT.json` | LOW — closed ops only; no render claim |
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
 | **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |

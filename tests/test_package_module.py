@@ -242,7 +242,9 @@ class TestCoreBundle:
                 install / "pipeline" / "scripts" / "submission_preflight.py",
                 install / "pipeline" / "scripts" / "story_graph.py",
                 install / "pipeline" / "scripts" / "story_edit.py",
-                install / "pipeline" / "scripts" / "hwp_ingress.py"):
+                install / "pipeline" / "scripts" / "hwp_ingress.py",
+                install / "pipeline" / "scripts" / "hwp_source_coverage.py",
+                install / "pipeline" / "scripts" / "hwp_docinfo_coverage.py"):
             completed = subprocess.run(
                 [sys.executable, str(script), "--help"],
                 cwd=install,
@@ -339,6 +341,7 @@ class TestCoreBundle:
         assert "pipeline/scripts/hwp_java_diagnostic_candidate.py" in names
         assert "pipeline/scripts/hwp_semantic_oracle.py" in names
         assert "pipeline/scripts/hwp_source_coverage.py" in names
+        assert "pipeline/scripts/hwp_docinfo_coverage.py" in names
         assert "pipeline/references/hwp_java/Hwp2HwpxBridge.java" in names
         assert "pipeline/references/hwp_java/toolchain-lock.json" in names
         assert "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json" in names
