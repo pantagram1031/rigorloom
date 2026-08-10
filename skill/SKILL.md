@@ -41,6 +41,13 @@ proof. Successful terminal execution must leave a current receipt at
 
 ## Task routing
 
+For a privacy-safe story inventory, run
+`python pipeline/scripts/story_graph.py FORM.hwpx --out story-graph.json`.
+This is read-only and refuses unknown structure; it never reads body text into
+the output. The result uses manifest-order member ordinals and role/ordinal
+addresses, never source names, control IDs, raw-byte fingerprints, or template
+fingerprints; it makes no edit or render claim.
+
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
@@ -113,6 +120,38 @@ rather than *executing*. If the cheap tier struggles on a documented CLI
 path, that is a surface defect to report, not a reason to escalate.
 
 ## Contracts (violations are defects)
+
+`story_graph.py` is a **read-only, structure-only** inventory. It follows
+`Contents/content.hpf` manifest/spine and actual section roots (not ZIP or
+filename order) and recognizes only namespace-valid nested `hp:ctrl` owners whose public OWPML
+model gives them an `hp:subList`: `header`, `footer`, `footNote`, and
+`endNote`. Its JSON has manifest-order member ordinals, role/ordinal addresses,
+closed roles, counts, topology, and schema-only structural hashes only. It never
+emits member names, control IDs, body text, author metadata, corpus content,
+URLs, absolute paths, raw-byte hashes, or template fingerprints. The exact
+physical mimetype is first/stored/extra-free; every local ZIP header must match
+its central record, including version-needed and DOS date/time, with empty
+extras and only flags `0` or corpus-proven
+DEFLATE `0x0004` (DEFLATED only); OCF rootfiles and declared XML roots are
+closed before bounded
+ZIP/XML availability, OPF grammar/media/coverage, foreign namespaces and the
+documented closed-pair transplants (including nested `hh:head`, `hh:bold`
+under `head`, and `hc:img` under `hp:run`),
+invalid page/bool values, duplicate note instances or same-table cells, and
+unsupported `hiddenComment`/memo/field/drawText/caption/masterPage controls
+refuse. Every actual section must occur exactly once in a nonempty OPF spine;
+there is no manifest fallback. A spine may reference only definition/section
+roles. Table-cell stories carry closed table/cell-encounter ordinals (never raw
+cell coordinates), while story-in-story owners refuse; no selector, edit, or render
+support is claimed. The owner boundary is grounded in the public
+[Hancom OWPML model](https://github.com/hancom-io/hwpx-owpml-model), especially
+its `HeaderFooterType`, `NoteType`, `hiddenComment`, `fieldBegin`, `drawText`,
+and `caption` classes.
+
+The `story_graph.py` CLI exits 0 only for a passed graph, 2 for argparse or
+output/usage errors, and 3 for refused/unknown packages. Capture the native
+exit directly (`$native=$LASTEXITCODE`) when running it from PowerShell; do not
+pipe the result into a summary command.
 
 - `inspect`/`form_inspect` return **structure only, never body text** — do
   not dump full document text into context. The one sanctioned exception is

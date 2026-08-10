@@ -239,7 +239,8 @@ class TestCoreBundle:
         env["PYTHONIOENCODING"] = "cp949"
         for script in (
                 install / "pipeline" / "scripts" / "doc_backend.py",
-                install / "pipeline" / "scripts" / "submission_preflight.py"):
+                install / "pipeline" / "scripts" / "submission_preflight.py",
+                install / "pipeline" / "scripts" / "story_graph.py"):
             completed = subprocess.run(
                 [sys.executable, str(script), "--help"],
                 cwd=install,
@@ -251,12 +252,14 @@ class TestCoreBundle:
             )
             assert completed.returncode == 0, (
                 script.name, completed.stdout, completed.stderr)
+            assert "Traceback" not in completed.stderr
             assert "ModuleNotFoundError" not in completed.stderr
             assert "adapters_impl" not in completed.stderr
 
         names = set()
         with zipfile.ZipFile(bundle) as archive:
             names.update(archive.namelist())
+        assert "pipeline/scripts/story_graph.py" in names
         assert "pipeline/adapters_impl/__init__.py" in names
         assert "pipeline/adapters_impl/bundle_backend.py" in names
         assert "pipeline/adapters_impl/docx_backend.py" in names

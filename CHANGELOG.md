@@ -10,6 +10,23 @@ the kernel's contract shape.
 
 ### Added
 
+- **T79:** added the read-only `story_graph.py` HWPX inventory. It follows the
+  OPF `content.hpf` manifest/spine plus actual section roots, inventories the
+  bounded `header`/`footer`/`footNote`/`endNote` paragraph-list controls, and
+  emits manifest-order member ordinals, role/ordinal addresses, counts,
+  topology, and schema-only structural hashes (never raw-byte fingerprints).
+  The physical mimetype must be the first stored, extra-free ZIP entry; every
+  local header is reconciled with its central record (including version-needed
+  and DOS date/time; empty extras and only flags `0` or public-corpus-proven
+  DEFLATE `0x0004`); OCF rootfiles and all
+  declared XML roots are closed and validated before OPF. Every section must
+  occur exactly once in a nonempty spine, which references only definitions or
+  sections; table-cell stories retain only closed table/cell encounter ordinals
+  (never raw coordinates) and story-in-story owners refuse.
+  ZIP/XML bounds, OPF grammar/media/coverage,
+  supported parent grammar, exact control values, note/cell scope identity, and unsupported story
+  resources are fail-closed. Fields, hidden comments, draw text, captions,
+  master pages, `.hwp`, rendering, and editing are deliberately out of scope.
 - `form_inspect` now emits additive, backward-compatible `anchor_records`
   (legacy `para_idx` plus the preedit-aligned `at_para` when identity is
   proven) as internal evidence, and accepts opt-in `--full-text PARA:N`,
@@ -18,6 +35,10 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T79:** the story inventory now rejects case-fold duplicate ZIP members and
+  has an explicit CLI contract: exit 0 for a passed graph, 2 for argparse or
+  output/usage errors, and 3 for a refused/unknown package. Help and output are
+  UTF-8-safe and never echo document text, author metadata, or absolute paths.
 - **T53:** backend capability probes no longer promote XML assembly to Hancom
   proof. Every non-`none` legacy grade is derived from a terminal execution
   receipt bound to the current artifact hashes; current-host capabilities are

@@ -17,6 +17,28 @@ the report module fragment, not here.
 
 ## XML/offline editing
 
+T79 story inventory: run `python pipeline/scripts/story_graph.py FORM.hwpx
+--out story-graph.json` for a read-only, structure-only graph. It follows
+`Contents/content.hpf` manifest/spine order and models only evidence-backed
+namespace-valid nested `hp:ctrl` `header`/`footer`/`footNote`/`endNote`
+`subList` owners. It emits manifest-order member ordinals and role/ordinal
+structural addresses, counts/topology, and schema-only structural hashes only:
+no raw byte/content/member-name fingerprint. Exact physical mimetype
+(first/stored/extra-free), every reconciled local/central ZIP header
+(including version-needed and DOS date/time; empty extras; flags `0` or
+DEFLATE `0x0004` only), safe OCF rootfiles, and closed declared XML roots,
+ZIP/XML bounds, unsafe or
+ambiguous ZIP/OPF refs/media/coverage, foreign namespaces and the documented
+closed-pair transplants (nested `hh:head`, `hh:bold` under `head`, and `hc:img`
+under `hp:run`), invalid
+`treatAsChar`/page variants, duplicate note instances or same-table cells, and
+unsupported field/hidden-comment/drawText/caption/masterPage refuse. Every
+actual section needs exactly one nonempty-spine reference and a spine admits
+only definition/section roles; table-cell stories keep closed table/cell
+encounter ordinals while raw coordinates stay internal, and story-in-story owners refuse. Exit
+0=passed, 2=usage/output, 3=refused/unknown; no selector, edit, or render path
+is claimed.
+
 | id | symptom | cause → fix |
 |---|---|---|
 | T18 | guide-paragraph deletion collapsed layout (21 pages, 20-line hole) | deletion by charPr color hit table/secPr/ctrl paragraphs → `preedit delete-guides` has the protection guard built in (`guards.is_protected_para`); never delete guide paragraphs with hand-rolled XML edits |
