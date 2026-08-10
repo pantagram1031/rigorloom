@@ -130,18 +130,66 @@ _SUPPORTED_TOKENS = frozenset({
     "docinfo.definition_groups", "bodytext.para_header",
     "bodytext.para_text", "bodytext.para_char_shape",
 })
+#: Reason spelling is part of the contract, and the two spellings mean
+#: different things (T96):
+#:
+#: * **dotted** — a claim ABOUT THE SCANNED DOCUMENT's structure, always
+#:   prefixed by the stream it concerns. This is the ``blocking_tokens``
+#:   vocabulary, and it shares the convention of ``_SUPPORTED_TOKENS`` above.
+#: * **underscore** — the run could not proceed: bad input selection, a
+#:   receipt that failed validation, a publication failure. Saying nothing
+#:   about the document is the point.
+#:
+#: The first release of this lane declared 23 dotted tokens of which 22 were
+#: raised by no code path (``docinfo.version_tail`` among them — no site emits
+#: it, so declaring it advertised a distinction the scanner cannot make),
+#: spelled one condition two ways (``bodytext.paragraph_invalid`` at the
+#: ParaHeader length check versus ``bodytext_paragraph_invalid`` three branches
+#: later), and omitted ``bodytext.envelope_incomplete``, the only reason the
+#: entire public corpus actually produces.
+#: ``test_reason_vocabulary_matches_the_source`` parses every literal out of
+#: this module and asserts set equality in both directions, so a future
+#: divergence has to announce itself instead of sitting unnoticed for a lane.
 _BLOCKING_TOKENS = frozenset({
-    "docinfo.record_unknown", "docinfo.record_order", "docinfo.record_level",
-    "docinfo.document_properties_missing", "docinfo.document_properties_duplicate",
-    "docinfo.id_mappings_missing", "docinfo.id_mappings_duplicate",
-    "docinfo.id_mappings_length", "docinfo.id_mappings_count_invalid",
-    "docinfo.definition_count_mismatch", "docinfo.definition_order",
-    "docinfo.definition_level", "docinfo.definition_unknown",
-    "docinfo.version_unsupported", "docinfo.version_tail",
-    "docinfo.record_truncated", "docinfo.record_extended_size",
-    "docinfo.record_level_jump", "bodytext.reference_out_of_range",
-    "bodytext.char_shape_position_invalid", "bodytext.paragraph_invalid",
-    "bodytext.section_invalid", "bodytext.envelope_invalid",
+    "bodytext.char_shape_position_invalid", "bodytext.decompressed_limit",
+    "bodytext.envelope_incomplete", "bodytext.paragraph_invalid",
+    "bodytext.record_limit", "bodytext.reference_out_of_range",
+    "bodytext.section_limit",
+    "docinfo.alias", "docinfo.definition_count_invalid",
+    "docinfo.definition_count_mismatch", "docinfo.definition_level",
+    "docinfo.definition_order", "docinfo.definition_semantics_unscanned",
+    "docinfo.definition_total_limit", "docinfo.definition_unknown",
+    "docinfo.document_properties_duplicate",
+    "docinfo.document_properties_invalid",
+    "docinfo.document_properties_missing",
+    "docinfo.id_mappings_count_invalid", "docinfo.id_mappings_duplicate",
+    "docinfo.id_mappings_length", "docinfo.id_mappings_missing",
+    "docinfo.invalid", "docinfo.record_extended_size", "docinfo.record_level",
+    "docinfo.record_level_jump", "docinfo.record_limit",
+    "docinfo.record_order", "docinfo.record_truncated",
+    "docinfo.stream_invalid", "docinfo.version_unsupported",
+})
+#: The operational half of the same closed set, kept separate so a consumer can
+#: tell "this document is not acceptable" from "this run did not happen".
+#:
+#: LIMIT, stated rather than hidden: ``reason`` is still not validated against
+#: these sets at runtime, because a refusal can also carry a reason raised by
+#: ``diagnostic_candidate_core`` (5 literals), ``hwp_ingress`` (127) or
+#: ``hwp_source_coverage`` (48). Closing that means a cross-module reason
+#: registry — roughly 200 tokens over four modules — and coupling this lane to
+#: three other modules' internals is its own reviewed slice, not a footnote
+#: here. Verified meanwhile: every upstream reason is a fixed literal, with no
+#: f-string, ``%``, ``format`` or concatenation, so no path or filename can
+#: reach a receipt through this field.
+_OPERATIONAL_REASONS = frozenset({
+    "diagnostic_publish_failed", "extension_not_hwp", "input_changed",
+    "input_empty", "input_root_overlap", "input_unavailable",
+    "output_write_failed", "preflight_failed", "receipt_changed",
+    "receipt_content_mismatch", "receipt_coverage_invalid",
+    "receipt_duplicate_key", "receipt_invalid", "receipt_layout_invalid",
+    "receipt_not_canonical", "receipt_schema_invalid",
+    "receipt_source_invalid", "receipt_state_invalid", "run_id_invalid",
+    "source_descriptor_invalid",
 })
 
 
@@ -283,7 +331,7 @@ def _direct_docinfo(cfb: Any) -> Any:
         root = cfb.root
         children = [cfb.directory[i] for i in cfb._tree_nodes(root.child)]
     except (AttributeError, TypeError, ValueError):
-        raise CoverageError("docinfo_invalid")
+        raise CoverageError("docinfo.invalid")
     # T85 permits case-folded ingress aliases.  T90's claim is narrower:
     # exactly one direct root stream with the canonical spelling.
     exact = [entry for entry in children if entry.name == "DocInfo"]
@@ -293,21 +341,21 @@ def _direct_docinfo(cfb: Any) -> Any:
                             else "docinfo_ambiguous")
     if any(entry.name.casefold() == "docinfo" and entry.name != "DocInfo"
            for entry in children):
-        raise CoverageError("docinfo_alias")
+        raise CoverageError("docinfo.alias")
     return matches[0]
 
 
 def _iter_records(raw: bytes, *, max_records: int, max_bytes: int) -> Iterable[tuple[int, int, bytes]]:
     if not isinstance(raw, bytes) or not raw or len(raw) > max_bytes:
-        raise CoverageError("docinfo_stream_invalid")
+        raise CoverageError("docinfo.stream_invalid")
     offset = 0
     count = 0
     previous_level: int | None = None
     while offset < len(raw):
         if count >= max_records:
-            raise CoverageError("docinfo_record_limit")
+            raise CoverageError("docinfo.record_limit")
         if len(raw) - offset < 4:
-            raise CoverageError("docinfo_record_truncated")
+            raise CoverageError("docinfo.record_truncated")
         header = struct.unpack_from("<I", raw, offset)[0]
         offset += 4
         tag = header & 0x3FF
@@ -315,17 +363,17 @@ def _iter_records(raw: bytes, *, max_records: int, max_bytes: int) -> Iterable[t
         size = (header >> 20) & 0xFFF
         if previous_level is None:
             if level != 0:
-                raise CoverageError("docinfo_record_level")
+                raise CoverageError("docinfo.record_level")
         elif level > previous_level + 1:
-            raise CoverageError("docinfo_record_level_jump")
+            raise CoverageError("docinfo.record_level_jump")
         previous_level = level
         if size == 0xFFF:
             if len(raw) - offset < 4:
-                raise CoverageError("docinfo_record_extended_size")
+                raise CoverageError("docinfo.record_extended_size")
             size = struct.unpack_from("<I", raw, offset)[0]
             offset += 4
         if size > max_bytes or size > len(raw) - offset:
-            raise CoverageError("docinfo_record_truncated")
+            raise CoverageError("docinfo.record_truncated")
         payload = raw[offset:offset + size]
         offset += size
         count += 1
@@ -336,9 +384,9 @@ def _version_tuple(version: str) -> tuple[int, int, int, int]:
     try:
         parts = tuple(int(item) for item in version.split("."))
     except (AttributeError, TypeError, ValueError):
-        raise CoverageError("docinfo_version_unsupported")
+        raise CoverageError("docinfo.version_unsupported")
     if len(parts) != 4 or parts[:2] not in ((5, 0), (5, 1)):
-        raise CoverageError("docinfo_version_unsupported")
+        raise CoverageError("docinfo.version_unsupported")
     return parts  # type: ignore[return-value]
 
 
@@ -354,12 +402,12 @@ def _id_key_count(version: str) -> int:
 def _parse_id_mappings(payload: bytes, version: str) -> tuple[dict[str, int], list[int]]:
     key_count = _id_key_count(version)
     if len(payload) != key_count * 4:
-        raise CoverageError("docinfo_id_mappings_length")
+        raise CoverageError("docinfo.id_mappings_length")
     values = list(struct.unpack("<%di" % key_count, payload))
     if any(value < 0 or value > MAX_DEFINITION_COUNT for value in values):
-        raise CoverageError("docinfo_id_mappings_count_invalid")
+        raise CoverageError("docinfo.id_mappings_count_invalid")
     if sum(values) > MAX_DEFINITION_TOTAL:
-        raise CoverageError("docinfo_definition_total_limit")
+        raise CoverageError("docinfo.definition_total_limit")
     return dict(zip(ID_KEYS[:key_count], values)), values
 
 
@@ -367,21 +415,21 @@ def _parse_docinfo(raw: bytes, version: str) -> dict[str, Any]:
     records = list(_iter_records(raw, max_records=MAX_DOCINFO_RECORDS,
                                  max_bytes=MAX_DOCINFO_BYTES))
     if len(records) < 2:
-        raise CoverageError("docinfo_record_order")
+        raise CoverageError("docinfo.record_order")
     first_tag, first_level, first_payload = records[0]
     second_tag, second_level, second_payload = records[1]
     if first_tag != TAG_DOCUMENT_PROPERTIES or first_level != 0:
-        raise CoverageError("docinfo_document_properties_missing")
+        raise CoverageError("docinfo.document_properties_missing")
     if len(first_payload) != 26:
-        raise CoverageError("docinfo_document_properties_invalid")
+        raise CoverageError("docinfo.document_properties_invalid")
     if second_tag != TAG_ID_MAPPINGS or second_level != 0:
-        raise CoverageError("docinfo_id_mappings_missing")
+        raise CoverageError("docinfo.id_mappings_missing")
     definition_counts, values = _parse_id_mappings(second_payload, version)
 
     if any(tag == TAG_DOCUMENT_PROPERTIES for tag, _, _ in records[1:]):
-        raise CoverageError("docinfo_document_properties_duplicate")
+        raise CoverageError("docinfo.document_properties_duplicate")
     if any(tag == TAG_ID_MAPPINGS for tag, _, _ in records[2:]):
-        raise CoverageError("docinfo_id_mappings_duplicate")
+        raise CoverageError("docinfo.id_mappings_duplicate")
 
     # Exact physical order: BinData, all seven FACE_NAME categories summed,
     # then the seven core definition groups.  Payload bytes are opaque.
@@ -401,15 +449,15 @@ def _parse_docinfo(raw: bytes, version: str) -> dict[str, Any]:
         if expected_tag is None:
             continue
         if expected_count < 0 or expected_count > MAX_DEFINITION_COUNT:
-            raise CoverageError("docinfo_definition_count_invalid")
+            raise CoverageError("docinfo.definition_count_invalid")
         for _ in range(expected_count):
             if position >= len(records):
-                raise CoverageError("docinfo_definition_count_mismatch")
+                raise CoverageError("docinfo.definition_count_mismatch")
             tag, level, _payload = records[position]
             if tag != expected_tag:
-                raise CoverageError("docinfo_definition_order")
+                raise CoverageError("docinfo.definition_order")
             if level != 1:
-                raise CoverageError("docinfo_definition_level")
+                raise CoverageError("docinfo.definition_level")
             position += 1
     # Version fields beyond Style are deliberately not interpreted.  Their
     # physical records are nevertheless cardinality-checked when declared by
@@ -422,15 +470,15 @@ def _parse_docinfo(raw: bytes, version: str) -> dict[str, Any]:
             continue
         for _ in range(values[value_index]):
             if position >= len(records) or records[position][0] != expected_tag:
-                raise CoverageError("docinfo_definition_order")
+                raise CoverageError("docinfo.definition_order")
             if records[position][1] != 1:
-                raise CoverageError("docinfo_definition_level")
+                raise CoverageError("docinfo.definition_level")
             position += 1
     # Track-change and author ID mappings are deliberately outside this first
     # coverage slice.  Their physical tags/ordering differ across producers;
     # a nonzero declaration therefore cannot be certified by this scanner.
     if len(values) > 16 and (values[16] or values[17]):
-        raise CoverageError("docinfo_definition_semantics_unscanned")
+        raise CoverageError("docinfo.definition_semantics_unscanned")
 
     # Non-ID-mapped DocInfo metadata is still part of the strict record
     # envelope.  We accept the reviewed classes observed in the public HWP
@@ -449,14 +497,14 @@ def _parse_docinfo(raw: bytes, version: str) -> dict[str, Any]:
     while position < len(records):
         tag, level, _payload = records[position]
         if tag not in optional_levels:
-            raise CoverageError("docinfo_definition_unknown")
+            raise CoverageError("docinfo.definition_unknown")
         if tag in seen_optional:
-            raise CoverageError("docinfo_definition_order")
+            raise CoverageError("docinfo.definition_order")
         if level != optional_levels[tag]:
-            raise CoverageError("docinfo_definition_level")
+            raise CoverageError("docinfo.definition_level")
         rank = optional_order[tag]
         if rank < last_rank:
-            raise CoverageError("docinfo_definition_order")
+            raise CoverageError("docinfo.definition_order")
         seen_optional.add(tag)
         last_rank = rank
         position += 1
@@ -475,7 +523,7 @@ def _body_records(cfb: Any, header: Any, definition_counts: dict[str, int]) -> d
     except _source.CoverageError as exc:
         raise CoverageError(exc.reason)
     if len(sections) > MAX_BODY_SECTIONS:
-        raise CoverageError("bodytext_section_limit")
+        raise CoverageError("bodytext.section_limit")
     # First run the complete T89 envelope scanner over every captured stream.
     # Its record hierarchy/extended-size/control accounting is deliberately
     # reused; this pass adds only DocInfo reference bounds.
@@ -496,7 +544,7 @@ def _body_records(cfb: Any, header: Any, definition_counts: dict[str, int]) -> d
                 raise CoverageError(exc.reason)
         total += len(raw)
         if total > getattr(_source, "MAX_TOTAL_DECOMPRESSED_BYTES", 256 * 1024 * 1024):
-            raise CoverageError("bodytext_decompressed_limit")
+            raise CoverageError("bodytext.decompressed_limit")
         try:
             envelope = _source._scan_records(raw)
         except _source.CoverageError as exc:
@@ -512,7 +560,7 @@ def _body_records(cfb: Any, header: Any, definition_counts: dict[str, int]) -> d
                 max_bytes=getattr(_source, "MAX_DECOMPRESSED_BYTES", 128 * 1024 * 1024)):
             records_total += 1
             if records_total > MAX_BODY_RECORDS_TOTAL:
-                raise CoverageError("bodytext_record_limit")
+                raise CoverageError("bodytext.record_limit")
             if tag == TAG_PARA_HEADER:
                 if len(payload) != 24:
                     raise CoverageError("bodytext.paragraph_invalid")
@@ -522,32 +570,32 @@ def _body_records(cfb: Any, header: Any, definition_counts: dict[str, int]) -> d
                 para_shape_id = struct.unpack_from("<H", payload, 8)[0]
                 style_id = payload[10]
                 if para_shape_id >= definition_counts.get("para_shape", 0):
-                    raise CoverageError("bodytext_reference_out_of_range")
+                    raise CoverageError("bodytext.reference_out_of_range")
                 if style_id >= definition_counts.get("style", 0):
-                    raise CoverageError("bodytext_reference_out_of_range")
+                    raise CoverageError("bodytext.reference_out_of_range")
                 current = {"level": level, "char_shape": False}
                 paragraphs += 1
                 para_shape_refs += 1
                 style_refs += 1
             elif tag == TAG_PARA_TEXT:
                 if current is None or level != current["level"] + 1:
-                    raise CoverageError("bodytext_paragraph_invalid")
+                    raise CoverageError("bodytext.paragraph_invalid")
             elif tag == TAG_PARA_CHAR_SHAPE:
                 if current is None or level != current["level"] + 1:
-                    raise CoverageError("bodytext_paragraph_invalid")
+                    raise CoverageError("bodytext.paragraph_invalid")
                 if len(payload) % 8:
-                    raise CoverageError("bodytext_paragraph_invalid")
+                    raise CoverageError("bodytext.paragraph_invalid")
                 previous: int | None = None
                 for offset in range(0, len(payload), 8):
                     position, shape_id = struct.unpack_from("<II", payload, offset)
                     if previous is None:
                         if position != 0:
-                            raise CoverageError("bodytext_char_shape_position_invalid")
+                            raise CoverageError("bodytext.char_shape_position_invalid")
                     elif position <= previous:
-                        raise CoverageError("bodytext_char_shape_position_invalid")
+                        raise CoverageError("bodytext.char_shape_position_invalid")
                     previous = position
                     if shape_id >= definition_counts.get("char_shape", 0):
-                        raise CoverageError("bodytext_reference_out_of_range")
+                        raise CoverageError("bodytext.reference_out_of_range")
                     char_shape_refs += 1
                     position_refs += 1
                 current["char_shape"] = True
