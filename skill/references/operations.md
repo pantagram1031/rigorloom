@@ -154,9 +154,10 @@ The ZIP flag interpretation follows [PKWARE APPNOTE bit 2](https://pkware.cachef
 The local receipt is exactly `{schema,status,address,changed,inventory,
 preservation,render}` with `render: "not_run"`; it contains no source or
 replacement text, IDs/names, coordinates, metadata, URLs, paths, graph hashes,
-or artifact SHA. This slice is structural mechanics only: the current public
-corpus has no text-bearing ordinary story fixture, so no native/Hancom/PDF
-render claim is made here.
+or artifact SHA. This CLI contract and this structural section make no
+native/Hancom/PDF render claim: the current public corpus has no text-bearing
+ordinary story fixture. The separate operator-local execution evidence later
+in this guide does not change the receipt's `render: "not_run"` boundary.
 
 ## 1. probe
 
@@ -710,12 +711,15 @@ and `--accept-without`; malformed XML, invalid conversion page counts/parity,
 incomparable baseline pages, missing required text, or visible forbidden text
 remain HARD/usage failures.
 
-The current native proof covers one public/sanitized header edited through
-this contract, converted by Windows Hancom, and reviewed on its only page.
-Footer, footnote, and endnote success paths remain synthetic structural tests;
-they are not native-render parity evidence. The independent render-quality
-checker returned `unknown/unsupported_graphics_state` for the header, so this
-evidence must not be reported as a quality pass.
+The current native execution proof covers one public/sanitized header plus
+disposable synthetic-donor footer, footnote, and endnote probes edited through
+this contract, converted by Windows Hancom, and reviewed on all pages. The
+note probes were not Hancom-authored anchors, so they do not prove insertion,
+numbering, continuation, or general native-render parity. The independent
+render-quality checker returned `unknown/unsupported_graphics_state` for all
+runs, so none may be reported as a quality pass. The repository-only T84
+research note retains the operator-local hash/page/delta matrix; it is not part
+of the installed skill surface or a reproducible fixture.
 
 **Exit codes — the whole table, one row per terminal state.** Nothing else is
 reachable; in particular **exit 1 is not in the contract** and a run that

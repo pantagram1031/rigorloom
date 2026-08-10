@@ -51,16 +51,24 @@ the kernel's contract shape.
   closed. Fill-only checks are audited under
   `deterministic.not_applicable_checks`, never acceptance waivers or ordinary
   skips; XML/page parity, baseline diff, and all-page vision remain mandatory.
-  Native evidence for this slice is deliberately narrower than the structural
-  role coverage: one public/sanitized header was converted with Windows Hancom
-  and accepted only after an all-page visual verdict. Footer, footnote, and
-  endnote success paths remain synthetic structural tests, and the independent
-  render-quality result for that header was `unknown/unsupported_graphics_state`
-  rather than a quality pass.
+  Initial native evidence for this slice was deliberately narrower than the
+  structural role coverage: one public/sanitized header was converted with
+  Windows Hancom and accepted only after an all-page visual verdict. T84 later
+  adds disposable donor-role execution without promoting those XML-assembled
+  notes to native-authored semantics. Every independent render-quality result
+  remains `unknown/unsupported_graphics_state`, not a quality pass.
 - **T83:** kept the document-evidence privacy rejection regression while
   assembling its synthetic Windows profile path at runtime, so the public
   repository privacy scan remains HARD-free instead of flagging the test
   fixture itself.
+- **T84:** recorded the bounded Windows-Hancom execution evidence for
+  disposable `footer`, `footNote`, and `endNote` donor probes without shipping
+  their HWPX/PDF bytes. All three passed T79/T80, current hash-bound conversion
+  records, page parity, baseline pixel comparison, and T82 all-page vision;
+  their independent render-quality result remained
+  `unknown/unsupported_graphics_state`. The note controls were XML-assembled,
+  not Hancom-authored anchors, so native note insertion, numbering, and
+  continuation remain explicitly unproved.
 - `form_inspect` now emits additive, backward-compatible `anchor_records`
   (legacy `para_idx` plus the preedit-aligned `at_para` when identity is
   proven) as internal evidence, and accepts opt-in `--full-text PARA:N`,
