@@ -18,7 +18,7 @@ the kernel's contract shape.
   The physical mimetype must be the first stored, extra-free ZIP entry; every
   local header is reconciled with its central record (including version-needed
   and DOS date/time; empty extras and only flags `0` or public-corpus-proven
-  DEFLATE `0x0004`); OCF rootfiles and all
+  DEFLATE fast flag `0x0004`); OCF rootfiles and all
   declared XML roots are closed and validated before OPF. Every section must
   occur exactly once in a nonempty spine, which references only definitions or
   sections; table-cell stories retain only closed table/cell encounter ordinals
@@ -27,6 +27,40 @@ the kernel's contract shape.
   supported parent grammar, exact control values, note/cell scope identity, and unsupported story
   resources are fail-closed. Fields, hidden comments, draw text, captions,
   master pages, `.hwp`, rendering, and editing are deliberately out of scope.
+- **T80:** added the bounded `story_edit.py` paragraph-only structural editor.
+  It accepts one private exact source SHA and one canonical
+  `section/container/story/paragraph` selector, requires exactly one direct
+  text-bearing run with one direct `hp:t`, and refuses text-first/raw-ID/
+  `/run[n]`/ambiguous/stale/noncanonical/unsupported/CR inputs. Raw span
+  splicing removes only the changed paragraph's own line-segment cache;
+  semantic no-ops copy bytes exactly. Immutable-snapshot processing,
+  topology-only T79 recheck, raw ZIP-record/metadata preservation verification,
+  exclusive identity-safe publication, and a closed local receipt preserve the
+  privacy/evidence boundary. This is structural mechanics only; render remains
+  `not_run`.
+- **T81:** corrected PKWARE DEFLATE flag `0x0004` handling to fast level 1,
+  skipped processing instructions through exact `?>`, and refused DTD/entity
+  declarations in the bounded editor lexer.
+- **T82:** added a closed `visual_verify` `operation_scope: "story_edit"`
+  for current native story-edit renders. It requires a `.hwpx`, explicit PDF,
+  comparable baseline, hash-bound conversion record, and non-empty per-page
+  `required_text`/full-string `forbidden_text`; the unbound structural T80
+  receipt is never artifact evidence. Form-fill/profile/blank/waiver,
+  deterministic-only, targeted-vision, unknown-scope/key, malformed XML,
+  invalid conversion/page/PrintMethod, and incomparable-baseline paths fail
+  closed. Fill-only checks are audited under
+  `deterministic.not_applicable_checks`, never acceptance waivers or ordinary
+  skips; XML/page parity, baseline diff, and all-page vision remain mandatory.
+  Native evidence for this slice is deliberately narrower than the structural
+  role coverage: one public/sanitized header was converted with Windows Hancom
+  and accepted only after an all-page visual verdict. Footer, footnote, and
+  endnote success paths remain synthetic structural tests, and the independent
+  render-quality result for that header was `unknown/unsupported_graphics_state`
+  rather than a quality pass.
+- **T83:** kept the document-evidence privacy rejection regression while
+  assembling its synthetic Windows profile path at runtime, so the public
+  repository privacy scan remains HARD-free instead of flagging the test
+  fixture itself.
 - `form_inspect` now emits additive, backward-compatible `anchor_records`
   (legacy `para_idx` plus the preedit-aligned `at_para` when identity is
   proven) as internal evidence, and accepts opt-in `--full-text PARA:N`,

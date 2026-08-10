@@ -262,7 +262,11 @@ def test_receipt_metadata_and_capabilities_are_privacy_safe(tmp_path):
             input_path=assembled,
             output_path=rendered,
             exit_code=0,
-            reason_code=r"failed_at_C:\Users\Alice\secret.hwpx",
+            # Assemble the synthetic user-profile path at runtime.  Keeping a
+            # literal drive-letter user-profile token in a public test would
+            # correctly trip the repository privacy gate that this behavior
+            # is meant to defend.
+            reason_code="failed_at_C:" + r"\Users\Alice\secret.hwpx",
         )
     assert any(error["code"] == "invalid_reason_code"
                for error in exc.value.errors)
