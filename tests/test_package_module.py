@@ -241,7 +241,8 @@ class TestCoreBundle:
                 install / "pipeline" / "scripts" / "doc_backend.py",
                 install / "pipeline" / "scripts" / "submission_preflight.py",
                 install / "pipeline" / "scripts" / "story_graph.py",
-                install / "pipeline" / "scripts" / "story_edit.py"):
+                install / "pipeline" / "scripts" / "story_edit.py",
+                install / "pipeline" / "scripts" / "hwp_ingress.py"):
             completed = subprocess.run(
                 [sys.executable, str(script), "--help"],
                 cwd=install,
@@ -262,6 +263,7 @@ class TestCoreBundle:
             names.update(archive.namelist())
         assert "pipeline/scripts/story_graph.py" in names
         assert "pipeline/scripts/story_edit.py" in names
+        assert "pipeline/scripts/hwp_ingress.py" in names
         assert "pipeline/adapters_impl/__init__.py" in names
         assert "pipeline/adapters_impl/bundle_backend.py" in names
         assert "pipeline/adapters_impl/docx_backend.py" in names

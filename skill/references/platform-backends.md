@@ -68,6 +68,8 @@ matching render artifact.
 
 ## Source register
 
+- [Hancom HWP 5.0 binary format revision 1.3](https://cdn.hancom.com/link/docs/%ED%95%9C%EA%B8%80%EB%AC%B8%EC%84%9C%ED%8C%8C%EC%9D%BC%ED%98%95%EC%8B%9D_5.0_revision1.3.pdf)
+- [Microsoft Compound Binary File header](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/05060311-bfce-4b12-874d-71fd4ce63aea) and [chain validation rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/9d33df18-7aee-4065-9121-4eabe41c29d4)
 - [Hancom current product status (Windows/macOS product rows)](https://www.hancom.com/support/csCenter/prdStatus)
 - [Hancom HWP Automation product/licence boundary](https://developer.hancom.com/hwpautomation)
 - [Hancom macOS Automation explicitly unsupported](https://forum.developer.hancom.com/t/topic/2915)

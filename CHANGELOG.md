@@ -10,6 +10,26 @@ the kernel's contract shape.
 
 ### Added
 
+- **T85:** added a fail-closed, standard-library HWP5 ingress boundary. The
+  read-only `hwp_ingress.py inspect` route validates closed CFB v3 FAT,
+  mini-FAT, directory and stream allocation; direct-root DocInfo and
+  BodyText/Section structure; and its unique 256-byte `FileHeader`, exact
+  `HWP Document File` signature, supported 5.0/5.1 version, and protection
+  flags without exposing document text or stream names. Canonical HWP-to-HWPX
+  publication is Windows Hancom-only: one named mutex covers the complete
+  operation; the source and reopened output use the same privacy-safe COM
+  extractor; full-text/character and table/picture/equation/shape/page/
+  control/field aggregates must match; the physical ZIP plus OCF/OPF/section
+  envelope must validate; and the live source hash must remain current. The
+  receipt is published first and the output link is the final commit marker.
+  The `verify` route closes receipt keys, types and terminal state and rebinds
+  the exact HWPX bytes/counts; `new_report --ingress-receipt` verifies both the
+  supplied artifact and workspace copy and retains the receipt for claimed
+  binary-HWP provenance.
+  The separate `rigorloom/hwp-ingress/v1` receipt is conversion-only and
+  always has `proof_grade: none`; it is never native-render evidence. Missing
+  Hancom, protected input, unavailable parity, or any mismatch exits 3. No
+  LibreOffice or `rhwp` result may become the canonical form.
 - **T79:** added the read-only `story_graph.py` HWPX inventory. It follows the
   OPF `content.hpf` manifest/spine plus actual section roots, inventories the
   bounded `header`/`footer`/`footNote`/`endNote` paragraph-list controls, and
