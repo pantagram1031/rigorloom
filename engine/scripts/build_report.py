@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cli_io import utf8_stdio  # noqa: E402
-from eqn import latex_to_hwpeqn, hwpeqn_sanity_check  # noqa: E402
+from eqn import validate_equation_operation  # noqa: E402
 
 TAG_LINE = re.compile(r"^\[\[(/?[A-Za-z]+)(.*?)\]\]\s*$")
 KNOWN_TAGS = {"EQ", "FIG", "TABLE", "/TABLE", "URL"}
@@ -611,20 +611,22 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
                     # 예전에 "자기 문단·가운데"로 조판되던 수식이 본문 중간에
                     # 낄 수 있다. 의도된 표시라면 [[EQ display ...]]로 명시할 것.
                     warnings.append(
-                        f"EQ 인라인으로 조판됨(구 기본값=display였음): "
-                        f"{(b.get('latex') or b.get('hwpeqn') or '')!r} "
-                        f"(섹션 {sec['anchor']!r}) — display 유지하려면 "
-                        f"[[EQ display ...]]로 명시")
-                if b.get("hwpeqn"):
-                    op["hwpeqn"] = b["hwpeqn"]
-                elif b.get("latex"):
-                    script, warns = latex_to_hwpeqn(b["latex"])
-                    ok, msg = hwpeqn_sanity_check(script)
-                    if not ok:
-                        die(f"수식 sanity 실패({msg}): {b['latex']} -> {script}")
-                    op["hwpeqn"] = script
-                else:
-                    die("EQ 태그에 latex/hwpeqn 둘 다 없음")
+                        "EQ 인라인으로 조판됨(구 기본값=display였음); "
+                        "display 유지하려면 [[EQ display ...]]로 명시")
+                # Validate only the closed equation-operation envelope.  The
+                # parsed report block also carries an internal ``kind`` key,
+                # which must never leak into the backend op allowlist.
+                equation_check = {"op": "insert_equation",
+                                  "base_pt": base_pt,
+                                  "display": b["display"]}
+                for source_key in ("latex", "hwpeqn", "font"):
+                    if source_key in b:
+                        equation_check[source_key] = b[source_key]
+                script, warns, ok, msg = validate_equation_operation(
+                    equation_check)
+                if not ok:
+                    die(f"equation preflight failed ({msg})")
+                op["hwpeqn"] = script
                 ops.append(op)
             elif b["kind"] == "fig":
                 # Rule 2(operator): 캡션은 객체와 붙어 그 아래에, 본문과는 앞뒤로
