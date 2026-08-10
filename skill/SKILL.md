@@ -34,8 +34,13 @@ proof. Successful terminal execution must leave a current receipt at
 `output/proof/backend/receipt.json`.
 
 - `.hwpx` — offline XML engine (default, works everywhere, byte-preserving).
-- `.hwp` — Hancom COM only (`render.hancom_com: true`). No COM → cannot edit;
-  ask for `.hwpx` or convert on the operator machine. Never parse `.hwp` bytes.
+- `.hwp` — run the bounded `hwp_ingress.py inspect` candidate gate first.
+  It parses only the CFB/FileHeader security envelope, never document content.
+  Canonical conversion is Hancom COM only (`render.hancom_com: true`) and must
+  pass the same-COM-extractor comparison. No COM means no canonical edit;
+  ask for `.hwpx`. A workspace that claims this conversion must pass
+  `hwp_ingress.py verify` and retain the receipt; a native-origin HWPX is a
+  separate no-ingress-claim path. Never send raw `.hwp` bytes to the XML engine.
 - Originals are immutable: every operation writes a new file (`--out` /
   `--save-as`). Editing in place is a defect, not a shortcut.
 
@@ -59,6 +64,8 @@ receipt is local privacy-safe evidence only and always reports
 
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
+| inspect a binary HWP candidate without reading its body | `python pipeline/scripts/hwp_ingress.py inspect FORM.hwp` | LOW — CFB/FileHeader capability only |
+| canonically convert HWP to HWPX | `python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom --out OUT.hwpx --manifest RECEIPT.json` | LOW — Windows Hancom only; conversion proof is never render proof |
 | edit exactly one inventoried story paragraph (T80 structural mechanics) | `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json --out OUTPUT.hwpx --receipt RECEIPT.json` | LOW — closed ops only; no render claim |
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
 | **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |

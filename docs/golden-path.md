@@ -32,7 +32,58 @@ Two things this doc is honest about up front:
   Office HWP install, plus the engine's optional `[windows]`/`[proof]` extras.
   This doc calls out each place that path diverges.
 
-## 0A. Inspect story topology without reading text
+## 0A. Admit a binary HWP without treating it as HWPX
+
+Binary `.hwp` is not XML. Before any native conversion, run the bounded
+cross-platform candidate check:
+
+```sh
+python pipeline/scripts/hwp_ingress.py inspect FORM.hwp
+```
+
+Exit 0 means only that the input is a bounded, supported HWP5 CFB candidate:
+it is not content parity, editability, or render proof. Protected, malformed,
+unsupported, or unavailable input exits 3 with a closed reason. The JSON never
+contains document text, stream names, command output, or an absolute path.
+
+Canonical conversion is explicit and Windows-Hancom-only:
+
+```sh
+python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom \
+  --out output/form_copy.hwpx --manifest output/proof/ingress/receipt.json
+```
+
+The converter captures immutable source bytes, holds a crash-safe Windows
+named mutex across the full operation, and performs the exact Hwp.exe precheck
+without killing processes before each of its three COM children. It compares
+privacy-safe full-text hashes, character counts, and the closed
+table/picture/equation/shape/page/control/field aggregate from the same COM
+extractor on the source and reopened HWPX. It then validates the physical ZIP,
+OCF, OPF/spine, and section envelope, rechecks the live source hash, writes the
+hash-bound receipt first, and makes the output link the final commit marker.
+The receipt schema is
+`rigorloom/hwp-ingress/v1`; even a successful conversion has
+`proof_grade: none` because conversion execution is not a PDF render. A
+LibreOffice or `rhwp` diagnostic must never replace the canonical form.
+
+Verify the consumer binding before claiming binary-HWP provenance:
+
+```sh
+python pipeline/scripts/hwp_ingress.py verify output/form_copy.hwpx \
+  --manifest output/proof/ingress/receipt.json
+python scripts/new_report.py ... --form output/form_copy.hwpx \
+  --ingress-receipt output/proof/ingress/receipt.json
+```
+
+The verifier closes receipt keys/types/states and reruns the physical
+ZIP/OCF/OPF/section plus exact output hash/size/count checks. The scaffolder
+revalidates the workspace copy and retains the receipt; without
+`--ingress-receipt`, an HWPX is treated only as an ordinary native HWPX and no
+binary-ingress provenance is claimed. The receipt's source hash names the
+immutable source snapshot used during conversion; it does not retain or later
+re-prove the caller's original HWP bytes if that source is deleted or changed.
+
+## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table
 ancestry before editing, run the bounded privacy-safe inventory:
@@ -73,7 +124,7 @@ claim. Exit codes are 0 passed, 2 usage/argparse/output error, and 3
 refused/unknown package. The owner facts are grounded in the public
 [Hancom OWPML model](https://github.com/hancom-io/hwpx-owpml-model).
 
-## 0B. Edit one inventoried story paragraph (T80 structural slice)
+## 0C. Edit one inventoried story paragraph (T80 structural slice)
 
 Prepare one closed `OP.json` with the private exact source SHA, the graph's
 canonical `section/container/story/paragraph` address (never `/run[n]`), and

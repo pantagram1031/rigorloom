@@ -99,14 +99,16 @@ def _fake_hwp(tmp_path: Path) -> Path:
     return src
 
 
-def test_hwp_leg_skips_cleanly_without_com(tmp_path: Path, monkeypatch) -> None:
+def test_hwp_leg_unavailable_is_an_explicit_nonpass(
+    tmp_path: Path, monkeypatch,
+) -> None:
     src = _fake_hwp(tmp_path)
     assembled = write_hwpx(tmp_path / "converted.hwpx")
     monkeypatch.setattr(check_convert_parity, "com_leg_available", lambda: False)
 
     verdict, code = check_convert_parity.check(src, assembled)
 
-    assert code == 0
+    assert code == 3
     assert verdict["verdict"] == "skip"
     assert verdict["warn"][0]["code"] == "hwp_source_leg_unavailable"
 

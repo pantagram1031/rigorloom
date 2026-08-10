@@ -78,6 +78,51 @@ error on both sides, so a typo cannot quietly mean "unscoped". Every other
 consumer of `--fill-map` (the value-presence check, `value_spans`, each
 module's declared-personal-number rules) sees the flattened plain string.
 
+## 0A. hwp_ingress
+
+```sh
+python pipeline/scripts/hwp_ingress.py inspect FORM.hwp
+python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom \
+  --out output/form_copy.hwpx --manifest output/proof/ingress/receipt.json
+```
+
+`inspect` is a privacy-safe CFB/FileHeader candidate check only. It exits 0
+for a supported unprotected HWP5 container, 2 for usage, and 3 for refusal.
+It does not extract body text, declare editability, or create render proof.
+
+`convert` has one canonical adapter: `hancom`. It is Windows/licensed-Hancom
+only, never automatic, and never falls back to LibreOffice or `rhwp`. Before
+each COM child it requires the exact `tasklist | findstr /i hwp` result that
+shows no existing Hwp.exe and it never uses `--kill-stale`. A process-wide
+Windows mutex stays held through receipt-first/output-last publication. The
+source and reopened output must return identical privacy-safe full-text hashes,
+character counts, and table/picture/equation/shape/page/control/field counts
+from `com_backend inspect --privacy-safe`; the staged HWPX ZIP/OCF/OPF/section
+envelope and live source hash must also remain valid. The closed v1 receipt
+contains hashes, sizes, aggregate match booleans, states, and reason tokens
+only. `proof_grade` is always `none`: this is conversion execution, not PDF or
+native-render evidence.
+
+When a downstream workspace claims that the HWPX came through this ingress,
+verify and retain the exact receipt:
+
+```sh
+python pipeline/scripts/hwp_ingress.py verify output/form_copy.hwpx \
+  --manifest output/proof/ingress/receipt.json
+python scripts/new_report.py ... --form output/form_copy.hwpx \
+  --ingress-receipt output/proof/ingress/receipt.json
+```
+
+The scaffolder validates the supplied artifact before workspace creation,
+revalidates `output/form_copy.hwpx` after the stage-0 copy, and copies the
+receipt to `output/proof/ingress/receipt.json`. Missing, refused, stale,
+duplicate-key, unknown-field, or hash-drifted claimed ingress exits 3. An
+ordinary native-origin HWPX can still enter without making an ingress claim.
+The receipt's source hash identifies the immutable bytes captured during the
+conversion run. It does not embed or retain the source HWP, so long-term source
+custody is an operator/workspace responsibility rather than a property of
+`verify`.
+
 ## 1. story_graph
 
 ```

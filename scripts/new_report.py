@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subject", required=True)
     parser.add_argument("--topic", required=True)
     parser.add_argument("--form", required=True)
+    parser.add_argument(
+        "--ingress-receipt",
+        help=("required when claiming that --form was canonically converted "
+              "from binary HWP; validates exact schema and output hash"),
+    )
     parser.add_argument("--mode", choices=["supervised", "autonomous", "night"], default="supervised")
     parser.add_argument("--pages", nargs=2, type=int, metavar=("MIN", "MAX"), default=[5, 12])
     parser.add_argument("--min-figures", type=int, default=4)
@@ -118,6 +123,17 @@ def _assert_safe_workspace(root: Path, slug: str) -> Path:
     return workspace
 
 
+def _verify_ingress_claim(form: Path, receipt: Path) -> None:
+    scripts = REPO_ROOT / "pipeline" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        from hwp_ingress import verify_receipt
+        verify_receipt(form, receipt)
+    except Exception as exc:
+        raise ValueError("ingress receipt is invalid or stale") from exc
+
+
 def main() -> int:
     args = parse_args()
     if args.pages[0] < 1 or args.pages[0] > args.pages[1]:
@@ -137,6 +153,25 @@ def main() -> int:
     if not form.is_file():
         print(f"error: form does not exist: {form}", file=sys.stderr)
         return 2
+    if form.suffix.casefold() == ".hwp":
+        print(
+            "error: binary .hwp must pass pipeline/scripts/hwp_ingress.py "
+            "convert --adapter hancom before workspace creation; provide the "
+            "published .hwpx and retain its ingress receipt",
+            file=sys.stderr,
+        )
+        return 3
+    ingress_receipt = None
+    if args.ingress_receipt:
+        ingress_receipt = Path(args.ingress_receipt).expanduser().resolve()
+        if form.suffix.casefold() != ".hwpx" or not ingress_receipt.is_file():
+            print("error: ingress receipt is invalid or stale", file=sys.stderr)
+            return 3
+        try:
+            _verify_ingress_claim(form, ingress_receipt)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
     if final.exists():
         print(f"error: workspace already exists: {final}", file=sys.stderr)
         return 1
@@ -149,14 +184,32 @@ def main() -> int:
     try:
         for relative in ("bundle/figures", "research", "sim", "figures", "output", "refs", "archive"):
             (staging / relative).mkdir(parents=True, exist_ok=True)
-        (staging / "request.yaml").write_text(_request_text(args, form), encoding="utf-8")
+        pipeline_form = form
+        personalization_form = form
+        if ingress_receipt is not None:
+            staged_form = staging / "output" / "form_copy.hwpx"
+            try:
+                shutil.copyfile(form, staged_form)
+                receipt_copy = staging / "output" / "proof" / "ingress" / "receipt.json"
+                receipt_copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ingress_receipt, receipt_copy)
+                _verify_ingress_claim(staged_form, receipt_copy)
+            except (OSError, ValueError):
+                print("error: ingress receipt is invalid after workspace copy",
+                      file=sys.stderr)
+                return 3
+            pipeline_form = final / "output" / "form_copy.hwpx"
+            personalization_form = staged_form
+        (staging / "request.yaml").write_text(
+            _request_text(args, pipeline_form), encoding="utf-8")
         (staging / "build.yaml").write_text(_build_text(args), encoding="utf-8")
         (staging / "APPROVALS.md").write_text(_approvals_text(), encoding="utf-8")
 
         command = [
             sys.executable, str(pipeline_ctl), "init", str(staging),
             "--slug", f"report-{args.slug}", "--mode", args.mode,
-            "--subject", args.subject, "--topic", args.topic, "--form", str(form),
+            "--subject", args.subject, "--topic", args.topic,
+            "--form", str(pipeline_form),
         ]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
         if result.returncode != 0:
@@ -165,7 +218,8 @@ def main() -> int:
         profile_root = args.profile_root or str(REPO_ROOT / ".local" / "personalization")
         personal = subprocess.run([
                 sys.executable, str(PERSONALIZATION_CTL), "--profile-root", profile_root, "resolve",
-                "--workspace", str(staging), "--form", str(form), "--subject", args.subject,
+                "--workspace", str(staging), "--form", str(personalization_form),
+                "--subject", args.subject,
                 "--request", str(staging / "request.yaml"),
             ], capture_output=True, text=True, encoding="utf-8")
         if personal.returncode != 0:
