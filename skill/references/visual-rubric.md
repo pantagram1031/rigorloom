@@ -41,6 +41,28 @@ otherwise. Do not downgrade a `hard` because it "looks minor".
 corroborate or to catch a variant the mechanism cannot see. "NONE" means the
 verdict is yours; nothing else in the system can see it.
 
+### Story-edit render scope (T82)
+
+An operation produced by `story_edit.py` carries no artifact hashes and is
+never a render binding. To verify its current native output, pass an explicit
+`expectations.operation_scope: "story_edit"` with non-empty
+`required_text` and `forbidden_text` lists, the current `.hwpx`, explicit
+`--pdf`, a comparable `--baseline`, and a hash-bound
+`--conversion-record`. The conversion record is checked against both files;
+the structural story-edit receipt is not consumed as evidence.
+
+This scope has no form-fill inputs: `--form-profile`, `--fill-map`,
+`declared_blank`/`intentionally_blank`, `--keep`, `--deterministic-only`,
+`--accept-without`, and targeted vision are refused. The fill-only checks are
+audited under `deterministic.not_applicable_checks`; they are not waivers.
+XML wellformedness, non-empty section XML, conversion page counts/parity,
+baseline pixel diff, and required/forbidden current-PDF text remain
+mandatory. Required and forbidden strings are normalized and matched in full
+within one page (never joined across a page boundary, and never reduced to the
+ordinary guide-text prefix). Pass 1 ends at `vision_pending` (exit 3) with no acceptance
+waiver/blocker when those checks are clean; a supplied vision verdict must
+review every rendered page before pass 2 can accept.
+
 ## 2. Per class
 
 ### `missing_glyphs` (hard)

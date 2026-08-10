@@ -2658,6 +2658,525 @@ def test_the_fill_map_help_states_that_it_is_one_concept():
 
 
 # --------------------------------------------------------------------------
+# T82 -- story-edit render scope
+#
+# The structural story editor's receipt is deliberately unbound: visual
+# verification must judge the current artifact/PDF pair, not turn that receipt
+# into a substitute for page/XML/vision evidence.  A story-scoped render has
+# no form-fill map, so the fill-only checks are explicitly not applicable;
+# XML wellformedness, page parity, required/forbidden text, baseline diff, and
+# the mandatory vision handback remain live.
+# --------------------------------------------------------------------------
+
+def _story_expectations(path: Path, **extra) -> Path:
+    payload = {
+        "operation_scope": "story_edit",
+        "required_text": ["STORY-NEW"],
+        "forbidden_text": ["STORY-OLD"],
+    }
+    payload.update(extra)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _story_support_args(tmp_path, artifact: Path, pdf: Path, *, pages=1):
+    """Explicit story-scope proof inputs used by every two-pass invocation."""
+    baseline = make_pdf(tmp_path / "baseline.pdf",
+                        [_body_page(prefix="STORY-OLD")] * pages)
+    conversion = make_conversion_record(
+        tmp_path / "conversion.json", artifact, pdf,
+        source_print_method=0, print_method_normalized=None,
+        pages_document=pages, pages_pdf=pages)
+    return ["--artifact", artifact, "--pdf", pdf,
+            "--baseline", baseline,
+            "--conversion-record", conversion]
+
+
+def test_t82_story_scope_is_closed_and_rejects_conflicting_fill_inputs(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    support = _story_support_args(tmp_path, artifact, pdf)
+
+    unknown = tmp_path / "unknown.json"
+    _story_expectations(unknown, operation_scope="future_story_scope")
+    code, verdict, _ = run(*support, "--expectations", unknown,
+                           "--png-dir", tmp_path / "unknown-png")
+    assert code == 2, verdict
+    assert "operation_scope" in verdict["error"]
+
+    with_map = tmp_path / "with-map.json"
+    _story_expectations(with_map, fill_map={"seat": "STORY-NEW"})
+    code, verdict, _ = run(*support, "--expectations", with_map,
+                           "--png-dir", tmp_path / "map-png")
+    assert code == 2, verdict
+    assert "fill_map" in verdict["error"]
+
+    with_blank = tmp_path / "with-blank.json"
+    _story_expectations(with_blank, declared_blank=[])
+    code, verdict, _ = run(*support, "--expectations", with_blank,
+                           "--png-dir", tmp_path / "blank-png")
+    assert code == 2, verdict
+    assert "declared_blank" in verdict["error"]
+
+    with_blank_alias = tmp_path / "with-blank-alias.json"
+    _story_expectations(with_blank_alias, intentionally_blank=[])
+    code, verdict, _ = run(*support, "--expectations", with_blank_alias,
+                           "--png-dir", tmp_path / "blank-alias-png")
+    assert code == 2, verdict
+    assert "intentionally_blank" in verdict["error"]
+
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    clean = _story_expectations(tmp_path / "clean.json")
+    code, verdict, _ = run(*support, "--expectations", clean,
+                           "--form-profile", profile,
+                           "--png-dir", tmp_path / "profile-png")
+    assert code == 2, verdict
+    assert "form-profile" in verdict["error"]
+
+
+def test_t82_story_scope_rejects_missing_or_malformed_required_text(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    support = _story_support_args(tmp_path, artifact, pdf)
+
+    missing = tmp_path / "missing.json"
+    missing.write_text(json.dumps({"operation_scope": "story_edit"}),
+                       encoding="utf-8")
+    code, verdict, _ = run(*support, "--expectations", missing,
+                           "--png-dir", tmp_path / "missing-png")
+    assert code == 2, verdict
+    assert "required_text" in verdict["error"]
+
+    malformed = tmp_path / "malformed.json"
+    _story_expectations(malformed, required_text="STORY-NEW")
+    code, verdict, _ = run(*support, "--expectations", malformed,
+                           "--png-dir", tmp_path / "malformed-png")
+    assert code == 2, verdict
+    assert "required_text" in verdict["error"]
+
+
+def test_t82_story_scope_requires_hwpx_source(tmp_path):
+    artifact = make_pdf(tmp_path / "story.pdf",
+                        [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", artifact,
+                           "--baseline", artifact,
+                           "--conversion-record", tmp_path / "record.json",
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert ".hwpx" in verdict["error"]
+
+
+def test_t82_forged_story_scope_cannot_skip_xml_or_page_parity_or_vision(
+        tmp_path):
+    # A story scope is only valid on an HWPX.  This malformed source proves a
+    # scope declaration cannot turn the XML gate into an advisory check; the
+    # missing vision handback is still visible on the failed pass1 result.
+    artifact = make_hwpx(tmp_path / "forged.hwpx", malformed=True)
+    pdf = make_pdf(tmp_path / "forged.pdf",
+                   [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert verdict["verdict"] == "fail"
+    assert verdict["acceptance"] is False
+    assert verdict["acceptance_waivers"] == []
+    assert any(row["code"] == "artifact_malformed"
+               for row in verdict["hard"])
+    assert verdict["vision"]["supplied"] is False
+    assert verdict["vision_required"]
+
+
+def test_t82_required_text_missing_is_hard(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="OTHER")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    hits = [row for row in verdict["hard"]
+            if row["code"] == "required_text_missing"]
+    assert len(hits) == 1, verdict["hard"]
+    assert hits[0]["detector"] == "visual_verify.required_text"
+
+
+def test_t82_forbidden_old_text_is_hard(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [{
+        "lines": [(72.0, 100.0, "STORY-NEW", 10.0),
+                  (72.0, 120.0, "STORY-OLD", 10.0)],
+    }])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    hits = [row for row in verdict["hard"]
+            if row["code"] == "guide_text_visible"]
+    assert len(hits) == 1, verdict["hard"]
+    assert hits[0]["detector"] == "visual_verify.forbidden_text"
+
+
+def test_t82_story_pass1_reaches_vision_pending_without_waiver_or_blocker(
+    tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    support = _story_support_args(tmp_path, artifact, pdf)
+    code, verdict, _ = run(*support, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert verdict["verdict"] == "vision_pending"
+    assert verdict["acceptance"] is False
+    assert verdict["acceptance_waivers"] == []
+    assert verdict["acceptance_blockers"] == []
+    assert verdict["deterministic"]["baseline_diff"] is not None
+    assert verdict["deterministic"]["baseline_diff"]["pages"]
+    details = {row["check"]: row for row in
+               verdict["deterministic"]["not_applicable_details"]}
+    for check in ("check_residue", "empty_cell_expected_fill",
+                  "fill_charpr_script_mismatch"):
+        assert details[check]["status"] == "not_applicable"
+    assert not any(row.get("class") == "empty_cell_expected_fill"
+                   for row in verdict["warn"])
+    assert verdict["vision_required"]
+
+
+def test_t82_ordinary_form_fill_still_hards_charpr_mismatch(tmp_path):
+    artifact = make_form_hwpx(tmp_path / "filled.hwpx", value_charpr=7)
+    pdf = _fill_pdf(tmp_path / "filled.pdf")
+    expectations = _fill_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png",
+                           "--deterministic-only")
+    assert code == 3, verdict
+    assert any(row["code"] == "fill_charpr_script_mismatch"
+               for row in verdict["hard"])
+
+
+@pytest.mark.parametrize("extra", [
+    ["--deterministic-only"],
+    ["--accept-without", "check_residue"],
+    ["--vision-scope", "targeted"],
+])
+def test_t82_story_scope_rejects_single_pass_or_waiver_shortcuts(tmp_path,
+                                                                 extra):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           *extra,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "story_edit" in verdict["error"]
+
+
+def test_t82_story_layout_filter_removes_only_fill_warning():
+    fill = {"class": "empty_cell_expected_fill", "code": "fill"}
+    alignment = {"class": "alignment_drift", "code": "align"}
+    findings = [fill, alignment]
+    summary = {"pass": False}
+
+    story_findings, story_summary = (
+        visual_verify.filter_layout_findings_for_scope(
+            findings, summary, "story_edit"))
+    assert story_findings == [alignment]
+    assert story_summary == {
+        "pass": False, "story_scope_empty_cell_suppressed": 1}
+
+    ordinary_findings, ordinary_summary = (
+        visual_verify.filter_layout_findings_for_scope(
+            findings, summary, None))
+    assert ordinary_findings is findings
+    assert ordinary_summary is summary
+
+
+def test_t82_story_scope_requires_nonempty_forbidden_text(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json", forbidden_text=[])
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "forbidden_text" in verdict["error"]
+
+
+@pytest.mark.parametrize("scope", [None, 1, True, [], {}])
+def test_t82_operation_scope_type_is_closed_and_traceback_free(tmp_path, scope):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(
+        tmp_path / "exp.json", operation_scope=scope)
+    code, verdict, stderr = run(*_story_support_args(tmp_path, artifact, pdf),
+                                "--expectations", expectations,
+                                "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "Traceback" not in stderr
+    assert "operation_scope" in verdict["error"]
+
+
+def test_t82_story_scope_rejects_ordinary_expectation_keys(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(
+        tmp_path / "exp.json", blank_pages=[2])
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "blank_pages" in verdict["error"]
+
+
+def test_t82_required_text_cannot_cross_a_page_boundary(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx", pages=2)
+    pdf = make_pdf(tmp_path / "story.pdf", [{
+        "lines": [(72.0, 100.0, "ABC", 10.0)],
+    }, {
+        "lines": [(72.0, 100.0, "DEF", 10.0)],
+    }])
+    expectations = _story_expectations(
+        tmp_path / "exp.json", required_text=["ABCDEF"])
+    code, verdict, _ = run(*_story_support_args(
+        tmp_path, artifact, pdf, pages=2),
+        "--expectations", expectations,
+        "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert any(row["code"] == "required_text_missing"
+               for row in verdict["hard"])
+
+
+def test_t82_forbidden_text_requires_full_suffix_match(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    actual = "ABCDEFGHIJKLMNOPQRSTV-GOOD"
+    forbidden = "ABCDEFGHIJKLMNOPQRSTU-BAD"
+    pdf = make_pdf(tmp_path / "story.pdf", [{
+        "lines": [(72.0, 100.0, "STORY-NEW", 10.0),
+                  (72.0, 120.0, actual, 10.0)],
+    }])
+    expectations = _story_expectations(
+        tmp_path / "exp.json", forbidden_text=[forbidden])
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert not any(row["code"] == "guide_text_visible"
+                   for row in verdict["hard"]), verdict["hard"]
+
+
+def test_t82_supplied_vision_must_review_every_page(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx", pages=2)
+    pdf = make_pdf(tmp_path / "story.pdf",
+                   [_body_page(prefix="STORY-NEW")] * 2)
+    expectations = _story_expectations(tmp_path / "exp.json")
+    vision = tmp_path / "vision.json"
+    vision.write_text(json.dumps({
+        "schema": "rigorloom/visual-vision-verdict/v1",
+        "pages_reviewed": [1], "findings": []}), encoding="utf-8")
+    code, verdict, _ = run(*_story_support_args(
+        tmp_path, artifact, pdf, pages=2),
+        "--expectations", expectations,
+        "--vision-verdict", vision,
+        "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "all pages" in verdict["error"]
+
+
+def _drop_cli_option(argv, option):
+    result = list(argv)
+    index = result.index(option)
+    del result[index:index + 2]
+    return result
+
+
+def test_t82_clean_pass2_accepts_only_after_all_pages_vision(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    vision = _reviewed(tmp_path, pages=(1,))
+    code, verdict, _ = run(*_story_support_args(tmp_path, artifact, pdf),
+                           "--expectations", expectations,
+                           "--vision-verdict", vision,
+                           "--png-dir", tmp_path / "png")
+    assert code == 0, verdict
+    assert verdict["verdict"] == "pass"
+    assert verdict["acceptance"] is True
+    assert verdict["acceptance_waivers"] == []
+    assert verdict["acceptance_blockers"] == []
+
+
+@pytest.mark.parametrize("missing", ["--pdf", "--baseline",
+                                      "--conversion-record"])
+def test_t82_requires_explicit_render_proof_inputs(tmp_path, missing):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    code, verdict, _ = run(*_drop_cli_option(argv, missing),
+                           "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert missing.lstrip("-") in verdict["error"]
+
+
+def test_t82_t80_receipt_cannot_bind_render(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    receipt = tmp_path / "story-edit-receipt.json"
+    receipt.write_text(json.dumps({
+        "schema": "rigorloom/hwpx-story-edit/v1", "status": "passed",
+        "render": "not_run"}), encoding="utf-8")
+    index = argv.index("--conversion-record")
+    argv[index + 1] = receipt
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "schema" in verdict["error"]
+
+
+@pytest.mark.parametrize("swap", ["artifact", "pdf"])
+def test_t82_conversion_record_hash_binding_rejects_swapped_bytes(tmp_path,
+                                                                   swap):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    if swap == "artifact":
+        artifact.write_bytes(artifact.read_bytes() + b"SWAPPED")
+    else:
+        pdf.write_bytes(pdf.read_bytes() + b"SWAPPED")
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "different" in verdict["error"] or "Re-run" in verdict["error"]
+
+
+@pytest.mark.parametrize("pages_document", [None, 0, False])
+def test_t82_conversion_page_fields_are_closed(tmp_path, pages_document):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    # Rewrite the explicit record after the helper created the valid one.
+    record = make_conversion_record(
+        tmp_path / "bad-conversion.json", artifact, pdf,
+        source_print_method=0, print_method_normalized=None,
+        pages_document=pages_document, pages_pdf=1)
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    index = argv.index("--conversion-record")
+    argv[index + 1] = record
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+
+
+def test_t82_document_pdf_page_parity_remains_hard(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx", pages=2)
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    record = make_conversion_record(
+        tmp_path / "parity.json", artifact, pdf,
+        source_print_method=0, print_method_normalized=None,
+        pages_document=2, pages_pdf=1)
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    index = argv.index("--conversion-record")
+    argv[index + 1] = record
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 3, verdict
+    assert any(row["code"] == "imposition_mismatch"
+               for row in verdict["hard"])
+
+
+@pytest.mark.parametrize("source_print_method,normalized", [
+    (None, None),
+    (0, {"from": 4, "to": 0}),
+    (4, {"from": 4, "to": 1}),
+])
+def test_t82_conversion_print_method_binding_is_closed(
+        tmp_path, source_print_method, normalized):
+    artifact = make_hwpx(tmp_path / "story.hwpx", print_method=4)
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    record = make_conversion_record(
+        tmp_path / "print-method.json", artifact, pdf,
+        source_print_method=source_print_method,
+        print_method_normalized=normalized,
+        pages_document=1, pages_pdf=1)
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    index = argv.index("--conversion-record")
+    argv[index + 1] = record
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+
+
+def test_t82_valid_conversion_print_method_normalization_still_runs_parity(
+        tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx", print_method=4)
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    record = make_conversion_record(
+        tmp_path / "print-method-valid.json", artifact, pdf,
+        source_print_method=4, print_method_normalized={"from": 4, "to": 0},
+        pages_document=1, pages_pdf=1)
+    vision = _reviewed(tmp_path, pages=(1,))
+    argv = _story_support_args(tmp_path, artifact, pdf)
+    index = argv.index("--conversion-record")
+    argv[index + 1] = record
+    code, verdict, _ = run(*argv, "--expectations", expectations,
+                           "--vision-verdict", vision,
+                           "--png-dir", tmp_path / "png")
+    assert code == 0, verdict
+    assert not [row for row in verdict["hard"]
+                if row["code"] == "imposition_mismatch"]
+
+
+def test_t82_baseline_must_be_comparable(tmp_path):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    support = _story_support_args(tmp_path, artifact, pdf)
+    baseline = make_pdf(tmp_path / "mismatch-baseline.pdf",
+                        [_body_page(prefix="STORY-OLD"),
+                         _body_page(prefix="STORY-OLD")])
+    index = support.index("--baseline")
+    support[index + 1] = baseline
+    code, verdict, _ = run(*support, "--expectations", expectations,
+                           "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "comparable" in verdict["error"]
+
+
+@pytest.mark.parametrize("extra", [
+    ["--fill-map", "MAP.json"],
+    ["--keep", "STORY-OLD"],
+    ["--keep-pattern", "STORY"],
+])
+def test_t82_cli_fill_inputs_conflict(tmp_path, extra):
+    artifact = make_hwpx(tmp_path / "story.hwpx")
+    pdf = make_pdf(tmp_path / "story.pdf", [_body_page(prefix="STORY-NEW")])
+    expectations = _story_expectations(tmp_path / "exp.json")
+    support = _story_support_args(tmp_path, artifact, pdf)
+    if extra[0] == "--fill-map":
+        (tmp_path / extra[1]).write_text(json.dumps({"seat": "STORY-NEW"}),
+                                         encoding="utf-8")
+        extra = [extra[0], tmp_path / extra[1]]
+    code, verdict, _ = run(*support, "--expectations", expectations,
+                           *extra, "--png-dir", tmp_path / "png")
+    assert code == 2, verdict
+    assert "story_edit" in verdict["error"]
+
+
+# --------------------------------------------------------------------------
 # (k) P0-B — the exit-code contract, every terminal state
 #
 # The clean-room sol and terra tiers both received process exit 1 for

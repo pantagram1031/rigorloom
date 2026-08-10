@@ -87,7 +87,7 @@ python pipeline/scripts/story_graph.py FORM.hwpx --out story-graph.json
 This is a read-only, structure-only operation. It validates the exact HWPX
 physical mimetype (first/stored/extra-free), reconciling every local ZIP header
 to its central record including version-needed and DOS date/time, with empty
-extras and only flags `0` or DEFLATE `0x0004`,
+extras and only flags `0` or the DEFLATE fast flag `0x0004` (PKWARE APPNOTE bit 2),
 and safe OCF rootfiles, then reads
 the OPF `Contents/content.hpf` manifest/spine
 and actual section roots for deterministic
@@ -114,6 +114,49 @@ model](https://github.com/hancom-io/hwpx-owpml-model), including its
 `caption` classes. The CLI exits 0 for a passed graph, 2 for argparse or
 output/usage errors, and 3 for a refused/unknown package. JSON and help are
 UTF-8-safe; diagnostics do not echo document text, author metadata, or paths.
+
+## 1A. story_edit
+
+```
+python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json \
+    --out OUTPUT.hwpx --receipt RECEIPT.json
+```
+
+This is one bounded, structural edit over one inventoried header, footer,
+footnote, or endnote paragraph. `OP.json` is a closed object containing the
+private exact `expected_input_sha256`, a schema-owned selector, and the
+replacement. The selector ends at `/paragraph[n]` (there is deliberately no
+`/run[n]`, text selector, raw control/member ID, cell coordinate, or graph
+hash); the paragraph must contain exactly one direct text-bearing `hp:run`
+with exactly one direct `hp:t`. Zero/multiple candidates, unsupported XML
+shapes, stale source bytes, noncanonical ordinals, raw CR, and any address
+mismatch refuse without outputs. Replacement text never appears in public
+diagnostics or the receipt.
+
+The bounded raw scanner accepts UTF-8 bytes (with an optional UTF-8 BOM) or no
+encoding declaration; ISO-8859-1/UTF-16 and other declarations refuse. It
+skips processing instructions only through `?>` and refuses DTD/internal
+subset/entity declarations because no general entity lexer is exposed.
+
+Mutation is a raw UTF-8 byte/span splice. Only the selected text span and its
+own direct `hp:linesegarray` (when the replacement changes) may differ. The
+source bytes are captured once and all inventory, parse, rewrite, and
+verification steps use that immutable snapshot. Before publication, the
+writer verifies T79 topology equality and compares archive comment, member
+order, every non-target decompressed payload, stable `ZipInfo` metadata, raw
+local records, central records, and the exact expected target payload/stream.
+Output and receipt are staged and published exclusively (never overwritten),
+with identity-safe rollback; receipt/write/preservation failure leaves no
+owned final artifacts. A semantic no-op copies the package byte-for-byte.
+
+The ZIP flag interpretation follows [PKWARE APPNOTE bit 2](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT): `0x0004` is the DEFLATE fast hint, not maximum compression.
+
+The local receipt is exactly `{schema,status,address,changed,inventory,
+preservation,render}` with `render: "not_run"`; it contains no source or
+replacement text, IDs/names, coordinates, metadata, URLs, paths, graph hashes,
+or artifact SHA. This slice is structural mechanics only: the current public
+corpus has no text-bearing ordinary story fixture, so no native/Hancom/PDF
+render claim is made here.
 
 ## 1. probe
 
@@ -645,6 +688,35 @@ python pipeline/scripts/visual_verify.py --artifact OUT.hwpx --pdf verify.pdf \
     --expectations exp.json --vision-verdict vision.json --out visual_verdict.json
 ```
 
+For the bounded `story_edit.py` render, use the two-pass contract with an
+explicit current-PDF, comparable baseline, and hash-bound conversion record:
+
+```sh
+python pipeline/scripts/visual_verify.py --artifact EDITED.hwpx \
+    --pdf native.pdf --baseline BLANK.pdf \
+    --conversion-record native.pdf.conversion.json \
+    --expectations story-expectations.json --out visual_verdict.json
+```
+
+`story-expectations.json` must carry the closed
+`{"operation_scope":"story_edit", "required_text":[...],
+"forbidden_text":[...]}` shape. The source must be `.hwpx`; the structural
+story-edit receipt is intentionally unbound and is not evidence for this
+check. Pass 1 is `vision_pending` (exit 3) after deterministic checks, with
+fill-only checks listed under `deterministic.not_applicable_checks` rather than
+waived. Pass 2 must supply a vision verdict covering every page. A story scope
+refuses form-fill/profile/blank inputs, targeted vision, deterministic-only,
+and `--accept-without`; malformed XML, invalid conversion page counts/parity,
+incomparable baseline pages, missing required text, or visible forbidden text
+remain HARD/usage failures.
+
+The current native proof covers one public/sanitized header edited through
+this contract, converted by Windows Hancom, and reviewed on its only page.
+Footer, footnote, and endnote success paths remain synthetic structural tests;
+they are not native-render parity evidence. The independent render-quality
+checker returned `unknown/unsupported_graphics_state` for the header, so this
+evidence must not be reported as a quality pass.
+
 **Exit codes — the whole table, one row per terminal state.** Nothing else is
 reachable; in particular **exit 1 is not in the contract** and a run that
 produces it is a bug (T36).
@@ -668,6 +740,14 @@ produces it is a bug (T36).
   diff is deliberately NOT in the set (T35: a renderer-less machine loses one
   check, not the run) and neither are the `format_noncompliance/*` tolerance
   legs — declining to pin a tolerance is not hiding a defect class.
+- **T82 story scope is the bounded exception for fill-only checks, not a
+   waiver.** With `expectations.operation_scope: "story_edit"`, the closed
+   `required_text`/`forbidden_text` contract and explicit PDF, comparable
+   baseline, and hash-bound conversion record are required. When no
+   form-fill/profile inputs exist, `check_residue`,
+   `empty_cell_expected_fill`, and `fill_charpr_script_mismatch` are recorded
+   only under `deterministic.not_applicable_checks`; they never enter
+   `acceptance_waivers` or ordinary `deterministic.skipped_checks`.
 - **Waive a check only on the record.** `--accept-without CHECK` (repeatable,
   closed vocabulary = the SAFETY set) lets acceptance proceed without one, and
   the verdict carries `acceptance_waivers: [...]` plus the unwaived remainder in

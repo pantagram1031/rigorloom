@@ -284,7 +284,8 @@ def _validate_local_headers(path: Path, infos: list[zipfile.ZipInfo]) -> None:
 
     The v1 envelope is deliberately narrower than generic ZIP: ASCII-normal
     member paths, no local/central extras, and either ordinary flags 0 or the
-    corpus-proven DEFLATE maximum-compression flag 0x0004.  In particular,
+    corpus-proven DEFLATE fast flag 0x0004 (PKWARE APPNOTE bit 2). In
+    particular,
     data descriptors and encryption are never accepted.
     """
     try:
