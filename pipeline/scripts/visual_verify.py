@@ -46,6 +46,15 @@ reports ``safety_incomplete`` and exits 3 instead of quietly accepting; the
 only way past it is ``--accept-without CHECK``, which is recorded in the
 verdict as ``acceptance_waivers`` so a waiver is auditable and never implicit.
 
+The closed ``expectations.operation_scope: "story_edit"`` contract is a
+two-pass render path for the current `.hwpx`/PDF pair. It requires explicit
+PDF/baseline/hash-bound conversion inputs plus non-empty per-page
+``required_text`` and full-string ``forbidden_text`` lists. Its fill-only
+checks are audited under ``deterministic.not_applicable_checks`` (never as
+waivers); XML/page parity, baseline comparability, and all-page vision remain
+mandatory. The structural story-edit receipt has no hashes and is not used as
+artifact evidence.
+
 Rendering rules (non-negotiable):
   * fitz at ``--dpi`` (default 130) for the page PNGs;
   * an ``.hwpx``/``.hwp`` artifact with no ``--pdf`` is converted through
@@ -174,6 +183,15 @@ SAFETY_CHECKS = (
     "empty_cell_expected_fill",
     "fill_charpr_script_mismatch",
 )
+
+# ``story_edit.py`` deliberately publishes a structural receipt with no
+# artifact hashes.  It therefore cannot bind a later render, but a caller can
+# still ask this verifier to judge the current artifact/PDF with the narrower
+# story-edit expectations below.  Keep this vocabulary closed: an unknown
+# scope must never silently inherit ordinary form-fill semantics.
+STORY_OPERATION_SCOPE = "story_edit"
+_OPERATION_SCOPES = frozenset({STORY_OPERATION_SCOPE})
+_MAX_REQUIRED_TEXT_CHARS = 4096
 
 #: Tolerances. Changed only by argument or expectations, never by editing.
 DEFAULT_DPI = 130
@@ -512,6 +530,50 @@ def load_conversion_record(record_path, artifact, pdf_path):
     return conversion, None
 
 
+def validate_story_conversion(conversion, artifact, page_count, print_method):
+    """Validate the additional current-render contract for story scope.
+
+    ``load_conversion_record`` already performs the byte binding.  This
+    second, scope-specific check closes the page-count fields and source
+    print-method fact so a hand-written or stale-but-hash-matching sidecar
+    cannot make a story render look eligible.
+    """
+    if not isinstance(conversion, dict):
+        return "story_edit operation_scope requires a hash-bound conversion record"
+    values = {}
+    for key in ("pages_document", "pages_pdf"):
+        value = conversion.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return (
+                f"story_edit conversion record {key} must be a positive integer")
+        values[key] = value
+    if values["pages_pdf"] != page_count:
+        return (
+            "story_edit conversion record pages_pdf does not match the current "
+            f"rendered PDF page count ({values['pages_pdf']} != {page_count})")
+    source_print_method = conversion.get("source_print_method")
+    if (source_print_method is not None
+            and (isinstance(source_print_method, bool)
+                 or not isinstance(source_print_method, int)
+                 or source_print_method < 0)):
+        return "story_edit conversion record source_print_method is invalid"
+    if source_print_method != print_method:
+        return (
+            "story_edit conversion record source_print_method does not match "
+            "the current HWPX")
+    normalized = conversion.get("print_method_normalized")
+    if print_method in (None, 0):
+        if normalized is not None:
+            return (
+                "story_edit conversion record print_method_normalized must be "
+                "null when the stored PrintMethod is zero or unavailable")
+    elif normalized != {"from": print_method, "to": 0}:
+        return (
+            "story_edit conversion record print_method_normalized must be "
+            "{from: stored PrintMethod, to: 0}")
+    return None
+
+
 def render_pages(fitz, pdf_path, png_dir, dpi):
     """Rasterize every page to ``png_dir/page_<n>.png`` and measure it."""
     png_dir = Path(png_dir)
@@ -820,6 +882,25 @@ def run_layout_qa(pdf_path, guide_strings=None, declared_blank=()):
     return raw, findings, summary
 
 
+def filter_layout_findings_for_scope(findings, summary, operation_scope):
+    """Remove only form-fill layout noise from the closed story-edit scope.
+
+    The returned summary records an aggregate count rather than document seat
+    labels or page positions.  Ordinary form verification is returned
+    unchanged.
+    """
+    if operation_scope != STORY_OPERATION_SCOPE:
+        return findings, summary
+    kept = [item for item in findings
+            if item.get("class") != "empty_cell_expected_fill"]
+    suppressed = len(findings) - len(kept)
+    if not suppressed:
+        return kept, summary
+    scoped_summary = dict(summary or {})
+    scoped_summary["story_scope_empty_cell_suppressed"] = suppressed
+    return kept, scoped_summary
+
+
 #: One loader, one normalization: the derivation below must agree with the
 #: gate about what the document contains, so it reads the map and the
 #: artifact text through ``check_residue`` itself rather than reimplementing
@@ -944,6 +1025,114 @@ def reconcile_declared_blank(expectations, fill_map_path):
             if error:
                 return [], [], error
     return entries, sources, None
+
+
+def validate_operation_scope(expectations, args):
+    """Validate the closed story-edit render scope before any work starts.
+
+    ``story_edit.py`` receipts are intentionally unbound, so this is only a
+    *render expectation* and never an artifact-binding shortcut.  Story scope
+    has no form-fill inputs: accepting one alongside a fill map/profile would
+    make it ambiguous whether the fill-only safety checks were supposed to
+    run.  Refuse that combination rather than weakening either contract.
+
+    Returns ``(scope, error)`` where ``scope`` is ``None`` for the ordinary
+    form-fill path.
+    """
+    scope_declared = "operation_scope" in expectations
+    scope = expectations.get("operation_scope")
+    if (scope_declared
+            and (not isinstance(scope, str) or scope not in _OPERATION_SCOPES)):
+        return None, (
+            "expectations.operation_scope must be the closed value "
+            f"{STORY_OPERATION_SCOPE!r}, got {scope!r}")
+
+    required_declared = "required_text" in expectations
+    required = expectations.get("required_text")
+    if required_declared:
+        if (not isinstance(required, list) or not required
+                or any(not isinstance(item, str)
+                       or not item.strip()
+                       or len(item) > _MAX_REQUIRED_TEXT_CHARS
+                       for item in required)):
+            return None, (
+                "expectations.required_text must be a non-empty list of "
+                f"non-empty strings (max {_MAX_REQUIRED_TEXT_CHARS} chars)")
+        if len(set(required)) != len(required):
+            return None, "expectations.required_text must not contain duplicates"
+    if required_declared and scope != STORY_OPERATION_SCOPE:
+        return None, (
+            "expectations.required_text requires "
+            f"operation_scope {STORY_OPERATION_SCOPE!r}")
+    if scope != STORY_OPERATION_SCOPE:
+        return None, None
+    if not required_declared:
+        return None, (
+            "story_edit operation_scope requires a non-empty "
+            "expectations.required_text list")
+    allowed = {"operation_scope", "required_text", "forbidden_text"}
+    conflict_keys = set(("fill_map", "declared_blank", "intentionally_blank"))
+    unknown = sorted(set(expectations) - allowed - conflict_keys)
+    if unknown:
+        return None, (
+            "story_edit operation_scope expectations has unknown key(s): "
+            + ", ".join(unknown))
+    forbidden = expectations.get("forbidden_text")
+    if (not isinstance(forbidden, list) or not forbidden
+            or any(not isinstance(item, str)
+                   or not item.strip()
+                   or len(item) > _MAX_REQUIRED_TEXT_CHARS
+                   for item in forbidden)):
+        return None, (
+            "story_edit operation_scope requires a non-empty list of "
+            f"non-empty expectations.forbidden_text strings (max "
+            f"{_MAX_REQUIRED_TEXT_CHARS} chars)")
+    if Path(str(getattr(args, "artifact", ""))).suffix.lower() != ".hwpx":
+        return None, "story_edit operation_scope requires a .hwpx artifact"
+    if getattr(args, "pdf", None) is None:
+        return None, "story_edit operation_scope requires explicit --pdf"
+    if getattr(args, "baseline", None) is None:
+        return None, "story_edit operation_scope requires explicit --baseline"
+    if getattr(args, "conversion_record", None) is None:
+        return None, (
+            "story_edit operation_scope requires explicit hash-bound "
+            "--conversion-record")
+    if getattr(args, "deterministic_only", False):
+        return None, (
+            "story_edit operation_scope cannot use --deterministic-only; "
+            "the vision half remains mandatory")
+    if getattr(args, "accept_without", None):
+        return None, (
+            "story_edit operation_scope cannot use --accept-without; "
+            "fill checks are audited as not_applicable, not waived")
+    if getattr(args, "vision_scope", "all") != "all":
+        return None, (
+            "story_edit operation_scope requires --vision-scope all; "
+            "targeted vision is not permitted")
+
+    conflicts = []
+    # Presence, not truthiness, is intentional: even an empty/null map is a
+    # declaration whose semantics would otherwise be unclear in this scope.
+    if "fill_map" in expectations:
+        conflicts.append("fill_map")
+    if getattr(args, "fill_map", None) is not None:
+        conflicts.append("--fill-map")
+    if getattr(args, "form_profile", None) is not None:
+        conflicts.append("--form-profile")
+    if any(name in expectations for name in DECLARED_BLANK_ALIASES):
+        conflicts.extend(name for name in DECLARED_BLANK_ALIASES
+                         if name in expectations)
+    if getattr(args, "keep", None) or getattr(args, "keep_pattern", None) is not None:
+        conflicts.extend(flag for flag, present in (
+            ("--keep", bool(getattr(args, "keep", None))),
+            ("--keep-pattern", getattr(args, "keep_pattern", None) is not None),
+        ) if present)
+    if conflicts:
+        labels = ", ".join(dict.fromkeys(conflicts))
+        return None, (
+            f"operation_scope {STORY_OPERATION_SCOPE!r} conflicts with "
+            f"{labels}; story scope has no form-fill inputs")
+    return STORY_OPERATION_SCOPE, None
 
 
 def declared_blank_match(declared, label):
@@ -1849,8 +2038,12 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
 
 def check_forbidden_text(records, expectations):
     out = []
+    story_scope = expectations.get("operation_scope") == STORY_OPERATION_SCOPE
     for needle in expectations.get("forbidden_text") or []:
-        target = _norm(needle)[:20]
+        # Ordinary form guidance keeps the historical bounded prefix match.
+        # Story-edit text is an explicit full-string contract: a common prefix
+        # with a different suffix is not the old text.
+        target = _norm(needle) if story_scope else _norm(needle)[:20]
         if not target:
             continue
         for rec in records:
@@ -1860,6 +2053,33 @@ def check_forbidden_text(records, expectations):
                     page=rec["page"],
                     detector="visual_verify.forbidden_text",
                     evidence={"text": needle[:80]}))
+    return out
+
+
+def check_required_text(records, expectations):
+    """Require every story-edit replacement marker in the current PDF text.
+
+    This is deliberately render-bound: it reads only the text extracted from
+    the PDF being verified and never consults the structural story-edit
+    receipt.  ``validate_operation_scope`` closes the shape and requires the
+    list for story scope; the empty result keeps ordinary form-fill behavior
+    unchanged.
+    """
+    required = expectations.get("required_text") or []
+    if not required:
+        return []
+    # Do not join page text: a forged ``ABC`` on page 1 plus ``DEF`` on page 2
+    # must not satisfy one required ``ABCDEF`` replacement.
+    page_text = [_norm(r["_text"]) for r in records]
+    out = []
+    for needle in required:
+        target = _norm(needle)
+        if target and not any(target in text for text in page_text):
+            out.append(finding(
+                "required_text_missing", "hard", cls=None,
+                detector="visual_verify.required_text",
+                evidence={"text": str(needle)[:80],
+                          "note": "required text is absent from the current PDF"}))
     return out
 
 
@@ -2010,6 +2230,10 @@ def verify(args):
             return usage_error(str(artifact), "visual_verify",
                                "expectations must be a JSON object")
 
+    operation_scope, scope_error = validate_operation_scope(expectations, args)
+    if scope_error:
+        return usage_error(str(artifact), "visual_verify", scope_error)
+
     # ONE fill map, whichever flag carried it (see reconcile_fill_map): a CLI
     # --fill-map now seeds expectations.fill_map, so it can no longer leave the
     # fill-value presence check and the T30 post-flight silently inactive.
@@ -2088,6 +2312,16 @@ def verify(args):
                            f"failed to render {pdf_path}: {exc}")
 
     page_count = len(records)
+    if operation_scope == STORY_OPERATION_SCOPE:
+        if not any(re.fullmatch(r"Contents/section\d+\.xml", name)
+                   for name in xml_members):
+            return usage_error(
+                str(artifact), "visual_verify",
+                "story_edit operation_scope requires non-empty section XML")
+        conversion_error = validate_story_conversion(
+            conversion, artifact, page_count, print_method)
+        if conversion_error:
+            return usage_error(str(artifact), "visual_verify", conversion_error)
     blank_pages = set(expectations.get("blank_pages") or [])
 
     # -- deterministic backstops --------------------------------------------
@@ -2124,11 +2358,22 @@ def verify(args):
     script_findings, script_report = check_fill_charpr_script(
         artifact, expectations, args.baseline)
     det += script_findings
+    det += check_required_text(records, expectations)
     det += check_forbidden_text(records, expectations)
 
-    guide_strings = expectations.get("forbidden_text") or None
+    # Story scope owns an exact full-string per-page forbidden-text contract;
+    # legacy layout_qa intentionally uses a bounded 20-character prefix and
+    # would reintroduce suffix false positives.  Keep the ordinary form path
+    # unchanged.
+    guide_strings = (None if operation_scope == STORY_OPERATION_SCOPE
+                     else expectations.get("forbidden_text") or None)
     layout_raw, layout_findings, layout_summary = run_layout_qa(
         pdf_path, guide_strings=guide_strings, declared_blank=declared_blank)
+    # ``layout_qa``'s header-cell warning is a form-fill heuristic.  A story
+    # edit has no seat map by contract, so retaining that warning would
+    # contradict the audited ``empty_cell_expected_fill`` N/A state.
+    layout_findings, layout_summary = filter_layout_findings_for_scope(
+        layout_findings, layout_summary, operation_scope)
     det += layout_findings
 
     delegates = []
@@ -2227,6 +2472,20 @@ def verify(args):
                 {"page": index, "comparable": True,
                  "changed_regions": regions})
 
+    if operation_scope == STORY_OPERATION_SCOPE:
+        if baseline_skip or baseline_report is None:
+            return usage_error(
+                str(artifact), "visual_verify",
+                "story_edit operation_scope requires a comparable baseline "
+                "pixel diff")
+        if baseline_report.get("baseline_pages") != page_count \
+                or any(not page.get("comparable")
+                       for page in baseline_report.get("pages", ())):
+            return usage_error(
+                str(artifact), "visual_verify",
+                "story_edit operation_scope requires baseline pages with "
+                "comparable geometry and matching page count")
+
     for item in det:
         (hard if item["severity"] == "hard" else warn).append(item)
 
@@ -2245,6 +2504,11 @@ def verify(args):
                       source=str(args.vision_verdict))
         missing = sorted({t["page"] for t in vision_required} - set(reviewed))
         if missing:
+            if operation_scope == STORY_OPERATION_SCOPE:
+                return usage_error(
+                    str(artifact), "visual_verify",
+                    "story_edit operation_scope vision verdict must review "
+                    f"all pages; missing {missing}")
             hard.append(finding(
                 "vision_incomplete", "hard", cls=None, detector="visual_verify",
                 evidence={"unreviewed_pages": missing,
@@ -2256,9 +2520,15 @@ def verify(args):
     skipped = _skipped(expectations, pages_document, layout_raw, script_report,
                        baseline_skip, form_profile=args.form_profile,
                        xml_members=xml_members,
-                       pages_document_note=pages_document_note)
-    blockers = [row for row in skipped
-                if row["check"] in SAFETY_CHECKS and row["check"] not in waivers]
+                       pages_document_note=pages_document_note,
+                       operation_scope=operation_scope)
+    not_applicable = [row for row in skipped
+                      if row.get("status") == "not_applicable"]
+    skipped_active = [row for row in skipped
+                      if row.get("status") != "not_applicable"]
+    blockers = [row for row in skipped_active
+                if row["check"] in SAFETY_CHECKS
+                and row["check"] not in waivers]
 
     # -- verdict -------------------------------------------------------------
     loop = {"attempt": args.attempt, "max_fix_attempts": args.max_fix_attempts,
@@ -2314,6 +2584,7 @@ def verify(args):
             "schema": SCHEMA,
             "artifact": str(artifact),
             "pdf": str(pdf_path),
+            "operation_scope": operation_scope,
             "dpi": args.dpi,
             "png_dir": str(png_dir),
             "rubric": RUBRIC_POINTER,
@@ -2339,9 +2610,17 @@ def verify(args):
                 "residue_keep": residue_keep,
                 "delegates": delegates,
                 "baseline_diff": baseline_report,
+                "operation_scope": operation_scope,
+                # Scope-limited fill checks are audited here, not represented
+                # as waivers or ordinary skipped safety checks.
+                "not_applicable_checks": sorted({row["check"] for row in
+                                                   not_applicable}),
+                "not_applicable_details": not_applicable,
                 "skipped": [f"{row['check']}: {row['reason']}"
-                            for row in skipped],
-                "skipped_checks": sorted({row["check"] for row in skipped}),
+                            for row in skipped_active],
+                "skipped_details": skipped_active,
+                "skipped_checks": sorted({row["check"] for row in
+                                           skipped_active}),
             },
             "vision": vision,
             "vision_required": vision_required,
@@ -2352,7 +2631,7 @@ def verify(args):
 
 def _skipped(expectations, pages_document, layout_raw, script_report=None,
              baseline_skip=None, *, form_profile=None, xml_members=None,
-             pages_document_note=None):
+             pages_document_note=None, operation_scope=None):
     """What the machine half could NOT check, stated out loud.
 
     Returns ``[{"check": KEY, "reason": TEXT}]``. ``KEY`` is machine-readable on
@@ -2363,8 +2642,11 @@ def _skipped(expectations, pages_document, layout_raw, script_report=None,
     """
     out = []
 
-    def skip(check, reason):
-        out.append({"check": check, "reason": reason})
+    def skip(check, reason, *, status=None):
+        row = {"check": check, "reason": reason}
+        if status is not None:
+            row["status"] = status
+        out.append(row)
 
     if baseline_skip:
         # resolve_baseline already formats "baseline_pixel_diff: <reason>", and
@@ -2378,9 +2660,15 @@ def _skipped(expectations, pages_document, layout_raw, script_report=None,
              "no Contents/section*.xml or header.xml member was parsed (not an "
              ".hwpx, or unreadable) — T23's blank-render trap is unchecked")
     if form_profile is None:
-        skip("check_residue",
-             "no --form-profile, so the residue gate did not run: surviving "
-             "guide text, placeholders and unfilled anchors are unchecked")
+        if operation_scope == STORY_OPERATION_SCOPE:
+            skip("check_residue",
+                 "not_applicable: operation_scope story_edit has no "
+                 "form_profile; residue is not a form-fill claim",
+                 status="not_applicable")
+        else:
+            skip("check_residue",
+                 "no --form-profile, so the residue gate did not run: surviving "
+                 "guide text, placeholders and unfilled anchors are unchecked")
     if expectations.get("fill_map") and script_report is None:
         skip("fill_charpr_script_mismatch",
              "charPr definitions were not readable (not an .hwpx, or no run "
@@ -2398,10 +2686,18 @@ def _skipped(expectations, pages_document, layout_raw, script_report=None,
     if not expectations.get("margins_mm"):
         skip("format_noncompliance/margins", "not declared")
     if not expectations.get("fill_map"):
-        skip("empty_cell_expected_fill", "no fill_map declared")
-        skip("fill_charpr_script_mismatch",
-             "no fill_map declared, so no run is known to be fill-modified "
-             "(T30)")
+        if operation_scope == STORY_OPERATION_SCOPE:
+            skip("empty_cell_expected_fill",
+                 "not_applicable: operation_scope story_edit has no fill_map",
+                 status="not_applicable")
+            skip("fill_charpr_script_mismatch",
+                 "not_applicable: operation_scope story_edit has no fill_map",
+                 status="not_applicable")
+        else:
+            skip("empty_cell_expected_fill", "no fill_map declared")
+            skip("fill_charpr_script_mismatch",
+                 "no fill_map declared, so no run is known to be fill-modified "
+                 "(T30)")
     if not (expectations.get("page_budget") or expectations.get("max_pages")):
         skip("page_budget_violation", "no budget declared")
     if layout_raw is None:
@@ -2436,7 +2732,8 @@ def main(argv=None):
                              "either surface), declared_blank (the seats you "
                              "deliberately left empty; intentionally_blank is "
                              "accepted as its alias), blank_pages, "
-                             "forbidden_text")
+                             "forbidden_text, or the closed story-edit "
+                             "operation_scope + required_text contract")
     parser.add_argument("--png-dir", default=None,
                         help="where page PNGs are written "
                              "(default: <pdf>_pages/ next to the PDF)")

@@ -44,7 +44,7 @@ python pipeline/scripts/story_graph.py FORM.hwpx --out story-graph.json
 The inventory first validates the exact HWPX mimetype as the first stored,
 extra-free ZIP entry and validates every local ZIP header against its central
 record, including version-needed and DOS date/time. Its v1 ZIP envelope permits only empty extras and flags `0` or the
-public-corpus-proven DEFLATE option `0x0004` (only with DEFLATED); encryption,
+public-corpus-proven DEFLATE fast flag `0x0004` (PKWARE APPNOTE bit 2, only with DEFLATED); encryption,
 data descriptors, all other flags, non-ASCII paths, and any mismatch refuse.
 It then validates every safe, present OCF rootfile, then
 derives section order from the `Contents/content.hpf` OPF spine and actual
@@ -72,6 +72,51 @@ section roles. This T79 slice is inventory-only: it provides no selector, edit, 
 claim. Exit codes are 0 passed, 2 usage/argparse/output error, and 3
 refused/unknown package. The owner facts are grounded in the public
 [Hancom OWPML model](https://github.com/hancom-io/hwpx-owpml-model).
+
+## 0B. Edit one inventoried story paragraph (T80 structural slice)
+
+Prepare one closed `OP.json` with the private exact source SHA, the graph's
+canonical `section/container/story/paragraph` address (never `/run[n]`), and
+the replacement, then run:
+
+```sh
+python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json \
+  --out OUTPUT.hwpx --receipt RECEIPT.json
+```
+
+The paragraph must have exactly one direct text-bearing run with one direct
+`hp:t`; ambiguous, stale, text-first/raw-ID, noncanonical, unsupported, or raw
+CR requests refuse. The byte-preserving verifier compares ZIP records and
+metadata before exclusive publication. The local receipt is privacy-safe and
+`render: "not_run"`; this path makes no native/Hancom/PDF claim.
+
+To verify that edit's current native render, use visual verification's closed
+story scope. The structural receipt is intentionally unbound and is not a
+render claim:
+
+```sh
+python pipeline/scripts/visual_verify.py --artifact OUTPUT.hwpx \
+  --pdf native.pdf --baseline BLANK.pdf \
+  --conversion-record native.pdf.conversion.json \
+  --expectations story-expectations.json --out visual_verdict.json
+```
+
+`story-expectations.json` must contain only non-empty `required_text` and
+`forbidden_text` lists alongside `"operation_scope": "story_edit"`. The
+hash-bound conversion record must match the current HWPX/PDF bytes and page
+counts; baseline pages must be comparable. Form-fill/profile/blank inputs,
+targeted vision, deterministic-only, and waivers are refused. Pass 1 ends at
+`vision_pending` after the deterministic checks with no acceptance waiver or
+blocker; pass 2 requires an all-pages vision verdict. Missing required text,
+visible forbidden text, malformed/non-empty XML, or invalid parity remains a
+failure.
+
+The current native evidence is one public/sanitized header fixture converted
+with Windows Hancom and reviewed on its single rendered page. Footer,
+footnote, and endnote success paths have synthetic structural coverage only;
+they are not native-render parity claims. The independent render-quality
+checker classified that header as `unknown/unsupported_graphics_state`, not as
+a quality pass.
 
 ## 1. Clone and bootstrap
 
