@@ -199,6 +199,26 @@ comparison unknown, render not run, proof none, and submission false. The
 receipt is not source fidelity, conversion parity, native execution, render,
 or submission evidence and must never enter Stage 0 or canonical output.
 
+## 0A.6 Bounded HWPX equation-envelope inventory (T91)
+
+For a privacy-safe structural equation check, pre-create the separate leaf:
+
+```sh
+python pipeline/scripts/hwp_equation_diagnostic.py inspect INPUT.hwpx \
+  --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX
+python pipeline/scripts/hwp_equation_diagnostic.py verify INPUT.hwpx \
+  --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX
+```
+
+T91 first applies the strict HWPX package validator, follows the exact OPF
+spine, and inventories equations by expanded OWPML QName. Each equation must
+be a direct child of a run with exactly one direct, nonempty, text-only script.
+The receipt contains the source artifact hash and aggregate counts only; it
+never contains equation text or per-script hashes. HwpEqn semantics are not
+scanned, execution/render stay not run, comparison stays unknown, proof is
+none, and submission is false. Every analyzed or refused invocation exits 3.
+Never route the receipt to Stage 0, canonical output, rendering, or submission.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

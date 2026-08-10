@@ -10,6 +10,27 @@ the kernel's contract shape.
 
 ### Added
 
+- **T91:** added the separate `rigorloom/hwp-equation-diagnostic/v1`
+  receipt-only HWPX equation-envelope inventory. It resolves section order
+  from the validated OPF spine and recognizes the official paragraph
+  namespace by expanded QName, so alternate prefixes cannot route an
+  equation-bearing package to LibreOffice and comments or similarly named
+  elements cannot create false equations. Receipts expose only the source
+  artifact hash, bounded counts, and closed states: no script text or
+  per-script hash. HwpEqn semantics, native execution, render, comparison,
+  and submission remain unproved. Conversion parity now preserves equation
+  whitespace instead of collapsing `sin x` and `sinx`, and requires the same
+  closed equation envelope on captured source/assembled snapshots with final
+  live-byte rebind, so duplicate-script loss or mid-check replacement cannot
+  pass. Raw-HWP parity likewise runs COM inspection on a private HWP snapshot
+  only after the T85 preflight and through the serialized, bounded,
+  privacy-safe COM envelope, then rebinds the live source. Manifest-backed
+  extracts are SHA-bound to the captured source; OPF-spine semantic order is
+  compared even when sections differ only by equation scripts. Receipt-only
+  publication and verification perform source/root callbacks before the final
+  one-link receipt content/identity check, closing same-inode overwrite races.
+  The legacy rhwp SVG proof helper is no longer selected automatically.
+
 - **T90:** added the separate `rigorloom/hwp-docinfo-coverage/v1`
   receipt-only DocInfo cardinality and BodyText ID-reference diagnostic. It
   binds the detailed 26-byte DocumentProperties and 72-byte IDMappings forms,

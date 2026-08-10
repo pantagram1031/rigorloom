@@ -18,12 +18,14 @@ Two modes, routed on the A-side suffix:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import re
-import subprocess
 import sys
+import tempfile
+import unicodedata
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -35,12 +37,16 @@ from content_extract import (
     local,
     section_names,
     semantic_fingerprint,
-    sha_file,
 )
+import hwp_equation_diagnostic
+import hwp_ingress
+import hwp_source_coverage
+import diagnostic_candidate_core
 
 ENGINE_COM_BACKEND = (
     Path(__file__).resolve().parents[2] / "engine" / "scripts" / "com_backend.py"
 )
+COM_INSPECT_TIMEOUT = 60.0
 
 
 def com_leg_available() -> bool:
@@ -49,19 +55,33 @@ def com_leg_available() -> bool:
 
 
 def _com_inspect(path: str | Path) -> dict:
-    """Run com_backend inspect on a .hwp and return its JSON payload."""
-    proc = subprocess.run(
-        [sys.executable, str(ENGINE_COM_BACKEND), "inspect",
-         "--file", str(path), "--preview-chars", "0"],
-        capture_output=True, text=True, encoding="utf-8")
-    if proc.returncode != 0:
-        raise ValueError(
-            f"COM inspect failed ({proc.returncode}): "
-            f"{proc.stderr.strip() or proc.stdout.strip()}")
-    payload = json.loads(proc.stdout)
-    if not payload.get("ok"):
-        raise ValueError(f"COM inspect not ok: {payload.get('error')}")
-    return payload
+    """Run the T85-bounded, privacy-safe COM inspect and adapt its counts."""
+    argv = [
+        sys.executable, str(ENGINE_COM_BACKEND), "inspect", "--file", str(path),
+        "--preview-chars", "0", "--privacy-safe",
+    ]
+    payload = hwp_ingress._com_inspect(argv, timeout=COM_INSPECT_TIMEOUT)
+    counts = payload.get("counts") if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or not isinstance(counts, dict)
+            or any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+                   for value in counts.values())):
+        raise hwp_ingress.IngressError("hancom_counts_missing")
+    required = ("tables", "pictures", "equations", "shapes", "pages",
+                "controls_total", "field_count")
+    if any(key not in counts for key in required):
+        raise hwp_ingress.IngressError("hancom_counts_missing")
+    return {
+        "ok": True,
+        "text_sha256": payload.get("text_sha256"),
+        "text_chars_total": payload.get("text_chars_total"),
+        "tables": counts["tables"],
+        "pictures": counts["pictures"],
+        "equations": counts["equations"],
+        "shapes": counts["shapes"],
+        "pages": counts["pages"],
+        "controls_total": counts["controls_total"],
+        "field_count": counts["field_count"],
+    }
 
 
 def _hwpx_text_chars(path: str | Path) -> int:
@@ -102,17 +122,79 @@ def check_hwp_conversion(src_hwp: str | Path,
         # or pipeline mistake an unavailable check for a successful gate.
         return verdict, EXIT_HARD
     try:
-        com = _com_inspect(src)
-        hwpx = semantic_fingerprint(dst)
-        hwpx_chars = _hwpx_text_chars(dst)
+        resolved_src = hwp_source_coverage._resolve_input_path(src)
+        captured_src = hwp_source_coverage._read_input_once(resolved_src)
+        hwp_source_coverage._preflight(captured_src)
+        resolved_dst = hwp_equation_diagnostic._resolve_input_path(dst)
+        captured_dst = hwp_equation_diagnostic._read_input_once(resolved_dst)
+        with tempfile.TemporaryDirectory(prefix=".convert-parity-") as temp:
+            temp_root = Path(temp)
+            source_snapshot = temp_root / "source.hwp"
+            converted_snapshot = temp_root / "converted.hwpx"
+            diagnostic_candidate_core.write_bytes(source_snapshot, captured_src)
+            diagnostic_candidate_core.write_bytes(converted_snapshot, captured_dst)
+            with hwp_ingress._com_serial_guard():
+                com = _com_inspect(source_snapshot)
+            hwp_equation_diagnostic.equation_presence(converted_snapshot)
+            hwpx = semantic_fingerprint(converted_snapshot)
+            hwpx_chars = _hwpx_text_chars(converted_snapshot)
+        if (hwp_source_coverage._read_input_once(resolved_src) != captured_src
+                or hwp_equation_diagnostic._read_input_once(resolved_dst)
+                != captured_dst):
+            raise hwp_equation_diagnostic.CoverageError("input_changed")
+    except hwp_equation_diagnostic.CoverageError as exc:
+        code = ("convert_input_changed" if exc.reason == "input_changed"
+                else "convert_equation_envelope_invalid")
+        verdict = verdict_skeleton(
+            str(dst.resolve()), "check_convert_parity",
+            hard=[{
+                "code": code,
+                "msg": ("converted HWPX changed during parity"
+                        if code == "convert_input_changed" else
+                        "converted HWPX equation envelope is ambiguous or invalid"),
+                "at": str(dst.resolve()),
+                "reason": exc.reason,
+            }],
+            extra={"mode": "hwp_conversion"},
+        )
+        return verdict, EXIT_HARD
+    except hwp_source_coverage.CoverageError as exc:
+        verdict = verdict_skeleton(
+            str(dst.resolve()), "check_convert_parity",
+            hard=[{
+                "code": "convert_input_invalid",
+                "msg": "source HWP could not be captured for parity",
+                "at": str(src.resolve()),
+                "reason": exc.reason,
+            }],
+            extra={"mode": "hwp_conversion"},
+        )
+        return verdict, EXIT_HARD
+    except hwp_ingress.IngressError as exc:
+        verdict = verdict_skeleton(
+            str(dst.resolve()), "check_convert_parity",
+            hard=[{
+                "code": "convert_com_inspect_invalid",
+                "msg": "bounded COM inspection did not produce a safe fingerprint",
+                "at": str(dst.resolve()),
+                "reason": exc.reason,
+            }],
+            extra={"mode": "hwp_conversion"},
+        )
+        return verdict, EXIT_HARD
     except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError,
             json.JSONDecodeError) as exc:
         return usage_error(dst, "check_convert_parity",
                            f"input could not be fingerprinted: {exc}")
+    equations = com.get("equations")
+    equation_count = (
+        equations if isinstance(equations, int) and not isinstance(equations, bool)
+        else len(equations) if isinstance(equations, list) else -1
+    )
     src_counts = {
         "tables": com.get("tables"),
         "pictures": com.get("pictures"),
-        "equations": len(com.get("equations") or []),
+        "equations": equation_count,
     }
     dst_counts = {
         "tables": hwpx["counts"]["tables"],
@@ -159,11 +241,11 @@ def input_fingerprint(path: str | Path) -> dict:
     raise ValueError("input must be content.md, its directory, or an .hwpx")
 
 
-def source_hwpx(path: str | Path) -> Path:
+def source_hwpx(path: str | Path) -> tuple[Path, str | None]:
     """Resolve the original HWPX behind an extraction input, fail-closed."""
     target = Path(path)
     if target.suffix.lower() == ".hwpx":
-        return target
+        return target, None
     manifest_path = (
         target / MANIFEST_NAME if target.is_dir()
         else target.parent / MANIFEST_NAME
@@ -179,9 +261,10 @@ def source_hwpx(path: str | Path) -> Path:
     if source.suffix.lower() != ".hwpx" or not source.is_file():
         raise ValueError(f"source HWPX from extraction manifest is unavailable: {source}")
     expected_hash = source_record.get("sha256")
-    if expected_hash and sha_file(source) != expected_hash:
-        raise ValueError("source HWPX hash differs from extraction manifest")
-    return source
+    if (not isinstance(expected_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None):
+        raise ValueError("source HWPX manifest hash is missing or invalid")
+    return source, expected_hash
 
 
 def content_core(fingerprint: dict) -> dict:
@@ -189,6 +272,53 @@ def content_core(fingerprint: dict) -> dict:
         "normalized_text_sha256": fingerprint["normalized_text_sha256"],
         "counts": fingerprint["counts"],
     }
+
+
+def _pack_semantic_piece(value: bytes) -> bytes:
+    """Length-delimit a semantic value before hashing it internally."""
+    return len(value).to_bytes(8, "big") + value
+
+
+def _spine_semantic_sequence(path: str | Path) -> tuple[bytes, ...]:
+    """Return opaque per-section semantic keys in the resolved OPF spine order.
+
+    This is intentionally not a raw XML digest and never leaves this process.
+    It includes exact NFC text boundaries, equation-script cardinality, and
+    closed local-tag counts, so a reordered OPF spine cannot be hidden by
+    filename sorting or the global ``semantic_fingerprint``. Script bytes are
+    compared separately by the exact equation-drift check.
+    """
+    data = hwp_equation_diagnostic._read_input_once(
+        hwp_equation_diagnostic._resolve_input_path(Path(path)))
+    sections, _ = hwp_equation_diagnostic._spine_sections(data)
+    sequence: list[bytes] = []
+    for _member, payload in sections:
+        root = ET.fromstring(payload)
+        chunks: list[bytes] = [b"rigorloom/t91-section-semantic-v1"]
+        local_counts: dict[str, int] = {}
+        text_chunks: list[str] = []
+        script_chunks: list[str] = []
+        for node in root.iter():
+            if not isinstance(node.tag, str):
+                continue
+            local_name = local(node.tag)
+            local_counts[local_name] = local_counts.get(local_name, 0) + 1
+            if local_name == "t":
+                text_chunks.append("".join(node.itertext()))
+            elif local_name == "script":
+                script_chunks.append(node.text or "")
+        for local_name, count in sorted(local_counts.items()):
+            chunks.append(_pack_semantic_piece(local_name.encode("utf-8")))
+            chunks.append(_pack_semantic_piece(str(count).encode("ascii")))
+        for label, values in ((b"text", text_chunks),
+                              (b"script", script_chunks)):
+            chunks.append(_pack_semantic_piece(label))
+            chunks.append(_pack_semantic_piece(str(len(values)).encode("ascii")))
+            for value in values:
+                encoded = unicodedata.normalize("NFC", value).encode("utf-8")
+                chunks.append(_pack_semantic_piece(encoded))
+        sequence.append(hashlib.sha256(b"".join(chunks)).digest())
+    return tuple(sequence)
 
 
 def check(extracted: str | Path, assembled: str | Path) -> tuple[dict, int]:
@@ -202,11 +332,64 @@ def check(extracted: str | Path, assembled: str | Path) -> tuple[dict, int]:
         return usage_error(assembled_path, "check_convert_parity",
                            "B-assembled input must be an existing .hwpx")
     try:
-        before = input_fingerprint(extracted_path)
-        after = input_fingerprint(assembled_path)
-        source_path = source_hwpx(extracted_path)
-        source_before = semantic_fingerprint(source_path)
-        source_after = semantic_fingerprint(assembled_path)
+        source_path, expected_source_hash = source_hwpx(extracted_path)
+        resolved_source = hwp_equation_diagnostic._resolve_input_path(source_path)
+        resolved_assembled = hwp_equation_diagnostic._resolve_input_path(assembled_path)
+        captured_source = hwp_equation_diagnostic._read_input_once(resolved_source)
+        captured_assembled = hwp_equation_diagnostic._read_input_once(resolved_assembled)
+        if (expected_source_hash is not None
+                and hashlib.sha256(captured_source).hexdigest()
+                != expected_source_hash):
+            raise hwp_equation_diagnostic.CoverageError(
+                "source_manifest_hash_mismatch")
+        with tempfile.TemporaryDirectory(prefix=".convert-parity-") as temp:
+            temp_root = Path(temp)
+            source_snapshot = temp_root / "source.hwpx"
+            assembled_snapshot = temp_root / "assembled.hwpx"
+            diagnostic_candidate_core.write_bytes(source_snapshot, captured_source)
+            diagnostic_candidate_core.write_bytes(
+                assembled_snapshot, captured_assembled)
+            hwp_equation_diagnostic.equation_presence(source_snapshot)
+            hwp_equation_diagnostic.equation_presence(assembled_snapshot)
+            before_input = (
+                source_snapshot
+                if extracted_path.suffix.lower() == ".hwpx"
+                else extracted_path
+            )
+            before = input_fingerprint(before_input)
+            after = input_fingerprint(assembled_snapshot)
+            source_before = semantic_fingerprint(source_snapshot)
+            source_after = semantic_fingerprint(assembled_snapshot)
+            source_spine_sequence = _spine_semantic_sequence(source_snapshot)
+            assembled_spine_sequence = _spine_semantic_sequence(assembled_snapshot)
+        if (hwp_equation_diagnostic._read_input_once(resolved_source)
+                != captured_source
+                or hwp_equation_diagnostic._read_input_once(resolved_assembled)
+                != captured_assembled):
+            raise hwp_equation_diagnostic.CoverageError("input_changed")
+    except hwp_equation_diagnostic.CoverageError as exc:
+        if exc.reason == "input_changed":
+            code = "convert_input_changed"
+        elif exc.reason == "source_manifest_hash_mismatch":
+            code = "convert_source_binding_invalid"
+        else:
+            code = "convert_equation_envelope_invalid"
+        verdict = verdict_skeleton(
+            str(assembled_path.resolve()), "check_convert_parity",
+            hard=[{
+                "code": code,
+                "msg": (
+                    "source or assembled HWPX changed during parity"
+                    if code == "convert_input_changed" else
+                    "captured source HWPX does not match extraction manifest"
+                    if code == "convert_source_binding_invalid" else
+                    "source or assembled HWPX equation envelope is ambiguous or invalid"
+                ),
+                "at": str(assembled_path.resolve()),
+                "reason": exc.reason,
+            }],
+        )
+        return verdict, EXIT_HARD
     except (OSError, UnicodeError, ValueError, zipfile.BadZipFile,
             ET.ParseError) as exc:
         return usage_error(assembled_path, "check_convert_parity",
@@ -241,6 +424,16 @@ def check(extracted: str | Path, assembled: str | Path) -> tuple[dict, int]:
                 "content": after["equation_scripts"],
                 "source_hwpx": source_after["equation_scripts"],
             },
+        })
+    if (source_spine_sequence != assembled_spine_sequence
+            and sorted(source_spine_sequence) == sorted(assembled_spine_sequence)):
+        hard.append({
+            "code": "convert_section_order_drift",
+            "msg": "resolved OPF spine section semantic order changed",
+            "at": str(assembled_path.resolve()),
+            "expected": {"section_count": len(source_spine_sequence)},
+            "actual": {"section_count": len(assembled_spine_sequence)},
+            "reason": "spine_semantic_sequence_mismatch",
         })
     verdict = verdict_skeleton(
         str(assembled_path.resolve()), "check_convert_parity", hard=hard,

@@ -11,6 +11,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+from xml.sax.saxutils import escape
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -126,13 +127,48 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         structure="",
     ):
         target = self.ws / "output" / name
-        equation = "<hp:equation/>" if equations else ""
+        hp = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+        hs = "http://www.hancom.co.kr/hwpml/2011/section"
+        opf = "http://www.idpf.org/2007/opf/"
+        ocf = "urn:oasis:names:tc:opendocument:xmlns:container"
+        equation = (
+            "<hp:equation><hp:script>x</hp:script></hp:equation>"
+            if equations else ""
+        )
+        section = (
+            f'<hs:sec xmlns:hs="{hs}" xmlns:hp="{hp}">'
+            f'<hp:p><hp:run><hp:t>{escape(text)}</hp:t>{structure}'
+            f'{equation}</hp:run></hp:p></hs:sec>'
+        )
+        container = (
+            f'<ocf:container xmlns:ocf="{ocf}"><ocf:rootfiles>'
+            '<ocf:rootfile full-path="Contents/content.hpf" '
+            'media-type="application/hwpml-package+xml"/>'
+            '</ocf:rootfiles></ocf:container>'
+        )
+        content_hpf = (
+            f'<opf:package xmlns:opf="{opf}" id="package" '
+            'unique-identifier="uid" version="1.0">'
+            '<opf:metadata><opf:title/><opf:language>ko</opf:language>'
+            '<opf:meta name="creator" content="test"/></opf:metadata>'
+            '<opf:manifest><opf:item id="header" href="Contents/header.xml" '
+            'media-type="application/xml"/><opf:item id="section0" '
+            'href="Contents/section0.xml" media-type="application/xml"/>'
+            '</opf:manifest><opf:spine><opf:itemref idref="section0"/>'
+            '</opf:spine></opf:package>'
+        )
         with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr("mimetype", b"application/hwp+zip",
+                             compress_type=zipfile.ZIP_STORED)
+            archive.writestr("META-INF/container.xml", container)
+            archive.writestr("Contents/content.hpf", content_hpf)
+            archive.writestr(
+                "Contents/header.xml",
+                '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"/>',
+            )
             archive.writestr(
                 "Contents/section0.xml",
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                f'<doc xmlns:hp="urn:hancom">{structure}<p>{text}</p>'
-                f'{equation}</doc>',
+                '<?xml version="1.0" encoding="UTF-8"?>' + section,
             )
         return target
 
@@ -408,6 +444,20 @@ class SubmissionPreflightTestCase(unittest.TestCase):
             for item in verdict["hard"]
         ), verdict)
 
+    def test_invalid_equation_envelope_is_closed_p3_not_an_exception(self):
+        self.write_header("output/submission.hwpx")
+        (self.ws / "request.yaml").write_text(
+            'output_filename: "submission.hwpx"\n', encoding="utf-8")
+        self.write_hwpx(structure="<hp:script>x</hp:script>")
+
+        verdict, code = submission_preflight.check(self.ws)
+
+        self.assertEqual(code, 3, verdict)
+        self.assertTrue(any(
+            item["code"] == "P3" and "equation_script_orphan" in item["msg"]
+            for item in verdict["hard"]
+        ), verdict)
+
     def test_advisory_no_equations_allows_explicit_draft_escape(self):
         self.write_header("output/submission.hwpx")
         (self.ws / "request.yaml").write_text(
@@ -535,13 +585,10 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         (self.ws / "form_baseline.json").write_text(
             json.dumps({"structure_sha256": baseline}), encoding="utf-8"
         )
-        with zipfile.ZipFile(artifact, "w") as archive:
-            archive.writestr(
-                "Contents/section0.xml",
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<doc xmlns:hp="urn:hancom"><hp:secPr landscape="true"/>'
-                '<p>different body text</p></doc>',
-            )
+        self.write_hwpx(
+            text="different body text",
+            structure='<hp:secPr landscape="true"/>',
+        )
 
         with mock.patch.object(
             submission_preflight.render_probe,
@@ -571,16 +618,15 @@ class SubmissionPreflightTestCase(unittest.TestCase):
         (self.ws / "form_baseline.json").write_text(
             json.dumps({"structure_sha256": baseline}), encoding="utf-8"
         )
-        with zipfile.ZipFile(artifact, "w") as archive:
-            archive.writestr(
-                "Contents/section0.xml",
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<doc xmlns:hp="urn:hancom">'
+        self.write_hwpx(
+            text="same body text",
+            structure=(
                 '<hp:tbl rowCnt="1" colCnt="2">'
                 '<hp:tc colAddr="0" rowAddr="0"><hp:p/></hp:tc>'
                 '<hp:tc colAddr="1" rowAddr="0"><hp:p/></hp:tc>'
-                '</hp:tbl><p>same body text</p></doc>',
-            )
+                '</hp:tbl>'
+            ),
+        )
 
         with mock.patch.object(
             submission_preflight.render_probe,
