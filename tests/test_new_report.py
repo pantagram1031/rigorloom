@@ -187,6 +187,31 @@ def test_scaffolder_rejects_raw_java_diagnostic_candidate(
     assert not root.exists()
 
 
+def test_scaffolder_rejects_raw_semantic_oracle_candidate_without_workspace(
+        tmp_path: Path):
+    form, _ = _ingress_pair(tmp_path)
+    diagnostic_form = (
+        tmp_path / "work" / "stage-0" / "scratch" / "hwp-semantic-oracle"
+        / "0123456789abcdef0123456789abcdef" / "candidate.hwpx"
+    )
+    diagnostic_form.parent.mkdir(parents=True)
+    diagnostic_form.write_bytes(form.read_bytes())
+    root = tmp_path / "runs"
+    proc = subprocess.run(
+        [
+            sys.executable, str(MODULE_PATH), "--slug", "raw-semantic-oracle",
+            "--subject", "science", "--topic", "topic", "--form",
+            str(diagnostic_form), "--workspace-root", str(root),
+        ],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 3
+    assert proc.stderr.strip() == (
+        "error: diagnostic candidate is quarantined and cannot enter a report workspace"
+    )
+    assert not root.exists()
+
+
 def test_scaffolder_rejects_java_diagnostic_receipt_without_workspace(
         tmp_path: Path):
     form, receipt = _ingress_pair(tmp_path)

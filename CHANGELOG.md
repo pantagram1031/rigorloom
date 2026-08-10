@@ -10,6 +10,19 @@ the kernel's contract shape.
 
 ### Added
 
+- **T88:** added a receipt-only paired bounded content/object agreement oracle for one
+  release-allowlisted T86 `rhwp` candidate and one lock-bound T87 Java
+  candidate. It rebinds both current receipts and candidates at compare/verify,
+  runs the public lane verifiers over captured snapshots, follows OPF spine
+  order with closed text/story-table-topology/equation/referenced-picture/
+  explicit-control coverage (styles, numbering, pagination, and metadata are
+  outside the comparison),
+  and publishes only `rigorloom/hwp-semantic-oracle/v1` agreement receipts.
+  Comparison remains diagnostic-only (`source_fidelity: not_established`),
+  render is `not_run`, proof is `none`, submission is false, and `new_report`
+  has a defense-in-depth guard that rejects a forged/reserved candidate path
+  under the receipt-only semantic-oracle root.
+
 - **T87:** added a separate Java HWP diagnostic-candidate lane for the
   release-approved `hwp2hwpx` fat-JAR hash and source-visible fixed bridge.
   It reuses the T86 bounded process/publication core, strips JVM option

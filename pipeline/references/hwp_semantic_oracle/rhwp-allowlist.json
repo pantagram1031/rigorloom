@@ -1,0 +1,6 @@
+{
+  "adapter": "rhwp",
+  "schema": "rigorloom/hwp-semantic-oracle-allowlist/v1",
+  "sha256": "e38215daddf63b284cbe05322541b44f65efd727ce7f50b9b4ffd94930e7ab72",
+  "version": "0.8.2"
+}

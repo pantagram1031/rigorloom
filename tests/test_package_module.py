@@ -258,6 +258,23 @@ class TestCoreBundle:
             assert "ModuleNotFoundError" not in completed.stderr
             assert "adapters_impl" not in completed.stderr
 
+        oracle_help = subprocess.run(
+            [sys.executable,
+             str(install / "pipeline" / "scripts" / "hwp_semantic_oracle.py"),
+             "--help"],
+            cwd=install,
+            env=env,
+            capture_output=True,
+            encoding="cp949",
+            errors="replace",
+            timeout=30,
+        )
+        assert oracle_help.returncode == 0, (
+            oracle_help.stdout, oracle_help.stderr)
+        assert "semantic" in oracle_help.stdout.lower()
+        assert "Traceback" not in oracle_help.stderr
+        assert "ModuleNotFoundError" not in oracle_help.stderr
+
         diagnostic_help = subprocess.run(
             [sys.executable,
              str(install / "pipeline" / "scripts" / "hwp_diagnostic_candidate.py"),
@@ -320,9 +337,14 @@ class TestCoreBundle:
         assert "pipeline/scripts/diagnostic_candidate_core.py" in names
         assert "pipeline/scripts/hwp_diagnostic_candidate.py" in names
         assert "pipeline/scripts/hwp_java_diagnostic_candidate.py" in names
+        assert "pipeline/scripts/hwp_semantic_oracle.py" in names
         assert "pipeline/references/hwp_java/Hwp2HwpxBridge.java" in names
         assert "pipeline/references/hwp_java/toolchain-lock.json" in names
+        assert "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json" in names
         assert not any(name.lower().endswith((".jar", ".class")) for name in names)
+        assert not any(name.lower().endswith((".hwp", ".hwpx")) for name in names)
+        assert not any(Path(name).name in {"candidate.hwpx", "receipt.json"}
+                       for name in names)
         assert "pipeline/adapters_impl/__init__.py" in names
         assert "pipeline/adapters_impl/bundle_backend.py" in names
         assert "pipeline/adapters_impl/docx_backend.py" in names
