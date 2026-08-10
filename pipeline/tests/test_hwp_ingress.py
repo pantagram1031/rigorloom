@@ -654,14 +654,15 @@ def test_publish_rollback_does_not_delete_swapped_receipt(tmp_path: Path, monkey
     output = tmp_path / "published.hwpx"
     manifest = tmp_path / "manifest.json"
     payload = {"output": {"sha256": ingress.sha256_file(staged)}}
+    swapped = b"X" * len(ingress._json_bytes(payload))
 
     def fail_after_swap(staged_path, output_path):
         manifest.unlink()
-        manifest.write_bytes(b"SWAPPED-BY-OTHER-WRITER")
+        manifest.write_bytes(swapped)
         raise FileExistsError(output_path)
 
     monkeypatch.setattr(ingress.os, "link", fail_after_swap)
     with pytest.raises(ingress.IngressError):
         ingress._publish_pair(staged, output, manifest, payload)
-    assert manifest.read_bytes() == b"SWAPPED-BY-OTHER-WRITER"
+    assert manifest.read_bytes() == swapped
     assert not output.exists()
