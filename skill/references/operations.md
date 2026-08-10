@@ -717,9 +717,9 @@ this contract, converted by Windows Hancom, and reviewed on all pages. The
 note probes were not Hancom-authored anchors, so they do not prove insertion,
 numbering, continuation, or general native-render parity. The independent
 render-quality checker returned `unknown/unsupported_graphics_state` for all
-runs, so none may be reported as a quality pass. See
-[`docs/research/story-role-native-evidence.md`](../../docs/research/story-role-native-evidence.md)
-for the exact evidence matrix.
+runs, so none may be reported as a quality pass. The repository-only T84
+research note retains the operator-local hash/page/delta matrix; it is not part
+of the installed skill surface or a reproducible fixture.
 
 **Exit codes — the whole table, one row per terminal state.** Nothing else is
 reachable; in particular **exit 1 is not in the contract** and a run that
