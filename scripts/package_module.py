@@ -153,6 +153,7 @@ _CORE_REQUIRED_FILES = (
     "scripts/sync_manifest.example.yaml",
     "scripts/package_module.py",
     "pipeline/scripts/module_registry.py",
+    "pipeline/scripts/hwp_ingress.py",
     "pipeline/adapters_impl/__init__.py",
     "pipeline/adapters_impl/bundle_backend.py",
     "pipeline/adapters_impl/docx_backend.py",

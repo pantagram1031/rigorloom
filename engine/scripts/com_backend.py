@@ -118,8 +118,16 @@ def _die(msg, code=2):
 # Inspect — 토큰 효율적 구조 요약
 # ---------------------------------------------------------------------------
 
-def inspect(hwp, text_chars=600):
-    """문서 구조를 작은 JSON으로 요약 (전체 본문 덤프 금지)."""
+def inspect(hwp, text_chars=600, *, privacy_safe=False):
+    """문서 구조를 작은 JSON으로 요약 (전체 본문 덤프 금지).
+
+    ``privacy_safe`` is the machine-to-machine fingerprint surface used by
+    binary-HWP ingress.  It exposes only a full-text SHA-256 and aggregate
+    counts, never preview text, field names, equation scripts, or exception
+    detail.  This lets the same COM extractor compare a source HWP with its
+    reopened HWPX output without transporting document content through the
+    receipt.
+    """
     info = {"ok": True}
 
     # 본문 미리보기 (앞부분만)
@@ -127,24 +135,39 @@ def inspect(hwp, text_chars=600):
         full = hwp.get_text_file("TEXT", "") if hasattr(hwp, "get_text_file") \
             else hwp.GetTextFile("TEXT", "")
         info["text_chars_total"] = len(full)
-        info["text_preview"] = full[:text_chars]
+        if privacy_safe:
+            info["text_sha256"] = hashlib.sha256(
+                full.encode("utf-8")
+            ).hexdigest()
+        else:
+            info["text_preview"] = full[:text_chars]
     except Exception as e:
-        info["text_preview_error"] = str(e)
+        if privacy_safe:
+            info["text_fingerprint_unavailable"] = True
+        else:
+            info["text_preview_error"] = str(e)
 
-    # 필드(누름틀) 목록
+    # 필드(누름틀) 목록. Privacy mode keeps only its aggregate cardinality.
     try:
         fields = hwp.get_field_list() if hasattr(hwp, "get_field_list") else ""
         if isinstance(fields, str):
             fields = [f for f in fields.replace("\x02", "\n").split("\n") if f]
-        info["fields"] = fields
+        if privacy_safe:
+            info["field_count"] = len(fields)
+        else:
+            info["fields"] = fields
     except Exception:
-        info["fields"] = []
+        if privacy_safe:
+            info["field_scan_error"] = True
+        else:
+            info["fields"] = []
 
     # 컨트롤 인벤토리 (표 / 수식 / 그림 / 그리기 개체)
-    tables, equations, pictures, shapes = 0, [], 0, 0
+    tables, equations, pictures, shapes, controls_total = 0, [], 0, 0, 0
     try:
         ctrl = hwp.HeadCtrl
         while ctrl:
+            controls_total += 1
             desc = getattr(ctrl, "UserDesc", "")
             cid = getattr(ctrl, "CtrlID", "")
             if cid == "tbl" or desc == "표":
@@ -168,16 +191,19 @@ def inspect(hwp, text_chars=600):
                     shapes += 1
             ctrl = ctrl.Next
     except Exception as e:
-        info["ctrl_scan_error"] = str(e)
+        info["ctrl_scan_error"] = True if privacy_safe else str(e)
     info["tables"] = tables
-    info["equations"] = equations
+    info["equations"] = len(equations) if privacy_safe else equations
     info["pictures"] = pictures
     info["shapes"] = shapes
+    if privacy_safe:
+        info["controls_total"] = controls_total
 
     try:
         info["pages"] = hwp.PageCount
     except Exception:
-        pass
+        if privacy_safe:
+            info["page_count_unavailable"] = True
     return info
 
 
@@ -1630,6 +1656,10 @@ def main():
     p_ins = sub.add_parser("inspect", help="문서 구조 요약(JSON)")
     p_ins.add_argument("--file", required=True)
     p_ins.add_argument("--preview-chars", type=int, default=600)
+    p_ins.add_argument(
+        "--privacy-safe", action="store_true",
+        help=("machine-to-machine fingerprint: omit preview text, field names, "
+              "equation scripts, and exception details"))
 
     p_ed = sub.add_parser("edit", help="배치 편집 실행")
     p_ed.add_argument("--file", required=True)
@@ -1677,8 +1707,23 @@ def main():
     tmp_ctx = None  # convert(PDF)용 인쇄방식-표준화 임시 사본 디렉터리
     try:
         if args.cmd == "inspect":
+            if args.privacy_safe:
+                try:
+                    available = Path(args.file).is_file()
+                except OSError:
+                    available = False
+                try:
+                    __import__("pyhwpx")
+                except ImportError:
+                    available = False
+                if not available:
+                    print(json.dumps(
+                        {"ok": False, "reason": "inspect_failed"},
+                        ensure_ascii=False))
+                    sys.exit(3)
             hwp = open_hwp(args.file)
-            print(json.dumps(inspect(hwp, args.preview_chars),
+            print(json.dumps(inspect(
+                hwp, args.preview_chars, privacy_safe=args.privacy_safe),
                              ensure_ascii=False, indent=2))
 
         elif args.cmd == "edit":
@@ -1812,6 +1857,12 @@ def main():
     except SystemExit:
         raise
     except Exception:
+        if args.cmd == "inspect" and args.privacy_safe:
+            # Machine-to-machine ingress must never echo the source path,
+            # exception text, COM details, or a traceback on failure.
+            print(json.dumps({"ok": False, "reason": "inspect_failed"},
+                             ensure_ascii=False))
+            sys.exit(3)
         print(json.dumps({"ok": False, "error": traceback.format_exc()},
                          ensure_ascii=False))
         sys.exit(1)
