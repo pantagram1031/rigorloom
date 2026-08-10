@@ -798,6 +798,17 @@ def check(
             "msg": "advisory proof release is held pending independent visual quality evidence",
             "at": ASSEMBLY_VERDICT_REL.as_posix(),
         })
+    if (grade == "certified"
+            and not document_evidence.CERTIFIED_PROOF_RELEASE_ENABLED):
+        # A certificate file is not an executable runtime binding.  Keep the
+        # older certificate checks below for diagnostic callers, but never let
+        # a forged/legacy certified verdict pass Stage 6 while the runtime is
+        # quarantined.
+        hard.append({
+            "code": "certified_runtime_unbound",
+            "msg": "certified renderer execution/promotion is quarantined",
+            "at": ASSEMBLY_VERDICT_REL.as_posix(),
+        })
     evidence_receipt = None
     receipt_path = ws / document_evidence.RECEIPT_REL
     if assembly_payload and assembly_payload.get("proof_unavailable") is True \
@@ -911,7 +922,8 @@ def check(
             "msg": "graded submission proof_grade must be hancom, certified, or advisory",
             "at": ASSEMBLY_VERDICT_REL.as_posix(),
         })
-    elif grade == "certified":
+    elif (grade == "certified"
+          and document_evidence.CERTIFIED_PROOF_RELEASE_ENABLED):
         certified_enabled, certificate_path = _certified_build_config(ws)
         if not certified_enabled:
             hard.append({

@@ -72,6 +72,12 @@ proof. Successful terminal execution must leave a current receipt at
   comparison are unknown, render not run, proof none, and submission false;
   never route it to ingress, Stage 0, canonical output, rendering, or
   `new_report`.
+- T93 `document_evidence.py` hardens generic receipt/artifact custody with
+  no-follow regular one-link captures, interior-parent/root guards, same-fd
+  hash/identity, two final rebind passes, final receipt raw/payload/identity
+  reads, and owned rollback. Automatic certified-renderer verification,
+  execution, and promotion remain quarantined (`certified_runtime_unbound`,
+  proof grade `none`); certificate tools are diagnostic-only.
 - T91 `hwp_equation_diagnostic.py` is a separate receipt-only HWPX
   equation-envelope inventory. Require the exact pre-created
   `work/stage-0/scratch/hwp-equation-diagnostic` leaf. It follows the strict

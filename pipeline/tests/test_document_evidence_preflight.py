@@ -100,6 +100,18 @@ def test_non_none_legacy_grade_without_receipt_is_hard(tmp_path, monkeypatch):
     assert any(item["code"] == "proof_receipt_missing" for item in verdict["hard"])
 
 
+def test_legacy_certified_grade_is_quarantined_even_with_certificate_config(
+    tmp_path, monkeypatch,
+):
+    ws, _artifact = _workspace(tmp_path, grade="certified")
+    monkeypatch.setattr(
+        submission_preflight, "_hwpx_text", lambda path: "content")
+    verdict, code = submission_preflight.check(ws)
+    assert code == 3
+    assert any(item["code"] == "certified_runtime_unbound"
+               for item in verdict["hard"])
+
+
 def test_valid_windows_receipt_survives_linux_host_probe(tmp_path, monkeypatch):
     ws, artifact = _workspace(tmp_path)
     _valid_receipt(ws, artifact)
