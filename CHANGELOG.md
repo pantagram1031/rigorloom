@@ -10,6 +10,19 @@ the kernel's contract shape.
 
 ### Added
 
+- **T90:** added the separate `rigorloom/hwp-docinfo-coverage/v1`
+  receipt-only DocInfo cardinality and BodyText ID-reference diagnostic. It
+  binds the detailed 26-byte DocumentProperties and 72-byte IDMappings forms,
+  zero-based definition counts and physical record groups, and ParaShape,
+  Style, and CharShape reference bounds without exposing raw IDs or payload
+  values. Definition semantics, generated numbering/bullets, style redirects,
+  paragraph split state, and versioned tails remain explicitly unscanned, so
+  eligibility and comparison stay `unknown`, render is `not_run`, proof is
+  `none`, and submission is false. The tool publishes only a one-link receipt
+  below the pre-created `hwp-docinfo-coverage/<run-id>` leaf, always exits 3
+  after analysis/refusal, and cannot enter ingress, Stage 0, canonical output,
+  rendering, or submission.
+
 - **T89:** added the separate `rigorloom/hwp-source-coverage/v1` receipt-only
   source inventory. It captures bounded HWP bytes once, reuses the T85
   FileHeader/CFB preflight, scans only direct `BodyText/Section0..N` streams,
