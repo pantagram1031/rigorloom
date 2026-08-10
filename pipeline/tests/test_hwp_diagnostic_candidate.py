@@ -435,6 +435,7 @@ def test_verify_binds_receipt_to_current_output_and_rejects_duplicate_or_foreign
     with zipfile.ZipFile(output) as original:
         members = {name: original.read(name) for name in original.namelist()}
     members["Contents/section0.xml"] = b"<sec><p><t>DRIFT</t></p></sec>"
+    output.chmod(0o600)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as rebuilt:
         for name, value in members.items():
             rebuilt.writestr(name, value)
@@ -508,6 +509,7 @@ def test_cli_verify_success_then_drift_is_exit_three(tmp_path: Path, monkeypatch
     with zipfile.ZipFile(output) as original:
         members = {name: original.read(name) for name in original.namelist()}
     members["Contents/section0.xml"] = b"<sec><p><t>CLI-DRIFT</t></p></sec>"
+    output.chmod(0o600)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as rebuilt:
         for name, value in members.items():
             rebuilt.writestr(name, value)
