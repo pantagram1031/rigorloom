@@ -20,6 +20,15 @@ refusal leaves no owned candidate or receipt and does not advance this stage.
 An unowned empty reservation or raced foreign path may be preserved for safety;
 it cannot verify and must never be treated as Stage-0 input.
 
+T87 is a second, separate Java diagnostic quarantine and likewise never enters
+Stage 0. Its exact leaf is `work/stage-0/scratch/hwp-java-diagnostic`; require
+an explicit rehashed Java launcher and the operator-supplied fat JAR matching
+the shipped lock. `rigorloom/hwp-java-diagnostic-candidate/v1` always records
+an unbound surrounding runtime, comparison `unknown`, render `not_run`, proof
+`none`, and submission false. Do not copy its candidate/receipt into canonical
+output, ingress/backend evidence, or `new_report`; the package ships no JAR,
+JRE, class, or corpus bytes.
+
 For the `conditions-only` alias, the agent first derives a short set of topic
 candidates from the recorded constraints and pauses for the human
 `topic_pick`; write the selected topic to `request.yaml` before normal form

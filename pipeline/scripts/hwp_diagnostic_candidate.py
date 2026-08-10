@@ -14,21 +14,21 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shutil
-import signal
 import stat
-import subprocess
 import sys
 import tempfile
-import threading
-import time
 from typing import Any
 
 try:
     import hwp_ingress as _ingress
 except ImportError:  # pragma: no cover - direct package import fallback
     from pipeline.scripts import hwp_ingress as _ingress
+
+try:
+    import diagnostic_candidate_core as _core
+except ImportError:  # pragma: no cover - direct package import fallback
+    from pipeline.scripts import diagnostic_candidate_core as _core
 
 
 SCHEMA = "rigorloom/hwp-diagnostic-candidate/v1"
@@ -112,11 +112,11 @@ def _validate_timeout(value: float) -> float:
 
 def _read_binary_once(path: Path) -> tuple[bytes, str, int]:
     try:
-        data = _read_regular_once(path, MAX_BINARY_BYTES,
-                                  "rhwp_binary_unavailable")
-    except DiagnosticError:
-        raise
-    except (OSError, ValueError):
+        data = _core.read_regular_once(path, MAX_BINARY_BYTES,
+                                       "rhwp_binary_unavailable")
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
+    except (OSError, ValueError, TypeError):
         raise DiagnosticError("rhwp_binary_unavailable")
     if not data:
         raise DiagnosticError("rhwp_binary_invalid")
@@ -127,61 +127,17 @@ def _read_binary_once(path: Path) -> tuple[bytes, str, int]:
 
 
 def _read_regular_once(path: Path, max_bytes: int, reason: str) -> bytes:
-    """Read one bounded regular file without following a replaceable path."""
     try:
-        before = path.lstat()
-        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-        if (stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode)
-                or getattr(before, "st_file_attributes", 0) & reparse):
-            raise DiagnosticError(reason)
-        if before.st_size < 0 or before.st_size > max_bytes:
-            raise DiagnosticError("file_too_large")
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        if hasattr(os, "O_NONBLOCK") and os.name != "nt":
-            flags |= os.O_NONBLOCK
-        fd = os.open(str(path), flags)
-        try:
-            opened = os.fstat(fd)
-            if (not stat.S_ISREG(opened.st_mode)
-                    or getattr(opened, "st_file_attributes", 0) & reparse
-                    or (getattr(opened, "st_dev", 0), getattr(opened, "st_ino", 0))
-                    != (getattr(before, "st_dev", 0), getattr(before, "st_ino", 0))
-                    or opened.st_size != before.st_size):
-                raise DiagnosticError(reason)
-            chunks: list[bytes] = []
-            total = 0
-            while True:
-                chunk = os.read(fd, min(65536, max_bytes - total + 1))
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise DiagnosticError("file_too_large")
-                chunks.append(chunk)
-            after = os.fstat(fd)
-            if (getattr(after, "st_dev", 0), getattr(after, "st_ino", 0),
-                    after.st_size) != (getattr(opened, "st_dev", 0),
-                                       getattr(opened, "st_ino", 0), total):
-                raise DiagnosticError(reason)
-            return b"".join(chunks)
-        finally:
-            os.close(fd)
-    except DiagnosticError:
-        raise
-    except (OSError, ValueError, TypeError):
-        raise DiagnosticError(reason)
+        return _core.read_regular_once(path, max_bytes, reason)
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
 
 
 def _hash_binary(path: Path) -> str:
     try:
-        data = _read_regular_once(path, MAX_BINARY_BYTES, "rhwp_binary_drift")
-    except (DiagnosticError, OSError, ValueError):
+        return _core.hash_regular(path, MAX_BINARY_BYTES, "rhwp_binary_drift")
+    except (_core.CoreError, OSError, ValueError, TypeError):
         raise DiagnosticError("rhwp_binary_drift")
-    if not data:
-        raise DiagnosticError("rhwp_binary_drift")
-    return hashlib.sha256(data).hexdigest()
 
 
 def _read_source(path: Path) -> tuple[bytes, dict[str, Any]]:
@@ -204,217 +160,25 @@ def _hash_source(path: Path) -> str:
     try:
         if path.suffix.casefold() != ".hwp":
             raise DiagnosticError("source_changed")
-        data = _read_regular_once(path, _ingress.MAX_INPUT_BYTES,
+        return _core.hash_regular(path, _ingress.MAX_INPUT_BYTES,
                                   "source_changed")
-        return hashlib.sha256(data).hexdigest()
-    except (DiagnosticError, _ingress.IngressError, OSError, ValueError):
+    except (DiagnosticError, _core.CoreError, _ingress.IngressError,
+            OSError, ValueError, TypeError):
         raise DiagnosticError("source_changed")
 
 
 def _configure_windows_job(proc):
-    """Assign a suspended child to a kill-on-close Job and resume its thread."""
-    import ctypes
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    handle = ctypes.c_void_p
-    dword = ctypes.c_uint32
-    boolean = ctypes.c_int
-    kernel.CreateJobObjectW.argtypes = [handle, ctypes.c_wchar_p]
-    kernel.CreateJobObjectW.restype = handle
-    kernel.SetInformationJobObject.argtypes = [handle, ctypes.c_int,
-                                               ctypes.c_void_p, dword]
-    kernel.SetInformationJobObject.restype = boolean
-    kernel.AssignProcessToJobObject.argtypes = [handle, handle]
-    kernel.AssignProcessToJobObject.restype = boolean
-    kernel.TerminateJobObject.argtypes = [handle, dword]
-    kernel.TerminateJobObject.restype = boolean
-    kernel.CloseHandle.argtypes = [handle]
-    kernel.CloseHandle.restype = boolean
-    kernel.CreateToolhelp32Snapshot.argtypes = [dword, dword]
-    kernel.CreateToolhelp32Snapshot.restype = handle
-    kernel.Thread32First.argtypes = [handle, ctypes.c_void_p]
-    kernel.Thread32First.restype = boolean
-    kernel.Thread32Next.argtypes = [handle, ctypes.c_void_p]
-    kernel.Thread32Next.restype = boolean
-    kernel.OpenThread.argtypes = [dword, boolean, dword]
-    kernel.OpenThread.restype = handle
-    kernel.ResumeThread.argtypes = [handle]
-    kernel.ResumeThread.restype = dword
-    job = kernel.CreateJobObjectW(None, None)
-    if not job:
-        raise OSError("CreateJobObjectW")
-
-    class BasicLimit(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_longlong),
-            ("PerJobUserTimeLimit", ctypes.c_longlong),
-            ("LimitFlags", ctypes.c_uint32),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", ctypes.c_uint32),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", ctypes.c_uint32),
-            ("SchedulingClass", ctypes.c_uint32),
-        ]
-
-    class IoCounters(ctypes.Structure):
-        _fields_ = [("ReadOperationCount", ctypes.c_ulonglong),
-                    ("WriteOperationCount", ctypes.c_ulonglong),
-                    ("OtherOperationCount", ctypes.c_ulonglong),
-                    ("ReadTransferCount", ctypes.c_ulonglong),
-                    ("WriteTransferCount", ctypes.c_ulonglong),
-                    ("OtherTransferCount", ctypes.c_ulonglong)]
-
-    class JobLimits(ctypes.Structure):
-        _fields_ = [("BasicLimitInformation", BasicLimit),
-                    ("IoInfo", IoCounters),
-                    ("ProcessMemoryLimit", ctypes.c_size_t),
-                    ("JobMemoryLimit", ctypes.c_size_t),
-                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
-
-    limits = JobLimits()
-    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    limits.BasicLimitInformation.LimitFlags = 0x2000
-    if not kernel.SetInformationJobObject(
-            job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
-        kernel.CloseHandle(job)
-        raise OSError("SetInformationJobObject")
-    if not kernel.AssignProcessToJobObject(job, ctypes.c_void_p(proc._handle)):
-        kernel.CloseHandle(job)
-        raise OSError("AssignProcessToJobObject")
-
-    # Popen does not expose the primary thread handle.  Enumerate the still
-    # suspended owner thread before allowing it to run; no grandchild can
-    # spawn before Job assignment.
-    snapshot = kernel.CreateToolhelp32Snapshot(0x00000004, 0)
-    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
-        kernel.TerminateJobObject(job, 1)
-        kernel.CloseHandle(job)
-        raise OSError("CreateToolhelp32Snapshot")
-
-    class ThreadEntry(ctypes.Structure):
-        _fields_ = [("dwSize", ctypes.c_uint32),
-                    ("cntUsage", ctypes.c_uint32),
-                    ("th32ThreadID", ctypes.c_uint32),
-                    ("th32OwnerProcessID", ctypes.c_uint32),
-                    ("tpBasePri", ctypes.c_long),
-                    ("tpDeltaPri", ctypes.c_long),
-                    ("dwFlags", ctypes.c_uint32)]
-
-    entry = ThreadEntry()
-    entry.dwSize = ctypes.sizeof(entry)
-    found = None
-    first = kernel.Thread32First(snapshot, ctypes.byref(entry))
-    while first:
-        if entry.th32OwnerProcessID == proc.pid:
-            found = entry.th32ThreadID
-            break
-        if not kernel.Thread32Next(snapshot, ctypes.byref(entry)):
-            break
-    kernel.CloseHandle(snapshot)
-    if found is None:
-        kernel.TerminateJobObject(job, 1)
-        kernel.CloseHandle(job)
-        raise OSError("primary thread unavailable")
-    thread_handle = kernel.OpenThread(0x0002, False, found)  # THREAD_SUSPEND_RESUME
-    if not thread_handle:
-        kernel.TerminateJobObject(job, 1)
-        kernel.CloseHandle(job)
-        raise OSError("OpenThread")
-    try:
-        if kernel.ResumeThread(thread_handle) == 0xFFFFFFFF:
-            kernel.TerminateJobObject(job, 1)
-            kernel.CloseHandle(job)
-            raise OSError("ResumeThread")
-    finally:
-        kernel.CloseHandle(thread_handle)
-    return job, kernel
+    return _core.configure_windows_job(proc)
 
 
 def _terminate_windows_descendants(parent_pid: int, kernel=None) -> None:
-    """Terminate only the process tree rooted at ``parent_pid``.
+    return _core.terminate_windows_descendants(parent_pid, kernel)
 
-    A Job normally owns the tree, but nested-job restrictions and third-party
-    launchers can make ``TerminateJobObject`` report success while a child
-    process still has an inherited pipe.  The Toolhelp walk is deliberately
-    scoped to descendants of this invocation; it never uses ``taskkill`` or a
-    global process-name match.
-    """
-    import ctypes
-
-    own_kernel = kernel is None
-    if kernel is None:
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    handle = ctypes.c_void_p
-    boolean = ctypes.c_int
-    dword = ctypes.c_uint32
-    for name, argtypes, restype in (
-        ("CreateToolhelp32Snapshot", [dword, dword], handle),
-        ("Process32FirstW", [handle, ctypes.c_void_p], boolean),
-        ("Process32NextW", [handle, ctypes.c_void_p], boolean),
-        ("OpenProcess", [dword, boolean, dword], handle),
-        ("TerminateProcess", [handle, dword], boolean),
-        ("CloseHandle", [handle], boolean),
-    ):
-        fn = getattr(kernel, name)
-        fn.argtypes = argtypes
-        fn.restype = restype
-
-    class ProcessEntry(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", ctypes.c_uint32),
-            ("cntUsage", ctypes.c_uint32),
-            ("th32ProcessID", ctypes.c_uint32),
-            ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", ctypes.c_uint32),
-            ("cntThreads", ctypes.c_uint32),
-            ("th32ParentProcessID", ctypes.c_uint32),
-            ("pcPriClassBase", ctypes.c_long),
-            ("dwFlags", ctypes.c_uint32),
-            ("szExeFile", ctypes.c_wchar * 260),
-        ]
-
-    snapshot = kernel.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
-    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
-        return
-    try:
-        entry = ProcessEntry()
-        entry.dwSize = ctypes.sizeof(entry)
-        rows: list[tuple[int, int]] = []
-        ok = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
-        while ok:
-            rows.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID)))
-            ok = kernel.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel.CloseHandle(snapshot)
-
-    descendants: set[int] = set()
-    frontier = {int(parent_pid)}
-    while frontier:
-        children = {pid for pid, ppid in rows if ppid in frontier and pid != parent_pid}
-        children -= descendants
-        descendants.update(children)
-        frontier = children
-    # Kill deepest descendants first, then the direct child if it is still
-    # present.  OpenProcess is scoped to these exact PIDs and no stale-name
-    # process can be selected.
-    for pid in sorted(descendants, reverse=True):
-        process = kernel.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
-        if process:
-            try:
-                kernel.TerminateProcess(process, 1)
-            finally:
-                kernel.CloseHandle(process)
-
-    if own_kernel:
-        # ``kernel`` is a module handle, not an owned OS handle; there is no
-        # close operation for the DLL reference itself.
-        del kernel
 
 
 def _run_child_capture(argv: list[str], *, timeout: float,
-                       cwd: Path | None = None):
+                       cwd: Path | None = None,
+                       env: dict[str, str] | None = None):
     """Run one child with bounded output and an isolated staging cwd.
 
     This local seam intentionally mirrors the ingress bounded-child contract
@@ -422,131 +186,18 @@ def _run_child_capture(argv: list[str], *, timeout: float,
     sidecars in the caller's repository/current directory.  Tests replace
     this function, keeping process execution deterministic.
     """
-    timeout = _validate_timeout(timeout)
-    job = None
-    job_kernel = None
-    windows_suspended = os.name == "nt"
-    try:
-        proc = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, cwd=str(cwd) if cwd is not None else None,
-            start_new_session=(os.name != "nt"),
-            creationflags=((getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                            | 0x00000004) if windows_suspended else 0),
-        )
-    except (OSError, ValueError, TypeError):
-        return -1, False, False
-    if os.name == "nt":
-        try:
-            job, job_kernel = _configure_windows_job(proc)
-        except (OSError, AttributeError, TypeError, ValueError):
-            try:
-                proc.kill()
-                proc.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            if job and job_kernel is not None:
-                job_kernel.CloseHandle(job)
-            return -1, False, False
-    stdout_total = [0]
-    stderr_total = [0]
-    overflow = [False]
-    stop = threading.Event()
+    return _core.run_child_capture(
+        argv, timeout=timeout, cwd=cwd, env=env,
+        timeout_validator=_validate_timeout,
+        max_output_bytes=_ingress.MAX_CHILD_OUTPUT_BYTES)
 
-    def drain(pipe, total):
-        try:
-            while not stop.is_set():
-                chunk = pipe.read(65536)
-                if not chunk:
-                    return
-                total[0] += len(chunk)
-                if total[0] > _ingress.MAX_CHILD_OUTPUT_BYTES:
-                    overflow[0] = True
-                    stop.set()
-                    return
-        except OSError:
-            return
-
-    threads = [threading.Thread(target=drain, args=(proc.stdout, stdout_total), daemon=True),
-               threading.Thread(target=drain, args=(proc.stderr, stderr_total), daemon=True)]
-    for thread in threads:
-        thread.start()
-    deadline = time.monotonic() + timeout
-    timed_out = False
-    def kill_tree() -> None:
-        if job and job_kernel is not None:
-            try:
-                job_kernel.TerminateJobObject(job, 1)
-            except (OSError, AttributeError):
-                pass
-            try:
-                _terminate_windows_descendants(proc.pid, job_kernel)
-            except (OSError, AttributeError, TypeError, ValueError):
-                pass
-            try:
-                proc.kill()
-            except OSError:
-                pass
-            return
-        if os.name != "nt":
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-                return
-            except (OSError, ProcessLookupError):
-                pass
-        try:
-            proc.kill()
-        except OSError:
-            pass
-
-    while proc.poll() is None:
-        if overflow[0]:
-            kill_tree()
-            break
-        if time.monotonic() >= deadline:
-            timed_out = True
-            kill_tree()
-            break
-        time.sleep(0.01)
-    try:
-        code = proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        kill_tree()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            pass
-        code = -1
-    # A well-behaved adapter may still leave descendants holding the output
-    # pipes (or a handle to the staged output) after its direct process exits.
-    # Contain those descendants before returning to the publication path.  On
-    # POSIX the process group is owned by this invocation; on Windows the Job
-    # owns the complete suspended/resumed tree.
-    if not timed_out and not overflow[0]:
-        kill_tree()
-    stop.set()
-    for thread in threads:
-        thread.join(timeout=1)
-    if job and job_kernel is not None:
-        try:
-            job_kernel.CloseHandle(job)
-        except OSError:
-            pass
-    return code, timed_out, overflow[0]
 
 
 def _write_bytes(path: Path, data: bytes) -> None:
     try:
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                     | getattr(os, "O_BINARY", 0), 0o600)
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError:
-        raise DiagnosticError("run_exists")
-    except OSError:
-        raise DiagnosticError("diagnostic_write_failed")
+        _core.write_bytes(path, data)
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
 
 
 def _write_receipt(path: Path, payload: dict[str, Any]) -> None:
@@ -556,66 +207,34 @@ def _write_receipt(path: Path, payload: dict[str, Any]) -> None:
 
 def _node_identity(path: Path) -> tuple[int, int, int, int, int, str]:
     try:
-        info = path.lstat()
-        digest = ""
-        if stat.S_ISREG(info.st_mode):
-            data = _read_regular_once(
-                path, _ingress.MAX_HWPX_ARCHIVE_BYTES,
-                "diagnostic_publish_failed")
-            digest = hashlib.sha256(data).hexdigest()
-    except (DiagnosticError, OSError, ValueError, TypeError):
-        raise DiagnosticError("diagnostic_publish_failed")
-    return (
-        getattr(info, "st_dev", 0), getattr(info, "st_ino", 0),
-        getattr(info, "st_size", 0), getattr(info, "st_mtime_ns", 0),
-        getattr(info, "st_ctime_ns", 0), digest,
-    )
+        return _core.node_identity(
+            path, read_once=_read_regular_once,
+            max_bytes=_ingress.MAX_HWPX_ARCHIVE_BYTES,
+            reason="diagnostic_publish_failed")
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
 
 
 def _same_file_identity(
         actual: tuple[int, int, int, int, int, str],
         expected: tuple[int, int, int, int, int, str]) -> bool:
-    """Compare a file identity while allowing hard-link ctime churn.
+    return _core.same_file_identity(actual, expected)
 
-    Creating a hard link updates the inode ctime on POSIX/Windows.  The
-    remaining identity fields include device/inode, size, mtime and a full
-    content digest, so an in-place overwrite or path swap still fails closed.
-    """
-    return (actual[0], actual[1], actual[2], actual[3], actual[5]) == (
-        expected[0], expected[1], expected[2], expected[3], expected[5])
+
+def _core_node_identity(path: Path):
+    """Bridge the adapter's closed error type into the generic core seam."""
+    try:
+        return _node_identity(path)
+    except DiagnosticError as exc:
+        raise _core.CoreError(exc.reason)
 
 
 def _remove_owned(path: Path, identity: tuple[int, int, int, int, int, str] | None) -> bool:
-    if identity is None:
-        return False
-    try:
-        info = path.lstat()
-        actual = _node_identity(path)
-        if (_same_file_identity(actual, identity)
-                and stat.S_ISREG(info.st_mode)):
-            try:
-                path.chmod(0o600)
-            except OSError:
-                pass
-            path.unlink()
-            return True
-    except (DiagnosticError, OSError):
-        return False
-    return False
+    return _core.remove_owned(path, identity, node_identity_fn=_core_node_identity)
 
 
 def _remove_owned_dir(path: Path, identity: tuple[int, int, int, int, int, str] | None) -> None:
-    if identity is None:
-        return
-    try:
-        info = path.lstat()
-        if (identity is not None and stat.S_ISDIR(info.st_mode)
-                and _node_identity(path) == identity):
-            if any(path.iterdir()):
-                return
-            path.rmdir()
-    except (DiagnosticError, OSError):
-        pass
+    _core.remove_owned_dir(path, identity, node_identity_fn=_core_node_identity)
 
 
 def _rollback_publication(
@@ -627,25 +246,11 @@ def _rollback_publication(
         candidate_identity: tuple[int, int, int, int, int, str] | None,
         token_target: Path | None = None,
         token_identity: tuple[int, int, int, int, int, str] | None = None) -> None:
-    """Remove only our files, then rebind the reserved directory identity."""
-    _remove_owned(receipt_target, receipt_identity)
-    _remove_owned(candidate_target, candidate_identity)
-    if token_target is None or token_identity is None:
-        return
-    if not _remove_owned(token_target, token_identity):
-        return
-    if reserved_identity is None:
-        return
-    try:
-        current = _node_identity(run_path)
-    except DiagnosticError:
-        return
-    # A swapped directory is never removed.  Own link/unlink operations can
-    # update mtime/ctime, so the post-cleanup identity is the one that is
-    # checked by _remove_owned_dir; device/inode must still match reservation.
-    if current[:2] != reserved_identity[:2]:
-        return
-    _remove_owned_dir(run_path, current)
+    _core.rollback_publication(
+        run_path, reserved_identity, receipt_target, receipt_identity,
+        candidate_target, candidate_identity, token_target, token_identity,
+        remove_owned_fn=_remove_owned, node_identity_fn=_core_node_identity,
+        remove_owned_dir_fn=_remove_owned_dir)
 
 
 def _validate_receipt_shape(payload: dict[str, Any], *, output: Path | None = None,
@@ -758,69 +363,84 @@ def _load_receipt(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _prepare_root(path: Path) -> Path:
+def _prepare_root(path: Path, *, expected_leaf: str = "hwp-diagnostic") -> Path:
     try:
-        root_input = path.expanduser()
-        info = root_input.lstat()
-        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
-                or getattr(info, "st_file_attributes", 0) & reparse):
-            raise DiagnosticError("diagnostic_root_invalid")
-        probe = root_input
-        while True:
-            ancestor = probe.lstat()
-            if (stat.S_ISLNK(ancestor.st_mode)
-                    or getattr(ancestor, "st_file_attributes", 0) & reparse):
-                raise DiagnosticError("diagnostic_root_invalid")
-            if probe == probe.parent:
-                break
-            probe = probe.parent
-        root = root_input.resolve(strict=True)
-        if (root.name.casefold() != "hwp-diagnostic"
-                or any(part.casefold() == "output" for part in root.parts)):
-            raise DiagnosticError("diagnostic_root_invalid")
-        return root
-    except DiagnosticError:
-        raise
-    except (OSError, RuntimeError, TypeError, ValueError):
-        raise DiagnosticError("diagnostic_root_invalid")
+        return _core.prepare_root(path, expected_leaf=expected_leaf)
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
 
 
 def _capture_root_guard(supplied: Path, resolved: Path) -> dict[str, Any]:
-    """Bind the supplied path and every existing ancestor to full identities."""
-    supplied_abs = supplied.expanduser().absolute()
-    rows: list[tuple[Path, tuple[int, int, int, int, int, str], bool]] = []
-    probe = supplied_abs
-    is_root = True
-    while True:
-        rows.append((probe, _node_identity(probe), is_root))
-        if probe == probe.parent:
-            break
-        probe = probe.parent
-        is_root = False
-    return {"supplied": supplied_abs, "resolved": resolved, "rows": rows}
+    return _core.capture_root_guard(
+        supplied, resolved, node_identity_fn=_core_node_identity)
 
 
 def _check_root_guard(guard: dict[str, Any], *, refresh: bool = False) -> None:
-    rows = guard["rows"]
-    current: list[tuple[Path, tuple[int, int, int, int, int, str], bool]] = []
     try:
-        for path, expected, is_root in rows:
-            info = path.lstat()
-            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-            if (stat.S_ISLNK(info.st_mode)
-                    or getattr(info, "st_file_attributes", 0) & reparse):
-                raise DiagnosticError("diagnostic_root_changed")
-            actual = _node_identity(path)
-            if ((is_root and not refresh and actual != expected)
-                    or (is_root and refresh and actual[:2] != expected[:2])
-                    or (not is_root and actual[:2] != expected[:2])):
-                raise DiagnosticError("diagnostic_root_changed")
-            current.append((path, actual, is_root))
-    except (DiagnosticError, OSError, RuntimeError, ValueError, TypeError):
-        raise DiagnosticError("diagnostic_root_changed")
-    if refresh:
-        guard["rows"] = current
+        _core.check_root_guard(
+            guard, refresh=refresh, node_identity_fn=_core_node_identity)
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
+
+
+def _publish_pair(
+        *, run_path: Path, publish_stage: Path, staged_candidate: Path,
+        payload: dict[str, Any], run_id: str, root_guard: dict[str, Any],
+        source_path: Path, binary_path: Path, staged_binary: Path,
+        staged_source: Path, source_descriptor: dict[str, Any], pin: str,
+        final_validated: dict[str, Any]) -> dict[str, Any]:
+    """Adapter callback layer over the generic owner-token publisher."""
+    def check_guard(guard, *, refresh=False):
+        try:
+            _check_root_guard(guard, refresh=refresh)
+        except DiagnosticError as exc:
+            raise _core.CoreError(exc.reason)
+
+    def write_bytes(path: Path, data: bytes):
+        try:
+            _write_bytes(path, data)
+        except DiagnosticError as exc:
+            raise _core.CoreError(exc.reason)
+
+    def validate_receipt(receipt_target: Path, output: Path):
+        try:
+            target_receipt = _load_receipt(receipt_target)
+            _validate_receipt_shape(target_receipt, output=output, run_id=run_id)
+        except DiagnosticError as exc:
+            raise _core.CoreError(exc.reason)
+
+    def before_candidate_link():
+        try:
+            if (_hash_binary(binary_path) != pin
+                    or _hash_binary(staged_binary) != pin):
+                raise DiagnosticError("rhwp_binary_drift")
+            if _hash_source(source_path) != source_descriptor["sha256"]:
+                raise DiagnosticError("source_changed")
+            if _hash_source(staged_source) != source_descriptor["sha256"]:
+                raise DiagnosticError("source_changed")
+            final_again = _validate_hwpx_current(staged_candidate)
+            if final_again != final_validated:
+                raise DiagnosticError("rhwp_output_drift")
+            staged_candidate.chmod(0o400)
+        except DiagnosticError as exc:
+            raise _core.CoreError(exc.reason)
+
+    try:
+        return _core.publish_owner_token_pair(
+            run_path, publish_stage, staged_candidate, payload,
+            run_id=run_id, root_guard=root_guard,
+            validate_receipt_fn=validate_receipt,
+            before_candidate_link_fn=before_candidate_link,
+            check_root_guard_fn=check_guard,
+            write_bytes_fn=write_bytes,
+            link_fn=os.link,
+            node_identity_fn=_core_node_identity,
+            same_identity_fn=_same_file_identity,
+            remove_owned_fn=_remove_owned,
+            rollback_fn=_rollback_publication,
+        )
+    except _core.CoreError as exc:
+        raise DiagnosticError(exc.reason)
 
 
 def _require_regular(path: Path, reason: str) -> None:
@@ -923,95 +543,15 @@ def run_diagnostic(input_path: str | Path, *, diagnostic_root: str | Path,
                             output=output_record)
             _validate_receipt_shape(payload, output=staged_candidate, run_id=run_id)
             _write_receipt(publish_stage / "receipt.json", payload)
-            # Reserve the final run directory exclusively, then publish the
-            # receipt first and candidate last with exclusive hard links.  A
-            # racing destination preserves its owner and removes no files.
-            reserved_identity: tuple[int, int, int, int, int, str] | None = None
-            receipt_identity: tuple[int, int, int, int, int, str] | None = None
-            candidate_identity: tuple[int, int, int, int, int, str] | None = None
-            token_target: Path | None = None
-            token_identity: tuple[int, int, int, int, int, str] | None = None
-            try:
-                _check_root_guard(root_guard)
-                os.mkdir(str(run_path))
-                reserved_identity = _node_identity(run_path)
-                _check_root_guard(root_guard, refresh=True)
-                receipt_target = run_path / "receipt.json"
-                candidate_target = run_path / "candidate.hwpx"
-                token_target = run_path / (".t86-owner-" + secrets.token_hex(16))
-                _write_bytes(token_target, secrets.token_bytes(32))
-                token_identity = _node_identity(token_target)
-                reserved_identity = _node_identity(run_path)
-                staged_receipt = publish_stage / "receipt.json"
-                receipt_identity = _node_identity(staged_receipt)
-                _check_root_guard(root_guard)
-                os.link(str(staged_receipt), str(receipt_target))
-                reserved_identity = _node_identity(run_path)
-                # Check the target after recording the source identity; if
-                # this check faults, rollback can still unlink only our inode.
-                if not _same_file_identity(_node_identity(receipt_target), receipt_identity):
-                    raise DiagnosticError("diagnostic_publish_failed")
-                target_receipt = _load_receipt(receipt_target)
-                _validate_receipt_shape(target_receipt, output=staged_candidate,
-                                        run_id=run_id)
-                if not _same_file_identity(_node_identity(receipt_target), receipt_identity):
-                    raise DiagnosticError("diagnostic_publish_failed")
-                # Recheck every mutable input and the exact candidate bytes
-                # after receipt creation and immediately before commit.
-                if (_hash_binary(binary_path) != pin
-                        or _hash_binary(staged_binary) != pin):
-                    raise DiagnosticError("rhwp_binary_drift")
-                if _hash_source(source_path) != source_descriptor["sha256"]:
-                    raise DiagnosticError("source_changed")
-                if _hash_source(staged_source) != source_descriptor["sha256"]:
-                    raise DiagnosticError("source_changed")
-                final_again = _validate_hwpx_current(staged_candidate)
-                if final_again != final_validated:
-                    raise DiagnosticError("rhwp_output_drift")
-                staged_candidate.chmod(0o400)
-                candidate_identity = _node_identity(staged_candidate)
-                _check_root_guard(root_guard)
-                os.link(str(staged_candidate), str(candidate_target))
-                reserved_identity = _node_identity(run_path)
-                if not _same_file_identity(_node_identity(candidate_target), candidate_identity):
-                    raise DiagnosticError("diagnostic_publish_failed")
-                target_receipt = _load_receipt(receipt_target)
-                _validate_receipt_shape(target_receipt, output=candidate_target,
-                                        run_id=run_id)
-                if (not _same_file_identity(_node_identity(receipt_target), receipt_identity)
-                        or not _same_file_identity(_node_identity(candidate_target), candidate_identity)):
-                    raise DiagnosticError("diagnostic_publish_failed")
-                _check_root_guard(root_guard)
-                if not _remove_owned(token_target, token_identity):
-                    raise DiagnosticError("diagnostic_publish_failed")
-                # Token removal is the final commit marker.  There is no
-                # fallible root/output check after it; the surrounding
-                # temporary-directory cleanup cannot publish anything.
-                return payload
-            except FileExistsError:
-                _rollback_publication(
-                    run_path, reserved_identity,
-                    receipt_target if 'receipt_target' in locals() else run_path / "receipt.json",
-                    receipt_identity,
-                    candidate_target if 'candidate_target' in locals() else run_path / "candidate.hwpx",
-                    candidate_identity, token_target, token_identity)
-                raise DiagnosticError("run_exists")
-            except DiagnosticError:
-                _rollback_publication(
-                    run_path, reserved_identity,
-                    receipt_target if 'receipt_target' in locals() else run_path / "receipt.json",
-                    receipt_identity,
-                    candidate_target if 'candidate_target' in locals() else run_path / "candidate.hwpx",
-                    candidate_identity, token_target, token_identity)
-                raise
-            except OSError:
-                _rollback_publication(
-                    run_path, reserved_identity,
-                    receipt_target if 'receipt_target' in locals() else run_path / "receipt.json",
-                    receipt_identity,
-                    candidate_target if 'candidate_target' in locals() else run_path / "candidate.hwpx",
-                    candidate_identity, token_target, token_identity)
-                raise DiagnosticError("diagnostic_publish_failed")
+            return _publish_pair(
+                run_path=run_path, publish_stage=publish_stage,
+                staged_candidate=staged_candidate, payload=payload,
+                run_id=run_id, root_guard=root_guard,
+                source_path=source_path, binary_path=binary_path,
+                staged_binary=staged_binary, staged_source=staged_source,
+                source_descriptor=source_descriptor, pin=pin,
+                final_validated=final_validated)
+
     except DiagnosticError as exc:
         return _base(status="refused", reason=exc.reason,
                      source=source_descriptor,
