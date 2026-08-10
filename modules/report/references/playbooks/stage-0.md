@@ -29,6 +29,19 @@ an unbound surrounding runtime, comparison `unknown`, render `not_run`, proof
 output, ingress/backend evidence, or `new_report`; the package ships no JAR,
 JRE, class, or corpus bytes.
 
+T88 is a third, receipt-only bounded content/object agreement boundary. It may compare only one
+current T86 receipt and one current T87 receipt under the exact pre-created
+`work/stage-0/scratch/hwp-semantic-oracle` leaf. It captures and verifies all
+four producer inputs, requires exact T85 source descriptors plus the T86
+allowlist/T87 lock, runs the public T86/T87/T79 gates over captured snapshots,
+and emits `rigorloom/hwp-semantic-oracle/v1` agreement evidence only. Its
+bounded comparison covers text/story-table topology/equations/referenced
+pictures/explicit controls only; styles, numbering, pagination, and metadata
+are not compared. Its ceiling is `diagnostic_only`; source fidelity is not established, render is
+`not_run`, proof is `none`, submission is false. Do not copy any candidate or
+receipt into canonical output, ingress/backend evidence, Stage 0, or
+`new_report`; do not substitute `syhwp`.
+
 For the `conditions-only` alias, the agent first derives a short set of topic
 candidates from the recorded constraints and pauses for the human
 `topic_pick`; write the selected topic to `request.yaml` before normal form

@@ -55,6 +55,16 @@ proof. Successful terminal execution must leave a current receipt at
   comparison unknown, render not run, proof none, and submission false. Never
   route it through T85, Stage 0, `new_report`, or backend evidence; the bundle
   contains no JAR/JRE/class/corpus bytes.
+- T88 `hwp_semantic_oracle.py` is receipt-only bounded content/object agreement between one current
+  T86 and one current T87 candidate. Require the exact pre-created
+  `work/stage-0/scratch/hwp-semantic-oracle` leaf and both producer receipt
+  paths; `verify` requires those paths again. It captures bounded snapshots,
+  reruns public producer/story verifiers over those bytes, and emits only
+  closed match booleans plus explicit compared/not-compared coverage and opaque
+  input bindings. Agreement is
+  diagnostic-only (`source_fidelity` not established, render `not_run`, proof
+  `none`, submission false); never route it to T85, Stage 0, canonical output,
+  rendering, or `new_report`.
 - Originals are immutable: every operation writes a new file (`--out` /
   `--save-as`). Editing in place is a defect, not a shortcut.
 
@@ -82,6 +92,7 @@ receipt is local privacy-safe evidence only and always reports
 | canonically convert HWP to HWPX | `python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom --out OUT.hwpx --manifest RECEIPT.json` | LOW — Windows Hancom only; conversion proof is never render proof |
 | quarantine an explicit `rhwp` diagnostic candidate (T86) | `python pipeline/scripts/hwp_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-diagnostic --run-id HEX --rhwp BIN --rhwp-sha256 SHA256` | LOW — diagnostic only; never canonical or submission evidence |
 | quarantine an approved Java diagnostic candidate (T87) | `python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-java-diagnostic --run-id HEX --java JAVA --java-sha256 SHA256 --tool-jar APPROVED.jar` | LOW — diagnostic only; runtime unbound, no parity/render/submission claim |
+| compare current T86/T87 candidates (T88) | `python pipeline/scripts/hwp_semantic_oracle.py compare T86_RECEIPT.json T87_RECEIPT.json --diagnostic-root work/stage-0/scratch/hwp-semantic-oracle --run-id HEX` | LOW — paired diagnostic agreement only; no canonical, render, or submission claim |
 | edit exactly one inventoried story paragraph (T80 structural mechanics) | `python pipeline/scripts/story_edit.py INPUT.hwpx --ops-file OP.json --out OUTPUT.hwpx --receipt RECEIPT.json` | LOW — closed ops only; no render claim |
 | profile a form (structure, anchors, tables, constraints) | `python engine/scripts/form_inspect.py FORM.hwpx --out profile.json [--baseline baseline.json]` | LOW — run as-is |
 | **fill a form end to end** (which command per cell, one map, verify) | follow `references/fill-recipe.md` — decision rule, the four artifacts and the flags that eat them, the literal command sequence, and what `acceptance: true` looks like | LOW — run as-is |

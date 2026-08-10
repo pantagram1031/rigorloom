@@ -25,6 +25,7 @@ __all__ = [
     "CoreError", "FileIdentity", "read_regular_once", "hash_regular",
     "write_bytes", "node_identity", "same_file_identity", "remove_owned",
     "remove_owned_dir", "rollback_publication", "publish_owner_token_pair",
+    "publish_owner_token_receipt",
     "prepare_root", "capture_root_guard", "check_root_guard",
     "configure_windows_job", "terminate_windows_descendants",
     "run_child_capture",
@@ -292,6 +293,83 @@ def publish_owner_token_pair(
         rollback_fn(
             run_path, reserved_identity, receipt_target, receipt_identity,
             candidate_target, candidate_identity, token_target, token_identity)
+        raise CoreError("diagnostic_publish_failed")
+
+
+def publish_owner_token_receipt(
+        run_path: Path,
+        publish_stage: Path,
+        payload: dict[str, Any],
+        *,
+        root_guard: dict[str, Any],
+        check_root_guard_fn: Callable[..., None],
+        write_bytes_fn: Callable[[Path, bytes], None],
+        link_fn: Callable[[str, str], None] | None = None,
+        node_identity_fn: NodeIdentity,
+        same_identity_fn: Callable[[FileIdentity, FileIdentity], bool],
+        remove_owned_fn: RemoveOwned,
+        rollback_fn: Callable[..., None],
+        validate_receipt_fn: Callable[[Path], None],
+        token_prefix: str = ".oracle-owner-",
+) -> dict[str, Any]:
+    """Publish a receipt-only run using the same owner-token commit protocol."""
+    if link_fn is None:
+        link_fn = os.link
+    reserved_identity: FileIdentity | None = None
+    receipt_identity: FileIdentity | None = None
+    token_target: Path | None = None
+    token_identity: FileIdentity | None = None
+    receipt_target = run_path / "receipt.json"
+    candidate_target = run_path / "candidate.hwpx"
+    try:
+        check_root_guard_fn(root_guard)
+        os.mkdir(str(run_path))
+        reserved_identity = node_identity_fn(run_path)
+        check_root_guard_fn(root_guard, refresh=True)
+        token_target = run_path / (token_prefix + secrets.token_hex(16))
+        write_bytes_fn(token_target, secrets.token_bytes(32))
+        token_identity = node_identity_fn(token_target)
+        reserved_identity = node_identity_fn(run_path)
+        staged_receipt = publish_stage / "receipt.json"
+        receipt_identity = node_identity_fn(staged_receipt)
+        check_root_guard_fn(root_guard)
+        link_fn(str(staged_receipt), str(receipt_target))
+        reserved_identity = node_identity_fn(run_path)
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        validate_receipt_fn(receipt_target)
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        # Detach the staged hard-link before the owner token is removed.  The
+        # public receipt must be a single regular file before publication is
+        # considered committed; temporary-directory cleanup is never part of
+        # receipt validity and may fail after this point.
+        if not remove_owned_fn(publish_stage / "receipt.json", receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        receipt_info = receipt_target.lstat()
+        if (not stat.S_ISREG(receipt_info.st_mode)
+                or stat.S_ISLNK(receipt_info.st_mode)
+                or getattr(receipt_info, "st_nlink", 1) != 1
+                or not same_identity_fn(node_identity_fn(receipt_target), receipt_identity)):
+            raise CoreError("diagnostic_publish_failed")
+        validate_receipt_fn(receipt_target)
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        check_root_guard_fn(root_guard)
+        if not remove_owned_fn(token_target, token_identity):
+            raise CoreError("diagnostic_publish_failed")
+        return payload
+    except FileExistsError:
+        rollback_fn(run_path, reserved_identity, receipt_target, receipt_identity,
+                    candidate_target, None, token_target, token_identity)
+        raise CoreError("run_exists")
+    except CoreError:
+        rollback_fn(run_path, reserved_identity, receipt_target, receipt_identity,
+                    candidate_target, None, token_target, token_identity)
+        raise
+    except OSError:
+        rollback_fn(run_path, reserved_identity, receipt_target, receipt_identity,
+                    candidate_target, None, token_target, token_identity)
         raise CoreError("diagnostic_publish_failed")
 
 
