@@ -15,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PERSONALIZATION_CTL = REPO_ROOT / "pipeline" / "scripts" / "personalization_ctl.py"
 SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+DIAGNOSTIC_RUN_ID_RE = re.compile(r"(?:[0-9a-f]{16}|[0-9a-f]{32})\Z")
 
 MODULE_REQUIRED_MSG = (
     "the report pipeline requires the report distribution module — enable it "
@@ -123,6 +124,19 @@ def _assert_safe_workspace(root: Path, slug: str) -> Path:
     return workspace
 
 
+def _is_quarantined_diagnostic_candidate(form: Path) -> bool:
+    """Recognize the schema-owned T86 layout without opening its receipt."""
+    try:
+        path = form.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return (
+        path.name == "candidate.hwpx"
+        and DIAGNOSTIC_RUN_ID_RE.fullmatch(path.parent.name) is not None
+        and path.parent.parent.name.casefold() == "hwp-diagnostic"
+    )
+
+
 def _verify_ingress_claim(form: Path, receipt: Path) -> None:
     scripts = REPO_ROOT / "pipeline" / "scripts"
     if str(scripts) not in sys.path:
@@ -153,6 +167,10 @@ def main() -> int:
     if not form.is_file():
         print(f"error: form does not exist: {form}", file=sys.stderr)
         return 2
+    if _is_quarantined_diagnostic_candidate(form):
+        print("error: diagnostic candidate is quarantined and cannot enter a report workspace",
+              file=sys.stderr)
+        return 3
     if form.suffix.casefold() == ".hwp":
         print(
             "error: binary .hwp must pass pipeline/scripts/hwp_ingress.py "
