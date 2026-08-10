@@ -140,6 +140,20 @@ count, then requires the unchanged T85 HWPX validator. The receipt is
 `not_run`, proof `none`, and submission false. Both raw candidate layout and
 receipt are rejected by `new_report`; no JAR/JRE/class/corpus bytes ship.
 
+## 0A.3 Paired bounded content/object agreement (T88)
+
+T88 compares the current T86 and T87 receipts as a separate diagnostic
+artifact. It requires the pre-created `hwp-semantic-oracle` leaf and both
+receipt paths; `verify` requires those paths again so all four producer inputs
+are rebound before accepting an old agreement receipt. It captures immutable
+bytes, invokes the public producer verifiers over those snapshots, then uses
+the bounded content/object comparison in OPF spine order. It compares text,
+story/table topology (including cell addresses), equations, referenced
+pictures, and explicit controls; styles, numbering, pagination, and metadata
+are outside coverage. An agreement is never native parity, render proof,
+canonical ingress, Stage 0 input, or submission evidence, and `syhwp` is
+explicitly deferred.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

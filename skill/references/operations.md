@@ -186,6 +186,44 @@ false. Never copy this result into canonical output, T85/backend receipts,
 Stage 0, or `new_report`; do not install/download Maven/JAR/JRE dependencies as
 part of this runtime command.
 
+## 0A.3. T88 paired bounded content/object agreement oracle
+
+T88 is a receipt-only diagnostic comparison, not a third converter and not an
+ingress or render route. Pre-create the exact
+`work/stage-0/scratch/hwp-semantic-oracle` leaf. Supply both current producer
+receipts; `verify` requires them again so the four current receipt/candidate
+inputs are rebound:
+
+```sh
+python pipeline/scripts/hwp_semantic_oracle.py compare T86_RECEIPT.json T87_RECEIPT.json \
+  --diagnostic-root work/stage-0/scratch/hwp-semantic-oracle \
+  --run-id 0123456789abcdef0123456789abcdef
+python pipeline/scripts/hwp_semantic_oracle.py verify \
+  --diagnostic-root work/stage-0/scratch/hwp-semantic-oracle \
+  --run-id 0123456789abcdef0123456789abcdef \
+  --rhwp-receipt T86_RECEIPT.json --java-receipt T87_RECEIPT.json
+```
+
+The oracle requires exact T85 source-descriptor equality, the release-owned
+T86 `rhwp` v0.8.2 allowlist, and the T87 toolchain lock. It snapshots each
+input without following replacements, runs the public T86/T87 verifiers and
+T79 story grammar over private copies, then follows OPF spine order while
+preserving logical text, paragraph/story/table/span/control/equation and
+referenced picture content. Ordinary whitespace remains semantic; converter-only
+run splitting is coalesced. Cell row/column addresses are bound in
+table topology. Styles, numbering, layout/pagination, and metadata are not
+compared. Unknown/future/unsupported controls, drift, races, or
+unknown package grammar refuse. The success receipt is
+`rigorloom/hwp-semantic-oracle/v1` with comparison
+`paired_converter_bounded_content_object_v1`, coverage
+`text/story_table_topology/equations/referenced_pictures/explicit_controls`,
+source fidelity
+`not_established`, independence `converter_code_distinct_java_runtime_unbound`,
+render `not_run`, proof `none`, and submission false. It contains no document
+text/equation/picture hashes, IDs, names, paths, argv, stdout/stderr, or raw
+candidate. Never feed it to T85, Stage 0, canonical output, rendering,
+submission, or `new_report`; `syhwp` remains deferred.
+
 ## 1. story_graph
 
 ```
