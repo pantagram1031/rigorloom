@@ -18,8 +18,10 @@ EXACT actions:
    `output/proof/backend/receipt.json` whose input/output hashes validate and
    whose derived grade equals the verdict. Current-host renderer probes are
    informational; they do not replace historical receipt evidence.
-   `certified` is accepted only with explicit `build.yaml` opt-in, a passing
-   live document-envelope check, and full certificate re-verification;
+    `certified` is currently HARD-quarantined as
+    `certified_runtime_unbound`; certificate files and live checks are
+    diagnostic-only and cannot promote a receipt or submission grade until a
+    separately reviewed runtime-v2/root/receipt contract is released;
    `experimental-rhwp` remains diagnostic-only.
    A native Hancom receipt is renderer provenance, not a readability
    certification: its bound glyph-quality result may be `unknown` for an

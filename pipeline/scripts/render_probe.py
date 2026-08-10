@@ -49,6 +49,10 @@ import subprocess
 import sys
 
 import render_cert
+try:
+    import document_evidence
+except ImportError:  # pragma: no cover - standalone probe invocation
+    document_evidence = None
 
 _SOFFICE_ARGS = (
     "--headless",
@@ -267,6 +271,11 @@ def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
     if not configured:
         return None, None, None
     certificate_path = os.path.abspath(os.path.expanduser(configured))
+    if not (document_evidence is not None
+            and document_evidence.CERTIFIED_PROOF_RELEASE_ENABLED):
+        # Certificate verification and renderer command/version probing are
+        # diagnostic-only while the certified runtime is quarantined.
+        return None, certificate_path, "certified_runtime_unbound"
     try:
         verification = render_cert.verify_certificate(certificate_path)
     except Exception:

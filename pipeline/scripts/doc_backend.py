@@ -460,112 +460,22 @@ def _run_certified_renderer(
     out_dir: str | None,
     renderer: dict,
 ) -> dict:
-    """Post-assembly certified render; replace the fallback PDF only on success."""
+    """Record the quarantined certified route without executing or promoting it."""
     output = Path(out_dir or os.path.join(ws, "output")).resolve()
-    target = output / "out.hwpx"
-    certificate = Path(str(renderer.get("certificate", ""))).expanduser()
     proof_dir = output / "proof" / "certified"
     proof_dir.mkdir(parents=True, exist_ok=True)
     receipt = {
         "ok": False,
-        "renderer": renderer.get("name"),
         "proof_grade": "none",
         "submission_grade": False,
         "page_count": 0,
         "layout_overflow": None,
         "parity_verdict": "fail",
-        "reason": "certified_check_failed",
-        "certificate": str(certificate),
+        "reason": "certified_runtime_unbound",
         "comparison": {},
+        "render": "not_run",
     }
-    try:
-        eligibility = render_cert.check_document(target, certificate)
-    except Exception as exc:
-        receipt["error"] = str(exc)
-        render_cert.write_json(proof_dir / "receipt.json", receipt)
-        return receipt
-    receipt["eligibility"] = eligibility
-    if eligibility.get("eligible") is not True:
-        receipt["reason"] = eligibility.get("reason_code", "certified_check_failed")
-        render_cert.write_json(proof_dir / "receipt.json", receipt)
-        return receipt
-
-    argv = renderer.get("argv")
-    if not isinstance(argv, list) or not argv:
-        receipt["reason"] = "certificate_runtime_command_invalid"
-        render_cert.write_json(proof_dir / "receipt.json", receipt)
-        return receipt
-    try:
-        with tempfile.TemporaryDirectory(prefix="candidate-", dir=proof_dir) as tmp:
-            candidate_dir = Path(tmp)
-            explicit_candidate = candidate_dir / "candidate.pdf"
-            input_value = str(target)
-            output_value = str(explicit_candidate)
-            outdir_value = str(candidate_dir)
-            if renderer.get("wsl"):
-                import render_probe
-                input_value = render_probe.to_wsl_path(input_value)
-                output_value = render_probe.to_wsl_path(output_value)
-                outdir_value = render_probe.to_wsl_path(outdir_value)
-            command = [
-                str(item).replace("{in}", input_value)
-                .replace("{out}", output_value)
-                .replace("{outdir}", outdir_value)
-                for item in argv
-            ]
-            receipt["command"] = command
-            completed = subprocess.run(
-                command, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=_certified_timeout(),
-            )
-            receipt["exit_code"] = completed.returncode
-            receipt["stdout"] = (completed.stdout or "")[-16000:]
-            receipt["stderr"] = (completed.stderr or "")[-16000:]
-            candidates = [explicit_candidate, candidate_dir / "out.pdf"]
-            produced = next(
-                (path for path in candidates if path.is_file() and path.stat().st_size > 0),
-                None,
-            )
-            if completed.returncode != 0:
-                receipt["reason"] = "certified_renderer_nonzero"
-            elif produced is None:
-                receipt["reason"] = "certified_renderer_output_missing"
-            else:
-                receipt["page_count"] = render_cert.pdf_page_count(produced)
-                staged = output / ".out.certified.tmp"
-                try:
-                    shutil.copyfile(produced, staged)
-                    os.replace(staged, output / "out.pdf")
-                finally:
-                    staged.unlink(missing_ok=True)
-                receipt.update({
-                    "ok": True,
-                    "proof_grade": "certified",
-                    "submission_grade": True,
-                    "parity_verdict": "pass",
-                    "reason": "certified_rendered",
-                    "certificate_sha256": eligibility.get("certificate_sha256"),
-                })
-    except subprocess.TimeoutExpired:
-        receipt["reason"] = "certified_renderer_timeout"
-    except (OSError, RuntimeError, ValueError) as exc:
-        receipt["reason"] = "certified_renderer_failed"
-        receipt["error"] = str(exc)
-
     render_cert.write_json(proof_dir / "receipt.json", receipt)
-    if receipt["ok"]:
-        verdict_path = output / "verdict_v06.json"
-        try:
-            verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            verdict = None
-        if isinstance(verdict, dict):
-            verdict["certified_proof"] = _render_proof_summary(receipt)
-            # The current terminal receipt supersedes any stale grade in an
-            # older verdict.  Never preserve a higher historical grade with a
-            # max(old, new) merge.
-            verdict["proof_grade"] = "certified"
-            render_cert.write_json(verdict_path, verdict)
     return receipt
 
 
@@ -677,22 +587,13 @@ def _run_hwpx_adapter(ws: str, out_dir: str | None) -> int:
     if adapter_payload is None:
         adapter_payload = {}
     proof_receipt = None
-    if completed.returncode == 0 and decision.get("certified_renderer"):
-        try:
-            certified_receipt = _run_certified_renderer(
-                ws, out_dir, decision["certified_renderer"]
-            )
-        except Exception as exc:
-            certified_receipt = {
-                "ok": False, "proof_grade": "none", "submission_grade": False,
-                "reason": "certified_renderer_failed", "error": str(exc),
-                "comparison": {},
-            }
-        if certified_receipt.get("ok") is True:
-            proof_receipt = certified_receipt
-            decision["selected"] = decision["certified_renderer"].get("name")
-            decision["proof_grade"] = "certified"
-            decision["reason"] = "certified_rendered"
+    # T93 quarantine: a valid certificate is diagnostic configuration only.
+    # Automatic runtime execution and promotion remain unbound until a future
+    # process/root/receipt contract is shipped.
+    if decision.get("certified_renderer"):
+        decision["certified_runtime_unbound"] = True
+        if decision.get("selected") is None:
+            decision["reason"] = "certified_runtime_unbound"
 
     if (completed.returncode == 0 and proof_receipt is None
             and decision.get("selected") == "rhwp_svg"):

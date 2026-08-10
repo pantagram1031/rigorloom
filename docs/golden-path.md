@@ -432,12 +432,14 @@ write the current, hash-bound receipt at
 `<WS>/output/proof/backend/receipt.json`. Stage 6 validates that receipt and
 requires its derived `proof_grade` to equal `output/verdict_v06.json`.
 
-The XML path therefore produces `proof_grade: none` unless a named renderer
-actually succeeds. Successful named LibreOffice, `rhwp`, certified, and
-Windows COM executions have distinct closed evidence classes. A failed,
-refused, stale, or hash-drifted execution always derives `none`; a receipt
-recorded on Windows remains historically valid when inspected on Linux, while
-the current host's capability probe is only informational.
+The XML path therefore produces `proof_grade: none` unless a released named
+renderer actually succeeds. Successful named LibreOffice, `rhwp`, and Windows
+COM executions have distinct closed evidence classes. The configured
+`certified_renderer` route is quarantined in this release: it is not probed,
+executed, or promoted automatically and derives `none`. A failed, refused,
+stale, or hash-drifted execution always derives `none`; a receipt recorded on
+Windows remains historically valid when inspected on Linux, while the current
+host's capability probe is only informational.
 
 The adapter's stdout is parsed as one bounded JSON object: harmless prefix or
 suffix diagnostics are discarded, while malformed, truncated, oversized, or
@@ -449,7 +451,7 @@ LibreOffice run currently remains terminal `proof_grade: none` on every
 entrypoint. Any `renderer_decision.candidate_proof_grade` is only an internal
 routing candidate; the top-level terminal `proof_grade` is authoritative.
 
-For every successful PDF renderer, the dispatcher also runs the receipt-bound
+For every released successful PDF renderer, the dispatcher also runs the receipt-bound
 `pipeline/scripts/render_quality.py` Hangul glyph checker against the exact
 assembled HWPX/PDF pair. On advisory/certified preview paths, a Hangul source
 with no extracted Hangul or an insufficient embedded glyph capacity is
@@ -524,19 +526,22 @@ python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
   checks that the receipt derives the same grade, and for advisory proof
   reruns the hash-bound Hangul quality contract. Advisory is HARD-rejected when
   quality is missing, failed, unknown, stale, or not tied to `converged: true`.
-  `certified` additionally requires the build opt-in, a passing live
-  `render_cert check`, and a certificate whose operator-key HMAC, embedded
-  measurements, manifest-derived envelope, corpus manifest, renderer binary,
-  and pinned versions re-verify. The current host's renderer capabilities are
+  `certified` is currently HARD-quarantined as
+  `certified_runtime_unbound`; `render_cert measure`/`certify`/`verify`/`check`
+  remain explicit diagnostics and no automatic command or PDF promotion is
+  performed while `CERTIFIED_PROOF_RELEASE_ENABLED` is false. The current
+  host's renderer capabilities are
   reported as informational `reproducible_here` facts; a historically valid
   Windows receipt is not invalidated merely because the delivery host lacks
   Hancom.
 
 ## 6. Where you land
 
-- Exit 0 on `submission_preflight` = a graded verdict: `proof_grade` is
-  `hancom`, `certified`, or `advisory`, the form structure is unmutated, and identity
-  fields are filled. This is printed as JSON and can be written with `--out`.
+- Exit 0 on `submission_preflight` = a released graded verdict:
+  `proof_grade` is `hancom` or `advisory`, the form structure is unmutated,
+  and identity fields are filled. `certified` remains a closed schema value
+  but is HARD-quarantined and cannot currently pass. The verdict is printed as
+  JSON and can be written with `--out`.
 - An `advisory`-grade equation document, or any `proof_grade: none` run, is
   rejected by default. To record an explicit draft exception (never a silent
   pass), use `--allow-advisory --reason "<why>"` or `--allow-unproven` —

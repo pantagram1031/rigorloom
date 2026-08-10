@@ -181,7 +181,7 @@ class TestRhwpProbe(unittest.TestCase):
 
 
 class TestCertifiedRendererProbe(unittest.TestCase):
-    def test_valid_configured_certificate_advertises_certified_renderer(self):
+    def test_valid_configured_certificate_is_quarantined_without_verification(self):
         certificate = {
             "renderer_id": "mock",
             "renderer_version": "mock 1.0",
@@ -202,27 +202,21 @@ class TestCertifiedRendererProbe(unittest.TestCase):
                         "reason_code": "certificate_valid",
                         "certificate": certificate,
                     },
-                ),
+                ) as verify_mock,
                 mock.patch.dict(os.environ, {
                     "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
                 }, clear=True),
             ):
                 result = render_probe.probe()
-
+            verify_mock.assert_not_called()
             self.assertEqual(
                 result["capabilities"]["render_certificate_reason"],
-                "certificate_valid",
+                "certified_runtime_unbound",
             )
-            renderer = next(
-                item for item in result["renderers"]
-                if item["proof_grade"] == "certified"
-            )
-            # Compare resolved paths while the file still exists: CI temp dirs
-            # can surface Windows 8.3 short names (RUNNER~1) on one side only.
-            self.assertEqual(
-                Path(renderer["certificate"]).resolve(), cert_path.resolve(),
-            )
-            self.assertEqual(renderer["argv"], certificate["renderer_argv"])
+            self.assertFalse(any(
+                item.get("proof_grade") == "certified"
+                for item in result["renderers"]
+            ))
 
     def test_invalid_certificate_is_not_advertised(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -234,10 +228,7 @@ class TestCertifiedRendererProbe(unittest.TestCase):
                 mock.patch.object(
                     render_probe.render_cert,
                     "verify_certificate",
-                    return_value={
-                        "ok": False,
-                        "reason_code": "certificate_hash_mismatch",
-                    },
+                    side_effect=AssertionError("quarantined probe must not verify"),
                 ),
                 mock.patch.dict(os.environ, {
                     "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
@@ -247,7 +238,7 @@ class TestCertifiedRendererProbe(unittest.TestCase):
 
         self.assertEqual(
             result["capabilities"]["render_certificate_reason"],
-            "certificate_hash_mismatch",
+            "certified_runtime_unbound",
         )
         self.assertFalse(any(
             item.get("proof_grade") == "certified"
