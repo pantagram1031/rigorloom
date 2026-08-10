@@ -338,6 +338,7 @@ class TestCoreBundle:
         assert "pipeline/scripts/hwp_diagnostic_candidate.py" in names
         assert "pipeline/scripts/hwp_java_diagnostic_candidate.py" in names
         assert "pipeline/scripts/hwp_semantic_oracle.py" in names
+        assert "pipeline/scripts/hwp_source_coverage.py" in names
         assert "pipeline/references/hwp_java/Hwp2HwpxBridge.java" in names
         assert "pipeline/references/hwp_java/toolchain-lock.json" in names
         assert "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json" in names

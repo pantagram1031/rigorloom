@@ -134,7 +134,8 @@ def _is_quarantined_diagnostic_candidate(form: Path) -> bool:
         path.name == "candidate.hwpx"
         and DIAGNOSTIC_RUN_ID_RE.fullmatch(path.parent.name) is not None
         and path.parent.parent.name.casefold()
-        in {"hwp-diagnostic", "hwp-java-diagnostic", "hwp-semantic-oracle"}
+        in {"hwp-diagnostic", "hwp-java-diagnostic", "hwp-semantic-oracle",
+            "hwp-source-coverage"}
     )
 
 
