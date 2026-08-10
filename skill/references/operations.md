@@ -78,6 +78,43 @@ error on both sides, so a typo cannot quietly mean "unscoped". Every other
 consumer of `--fill-map` (the value-presence check, `value_spans`, each
 module's declared-personal-number rules) sees the flattened plain string.
 
+## 1. story_graph
+
+```
+python pipeline/scripts/story_graph.py FORM.hwpx --out story-graph.json
+```
+
+This is a read-only, structure-only operation. It validates the exact HWPX
+physical mimetype (first/stored/extra-free), reconciling every local ZIP header
+to its central record including version-needed and DOS date/time, with empty
+extras and only flags `0` or DEFLATE `0x0004`,
+and safe OCF rootfiles, then reads
+the OPF `Contents/content.hpf` manifest/spine
+and actual section roots for deterministic
+section order (every actual section exactly once in a nonempty spine; no
+manifest fallback), then inventories only namespace-valid nested `hp:ctrl` `header`,
+`footer`, `footNote`, and `endNote` owners with their `hp:subList` paragraphs.
+The JSON contains manifest-order member ordinals, role/ordinal structural
+addresses, closed roles, counts, table ancestry, and schema-only structural
+hashes only. It never emits member names, control IDs, body text, author
+metadata, corpus content, URLs, absolute paths, raw-byte hashes, or template
+fingerprints. A spine admits only definition/section roles. Table-cell stories
+retain closed table/cell-encounter ordinal ancestry; raw cell coordinates stay
+internal to duplicate validation;
+story-in-story owners refuse. ZIP/XML bounds, unsafe or ambiguous ZIP/OPF references/media/coverage,
+foreign namespaces and the documented closed-pair transplants (including
+nested `hh:head`, `hh:bold` under `head`, and `hc:img` under `hp:run`), invalid
+scoped identity/value fields, and unsupported
+story-bearing controls (`hiddenComment`, memo/field/drawText/caption/masterPage)
+refuse; no editing, selector, or render support is implied.
+
+The bounded owner facts are grounded in the public [Hancom OWPML
+model](https://github.com/hancom-io/hwpx-owpml-model), including its
+`HeaderFooterType`, `NoteType`, `hiddenComment`, `fieldBegin`, `drawText`, and
+`caption` classes. The CLI exits 0 for a passed graph, 2 for argparse or
+output/usage errors, and 3 for a refused/unknown package. JSON and help are
+UTF-8-safe; diagnostics do not echo document text, author metadata, or paths.
+
 ## 1. probe
 
 ```
