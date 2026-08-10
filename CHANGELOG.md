@@ -10,6 +10,19 @@ the kernel's contract shape.
 
 ### Added
 
+- **T89:** added the separate `rigorloom/hwp-source-coverage/v1` receipt-only
+  source inventory. It captures bounded HWP bytes once, reuses the T85
+  FileHeader/CFB preflight, scans only direct `BodyText/Section0..N` streams,
+  inventories records and controls without raw identifiers, closes the exact
+  24-byte v1 ParaHeader and supported child order, rejects source-path
+  symlink/reparse ancestry, and publishes analyzed ineligible or unknown
+  receipts under the pre-created `hwp-source-coverage/<run-id>` leaf. The
+  owner-token commit remains authoritative if only post-commit scratch cleanup
+  fails, and `new_report` reserves the leaf against fabricated raw candidates.
+  It does not install or execute syhwp,
+  and it establishes no source fidelity, conversion parity, native execution,
+  render, or submission claim.
+
 - **T88:** added a receipt-only paired bounded content/object agreement oracle for one
   release-allowlisted T86 `rhwp` candidate and one lock-bound T87 Java
   candidate. It rebinds both current receipts and candidates at compare/verify,
