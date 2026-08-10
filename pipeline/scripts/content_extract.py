@@ -65,38 +65,13 @@ def text_hash(chunks: list[str]) -> str:
     return sha_bytes(re.sub(r"\s+", "", value).encode("utf-8"))
 
 
-def _brace_equation_scripts(script: str) -> str:
-    """Canonicalize bare HwpEqn ^x/_x atoms like the engine's eqn fill path (engine/scripts/eqn.py)."""
-    out: list[str] = []
-    index, size = 0, len(script)
-    while index < size:
-        token = script[index]
-        out.append(token)
-        if token in "^_":
-            atom_index = index + 1
-            while atom_index < size and script[atom_index] == " ":
-                atom_index += 1
-            if atom_index >= size or script[atom_index] == "{":
-                index += 1
-                continue
-            if script[atom_index] == chr(92):
-                match = re.match(r"\\([a-zA-Z]+\*?|.)", script[atom_index:])
-                atom = match.group(0) if match else chr(92)
-                out.append("{" + atom + "}")
-                index = atom_index + len(atom)
-                continue
-            out.append("{" + script[atom_index] + "}")
-            index = atom_index + 1
-            continue
-        index += 1
-    return "".join(out)
-
-
 def normalize_equation_script(script: str) -> str:
-    """Normalize HwpEqn for parity without treating formatting spaces as drift."""
-    value = unicodedata.normalize("NFC", script)
-    value = _brace_equation_scripts(value)
-    return re.sub(r"\s+", "", value)
+    """Preserve exact decoded HwpEqn lexical boundaries for parity.
+
+    Whitespace and brace spelling may be semantic in HwpEqn.  Until a closed
+    lexer/parser proves an equivalence, only Unicode NFC normalization is safe.
+    """
+    return unicodedata.normalize("NFC", script)
 
 
 def equation_script(node: ET.Element) -> str:

@@ -273,6 +273,29 @@ remain unknown, render not run, proof none, and submission false; analyzed and
 refused results exit 3 and cannot enter ingress, Stage 0, canonical output,
 rendering, `new_report`, or submission.
 
+## 0A.6. T91 bounded HWPX equation-envelope inventory
+
+T91 is a receipt-only structural diagnostic. Pre-create the exact
+`work/stage-0/scratch/hwp-equation-diagnostic` leaf:
+
+```sh
+python pipeline/scripts/hwp_equation_diagnostic.py inspect INPUT.hwpx \
+  --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX
+python pipeline/scripts/hwp_equation_diagnostic.py verify INPUT.hwpx \
+  --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX
+```
+
+The scanner validates captured bytes with the T85 HWPX package contract,
+follows the OPF spine, and matches equations by the official expanded QName,
+not an XML prefix or raw byte substring. Each equation must have a direct run
+parent and exactly one direct, nonempty, text-only script. The receipt exposes
+only a source artifact descriptor and aggregate counts. It contains no script
+text, script hashes, IDs, member names, paths, argv, stdout, or stderr.
+`script_semantics` remains `not_scanned`; execution, native, and render remain
+`not_run`; comparison is `unknown`; proof is `none`; submission is false. All
+analyzed/refused results exit 3 and never enter ingress, Stage 0, canonical
+output, rendering, `new_report`, or submission.
+
 ## 1. story_graph
 
 ```

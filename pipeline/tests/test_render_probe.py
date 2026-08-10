@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -23,31 +22,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import render_probe  # noqa: E402
+from test_hwp_equation_diagnostic import _package, _section  # noqa: E402
 
 
 class TestHwpxHasEquations(unittest.TestCase):
     def test_true_when_section_xml_contains_equation_element(self):
         with tempfile.TemporaryDirectory() as tmp:
-            hwpx = Path(tmp) / "equations.hwpx"
-            with zipfile.ZipFile(hwpx, "w") as archive:
-                archive.writestr(
-                    "Contents/section0.xml",
-                    '<?xml version="1.0" encoding="UTF-8"?>'
-                    '<hp:section xmlns:hp="urn:hancom"><hp:equation/></hp:section>',
-                )
+            hwpx = _package(Path(tmp) / "equations.hwpx", [_section(["x"])])
 
             self.assertTrue(render_probe.hwpx_has_equations(hwpx))
 
     def test_false_when_sections_have_no_equations_or_file_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            hwpx = Path(tmp) / "plain.hwpx"
-            with zipfile.ZipFile(hwpx, "w") as archive:
-                archive.writestr(
-                    "Contents/section0.xml",
-                    '<?xml version="1.0" encoding="UTF-8"?>'
-                    '<hp:section xmlns:hp="urn:hancom"><hp:p/></hp:section>',
-                )
-                archive.writestr("Contents/header.xml", "<hp:equation/>")
+            hwpx = _package(Path(tmp) / "plain.hwpx", [_section([])])
 
             self.assertFalse(render_probe.hwpx_has_equations(hwpx))
             self.assertFalse(render_probe.hwpx_has_equations(Path(tmp) / "missing.hwpx"))

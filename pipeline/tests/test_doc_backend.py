@@ -739,7 +739,7 @@ class TestPdfCmdWiring(unittest.TestCase):
             self.assertEqual(decision["proof_grade"], "advisory")
             self.assertEqual(decision["pdf_cmd_argv"], ["soffice", "--headless"])
 
-    def test_rhwp_is_selected_for_equation_documents_as_experimental(self):
+    def test_rhwp_capability_does_not_auto_select_unsanitized_equation_proof(self):
         rhwp_renderer = {
             "name": "rhwp_svg",
             "wsl": False,
@@ -765,12 +765,52 @@ class TestPdfCmdWiring(unittest.TestCase):
         ):
             decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
 
-        self.assertEqual(decision["selected"], "rhwp_svg")
-        self.assertEqual(decision["proof_grade"], "experimental-rhwp")
+        self.assertIsNone(decision["selected"])
+        self.assertEqual(decision["proof_grade"], "none")
+        self.assertEqual(decision["reason"], "renderer_cannot_eqn")
         self.assertIsNone(decision["pdf_cmd_argv"])
-        self.assertEqual(decision["rhwp_renderer"], rhwp_renderer)
 
-    def test_successful_adapter_runs_rhwp_proof_and_emits_receipt_summary(self):
+    def test_malformed_workspace_section_fails_closed_without_traceback(self):
+        self._write_fake_fill_report(advertises_pdf_cmd=True)
+        scratch = self.ws / "work" / "scratch"
+        scratch.mkdir(parents=True)
+        (scratch / "section0.xml").write_text(
+            '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
+            'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+            '<hp:script>x</hp:script></hs:sec>',
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ, {"HWP_MASTER_SCRIPTS": str(self.scripts)}),
+            mock.patch.object(
+                self.render_probe,
+                "probe",
+                return_value={
+                    "capabilities": {"hancom_com": False},
+                    "renderers": [{
+                        "name": "soffice_local", "wsl": False,
+                        "argv": ["soffice", "--headless"],
+                    }],
+                },
+            ),
+            mock.patch.object(
+                self.render_probe, "hwpx_has_equations", return_value=False),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertEqual(payload["renderer_decision"]["reason"],
+                         "renderer_probe_failed")
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_successful_adapter_does_not_run_legacy_rhwp_proof_automatically(self):
         rhwp_renderer = {
             "name": "rhwp_svg",
             "wsl": False,
@@ -821,11 +861,12 @@ class TestPdfCmdWiring(unittest.TestCase):
             code = doc_backend.main([str(self.ws), "--backend", "hwpx"])
 
         self.assertEqual(code, 0)
-        run_proof.assert_called_once()
+        run_proof.assert_not_called()
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["proof_grade"], "experimental-rhwp")
-        self.assertEqual(payload["render_proof"]["page_count"], 3)
-        self.assertFalse(payload["render_proof"]["submission_grade"])
+        self.assertEqual(payload["proof_grade"], "none")
+        self.assertEqual(payload["renderer_decision"]["reason"],
+                         "renderer_cannot_eqn")
+        self.assertNotIn("render_proof", payload)
         self.assertNotIn("rhwp_renderer", payload["renderer_decision"])
 
     def test_certified_renderer_is_retained_as_post_assembly_upgrade(self):

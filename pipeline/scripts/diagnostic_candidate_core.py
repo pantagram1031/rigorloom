@@ -311,6 +311,7 @@ def publish_owner_token_receipt(
         rollback_fn: Callable[..., None],
         validate_receipt_fn: Callable[[Path], None],
         before_commit_fn: Callable[[], None] | None = None,
+        final_commit_fn: Callable[[], None] | None = None,
         token_prefix: str = ".oracle-owner-",
 ) -> dict[str, Any]:
     """Publish a receipt-only run using the same owner-token commit protocol."""
@@ -364,6 +365,24 @@ def publish_owner_token_receipt(
         if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
             raise CoreError("diagnostic_publish_failed")
         check_root_guard_fn(root_guard)
+        if final_commit_fn is not None:
+            final_commit_fn()
+        check_root_guard_fn(root_guard)
+        # The final custody callback may itself be the last fallible seam and
+        # can race a same-inode overwrite of the already-linked receipt.  The
+        # root guard is also fallible and can expose the same race.  Therefore
+        # the public receipt is the last persistent state revalidated before
+        # the owner token is removed; no callback or guard follows it.
+        receipt_info = receipt_target.lstat()
+        if (not stat.S_ISREG(receipt_info.st_mode)
+                or stat.S_ISLNK(receipt_info.st_mode)
+                or getattr(receipt_info, "st_nlink", 1) != 1
+                or not same_identity_fn(
+                    node_identity_fn(receipt_target), receipt_identity)):
+            raise CoreError("diagnostic_publish_failed")
+        validate_receipt_fn(receipt_target)
+        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
         if not remove_owned_fn(token_target, token_identity):
             raise CoreError("diagnostic_publish_failed")
         return payload

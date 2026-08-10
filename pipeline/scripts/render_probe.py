@@ -40,7 +40,6 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import json
 import os
@@ -48,7 +47,6 @@ import re
 import shutil
 import subprocess
 import sys
-import zipfile
 
 import render_cert
 
@@ -426,22 +424,17 @@ def best_pdf_cmd(result: dict) -> list[str] | None:
 
 
 def hwpx_has_equations(path) -> bool:
-    """Return whether an HWPX section contains a literal equation element.
+    """Return whether a strict HWPX spine contains an official equation.
 
     The check is deliberately document-local and does not alter ``probe()``'s
     machine-capability schema. Missing pre-assembly outputs are equation-free
-    for selection purposes; malformed archives still surface to the caller.
+    for selection purposes. Malformed or ambiguous archives surface to the
+    caller so proof routing falls closed instead of selecting LibreOffice.
     """
-    try:
-        with zipfile.ZipFile(path) as archive:
-            for name in archive.namelist():
-                if not fnmatch.fnmatchcase(name, "Contents/section*.xml"):
-                    continue
-                if b"<hp:equation" in archive.read(name):
-                    return True
-    except FileNotFoundError:
+    if not os.path.isfile(path):
         return False
-    return False
+    from hwp_equation_diagnostic import equation_presence
+    return equation_presence(path)
 
 
 def format_table(result: dict) -> str:

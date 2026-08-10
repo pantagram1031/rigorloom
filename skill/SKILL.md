@@ -72,6 +72,12 @@ proof. Successful terminal execution must leave a current receipt at
   comparison are unknown, render not run, proof none, and submission false;
   never route it to ingress, Stage 0, canonical output, rendering, or
   `new_report`.
+- T91 `hwp_equation_diagnostic.py` is a separate receipt-only HWPX
+  equation-envelope inventory. Require the exact pre-created
+  `work/stage-0/scratch/hwp-equation-diagnostic` leaf. It follows the strict
+  OPF spine and recognizes expanded OWPML QNames; it emits no equation text or
+  per-script hashes. HwpEqn semantics, execution, render, comparison, proof,
+  and submission remain closed and unproved.
 - Originals are immutable: every operation writes a new file (`--out` /
   `--save-as`). Editing in place is a defect, not a shortcut.
 
@@ -95,6 +101,7 @@ receipt is local privacy-safe evidence only and always reports
 
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
+| inspect bounded HWPX equation envelopes (T91) | `python pipeline/scripts/hwp_equation_diagnostic.py inspect INPUT.hwpx --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX` then `verify` with the same source/root/run | LOW — receipt-only aggregate inventory; HwpEqn meaning, execution, render, and parity are not proved |
 | inspect a binary HWP candidate without reading its body | `python pipeline/scripts/hwp_ingress.py inspect FORM.hwp` | LOW — CFB/FileHeader capability only |
 | canonically convert HWP to HWPX | `python pipeline/scripts/hwp_ingress.py convert FORM.hwp --adapter hancom --out OUT.hwpx --manifest RECEIPT.json` | LOW — Windows Hancom only; conversion proof is never render proof |
 | quarantine an explicit `rhwp` diagnostic candidate (T86) | `python pipeline/scripts/hwp_diagnostic_candidate.py run FORM.hwp --diagnostic-root work/stage-0/scratch/hwp-diagnostic --run-id HEX --rhwp BIN --rhwp-sha256 SHA256` | LOW — diagnostic only; never canonical or submission evidence |

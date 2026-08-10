@@ -59,6 +59,7 @@ import rhwp_proof  # noqa: E402
 import render_cert  # noqa: E402
 import document_evidence  # noqa: E402
 import render_quality  # noqa: E402
+import hwp_equation_diagnostic  # noqa: E402
 
 _HWP_POINTER = (
     "hwp backend is the COM assembly loop (Windows + Hancom), bundled at\n"
@@ -90,7 +91,6 @@ _HWPX_POINTER = (
 # the wrong directory) — it is not a security boundary.
 _HWP_MASTER_MARKERS = ("fill_report.py", "eqn.py", "xml_backend.py")
 _CONTENT_EQ_RE = re.compile(r"\[\[\s*EQ\b", re.IGNORECASE)
-_XML_EQ_RE = re.compile(br"<(?:[A-Za-z_][\w.-]*:)?equation\b", re.IGNORECASE)
 _MAX_ADAPTER_STDOUT_CHARS = 1_000_000
 # A valid advisory child payload is not sufficient for submission proof until
 # the independent visual-quality decision is released.  Keep this safety hold
@@ -195,7 +195,7 @@ def _workspace_has_equations(ws: str, target: str, render_probe) -> bool:
                     and filename.lower().endswith(".xml")):
                 continue
             with open(os.path.join(directory, filename), "rb") as stream:
-                if _XML_EQ_RE.search(stream.read()):
+                if hwp_equation_diagnostic.section_equation_count(stream.read()) > 0:
                     return True
     return False
 
@@ -258,27 +258,21 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
             decision["certified_renderer"] = certified_renderer
         return decision
 
-    rhwp_renderer = next(
-        (renderer for renderer in renderers
-         if renderer.get("name") == "rhwp_svg" and renderer.get("argv")),
-        None,
-    )
     soffice = next(
         (renderer for renderer in renderers
          if renderer.get("name") in {"soffice_local", "soffice_wsl"}
          and renderer.get("argv")),
         None,
     )
-    if rhwp_renderer is not None and (has_equations or soffice is None):
+    # T91 keeps the legacy rhwp SVG helper out of automatic routing.  Its
+    # historical receipt contains caller paths/process output and lacks the
+    # quarantine/process contract required for public evidence.  A future
+    # explicit diagnostic lane may execute it; capability alone selects none.
+    if has_equations:
         return with_certified({
-            "target": target,
-            "equations": has_equations,
-            "available": available,
-            "selected": "rhwp_svg",
-            "proof_grade": "experimental-rhwp",
-            "reason": "experimental_rhwp_available",
-            "pdf_cmd_argv": None,
-            "rhwp_renderer": dict(rhwp_renderer),
+            "target": target, "equations": True, "available": available,
+            "selected": None, "proof_grade": "none",
+            "reason": "renderer_cannot_eqn", "pdf_cmd_argv": None,
         })
     if soffice is None:
         return with_certified({
@@ -286,12 +280,6 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
             "available": available, "selected": None,
             "proof_grade": "none", "reason": "renderer_unavailable",
             "pdf_cmd_argv": None,
-        })
-    if has_equations:
-        return with_certified({
-            "target": target, "equations": True, "available": available,
-            "selected": None, "proof_grade": "none",
-            "reason": "renderer_cannot_eqn", "pdf_cmd_argv": None,
         })
     return with_certified({
         "target": target, "equations": False, "available": available,
