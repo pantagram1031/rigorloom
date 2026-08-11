@@ -372,6 +372,34 @@ def _classify_guide(text, colored):
     return None
 
 
+# 답을 표시할 슬롯을 품은 문단은 삭제 대상이 아니라 표기 대상이다.
+# bracket-placeholder를 제외하는 것과 같은 논리이고(removal_targets 주석 참조),
+# 그 규칙이 "문단 전체가 `[...]`"인 경우만 잡아 남긴 구멍을 문단 단위로 메운다.
+# 같은 원칙이 이미 admrul-gajokdolbom 양식에는 양식 전체 단위로 적용돼 있다
+# (test_guide_text_patterns.py docstring: 체크박스를 지우면 양식이 깨진다).
+ANSWER_ENUM_RE = re.compile(r'\(\s*[^()]{1,12}?\s*,\s*[^()]{1,12}?\s*\)')
+EMPTY_MARK_SLOT_RE = re.compile(r'\[\s*\]|□')
+
+
+def _answer_slot_reason(text):
+    """이 문단이 표기 지점인 이유, 아니면 None.
+
+    12개 코퍼스 양식 전량 실측(#63): 정확히 3개 문단만 해당한다 —
+    주민등록 등초본 신청서의 선택 필드 2개(`[  ]전체 포함  [  ]직접 입력…`)와
+    정보공개 동의서의 동의 문항(`☞ … 동의하십니까? (예,  아니오)`).
+
+    임계값 2는 고른 값이 아니라 코퍼스가 준 경계다: 표기 규칙을 *설명하기만* 하는
+    안내문 7개(`※ [  ]에는 해당하는 곳에 √표를 합니다` 등)는 슬롯이 1개씩이고
+    삭제 후보로 남아야 한다. 완화할 때마다 그 7개가 여전히 잡히는지 확인할 것.
+    """
+    stripped = text.strip()
+    if "?" in stripped and ANSWER_ENUM_RE.search(stripped):
+        return "interrogative_enumeration"
+    if len(EMPTY_MARK_SLOT_RE.findall(stripped)) >= 2:
+        return "multiple_mark_slots"
+    return None
+
+
 def _looks_like_anchor(text, para_pr, heading_parapr_ids):
     stripped = text.strip()
     if not stripped:
@@ -1134,17 +1162,25 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
             reason = _classify_guide(text, colored) if text.strip() else None
             if reason:
                 instruction_kw = _has_instruction(text)
-                excluded = is_anchor or is_heading_pattern or is_bracket_placeholder
+                answer_slot = _answer_slot_reason(text)
+                excluded = (is_anchor or is_heading_pattern
+                            or is_bracket_placeholder or bool(answer_slot))
                 if reason == "colored" and instruction_kw:
                     confidence = "high"
                 else:
                     confidence = "medium"
-                guide_text.append({
+                entry = {
                     "text": text, "para_idx": global_para_idx,
                     "section": sname, "reason": reason,
                     "removal_confidence": confidence,
                     "excluded_from_removal": excluded,
-                })
+                }
+                # 표기 지점은 이유까지 노출한다. "삭제 후보에서 빠졌다"만으로는
+                # 에이전트가 "여기에 표시해야 한다"를 알 수 없다 — A2 실측에서
+                # 동의 표기 절차가 어느 문서에도 없어 모듈 소스를 읽어야 했다.
+                if answer_slot:
+                    entry["answer_slot"] = answer_slot
+                guide_text.append(entry)
                 guide_charpr_ids.update(cids)
                 guide_parapr_ids.add(para_pr)
             else:
@@ -1203,7 +1239,9 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
     removal_policy = (
         "high confidence(색+지시어 키워드 동시 충족)만 조립 시 자동 삭제. "
         "medium confidence(둘 중 하나만 충족)는 에이전트가 확인 후 삭제할 것 — "
-        "anchors/heading 패턴/bracket-placeholder는 애초에 제외됨."
+        "anchors/heading 패턴/bracket-placeholder는 애초에 제외됨. "
+        "답 표기 슬롯을 품은 문단도 제외되며(`answer_slot` 사유 표기), "
+        "삭제 대상이 아니라 표시할 대상이다."
     )
 
     # format_hints

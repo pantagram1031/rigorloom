@@ -60,6 +60,35 @@ checkbox fill-targets, and a ○○○ signature placeholder — all must surviv
 assembly). A detector change that makes it non-zero has over-generalized
 into form content; a regression test locks the 0.
 
+**The same bound at paragraph granularity (T110).** The admrul rule above says
+a whole form can be all-protected. A form whose `guide_text` is legitimately
+non-zero can still contain individual paragraphs that must survive, and those
+were leaking into `removal_targets`. A guide paragraph carrying an **answer
+slot** is a marking site, not a deletion site — the same reason a
+bracket-placeholder paragraph is excluded (substitution, not deletion) — and is
+now excluded with the reason exposed as `guide_text[].answer_slot`:
+
+| `answer_slot` | recognized by | corpus instances |
+|---|---|---|
+| `interrogative_enumeration` | a question mark plus a parenthesized pair of short alternatives, e.g. `동의하십니까? (예, 아니오)` | both PPS 정보공개동의서 consent questions |
+| `multiple_mark_slots` | two or more empty mark slots (`[ ]`, `□`) in one paragraph | the two 주민등록 등초본 선택 필드 |
+
+Measured over all 12 corpus forms: `removal_targets` 79 → 76, `guide_text`
+unchanged at 268 — the diagnostic inventory is untouched, only the removal
+verdict moves. The threshold of two slots is a corpus-derived boundary, not a
+tuned constant: seven guide lines that merely *describe* the convention
+(`※ [  ]에는 해당하는 곳에 √표를 합니다`) carry one slot each and must stay
+removable. Relaxing it re-swallows form fields.
+
+Why it mattered: the two PPS consent questions are legally identical and
+structurally identical, yet they had **opposite** removal verdicts, because
+their `paraPrIDRef` differ (18 vs 21) and only one of those ids happens to be
+reused by a heading. Anchor-hood was standing in for "must keep", and
+anchor-hood is partly a formatting accident. Downstream this reached a gate,
+not just a report: `check_residue` takes `removal_targets` as its authority
+(T47), so the consent question's text sat in the *forbidden* set and the only
+route to a pass was an explicit hand-written `--keep`.
+
 Unchanged consequences:
 
 - Never treat "detector says 0" as "nothing to protect" — deletion
