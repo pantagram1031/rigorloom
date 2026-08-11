@@ -45,7 +45,16 @@ ARGV_TEMPLATE_SHA256 = hashlib.sha256(
     json.dumps(ARGV_TEMPLATE, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
 ENV_POLICY = "minimal_allowlist_v1"
-PROCESS_POLICY = "contained_child_v1"
+PROCESS_POLICY = (
+    "windows_job_kill_on_close_v1" if os.name == "nt"
+    else "posix_process_group_v1"
+)
+ACCEPTED_PROCESS_POLICIES = frozenset({
+    "windows_job_kill_on_close_v1",
+    "posix_process_group_v1",
+})
+DESCENDANT_CONTAINMENT = "not_established"
+EVIDENCE_AUTHENTICATION = "not_established"
 CWD_POLICY = "private_stage"
 MAX_BINARY_BYTES = 256 * 1024 * 1024
 MAX_INPUT_BYTES = getattr(_ingress, "MAX_HWPX_BYTES", 256 * 1024 * 1024)
@@ -474,6 +483,8 @@ def _build_payload(*, binary: dict[str, Any], source: dict[str, Any],
             "env_policy": ENV_POLICY,
             "env_sha256": env_sha256,
             "process_policy": PROCESS_POLICY,
+            "descendant_containment": DESCENDANT_CONTAINMENT,
+            "evidence_authentication": EVIDENCE_AUTHENTICATION,
             "version_probe": {
                 "state": "succeeded", "exit_code": 0,
                 "timed_out": False, "overflow": False,
@@ -513,7 +524,9 @@ def _json_bytes(payload: dict[str, Any]) -> bytes:
                        separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def _validate_payload(payload: Any, *, run_id: str | None = None) -> dict[str, Any]:
+def _validate_payload(payload: Any, *, run_id: str | None = None,
+                      require_local_process_policy: bool = True
+                      ) -> dict[str, Any]:
     if not isinstance(payload, dict) or set(payload) != _TOP_KEYS:
         raise RuntimeRefusal("receipt_schema_invalid")
     if (payload.get("schema") != SCHEMA or payload.get("status") != "analyzed"
@@ -533,7 +546,8 @@ def _validate_payload(payload: Any, *, run_id: str | None = None) -> dict[str, A
     if not isinstance(execution, dict) or set(execution) != {
             "state", "adapter", "binary_sha256", "argv_sha256",
             "argv_template_sha256", "cwd_policy", "env_policy", "env_sha256",
-            "process_policy", "version_probe", "render_process"}:
+            "process_policy", "descendant_containment",
+            "evidence_authentication", "version_probe", "render_process"}:
         raise RuntimeRefusal("receipt_execution_invalid")
     if (execution.get("state") != "succeeded"
             or execution.get("adapter") != RENDERER_ID
@@ -543,7 +557,11 @@ def _validate_payload(payload: Any, *, run_id: str | None = None) -> dict[str, A
             or execution.get("cwd_policy") != CWD_POLICY
             or execution.get("env_policy") != ENV_POLICY
             or SHA256_RE.fullmatch(execution.get("env_sha256", "")) is None
-            or execution.get("process_policy") != PROCESS_POLICY):
+            or execution.get("process_policy") not in ACCEPTED_PROCESS_POLICIES
+            or (require_local_process_policy
+                and execution.get("process_policy") != PROCESS_POLICY)
+            or execution.get("descendant_containment") != DESCENDANT_CONTAINMENT
+            or execution.get("evidence_authentication") != EVIDENCE_AUTHENTICATION):
         raise RuntimeRefusal("receipt_execution_invalid")
     for key in ("version_probe", "render_process"):
         item = execution.get(key)
@@ -596,7 +614,9 @@ def _validate_payload(payload: Any, *, run_id: str | None = None) -> dict[str, A
 
 
 def _read_receipt(path: Path, *, allow_hardlink: bool = False,
-                  run_id: str | None = None) -> tuple[dict[str, Any], bytes, dict[str, Any]]:
+                  run_id: str | None = None,
+                  allow_cross_host_process_policy: bool = False
+                  ) -> tuple[dict[str, Any], bytes, dict[str, Any]]:
     try:
         info = path.lstat()
         if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
@@ -607,7 +627,9 @@ def _read_receipt(path: Path, *, allow_hardlink: bool = False,
                                  allow_hardlink=allow_hardlink)
         payload = json.loads(snapshot["data"].decode("utf-8"),
                              object_pairs_hook=_no_duplicate_keys)
-        _validate_payload(payload, run_id=run_id)
+        _validate_payload(
+            payload, run_id=run_id,
+            require_local_process_policy=not allow_cross_host_process_policy)
         if snapshot["data"] != _json_bytes(payload):
             raise RuntimeRefusal("receipt_not_canonical")
         return payload, snapshot["data"], snapshot
@@ -1039,7 +1061,9 @@ def _verify_runtime_impl(*, workspace: str | Path, run_id: str,
         raise RuntimeRefusal("paths_not_distinct")
     run_path, receipt_path, artifact_path = _public_layout(root, run_id)
     root_binding.check()
-    payload, raw, receipt_snapshot = _read_receipt(receipt_path, run_id=run_id)
+    payload, raw, receipt_snapshot = _read_receipt(
+        receipt_path, run_id=run_id,
+        allow_cross_host_process_policy=True)
     binary_snapshot = _capture_file(binary_path, MAX_BINARY_BYTES,
                                     "binary_changed")
     if binary_snapshot["sha256"] != payload["renderer"]["binary_sha256"]:
@@ -1071,7 +1095,8 @@ def _verify_runtime_impl(*, workspace: str | Path, run_id: str,
     _core.check_root_guard(root_guard)
     root_binding.check()
     final_payload, final_raw, final_receipt_snapshot = _read_receipt(
-        receipt_path, run_id=run_id)
+        receipt_path, run_id=run_id,
+        allow_cross_host_process_policy=True)
     final_source = _capture_file(
         source_path, MAX_INPUT_BYTES, "input_changed",
         binding=output_binding, relative_name="out.hwpx")

@@ -145,6 +145,12 @@ def test_runtime_receipt_binds_staged_execution_and_all_artifacts(tmp_path, monk
     assert payload["execution"]["state"] == "succeeded"
     assert payload["execution"]["binary_sha256"] == _sha(binary)
     assert payload["execution"]["argv_sha256"]
+    assert payload["execution"]["process_policy"] == runtime.PROCESS_POLICY
+    assert runtime.PROCESS_POLICY in {
+        "windows_job_kill_on_close_v1", "posix_process_group_v1",
+    }
+    assert payload["execution"]["descendant_containment"] == "not_established"
+    assert payload["execution"]["evidence_authentication"] == "not_established"
     assert payload["execution"]["version_probe"]["state"] == "succeeded"
     assert payload["execution"]["version_probe"]["stdout"] == _evidence(version_output)
     assert payload["input"]["sha256"] == _sha(source)
@@ -170,6 +176,74 @@ def test_runtime_receipt_binds_staged_execution_and_all_artifacts(tmp_path, monk
     assert json.loads(raw) == payload
     assert output.stat().st_nlink == 1
     assert receipt.stat().st_nlink == 1
+
+
+def test_runtime_rejects_legacy_contained_child_policy(tmp_path, monkeypatch):
+    binary, source, certificate, workspace = _fixture(tmp_path)
+    fitz = pytest.importorskip("fitz")
+    _install_success_renderer(monkeypatch, fitz)
+    payload = runtime.execute_runtime(
+        workspace=workspace, run_id=RUN_ID, renderer_id="rhwp_pdf",
+        binary=binary, binary_sha256=_sha(binary),
+        certificate_path=certificate, certificate_sha256=_sha(certificate),
+        timeout=5.0,
+    )
+    receipt = _output_root(workspace) / RUN_ID / "receipt.json"
+    forged = json.loads(receipt.read_text(encoding="utf-8"))
+    forged["execution"]["process_policy"] = "contained_child_v1"
+    receipt.write_bytes(runtime._json_bytes(forged))
+    with pytest.raises(runtime.RuntimeRefusal) as exc:
+        runtime.verify_runtime(workspace=workspace, run_id=RUN_ID,
+                               binary=binary, certificate_path=certificate)
+    assert exc.value.reason == "receipt_execution_invalid"
+
+
+def test_runtime_verify_labels_forged_process_evidence_unauthenticated(
+        tmp_path, monkeypatch):
+    binary, source, certificate, workspace = _fixture(tmp_path)
+    fitz = pytest.importorskip("fitz")
+    _install_success_renderer(monkeypatch, fitz)
+    runtime.execute_runtime(
+        workspace=workspace, run_id=RUN_ID, renderer_id="rhwp_pdf",
+        binary=binary, binary_sha256=_sha(binary),
+        certificate_path=certificate, certificate_sha256=_sha(certificate),
+        timeout=5.0,
+    )
+    receipt = _output_root(workspace) / RUN_ID / "receipt.json"
+    forged = json.loads(receipt.read_text(encoding="utf-8"))
+    forged["execution"]["version_probe"]["stdout"] = _evidence(
+        b"forged-version-output\n")
+    receipt.write_bytes(runtime._json_bytes(forged))
+    verified = runtime.verify_runtime(
+        workspace=workspace, run_id=RUN_ID, binary=binary,
+        certificate_path=certificate)
+    assert verified["status"] == "analyzed"
+    assert verified["execution"]["evidence_authentication"] == "not_established"
+
+
+def test_runtime_verify_accepts_closed_other_host_process_policy(
+        tmp_path, monkeypatch):
+    binary, source, certificate, workspace = _fixture(tmp_path)
+    fitz = pytest.importorskip("fitz")
+    _install_success_renderer(monkeypatch, fitz)
+    runtime.execute_runtime(
+        workspace=workspace, run_id=RUN_ID, renderer_id="rhwp_pdf",
+        binary=binary, binary_sha256=_sha(binary),
+        certificate_path=certificate, certificate_sha256=_sha(certificate),
+        timeout=5.0,
+    )
+    receipt = _output_root(workspace) / RUN_ID / "receipt.json"
+    forged = json.loads(receipt.read_text(encoding="utf-8"))
+    other_policy = next(
+        policy for policy in runtime.ACCEPTED_PROCESS_POLICIES
+        if policy != runtime.PROCESS_POLICY)
+    forged["execution"]["process_policy"] = other_policy
+    receipt.write_bytes(runtime._json_bytes(forged))
+    verified = runtime.verify_runtime(
+        workspace=workspace, run_id=RUN_ID, binary=binary,
+        certificate_path=certificate)
+    assert verified["status"] == "analyzed"
+    assert verified["execution"]["process_policy"] == other_policy
 
 
 def test_runtime_creates_fresh_owned_run_dir_and_rejects_stale_output(tmp_path):
@@ -488,9 +562,12 @@ def test_verify_final_receipt_seam_mutating_artifact_is_refused(tmp_path, monkey
     original_read = runtime._read_receipt
     calls = {"count": 0}
 
-    def read_then_mutate(path, *, allow_hardlink=False, run_id=None):
+    def read_then_mutate(path, *, allow_hardlink=False, run_id=None,
+                         allow_cross_host_process_policy=False):
         result = original_read(path, allow_hardlink=allow_hardlink,
-                               run_id=run_id)
+                               run_id=run_id,
+                               allow_cross_host_process_policy=(
+                                   allow_cross_host_process_policy))
         calls["count"] += 1
         if calls["count"] == 2:
             replacement = fitz.open()

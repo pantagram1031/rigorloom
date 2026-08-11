@@ -2,8 +2,10 @@
 
 This module has no document-format knowledge.  It owns only the security
 boundaries that every diagnostic adapter needs: no-follow regular snapshots,
-bounded child execution with process-tree containment, exclusive writes,
-full file identities, root anchoring, and identity-safe rollback helpers.
+bounded child execution with OS-specific process-group/Job containment,
+exclusive writes, full file identities, root anchoring, and identity-safe
+rollback helpers.  Detached-descendant containment is deliberately not
+established by this generic primitive.
 Format-specific runners provide their own closed error class and validation
 callbacks around these primitives.
 """
@@ -1129,7 +1131,13 @@ def run_child_capture(
         timeout_validator: Callable[[float], float] | None = None,
         max_output_bytes: int = 8 * 1024 * 1024,
         return_evidence: bool = False):
-    """Run one bounded child with POSIX group/Windows Job containment."""
+    """Run one bounded child with POSIX group/Windows Job containment.
+
+    The parent process and its ordinary descendants are contained by the
+    platform boundary.  A descendant that deliberately creates a new session
+    (POSIX) or otherwise escapes the Job boundary is not proven contained;
+    callers must keep that limitation explicit in their receipts.
+    """
     if type(return_evidence) is not bool:
         raise CoreError("return_evidence_invalid")
     if timeout_validator is not None:
