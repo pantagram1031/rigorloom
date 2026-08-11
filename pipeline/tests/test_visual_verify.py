@@ -3705,3 +3705,122 @@ def test_t101_no_hwpx_baseline_reads_unknown_not_no(tmp_path, monkeypatch):
     for item in mismatches:
         assert item["evidence"]["inherited"] == visual_verify.INHERITED_UNKNOWN
         assert item["evidence"]["inherited_reason"]
+
+
+# ---------------------------------------------------------------------------
+# T104: reuse a baseline conversion this run can PROVE, never one it assumes
+# ---------------------------------------------------------------------------
+
+def _baseline_reuse_env(tmp_path, monkeypatch, *, calls):
+    """A resolve_baseline that counts conversions instead of running Hancom.
+
+    The saving being tested is a Hancom call not made, so the assertion has to
+    be on the call count. Rendering for real would make the test slow and
+    machine-dependent and would still not say whether the second call happened.
+    """
+    blank = tmp_path / "blank.hwpx"
+    blank.write_bytes(b"blank-form-bytes")
+    out_pdf = tmp_path / "blank_baseline.pdf"
+
+    def fake_convert(artifact, target):
+        calls.append(Path(artifact).name)
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        Path(target).write_bytes(b"%PDF-1.4 baseline")
+        record = visual_verify.conversion_record_path(target)
+        record.write_text(json.dumps({
+            "schema": visual_verify.CONVERSION_RECORD_SCHEMA,
+            "source_sha256": visual_verify.sha256_file(artifact),
+            "pdf_sha256": visual_verify.sha256_file(target),
+            "print_method_normalized": {"from": 4, "to": 0},
+            "pages_document": 1,
+            "pages_pdf": 1,
+        }), encoding="utf-8")
+        return str(target), {"print_method_normalized": {"from": 4, "to": 0}}, None
+
+    monkeypatch.setattr(visual_verify, "render_capable", lambda: True)
+    monkeypatch.setattr(visual_verify, "convert_to_pdf", fake_convert)
+    return blank, out_pdf
+
+
+def test_t104_a_second_pass_reuses_the_proven_baseline_conversion(
+        tmp_path, monkeypatch):
+    """The measured cost: the canonical recipe verifies twice and passes the
+    blank form both times, so an accepted fill paid for three serial Hancom
+    conversions on the slowest step in the loop."""
+    calls = []
+    blank, _pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    first = visual_verify.resolve_baseline(blank, tmp_path)
+    second = visual_verify.resolve_baseline(blank, tmp_path)
+    assert len(calls) == 1, calls
+    assert first[1]["baseline_conversion_reused"] is False
+    assert second[1]["baseline_conversion_reused"] is True
+    assert first[0] == second[0]
+
+
+def test_t104_a_different_blank_form_is_reconverted(tmp_path, monkeypatch):
+    """Proven, not cached. The still-catches for the whole slice.
+
+    Same output path, different source bytes: the sidecar's source_sha256 no
+    longer describes this form, so reuse must be refused. A cache keyed on the
+    path alone would silently verify against the wrong blank form -- which is
+    worse than the cost it saves.
+    """
+    calls = []
+    blank, _pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    visual_verify.resolve_baseline(blank, tmp_path)
+    blank.write_bytes(b"a-completely-different-blank-form")
+    result = visual_verify.resolve_baseline(blank, tmp_path)
+    assert len(calls) == 2, calls
+    assert result[1]["baseline_conversion_reused"] is False
+
+
+def test_t104_an_unusable_sidecar_reconverts_rather_than_accepting(
+        tmp_path, monkeypatch):
+    """Cannot prove means convert -- never accept, and never fail the run.
+
+    A corrupt, foreign or hand-written record is not a usage error here: it
+    only means this run cannot skip the work, so it does the work.
+    """
+    calls = []
+    blank, pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    visual_verify.resolve_baseline(blank, tmp_path)
+    visual_verify.conversion_record_path(pdf).write_text(
+        '{"schema": "not-ours"}', encoding="utf-8")
+    result = visual_verify.resolve_baseline(blank, tmp_path)
+    assert len(calls) == 2, calls
+    assert result[3] is None, result[3]
+    assert result[1]["baseline_conversion_reused"] is False
+
+
+def test_t104_a_missing_sidecar_reconverts(tmp_path, monkeypatch):
+    """An existing PDF with no record proves nothing about its source."""
+    calls = []
+    blank, pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    visual_verify.resolve_baseline(blank, tmp_path)
+    visual_verify.conversion_record_path(pdf).unlink()
+    visual_verify.resolve_baseline(blank, tmp_path)
+    assert len(calls) == 2, calls
+
+
+def test_t104_a_regenerated_pdf_is_not_reused(tmp_path, monkeypatch):
+    """The record binds BOTH ends. A PDF replaced behind the record's back is
+    not the conversion the record describes."""
+    calls = []
+    blank, pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    visual_verify.resolve_baseline(blank, tmp_path)
+    pdf.write_bytes(b"%PDF-1.4 someone-elses-pdf")
+    result = visual_verify.resolve_baseline(blank, tmp_path)
+    assert len(calls) == 2, calls
+    assert result[1]["baseline_conversion_reused"] is False
+
+
+def test_t104_a_pdf_baseline_still_needs_no_conversion(tmp_path, monkeypatch):
+    """Unchanged behaviour: only a document baseline converts at all."""
+    calls = []
+    _blank, _pdf = _baseline_reuse_env(tmp_path, monkeypatch, calls=calls)
+    already = tmp_path / "someone_baseline.pdf"
+    already.write_bytes(b"%PDF-1.4 already rendered")
+    path, conversion, skip, error = visual_verify.resolve_baseline(
+        already, tmp_path)
+    assert (calls, conversion, skip, error) == ([], None, None, None)
+    assert path == already

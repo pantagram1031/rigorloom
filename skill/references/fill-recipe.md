@@ -298,6 +298,31 @@ list and the verdict records which surface each came from.
 
 ---
 
+## Hancom conversion cost of this recipe
+
+Conversions are serial, are the slowest step in the loop, and on a shared
+machine they are the step another lane is waiting for. So the count is part of
+the contract:
+
+| step | conversions |
+|---|---:|
+| the artifact, once | 1 |
+| the blank form, on the first verify pass | 1 |
+| the blank form, on the second verify pass | **0 since T104** — reused |
+
+A minimum accepted fill therefore costs **2**, not the 3 it cost before. The
+saving is a proven reuse, not a cache: `com_backend convert` leaves a sidecar
+binding the PDF to the exact source bytes it came from (T38), and the second
+pass reuses that PDF only when both hashes still match. A different blank form,
+an edited one, a regenerated PDF, a missing or foreign sidecar — each falls
+through and converts, because *cannot prove* means convert. `--baseline` still
+names the `.hwpx`: the T40 charPr leg reads the blank form's XML, so the PDF is
+not a substitute for the document, only for the conversion of it. The verdict
+reports `baseline_conversion_reused` either way, so a run never implies work it
+did not do.
+
+Measured on the 기안문 별지 1호: first conversion 22.9s, reuse 1.8s.
+
 ## 3. The command sequence
 
 Every path below is literal. `FORM.hwpx` is the blank; `W` is your work
