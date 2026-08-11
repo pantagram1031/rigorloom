@@ -19,6 +19,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -773,6 +775,110 @@ class CorpusGeneratorStubTestCase(unittest.TestCase):
             self.assertTrue((root / "ops" / "form-a-train.ops.json").is_file())
             self.assertFalse((root / "form-a.hwpx").exists())
             self.assertFalse((root / "form-a-reference.pdf").exists())
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_render_cert_json_nonfinite_values_refuse_parser_and_writer(
+    tmp_path, literal,
+):
+    with pytest.raises(ValueError, match="nonfinite_json_value"):
+        render_cert._json_loads(f'{{"value":{literal}}}')
+    with pytest.raises(ValueError, match="nonfinite_json_value"):
+        render_cert._json_bytes({"value": float(literal)})
+    target = tmp_path / "nonfinite.json"
+    with pytest.raises(ValueError, match="nonfinite_json_value"):
+        render_cert.write_json(target, {"value": float(literal)})
+    assert not target.exists()
+
+
+def test_render_cert_finite_exponent_remains_valid_json():
+    assert render_cert._json_loads('{"value":1e3}') == {"value": 1000.0}
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_render_cert_thresholds_require_finite_numbers(value):
+    with pytest.raises(ValueError, match="finite"):
+        render_cert._validate_thresholds({
+            "page_count_exact": True,
+            "word_anchor_px": value,
+            "raster_changed_channel_ratio": 0.1,
+        })
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_render_cert_threshold_file_and_inline_inputs_refuse_nonfinite(
+    tmp_path, literal,
+):
+    raw = (
+        '{"page_count_exact":true,"word_anchor_px":%s,'
+        '"raster_changed_channel_ratio":0.1}' % literal
+    )
+    threshold_file = tmp_path / "thresholds.json"
+    threshold_file.write_text(raw, encoding="utf-8")
+    file_args = types.SimpleNamespace(
+        thresholds=str(threshold_file), word_anchor_px=None,
+        raster_changed_channel_ratio=None, min_matched_unique_words=None,
+    )
+    with pytest.raises(ValueError):
+        render_cert._validate_thresholds(render_cert._threshold_args(file_args))
+    inline_args = types.SimpleNamespace(
+        thresholds=raw, word_anchor_px=None,
+        raster_changed_channel_ratio=None, min_matched_unique_words=None,
+    )
+    with pytest.raises(ValueError, match="nonfinite_json_value"):
+        render_cert._threshold_args(inline_args)
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_render_cert_nonfinite_certificate_public_paths_refuse(
+    tmp_path, capsys, literal,
+):
+    certificate = tmp_path / "certificate.json"
+    certificate.write_text(
+        '{"schema_version":1,"certificate_sha256":"%s","x":%s}'
+        % ("0" * 64, literal), encoding="ascii")
+    verified = render_cert.verify_certificate(certificate)
+    assert verified["reason_code"] == "certificate_invalid_json"
+
+    document = tmp_path / "document.hwpx"
+    checked = render_cert.check_document(document, certificate)
+    assert checked["reason_code"] == "certificate_invalid_json"
+    code = render_cert.main(["check", str(document), str(certificate)])
+    assert code == 3
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["reason_code"] == "certificate_invalid_json"
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_render_cert_manifest_nested_nonfinite_value_refuses(tmp_path, literal):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        '{"schema_version":1,"documents":[{"generator":{"weight":%s}}]}'
+        % literal, encoding="ascii")
+    with pytest.raises(ValueError, match="nonfinite_json_value"):
+        render_cert.load_manifest(manifest, require_ready=False)
+
+
+def test_render_cert_main_nonfinite_payload_is_closed_operation_failure(
+    tmp_path, monkeypatch, capsys,
+):
+    payload = {"ok": True, "eligible": True, "value": float("nan")}
+    monkeypatch.setattr(render_cert, "check_document", lambda *args, **kwargs: payload)
+    out = tmp_path / "result.json"
+    code = render_cert.main([
+        "check", str(tmp_path / "document.hwpx"),
+        str(tmp_path / "certificate.json"), "--out", str(out),
+    ])
+    assert code == 3
+    stdout_payload = json.loads(capsys.readouterr().out)
+    assert stdout_payload["reason_code"] == "operation_failed"
+    assert "NaN" not in out.read_text(encoding="utf-8")
+    assert json.loads(out.read_text(encoding="utf-8"))["reason_code"] == (
+        "operation_failed")
 
 
 if __name__ == "__main__":
