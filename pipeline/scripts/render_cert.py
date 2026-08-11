@@ -35,6 +35,12 @@ MANIFEST_ID_RE = re.compile(r"^[^./\\]+$")
 DEFAULT_DPI = 300
 DEFAULT_RENDER_TIMEOUT = 240.0
 CERTIFICATE_HMAC_FIELD = "certificate_hmac_sha256"
+_CERTIFY_NO_OUTPUT_REASONS = frozenset({
+    "manifest_changed",
+    "measurement_document_changed",
+    "measurement_reference_changed",
+    "measurement_candidate_changed",
+})
 
 
 def _absolute_lexical(path: str | Path) -> Path:
@@ -712,6 +718,43 @@ def _same_private_generation(first: dict, second: dict) -> bool:
     )
 
 
+def _stage_private_snapshot(directory: str | Path, name: str, generation: dict) -> Path:
+    """Materialize a captured generation in a private, owned temp directory."""
+    root = Path(directory)
+    target = root / name
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(str(target), flags, 0o600)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError("snapshot_write_failed") from exc
+    try:
+        raw = generation.get("raw")
+        if not isinstance(raw, bytes):
+            raise ValueError("snapshot_generation_invalid")
+        view = memoryview(raw)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise ValueError("snapshot_write_failed")
+            view = view[written:]
+        os.fsync(fd)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError("snapshot_write_failed") from exc
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        if target.read_bytes() != generation["raw"]:
+            raise ValueError("snapshot_changed")
+    except (OSError, TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc) == "snapshot_changed":
+            raise
+        raise ValueError("snapshot_changed") from exc
+    return target
+
+
 def load_manifest(path: str | Path, *, require_ready: bool = True) -> dict:
     manifest_path = Path(path)
     payload = _read_json(manifest_path)
@@ -1020,45 +1063,74 @@ def measure_corpus(
             )
             if reference_before["sha256"] != entry["reference_pdf"]["sha256"]:
                 raise ValueError("reference_pdf_hash_mismatch")
-            actual_features = feature_extract.extract_feature_counts(
-                document_before["path"],
-            )
-            if actual_features != entry["features"]:
-                raise ValueError("manifest_feature_mismatch")
-            if render_callback is not None:
-                callback_output = render_callback(
-                    entry, document_before["path"], candidate,
+            # All renderer/feature/metric consumers use private snapshots from
+            # these captures.  The live source and reference remain inputs to
+            # the final generation rebind only.
+            with tempfile.TemporaryDirectory(prefix="render-cert-snapshot-") as snapshot_root:
+                snapshot_dir = Path(snapshot_root)
+                document_snapshot = _stage_private_snapshot(
+                    snapshot_dir, document.name, document_before,
                 )
-                if callback_output is not None:
-                    callback_path = Path(callback_output)
-                    if callback_path.resolve() != candidate.resolve():
-                        shutil.copyfile(callback_path, candidate)
-                completed_record = {"exit_code": 0, "command": ["mocked-render-callback"]}
-            else:
-                command = _render_command(renderer["argv"], document, candidate)
-                completed = subprocess.run(
-                    command, capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=timeout,
+                reference_snapshot = _stage_private_snapshot(
+                    snapshot_dir, "reference.pdf", reference_before,
                 )
-                completed_record = {
-                    "command": command,
-                    "exit_code": completed.returncode,
-                    "stdout": (completed.stdout or "")[-16000:],
-                    "stderr": (completed.stderr or "")[-16000:],
-                }
-                if completed.returncode != 0:
-                    raise ValueError("renderer_nonzero")
-                if not candidate.is_file() and generated.is_file():
-                    generated.replace(candidate)
-            if generated != candidate:
-                try:
-                    generated.lstat()
-                except FileNotFoundError:
-                    pass
+                actual_features = feature_extract.extract_feature_counts(
+                    document_snapshot,
+                )
+                if actual_features != entry["features"]:
+                    raise ValueError("manifest_feature_mismatch")
+                if render_callback is not None:
+                    callback_output = render_callback(
+                        entry, document_snapshot, candidate,
+                    )
+                    if callback_output is not None:
+                        callback_path = Path(callback_output)
+                        if callback_path.resolve() != candidate.resolve():
+                            shutil.copyfile(callback_path, candidate)
+                    completed_record = {
+                        "exit_code": 0, "command": ["mocked-render-callback"],
+                    }
                 else:
-                    # Two renderer output generations are ambiguous; do not
-                    # silently choose one while leaving the other unbound.
-                    raise ValueError("renderer_output_ambiguous")
+                    command = _render_command(
+                        renderer["argv"], document_snapshot, candidate,
+                    )
+                    completed = subprocess.run(
+                        command, capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=timeout,
+                    )
+                    completed_record = {
+                        "command": command,
+                        "exit_code": completed.returncode,
+                        "stdout": (completed.stdout or "")[-16000:],
+                        "stderr": (completed.stderr or "")[-16000:],
+                    }
+                    if completed.returncode != 0:
+                        raise ValueError("renderer_nonzero")
+                    if not candidate.is_file() and generated.is_file():
+                        generated.replace(candidate)
+                if generated != candidate:
+                    try:
+                        generated.lstat()
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        # Two renderer output generations are ambiguous; do not
+                        # silently choose one while leaving the other unbound.
+                        raise ValueError("renderer_output_ambiguous")
+                candidate_before_metrics = _capture_private_generation(
+                    candidate, "renderer_output_missing",
+                )
+                candidate_snapshot = _stage_private_snapshot(
+                    snapshot_dir, "candidate.pdf", candidate_before_metrics,
+                )
+                metrics = compare_pdf_metrics(
+                    reference_snapshot, candidate_snapshot, dpi=dpi,
+                )
+
+            # Rebind every live generation after metric comparison.  A
+            # candidate mutation during comparison is therefore visible here,
+            # while a mutation that was restored cannot affect the metrics
+            # computed from the owned snapshots above.
             document_after = _capture_private_generation(
                 document, "document_changed",
             )
@@ -1070,8 +1142,10 @@ def measure_corpus(
             if not _same_private_generation(reference_before, reference_after):
                 raise ValueError("reference_pdf_changed")
             candidate_after = _capture_private_generation(
-                candidate, "renderer_output_missing",
+                candidate, "renderer_output_changed",
             )
+            if not _same_private_generation(candidate_before_metrics, candidate_after):
+                raise ValueError("renderer_output_changed")
             record.update({
                 "ok": True,
                 "document": str(document_before["path"]),
@@ -1081,9 +1155,7 @@ def measure_corpus(
                 "candidate_pdf": str(candidate_after["path"]),
                 "candidate_pdf_sha256": candidate_after["sha256"],
                 "renderer_run": completed_record,
-                "metrics": compare_pdf_metrics(
-                    reference_before["path"], candidate_after["path"], dpi=dpi,
-                ),
+                "metrics": metrics,
             })
         except subprocess.TimeoutExpired:
             record["reason_codes"].append("renderer_timeout")
@@ -1449,8 +1521,28 @@ def issue_certificate(
         raise ValueError("measurements do not contain complete renderer/corpus provenance")
     if not isinstance(certificate["renderer_argv"], list) or not certificate["renderer_argv"]:
         raise ValueError("measurements do not contain a renderer argv template")
-    certificate["certificate_sha256"] = _certificate_digest(certificate)
     key = receipt_sign.load_operator_key(create=True)
+    # The key load is intentionally before the final custody pass.  A
+    # manifest or measurement generation changed by a key-provider callback
+    # must never be incorporated into a self-hash/HMAC-successful certificate.
+    manifest_final = _capture_private_generation(
+        manifest_path, "manifest_changed",
+    )
+    if not _same_private_generation(manifest_snapshot, manifest_final):
+        raise ValueError("manifest_changed")
+    # Complete the manifest generation rebind before the final all-component
+    # validation.  That validation must be the last fallible filesystem work
+    # before self-hash/HMAC so a candidate mutation cannot land after the
+    # generation checks and still be signed.
+    manifest_final_after = _capture_private_generation(
+        manifest_path, "manifest_changed",
+    )
+    if not _same_private_generation(manifest_final, manifest_final_after):
+        raise ValueError("manifest_changed")
+    _validate_measurement_generations(
+        manifest_path, manifest["documents"], measurement_records, manifest_base,
+    )
+    certificate["certificate_sha256"] = _certificate_digest(certificate)
     certificate[CERTIFICATE_HMAC_FIELD] = receipt_sign.hmac_sha256(
         certificate, key, omit_fields=(CERTIFICATE_HMAC_FIELD,),
     )
@@ -1695,6 +1787,7 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--out")
 
     args = parser.parse_args(argv)
+    suppress_private_output = False
     try:
         if args.command == "measure":
             renderer_argv = shlex.split(args.renderer_command) if args.renderer_command else None
@@ -1720,14 +1813,21 @@ def main(argv: list[str] | None = None) -> int:
                 renderer_version=args.renderer_version,
             )
             code = 0 if payload["eligible"] else 3
-    except Exception:
+    except Exception as exc:
+        # A final custody rebind failure occurs before certificate commit.  Do
+        # not create even a pathful private artifact for that stale-generation
+        # refusal; generic operation failures retain their historical output
+        # projection for compatibility.
+        suppress_private_output = (
+            args.command == "certify" and str(exc) in _CERTIFY_NO_OUTPUT_REASONS
+        )
         payload = _result(False, ["operation_failed"])
         code = 3
     safe_payload = _strict_output_payload(payload)
     if safe_payload is not payload:
         payload = safe_payload
         code = 3
-    if getattr(args, "out", None):
+    if getattr(args, "out", None) and not suppress_private_output:
         try:
             if args.command in {"measure", "certify"}:
                 _write_private_artifact_json(args.out, payload)

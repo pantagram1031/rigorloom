@@ -221,3 +221,47 @@ def test_t159_docs_pin_legacy_private_measurement_binding_boundary():
     assert trouble.index("| T157 |") < trouble.index("| T156 |")
     assert trouble.index("| T156 |") < trouble.index("| T155 |")
     assert "| T109 |" not in trouble
+
+
+def test_t160_docs_pin_producer_snapshot_integrity_boundary():
+    paths = (
+        "CHANGELOG.md",
+        "docs/trouble-table.md",
+        "docs/research/render-cert-envelope-v2.md",
+    )
+    combined = " ".join(" ".join(_read(path).split()) for path in paths)
+    for token in (
+        "T160",
+        "owned captured snapshots",
+        "feature extraction",
+        "renderer input",
+        "PDF metrics",
+        "captured snapshot files",
+        "rather than rereading live",
+        "After metrics",
+        "final live document/reference/candidate generations are rebound",
+        "mutation restored before the final check",
+        "operator key is loaded",
+        "immediately before HMAC",
+        "live manifest",
+        "every measurement document/reference/candidate generation",
+        "public `verify_certificate` remains",
+        "exact four-field projection",
+        "`check_document` adds only `eligible`",
+        "Schema",
+        "routing",
+        "proof",
+        "release switches",
+        "Successful measure/certify artifacts and stdout remain pathful private",
+        "final pre-HMAC manifest drift publishes no stale certificate artifact",
+        "generic failure/projection semantics otherwise remain unchanged",
+    ):
+        assert token in combined
+
+    trouble = _read("docs/trouble-table.md")
+    assert trouble.index("| T160 |") < trouble.index("| T159 |")
+    assert trouble.index("| T159 |") < trouble.index("| T158 |")
+    assert trouble.index("| T158 |") < trouble.index("| T157 |")
+    assert trouble.index("| T157 |") < trouble.index("| T156 |")
+    assert trouble.index("| T156 |") < trouble.index("| T155 |")
+    assert "| T109 |" not in trouble
