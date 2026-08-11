@@ -132,7 +132,7 @@ with an explicit fallback reason. Equation-bearing HWPX is never routed to
 LibreOffice as a substitute proof path.
 
 An operator-issued renderer certificate remains diagnostic configuration only.
-`RIGORLOOM_RENDER_CERTIFICATE=<certificate.json>` is not probed or executed by
+`RIGORLOOM_RENDER_CERTIFICATE=<certificate path>` is not probed or executed by
 the automatic XML route while the shared `CERTIFIED_PROOF_RELEASE_ENABLED`
 switch is false. The dispatcher records the closed
 `certified_runtime_unbound` reason and keeps the canonical XML output and
@@ -140,6 +140,13 @@ receipt grade `none`; it does not call `render_cert check`, launch a certified
 command, or promote a PDF. `render_cert measure`, `certify`, `verify`, and
 `check` remain explicit operator diagnostics until a separately reviewed
 runtime-v2/root/receipt contract is released.
+
+T150 `renderer_runtime_v2.py` is that separately named quarantine diagnostic,
+not a Stage 5 backend: it binds a fixed `rhwp_pdf` `export-pdf` child under
+`rigorloom/renderer-runtime-v2/v1`, refuses equation-bearing input with
+`equation_input_unsupported`, and records `dependency_closure: unknown`,
+`proof_grade: none`, and `submission_grade: false`. No automatic route sends
+its receipt to Stage 5/6, `new_report`, canonical output, or certified proof.
 
 ---
 
