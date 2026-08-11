@@ -9,10 +9,13 @@ the human-readable table formatter.
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -213,6 +216,9 @@ class TestCertifiedRendererProbe(unittest.TestCase):
                 result["capabilities"]["render_certificate_reason"],
                 "certified_runtime_unbound",
             )
+            self.assertTrue(result["capabilities"]["render_certificate_configured"])
+            self.assertNotIn("render_certificate", result["capabilities"])
+            self.assertNotIn(str(cert_path), json.dumps(result, ensure_ascii=False))
             self.assertFalse(any(
                 item.get("proof_grade") == "certified"
                 for item in result["renderers"]
@@ -240,10 +246,96 @@ class TestCertifiedRendererProbe(unittest.TestCase):
             result["capabilities"]["render_certificate_reason"],
             "certified_runtime_unbound",
         )
+        self.assertTrue(result["capabilities"]["render_certificate_configured"])
+        self.assertNotIn("render_certificate", result["capabilities"])
+        self.assertNotIn(str(cert_path), json.dumps(result, ensure_ascii=False))
         self.assertFalse(any(
             item.get("proof_grade") == "certified"
             for item in result["renderers"]
         ))
+
+    def test_release_switch_keeps_private_compatibility_route_without_public_cert_path(self):
+        certificate = {
+            "renderer_id": "mock",
+            "renderer_version": "mock 1.0",
+            "renderer_binary_path": "/opt/mock-renderer",
+            "renderer_argv": ["/opt/mock-renderer", "{in}", "{out}"],
+        }
+        rich = {"ok": True, "reason_code": "certificate_valid", "certificate": certificate}
+        with tempfile.TemporaryDirectory() as tmp:
+            cert_path = Path(tmp) / "certificate.json"
+            cert_path.write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(
+                    render_probe, "document_evidence",
+                    types.SimpleNamespace(CERTIFIED_PROOF_RELEASE_ENABLED=True),
+                ),
+                mock.patch.object(render_probe.render_cert, "verify_certificate",
+                                  side_effect=AssertionError("public verifier must remain closed")),
+                mock.patch.object(render_probe.render_cert, "_verify_certificate_rich",
+                                  return_value=rich) as rich_mock,
+                mock.patch.dict(os.environ, {
+                    "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
+                }, clear=True),
+            ):
+                result = render_probe.probe()
+                table = render_probe.format_table(result)
+                out = Path(tmp) / "public-probe.json"
+                stdout = io.StringIO()
+                with mock.patch("sys.stdout", stdout):
+                    code = render_probe.main(["--json", "--out", str(out)])
+                persisted = json.loads(out.read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 0)
+        rich_mock.assert_not_called()
+        self.assertEqual(
+            result["capabilities"]["render_certificate_reason"], "certified_runtime_unbound",
+        )
+        self.assertTrue(result["capabilities"]["render_certificate_configured"])
+        self.assertNotIn("render_certificate", result["capabilities"])
+        self.assertNotIn(str(cert_path), json.dumps(result, ensure_ascii=False))
+        self.assertFalse(any(item["name"] == "certified_mock" for item in result["renderers"]))
+        self.assertFalse(any(
+            "binary_path" in item or "argv" in item for item in result["renderers"]
+        ))
+        self.assertNotIn(str(cert_path), table)
+        emitted = json.loads(stdout.getvalue())
+        self.assertEqual(emitted, persisted)
+        self.assertNotIn(str(cert_path), stdout.getvalue())
+        self.assertNotIn(str(cert_path), json.dumps(emitted, ensure_ascii=False))
+
+    def test_private_probe_retains_switch_gated_renderer_for_workspace_selector(self):
+        certificate = {
+            "renderer_id": "mock",
+            "renderer_version": "mock 1.0",
+            "renderer_binary_path": "/opt/mock-renderer",
+            "renderer_argv": ["/opt/mock-renderer", "{in}", "{out}"],
+        }
+        rich = {"ok": True, "reason_code": "certificate_valid", "certificate": certificate}
+        with tempfile.TemporaryDirectory() as tmp:
+            cert_path = Path(tmp) / "certificate.json"
+            cert_path.write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(render_probe.sys, "platform", "linux"),
+                mock.patch.object(render_probe.shutil, "which", return_value=None),
+                mock.patch.object(
+                    render_probe, "document_evidence",
+                    types.SimpleNamespace(CERTIFIED_PROOF_RELEASE_ENABLED=True),
+                ),
+                mock.patch.object(render_probe.render_cert, "_verify_certificate_rich",
+                                  return_value=rich),
+                mock.patch.dict(os.environ, {
+                    "RIGORLOOM_RENDER_CERTIFICATE": str(cert_path),
+                }, clear=True),
+            ):
+                result = render_probe.probe(include_private=True)
+
+        self.assertTrue(any(item["name"] == "certified_mock" for item in result["renderers"]))
+        renderer = next(item for item in result["renderers"] if item["name"] == "certified_mock")
+        self.assertEqual(renderer["argv"], certificate["renderer_argv"])
+        self.assertEqual(renderer["certificate"], str(cert_path))
 
 
 class TestSofficePathPresent(unittest.TestCase):
@@ -396,6 +488,44 @@ class TestCli(unittest.TestCase):
                                                                "rhwp_reason": "not_found"},
                                              "renderers": []}):
             self.assertEqual(render_probe.main(["--json"]), 0)
+
+    def test_configured_certificate_projection_is_pathless_in_table_json_and_out(self):
+        marker = "private-render-certificate-marker"
+        result = {
+            "capabilities": {
+                "hancom_com": False, "soffice_path": None, "soffice_wsl": False,
+                "h2orestart": "unknown", "rhwp_path": None, "rhwp_wsl": False,
+                "rhwp_version": None, "rhwp_reason": "not_found",
+                "render_certificate_configured": True,
+                "render_certificate_reason": "certified_runtime_unbound",
+            },
+            "renderers": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "probe.json"
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(render_probe, "probe", return_value=result),
+                mock.patch("sys.stdout", stdout),
+            ):
+                code = render_probe.main(["--json", "--out", str(out)])
+            self.assertEqual(code, 0)
+            emitted = json.loads(stdout.getvalue())
+            persisted = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(emitted, persisted)
+            self.assertTrue(emitted["capabilities"]["render_certificate_configured"])
+            self.assertEqual(
+                emitted["capabilities"]["render_certificate_reason"],
+                "certified_runtime_unbound",
+            )
+            self.assertNotIn("render_certificate", emitted["capabilities"])
+            self.assertNotIn(marker, stdout.getvalue())
+
+            table = render_probe.format_table(result)
+            self.assertIn("render_certificate_configured", table)
+            self.assertIn("render_certificate_reason", table)
+            self.assertNotIn("  render_certificate  ", table)
+            self.assertNotIn(marker, table)
 
 
 if __name__ == "__main__":

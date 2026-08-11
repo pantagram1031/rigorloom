@@ -895,13 +895,20 @@ class TestPdfCmdWiring(unittest.TestCase):
                          "argv": ["soffice", "--headless"]},
                     ],
                 },
-            ),
+            ) as probe_mock,
             mock.patch.object(
                 self.render_probe, "hwpx_has_equations", return_value=False
             ),
         ):
             decision = doc_backend._hwpx_renderer_decision(str(self.ws), None)
 
+        probe_mock.assert_called_once_with(include_private=True)
+        self.assertEqual(
+            doc_backend._certified_renderer_for_workspace(
+                str(self.ws), [certified],
+            ),
+            certified,
+        )
         self.assertEqual(decision["proof_grade"], "advisory")
         self.assertEqual(decision["certified_renderer"], certified)
         public = doc_backend._public_renderer_decision(decision)
