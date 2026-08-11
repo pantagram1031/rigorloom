@@ -773,7 +773,45 @@ def _check_balsin(model, vocabulary, state, hard, info):
         info.append({"seat": "balsin", "state": "absent"})
 
 
+def _seal_residue_index(model, vocabulary, labels):
+    """``(table, addr) -> residual text`` for every seal slot in a model.
+
+    Keyed by address so a slot can be compared with the SAME slot, and using
+    the same label set on both sides so the comparison is between like
+    quantities rather than between two different notions of residue.
+    """
+    index = {}
+    for slot in seal_slots(model, vocabulary):
+        location = slot["at"]
+        if location.get("addr") is None:
+            continue
+        index[(location["table"], tuple(location["addr"]))] = residual_text(
+            slot["text"], labels, vocabulary)
+    return index
+
+
 def _check_seal(model, vocabulary, baseline_model, hard, info, skipped):
+    """R5 — the seal slot is a placement for a physical impression.
+
+    T105: this rule used to HARD on ANY text beyond the seal label, while its
+    sibling ``seal_slot_removed`` two lines up already read ``baseline_model``
+    from the same scope. So a blank form that prints anything inside its
+    직인/관인 box — a size hint, a bracketed instruction — read as overwritten
+    on the pristine form. Empirically clean on this corpus, which is why it was
+    never noticed; the fix copies the stronger design that already existed in
+    ``check_minwon``, comparing each slot against ITS OWN residue in the blank
+    form rather than against a vocabulary.
+
+    The baseline is used to EXCUSE, never to accuse, and that direction was a
+    correction: the first cut of this fix downgraded the no-baseline case to a
+    WARN, which an existing test disproved by asserting that a name written
+    into the seal box is caught with no baseline at all. That is the common
+    case and a real defect, so trading a working true positive for a
+    theoretical false positive the corpus never exhibits was the wrong way
+    round. With no baseline the behaviour is exactly what it was; a HARD can
+    only become an info when the blank form is present AND its own residue in
+    that same slot is identical.
+    """
     labels = _terms(vocabulary, "seal", "labels")
     slots = seal_slots(model, vocabulary)
     if not slots:
@@ -788,18 +826,29 @@ def _check_seal(model, vocabulary, baseline_model, hard, info, skipped):
             skipped.append({"rule": "seal_slot", "reason": "seat_absent"
                             if baseline_model is not None else "no_baseline"})
         return
+    blank_residue = (_seal_residue_index(baseline_model, vocabulary, labels)
+                     if baseline_model is not None else None)
     for slot in slots:
+        location = slot["at"]
         extra = residual_text(slot["text"], labels, vocabulary)
-        if extra:
-            hard.append(_finding(
-                "seal_slot_overwritten",
-                "직인 slot carries text other than the seal label — the slot "
-                "is a placement for a physical impression, never a fill target",
-                slot["at"], value=extra))
-        else:
+        if not extra:
             info.append({"seat": "seal", "state": "reserved",
                          "red_bordered": slot["red_bordered"],
-                         "at": slot["at"]})
+                         "at": location})
+            continue
+        key = ((location["table"], tuple(location["addr"]))
+               if location.get("addr") is not None else None)
+        if (blank_residue is not None and key is not None
+                and blank_residue.get(key) == extra):
+            info.append({"seat": "seal", "state": "reserved",
+                         "red_bordered": slot["red_bordered"],
+                         "at": location, "inherited_residue": extra})
+            continue
+        hard.append(_finding(
+            "seal_slot_overwritten",
+            "직인 slot carries text other than the seal label — the slot "
+            "is a placement for a physical impression, never a fill target",
+            location, value=extra))
 
 
 def _maximal(terms) -> list[str]:
