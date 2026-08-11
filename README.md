@@ -84,6 +84,15 @@ own skill fragments at install time via `scripts/sync_local.py`.
   `submission_grade: false`, and `promotion: not_run`; it does not execute a
   renderer, auto-route, or promote a PDF, and it ships no private paths,
   operator key, or corpus bytes.
+- **T152 composite certificate receipt.**
+  `renderer_certificate_composite_v1.py` joins a captured T150 runtime receipt
+  to the T151 exact source and signed certificate checks. It writes only the
+  canonical composite receipt, with `binding_scope: captured_snapshot_only`
+  and evidence ceiling
+  `runtime_input_exact_document_certificate_binding_only`; it is not
+  HMAC-authenticated and never executes, auto-routes, or promotes. The result
+  remains `proof_grade: none`, `submission_grade: false`, and
+  `promotion: not_run`, with no paths, key, corpus, or PDF bytes published.
 - **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
   XML directly through the bundled engine (`engine/scripts`), without Hancom
   or COM, on any OS.
