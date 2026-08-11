@@ -1640,7 +1640,10 @@ def run_machine_check(sandbox: Sandbox, check: dict[str, Any],
             argv: list[str] = ["--form-profile", str(profile_path),
                                "--artifact", str(artifact)]
             for entry in keep:
-                argv += ["--keep", entry]
+                # `--keep=VALUE`, one token — a bare `--` inventory entry would
+                # otherwise be eaten as argparse's end-of-options marker and the
+                # delegate would exit 2 (T116).
+                argv.append(f"--keep={entry}")
             proc = sandbox.run_python(
                 sandbox.install / "pipeline" / "scripts" / "check_residue.py",
                 argv, cwd=Path(variables["WORK"]))

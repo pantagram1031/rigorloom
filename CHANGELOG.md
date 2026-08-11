@@ -246,6 +246,24 @@ the kernel's contract shape.
   returning only the requested paragraph's own exact text/runs in preedit's
   document order.
 
+### Fixed
+
+- **T116:** the residue gate could not run at all on a form whose inventory
+  contains a literal `--`. Every caller built the keep list as two argv tokens,
+  `["--keep", entry]`, and argparse reads a bare `--` as its end-of-options
+  marker, so `check_residue` exited 2 with `argument --keep: expected one
+  argument` and `visual_verify`'s own residue leg HARDed with
+  `check_residue_error`. The shell is irrelevant — it reproduces through the
+  internal `subprocess` list, which is the path the product takes. Nothing an
+  operator does causes it: the keep list is derived from the form's own
+  inventory, and `kstartup-jiwon-sincheongseo` prints `--` twice as a schedule
+  placeholder in the untouched original. Every emitter now passes one token,
+  `--keep=VALUE`, and `check_residue --help` states the rule for humans. Guarded
+  by a unit test on the emitted tokens, an end-to-end test that runs the real
+  delegate against the real corpus form, and a source-level guard that tokenizes
+  every module and rejects any `["--keep", …]` list. Found by the A3 clean-room
+  agent-completion run.
+
 ### Added
 
 - **T115:** `preedit set-runs` — a third operation that addresses structure
