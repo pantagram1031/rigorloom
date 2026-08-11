@@ -90,6 +90,16 @@ proof. Successful terminal execution must leave a current receipt at
   is `none`, submission is false, and promotion is `not_run`. Never route it to
   `doc_backend`, Stage 0/5/6, canonical output, `new_report`, or certified
   proof; no binary, certificate, document, or corpus bytes ship in the bundle.
+- T151 `render_cert_envelope_v2.py` is an independent, pathless exact-document
+  certificate diagnostic. Issue `rigorloom/render-cert-envelope/v2` from a
+  private `rigorloom/render-cert-private-manifest/v2` manifest, then use
+  `verify CERT` or `check DOCUMENT CERT`; the public envelope contains only
+  hashes, byte counts, opaque ids, metric hashes, and the HMAC. It records
+  `runtime_binding: not_established`, `proof_grade: none`,
+  `submission_grade: false`, and `promotion: not_run`; it never executes a
+  renderer, auto-routes, writes the canonical backend receipt, or ships local
+  paths, key material, source/PDF/corpus bytes. Legacy v1 `render_cert.py`
+  remains quarantined and both release switches remain false.
 - T91 `hwp_equation_diagnostic.py` is a separate receipt-only HWPX
   equation-envelope inventory. Require the exact pre-created
   `work/stage-0/scratch/hwp-equation-diagnostic` leaf. It follows the strict
@@ -119,6 +129,7 @@ receipt is local privacy-safe evidence only and always reports
 
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
+| issue or check an exact-document certificate envelope (T151) | `python pipeline/scripts/render_cert_envelope_v2.py issue PRIVATE_MANIFEST --out CERT`, then `verify CERT` or `check DOCUMENT CERT` | LOW — pathless hash/HMAC snapshot only; runtime binding not established, proof/submission remain none/false, promotion not run, and no automatic route |
 | execute and verify the quarantine-only rhwp PDF runtime (T150) | `python pipeline/scripts/renderer_runtime_v2.py inspect WORKSPACE --run-id HEX --renderer-id rhwp_pdf --binary RHWP_BINARY --binary-sha256 SHA256 --certificate CERTIFICATE --certificate-sha256 SHA256` then `verify` with the same workspace/run and operator paths | LOW — receipt-only execution binding; dependency closure unknown, equation-bearing input refused, render/proof/submission remain closed |
 | inspect bounded HWPX equation envelopes (T91) | `python pipeline/scripts/hwp_equation_diagnostic.py inspect INPUT.hwpx --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX` then `verify` with the same source/root/run | LOW — receipt-only aggregate inventory; HwpEqn meaning, execution, render, and parity are not proved |
 | inspect a binary HWP candidate without reading its body | `python pipeline/scripts/hwp_ingress.py inspect FORM.hwp` | LOW — CFB/FileHeader capability only |

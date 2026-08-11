@@ -24,6 +24,20 @@ the kernel's contract shape.
   canonical output, or certified routing; it ships no operator binary,
   certificate, document, or corpus bytes.
 
+- **T151:** added the independent pathless
+  `rigorloom/render-cert-envelope/v2` exact-document envelope. Operators issue
+  it with `issue PRIVATE_MANIFEST --out CERT`, then use `verify CERT` or
+  `check DOCUMENT CERT`; the private manifest is never serialized into the
+  certificate. Canonical measurements contain only hashes, byte counts,
+  opaque ids, and metric hashes, bound by `certificate_sha256` and
+  `certificate_hmac_sha256`; no local paths, command streams, source text,
+  private key material, PDF/corpus bytes, or generalized feature envelope is
+  shipped. Its ceiling is `runtime_binding: not_established`,
+  `proof_grade: none`, `submission_grade: false`, and `promotion: not_run`.
+  Legacy v1 certificate tooling remains quarantined; both
+  `ADVISORY_PROOF_RELEASE_ENABLED` and `CERTIFIED_PROOF_RELEASE_ENABLED`
+  stay false, with no runtime integration, auto-route, or PDF promotion.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
