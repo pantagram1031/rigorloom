@@ -97,6 +97,17 @@ PDF. The result ceiling is always `proof_grade: none`,
 `runtime_binding: not_established`; native layout, visual quality, parity,
 dependency closure, and submission readiness remain unestablished.
 
+T158 changes only custody for the legacy v1 `measure`/`certify --out` path. The
+dedicated fresh private artifact publisher requires a pre-created canonical
+parent that is a real directory and an absent output leaf, and publishes only
+a new regular one-link file. Symlink/reparse/hardlink/pre-existing targets and
+parent swaps are refused; held-parent relative staging/link/final checks bind exact bytes
+and identity, while owned-only rollback preserves foreign replacements. A
+refusal is the pathless `operation_failed` result. Generic `write_json`,
+`check`, and `doc_backend` receipt writing remain unchanged. Legacy artifacts
+remain pathful private v1 files; stdout/privacy, authentication, routing,
+proof, submission, and release-switch semantics are unchanged.
+
 The core bundle ships the Python entry point and its ordinary script imports
 only. It ships no binary, source document, reference PDF, private manifest,
 operator key, certificate, or corpus artifact. Clean extracted `--help` must

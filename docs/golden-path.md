@@ -586,7 +586,17 @@ python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
   `ok`, `reason_code`, `reason`, and `reason_codes`; `check` adds only
   `eligible`, with no raw errors, paths, argv, feature maps, certificate
   payloads, or renderer streams. Successful measure/certify files remain
-  private, pathful v1 operator artifacts, never public receipts. `render_probe`
+  private, pathful v1 operator artifacts, never public receipts. Only
+  `measure`/`certify --out` uses the dedicated fresh private artifact
+  publisher: require a pre-created canonical parent that is a real directory
+  and an absent leaf, then publish a new regular one-link file through
+  held-parent relative staging/link/final exact-byte-and-identity checks.
+  Symlink, reparse,
+  hardlink, pre-existing-target, and parent-swap cases refuse; owned-only
+  rollback preserves foreign replacements. Refusals emit pathless
+  `operation_failed`; generic `write_json`, `check`, and `doc_backend` receipt
+  writes are unchanged, as are stdout/privacy, authentication, routing, proof,
+  submission, and release-switch semantics. `render_probe`
   publishes only `render_certificate_configured` and closed
   `render_certificate_reason`, never the configured path. No automatic
   command or PDF promotion is performed while `CERTIFIED_PROOF_RELEASE_ENABLED`

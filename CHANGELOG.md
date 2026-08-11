@@ -109,6 +109,20 @@ the kernel's contract shape.
   eligibility semantics, routing, proof, submission behavior, or release
   switches; both advisory and certified release switches remain false.
 
+- **T158:** legacy v1 `measure`/`certify --out` now use a dedicated fresh
+  private artifact publisher. A pre-created canonical parent must be a real
+  directory, and the output leaf must be absent before publication; the
+  new leaf is required to be a regular one-link file. Symlink, reparse-point,
+  hardlink, pre-existing-target, and parent-swap cases refuse without
+  overwriting foreign bytes. Publication stages and links relative to a held
+  parent, then rebinds exact bytes and filesystem identity before committing;
+  rollback removes only a generation owned by this call, preserving foreign
+  replacements. A refusal from `main` remains the pathless `operation_failed`
+  result. Generic `write_json`, `check`, and `doc_backend` receipt writes are
+  unchanged; artifacts remain pathful private v1 files, and stdout/privacy,
+  authentication, routing, proof, submission, and release-switch semantics
+  are unchanged.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one

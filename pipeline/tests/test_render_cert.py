@@ -25,6 +25,7 @@ SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import feature_extract  # noqa: E402
+import diagnostic_candidate_core  # noqa: E402
 import render_cert  # noqa: E402
 
 
@@ -150,6 +151,22 @@ class RenderCertTestCase(unittest.TestCase):
             "word_anchor_px": 1.0,
             "raster_changed_channel_ratio": 0.01,
         }
+
+    def _run_private_certify(self, output: Path) -> tuple[int, str]:
+        """Run the legacy certify CLI against only synthetic private inputs."""
+        measurements = self.root / "private-measurements.json"
+        measurements.write_text(
+            json.dumps(self._measurements()), encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = render_cert.main([
+                "certify", "--measurements", str(measurements),
+                "--thresholds", json.dumps(self._thresholds()),
+                "--issued-at", "2026-07-20T00:00:00Z",
+                "--out", str(output),
+            ])
+        return code, stdout.getvalue()
 
     def _resign(self, certificate: dict) -> None:
         certificate.pop("certificate_hmac_sha256", None)
@@ -311,6 +328,506 @@ class RenderCertTestCase(unittest.TestCase):
                     )
                     self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
                 self.assertEqual(emitted, persisted)
+
+    def test_private_certify_requires_precreated_canonical_parent(self):
+        output = self.root / "private-output" / "certificate.json"
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertFalse(output.parent.exists())
+        self.assertFalse(output.exists())
+
+    def test_private_certify_refuses_preexisting_target_and_preserves_bytes(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        foreign = b"FOREIGN-CANONICAL-TARGET"
+        output.write_bytes(foreign)
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(output.read_bytes(), foreign)
+        self.assertEqual(output.stat().st_nlink, 1)
+
+    def test_private_certify_refuses_leaf_symlink_without_following_or_replacing(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        referent = parent / "foreign.json"
+        output = parent / "certificate.json"
+        referent.write_bytes(b"FOREIGN-REFERENT")
+        try:
+            output.symlink_to(referent)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertTrue(output.is_symlink())
+        self.assertEqual(output.resolve(), referent.resolve())
+        self.assertEqual(referent.read_bytes(), b"FOREIGN-REFERENT")
+
+    def test_private_certify_refuses_hardlink_target_without_breaking_alias(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        alias = parent / "foreign-alias.json"
+        output = parent / "certificate.json"
+        alias.write_bytes(b"FOREIGN-HARDLINK")
+        try:
+            os.link(alias, output)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"hardlink unavailable: {exc}")
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(alias.read_bytes(), b"FOREIGN-HARDLINK")
+        self.assertEqual(output.read_bytes(), b"FOREIGN-HARDLINK")
+        self.assertEqual(output.stat().st_nlink, 2)
+
+    def test_private_certify_refuses_parent_symlink_without_external_write(self):
+        real_parent = self.root / "private-output-real"
+        alias_parent = self.root / "private-output-alias"
+        external = self.root / "outside-private-output"
+        real_parent.mkdir()
+        external.mkdir()
+        try:
+            alias_parent.symlink_to(external, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink unavailable: {exc}")
+        output = alias_parent / "certificate.json"
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertTrue(alias_parent.is_symlink())
+        self.assertFalse((external / "certificate.json").exists())
+        self.assertFalse(output.exists())
+
+    def test_private_certify_refuses_nested_parent_ancestor_symlink(self):
+        """A regular leaf below an interior alias must not redirect output."""
+        external = self.root / "outside-private-output"
+        external_child = external / "nested"
+        alias_parent = self.root / "private-output-alias"
+        external_child.mkdir(parents=True)
+        try:
+            alias_parent.symlink_to(external, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink unavailable: {exc}")
+        output = alias_parent / "nested" / "certificate.json"
+
+        code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertTrue(alias_parent.is_symlink())
+        self.assertFalse((external_child / "certificate.json").exists())
+        self.assertFalse(output.exists())
+
+    def test_private_certify_target_identity_failure_rolls_back_owned_target(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_identity = render_cert._private_bound_identity
+        target_calls = 0
+
+        def fail_first_target_identity(binding, name):
+            nonlocal target_calls
+            if name == output.name:
+                target_calls += 1
+                if target_calls == 1:
+                    raise diagnostic_candidate_core.CoreError(
+                        "synthetic target identity failure",
+                    )
+            return real_identity(binding, name)
+
+        with mock.patch.object(
+            render_cert, "_private_bound_identity",
+            side_effect=fail_first_target_identity,
+        ):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
+        self.assertEqual(list(parent.glob(".*.tmp")), [])
+        self.assertEqual(list(parent.glob(".*.rollback.*")), [])
+
+    def test_private_certify_positive_output_is_exact_regular_one_link_file(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+
+        code, stdout = self._run_private_certify(output)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(output.is_file())
+        self.assertFalse(output.is_symlink())
+        self.assertEqual(output.stat().st_nlink, 1)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")),
+                         json.loads(stdout))
+        self.assertEqual(list(parent.glob(".*.tmp")), [])
+
+    def test_private_certify_parent_swap_cannot_redirect_or_leave_temp(self):
+        parent = self.root / "private-output"
+        moved_parent = self.root / "private-output-moved"
+        external = self.root / "outside-private-output"
+        parent.mkdir()
+        external.mkdir()
+        output = parent / "certificate.json"
+        link_called = False
+        swap_succeeded = False
+        real_link = render_cert.os.link
+
+        def swap_parent_then_link(*args, **kwargs):
+            nonlocal link_called, swap_succeeded
+            link_called = True
+            try:
+                parent.rename(moved_parent)
+                try:
+                    parent.symlink_to(external, target_is_directory=True)
+                except (OSError, NotImplementedError):
+                    moved_parent.rename(parent)
+                    raise
+                swap_succeeded = True
+            except OSError:
+                return real_link(*args, **kwargs)
+            return real_link(*args, **kwargs)
+
+        with mock.patch.object(render_cert.os, "link",
+                               side_effect=swap_parent_then_link):
+            code, _ = self._run_private_certify(output)
+
+        try:
+            self.assertTrue(link_called)
+            if swap_succeeded:
+                self.assertEqual(code, 3)
+                self.assertFalse((external / "certificate.json").exists())
+                self.assertFalse((moved_parent / "certificate.json").exists())
+                self.assertEqual(list(self.root.rglob("*.tmp")), [])
+            else:
+                # A held Windows directory handle legitimately blocks the
+                # swap; normal publication remains canonical.
+                self.assertEqual(code, 0)
+                self.assertTrue(output.is_file())
+                self.assertFalse(output.is_symlink())
+                self.assertEqual(output.stat().st_nlink, 1)
+        finally:
+            if parent.is_symlink():
+                parent.unlink()
+            if moved_parent.exists():
+                moved_parent.rename(parent)
+
+    def test_private_certify_precommit_foreign_replacement_is_preserved(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_link = render_cert.os.link
+
+        def foreign_then_link(*args, **kwargs):
+            output.write_bytes(b"FOREIGN-BEFORE-COMMIT")
+            return real_link(*args, **kwargs)
+
+        with mock.patch.object(render_cert.os, "link",
+                               side_effect=foreign_then_link):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(output.read_bytes(), b"FOREIGN-BEFORE-COMMIT")
+        self.assertEqual(output.stat().st_nlink, 1)
+
+    def test_private_certify_postpublish_foreign_replacement_is_preserved(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_link = render_cert.os.link
+        real_replace = render_cert.os.replace
+
+        def link_then_foreign(*args, **kwargs):
+            result = real_link(*args, **kwargs)
+            foreign = parent / "foreign-after.json"
+            foreign.write_bytes(b"FOREIGN-AFTER-COMMIT")
+            real_replace(foreign, output)
+            return result
+
+        with mock.patch.object(render_cert.os, "link",
+                               side_effect=link_then_foreign):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(output.read_bytes(), b"FOREIGN-AFTER-COMMIT")
+        self.assertEqual(output.stat().st_nlink, 1)
+
+    def test_private_certify_link_then_raise_rolls_back_owned_target(self):
+        """A post-link exception cannot strand the freshly linked receipt."""
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_link = render_cert.os.link
+
+        def link_then_raise(*args, **kwargs):
+            real_link(*args, **kwargs)
+            raise OSError("synthetic post-link failure")
+
+        with mock.patch.object(render_cert.os, "link",
+                               side_effect=link_then_raise):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
+        self.assertEqual(list(parent.glob(".*.tmp")), [])
+        self.assertEqual(list(parent.glob(".*.rollback.*")), [])
+
+    def test_private_certify_rollback_capture_unlink_race_preserves_foreign(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_capture_bound = render_cert._private_capture_bound
+        quarantine_captures = 0
+
+        def capture_then_foreign(binding, name):
+            nonlocal quarantine_captures
+            result = real_capture_bound(binding, name)
+            if name.startswith(f".{output.name}.rollback."):
+                quarantine_captures += 1
+                if quarantine_captures == 2:
+                    (binding.path / name).write_bytes(b"FOREIGN-ROLLBACK-RACE")
+            return result
+
+        def force_publish_failure(*args, **kwargs):
+            raise diagnostic_candidate_core.CoreError("synthetic-final-failure")
+
+        with mock.patch.object(render_cert, "_private_capture_bound",
+                               side_effect=capture_then_foreign), \
+             mock.patch.object(render_cert, "_private_validate_target",
+                                side_effect=force_publish_failure):
+            with self.assertRaises(diagnostic_candidate_core.CoreError):
+                render_cert._write_private_artifact_json(
+                    output, {"private": "rollback-race"},
+                )
+
+        self.assertEqual(output.read_bytes(), b"FOREIGN-ROLLBACK-RACE")
+        self.assertEqual(output.stat().st_nlink, 1)
+
+    def test_private_certify_source_temp_replacement_preserves_foreign_temp(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_link = render_cert.os.link
+
+        def replace_source_then_link(*args, **kwargs):
+            source = Path(args[0])
+            if not source.is_absolute():
+                source = parent / source
+            source.write_bytes(b"FOREIGN-STAGED-TEMP")
+            return real_link(*args, **kwargs)
+
+        with mock.patch.object(render_cert.os, "link",
+                               side_effect=replace_source_then_link):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
+        staged = list(parent.glob(".*.tmp"))
+        self.assertEqual(len(staged), 1)
+        self.assertEqual(staged[0].read_bytes(), b"FOREIGN-STAGED-TEMP")
+
+    def test_private_certify_final_rebind_same_size_mutation_is_refused(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        payload = {"private": "final-rebind"}
+        replacement = b"X" * len(render_cert._private_json_bytes(payload))
+        real_validate = render_cert._private_validate_target
+        real_lstat = Path.lstat
+        mutated = False
+
+        def validate_then_mutate(binding, name, expected, raw, **kwargs):
+            nonlocal mutated
+            if kwargs.get("lexical_path") != output:
+                return real_validate(binding, name, expected, raw, **kwargs)
+
+            def lstat_then_mutate(path):
+                nonlocal mutated
+                result = real_lstat(path)
+                if path == output and not mutated:
+                    output.write_bytes(replacement)
+                    mutated = True
+                return result
+
+            # Scope the mutation to the final lexical validation.  POSIX and
+            # Windows take different earlier identity paths, so counting raw
+            # os.stat calls made this regression miss the Linux seam in CI.
+            with mock.patch.object(Path, "lstat", new=lstat_then_mutate):
+                return real_validate(binding, name, expected, raw, **kwargs)
+
+        with mock.patch.object(
+                render_cert, "_private_validate_target",
+                side_effect=validate_then_mutate):
+            with self.assertRaises(diagnostic_candidate_core.CoreError):
+                render_cert._write_private_artifact_json(output, payload)
+
+        self.assertTrue(mutated)
+        self.assertEqual(output.read_bytes(), replacement)
+
+    def test_private_certify_final_lexical_capture_rejects_parent_swap(self):
+        parent = self.root / "private-output"
+        moved_parent = self.root / "private-output-moved"
+        external = self.root / "outside-private-output"
+        parent.mkdir()
+        external.mkdir()
+        output = parent / "certificate.json"
+        real_capture_bound = render_cert._private_capture_bound
+        swap_succeeded = False
+        swapped = False
+
+        def swap_before_lexical_capture(binding, name, **kwargs):
+            nonlocal swap_succeeded, swapped
+            lexical_path = kwargs.get("lexical_path")
+            if lexical_path == output and not swapped:
+                swapped = True
+                try:
+                    parent.rename(moved_parent)
+                    parent.symlink_to(external, target_is_directory=True)
+                    swap_succeeded = True
+                except (OSError, NotImplementedError):
+                    if moved_parent.exists() and not parent.exists():
+                        moved_parent.rename(parent)
+            return real_capture_bound(binding, name, **kwargs)
+
+        try:
+            with mock.patch.object(
+                render_cert, "_private_capture_bound",
+                side_effect=swap_before_lexical_capture,
+            ):
+                if os.name == "nt":
+                    code, _ = self._run_private_certify(output)
+                else:
+                    with self.assertRaises(diagnostic_candidate_core.CoreError):
+                        render_cert._write_private_artifact_json(
+                            output, {"private": "final-parent-swap"},
+                        )
+            self.assertTrue(swapped)
+            if swap_succeeded:
+                self.assertFalse((external / "certificate.json").exists())
+                self.assertFalse((moved_parent / "certificate.json").exists())
+            else:
+                self.assertTrue(output.is_file())
+                self.assertEqual(output.stat().st_nlink, 1)
+        finally:
+            if parent.is_symlink():
+                parent.unlink()
+            if moved_parent.exists():
+                moved_parent.rename(parent)
+
+    def test_private_certify_partial_precommit_failure_cleans_owned_temp(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+
+        def partial_stage(binding, name, data):
+            fd = binding.open_file(
+                name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+            )
+            before = os.fstat(fd)
+            owned = (
+                getattr(before, "st_dev", 0), getattr(before, "st_ino", 0),
+                0, getattr(before, "st_mtime_ns", 0),
+                getattr(before, "st_ctime_ns", 0), "",
+            )
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(b"PARTIAL-PRIVATE-TEMP")
+                stream.flush()
+            error = diagnostic_candidate_core.CoreError(
+                "synthetic partial write",
+            )
+            error.private_owned_identity = owned
+            raise error
+
+        with mock.patch.object(
+            render_cert, "_private_stage_bytes", new=partial_stage,
+        ):
+            code, _ = self._run_private_certify(output)
+
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
+        self.assertEqual(list(parent.glob(".*.tmp")), [])
+
+    def test_private_certify_postcommit_cleanup_failure_keeps_success(self):
+        parent = self.root / "private-output"
+        parent.mkdir()
+        output = parent / "certificate.json"
+        real_unlink = render_cert.os.unlink
+
+        def unlink_then_raise(*args, **kwargs):
+            result = real_unlink(*args, **kwargs)
+            raise OSError("synthetic postcommit cleanup failure")
+
+        with mock.patch.object(render_cert.os, "unlink",
+                               side_effect=unlink_then_raise):
+            code, stdout = self._run_private_certify(output)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(output.is_file())
+        self.assertEqual(output.stat().st_nlink, 1)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")),
+                         json.loads(stdout))
+
+    def test_generic_write_json_still_overwrites_for_legacy_callers(self):
+        target = self.root / "legacy.json"
+        target.write_text("FOREIGN", encoding="utf-8")
+
+        render_cert.write_json(target, {"legacy": True})
+
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")),
+                         {"legacy": True})
+
+    def test_private_measure_and_certify_routes_use_dedicated_publisher(self):
+        calls = []
+
+        def fake_private_publisher(path, payload):
+            calls.append(Path(path))
+            Path(path).write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+        measure_output = self.root / "measure-private" / "measurements.json"
+        measure_output.parent.mkdir()
+        with mock.patch.object(
+            render_cert, "_write_private_artifact_json",
+            side_effect=fake_private_publisher, create=True,
+        ), mock.patch.object(
+            render_cert, "measure_corpus",
+            return_value={"documents": [{"ok": True}]},
+        ):
+            measure_code = render_cert.main([
+                "measure", "--renderer", "mock", "--corpus",
+                str(self.manifest), "--out", str(measure_output),
+            ])
+
+        self.assertEqual(measure_code, 0)
+        self.assertEqual(calls, [measure_output])
+
+        calls.clear()
+        measurements = self.root / "route-measurements.json"
+        measurements.write_text(
+            json.dumps(self._measurements()), encoding="utf-8",
+        )
+        certify_output = self.root / "certify-private" / "certificate.json"
+        certify_output.parent.mkdir()
+        with mock.patch.object(
+            render_cert, "_write_private_artifact_json",
+            side_effect=fake_private_publisher, create=True,
+        ):
+            certify_code = render_cert.main([
+                "certify", "--measurements", str(measurements),
+                "--thresholds", json.dumps(self._thresholds()),
+                "--out", str(certify_output),
+            ])
+
+        self.assertEqual(certify_code, 0)
+        self.assertEqual(calls, [certify_output])
 
     def test_direct_and_consumer_loaders_reject_duplicate_certificate_keys(self):
         certificate = render_cert.issue_certificate(
