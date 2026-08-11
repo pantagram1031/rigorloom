@@ -156,6 +156,17 @@ runtime binding is `not_established`, proof is `none`, submission is `false`,
 and promotion is `not_run`. Legacy v1 certificates remain quarantined while
 both release switches stay false.
 
+T152 `renderer_certificate_composite_v1.py` is outside Stage 5 as well. It
+joins the captured T150 runtime receipt and T151 exact-document certificate
+under `rigorloom/renderer-certificate-composite/v1`, with
+`binding_scope: captured_snapshot_only` and ceiling
+`runtime_input_exact_document_certificate_binding_only`. `check WORKSPACE`
+and `verify WORKSPACE` do not execute a renderer, issue a certificate, write
+the backend receipt, auto-route, or promote a PDF; proof is `none`, submission
+is `false`, and promotion is `not_run`. The composite is not
+HMAC-authenticated, and T151 operator-key validation remains required but
+private material is never published.
+
 ---
 
 ## §HWP — assemble on a form copy (Windows + Hancom; engine bundled at engine/scripts)

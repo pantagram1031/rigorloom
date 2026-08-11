@@ -38,6 +38,20 @@ the kernel's contract shape.
   `ADVISORY_PROOF_RELEASE_ENABLED` and `CERTIFIED_PROOF_RELEASE_ENABLED`
   stay false, with no runtime integration, auto-route, or PDF promotion.
 
+- **T152:** added the diagnostic-only
+  `rigorloom/renderer-certificate-composite/v1` receipt. `check WORKSPACE`
+  joins the T150 runtime receipt with the T151 exact-document certificate and
+  publishes only under
+  `output/proof/renderer-certificate-composite/<run-id>/receipt.json`;
+  `verify WORKSPACE` re-runs both underlying verifiers and the exact source
+  check. The join is `binding_scope: captured_snapshot_only` with evidence
+  ceiling `runtime_input_exact_document_certificate_binding_only`; it keeps
+  `dependency_closure: unknown`, `comparison: unknown`, `render: not_run`,
+  proof `none`, submission `false`, and promotion `not_run`. File-level
+  certificate bytes and signed certificate-body digests remain distinct. The
+  composite is not HMAC-authenticated, does not execute or auto-route, and
+  publishes no paths, operator key, corpus/PDF bytes, argv, or streams.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one

@@ -35,6 +35,13 @@ EXACT actions:
     `not_run`. It cannot select a renderer, write the backend receipt, or
     promote a PDF, and legacy v1 certificates remain quarantined while both
     release switches are false.
+    T152 `renderer_certificate_composite_v1.py` is also outside this proof
+    ladder. Its `rigorloom/renderer-certificate-composite/v1` receipt joins
+    only captured T150 runtime and T151 exact-document evidence under
+    `binding_scope: captured_snapshot_only`; the ceiling is
+    `runtime_input_exact_document_certificate_binding_only`. It does not
+    execute, auto-route, or promote, is not HMAC-authenticated, and remains
+    `proof_grade: none`, `submission_grade: false`, `promotion: not_run`.
    A native Hancom receipt is renderer provenance, not a readability
    certification: its bound glyph-quality result may be `unknown` for an
    uninspectable Type3 font and still retain `hancom`, while a confirmed
