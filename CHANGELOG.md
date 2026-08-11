@@ -141,6 +141,21 @@ the kernel's contract shape.
   eligibility, routing, proof, submission, and promotion semantics remain
   unchanged; both release switches remain false.
 
+- **T160:** legacy private measurement now binds owned captured snapshots for
+  every producer read. Feature extraction, renderer input, and PDF metrics use
+  those owned captured snapshot files rather than rereading live
+  document/reference/candidate paths. After metrics, the final live
+  document/reference/candidate generations are rebound; a mutation restored before
+  that final check cannot alter snapshot-derived metrics, while non-restored
+  drift refuses the record. Before issuing a
+  certificate, the operator key is loaded first; immediately before HMAC the
+  live manifest and all measurement generations are rebound again, so a final
+  manifest or source/reference/candidate mutation cannot become a signed
+  claim. Successful measure/certify artifacts and stdout remain pathful private
+  v1 outputs; final pre-HMAC manifest drift publishes no stale certificate
+  artifact. The public verify/check projection, schema, routing, proof, release
+  switches, and generic failure/projection semantics otherwise remain unchanged.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
