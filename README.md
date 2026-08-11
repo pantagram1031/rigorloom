@@ -380,7 +380,16 @@ workspaces/  local run data; ignored by Git
   `reason_codes`; `check` adds only `eligible`, with no raw errors, paths, argv,
   feature maps, certificate payloads, or renderer streams. Successful
   `measure`/`certify` files remain private, pathful v1 operator artifacts and
-  are never public receipts. `render_probe` publishes only
+  are never public receipts. Only `measure`/`certify --out` uses the dedicated
+  fresh private artifact publisher: its pre-created canonical parent must be a
+  real directory; its output leaf must be absent, and the new leaf must be a
+  regular one-link file. Symlink/reparse/hardlink/pre-existing targets refuse without
+  changing foreign bytes; held-parent staging/link/final checks bind exact
+  bytes and identity, and owned-only rollback preserves foreign replacements.
+  Refusals remain pathless `operation_failed`; generic `write_json`, `check`,
+  and `doc_backend` behavior is unchanged. This custody boundary changes no
+  stdout/privacy, authentication, routing, proof, submission, or release-switch
+  semantics. `render_probe` publishes only
   `render_certificate_configured` and closed `render_certificate_reason`.
   `certified_runtime_unbound` prevents `submission_preflight` from accepting
   the grade until a separately reviewed runtime binding is released. T151's

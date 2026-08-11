@@ -127,3 +127,45 @@ def test_t157_docs_pin_legacy_public_summary_and_cli_privacy_boundary():
     assert trouble.index("| T156 |") < trouble.index("| T155 |")
     assert trouble.index("| T155 |") < trouble.index("| T154 |")
     assert "| T109 |" not in trouble
+
+
+def test_t158_docs_pin_legacy_private_artifact_custody_boundary():
+    paths = (
+        "CHANGELOG.md",
+        "README.md",
+        "docs/trouble-table.md",
+        "docs/golden-path.md",
+        "docs/research/render-cert-envelope-v2.md",
+    )
+    combined = " ".join(" ".join(_read(path).split()) for path in paths)
+    for token in (
+        "T158",
+        "fresh private artifact publisher",
+        "pre-created canonical parent",
+        "absent output leaf",
+        "regular one-link",
+        "symlink",
+        "reparse",
+        "hardlink",
+        "held-parent",
+        "exact bytes",
+        "identity",
+        "owned-only rollback",
+        "foreign replacements",
+        "pathless `operation_failed`",
+        "generic `write_json`",
+        "`doc_backend`",
+        "pathful private v1",
+        "stdout/privacy",
+        "authentication",
+        "routing",
+        "proof",
+        "release-switch",
+    ):
+        assert token in combined
+
+    trouble = _read("docs/trouble-table.md")
+    assert trouble.index("| T158 |") < trouble.index("| T157 |")
+    assert trouble.index("| T157 |") < trouble.index("| T156 |")
+    assert trouble.index("| T156 |") < trouble.index("| T155 |")
+    assert "| T109 |" not in trouble
