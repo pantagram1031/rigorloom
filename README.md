@@ -77,6 +77,13 @@ own skill fragments at install time via `scripts/sync_local.py`.
   execution, and PDF promotion off. `render_cert.py` is an explicit operator
   diagnostic, not submission proof, until a separately reviewed runtime
   binding is released.
+- **T151 exact-document certificate envelope.**
+  `render_cert_envelope_v2.py` can issue a pathless, HMAC-bound snapshot from a
+  private manifest and check only the exact document bytes. It is diagnostic
+  evidence with `runtime_binding: not_established`, `proof_grade: none`,
+  `submission_grade: false`, and `promotion: not_run`; it does not execute a
+  renderer, auto-route, or promote a PDF, and it ships no private paths,
+  operator key, or corpus bytes.
 - **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
   XML directly through the bundled engine (`engine/scripts`), without Hancom
   or COM, on any OS.
@@ -360,7 +367,10 @@ workspaces/  local run data; ignored by Git
   `pipeline/scripts/render_cert.py measure`/`certify`/`verify`/`check` commands
   are explicit operator diagnostics only; `certified_runtime_unbound` prevents
   `submission_preflight` from accepting the grade until a separately reviewed
-  runtime binding is released.
+  runtime binding is released. T151's
+  `rigorloom/render-cert-envelope/v2` pathless envelope is an independent
+  exact-document diagnostic; it does not revive the legacy v1 route or change
+  either release switch.
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
 v0.16.0 completed the unified-core-and-modules program (engine absorption,
