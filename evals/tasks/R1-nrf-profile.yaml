@@ -51,4 +51,11 @@ machine_checks:
     description: 기존 보고서 파이프라인이 이 프로파일을 보고서 팩 가정 없이 받아들이는가
     argv: ["modules/report/scripts/fill_report.py", "--help"]
     expect_exit: 0
-    blocked_on: report 모듈 번들이 설치된 런에서만 평가한다
+    # T106: this used to be blocked_on with that same sentence as prose.
+    # run_machine_check returns on blocked_on BEFORE it consults
+    # requires_module, so the reason promised a conditionality the code never
+    # implemented: the report bundle was installed and enabled in a clean-room
+    # run and the check still skipped. requires_module is the mechanism that
+    # actually means "only where this module is installed", so the statement is
+    # now true instead of merely written.
+    requires_module: report

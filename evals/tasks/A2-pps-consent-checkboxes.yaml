@@ -30,11 +30,11 @@ expected_behavior:
 machine_checks:
   - id: profile_blank
     kind: python
-    description: 빈 양식 프로파일링 - Bench-0 고정 하한 (anchors 28, tables 3)
+    description: 빈 양식 프로파일링 - Bench-0 고정 하한 (anchors 28, tables 4)
     argv: ["engine/scripts/form_inspect.py", "${INPUTS}/pps-jeongbogonggae-donguiseo.hwpx", "--out", "${WORK}/blank.profile.json"]
     expect_exit: 0
     json_file: "${WORK}/blank.profile.json"
-    assert_json: ["len(anchors) >= 28", "len(table_map) == 3"]
+    assert_json: ["len(anchors) >= 28", "len(table_map) == 4"]
 
   - id: filled_produced
     kind: file
