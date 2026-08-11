@@ -25,6 +25,17 @@ def _write_bound(ws: Path, name: str, data: bytes) -> Path:
     return path
 
 
+def _duplicate_json_member(
+    raw: bytes, member: str, duplicate_member: str | None = None,
+) -> bytes:
+    text = raw.decode("utf-8")
+    if text.count(member) != 1:
+        raise AssertionError(f"expected one JSON member, got {member!r}")
+    duplicate_member = duplicate_member or member
+    return text.replace(
+        member, f"{member},{duplicate_member}", 1).encode("utf-8")
+
+
 def _quality_for(path: Path, *, state="passed", reason="passed"):
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return {
@@ -226,6 +237,146 @@ def test_successful_named_runtime_is_hash_bound(tmp_path, backend, evidence_clas
     assert loaded["execution"]["input"]["sha256"] == hashlib.sha256(b"assembled").hexdigest()
     expected_output = b"svg" if evidence_class == "diagnostic_render" else b"pdf"
     assert loaded["execution"]["output"]["sha256"] == hashlib.sha256(expected_output).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        '"schema": "rigorloom/document-evidence/v1"',
+        '"backend": "xml_only"',
+    ],
+    ids=["top_level", "nested_execution"],
+)
+def test_receipt_duplicate_json_members_are_rejected_by_direct_decoder(
+    tmp_path, member,
+):
+    ws = _workspace(tmp_path)
+    source = _write_bound(ws, "form_copy.hwpx", b"source")
+    assembled = _write_bound(ws, "out.hwpx", b"assembled")
+    receipt = evidence.build_receipt(
+        ws,
+        backend="xml_only",
+        evidence_class="structural_only",
+        terminal_state="succeeded",
+        input_path=source,
+        output_path=assembled,
+        input_role="source_form",
+        output_role="assembled_hwpx",
+        exit_code=0,
+    )
+    duplicated = _duplicate_json_member(
+        evidence._canonical_bytes(receipt), member)
+    with pytest.raises(evidence.EvidenceError) as exc:
+        evidence._decode_receipt_bytes(duplicated)
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in exc.value.errors)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        '"schema": "rigorloom/document-evidence/v1"',
+        '"backend": "xml_only"',
+    ],
+    ids=["top_level", "nested_execution"],
+)
+def test_receipt_duplicate_json_members_are_rejected_by_public_loader(
+    tmp_path, member,
+):
+    ws = _workspace(tmp_path)
+    source = _write_bound(ws, "form_copy.hwpx", b"source")
+    assembled = _write_bound(ws, "out.hwpx", b"assembled")
+    receipt = evidence.build_receipt(
+        ws,
+        backend="xml_only",
+        evidence_class="structural_only",
+        terminal_state="succeeded",
+        input_path=source,
+        output_path=assembled,
+        input_role="source_form",
+        output_role="assembled_hwpx",
+        exit_code=0,
+    )
+    evidence.write_receipt(ws, receipt)
+    receipt_path = ws / evidence.RECEIPT_REL
+    receipt_path.write_bytes(_duplicate_json_member(
+        receipt_path.read_bytes(), member))
+    with pytest.raises(evidence.EvidenceError) as exc:
+        evidence.load_and_validate_receipt(ws)
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in exc.value.errors)
+
+
+@pytest.mark.parametrize(
+    ("member", "duplicate_member"),
+    [
+        (
+            '"schema": "rigorloom/document-evidence/v1"',
+            '"schema": "rigorloom/document-evidence/future"',
+        ),
+        (
+            '"backend": "xml_only"',
+            '"backend": "future_backend"',
+        ),
+    ],
+    ids=["top_level_conflict", "nested_execution_conflict"],
+)
+def test_receipt_conflicting_duplicate_json_members_are_rejected(
+    tmp_path, member, duplicate_member,
+):
+    ws = _workspace(tmp_path)
+    source = _write_bound(ws, "form_copy.hwpx", b"source")
+    assembled = _write_bound(ws, "out.hwpx", b"assembled")
+    receipt = evidence.build_receipt(
+        ws,
+        backend="xml_only",
+        evidence_class="structural_only",
+        terminal_state="succeeded",
+        input_path=source,
+        output_path=assembled,
+        input_role="source_form",
+        output_role="assembled_hwpx",
+        exit_code=0,
+    )
+    duplicated = _duplicate_json_member(
+        evidence._canonical_bytes(receipt), member, duplicate_member)
+    with pytest.raises(evidence.EvidenceError) as direct_error:
+        evidence._decode_receipt_bytes(duplicated)
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in direct_error.value.errors)
+    evidence.write_receipt(ws, receipt)
+    receipt_path = ws / evidence.RECEIPT_REL
+    receipt_path.write_bytes(duplicated)
+    with pytest.raises(evidence.EvidenceError) as public_error:
+        evidence.load_and_validate_receipt(ws)
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in public_error.value.errors)
+
+
+def test_receipt_unique_key_reordering_and_whitespace_remain_accepted(tmp_path):
+    ws = _workspace(tmp_path)
+    source = _write_bound(ws, "form_copy.hwpx", b"source")
+    assembled = _write_bound(ws, "out.hwpx", b"assembled")
+    receipt = evidence.build_receipt(
+        ws,
+        backend="xml_only",
+        evidence_class="structural_only",
+        terminal_state="succeeded",
+        input_path=source,
+        output_path=assembled,
+        input_role="source_form",
+        output_role="assembled_hwpx",
+        exit_code=0,
+    )
+    evidence.write_receipt(ws, receipt)
+    receipt_path = ws / evidence.RECEIPT_REL
+    reordered = {key: receipt[key] for key in reversed(receipt)}
+    receipt_path.write_text(
+        "\n  \n" + json.dumps(reordered, indent=4) + "\n\n",
+        encoding="utf-8",
+    )
+    loaded = evidence.load_and_validate_receipt(ws)
+    assert loaded["schema"] == evidence.RECEIPT_SCHEMA
 
 
 def test_backend_evidence_pairing_and_roles_fail_closed(tmp_path):

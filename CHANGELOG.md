@@ -76,6 +76,16 @@ the kernel's contract shape.
   bytes but does not authenticate child-process evidence; proof remains `none`,
   submission `false`, and promotion `not_run`.
 
+- **T155:** duplicate JSON object members now refuse recursively in generic
+  document-evidence receipts and in the legacy v1 render-certificate loaders,
+  including external files and inline JSON. Generic receipt decoding reports
+  `receipt_duplicate_key`; certificate `verify`/`check` reports
+  `certificate_invalid_json`, while an outer CLI operation that cannot parse its
+  input remains `operation_failed`. This adds no authentication, automatic
+  route, or promotion; the legacy v1 workflow remains quarantined and
+  diagnostic-only with `proof_grade: none`. T155 is duplicate-member rejection
+  only; it does not expand canonical JSON, non-finite-value, or HMAC semantics.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one

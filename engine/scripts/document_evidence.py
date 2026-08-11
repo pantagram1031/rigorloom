@@ -1917,9 +1917,32 @@ class _DestinationDirectoryBinding:
                 pass
 
 
+def _reject_duplicate_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Decode one JSON object while refusing duplicate member names.
+
+    Python's default decoder keeps the last duplicate value, which can turn a
+    forged receipt into a different in-memory payload than the bytes an
+    operator inspected.  The hook is recursive: ``json`` invokes it for every
+    nested object before the containing object is returned.
+    """
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise EvidenceError({
+                "code": "receipt_duplicate_key",
+                "path": RECEIPT_REL.as_posix(),
+                "message": "receipt contains a duplicate JSON member",
+            })
+        payload[key] = value
+    return payload
+
+
 def _decode_receipt_bytes(raw: bytes) -> dict[str, Any]:
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_pairs,
+        )
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise EvidenceError({
             "code": "receipt_malformed",

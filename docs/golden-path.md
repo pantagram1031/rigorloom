@@ -476,6 +476,9 @@ assembly to Hancom proof. `fill_report.py` and post-assembly renderer paths
 write the current, hash-bound receipt at
 `<WS>/output/proof/backend/receipt.json`. Stage 6 validates that receipt and
 requires its derived `proof_grade` to equal `output/verdict_v06.json`.
+Generic document-evidence receipt decoding rejects duplicate JSON object
+members at every nesting level with `receipt_duplicate_key`; it never applies
+last-member-wins parsing before Stage 6 validation.
 
 The XML path therefore produces `proof_grade: none` unless a released named
 renderer actually succeeds. Successful named LibreOffice, `rhwp`, and Windows

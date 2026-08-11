@@ -39,6 +39,20 @@ def _json_bytes(payload) -> bytes:
     ).encode("utf-8")
 
 
+def _reject_duplicate_json_pairs(pairs):
+    """Build JSON objects without silently accepting duplicate member names."""
+    payload = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("duplicate_json_key")
+        payload[key] = value
+    return payload
+
+
+def _json_loads(text: str):
+    return json.loads(text, object_pairs_hook=_reject_duplicate_json_pairs)
+
+
 def _sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -70,7 +84,7 @@ def write_json(path: str | Path, payload: dict) -> None:
 
 
 def _read_json(path: str | Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return _json_loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _result(ok: bool, reason_codes: list[str], **extra) -> dict:
@@ -560,7 +574,7 @@ def _derive_certificate_claims(
         group = grouped[key]
         train = [record for record in group if record["split"] == "train"]
         holdout = [record for record in group if record["split"] == "holdout"]
-        group_features = json.loads(key)
+        group_features = _json_loads(key)
         covers_failed_holdout = any(
             all(
                 tag in group_features and count <= group_features[tag]
@@ -676,7 +690,7 @@ def verify_certificate(
         cert = _read_json(source_path) if source_path else certificate
     except FileNotFoundError:
         return _result(False, ["certificate_missing"])
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         return _result(False, ["certificate_invalid_json"])
     if not isinstance(cert, dict):
         return _result(False, ["certificate_schema_invalid"])
@@ -844,7 +858,7 @@ def _threshold_args(args) -> dict:
         candidate = Path(args.thresholds)
         if candidate.is_file():
             return _read_json(candidate)
-        return json.loads(args.thresholds)
+        return _json_loads(args.thresholds)
     if args.word_anchor_px is None or args.raster_changed_channel_ratio is None:
         raise ValueError("certify requires --thresholds or both metric threshold options")
     return {

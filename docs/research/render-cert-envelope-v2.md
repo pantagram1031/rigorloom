@@ -64,7 +64,12 @@ renderer, or auto-routes a document. `ADVISORY_PROOF_RELEASE_ENABLED=False`
 and `CERTIFIED_PROOF_RELEASE_ENABLED=False` remain unchanged.
 
 The legacy `pipeline/scripts/render_cert.py` v1 certificate workflow remains
-quarantined and diagnostic-only. T151 does not upgrade the closed
+quarantined and diagnostic-only. Its external-file and inline JSON loaders now
+refuse duplicate object members recursively; certificate `verify`/`check`
+reports `certificate_invalid_json`, while an outer CLI operation that cannot
+parse its input reports `operation_failed`. This is duplicate-member rejection
+only; it does not expand canonical JSON, non-finite-value, or HMAC semantics.
+T151 does not upgrade the closed
 `certified_runtime_unbound` route, enable certified execution, or promote a
 PDF. The result ceiling is always `proof_grade: none`,
 `submission_grade: false`, `promotion: not_run`, and
