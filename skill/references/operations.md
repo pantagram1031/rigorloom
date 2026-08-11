@@ -152,13 +152,29 @@ rather than imported:
 
 Two open gaps, both recorded rather than quietly fixed:
 
-- `check_grant` `self_deleting_guide_retained` and
-  `example_placeholder_retained` gate on the operator-supplied `--mode` rather
-  than on the state the checker derives. Measured on the untouched kstartup
-  blank form: `--mode auto` and `--mode draft` give `hard: 0`, while
-  `--mode final` gives `hard: 2` with `document.state` still reported as
-  `blank`. The verdict then says the document is blank and that the applicant's
-  own words are missing from it. Neither rule takes a baseline parameter.
+- **Closed as T103, and narrower than first written.** All four work-type
+  checkers let `--mode` force the derived state, and all four already recorded
+  the override in `document.state_used` — so the data was there and my first
+  note was wrong to call the verdict traceless. What was missing was any
+  statement that the two DISAGREED, visible only to a reader who compared two
+  sibling keys while `document.state` is the obvious one. `resolve_state` in
+  `checker_base` now applies the override and returns a
+  `document_state_declared_against_evidence` WARN naming both values and the
+  basis; measured on the untouched kstartup blank form, `--mode auto` is
+  unchanged and `--mode final` gains that WARN beside its two HARDs.
+  It is a WARN, not a HARD: a declaration disagreeing with the evidence is not
+  a defect of the document, and an operator legitimately knows the intended
+  state before the seats are filled. Both directions are reported — declaring
+  `blank` over a filled document SUPPRESSES the rules that would have judged
+  it, which is the quieter mistake.
+- **`check_grant`'s residue rules are correctly baseline-independent**, and
+  this is where the T100 class does NOT apply. I nearly extended baseline
+  attribution to `self_deleting_guide_retained` and
+  `example_placeholder_retained` before reading what they assert: the form's own
+  sentence instructs the applicant to delete it, so in a final submission the
+  SURVIVAL of that inherited text is precisely the defect. Inheritance is not
+  exculpatory here. A gate must not blame the artifact for an inherited
+  property — unless the rule is about the inheritance itself.
 - `check_gongmun` `seal_slot_overwritten` ignores the `baseline_model` its
   sibling `seal_slot_removed` reads from the same scope, comparing against a
   generic label vocabulary instead. Empirically clean on the corpus, so

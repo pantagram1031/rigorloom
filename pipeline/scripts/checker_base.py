@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 
 EXIT_PASS = 0
@@ -30,6 +30,51 @@ def exit_code(*, hard: Sequence[Any] = (), usage: bool = False) -> int:
     if usage:
         return EXIT_USAGE
     return EXIT_HARD if hard else EXIT_PASS
+
+
+#: The declared-mode value that means "trust the derived state".
+STATE_MODE_AUTO = "auto"
+
+
+def resolve_state(classification: MutableMapping[str, Any],
+                  mode: str) -> Mapping[str, Any] | None:
+    """Apply a declared ``--mode`` over a derived state, loudly (T103).
+
+    Every work-type checker derives a document state and then lets ``--mode``
+    force it. All four recorded the override in ``state_used`` and none of them
+    ever said the two DISAGREED, so a declared mode that contradicts the
+    evidence was visible only to a reader who thought to compare two sibling
+    keys — and ``document.state`` is the obvious one to read.
+
+    That silence has teeth. Declaring ``final`` on a document the checker reads
+    as ``blank`` makes every "you left the form's own guidance in the packet"
+    rule fire on content the blank form shipped with; declaring ``blank`` on a
+    filled one suppresses those rules instead. Neither is a defect of the
+    document, so neither is HARD — it is a declaration disagreeing with the
+    evidence, which is a WARN that names both values.
+
+    Mutates ``classification`` to carry ``mode`` and ``state_used`` as before,
+    and returns the contradiction row to append, or ``None``.
+    """
+    derived = classification.get("state")
+    state = derived if mode == STATE_MODE_AUTO else mode
+    classification["mode"] = mode
+    classification["state_used"] = state
+    if mode == STATE_MODE_AUTO or mode == derived:
+        return None
+    classification["state_declaration_conflict"] = True
+    return {
+        "code": "document_state_declared_against_evidence",
+        "msg": ("--mode declared %r but this document reads as %r (%s), and the "
+                "declared value is what gates the state-dependent rules — so "
+                "findings below may name content the form itself shipped with, "
+                "or may be suppressed on a document that is further along than "
+                "declared" % (mode, derived,
+                              classification.get("state_basis") or "no basis")),
+        "declared_mode": mode,
+        "derived_state": derived,
+        "state_basis": classification.get("state_basis"),
+    }
 
 
 def verdict_skeleton(
