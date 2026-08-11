@@ -1577,6 +1577,46 @@ class RenderCertTestCase(unittest.TestCase):
                         issued_at="2026-08-12T00:00:00Z",
                     )
 
+    def test_issue_uses_lexical_manifest_join_not_resolving_helper(self):
+        with mock.patch.object(
+            render_cert, "_resolve_recorded_path",
+            side_effect=AssertionError("legacy resolving helper must not run"),
+        ):
+            certificate = render_cert.issue_certificate(
+                self._measurements(), self._thresholds(),
+                issued_at="2026-08-12T00:00:00Z",
+            )
+        self.assertEqual(certificate["schema_version"], 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path-alias regression")
+    def test_issue_accepts_windows_short_path_alias_for_bound_document(self):
+        import ctypes
+
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short.restype = ctypes.c_uint32
+        source = str(self.doc)
+        size = 512
+        buffer = ctypes.create_unicode_buffer(size)
+        result = get_short(source, buffer, size)
+        if not result or buffer.value.casefold() == source.casefold():
+            self.skipTest("short-path alias unavailable")
+        tampered = deepcopy(self._measurements())
+        short_root = Path(buffer.value).parent
+        tampered["corpus"]["manifest_path"] = str(
+            short_root / self.manifest.name,
+        )
+        for record in tampered["documents"]:
+            record["document"] = str(short_root / self.doc.name)
+            record["reference_pdf"] = str(short_root / self.reference.name)
+            record["candidate_pdf"] = str(
+                short_root / self.candidates[record["id"]].name,
+            )
+        certificate = render_cert.issue_certificate(
+            tampered, self._thresholds(), issued_at="2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(certificate["schema_version"], 1)
+
     @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
     def test_pdf_metrics_include_exact_pages_word_anchors_and_raster_ratio(self):
         import fitz

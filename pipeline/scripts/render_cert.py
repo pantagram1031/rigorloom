@@ -42,6 +42,14 @@ def _absolute_lexical(path: str | Path) -> Path:
     return Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
 
 
+def _resolve_recorded_lexical_path(raw: str, base: Path) -> Path:
+    """Resolve a recorded path without canonicalizing its parent aliases."""
+    candidate = Path(raw).expanduser()
+    return _absolute_lexical(
+        candidate if candidate.is_absolute() else base / candidate,
+    )
+
+
 def _json_bytes(payload) -> bytes:
     try:
         return json.dumps(
@@ -1391,7 +1399,7 @@ def issue_certificate(
     if not isinstance(manifest_raw, str) or not manifest_raw:
         raise ValueError("measurements do not contain a corpus manifest path")
     manifest_base = measurement_path.parent if measurement_path else Path.cwd()
-    manifest_path = _resolve_recorded_path(manifest_raw, manifest_base)
+    manifest_path = _resolve_recorded_lexical_path(manifest_raw, manifest_base)
     manifest_snapshot = _capture_private_generation(
         manifest_path, "manifest_changed",
     )
