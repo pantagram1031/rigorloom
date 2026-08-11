@@ -148,6 +148,14 @@ not a Stage 5 backend: it binds a fixed `rhwp_pdf` `export-pdf` child under
 `proof_grade: none`, and `submission_grade: false`. No automatic route sends
 its receipt to Stage 5/6, `new_report`, canonical output, or certified proof.
 
+T151 `render_cert_envelope_v2.py` is also outside Stage 5. Its private-manifest
+`rigorloom/render-cert-envelope/v2` certificate is a pathless exact-document
+hash/HMAC snapshot only. `verify CERT` and `check DOCUMENT CERT` do not execute
+or select a renderer, write the backend receipt, or promote a PDF; their
+runtime binding is `not_established`, proof is `none`, submission is `false`,
+and promotion is `not_run`. Legacy v1 certificates remain quarantined while
+both release switches stay false.
+
 ---
 
 ## §HWP — assemble on a form copy (Windows + Hancom; engine bundled at engine/scripts)
