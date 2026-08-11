@@ -296,10 +296,50 @@ Machine-check kinds:
 | `geometry` | table geometry (cell addr/size/borderFill/shading, row/col counts) identical between two profiles |
 | `idempotence` | two artifacts have identical zip member contents |
 | `residue` | `check_residue` exit 0 **and** non-vacuous |
-| `text_present` / `text_absent` | strings survive / are gone in the artifact's extracted text |
+| `text_present` / `text_absent` | strings survive / are gone in the artifact's extracted text. **Never on a rule name in a verdict JSON** — see below |
 
 `assert_json` is a small expression language: `len(anchors) >= 29`,
-`table_map[0].rowCnt == 19`, `constraints.max_pages == null`.
+`table_map[0].rowCnt == 19`, `constraints.max_pages == null`. It is accepted on
+**every** kind, not just `python` — a `file` check can carry it, which is how a
+task asserts something about a verdict another check already produced.
+
+### Never search for a rule name in a verdict JSON (T118)
+
+This README used to document the convention *"a rule name absent from the verdict
+JSON means it ran and passed."* **That convention was never true**, and four
+tasks were written against it.
+
+A checker writes a rule name in at least three senses: as a **finding** (it
+fired), as a **positive acknowledgment** (`{"seat":
+"self_deleting_guide_retained", "state": "clean"}` means the agent correctly
+deleted the notice), and as a permanent **skipped** row with a reason. A
+substring search over the serialized verdict cannot tell them apart.
+
+Measured cost: A3's check asserted thirteen names absent and **could never
+pass** — not on a perfect fill, and not on the pristine corpus form that
+`check_grant` itself grades `pass`, because `budget_total_mismatch` is a
+permanent `skipped` row (`no_addends`, table 11 addr [5,5]).
+
+So a checker publishes each rule's outcome and the task asserts *that*:
+
+```yaml
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - 'rules.table_structure_lost != "hard"'
+      - 'rules.budget_total_mismatch == "skipped"'
+```
+
+`rules` maps every rule name to one of `hard` / `warn` / `skipped` / `clean`,
+severity first, so a rule that fired somewhere is reported by its worst outcome
+and a skip elsewhere cannot mask a finding. `clean` is the thing the old
+convention tried to express by silence.
+
+`tests/test_prompt_values_are_accounted.py` enforces this: a `text_present` /
+`text_absent` whose strings are rule names and whose artifact is a verdict fails.
+Four instances remain open in `H1` and `P2` — `check_hr` and `check_minwon` do
+not publish the map yet — and they are **pinned in a
+`KNOWN_NAME_SEARCH_DEBT` list**, so a new instance fails and a fixed one forces
+the list down on purpose.
 
 The `residue` kind implements the form-fill keep derivation from
 form-eval-scenarios.md §"Results appendix" note 1: on a *fill*, the form's own
