@@ -92,7 +92,8 @@ keeps only its renderer provenance for that diagnostic boundary. A passed
 checker only establishes this bounded glyph property; it is not Hancom visual
 parity.
 
-**Deterministic:** FULL for the receipt-bound HWPX/PDF pair. The checker keeps
+**Deterministic:** NONE in `visual_verify`; FULL for the receipt-bound
+HWPX/PDF pair in the separate `render_quality` run. The checker keeps
 only aggregate counts and font xrefs: when source Hangul is present, zero PDF
 Hangul or more unique syllables than an embedded font's glyph capacity is a
 HARD `missing_hangul_glyphs` result. Partial source/PDF syllable coverage is
@@ -254,7 +255,10 @@ different indentation across different heading LEVELS.
 page. Drift is inconsistency within a class, not variety across classes.
 **Severity note:** `warn` by default. Escalate to `hard` in `severity` only
 when the drift makes a table row unreadable or crosses a cell boundary.
-**Deterministic:** NONE.
+**Deterministic:** PARTIAL — see the class table for the four `layout_qa` legs.
+Optical alignment of a block against its neighbours is not measured, which is
+why this class earns its keep: the A2 run's displaced ruled blank (T112) was
+found here and nowhere else.
 
 ### `orphan_widow` (warn)
 **Looks like:** a heading alone at the bottom of a page with its body on the

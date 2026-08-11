@@ -156,8 +156,30 @@ def die(msg, code=2):
     sys.exit(code)
 
 
+def _charpr_body(header_xml, start):
+    """`start` 이후 **이 charPr의 본문만** 반환.
+
+    tail window 방식은 정의가 짧으면 다음 charPr로 새어나간다. 밑줄은 어느 런이
+    괘선 빈칸인지를 결정하므로(T112) 이웃의 속성을 물려받으면 안 된다 —
+    닫는 태그 또는 다음 charPr 시작, 둘 중 먼저 오는 곳에서 끊는다.
+
+    실측: PPS 코퍼스 양식의 charPr 본문은 649자이고 ``underline``은 오프셋 462에
+    있다. 이웃한 ``fontRef`` 조회가 쓰는 400자 창으로는(fontRef는 첫 자식이라
+    문제가 없다) 보이지 않는다 — 그래서 임의 길이가 아니라 charPr 경계로 끊는다.
+    """
+    tail = header_xml[start:]
+    bounds = [m for m in (re.search(r'</' + NS + r':charPr>', tail),
+                          re.search(r'<' + NS + r':charPr\b', tail))
+              if m is not None]
+    return tail[:min(m.start() for m in bounds)] if bounds else tail
+
+
 def _charpr_defs(header_xml):
-    """charPr id -> {height_pt, color, fontRef}. fontRef는 lang별 font id dict."""
+    """charPr id -> {height_pt, color, fontRef, underline}.
+
+    fontRef는 lang별 font id dict. ``underline``은 type 값(없으면 None)이며
+    ``NONE``이 아닌 값이 곧 괘선 빈칸의 표식이다.
+    """
     defs = {}
     for m in re.finditer(r'<' + NS + r':charPr\b([^>]*?)/?>', header_xml):
         attrs = m.group(1)
@@ -172,12 +194,26 @@ def _charpr_defs(header_xml):
         if fr:
             for k, v in re.findall(r'(\w+)\s*=\s*' + Q + r'(\d+)' + Q, fr.group(1)):
                 font_ref[k] = v
+        um = re.search(r'<' + NS + r':underline\b([^>]*)>',
+                       _charpr_body(header_xml, m.end()))
         defs[cid] = {
             "height_pt": int(height) / 100.0 if height else None,
             "color": (color.upper() if color and re.match(r'#?[0-9A-Fa-f]{6}$', color) else None),
             "fontRef": font_ref,
+            "underline": _attr(um.group(1), "type") if um else None,
         }
     return defs
+
+
+def _is_ruled(defs, cid):
+    """이 charPr이 괘선(밑줄)을 그리는가.
+
+    양식의 빈칸은 밑줄 런으로 그려진다. 값을 라벨 런에 이어 쓰면 괘선 런은
+    그대로 남아 값 아래가 아닌 곳에 선으로 렌더된다 — 텍스트 게이트는 어느
+    쪽이든 통과하므로 이 사실을 프로필이 말해줘야 한다(T112).
+    """
+    ul = (defs.get(cid) or {}).get("underline")
+    return bool(ul) and ul.upper() != "NONE"
 
 
 def _fontfaces(header_xml):
@@ -846,7 +882,20 @@ def _table_map(section_names, z, defs, borderfill_shaded,
     return tables
 
 
-def _full_text(section_names, z, wanted):
+def _run_record(run, defs):
+    """--full-text 런 레코드. ``ruled``는 참일 때만 존재한다.
+
+    괘선 런이 곧 값을 써 넣을 자리다. 라벨 런에 이어 쓰면 괘선이 값과 분리돼
+    남는다 — A2 산출물의 주소 줄에서 실제로 그렇게 렌더됐고, 결정론적 검사와
+    vision 모두 통과했다.
+    """
+    out = {"index": run["index"], "text": run["text"], "charpr": run["charpr"]}
+    if _is_ruled(defs or {}, run["charpr"]):
+        out["ruled"] = True
+    return out
+
+
+def _full_text(section_names, z, wanted, defs=None):
     """--full-text로 **이름 붙인 셀/문단만** 정확한 텍스트를 반환.
 
     구조-전용 계약(profile은 본문 텍스트를 담지 않는다)의 **의도적** 탈출구다.
@@ -912,9 +961,7 @@ def _full_text(section_names, z, wanted):
                 "para_idx": para_idx,
                 "section": record["section"],
                 "text": record["text"],
-                "runs": [{"index": r["index"], "text": r["text"],
-                           "charpr": r["charpr"]}
-                          for r in record["runs"]],
+                "runs": [_run_record(r, defs) for r in record["runs"]],
             })
             continue
 
@@ -939,8 +986,7 @@ def _full_text(section_names, z, wanted):
             "addr": {"row": row, "col": col},
             "text": text,
             "truncated_preview": len(text) > 30,
-            "runs": [{"index": r["index"], "text": r["text"],
-                      "charpr": r["charpr"]} for r in runs],
+            "runs": [_run_record(r, defs) for r in runs],
         })
     return out
 
@@ -1318,7 +1364,8 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
     }
     if full_text:
         # opt-in 이므로 요청이 없으면 키 자체가 없다 — 구조-전용 계약 유지.
-        profile["full_text"] = _full_text(section_names, z, full_text)
+        profile["full_text"] = _full_text(section_names, z, full_text,
+                                          defs)
 
     baseline = None
     if want_baseline:
