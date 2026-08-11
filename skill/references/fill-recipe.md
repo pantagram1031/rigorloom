@@ -606,11 +606,22 @@ paragraph with the `at_para` values from the table above:
   is decoration. Marking or deleting one is wrong in both directions.
 - The consent question paragraph itself survives, and since T110 it is no longer
   in `check_residue`'s forbidden set, so no `--keep` is needed for it.
-- **Still needed:** the statutory notice paragraphs on the same form
-  (`※ … 동의를 거부할 권리가 있습니다`, PIPA §22 고지) are still classified as
-  removable guide text, so they must be named in an explicit `--keep` or the
-  residue gate HARDs on correct content. That is a known open defect, not a
-  property of consent forms.
+- The statutory notice paragraphs on the same form
+  (`※ … 동의를 거부할 권리가 있습니다`, PIPA §22 고지) are classified as removable
+  guide text by core, so the residue gate holds their text in the forbidden set.
+  Since T114 you do **not** hand-write a `--keep` for them: the grant module
+  declares them in `expectations.protected_text`, and `visual_verify` forwards
+  them, recording them as `deterministic.residue_keep.module_protected_keep`
+  apart from your own `explicit_keep`.
+
+  **You have to pass the module payload for that to happen.** Module
+  expectations are ordinary payload the caller supplies — nothing loads them for
+  you — so merge
+  `modules/<family>/references/visual_expectations/<family>.json` into the
+  `--expectations` file you build from your fill declaration. Measured on A2:
+  with the module list the run needs **zero** hand-written keeps where it
+  previously needed four, and with neither the residue gate correctly HARDs. If
+  `module_protected_keep` comes back empty on a 동의서, you forgot the merge.
 
 ## 3c. A form's blank is a ruled run — put the value on the rule (T112)
 
