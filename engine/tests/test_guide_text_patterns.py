@@ -137,3 +137,96 @@ def test_admrul_bound_locked_at_zero():
         _corpus("converted/admrul-gajokdolbom-hyuga-sinchengseo.hwpx"),
         want_baseline=False)
     assert len(profile["guide_text"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# T110 (#63) — a paragraph carrying an answer slot is a marking site, never a
+# removal target.  The admrul BOUND above states this principle at WHOLE-FORM
+# granularity ("checkbox fill-targets ... must survive assembly"); these apply
+# it per paragraph, which is where it was leaking.
+# ---------------------------------------------------------------------------
+
+# Exact corpus strings.  Both PPS consent questions are structurally identical
+# and legally identical, and they carried OPPOSITE removal verdicts because
+# their paraPrIDRef differ (18 vs 21) and only one of those ids happens to be
+# reused by a heading.  Formatting accident decided whether a statutory consent
+# question was offered up for deletion.
+CONSENT_COLLECT = "☞ 위와 같이 개인정보를 수집ㆍ이용하는데 동의하십니까? (예,  아니오)"
+CONSENT_THIRD_PARTY = "☞ 위와 같이 개인정보를 제3자에게 제공하는데 동의하십니까? (예,  아니오)"
+JUMIN_CHOICE = "[  ]전체 포함  [  ]직접 입력: 최근  년 포함"
+
+# The still-catches set, measured over all 12 corpus forms: guide lines that
+# merely DESCRIBE the marking convention carry ONE slot and stay removable.
+# Every one of these must keep failing the predicate, or the threshold of 2 has
+# been relaxed into form content.
+DESCRIBES_THE_CONVENTION = [
+    "※ [  ]에는 해당하는 곳에 √표를 합니다.",
+    "※ [  ]에는 해당되는 곳에 √표를 합니다.",
+    "※ 3쪽의 유의 사항을 읽고 작성하시기 바라며, 해당하는 내용 앞의 [ ]에 √표를 합니다.",
+    "※ 담당 공무원이 행정정보의 공동이용을 통해 확인하는 것에 동의하는 서류 앞의 [ ]에 √표를 합니다.",
+]
+
+
+@pytest.mark.parametrize("text,expected", [
+    (CONSENT_COLLECT, "interrogative_enumeration"),
+    (CONSENT_THIRD_PARTY, "interrogative_enumeration"),
+    (JUMIN_CHOICE, "multiple_mark_slots"),
+])
+def test_answer_slot_is_recognized(text, expected):
+    assert form_inspect._answer_slot_reason(text) == expected
+
+
+@pytest.mark.parametrize("text", DESCRIBES_THE_CONVENTION)
+def test_describing_the_marking_convention_is_still_removable(text):
+    """A sentence ABOUT slots is guide text; a line OF slots is a field."""
+    assert form_inspect._answer_slot_reason(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    # A citation in brackets is not an empty slot, and this header line is a
+    # legitimate removal target on 3 corpus forms.
+    "■ 주민등록법 시행규칙 [별지 제7호서식] <개정 2024. 12. 20.>",
+    # A signature parenthetical enumerates nothing and asks nothing.
+    "성명 : (서명 또는 인)",
+    # An enumeration with no question is a list of collected items.
+    "수집 항목 : (성명, 주소)",
+])
+def test_answer_slot_does_not_over_fire(text):
+    assert form_inspect._answer_slot_reason(text) is None
+
+
+def test_both_pps_consent_questions_get_the_same_verdict():
+    """The class defect: identical content, opposite verdicts, decided by which
+    paraPr id the form author happened to reuse."""
+    profile, _ = form_inspect.analyze(
+        _corpus("grant/pps-jeongbogonggae-donguiseo.hwpx"), want_baseline=False)
+    targets = {t["para_idx"] for t in profile["removal_targets"]}
+    consent = [g for g in profile["guide_text"]
+               if "동의하십니까" in (g["text"] or "")]
+    assert len(consent) == 2, "corpus drift: expected exactly 2 consent questions"
+    verdicts = {g["para_idx"] in targets for g in consent}
+    assert verdicts == {False}, (
+        "a statutory consent question is offered for removal: "
+        f"{[(g['para_idx'], g['para_idx'] in targets) for g in consent]}")
+    # Only the content-based leg may claim them; being an anchor is incidental.
+    assert all(g.get("answer_slot") == "interrogative_enumeration"
+               for g in consent)
+    # Non-vacuity: the fix must not empty the list it filters.
+    assert targets, "removal_targets went empty — the filter over-fired"
+
+
+def test_jumin_selection_fields_are_not_removal_targets():
+    profile, _ = form_inspect.analyze(
+        _corpus("converted/jumin-deungchobon-sinchengseo.hwpx"),
+        want_baseline=False)
+    targets = {t["para_idx"] for t in profile["removal_targets"]}
+    fields = [g for g in profile["guide_text"]
+              if (g["text"] or "").strip() == JUMIN_CHOICE]
+    assert len(fields) == 2, "corpus drift: expected 2 선택 필드 paragraphs"
+    assert not [g for g in fields if g["para_idx"] in targets]
+    # And the instruction lines on the same form stay removable, so this is a
+    # discrimination rather than a blanket exemption for the form.
+    describing = [g for g in profile["guide_text"]
+                  if "√표를 합니다" in (g["text"] or "")]
+    assert describing, "corpus drift: expected √표 instruction lines"
+    assert all(g["para_idx"] in targets for g in describing)
