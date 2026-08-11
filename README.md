@@ -70,11 +70,13 @@ own skill fragments at install time via `scripts/sync_local.py`.
   the old "caller-supplied-integer" bypass was retired in v0.7 (see
   [CHANGELOG.md](CHANGELOG.md)).
 - **A graded render proof ladder, not a single pass/fail.** Delivery is
-  ranked `none < experimental-rhwp < advisory < certified < hancom` — v0.15
-  added `certified`, an opt-in, HMAC-signed operator render certificate that
-  lets the `hwpx` backend clear submission grade on equation-bearing
-  documents without Hancom — and the ladder is cross-checked against what
-  this machine can actually render, not trusted blindly.
+  ranked `none < experimental-rhwp < advisory < certified < hancom`, but
+  `certified` is a closed schema value in this release:
+  `CERTIFIED_PROOF_RELEASE_ENABLED` is false and
+  `certified_runtime_unbound` keeps certificate verification, renderer
+  execution, and PDF promotion off. `render_cert.py` is an explicit operator
+  diagnostic, not submission proof, until a separately reviewed runtime
+  binding is released.
 - **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
   XML directly through the bundled engine (`engine/scripts`), without Hancom
   or COM, on any OS.
@@ -159,7 +161,7 @@ Only `bundle` is required — the other three are optional extras dispatched by
 |---|---|---|---|---|
 | `bundle` | none (stdlib) | any OS, no Hancom | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview | none — advisory artifact only; cannot satisfy the Stage 5.3 format gate (`output/out.hwpx` required) |
 | `docx` | `pip install .[docx]` | any OS, no Hancom | styled `.docx` (headings, figures, tables; equations render as literal text, not OMML; PDF conversion left to LibreOffice) | none — same reason as `bundle` |
-| `hwpx` | bundled XML engine (`engine/scripts`; `HWP_MASTER_SCRIPTS` optional override) | any OS, **no Hancom** | `output/out.hwpx` filled without COM | `advisory` by default — LibreOffice + H2Orestart headless render for equation-free documents; equation-bearing documents (or any document when no `soffice` renderer exists) instead get an `experimental-rhwp` SVG overflow/pagination check on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own; otherwise proof grade is `none`. Opt into `certified` (submission-grade, ranks between `advisory` and `hancom`) by setting `certified_render: true` and `render_certificate: <path>` in `build.yaml` once an operator has issued an HMAC-signed certificate (`render_cert.py measure`/`certify`) — the certificate is independently re-verified at submission time |
+| `hwpx` | bundled XML engine (`engine/scripts`; `HWP_MASTER_SCRIPTS` optional override) | any OS, **no Hancom** | `output/out.hwpx` filled without COM | Terminal grade is `none` for XML and LibreOffice in this release. Equation-free LibreOffice + H2Orestart may produce an internal `advisory` candidate, but `ADVISORY_PROOF_RELEASE_ENABLED` is false and prevents terminal promotion. Equation-bearing documents (or any document when no `soffice` renderer exists) may instead get an `experimental-rhwp` SVG overflow/pagination diagnostic on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own. Certified opt-in is also unavailable: `certified_render` remains diagnostic-only and `certified_runtime_unbound` prevents promotion while `CERTIFIED_PROOF_RELEASE_ENABLED` is false. |
 | `hwp` | Windows + Hancom + bundled COM loop (`engine/scripts`) | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
 
 The `bundle` backend is the any-machine floor: it runs anywhere Python runs,
@@ -167,6 +169,12 @@ with zero dependencies, but it is a preview/review artifact, not a graded
 submission. Stage 6 `submission_preflight` requires `proof_grade` to be
 `hancom`, `certified`, or `advisory` (`pipeline/scripts/submission_preflight.py`);
 a `docx` or `bundle`-only run never reaches that state.
+
+Certified remains a closed schema value in this release: the shared
+`CERTIFIED_PROOF_RELEASE_ENABLED` switch is false and
+`certified_runtime_unbound` keeps certificate verification, renderer execution,
+and PDF promotion quarantined. The `hwpx` row's historical certificate
+configuration is diagnostic-only and does not provide a current opt-in route.
 
 ### Content audit and submission gates
 
@@ -344,13 +352,15 @@ workspaces/  local run data; ignored by Git
   `submission_preflight` as diagnostic-only, and pixel-level parity with
   Hancom rendering has not been achieved (see
   [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
-- **Certified (v0.15, opt-in)**: `certified` is a submission-grade proof
-  tier between `advisory` and `hancom` — an operator issues an HMAC-signed
-  render certificate (`pipeline/scripts/render_cert.py measure`/`certify`)
-  from a Windows/Hancom reference machine, and `submission_preflight`
-  independently re-verifies it before accepting the grade. It is the only
-  path to a submission-grade `hwpx` artifact for equation-bearing documents
-  without Hancom present on the build machine itself.
+- **Certified (v0.15, schema value; currently quarantined)**: `certified` is
+  retained as a closed proof value between `advisory` and `hancom`; automatic
+  certificate verification, renderer execution, and PDF promotion remain
+  disabled while `CERTIFIED_PROOF_RELEASE_ENABLED` is false.
+  The historical operator-certificate workflow is not active in this release.
+  `pipeline/scripts/render_cert.py measure`/`certify`/`verify`/`check` commands
+  are explicit operator diagnostics only; `certified_runtime_unbound` prevents
+  `submission_preflight` from accepting the grade until a separately reviewed
+  runtime binding is released.
 - **Studio action mode**: opt-in and token-guarded; off by default.
 
 v0.16.0 completed the unified-core-and-modules program (engine absorption,

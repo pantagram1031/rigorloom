@@ -161,6 +161,7 @@ _CORE_REQUIRED_FILES = (
     "pipeline/scripts/hwp_source_coverage.py",
     "pipeline/scripts/hwp_docinfo_coverage.py",
     "pipeline/scripts/hwp_equation_diagnostic.py",
+    "pipeline/scripts/renderer_runtime_v2.py",
     "pipeline/references/hwp_java/Hwp2HwpxBridge.java",
     "pipeline/references/hwp_java/toolchain-lock.json",
     "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json",

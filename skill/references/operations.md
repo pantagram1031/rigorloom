@@ -409,6 +409,40 @@ text, script hashes, IDs, member names, paths, argv, stdout, or stderr.
 analyzed/refused results exit 3 and never enter ingress, Stage 0, canonical
 output, rendering, `new_report`, or submission.
 
+## 0A.7. T150 quarantine-only renderer runtime v2
+
+T150 is an explicitly requested runtime diagnostic, not a backend and not a
+certified-proof switch. Pre-create the exact workspace leaf
+`output/proof/renderer-runtime-v2` and provide an opaque run id, one operator
+binary, and one opaque certificate with mandatory SHA-256 pins:
+
+```sh
+python pipeline/scripts/renderer_runtime_v2.py inspect WORKSPACE \
+  --run-id 0123456789abcdef --renderer-id rhwp_pdf \
+  --binary RHWP_BINARY --binary-sha256 SHA256 \
+  --certificate CERTIFICATE --certificate-sha256 SHA256
+python pipeline/scripts/renderer_runtime_v2.py verify WORKSPACE \
+  --run-id 0123456789abcdef --binary RHWP_BINARY --certificate CERTIFICATE
+```
+
+The closed adapter stages `output/out.hwpx` as `input.hwpx` and invokes only
+`rhwp_pdf --version` followed by `rhwp_pdf export-pdf INPUT -o OUTPUT`. It
+uses a private cwd, a minimal environment, contained child processes, bounded
+no-follow regular-file captures, and final source/binary/certificate/output/
+receipt rebinds. Equation-bearing HWPX refuses with
+`equation_input_unsupported` before either child starts. The receipt schema is
+`rigorloom/renderer-runtime-v2/v1`; its only persistent files are
+`<run-id>/artifact.pdf` and `<run-id>/receipt.json`.
+
+The receipt records `dependency_closure: unknown`, certificate validation
+`not_run`, comparison `unknown`, render `not_run`, proof `none`, submission
+false, and promotion `not_run`. It contains no source text, paths, argv, child
+streams, or certificate contents. Never route it to `doc_backend`, Stage 0/5/6,
+canonical output, `new_report`, or `output/proof/backend/receipt.json`.
+`CERTIFIED_PROOF_RELEASE_ENABLED` remains false and certified routing remains
+`certified_runtime_unbound`; no binary, certificate, document, or corpus bytes
+are installed or shipped.
+
 ## 1. story_graph
 
 ```
