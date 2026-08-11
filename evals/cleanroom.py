@@ -295,6 +295,25 @@ def load_task(path: Path | str) -> dict[str, Any]:
 _CHECK_KINDS = {"python", "shell", "file", "geometry", "idempotence",
                 "residue", "text_present", "text_absent", "unmodified"}
 _FILE_MODES = {"exists", "absent", "nonempty"}
+
+#: Why a prompt-named value is not asserted by any machine check. Closed, so
+#: that ``uncurated`` stays a countable debt instead of a shrug (#61).
+UNASSERTED_REASONS = frozenset({
+    # The bullet is an instruction or a description, not a literal to write.
+    "prose",
+    # One bullet carries several fields; the parts are asserted individually.
+    "composite",
+    # The form renders this in its own format, so no literal is expected.
+    "format_unknown",
+    # The task deliberately expects this NOT to be written (a signature seat).
+    "expected_absent",
+    # Measured to be in the blank form already — a printed option label the fill
+    # MARKS rather than writes. text_present cannot tell a fill from a no-op
+    # there, so asserting it would be a green light for doing nothing.
+    "in_blank_form",
+    # Not yet decided. Counted, and the count is published in evals/README.md.
+    "uncurated",
+})
 # ``requires_module: NAME`` gates one machine_check on a distribution module
 # being enabled in the sandbox. Same name grammar as module_registry's _NAME_RE.
 _MODULE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
@@ -340,6 +359,30 @@ def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
         if declared not in basenames:
             fail(f"baseline {declared!r} is not one of this task's inputs "
                  f"({sorted(basenames)}) — the blank form must be a task input")
+
+    # ``unasserted_prompt_values`` (optional): the values this task's prompt
+    # names that NO machine check asserts, each with a reason from a closed
+    # vocabulary. The guard in tests/test_prompt_values_are_accounted.py parses
+    # the prompt and fails on any value that is neither asserted nor listed
+    # here, so the gap between "what was asked" and "what is checked" is
+    # counted rather than silent (#61).
+    if "unasserted_prompt_values" in task:
+        rows = task["unasserted_prompt_values"]
+        if not isinstance(rows, list) or not rows:
+            fail("unasserted_prompt_values must be a non-empty list when present")
+        for row in rows:
+            if not isinstance(row, dict):
+                fail("unasserted_prompt_values entries must be mappings")
+            if not isinstance(row.get("value"), str) or not row["value"].strip():
+                fail("unasserted_prompt_values entries need a non-empty value")
+            if row.get("why") not in UNASSERTED_REASONS:
+                fail(f"unasserted_prompt_values[{row['value']!r}]: why must be "
+                     f"one of {sorted(UNASSERTED_REASONS)} "
+                     f"(got {row.get('why')!r})")
+            extra = sorted(set(row) - {"value", "why", "note"})
+            if extra:
+                fail(f"unasserted_prompt_values[{row['value']!r}]: unknown "
+                     f"members {extra}")
 
     behaviors = task.get("expected_behavior")
     if not isinstance(behaviors, list) or not behaviors:

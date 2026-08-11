@@ -24,6 +24,16 @@ input_files:
 # blank form.
 baseline: jumin-deungchobon-sinchengseo.hwpx
 
+# Values this prompt names that no machine check asserts, with the reason.
+# tests/test_prompt_values_are_accounted.py parses the prompt and fails on any
+# value that is neither asserted nor listed here, so the gap between what was
+# asked and what is checked stays counted rather than silent (#61).
+unasserted_prompt_values:
+  - value: "주민등록표 등본 1통, 용도는 은행 제출용"
+    why: prose
+    note: >-
+      a description of what to request, realized as the form's own quantity and purpose fields
+
 expected_behavior:
   - "[judgment] 접수번호, 접수일, 처리기간 같은 담당 공무원 전용 칸(음영 칸)을 알아보고 쓰지 않는다."
   - "[judgment] 체크 표시는 [ ] 안에 √ 를 넣는 텍스트 토글로 처리한다. 폼 필드 객체로 바꾸지 않는다."
@@ -125,3 +135,15 @@ machine_checks:
       # non-zero value proves BOTH that the harness supplied the blank form and
       # that the agent actually wrote into the grid.
       - "document.cells_changed >= 1"
+
+  # #61 — the values the prompt supplies. Before this, the harness verified the
+  # internal consistency of what the agent claimed and never fidelity to what
+  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
+  # value was never written while every gate passed.
+  - id: requested_values_present
+    kind: text_present
+    description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "서울특별시 강남구 테헤란로 100"
+      - "010-0000-0000"

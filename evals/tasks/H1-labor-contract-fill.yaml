@@ -26,6 +26,16 @@ input_files:
 # / this sentence destroyed?" is only decidable against the form it came from.
 baseline: moel-pyojun-geunrogyeyakseo-2025.hwpx
 
+# Values this prompt names that no machine check asserts, with the reason.
+# tests/test_prompt_values_are_accounted.py parses the prompt and fails on any
+# value that is neither asserted nor listed here, so the gap between what was
+# asked and what is checked stays counted rather than silent (#61).
+unasserted_prompt_values:
+  - value: "한빛정밀 주식회사, 대표 김도현"
+    why: composite
+    note: >-
+      one bullet carries the employer and its representative; both are asserted individually
+
 expected_behavior:
   - "[judgment] 여러 종류의 표준계약서가 한 문서에 들어 있음을 알아보고, 사용자가 지정한 기간의 정함이 없는 경우 계약서만 채운다. 나머지 계약서 시트는 지우지 않는다."
   - "[judgment] 상여금, 수당, 임금지급일처럼 사용자가 주지 않은 항목은 지어내지 않고 빈칸으로 두며 무엇이 비었는지 되돌려 알려준다."
@@ -155,3 +165,20 @@ machine_checks:
     strings:
       - "v2025"
       - "verbatim"
+
+  # #61 — the values the prompt supplies. Before this, the harness verified the
+  # internal consistency of what the agent claimed and never fidelity to what
+  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
+  # value was never written while every gate passed.
+  - id: requested_values_present
+    kind: text_present
+    description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "한빛정밀 주식회사"
+      - "김도현"
+      - "이서준"
+      - "2026년 9월 1일"
+      - "경기도 화성시 동탄산단로 15"
+      - "2,800,000원"
+      - "2026년 8월 20일"

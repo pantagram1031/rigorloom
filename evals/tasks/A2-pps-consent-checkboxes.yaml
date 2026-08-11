@@ -130,3 +130,16 @@ machine_checks:
     artifact: "${WORK}/grant_verdict.json"
     strings:
       - "no_mark_glyphs"
+
+  # #61 — the values the prompt supplies. Before this, the harness verified the
+  # internal consistency of what the agent claimed and never fidelity to what
+  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
+  # value was never written while every gate passed.
+  - id: requested_values_present
+    kind: text_present
+    description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "김도현"
+      - "서울특별시 강남구 테헤란로 100"
+      - "2026년 8월 20일"
