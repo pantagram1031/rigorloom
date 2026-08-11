@@ -221,6 +221,97 @@ class RenderCertTestCase(unittest.TestCase):
         self.assertTrue(result["eligible"], result)
         self.assertEqual(result["reason_code"], "eligible")
 
+    def test_public_verify_is_exact_pathless_contract(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-public.json"
+        render_cert.write_json(cert_path, certificate)
+
+        result = render_cert.verify_certificate(
+            cert_path, renderer_binary=self.binary, renderer_version="mock 1.0",
+        )
+
+        self.assertEqual(set(result), {"ok", "reason_code", "reason", "reason_codes"})
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
+
+    def test_public_check_is_exact_pathless_contract_on_success_and_refusal(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-public-check.json"
+        render_cert.write_json(cert_path, certificate)
+
+        accepted = render_cert.check_document(
+            self.doc, cert_path,
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+        )
+        refused = render_cert.check_document(
+            self.root / "missing-document.hwpx", cert_path,
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+        )
+        for result in (accepted, refused):
+            self.assertEqual(
+                set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+            )
+            self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
+        self.assertTrue(accepted["eligible"], accepted)
+        self.assertFalse(refused["eligible"], refused)
+
+    def test_cli_operation_failed_is_fixed_and_pathless_in_stdout_and_out(self):
+        marker = self.root / "private-operation-marker" / "missing-measurements.json"
+        out = self.root / "public-result.json"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = render_cert.main([
+                "certify", "--measurements", str(marker),
+                "--thresholds", json.dumps(self._thresholds()),
+                "--out", str(out),
+            ])
+        self.assertEqual(code, 3)
+        emitted = json.loads(stdout.getvalue())
+        persisted = json.loads(out.read_text(encoding="utf-8"))
+        for result in (emitted, persisted):
+            self.assertEqual(set(result), {"ok", "reason_code", "reason", "reason_codes"})
+            self.assertEqual(result["reason_code"], "operation_failed")
+            self.assertNotIn("error", result)
+            self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
+        self.assertNotIn(str(self.root), stdout.getvalue())
+
+    def test_cli_check_is_exact_pathless_contract_in_stdout_and_out(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-cli-check.json"
+        render_cert.write_json(cert_path, certificate)
+        for label, document in (
+            ("accepted", self.doc),
+            ("refused", self.root / "missing-cli-document.hwpx"),
+        ):
+            with self.subTest(label=label):
+                out = self.root / f"{label}-result.json"
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    code = render_cert.main([
+                        "check", str(document), str(cert_path),
+                        "--renderer-binary", str(self.binary),
+                        "--renderer-version", "mock 1.0", "--out", str(out),
+                    ])
+                expected_code = 0 if label == "accepted" else 3
+                self.assertEqual(code, expected_code)
+                emitted = json.loads(stdout.getvalue())
+                persisted = json.loads(out.read_text(encoding="utf-8"))
+                for result in (emitted, persisted):
+                    self.assertEqual(
+                        set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+                    )
+                    self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
+                self.assertEqual(emitted, persisted)
+
     def test_direct_and_consumer_loaders_reject_duplicate_certificate_keys(self):
         certificate = render_cert.issue_certificate(
             self._measurements(), self._thresholds(),
@@ -241,6 +332,7 @@ class RenderCertTestCase(unittest.TestCase):
         )
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["reason_code"], "certificate_invalid_json")
+        self.assertEqual(set(result), {"ok", "reason_code", "reason", "reason_codes"})
 
     def test_consumer_rejects_conflicting_duplicate_with_valid_last_value(self):
         certificate = render_cert.issue_certificate(
@@ -390,7 +482,9 @@ class RenderCertTestCase(unittest.TestCase):
                 payload = json.loads(stdout.getvalue())
                 self.assertFalse(payload["ok"], payload)
                 self.assertEqual(payload["reason_code"], "operation_failed")
-                self.assertEqual(payload["error"], "duplicate_json_key")
+                self.assertEqual(
+                    set(payload), {"ok", "reason_code", "reason", "reason_codes"},
+                )
                 self.assertNotIn(str(self.root), stdout.getvalue())
 
     def test_manifest_loader_rejects_duplicate_top_level_or_nested_key(self):
@@ -639,6 +733,30 @@ class RenderCertTestCase(unittest.TestCase):
         )
         self.assertFalse(result["eligible"])
         self.assertEqual(result["reason_code"], "unknown_feature")
+
+    def test_unknown_feature_canary_is_not_echoed_by_public_check(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-canary.json"
+        render_cert.write_json(cert_path, certificate)
+        canary = "unknown:PRIVATE_CANARY"
+        with mock.patch.object(
+            render_cert.feature_extract,
+            "extract_feature_counts",
+            return_value={canary: 1},
+        ):
+            result = render_cert.check_document(
+                self.doc, cert_path,
+                renderer_binary=self.binary, renderer_version="mock 1.0",
+            )
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "unknown_feature")
+        self.assertNotIn(canary, json.dumps(result, ensure_ascii=False))
 
     def test_unknown_run_child_is_never_certifiable(self):
         unknown_doc = self.root / "unknown-run-child.hwpx"

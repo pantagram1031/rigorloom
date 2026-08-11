@@ -721,7 +721,7 @@ def _resolve_recorded_path(raw: str, base: Path) -> Path:
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
-def verify_certificate(
+def _verify_certificate_rich(
     certificate: dict | str | Path,
     *,
     renderer_binary: str | Path | None = None,
@@ -840,6 +840,31 @@ def verify_certificate(
     )
 
 
+def verify_certificate(
+    certificate: dict | str | Path,
+    *,
+    renderer_binary: str | Path | None = None,
+    renderer_version: str | None = None,
+) -> dict:
+    """Return the closed public certificate-verification projection.
+
+    The full certificate/manifest/binary evidence remains available only to
+    the private helper used by the document eligibility check.  Public callers
+    receive stable status and reason fields without paths, argv, certificate
+    members, or renderer identifiers.
+    """
+    try:
+        rich = _verify_certificate_rich(
+            certificate, renderer_binary=renderer_binary, renderer_version=renderer_version,
+        )
+    except Exception:
+        return _result(False, ["certificate_invalid"])
+    return _result(
+        rich.get("ok") is True,
+        list(rich.get("reason_codes") or [rich.get("reason_code", "unknown_failure")]),
+    )
+
+
 def _inside_envelope(features: dict[str, int], envelope: list[dict]) -> bool:
     for entry in envelope:
         maximum = entry.get("features", {})
@@ -855,45 +880,27 @@ def check_document(
     renderer_binary: str | Path | None = None,
     renderer_version: str | None = None,
 ) -> dict:
-    verification = verify_certificate(
-        certificate, renderer_binary=renderer_binary, renderer_version=renderer_version
-    )
+    try:
+        verification = _verify_certificate_rich(
+            certificate, renderer_binary=renderer_binary, renderer_version=renderer_version
+        )
+    except Exception:
+        return {**_result(False, ["certificate_invalid"]), "eligible": False}
     if verification.get("ok") is not True:
-        return {
-            **verification,
-            "eligible": False,
-            "document": str(Path(document)),
-        }
+        return {**_result(False, verification.get("reason_codes", [
+            verification.get("reason_code", "certificate_invalid")
+        ])), "eligible": False}
     try:
         features = feature_extract.extract_feature_counts(document)
-    except (OSError, ValueError):
-        return {
-            **_result(False, ["document_unreadable"]),
-            "eligible": False, "document": str(Path(document)),
-        }
+    except Exception:
+        return {**_result(False, ["document_unreadable"]), "eligible": False}
     unknown = sorted(tag for tag in features if tag.startswith("unknown:"))
     if unknown:
-        return {
-            **_result(False, ["unknown_feature"]),
-            "eligible": False, "document": str(Path(document)),
-            "features": features, "unknown_features": unknown,
-        }
+        return {**_result(False, ["unknown_feature"]), "eligible": False}
     certificate_payload = verification["certificate"]
     if not _inside_envelope(features, certificate_payload["envelope"]):
-        return {
-            **_result(False, ["envelope_mismatch"]),
-            "eligible": False, "document": str(Path(document)),
-            "features": features,
-        }
-    return {
-        **_result(True, ["eligible"]),
-        "eligible": True, "document": str(Path(document).resolve()),
-        "features": features,
-        "certificate_sha256": certificate_payload["certificate_sha256"],
-        "renderer_id": certificate_payload["renderer_id"],
-        "renderer_version": certificate_payload["renderer_version"],
-        "hancom_version": certificate_payload["hancom_version"],
-    }
+        return {**_result(False, ["envelope_mismatch"]), "eligible": False}
+    return {**_result(True, ["eligible"]), "eligible": True}
 
 
 def _threshold_args(args) -> dict:
@@ -972,8 +979,8 @@ def main(argv: list[str] | None = None) -> int:
                 renderer_version=args.renderer_version,
             )
             code = 0 if payload["eligible"] else 3
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
-        payload = _result(False, ["operation_failed"], error=str(exc))
+    except Exception:
+        payload = _result(False, ["operation_failed"])
         code = 3
     safe_payload = _strict_output_payload(payload)
     if safe_payload is not payload:

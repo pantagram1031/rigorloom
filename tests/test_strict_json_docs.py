@@ -82,3 +82,48 @@ def test_t156_docs_pin_finite_json_only_boundary():
     assert trouble.index("| T156 |") < trouble.index("| T155 |")
     assert trouble.index("| T155 |") < trouble.index("| T154 |")
     assert "| T109 |" not in trouble
+
+
+def test_t157_docs_pin_legacy_public_summary_and_cli_privacy_boundary():
+    paths = (
+        "CHANGELOG.md",
+        "README.md",
+        "docs/trouble-table.md",
+        "docs/golden-path.md",
+        "docs/research/render-cert-envelope-v2.md",
+    )
+    combined = " ".join(" ".join(_read(path).split()) for path in paths)
+    for token in (
+        "T157",
+        "verify_certificate",
+        "ok",
+        "reason_code",
+        "reason_codes",
+        "check_document",
+        "eligible",
+        "raw errors",
+        "feature maps",
+        "renderer streams",
+        "private, pathful v1 operator artifacts",
+        "never public receipts",
+        "render_certificate_configured",
+        "render_certificate_reason",
+        "no `verify` subcommand",
+        "no authentication",
+        "no automatic",
+        "proof",
+        "submission",
+        "release switches remain false",
+    ):
+        assert token in combined
+
+    for path in ("README.md", "docs/golden-path.md", "CHANGELOG.md"):
+        text = _read(path)
+        assert "measure`/`certify`/`verify`/`check" not in text
+        assert "measure/verify/check" not in text
+
+    trouble = _read("docs/trouble-table.md")
+    assert trouble.index("| T157 |") < trouble.index("| T156 |")
+    assert trouble.index("| T156 |") < trouble.index("| T155 |")
+    assert trouble.index("| T155 |") < trouble.index("| T154 |")
+    assert "| T109 |" not in trouble

@@ -95,6 +95,20 @@ the kernel's contract shape.
   remain unchanged. This is finite-JSON enforcement only: it adds no canonical
   JSON, HMAC, authentication, routing, proof, promotion, or privacy expansion.
 
+- **T157:** the quarantined legacy v1 renderer-certificate API now exposes a
+  bounded public summary: `verify_certificate` returns only `ok`,
+  `reason_code`, `reason`, and `reason_codes`; `check_document` and the `check`
+  CLI add only `eligible`. Public summaries omit raw errors, local paths,
+  argv, feature maps, certificate payloads, and renderer streams. The CLI has
+  `measure`, `certify`, and `check` only; there is no `verify` subcommand (the
+  Python verification API remains available to quarantined consumers).
+  Successful `measure`/`certify` files remain private operator artifacts and
+  may retain pathful v1 fields; they are never public receipts. `render_probe`
+  publishes only `render_certificate_configured` and a closed
+  `render_certificate_reason`. This changes no authentication, execution,
+  eligibility semantics, routing, proof, submission behavior, or release
+  switches; both advisory and certified release switches remain false.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
@@ -104,8 +118,9 @@ the kernel's contract shape.
   they identify the same non-reparse filesystem node, and public errors remain
   workspace-relative. Automatic
   certified-renderer execution and promotion are quarantined behind the closed
-  `certified_runtime_unbound` release gate; certificate measure/verify/check is
-  diagnostic-only and derives proof grade `none`.
+  `certified_runtime_unbound` release gate; legacy certificate
+  measure/certify/check and the Python verify API are diagnostic-only and
+  derive proof grade `none`.
 
 - **T92:** tightened the shared `rigorloom/hwpeqn/v1` equation lane with a
   closed LaTeX/HwpEqn XOR envelope, static case-folded origin-refusal

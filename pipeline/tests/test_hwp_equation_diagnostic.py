@@ -400,7 +400,7 @@ def test_alt_prefix_equation_can_never_route_to_libreoffice_advisory(
     (workspace / "bundle").mkdir()
     (workspace / "bundle" / "content.md").write_text("plain", encoding="utf-8")
     _package(workspace / "output" / "form_copy.hwpx", [_section(["x"], prefix="x")])
-    monkeypatch.setattr(render_probe, "probe", lambda: {
+    monkeypatch.setattr(render_probe, "probe", lambda **_kwargs: {
         "capabilities": {"hancom_com": False},
         "renderers": [{"name": "soffice_local", "wsl": False,
                        "argv": ["soffice", "--headless"]}],

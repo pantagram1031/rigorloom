@@ -373,10 +373,17 @@ workspaces/  local run data; ignored by Git
   certificate verification, renderer execution, and PDF promotion remain
   disabled while `CERTIFIED_PROOF_RELEASE_ENABLED` is false.
   The historical operator-certificate workflow is not active in this release.
-  `pipeline/scripts/render_cert.py measure`/`certify`/`verify`/`check` commands
-  are explicit operator diagnostics only; `certified_runtime_unbound` prevents
-  `submission_preflight` from accepting the grade until a separately reviewed
-  runtime binding is released. T151's
+  The legacy `pipeline/scripts/render_cert.py` CLI exposes only
+  `measure`/`certify`/`check` (there is no `verify` subcommand); its Python
+  `verify_certificate(...)` API is available only to quarantined consumers.
+  Public verify summaries contain exactly `ok`, `reason_code`, `reason`, and
+  `reason_codes`; `check` adds only `eligible`, with no raw errors, paths, argv,
+  feature maps, certificate payloads, or renderer streams. Successful
+  `measure`/`certify` files remain private, pathful v1 operator artifacts and
+  are never public receipts. `render_probe` publishes only
+  `render_certificate_configured` and closed `render_certificate_reason`.
+  `certified_runtime_unbound` prevents `submission_preflight` from accepting
+  the grade until a separately reviewed runtime binding is released. T151's
   `rigorloom/render-cert-envelope/v2` pathless envelope is an independent
   exact-document diagnostic; it does not revive the legacy v1 route or change
   either release switch.

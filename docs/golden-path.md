@@ -579,10 +579,18 @@ python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
   reruns the hash-bound Hangul quality contract. Advisory is HARD-rejected when
   quality is missing, failed, unknown, stale, or not tied to `converged: true`.
   `certified` is currently HARD-quarantined as
-  `certified_runtime_unbound`; `render_cert measure`/`certify`/`verify`/`check`
-  remain explicit diagnostics and no automatic command or PDF promotion is
-  performed while `CERTIFIED_PROOF_RELEASE_ENABLED` is false. The current
-  host's renderer capabilities are
+  `certified_runtime_unbound`; the legacy `render_cert.py` CLI exposes only
+  `measure`/`certify`/`check` (there is no `verify` subcommand), and all remain
+  explicit diagnostics. Its Python `verify_certificate(...)` API is available
+  only to quarantined consumers. Public verify summaries contain exactly
+  `ok`, `reason_code`, `reason`, and `reason_codes`; `check` adds only
+  `eligible`, with no raw errors, paths, argv, feature maps, certificate
+  payloads, or renderer streams. Successful measure/certify files remain
+  private, pathful v1 operator artifacts, never public receipts. `render_probe`
+  publishes only `render_certificate_configured` and closed
+  `render_certificate_reason`, never the configured path. No automatic
+  command or PDF promotion is performed while `CERTIFIED_PROOF_RELEASE_ENABLED`
+  is false. The current host's renderer capabilities are
   reported as informational `reproducible_here` facts; a historically valid
   Windows receipt is not invalidated merely because the delivery host lacks
   Hancom.

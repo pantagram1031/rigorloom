@@ -235,7 +235,7 @@ def _hwpx_renderer_decision(ws: str, out_dir: str | None) -> dict:
     target = os.path.join(out_dir or os.path.join(ws, "output"), "out.hwpx")
     try:
         import render_probe
-        result = render_probe.probe()
+        result = render_probe.probe(include_private=True)
         has_equations = _workspace_has_equations(ws, target, render_probe)
     except Exception:
         return {
