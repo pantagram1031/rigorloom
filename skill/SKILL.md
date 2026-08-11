@@ -100,6 +100,15 @@ proof. Successful terminal execution must leave a current receipt at
   renderer, auto-routes, writes the canonical backend receipt, or ships local
   paths, key material, source/PDF/corpus bytes. Legacy v1 `render_cert.py`
   remains quarantined and both release switches remain false.
+- T152 `renderer_certificate_composite_v1.py` joins only captured T150 runtime
+  and T151 exact-document certificate evidence. Use the canonical
+  `output/proof/renderer-certificate-composite/<run-id>/receipt.json` leaf;
+  `binding_scope` is `captured_snapshot_only` and the ceiling is
+  `runtime_input_exact_document_certificate_binding_only`. `check WORKSPACE`
+  publishes a bounded diagnostic receipt and `verify WORKSPACE` re-runs both
+  underlying verifiers. It is not HMAC-authenticated, never executes or
+  auto-routes, and always leaves proof `none`, submission `false`, and
+  promotion `not_run`; no paths, key, corpus, or PDF bytes ship.
 - T91 `hwp_equation_diagnostic.py` is a separate receipt-only HWPX
   equation-envelope inventory. Require the exact pre-created
   `work/stage-0/scratch/hwp-equation-diagnostic` leaf. It follows the strict
@@ -129,6 +138,7 @@ receipt is local privacy-safe evidence only and always reports
 
 | intent | command (see references/operations.md for contracts) | freedom |
 |---|---|---|
+| join captured runtime and exact-document certificate evidence (T152) | `python pipeline/scripts/renderer_certificate_composite_v1.py check WORKSPACE --run-id RUN_ID --binary BIN --certificate CERT --out RECEIPT`, then `verify WORKSPACE --run-id RUN_ID --binary BIN --certificate CERT` | LOW — captured-snapshot binding only; no renderer execution, HMAC on the composite, automatic route, proof/submission, or promotion |
 | issue or check an exact-document certificate envelope (T151) | `python pipeline/scripts/render_cert_envelope_v2.py issue PRIVATE_MANIFEST --out CERT`, then `verify CERT` or `check DOCUMENT CERT` | LOW — pathless hash/HMAC snapshot only; runtime binding not established, proof/submission remain none/false, promotion not run, and no automatic route |
 | execute and verify the quarantine-only rhwp PDF runtime (T150) | `python pipeline/scripts/renderer_runtime_v2.py inspect WORKSPACE --run-id HEX --renderer-id rhwp_pdf --binary RHWP_BINARY --binary-sha256 SHA256 --certificate CERTIFICATE --certificate-sha256 SHA256` then `verify` with the same workspace/run and operator paths | LOW — receipt-only execution binding; dependency closure unknown, equation-bearing input refused, render/proof/submission remain closed |
 | inspect bounded HWPX equation envelopes (T91) | `python pipeline/scripts/hwp_equation_diagnostic.py inspect INPUT.hwpx --diagnostic-root work/stage-0/scratch/hwp-equation-diagnostic --run-id HEX` then `verify` with the same source/root/run | LOW — receipt-only aggregate inventory; HwpEqn meaning, execution, render, and parity are not proved |

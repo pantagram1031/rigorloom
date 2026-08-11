@@ -163,6 +163,7 @@ _CORE_REQUIRED_FILES = (
     "pipeline/scripts/hwp_equation_diagnostic.py",
     "pipeline/scripts/renderer_runtime_v2.py",
     "pipeline/scripts/render_cert_envelope_v2.py",
+    "pipeline/scripts/renderer_certificate_composite_v1.py",
     "pipeline/references/hwp_java/Hwp2HwpxBridge.java",
     "pipeline/references/hwp_java/toolchain-lock.json",
     "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json",

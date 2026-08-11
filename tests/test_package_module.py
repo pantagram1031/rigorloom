@@ -274,7 +274,8 @@ class TestCoreBundle:
                 install / "pipeline" / "scripts" / "hwp_docinfo_coverage.py",
                 install / "pipeline" / "scripts" / "hwp_equation_diagnostic.py",
                 install / "pipeline" / "scripts" / "renderer_runtime_v2.py",
-                install / "pipeline" / "scripts" / "render_cert_envelope_v2.py"):
+                install / "pipeline" / "scripts" / "render_cert_envelope_v2.py",
+                install / "pipeline" / "scripts" / "renderer_certificate_composite_v1.py"):
             completed = subprocess.run(
                 [sys.executable, str(script), "--help"],
                 cwd=install,
@@ -375,6 +376,7 @@ class TestCoreBundle:
         assert "pipeline/scripts/hwp_equation_diagnostic.py" in names
         assert "pipeline/scripts/renderer_runtime_v2.py" in names
         assert "pipeline/scripts/render_cert_envelope_v2.py" in names
+        assert "pipeline/scripts/renderer_certificate_composite_v1.py" in names
         assert "pipeline/references/hwp_java/Hwp2HwpxBridge.java" in names
         assert "pipeline/references/hwp_java/toolchain-lock.json" in names
         assert "pipeline/references/hwp_semantic_oracle/rhwp-allowlist.json" in names
@@ -436,7 +438,8 @@ class TestCoreBundle:
 
         for script_name in (
                 "doc_backend.py", "submission_preflight.py",
-                "renderer_runtime_v2.py", "render_cert_envelope_v2.py"):
+                "renderer_runtime_v2.py", "render_cert_envelope_v2.py",
+                "renderer_certificate_composite_v1.py"):
             script = destination / "pipeline" / "scripts" / script_name
             completed = subprocess.run(
                 [sys.executable, str(script), "--help"],

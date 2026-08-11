@@ -75,6 +75,7 @@ Stage 6, `new_report`, or certified proof.
 |---|---|---|
 | `T150 renderer_runtime_v2` | Operator-pinned `rhwp_pdf` with fixed `export-pdf` argv; receipt-only runtime binding under `rigorloom/renderer-runtime-v2/v1` | No automatic backend selection or promotion; dependency closure is unknown, equation input is refused, and proof/submission stay none/false. |
 | `T151 render_cert_envelope_v2` | Private-manifest `rigorloom/render-cert-envelope/v2` exact-document hash/HMAC envelope; no renderer execution | No automatic backend selection or promotion; runtime binding is not established, proof/submission stay none/false, promotion is not run, and no local paths, key, PDF, or corpus bytes ship. |
+| `T152 renderer_certificate_composite_v1` | Captured T150 runtime receipt joined to T151 exact-document certificate under `rigorloom/renderer-certificate-composite/v1` | Snapshot-only binding; no renderer execution, auto-route, or promotion; proof/submission stay none/false, and the composite is not HMAC-authenticated. |
 
 Receipt artifact roles are closed as well: `source_form`, `assembled_hwpx`,
 `rendered_pdf`, and `diagnostic_svg`. Successful structural assembly records
