@@ -740,6 +740,68 @@ def _baseline_pixmaps(fitz, baseline, dpi, count):
     return None
 
 
+#: Tri-state attribution for a finding whose property the BLANK FORM may
+#: already carry (T100). Closed on purpose: one field with a bool and a string
+#: in it is the T35 shape this line has already paid for once.
+INHERITED_YES = "yes"
+INHERITED_NO = "no"
+INHERITED_UNKNOWN = "unknown"
+
+
+def _baseline_format_records(fitz, baseline, dpi):
+    """Measured page records for the blank form, or ``None``.
+
+    Reuses ``_measure_page`` so the baseline is measured by exactly the code
+    that measures the artifact — a second measurement path would be a second
+    thing to keep in agreement.
+
+    Only a PDF baseline can support this. A directory of page images has no
+    text layer, so point size, line pitch and content bbox are not recoverable
+    from it; that case returns ``None`` and the caller reports attribution as
+    ``unknown`` rather than guessing. ``png_path`` is ``None`` because these
+    records exist to be measured, never to be shown.
+    """
+    path = Path(baseline)
+    if not (path.is_file() and path.suffix.lower() == ".pdf"):
+        return None
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    try:
+        with fitz.open(str(path)) as doc:
+            return [_measure_page(page, index,
+                                  None, page.get_pixmap(matrix=matrix,
+                                                        alpha=False))
+                    for index, page in enumerate(doc, start=1)]
+    except (RuntimeError, ValueError, OSError):
+        return None
+
+
+def _attribute(baseline_records, page, predicate):
+    """Was this finding's property already true of the blank form?
+
+    ``predicate`` receives the baseline record for the same page number and
+    answers whether the blank form violates the same declaration. Returns
+    ``(state, reason)`` where ``state`` is one of the ``INHERITED_*`` tokens.
+
+    Attribution NEVER changes a severity here. The declaration is still
+    violated by the document as submitted, so the finding stands; what changes
+    is what the operator should do about it, because a violation the blank form
+    already carries cannot be fixed by editing the fill.
+    """
+    if baseline_records is None:
+        return INHERITED_UNKNOWN, ("no measurable blank-form baseline in this "
+                                   "run: pass the blank form as --baseline "
+                                   "(.hwpx/.hwp/.pdf) to attribute this")
+    match = next((r for r in baseline_records if r["page"] == page), None)
+    if match is None:
+        return INHERITED_UNKNOWN, ("the blank form has no page %s to compare "
+                                   "against" % page)
+    try:
+        return (INHERITED_YES if predicate(match) else INHERITED_NO), None
+    except (KeyError, TypeError, ZeroDivisionError):
+        return INHERITED_UNKNOWN, "the blank-form page could not be measured"
+
+
 def diff_regions(pix_a, pix_b, tile=8):
     """Changed-region bboxes (image pixels) between two pixmaps.
 
@@ -1442,21 +1504,45 @@ def _delegate(script, argv, label):
 # expectation-driven deterministic checks
 # --------------------------------------------------------------------------
 
-def check_page_budget(expectations, page_count):
+def check_page_budget(expectations, page_count, baseline_records=None):
+    """Declared page budget, with T100 attribution.
+
+    A blank form can already exceed the budget it is filed under — a three-page
+    form declared ``max: 2`` fails before anyone types a character. The
+    violation is real either way, so the severity does not move; what the
+    evidence adds is whether editing the fill could ever fix it.
+    """
     budget = expectations.get("page_budget") or {}
     lo = budget.get("min")
     hi = budget.get("max", expectations.get("max_pages"))
+    baseline_pages = len(baseline_records) if baseline_records else None
     out = []
+
+    def attribution(violates):
+        if baseline_pages is None:
+            return {"inherited": INHERITED_UNKNOWN,
+                    "inherited_reason": "no measurable blank-form baseline in "
+                                        "this run"}
+        state = INHERITED_YES if violates(baseline_pages) else INHERITED_NO
+        item = {"inherited": state, "baseline_pages": baseline_pages}
+        if state == INHERITED_YES:
+            item["note"] = ("the blank form already violates this budget, so "
+                            "the declaration or the form is wrong — editing "
+                            "the fill cannot satisfy it")
+        return item
+
     if lo is not None and page_count < lo:
+        evidence = {"pages": page_count, "min": lo}
+        evidence.update(attribution(lambda pages: pages < lo))
         out.append(finding(
             "page_budget_violation", "hard", cls="page_budget_violation",
-            detector="visual_verify.page_budget",
-            evidence={"pages": page_count, "min": lo}))
+            detector="visual_verify.page_budget", evidence=evidence))
     if hi is not None and page_count > hi:
+        evidence = {"pages": page_count, "max": hi}
+        evidence.update(attribution(lambda pages: pages > hi))
         out.append(finding(
             "page_budget_violation", "hard", cls="page_budget_violation",
-            detector="visual_verify.page_budget",
-            evidence={"pages": page_count, "max": hi}))
+            detector="visual_verify.page_budget", evidence=evidence))
     return out
 
 
@@ -1541,28 +1627,66 @@ def check_imposition(records, print_method, pages_document, pages_pdf,
     return out
 
 
-def check_format(records, expectations):
+def check_format(records, expectations, baseline_records=None):
+    """Declared typography and margins, with T100 attribution.
+
+    All three metrics here are predominantly properties of the FORM, not of the
+    fill. A page's median point size on a form is dominated by the form's own
+    printed labels and boilerplate; margins are its page setup outright. So a
+    declaration the blank form already fails will fail on every page no matter
+    how correct the fill is.
+
+    Severity is unchanged — the document as submitted really does violate the
+    declaration, and that is what ``format_noncompliance`` means. What the
+    evidence adds is attribution, because "your fill is wrong" and "this form
+    cannot satisfy this declaration" call for opposite actions.
+    """
     out = []
     base_pt = expectations.get("base_pt")
     spacing = expectations.get("line_spacing_pct")
     margins = expectations.get("margins_mm") or {}
+
+    def attributed(evidence, page, predicate):
+        state, reason = _attribute(baseline_records, page, predicate)
+        evidence["inherited"] = state
+        if reason:
+            evidence["inherited_reason"] = reason
+        elif state == INHERITED_YES:
+            evidence["note"] = ("the blank form fails the same declaration on "
+                                "this page, so the declaration or the form is "
+                                "wrong — editing the fill cannot satisfy it")
+        return evidence
+
     for rec in records:
         if base_pt and rec["median_pt"]:
             if abs(rec["median_pt"] - base_pt) > BASE_PT_TOL:
+                evidence = {"measured_pt": rec["median_pt"],
+                            "declared_pt": base_pt, "tol_pt": BASE_PT_TOL}
                 out.append(finding(
                     "format_noncompliance", "hard", cls="format_noncompliance",
                     page=rec["page"], detector="visual_verify.base_pt",
-                    evidence={"measured_pt": rec["median_pt"],
-                              "declared_pt": base_pt, "tol_pt": BASE_PT_TOL}))
+                    evidence=attributed(
+                        evidence, rec["page"],
+                        lambda b: bool(b["median_pt"]) and abs(
+                            b["median_pt"] - base_pt) > BASE_PT_TOL)))
         if spacing and rec["line_pitch_pt"] and rec["median_pt"]:
             measured = rec["line_pitch_pt"] / rec["median_pt"] * 100.0
             if abs(measured - spacing) > LINE_SPACING_TOL_PCT:
+                evidence = {"measured_pct": round(measured, 1),
+                            "declared_pct": spacing,
+                            "tol_pct": LINE_SPACING_TOL_PCT}
+
+                def _spacing_fails(b):
+                    if not (b["line_pitch_pt"] and b["median_pt"]):
+                        return False
+                    base_measured = b["line_pitch_pt"] / b["median_pt"] * 100.0
+                    return abs(base_measured - spacing) > LINE_SPACING_TOL_PCT
+
                 out.append(finding(
                     "format_noncompliance", "hard", cls="format_noncompliance",
                     page=rec["page"], detector="visual_verify.line_spacing",
-                    evidence={"measured_pct": round(measured, 1),
-                              "declared_pct": spacing,
-                              "tol_pct": LINE_SPACING_TOL_PCT}))
+                    evidence=attributed(evidence, rec["page"],
+                                        _spacing_fails)))
         if margins and rec["content_bbox_pt"]:
             x0, y0, x1, y1 = rec["content_bbox_pt"]
             actual = {
@@ -1575,14 +1699,36 @@ def check_format(records, expectations):
                 if side not in actual or declared is None:
                     continue
                 if actual[side] < declared - MARGIN_TOL_MM:
+                    evidence = {"side": side,
+                                "measured_mm": round(actual[side], 1),
+                                "declared_mm": declared,
+                                "tol_mm": MARGIN_TOL_MM}
+                    # side/declared are bound as defaults rather than closed
+                    # over. Defensive only: ``attributed`` invokes the
+                    # predicate immediately, so a closure would read the
+                    # current iteration's values and behave the same today.
+                    # The binding is here so a later refactor that DEFERS the
+                    # call cannot silently attribute every side using the last
+                    # one. Mutating it away does not fail any test, and the
+                    # per-side test says so instead of pretending otherwise.
+                    def _margin_fails(b, side=side, declared=declared):
+                        if not b["content_bbox_pt"]:
+                            return False
+                        bx0, by0, bx1, by1 = b["content_bbox_pt"]
+                        base_actual = {
+                            "left": bx0 * MM_PER_PT,
+                            "top": by0 * MM_PER_PT,
+                            "right": (b["width_pt"] - bx1) * MM_PER_PT,
+                            "bottom": (b["height_pt"] - by1) * MM_PER_PT,
+                        }
+                        return base_actual[side] < declared - MARGIN_TOL_MM
+
                     out.append(finding(
                         "format_noncompliance", "hard",
                         cls="format_noncompliance", page=rec["page"],
                         detector="visual_verify.margins",
-                        evidence={"side": side,
-                                  "measured_mm": round(actual[side], 1),
-                                  "declared_mm": declared,
-                                  "tol_mm": MARGIN_TOL_MM}))
+                        evidence=attributed(evidence, rec["page"],
+                                            _margin_fails)))
     return out
 
 
@@ -2331,6 +2477,22 @@ def verify(args):
     # performed (Hancom's own PageCount), then an explicit declaration, then the
     # artifact's own layout cache. Only when all three are unavailable does
     # parity skip, and then ``pages_document_note`` says which leg was missing.
+    # --baseline is resolved HERE, before the deterministic legs, because T100
+    # attribution needs the blank form's own measurements: several legs compare
+    # the artifact against a declaration the FORM largely determines, and
+    # without the baseline they can only report the violation, never say whether
+    # editing the fill could fix it. The pixel diff below reuses this result
+    # rather than resolving a second time.
+    base_source = base_conversion = baseline_skip = None
+    if args.baseline:
+        base_source, base_conversion, baseline_skip, error = resolve_baseline(
+            args.baseline, Path(pdf_path).parent)
+        if error:
+            return usage_error(str(artifact), "visual_verify", error)
+    baseline_records = (
+        _baseline_format_records(fitz, base_source, args.dpi)
+        if (base_source and not baseline_skip) else None)
+
     pages_document_note = None
     if (conversion or {}).get("pages_document") is not None:
         pages_document = conversion["pages_document"]
@@ -2347,8 +2509,8 @@ def verify(args):
         records, print_method, pages_document, pages_pdf,
         normalized=bool((conversion or {}).get("print_method_normalized")),
         pages_source=pages_document_source)
-    det += check_page_budget(expectations, page_count)
-    det += check_format(records, expectations)
+    det += check_page_budget(expectations, page_count, baseline_records)
+    det += check_format(records, expectations, baseline_records)
     det += check_fill_map(records, expectations, declared_blank)
     # --baseline is the BLANK FORM. The pixel diff below converts it; the T30
     # post-flight reads its XML, to tell a signature the fill INTRODUCED from
@@ -2421,12 +2583,11 @@ def verify(args):
     # -- pixel diff ----------------------------------------------------------
     changed_pages = set()
     baseline_report = None
-    baseline_skip = None
-    if args.baseline:
-        base_source, base_conversion, baseline_skip, error = resolve_baseline(
-            args.baseline, Path(pdf_path).parent)
-        if error:
-            return usage_error(str(artifact), "visual_verify", error)
+    # base_source / base_conversion / baseline_skip were resolved above, before
+    # the deterministic legs, so that T100 attribution could use the blank
+    # form's own measurements. Do NOT re-initialise baseline_skip here: that
+    # reset is what silently discarded the earlier resolution and sent an
+    # unrenderable .hwpx baseline into the pixel diff as None.
     if args.baseline and baseline_skip:
         baseline_report = {"baseline": str(args.baseline),
                            "baseline_pages": None, "skipped": baseline_skip,

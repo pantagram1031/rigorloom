@@ -12,6 +12,7 @@ looks like. This file is the per-CLI contract each of those steps invokes.
 ## TOC
 
 0. [Text-match scoping](#0-text-match-scoping) — which surfaces refuse an ambiguous match
+0B. [Inherited-property attribution](#0b-inherited-property-attribution-t100) — which gates ask the blank form first
 1. [probe](#1-probe) — capability probe
 2. [form_inspect](#2-form_inspect) — offline form profiling (+ `--full-text`)
 3. [preedit](#3-preedit) — replace (`--map` / `--at-cell`) / fill-cells / delete-guides / normalize-clones
@@ -77,6 +78,93 @@ only its own and neither rejects the other's. An unknown member is a usage
 error on both sides, so a typo cannot quietly mean "unscoped". Every other
 consumer of `--fill-map` (the value-presence check, `value_spans`, each
 module's declared-personal-number rules) sees the flattened plain string.
+
+## 0B. Inherited-property attribution (T100)
+
+The sibling question to §0. There, the risk is a gate resolving an ambiguous
+match; here it is a gate blaming the artifact for a property it **inherited
+from the blank form**. Two shipped findings had that defect — `imposition_mismatch`
+(the blank 기안문 stores `PrintMethod=4`, so the fill introduced nothing) and
+`fill_charpr_script_mismatch` (that form's own seats are `ratio=97`, so its
+dominant typography read as an anomaly against a fine-print body baseline).
+
+**Attribution is not relaxation.** A declaration the document violates is still
+violated, so severity does not move. What the evidence adds is whether editing
+the fill could ever fix it — because "your fill is wrong" and "this form cannot
+satisfy this declaration" call for opposite actions. Findings that carry it
+report `inherited: yes | no | unknown`, and `unknown` names why rather than
+guessing.
+
+`--baseline` is what makes attribution possible, and its shape decides how much
+can be answered: an `.hwpx`/`.hwp`/`.pdf` baseline supports it, a directory of
+page images does not (no text layer, so point size, line pitch and content bbox
+are not recoverable from it).
+
+### visual_verify deterministic legs
+
+| leg | finding | receives the baseline | compares | verdict |
+|---|---|---|---|---|
+| `page_budget` | `page_budget_violation` | **yes** (T100) | page count vs the same bound | attributes. A three-page form filed under `max: 2` fails before anyone types |
+| `base_pt` | `format_noncompliance` | **yes** (T100) | same metric, same page | attributes. A page's median size on a form is dominated by the form's own labels |
+| `line_spacing` | `format_noncompliance` | **yes** (T100) | ratio recomputed from the baseline's own pitch and size | attributes |
+| `margins` | `format_noncompliance` | **yes** (T100) | per side, independently | attributes. Margins are the form's page setup outright |
+| `fill_charpr_script` | `fill_charpr_script_mismatch` | yes (T40) | the blank form's signature for the same seat | compares; an inherited signature is a named WARN |
+| `print_method` | `imposition_mismatch` | n/a | conversion provenance instead (T38) | closed differently: a hash-bound record proves the normalization happened |
+| `page_parity` | `imposition_mismatch` | no | — | correctly isolated: both counts are of the same artifact |
+| `orientation` | `imposition_mismatch` | no | — | WARN only; landscape is a form property, so attribution would help but the severity never accused the fill |
+| `text_length` / `page_content` | `blank_render` | no | — | correctly isolated: a render with no text is not a render, whatever the form looked like |
+| `forbidden_text` | `guide_text_visible` | no | — | declaration-driven; the blank-derived half is the module keep policy, not this leg |
+| `required_text` | `required_text_missing` | no | — | correctly isolated: the requirement is about the edit |
+
+### Module and pipeline checkers
+
+Inventoried across `check_residue`, `check_gongmun`, `check_minwon`, `check_hr`
+and `check_grant` — the ones that can receive a blank-form baseline.
+`check_layout` is a pure delegate to the bundled engine and owns no finding
+class of its own. The report and style checkers are out of this class: they
+judge prose content, not form inheritance.
+
+Most rules already compare, and the good pattern is native to the codebase
+rather than imported:
+
+- `check_minwon` `byeolji_header_lost` **downgrades to WARN** with
+  `basis: artifact_only` when no baseline is available, instead of HARDing
+  blind. This is the reference behaviour.
+- `check_hr` `clause_lost` judges against the baseline's own clause inventory
+  precisely because the 2013 standard contract numbers itself irregularly
+  (`1,2,3,4,5,6,8,9`, with clause 7 written mid-paragraph). A rule that assumed
+  contiguity would blame every correct fill of that form.
+- `check_grant` `packet_section_lost` derives *whether a section is optional*
+  from the blank form, so the required/optional split is evidence rather than a
+  list.
+- `check_minwon` `seal_seat_overwritten` compares a seal cell's residual text
+  against **that cell's own residue in the blank form**, not against a generic
+  vocabulary.
+
+Two open gaps, both recorded rather than quietly fixed:
+
+- `check_grant` `self_deleting_guide_retained` and
+  `example_placeholder_retained` gate on the operator-supplied `--mode` rather
+  than on the state the checker derives. Measured on the untouched kstartup
+  blank form: `--mode auto` and `--mode draft` give `hard: 0`, while
+  `--mode final` gives `hard: 2` with `document.state` still reported as
+  `blank`. The verdict then says the document is blank and that the applicant's
+  own words are missing from it. Neither rule takes a baseline parameter.
+- `check_gongmun` `seal_slot_overwritten` ignores the `baseline_model` its
+  sibling `seal_slot_removed` reads from the same scope, comparing against a
+  generic label vocabulary instead. Empirically clean on the corpus, so
+  theoretical — the fix is to copy `check_minwon`'s design.
+
+A structural near-miss worth knowing: every module checker HARDs
+`artifact_malformed` and returns **before** the baseline is loaded, even though
+each module declares `wants: [baseline]`. No corpus form is malformed, so this
+is theoretical, but it is the same shape as the two defects above.
+
+Severity gated on a derived document state (`blank` / `draft` / `final`) rather
+than on a baseline comparison is the other near-miss. State classification is
+sound on all ten corpus forms under `--mode auto`; the risk is that a wrong
+classification has no baseline backstop behind it.
+
 
 ## 0A. hwp_ingress
 

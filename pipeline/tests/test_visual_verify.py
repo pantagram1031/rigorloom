@@ -3466,3 +3466,160 @@ def test_declared_blank_and_suppression_are_recorded_in_the_verdict(tmp_path):
     labels = {f["evidence"]["label"] for f in verdict["hard"]
               if f["class"] == "empty_cell_expected_fill"}
     assert labels == {"applicant"}
+
+
+# ---------------------------------------------------------------------------
+# T100: a gate must not blame the artifact for a property it inherited from
+# the blank form. Attribution only — severity never moves.
+# ---------------------------------------------------------------------------
+
+def _fmt_record(page=1, median_pt=10.0, line_pitch_pt=16.0,
+                content_bbox_pt=(60.0, 60.0, 535.0, 780.0),
+                width_pt=595.0, height_pt=842.0):
+    """One measured page, built directly.
+
+    The legs under test take records, so building them beats rendering a PDF:
+    the point is the attribution arithmetic, and a fixture that also exercises
+    fitz would hide which of the two failed.
+    """
+    return {"page": page, "median_pt": median_pt,
+            "line_pitch_pt": line_pitch_pt,
+            "content_bbox_pt": content_bbox_pt,
+            "width_pt": width_pt, "height_pt": height_pt}
+
+
+def _fmt_findings(records, expectations, baseline=None):
+    return visual_verify.check_format(records, expectations, baseline)
+
+
+def test_t100_a_base_pt_violation_the_blank_form_also_has_is_inherited():
+    """The heart of the class: the form's own labels set the median size.
+
+    A declaration the blank form already fails will fail on every page no
+    matter how correct the fill is, so the operator has to know the fill is not
+    the thing to edit.
+    """
+    off_spec = [_fmt_record(median_pt=8.0)]
+    found = _fmt_findings(off_spec, {"base_pt": 11.0}, off_spec)
+    assert len(found) == 1
+    assert found[0]["evidence"]["inherited"] == visual_verify.INHERITED_YES
+    assert "cannot satisfy it" in found[0]["evidence"]["note"]
+
+
+def test_t100_a_base_pt_violation_the_fill_introduced_is_not_inherited():
+    found = _fmt_findings([_fmt_record(median_pt=8.0)], {"base_pt": 11.0},
+                          [_fmt_record(median_pt=11.0)])
+    assert found[0]["evidence"]["inherited"] == visual_verify.INHERITED_NO
+    assert "note" not in found[0]["evidence"]
+
+
+def test_t100_attribution_is_unknown_and_says_why_without_a_baseline():
+    """Never guessed. A run with no measurable baseline says so."""
+    found = _fmt_findings([_fmt_record(median_pt=8.0)], {"base_pt": 11.0})
+    evidence = found[0]["evidence"]
+    assert evidence["inherited"] == visual_verify.INHERITED_UNKNOWN
+    assert "--baseline" in evidence["inherited_reason"]
+
+
+def test_t100_attribution_never_changes_severity():
+    """The still-catches for the whole slice.
+
+    This is attribution, not relaxation: the document as submitted really does
+    violate the declaration in both cases, so both stay HARD. A future change
+    that quietly downgrades the inherited case has to fail here.
+    """
+    inherited = _fmt_findings([_fmt_record(median_pt=8.0)], {"base_pt": 11.0},
+                              [_fmt_record(median_pt=8.0)])
+    introduced = _fmt_findings([_fmt_record(median_pt=8.0)], {"base_pt": 11.0},
+                               [_fmt_record(median_pt=11.0)])
+    assert [f["severity"] for f in inherited] == ["hard"]
+    assert [f["severity"] for f in introduced] == ["hard"]
+
+
+def test_t100_a_compliant_page_reports_nothing_with_or_without_a_baseline():
+    """Non-vacuity guard: the attribution code must not invent findings."""
+    good = [_fmt_record(median_pt=11.0)]
+    assert _fmt_findings(good, {"base_pt": 11.0}) == []
+    assert _fmt_findings(good, {"base_pt": 11.0}, good) == []
+
+
+def test_t100_line_spacing_attribution_uses_the_baselines_own_ratio():
+    """Spacing is a ratio, so the baseline has to be recomputed, not copied."""
+    artifact = [_fmt_record(median_pt=10.0, line_pitch_pt=30.0)]  # 300%
+    same_ratio = [_fmt_record(median_pt=12.0, line_pitch_pt=36.0)]  # also 300%
+    found = _fmt_findings(artifact, {"line_spacing_pct": 160.0}, same_ratio)
+    spacing = [f for f in found
+               if f["detector"] == "visual_verify.line_spacing"]
+    assert len(spacing) == 1
+    assert spacing[0]["evidence"]["inherited"] == visual_verify.INHERITED_YES
+
+
+def test_t100_margin_attribution_is_independent_per_side():
+    """Each side is attributed from its own declaration, not a shared one.
+
+    The artifact violates BOTH left and top; the blank form violates only left.
+    So a correct implementation returns one inherited finding and one not.
+
+    Note on what this does NOT prove: the predicate is invoked immediately
+    inside the loop iteration, so a closure over the loop variables would read
+    the current values and behave identically. The default-argument binding in
+    `_margin_fails` is defensive against a future refactor that defers the
+    call; it is not what keeps this test green, and mutating it away does not
+    fail here. Said out loud because the first version of this docstring
+    claimed the opposite.
+    """
+    artifact = [_fmt_record(content_bbox_pt=(5.0, 5.0, 535.0, 780.0))]
+    baseline = [_fmt_record(content_bbox_pt=(5.0, 60.0, 535.0, 780.0))]
+    found = _fmt_findings(artifact, {"margins_mm": {"left": 20.0,
+                                                    "top": 20.0}}, baseline)
+    by_side = {f["evidence"]["side"]: f["evidence"]["inherited"]
+               for f in found}
+    assert by_side == {"left": visual_verify.INHERITED_YES,
+                       "top": visual_verify.INHERITED_NO}
+
+
+def test_t100_attribution_is_unknown_when_the_blank_form_lacks_that_page():
+    """A shorter blank form cannot answer for a page it does not have."""
+    found = _fmt_findings([_fmt_record(page=3, median_pt=8.0)],
+                          {"base_pt": 11.0}, [_fmt_record(page=1)])
+    evidence = found[0]["evidence"]
+    assert evidence["inherited"] == visual_verify.INHERITED_UNKNOWN
+    assert "page 3" in evidence["inherited_reason"]
+
+
+def test_t100_page_budget_inherited_when_the_blank_form_already_exceeds():
+    """A three-page form filed under max: 2 fails before anyone types."""
+    found = visual_verify.check_page_budget(
+        {"page_budget": {"max": 2}}, 3,
+        [_fmt_record(page=1), _fmt_record(page=2), _fmt_record(page=3)])
+    assert len(found) == 1
+    assert found[0]["severity"] == "hard"
+    assert found[0]["evidence"]["inherited"] == visual_verify.INHERITED_YES
+    assert found[0]["evidence"]["baseline_pages"] == 3
+
+
+def test_t100_page_budget_not_inherited_when_the_fill_grew_the_document():
+    found = visual_verify.check_page_budget(
+        {"page_budget": {"max": 2}}, 3, [_fmt_record(page=1)])
+    assert found[0]["evidence"]["inherited"] == visual_verify.INHERITED_NO
+
+
+def test_t100_page_budget_attribution_is_unknown_without_a_baseline():
+    found = visual_verify.check_page_budget({"page_budget": {"max": 2}}, 3)
+    assert (found[0]["evidence"]["inherited"]
+            == visual_verify.INHERITED_UNKNOWN)
+
+
+def test_t100_an_image_directory_baseline_cannot_attribute(tmp_path):
+    """A directory of page images has no text layer.
+
+    Point size, line pitch and content bbox are not recoverable from pixels, so
+    this returns None and the legs report unknown — rather than measuring
+    something else and calling it the same quantity.
+    """
+    images = tmp_path / "baseline_pages"
+    images.mkdir()
+    (images / "page_001.png").write_bytes(b"not really a png")
+    assert visual_verify._baseline_format_records(
+        visual_verify.fitz if hasattr(visual_verify, "fitz") else None,
+        images, 130) is None
