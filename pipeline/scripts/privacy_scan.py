@@ -13,13 +13,26 @@ passes the extension rule but its extracted text is still content-scanned
 (RRN / filled phone / email / user-path / denylist all HARD) — see the
 "Corpus binary allowlist" section below.
 
+A gate may not claim more than it checked. Any path the walk cannot read —
+a file that raises ``OSError`` when opened (permission denied, a broken
+symlink, a hostile/exotic filesystem entry, a transient I/O error) or a
+directory ``os.walk`` cannot enter — is reported as an ``unreadable_file``
+finding at HARD severity, never silently skipped and never downgraded to
+WARN: an unverifiable file must not pass a privacy gate. When any such
+finding exists, both the printed summary and the JSON ``summary.incomplete``
+field say so explicitly, because a verdict built on a scan that could not
+read everything is not a verdict a human should trust from a count alone.
+
 CLI:
     privacy_scan.py <root> [--denylist <path>] [--binary-allowlist <manifest.json>] [--json]
 
-Exit codes:
+Exit codes (the ONLY designed codes — anything else, notably 1, means the
+process crashed with an uncaught exception and is a bug in this script, not
+a verdict):
     0  clean (or WARN-only findings)
     2  usage error (bad args, bad root/denylist path, denylist inside root)
-    3  at least one HARD finding
+    3  at least one HARD finding (this includes any ``unreadable_file``
+       finding — see above)
 """
 from __future__ import annotations
 
@@ -149,6 +162,13 @@ def _finding(file: str, line: int | None, rule: str, severity: str, snippet: str
     return {"file": file, "line": line, "rule": rule, "severity": severity, "snippet": _snippet(snippet)}
 
 
+def _unreadable_finding(rel: str, exc: OSError) -> dict:
+    """A path the walk could not read/enter. Always HARD: a privacy gate must
+    not pass a file it could not verify, and must not claim to have checked
+    something it never actually read (see module docstring)."""
+    return _finding(rel, None, "unreadable_file", "HARD", f"{type(exc).__name__}: {exc}")
+
+
 def _gap(a: tuple[int, int], b: tuple[int, int]) -> int:
     if a[1] <= b[0]:
         return b[0] - a[1]
@@ -180,6 +200,12 @@ def load_denylist(path: Path) -> list[tuple[str, str]]:
 
 
 def _read_text(path: Path) -> str | None:
+    """Decode `path` as utf-8 or cp949, or None if it decodes as neither
+    (an undecodable binary blob — still subject to name/extension/size
+    checks by the caller). Raises OSError on an unreadable file; the caller
+    turns that into a HARD ``unreadable_file`` finding rather than letting
+    it crash the whole scan (an untracked font under a scratch dir, a
+    permission-denied file, a broken symlink, ... all raise OSError here)."""
     data = path.read_bytes()
     for enc in ("utf-8", "cp949"):
         try:
@@ -337,8 +363,10 @@ def _scan_large_file(rel: str, path: Path, denylist_terms: list[tuple[str, str]]
             return _scan_large_file_pass(rel, path, denylist_terms, factory, carry_chars)
         except UnicodeDecodeError:
             continue
-        except OSError:
-            return []
+        except OSError as exc:
+            # A file the walk cannot open/read must surface as a finding, not
+            # vanish into an empty result (that would read as "clean").
+            return [_unreadable_finding(rel, exc)]
     return []
 
 
@@ -425,7 +453,12 @@ def load_binary_allowlist(manifest_path: Path) -> dict[Path, str]:
 
 def _hwpx_text(path: Path) -> str | None:
     """Concatenated text of an hwpx (zip) package's XML/text parts, or None
-    when the file is not a readable zip."""
+    when the file is a readable-but-corrupt/non-zip package.
+
+    Raises OSError on an unreadable file (permission denied, broken symlink,
+    ...) rather than folding that into the same None return as "not a zip" —
+    the caller must tell an unverifiable file (HARD) apart from a merely
+    corrupt one (WARN, see ``binary_extract_failed``)."""
     import zipfile
     try:
         with zipfile.ZipFile(path) as archive:
@@ -434,7 +467,7 @@ def _hwpx_text(path: Path) -> str | None:
                 if name.lower().endswith(_HWPX_TEXT_SUFFIXES):
                     parts.append(archive.read(name).decode("utf-8", "replace"))
             return "\n".join(parts)
-    except (OSError, zipfile.BadZipFile, RuntimeError):
+    except (zipfile.BadZipFile, RuntimeError):
         return None
 
 
@@ -447,11 +480,13 @@ def _hwp_utf16_harvest(path: Path) -> str:
     does not decode into anything pattern-shaped. Sector boundaries can split
     a run — this net is heuristic; the manifest sha256 pin is the primary
     gate and this scan is the filled-document backstop on top of it.
+
+    Raises OSError on an unreadable file — the caller turns that into a HARD
+    ``unreadable_file`` finding instead of letting a read failure quietly
+    read back as "no PII found here" (the old behaviour: swallow and return
+    an empty string).
     """
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return ""
+    data = path.read_bytes()
     texts = []
     for offset in (0, 1):
         texts.append(data[offset:].decode("utf-16-le", errors="ignore"))
@@ -468,16 +503,25 @@ def _scan_allowlisted_binary(rel: str, path: Path, suffix: str,
     """
     findings: list[dict] = []
     if suffix == ".hwpx":
-        text = _hwpx_text(path)
+        try:
+            text = _hwpx_text(path)
+        except OSError as exc:
+            # The hash was verified earlier, but the file has since become
+            # unreadable (race, permission change, ...): unverifiable, so it
+            # must not pass on the strength of a stale hash check.
+            return [_unreadable_finding(rel, exc)]
         if text is None:
-            # Hash matched the manifest yet the package is unreadable: the
-            # reviewed bytes are intact, but the content backstop cannot run.
+            # Readable, but not a valid zip: the reviewed bytes are intact
+            # (hash matched) yet the content backstop cannot run.
             findings.append(_finding(
                 rel, None, "binary_extract_failed", "WARN",
                 "allowlisted hwpx is not a readable zip; content backstop skipped"))
             return findings
     else:
-        text = _hwp_utf16_harvest(path)
+        try:
+            text = _hwp_utf16_harvest(path)
+        except OSError as exc:
+            return [_unreadable_finding(rel, exc)]
 
     seen: set[tuple[str, str]] = set()
 
@@ -519,14 +563,25 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         if pinned is None:
             # Unlisted binary anywhere: HARD exactly as before.
             findings.append(_finding(rel, None, "binary_document_ext", "HARD", name))
-        elif _sha256_file(path) != pinned:
-            # Listed but drifted: tamper/substitution, HARD (still-catches #1).
-            findings.append(_finding(
-                rel, None, "binary_allowlist_hash_mismatch", "HARD", name))
         else:
-            # Listed + hash-verified: content backstop instead of a free pass.
-            findings.extend(
-                _scan_allowlisted_binary(rel, path, suffix, denylist_terms))
+            try:
+                digest = _sha256_file(path)
+            except OSError as exc:
+                # Cannot hash it, so cannot verify the allowlist pin: this is
+                # unverifiable, not "assume it's the pinned blank template".
+                findings.append(_unreadable_finding(rel, exc))
+                digest = None
+            if digest is not None:
+                if digest != pinned:
+                    # Listed but drifted: tamper/substitution, HARD
+                    # (still-catches #1).
+                    findings.append(_finding(
+                        rel, None, "binary_allowlist_hash_mismatch", "HARD", name))
+                else:
+                    # Listed + hash-verified: content backstop instead of a
+                    # free pass.
+                    findings.extend(
+                        _scan_allowlisted_binary(rel, path, suffix, denylist_terms))
 
     if denylist_terms:
         name_lower = _ascii_lower(name)
@@ -544,21 +599,32 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         # regex on a huge single-line blob is quadratic, so we scan in bounded
         # chunks with per-line truncation instead of skipping content entirely.
         findings.append(_finding(rel, None, "large_file", "WARN", f"{size} bytes"))
-        findings.extend(_scan_large_file(rel, path, denylist_terms))
-        if suffix == ".jsonl":
+        stream_findings = _scan_large_file(rel, path, denylist_terms)
+        findings.extend(stream_findings)
+        already_unreadable = any(f["rule"] == "unreadable_file" for f in stream_findings)
+        if suffix == ".jsonl" and not already_unreadable:
             # A store feedback log can exceed the large-file bound; its schema
             # marker sits on every line, so a bounded head read suffices.
+            # (Skipped when the stream pass above already found the file
+            # unreadable — no point re-attempting a doomed open(), and it
+            # would otherwise silently re-swallow the same OSError below.)
             try:
                 head = path.open("rb").read(8 * STREAM_CHUNK_BYTES)
-            except OSError:
+            except OSError as exc:
+                findings.append(_unreadable_finding(rel, exc))
                 head = b""
-            head_text = head.decode("utf-8", errors="ignore")
-            head_lines = head_text.splitlines()[:-1] or [head_text]
-            findings.extend(_scan_profile_store_json(
-                rel, ".jsonl", "\n".join(head_lines)))
+            else:
+                head_text = head.decode("utf-8", errors="ignore")
+                head_lines = head_text.splitlines()[:-1] or [head_text]
+                findings.extend(_scan_profile_store_json(
+                    rel, ".jsonl", "\n".join(head_lines)))
         return findings
 
-    text = _read_text(path)
+    try:
+        text = _read_text(path)
+    except OSError as exc:
+        findings.append(_unreadable_finding(rel, exc))
+        return findings
     if text is None:
         return findings  # undecodable binary blob: only name/extension/size checks apply
 
@@ -605,7 +671,21 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
 def scan_tree(root: Path, denylist_terms: list[tuple[str, str]] | None,
               binary_allowlist: dict[Path, str] | None = None) -> list[dict]:
     findings: list[dict] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+
+    def _on_walk_error(exc: OSError) -> None:
+        # os.walk's default (onerror=None) is to silently ignore a
+        # directory it cannot enter and simply not visit it — the exact
+        # "gate claims more than it checked" failure this module exists to
+        # rule out. Treat an inaccessible directory the same as an
+        # unreadable file: a visible HARD finding, not a quiet omission.
+        bad_path = getattr(exc, "filename", None) or str(exc)
+        try:
+            rel = Path(bad_path).resolve().relative_to(root).as_posix()
+        except (OSError, ValueError):
+            rel = str(bad_path)
+        findings.append(_unreadable_finding(rel, exc))
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_on_walk_error):
         dirnames[:] = sorted(
             d for d in dirnames if unicodedata.normalize("NFC", d) not in EXCLUDED_DIRS
         )
@@ -624,12 +704,20 @@ def scan_tree(root: Path, denylist_terms: list[tuple[str, str]] | None,
 def _print_report(root: Path, findings: list[dict], as_json: bool) -> None:
     hard = [f for f in findings if f["severity"] == "HARD"]
     warn = [f for f in findings if f["severity"] == "WARN"]
+    # Any unreadable_file finding means the scan could not read everything
+    # under root -- the verdict is real (every finding it DID make still
+    # holds) but the coverage is not total, and that must be visible next to
+    # the counts, not just inferable from grepping the finding list.
+    incomplete = any(f["rule"] == "unreadable_file" for f in findings)
 
     if as_json:
         payload = {
             "root": str(root),
             "findings": findings,
-            "summary": {"hard": len(hard), "warn": len(warn), "total": len(findings)},
+            "summary": {
+                "hard": len(hard), "warn": len(warn), "total": len(findings),
+                "incomplete": incomplete,
+            },
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -640,7 +728,9 @@ def _print_report(root: Path, findings: list[dict], as_json: bool) -> None:
         for f in findings:
             line = f["line"] if f["line"] is not None else "-"
             print(f"{f['file']}:{line} [{f['severity']}] ({f['rule']}) {f['snippet']}")
-    print(f"summary: HARD={len(hard)} WARN={len(warn)} TOTAL={len(findings)}")
+    incomplete_note = " -- SCAN INCOMPLETE: some paths could not be read (see unreadable_file findings)" \
+        if incomplete else ""
+    print(f"summary: HARD={len(hard)} WARN={len(warn)} TOTAL={len(findings)}{incomplete_note}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -689,8 +779,12 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             denylist_terms = load_denylist(denylist_path)
-        except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        except (ValueError, OSError) as exc:
+            # The denylist is a scan INPUT (already existence/type-checked
+            # above), not scanned content -- an OSError reading it (e.g. a
+            # permission race) is a usage error (exit 2), not an
+            # unreadable_file scan finding.
+            print(f"error: cannot read denylist file: {denylist_path}: {exc}", file=sys.stderr)
             return 2
 
     binary_allowlist = None

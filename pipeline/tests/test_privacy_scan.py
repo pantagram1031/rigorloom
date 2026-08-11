@@ -6,13 +6,30 @@ exactly as a CI step would see them.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "privacy_scan.py"
+
+
+def _load_privacy_scan():
+    """Import privacy_scan.py in-process (as opposed to the subprocess-based
+    `run()` below) so tests can call `scan_tree()` / `main()` directly and
+    monkeypatch its internals."""
+    spec = importlib.util.spec_from_file_location("privacy_scan_direct", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+privacy_scan = _load_privacy_scan()
 
 
 def run(root: Path, *extra_args: str) -> tuple[dict, int]:
@@ -43,7 +60,7 @@ def test_clean_tree_exits_zero(tmp_path: Path):
 
     assert code == 0
     assert payload["findings"] == []
-    assert payload["summary"] == {"hard": 0, "warn": 0, "total": 0}
+    assert payload["summary"] == {"hard": 0, "warn": 0, "total": 0, "incomplete": False}
 
 
 def test_binary_document_extension_is_hard(tmp_path: Path):
@@ -527,3 +544,102 @@ def test_malformed_allowlist_manifest_is_usage_error(tmp_path: Path):
     )
 
     assert proc.returncode == 2
+
+
+# --- T95: an unreadable file must be a visible HARD finding, never a crash
+# and never a silent pass ------------------------------------------------
+
+def _make_unreadable(path: Path) -> None:
+    """Create a filesystem entry at `path` that raises OSError when opened
+    for reading: a dangling symlink (portable across POSIX and Windows with
+    symlink privilege / Developer Mode). Skips the test — visibly, with a
+    reason — rather than silently passing when this host cannot create
+    symlinks at all (e.g. Windows without Developer Mode or admin)."""
+    target = path.parent / (path.name + ".missing-target")
+    try:
+        os.symlink(target, path)
+    except OSError as exc:
+        pytest.skip(
+            f"cannot create a symlink on this host to build the "
+            f"unreadable-file fixture: {exc}"
+        )
+
+
+def test_unreadable_file_is_hard_finding_via_scan_tree_direct(tmp_path: Path):
+    """Library-consumer path (matches how package_module.build_bundle calls
+    scan_tree): an unreadable file must appear as an unreadable_file HARD
+    finding, not raise and abort the whole scan."""
+    _make_unreadable(tmp_path / "ghost.bin")
+    (tmp_path / "clean.txt").write_text("nothing sensitive\n", encoding="utf-8")
+
+    findings = privacy_scan.scan_tree(tmp_path, None)
+
+    unreadable = [f for f in findings if f["rule"] == "unreadable_file"]
+    assert len(unreadable) == 1
+    assert unreadable[0]["severity"] == "HARD"
+    assert unreadable[0]["file"] == "ghost.bin"
+
+
+def test_unreadable_file_is_hard_finding_via_cli(tmp_path: Path):
+    _make_unreadable(tmp_path / "ghost.bin")
+    (tmp_path / "clean.txt").write_text("nothing sensitive\n", encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3  # HARD, via the same exit-3 contract as every other HARD rule
+    assert "unreadable_file" in rules(payload)
+    unreadable = [f for f in payload["findings"] if f["rule"] == "unreadable_file"]
+    assert unreadable[0]["severity"] == "HARD"
+    assert payload["summary"]["incomplete"] is True
+    assert payload["summary"]["hard"] >= 1
+
+
+def test_unreadable_file_summary_text_says_incomplete(tmp_path: Path):
+    _make_unreadable(tmp_path / "ghost.bin")
+
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path)],
+        capture_output=True, text=True, encoding="utf-8", env=env,
+    )
+
+    assert proc.returncode == 3
+    assert "INCOMPLETE" in proc.stdout
+
+
+def test_unreadable_file_via_scan_tree_monkeypatch(monkeypatch: pytest.MonkeyPatch,
+                                                    tmp_path: Path):
+    """Portable companion to the symlink-based tests above: forces the exact
+    OSError site named in the defect report (`_read_text`) without relying
+    on any OS-specific filesystem trick, so this always runs regardless of
+    symlink privilege."""
+    (tmp_path / "locked.txt").write_text("would be clean if readable\n", encoding="utf-8")
+    (tmp_path / "other.txt").write_text("nothing sensitive\n", encoding="utf-8")
+
+    original_read_text = privacy_scan._read_text
+
+    def boom(path: Path):
+        if path.name == "locked.txt":
+            raise OSError(13, "Permission denied")
+        return original_read_text(path)
+
+    monkeypatch.setattr(privacy_scan, "_read_text", boom)
+
+    findings = privacy_scan.scan_tree(tmp_path, None)
+
+    unreadable = [f for f in findings if f["rule"] == "unreadable_file"]
+    assert len(unreadable) == 1
+    assert unreadable[0]["file"] == "locked.txt"
+    assert unreadable[0]["severity"] == "HARD"
+
+
+def test_clean_tree_with_no_unreadable_files_is_still_complete(tmp_path: Path):
+    """Baseline: the incomplete flag stays False and exit stays 0 when
+    nothing was unreadable — the new machinery must not fire on its own."""
+    (tmp_path / "a.txt").write_text("clean\n", encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert payload["summary"]["incomplete"] is False
+    assert "unreadable_file" not in rules(payload)

@@ -174,6 +174,33 @@ class TestModuleBundle:
         assert not list((tmp_path / "dist").glob("*.zip")) \
             if (tmp_path / "dist").exists() else True
 
+    def test_unreadable_staged_file_refuses_cleanly_not_a_traceback(
+            self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        # T95: a staged file the privacy gate cannot read must not crash
+        # build_bundle with an uncaught OSError traceback. scan_tree turns
+        # it into an unreadable_file HARD finding, and _run_privacy_gate
+        # refuses the build through the SAME PackageError path as any other
+        # HARD finding (exit 3) -- a privacy refusal, not a stack trace.
+        # Monkeypatches the exact read site named in the defect report
+        # (privacy_scan._read_text) rather than relying on an OS-specific
+        # filesystem trick, so this runs identically on every CI OS.
+        module = make_module(tmp_path / "modules")
+        original_read_text = package_module.privacy_scan._read_text
+
+        def boom(path: Path):
+            if path.name == "play.md":
+                raise OSError(13, "Permission denied")
+            return original_read_text(path)
+
+        monkeypatch.setattr(package_module.privacy_scan, "_read_text", boom)
+
+        with pytest.raises(package_module.PackageError) as ctx:
+            build(tmp_path)
+        assert ctx.value.exit_code == 3
+        assert "privacy_scan" in str(ctx.value)
+        assert not list((tmp_path / "dist").glob("*.zip")) \
+            if (tmp_path / "dist").exists() else True
+
     def test_profile_store_content_in_payload_refuses_the_build(
             self, tmp_path: Path):
         # v0.16 W4.1 artifact leak gate: personalization-store content in a
