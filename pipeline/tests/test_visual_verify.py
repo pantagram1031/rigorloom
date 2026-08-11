@@ -3623,3 +3623,85 @@ def test_t100_an_image_directory_baseline_cannot_attribute(tmp_path):
     assert visual_verify._baseline_format_records(
         visual_verify.fitz if hasattr(visual_verify, "fitz") else None,
         images, 130) is None
+
+
+# ---------------------------------------------------------------------------
+# T101: one attribution vocabulary per finding class
+# ---------------------------------------------------------------------------
+
+INHERITED_STATES = {"yes", "no", "unknown"}
+
+
+def _attribution_carrying(verdict):
+    """Every format_noncompliance finding in a verdict, all buckets."""
+    out = []
+    for bucket in ("hard", "warn", "deterministic"):
+        for item in verdict.get(bucket) or []:
+            if isinstance(item, dict) and item.get("class") == "format_noncompliance":
+                out.append(item)
+    return out
+
+
+def test_t101_every_format_noncompliance_finding_carries_one_vocabulary(
+        tmp_path, monkeypatch):
+    """The regression T100 shipped and the bench caught.
+
+    ``format_noncompliance`` had two vocabularies for one question: the T100
+    legs put ``inherited`` in the evidence, while the T40 charPr leg answered
+    the same thing with ``form_baseline_checked`` / ``form_baseline_match`` /
+    ``form_baseline_note`` and no ``inherited`` key at all. A consumer
+    filtering the class on ``inherited`` therefore skipped the strongest
+    baseline comparison in the file and could not tell that from "nothing was
+    inherited".
+
+    The invariant, asserted over a real verify run rather than a constructed
+    finding: every finding of this class carries ``inherited``, and its value
+    is in the closed tri-state.
+    """
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    verdict, _code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+    findings = _attribution_carrying(verdict)
+    assert findings, "fixture produced no format_noncompliance finding to check"
+    missing = [f["code"] for f in findings if "inherited" not in f["evidence"]]
+    assert missing == []
+    bad = {f["code"]: f["evidence"]["inherited"] for f in findings
+           if f["evidence"]["inherited"] not in INHERITED_STATES}
+    assert bad == {}
+
+
+def test_t101_an_inherited_seat_signature_reads_yes(tmp_path, monkeypatch):
+    """The T40 WARN and the T100 legs now say the same word for the same fact."""
+    blank = make_seat_form_hwpx(tmp_path / "blank.hwpx", seat=_SEAT_LABEL)
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    verdict, _code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=blank,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+    inherited = [f for f in _attribution_carrying(verdict)
+                 if f["code"] == "fill_charpr_script_inherited"]
+    assert inherited, "expected the T40 inherited WARN in this fixture"
+    for item in inherited:
+        assert item["evidence"]["inherited"] == visual_verify.INHERITED_YES
+        # The detail behind the verdict is kept, not replaced.
+        assert item["evidence"]["form_baseline_checked"] is True
+
+
+def test_t101_no_hwpx_baseline_reads_unknown_not_no(tmp_path, monkeypatch):
+    """Failing to find the evidence is not the same as finding the fill guilty.
+
+    Without an ``.hwpx`` baseline the blank form's seat cannot be identified,
+    so the charPr leg must report ``unknown`` with a reason — never ``no``,
+    which would assert the fill introduced a signature nobody checked.
+    """
+    artifact = make_seat_form_hwpx(tmp_path / "filled.hwpx", seat=_SEAT_FILLED)
+    verdict, _code = _seat_run(
+        tmp_path, monkeypatch, artifact=artifact, baseline=None,
+        expectations=str(_seat_expectations(tmp_path / "exp.json")))
+    mismatches = [f for f in _attribution_carrying(verdict)
+                  if f["code"] == "fill_charpr_script_mismatch"]
+    assert mismatches, "expected the T40 HARD without a baseline"
+    for item in mismatches:
+        assert item["evidence"]["inherited"] == visual_verify.INHERITED_UNKNOWN
+        assert item["evidence"]["inherited_reason"]
