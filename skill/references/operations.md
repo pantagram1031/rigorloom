@@ -95,6 +95,15 @@ satisfy this declaration" call for opposite actions. Findings that carry it
 report `inherited: yes | no | unknown`, and `unknown` names why rather than
 guessing.
 
+**One vocabulary per class.** Every finding of class `format_noncompliance` carries `inherited`, whichever leg emitted it, and
+a test asserts that over a real verify run rather than over a constructed
+finding. T100 first shipped the tri-state on its own legs while the T40
+charPr leg answered the same question in `form_baseline_*` keys only, so a
+consumer filtering the class on `inherited` silently skipped the strongest
+baseline comparison in the file — and could not tell that from "nothing
+was inherited". Two names for one concept is the shape T35 and T36 already
+closed here, which is why it is now asserted rather than merely agreed.
+
 `--baseline` is what makes attribution possible, and its shape decides how much
 can be answered: an `.hwpx`/`.hwp`/`.pdf` baseline supports it, a directory of
 page images does not (no text layer, so point size, line pitch and content bbox
@@ -108,7 +117,7 @@ are not recoverable from it).
 | `base_pt` | `format_noncompliance` | **yes** (T100) | same metric, same page | attributes. A page's median size on a form is dominated by the form's own labels |
 | `line_spacing` | `format_noncompliance` | **yes** (T100) | ratio recomputed from the baseline's own pitch and size | attributes |
 | `margins` | `format_noncompliance` | **yes** (T100) | per side, independently | attributes. Margins are the form's page setup outright |
-| `fill_charpr_script` | `fill_charpr_script_mismatch` | yes (T40) | the blank form's signature for the same seat | compares; an inherited signature is a named WARN |
+| `fill_charpr_script` | `fill_charpr_script_mismatch` / `fill_charpr_script_inherited` | yes (T40) | the blank form's signature for the same seat | compares; an inherited signature is a named WARN. Carries the same `inherited` tri-state as the legs above (T101) — `no` only when the blank form's own run in that seat was positively identified and differs, `unknown` otherwise, because failing to find the evidence is not the same as finding the fill guilty. The `form_baseline_*` keys stay as the detail behind it |
 | `print_method` | `imposition_mismatch` | n/a | conversion provenance instead (T38) | closed differently: a hash-bound record proves the normalization happened |
 | `page_parity` | `imposition_mismatch` | no | — | correctly isolated: both counts are of the same artifact |
 | `orientation` | `imposition_mismatch` | no | — | WARN only; landscape is a form property, so attribution would help but the severity never accused the fill |
