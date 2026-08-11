@@ -803,6 +803,150 @@ def _assert_map_keys_unambiguous(occurrences, scopes):
 
 
 # ---------------------------------------------------------------------------
+# 1c) set_runs — (at_para, run) 주소로 런 텍스트를 직접 쓴다 (오프라인)
+#
+# T112: 양식의 빈칸은 밑줄(괘선)을 그리는 런이고, 값은 그 런 안에 들어가야
+# 괘선이 값 아래로 이어진다. 라벨 런에 이어 쓰면 값은 밑줄 없는 런에 앉고
+# 괘선 런은 그대로 남아 다음 줄로 밀린다 — A2의 승인된 산출물이 실제로 그렇게
+# 렌더됐다.
+#
+# replace로는 도달할 수 없다(#66, 실측으로 확인): 괘선 런의 텍스트가 공백뿐인
+# 경우 잡을 문자열이 없고, 공백뿐인 키는 tier A의 strip-비교에서 '모든 공백뿐인
+# 런'에 매치되는 와일드카드가 되어 문단으로 좁혀도 모호하다(주소 문단에도
+# 들여쓰기 런이 함께 있으므로). 키 규칙을 완화하는 쪽은 건전하지만 동기가 된
+# 자리에 도달하지 못한다 — 그래서 fill_cells가 셀에 대해 한 것과 같이, 구조
+# 주소로 쓰는 별개 오퍼레이션이다.
+#
+# 주소는 form_inspect가 이미 보고하는 것을 그대로 쓴다:
+# `--full-text PARA:N`의 `at_para`와 그 안 `runs[].index`(그리고 어느 런이
+# 괘선인지는 `runs[].ruled`).
+# ---------------------------------------------------------------------------
+
+
+def _strip_own_linesegarray(p_xml):
+    """이 문단 '자신의' linesegarray만 제거(T24) — 중첩 문단 것은 보존.
+
+    `_replace_in_paragraph`와 같은 귀속 규칙이다: 문단 inner를 중첩 문단 스팬과
+    그 밖의 gap으로 나누고 gap에서만 지운다. 문단 전체에 sub를 걸면 바뀌지도
+    않은 중첩 문단의 캐시된 좌표까지 버리게 되고, 그건 이유 없는
+    byte-fidelity 손실이다.
+    """
+    open_m = P_OPEN_RE.match(p_xml)
+    if not open_m:
+        return LINESEG_RE.sub("", p_xml)
+    close_idx = p_xml.rfind("</")
+    inner = p_xml[open_m.end():close_idx]
+    out, last = [], 0
+    for start, end, nested in _find_paragraphs(inner):
+        out.append(LINESEG_RE.sub("", inner[last:start]))
+        out.append(nested)
+        last = end
+    out.append(LINESEG_RE.sub("", inner[last:]))
+    return p_xml[:open_m.end()] + "".join(out) + p_xml[close_idx:]
+
+
+def set_runs(hwpx_in, hwpx_out, sets):
+    """런 텍스트를 (at_para, run index) 주소로 직접 쓴다.
+
+    sets: [(at_para, run_index, value), ...]
+
+    계약:
+      - 런 오프너는 손대지 않는다 → charPrIDRef 보존이 곧 이 오퍼레이션의
+        요점이다(괘선 런에 써야 괘선이 값 아래로 간다).
+      - 런의 첫 ``<hp:t>``에 값을 쓰고 나머지 ``<hp:t>``는 비운다. 한 런이
+        여러 조각으로 쪼개져 있어도 결과 텍스트는 정확히 값 하나다.
+      - ``<hp:t>``가 아예 없는 런(빈 셀의 자기닫힘 런)은 거부한다 — 그것은
+        fill_cells의 영역이고, 여기서 <hp:t>를 만들면 두 오퍼레이션이 같은
+        구조를 서로 다르게 다루게 된다.
+      - 범위를 벗어난 at_para/run index는 거부(문서가 가진 수를 함께 보고).
+      - 같은 주소를 두 번 지정하면 거부(조용한 마지막-승리 금지).
+      - 텍스트가 바뀐 문단의 ``<hp:linesegarray>``는 제거(T24) — 바뀌지 않은
+        문단의 것은 바이트 그대로 보존.
+      - 쓰기 전 수정 멤버 well-formed 검증(실패 시 아무것도 쓰지 않는다).
+
+    멱등성: 같은 값으로 재실행하면 content-identical.
+
+    반환: {"ok": True, "written": n, "runs": [{"at_para": N, "run": i,
+           "charpr": "19"|None, "previous": "…"}, ...]}
+    """
+    wanted = {}
+    for at_para, run_index, value in sets:
+        at_para, run_index = int(at_para), int(run_index)
+        if at_para < 0 or run_index < 0:
+            raise PreeditError(
+                f"주소는 0 이상이어야 한다: at_para={at_para}, run={run_index}")
+        if (at_para, run_index) in wanted:
+            raise PreeditError(
+                f"같은 런 주소가 중복 지정됨: at_para={at_para}, run={run_index}")
+        wanted[(at_para, run_index)] = str(value)
+    if not wanted:
+        raise ValueError("쓸 런이 하나도 없음")
+
+    infos, contents = _read_zip(hwpx_in)
+    written, modified, para_total = [], [], 0
+    for sname in _section_names(contents):
+        xml = contents[sname].decode("utf-8")
+        edits = []           # (absolute_start, absolute_end, replacement)
+        for p_start, p_end, p_xml in _iter_document_paragraphs(xml):
+            at_para = para_total
+            para_total += 1
+            here = {k: v for k, v in wanted.items() if k[0] == at_para}
+            if not here:
+                continue
+            runs = paragraph_text_runs(p_xml)
+            new_p = p_xml
+            for (_a, run_index), value in sorted(here.items()):
+                if run_index >= len(runs):
+                    # 0개는 그 문단이 <hp:t> 없는 자기닫힘 런만 갖는 경우다
+                    # (빈 셀의 표준형) — 여기서 <hp:t>를 만들면 fill_cells와
+                    # 같은 구조를 서로 다르게 다루게 되므로 그쪽으로 보낸다.
+                    # `paragraph_text_runs`가 <hp:t> 없는 런을 애초에 반환하지
+                    # 않으므로 이 한 곳이 그 사례의 유일한 출구다.
+                    hint = (" — <hp:t>가 없는 런만 있는 문단이다"
+                            "(빈 셀의 자기닫힘 런): fill_cells를 쓸 것"
+                            if not runs else "")
+                    raise PreeditError(
+                        f"at_para={at_para}에 run={run_index}이 없음 — "
+                        f"텍스트 런 {len(runs)}개{hint}")
+                run = runs[run_index]
+                spans = sorted(run["t_spans"])
+                pieces, last = [], 0
+                for i, (s, e) in enumerate(spans):
+                    pieces.append(new_p[last:s])
+                    pieces.append(escape(value) if i == 0 else "")
+                    last = e
+                pieces.append(new_p[last:])
+                new_p = "".join(pieces)
+                written.append({"at_para": at_para, "run": run_index,
+                                "charpr": run["charpr"],
+                                "previous": run["text"]})
+                # 같은 문단에 두 번째 런을 쓰려면 오프셋이 밀렸으므로 다시 읽는다.
+                runs = paragraph_text_runs(new_p)
+            if new_p != p_xml:
+                new_p = _strip_own_linesegarray(new_p)
+                edits.append((p_start, p_end, new_p))
+        if edits:
+            out, last = [], 0
+            for start, end, replacement in sorted(edits):
+                out.append(xml[last:start])
+                out.append(replacement)
+                last = end
+            out.append(xml[last:])
+            contents[sname] = "".join(out).encode("utf-8")
+            modified.append(sname)
+
+    unresolved = sorted(k for k in wanted
+                        if not any(w["at_para"] == k[0] and w["run"] == k[1]
+                                   for w in written))
+    if unresolved:
+        raise PreeditError(
+            f"문서에 없는 문단 주소: {unresolved} — 문단 {para_total}개")
+    _assert_members_well_formed(contents, modified)
+    _write_zip(hwpx_out, infos, contents)
+    return {"ok": True, "written": len(written), "runs": written}
+
+
+# ---------------------------------------------------------------------------
 # 1b) fill_cells — cellAddr로 '진짜 빈' 표 셀 채우기 (오프라인)
 #
 # T27(첫 클린룸 교차모델 런): 양식의 빈 셀은 텍스트가 '비어 있는' 게 아니라
@@ -2317,6 +2461,21 @@ def main(argv=None):
                        help="그 런의 charPrIDRef 재지정(반복 가능)."
                             " T30 사전 점검 거부를 넘기는 경로다")
 
+    p_sr = sub.add_parser(
+        "set-runs",
+        help="(at_para,run) 주소로 런 텍스트 쓰기 — 괘선 런에 값을 넣는 경로")
+    p_sr.add_argument("file")
+    p_sr.add_argument("--out", required=True)
+    p_sr.add_argument("--run", action="append", default=[],
+                      metavar="AT_PARA,RUN=TEXT",
+                      help="쓸 런(반복 가능). 주소는 form_inspect"
+                           " `--full-text PARA:N`의 at_para와 그 안"
+                           " runs[].index다 — 어느 런이 괘선인지는"
+                           " runs[].ruled가 말해준다(T112). 런의 charPrIDRef는"
+                           " 보존되며, 그게 이 오퍼레이션의 요점이다")
+    p_sr.add_argument("--map",
+                      help='런 JSON 파일({"18,2": "값"}) — --run과 병용 가능')
+
     p_fc = sub.add_parser("fill-cells",
                           help="cellAddr(row,col)로 표 셀 채우기(빈 셀 도달 경로)")
     p_fc.add_argument("file")
@@ -2404,6 +2563,27 @@ def main(argv=None):
                 result = replace_placeholders(
                     args.file, args.out, mapping,
                     on_zero_hits="ignore" if args.allow_missing else "error")
+        elif args.cmd == "set-runs":
+            sets = []
+            specs = list(args.run)
+            if args.map:
+                payload = json.loads(
+                    Path(args.map).read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise PreeditError("--map은 {\"at_para,run\": \"값\"} 객체")
+                specs += [f"{k}={v}" for k, v in payload.items()]
+            for spec in specs:
+                addr, sep, value = spec.partition("=")
+                if not sep:
+                    raise PreeditError(
+                        f"--run 형식은 AT_PARA,RUN=TEXT: {spec!r}")
+                try:
+                    at_para, run_index = (int(x) for x in addr.split(","))
+                except ValueError:
+                    raise PreeditError(
+                        f"--run 주소는 AT_PARA,RUN 두 정수: {addr!r}") from None
+                sets.append((at_para, run_index, value))
+            result = set_runs(args.file, args.out, sets)
         elif args.cmd == "fill-cells":
             fills, cell_addrs, line_order, line_by = [], set(), [], {}
             for spec in args.cell:
