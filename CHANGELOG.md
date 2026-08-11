@@ -52,6 +52,19 @@ the kernel's contract shape.
   composite is not HMAC-authenticated, does not execute or auto-route, and
   publishes no paths, operator key, corpus/PDF bytes, argv, or streams.
 
+- **T153:** added the standalone, read-only
+  `rigorloom/hwpx-definition-graph/v1` diagnostic. The CLI inspects one HWPX
+  snapshot and emits only the selected definition/reference graph's closed
+  counts and canonical `graph_sha256`; ZIP order and compression do not alter
+  the digest. `status: analyzed` is still a diagnostic result, not semantic,
+  feature, renderer, certificate, runtime, conversion, or submission proof.
+  It publishes no source text, member names, raw IDs, binary bytes, metadata,
+  or paths, refuses unresolved or malformed references, and does not execute a
+  renderer or use an automatic route. The downstream ceiling remains
+  `comparison: {state: unknown}`, `render: {state: not_run}`, `proof_grade: none`,
+  `submission_grade: false`, and `promotion: not_run`; no release switch or
+  existing runtime/certificate behavior changes.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
