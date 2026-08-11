@@ -736,7 +736,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--keep", action="append", default=[],
-        help="exact anchor text to keep (repeatable)",
+        help="exact anchor text to keep (repeatable). A value that STARTS WITH "
+             "'-' must use the '=' form — write --keep=-- , never --keep -- , "
+             "because argparse reads a bare '--' as its end-of-options marker "
+             "and the value never arrives (T116). Real forms print '--' as a "
+             "placeholder, so this is not hypothetical",
     )
     parser.add_argument(
         "--fill-map", default=None,

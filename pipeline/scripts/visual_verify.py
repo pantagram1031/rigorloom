@@ -1551,9 +1551,15 @@ def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
             seen.add(entry)
             ordered.append(entry)
     for entry in ordered:
-        argv += ["--keep", entry]
+        # `--keep=VALUE`, one token, NOT ["--keep", value]. An inventory entry
+        # that is exactly `--` is a real thing — the kstartup form prints it
+        # twice as a schedule placeholder — and argparse reads a bare `--` as
+        # its end-of-options marker, so the two-token form makes check_residue
+        # exit 2 with "expected one argument" and the residue gate cannot run
+        # at all on that form. The `=` binds the value and is immune (T116).
+        argv.append(f"--keep={entry}")
     if keep_pattern is not None:
-        argv += ["--keep-pattern", keep_pattern]
+        argv.append(f"--keep-pattern={keep_pattern}")
     report["keep_total"] = len(ordered)
     return argv, report, None
 

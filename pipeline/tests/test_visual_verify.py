@@ -3869,7 +3869,7 @@ def test_module_protected_keeps_are_forwarded_and_recorded_apart():
         "profile.json", "art.hwpx", keep=("operator says so",),
         protected=("모듈이 법정 문구라고 선언", "두 번째"))
     assert error is None
-    kept = [argv[i + 1] for i, a in enumerate(argv) if a == "--keep"]
+    kept = [a.split("=", 1)[1] for a in argv if a.startswith("--keep=")]
     assert kept == ["operator says so", "모듈이 법정 문구라고 선언", "두 번째"]
     assert report["explicit_keep"] == ["operator says so"]
     assert report["module_protected_keep"] == ["모듈이 법정 문구라고 선언",
@@ -3881,7 +3881,8 @@ def test_a_protected_entry_the_operator_also_passed_is_not_duplicated():
     argv, report, error = visual_verify.build_residue_argv(
         "profile.json", "art.hwpx", keep=("같은 문구",), protected=("같은 문구",))
     assert error is None
-    assert [argv[i + 1] for i, a in enumerate(argv) if a == "--keep"] == ["같은 문구"]
+    assert [a.split("=", 1)[1] for a in argv
+            if a.startswith("--keep=")] == ["같은 문구"]
     assert report["keep_total"] == 1
     # Both records still say who claimed it; dedup is about argv, not provenance.
     assert report["explicit_keep"] == ["같은 문구"]
@@ -3907,3 +3908,127 @@ def test_story_edit_scope_refuses_a_fill_path_protected_text():
          "forbidden_text": ["y"], "protected_text": ["z"]}, _Args())
     assert scope is None
     assert error and "protected_text" in error
+
+
+# --------------------------------------------------------------------------- #
+# T116 — a keep value of exactly `--` must reach the delegate.
+#
+# The kstartup corpus form prints `--` twice as a schedule placeholder, so it is
+# an ordinary inventory entry. argparse reads a bare `--` as its end-of-options
+# marker, so ["--keep", "--"] makes check_residue exit 2 with "expected one
+# argument" and the residue gate cannot run AT ALL on that form — through the
+# internal subprocess list too, since no shell is involved. Found by the A3
+# clean-room run.
+# --------------------------------------------------------------------------- #
+
+def test_keep_values_are_emitted_as_one_token():
+    argv, _report, error = visual_verify.build_residue_argv(
+        "p.json", "a.hwpx", keep=("--", "ordinary"), keep_pattern="-x")
+    assert error is None
+    keeps = [a for a in argv if a.startswith("--keep")]
+    assert keeps == ["--keep=--", "--keep=ordinary", "--keep-pattern=-x"]
+    # and no bare token survives anywhere in the argv
+    assert "--" not in argv
+    assert "-x" not in argv
+
+
+def test_a_dashdash_keep_reaches_the_delegate_and_is_honoured(tmp_path):
+    """Failing before: exit 2, `argument --keep: expected one argument`.
+
+    Runs the REAL delegate through a subprocess list, which is the path the
+    product takes — the defect is argparse's, not the shell's.
+    """
+    form = (REPO_ROOT / "tests" / "corpus" / "forms"
+            / "converted" / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx")
+    if not form.is_file():
+        pytest.skip("kstartup corpus member absent")
+    profile = tmp_path / "blank.json"
+    subprocess.run(
+        [sys.executable,
+         str(REPO_ROOT / "engine" / "scripts"
+             / "form_inspect.py"), str(form), "--out", str(profile)],
+        check=True, capture_output=True)
+    inventory = json.loads(profile.read_text(encoding="utf-8"))
+    assert any(entry.strip() == "--" for entry in inventory["anchors"]), (
+        "corpus drift: this form is the reason the test exists")
+
+    argv, _report, error = visual_verify.build_residue_argv(
+        str(profile), str(form), keep=("--",))
+    assert error is None
+    proc = subprocess.run(
+        [sys.executable,
+         str(Path(visual_verify.__file__).parent / "check_residue.py"), *argv],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 3, (proc.returncode, proc.stderr[-200:])
+    payload = json.loads(proc.stdout)
+    assert payload["counts"]["kept"] >= 1
+
+
+def _two_token_keep_sites(path):
+    """``[ "--keep" ,`` as CODE - tokenized, so a comment about the bug is not a
+    hit. A guard that false-positives on its own documentation is a guard
+    somebody deletes.
+
+    Bound, stated rather than implied: only a LIST opener counts. `(` would also
+    catch every ``add_argument("--keep", ...)`` declaration and the conflict
+    tuple in ``validate_operation_scope`` - neither builds an argv, and a guard
+    that cries about a flag's own definition is worse than no guard. So a future
+    ``argv.extend(("--keep", v))`` would escape this; both real sites used a
+    list, which is the shape it is here to keep out.
+    """
+    import io
+    import tokenize
+    try:
+        tokens = list(tokenize.generate_tokens(
+            io.StringIO(path.read_text(encoding="utf-8",
+                                       errors="replace")).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return []
+    # tokenize is what makes this comment-immune, not a filter: it emits a
+    # whole comment as ONE token, so `# never write ["--keep", v]` never splits
+    # into the OP/STRING/OP triple below. Verified by mutation - dropping a
+    # COMMENT filter changes nothing, so no such filter is kept here. Only
+    # layout tokens are dropped, to keep the triple contiguous.
+    code = [tok for tok in tokens
+            if tok.type not in (tokenize.NL, tokenize.NEWLINE,
+                                tokenize.INDENT, tokenize.DEDENT)]
+    hits = []
+    for i in range(len(code) - 2):
+        opener, name, comma = code[i], code[i + 1], code[i + 2]
+        if (opener.type == tokenize.OP and opener.string == "["
+                and name.type == tokenize.STRING
+                and name.string.strip("\"\'") in ("--keep", "--keep-pattern")
+                and comma.type == tokenize.OP and comma.string == ","):
+            hits.append(opener.start[0])
+    return hits
+
+
+def test_no_caller_in_the_tree_passes_a_keep_as_two_tokens():
+    """The durable half: a future emitter cannot reintroduce it quietly.
+
+    Source-level, because the failure is in how argv is BUILT and a behavioural
+    test only covers the sites someone remembered to test.
+    """
+    offenders = []
+    for path in REPO_ROOT.rglob("*.py"):
+        posix = path.as_posix()
+        if ("/.git/" in posix or "/scratch/" in posix
+                or path.name.startswith("test_")):
+            continue
+        for line in _two_token_keep_sites(path):
+            offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{line}")
+    assert not offenders, (
+        "pass keeps as one token (--keep=VALUE); a bare '--' value is eaten by "
+        f"argparse: {offenders}")
+
+
+def test_the_source_guard_can_actually_see_a_two_token_keep(tmp_path):
+    """Non-vacuity: the tokenizer walk must still detect the real shape, and
+    must NOT detect it inside a comment."""
+    bad = tmp_path / "bad.py"
+    bad.write_text('argv += ["--keep", entry]\n', encoding="utf-8")
+    assert _two_token_keep_sites(bad) == [1]
+    commented = tmp_path / "ok.py"
+    commented.write_text('# never write ["--keep", entry]\n'
+                         'argv.append(f"--keep={entry}")\n', encoding="utf-8")
+    assert _two_token_keep_sites(commented) == []
