@@ -30,12 +30,27 @@ otherwise. Do not downgrade a `hard` because it "looks minor".
 | `guide_text_visible` | hard | PARTIAL — `layout_qa` body_markers + `check_residue` |
 | `empty_cell_expected_fill` | hard | PARTIAL — fill-map value absent from PDF text |
 | `format_noncompliance` | hard | PARTIAL — measured pt/spacing vs declared; **script/scale/offset inheritance on fill-modified runs (`fill_charpr_script_mismatch`) is FULL** |
-| `missing_glyphs` | hard | FULL for the deterministic Hangul quality checker (`render_quality`); text extraction does not prove visible glyphs |
+| `missing_glyphs` | hard | **NONE in `visual_verify`** — it is in `VISION_HARD_CLASSES`, so the vision half owns it here and cannot downgrade it below hard. The deterministic Hangul checker `render_quality` covers it FULLY in a DIFFERENT run (`doc_backend` / `submission_preflight`), so do not read that coverage as present in a `visual_verify` verdict. Text extraction never proves visible glyphs |
 | `overprint` | hard | NONE (targeting only — glyph-bbox overlap ratio) |
 | `text_clipped` | hard | NONE |
-| `alignment_drift` | warn | NONE |
+| `alignment_drift` | warn | PARTIAL — `layout_qa` `line_spacing_uniformity`, `figure_placement/figure_width`, `tables/ragged`, `tables/table_too_wide` (four legs; see `_LAYOUT_QA_MAP`). Spacing/width/ragged-table drift is measured; optical alignment of a block against its neighbours is not |
 | `orphan_widow` | warn | PARTIAL — `layout_qa` caption/figure rules only |
 | `figure_overlap` | warn | FULL — `layout_qa` figure_placement |
+
+The `deterministic coverage` column is derived from the tool this rubric
+governs, `visual_verify`, and `tests/test_rubric_coverage.py` asserts the
+binary part of it against the source: a class the column calls NONE must
+have no detector, and a class with a detector must not be called NONE.
+Whether coverage is FULL or PARTIAL stays prose, because that is a
+judgement about what the detector actually establishes — the test does not
+pretend to check it.
+
+Both errors this guard was written for ran in opposite directions, which is
+why the binary is the thing worth asserting: `alignment_drift` was called
+NONE while four `layout_qa` legs mapped to it, and `missing_glyphs` was
+called FULL by naming a checker that runs in a different pipeline.
+Understating coverage invites a vision judge to re-adjudicate an answered
+question; overstating it invites the judge to skip an unanswered one.
 
 "FULL" means the machine half already HARDs on it and your job is only to
 corroborate or to catch a variant the mechanism cannot see. "NONE" means the

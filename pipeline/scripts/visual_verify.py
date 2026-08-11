@@ -2258,7 +2258,7 @@ def build_vision_task(records, det_findings, changed_pages, scope):
     """Which pages the vision half must read, and why.
 
     Default scope is ``all`` — the vision half is not skippable, and the
-    classes it owns (overprint, clipping, alignment drift) can appear on a
+    classes it owns (overprint, clipping) can appear on a
     page with a perfectly clean machine half. ``--vision-scope targeted``
     narrows to pages with a deterministic finding, a suspected overprint, or
     a pixel-diff change; use it only when a baseline pins the rest.
