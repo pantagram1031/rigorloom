@@ -248,6 +248,23 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T118:** an eval task asserts a rule's **outcome**, never the presence of its
+  name in a verdict JSON. `evals/README.md` documented "a name absent means it ran
+  and passed"; that was never true, because a checker writes a rule name as a
+  finding, as a positive acknowledgment, and as a permanent `skipped` row with a
+  reason. A3's check asserted thirteen names absent and could never pass — not on
+  a perfect fill, and not on the pristine form `check_grant` grades `pass`, since
+  `budget_total_mismatch` is a permanent skip (`no_addends`). `check_grant` now
+  publishes `rules`, mapping every rule to `hard`/`warn`/`skipped`/`clean`,
+  severity first so a skip elsewhere cannot mask a finding. A guard forbids the
+  pattern, and it widened its own scope twice while being written: it found two
+  more instances in A2/A3, then — after the vocabulary parser was corrected,
+  because only one of fifteen checkers declares a `RULES` tuple — two more in H1
+  and P2. Four tasks, six checks, three modules. The remaining four need
+  `check_hr` and `check_minwon` to publish the same map, so they are pinned in
+  `KNOWN_NAME_SEARCH_DEBT` and the guard asserts the offender list *equals* it: a
+  new instance fails and a fixed one forces the list down on purpose.
+
 - **T117:** a legitimate fill no longer makes `check_grant` report a table as
   deleted. `grid_tables` derives a table's identity from the first row carrying
   at least `header_min_labels` non-empty cells, **per document**, so writing a

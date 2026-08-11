@@ -639,3 +639,57 @@ class TestAFillDoesNotLookLikeADeletedTable:
                 archive.read(name).decode("utf-8") for name in archive.namelist()
                 if name.lower().startswith("contents/section"))
         assert "ZZZ완전히다른라벨A" in body
+
+
+# --------------------------------------------------------------------------- #
+# T118 - the verdict states every rule's outcome, because silence never did.
+# --------------------------------------------------------------------------- #
+
+class TestRuleStatesAreExplicit:
+
+    def test_every_rule_has_a_state_from_the_closed_set(self):
+        verdict, _code = cg.check(KSTARTUP, baseline=KSTARTUP)
+        states = verdict["rules"]
+        assert set(states) == set(cg.RULES)
+        assert set(states.values()) <= set(cg.RULE_STATES)
+
+    def test_the_pristine_form_reports_clean_and_skipped_not_silence(self):
+        """The measured shape of the form that made A3's old check impossible:
+        budget_total_mismatch is a permanent skip, so its NAME is in the JSON
+        while nothing is wrong."""
+        verdict, code = cg.check(KSTARTUP, baseline=KSTARTUP)
+        assert code == 0
+        states = verdict["rules"]
+        assert states["budget_total_mismatch"] == "skipped"
+        assert states["table_structure_lost"] == "clean"
+        assert "hard" not in set(states.values())
+
+    def test_a_fired_rule_reads_as_hard(self, tmp_path):
+        """Discrimination: the state must move when a rule actually fires."""
+        def drop_first_table(xml):
+            start = xml.find("<hp:tbl")
+            if start < 0:
+                return xml
+            depth = 0
+            for token in re.finditer(r"<hp:tbl\b|</hp:tbl>", xml[start:]):
+                if token.group(0).startswith("</"):
+                    depth -= 1
+                    if depth == 0:
+                        return xml[:start] + xml[start + token.end():]
+                else:
+                    depth += 1
+            return xml
+
+        path = rewrite(KSTARTUP, tmp_path / "deleted.hwpx", drop_first_table)
+        verdict, code = cg.check(path, baseline=KSTARTUP)
+        assert code == 3
+        assert verdict["rules"]["table_structure_lost"] == "hard"
+
+    def test_severity_wins_over_skip_when_a_rule_does_both(self):
+        """A rule reported by its WORST outcome, so a skip elsewhere cannot mask
+        a finding."""
+        states = cg.rule_states(
+            hard=[{"code": "table_structure_lost"}],
+            warn=[],
+            skipped=[{"rule": "table_structure_lost", "reason": "no_baseline"}])
+        assert states["table_structure_lost"] == "hard"
