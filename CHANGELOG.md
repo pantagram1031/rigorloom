@@ -234,6 +234,24 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T110:** `form_inspect` no longer offers a statutory consent question up for
+  deletion. A guide paragraph carrying an **answer slot** is a marking site, not
+  a deletion site, and is excluded from `removal_targets` on content, with the
+  reason exposed as `guide_text[].answer_slot` —
+  `interrogative_enumeration` (a question mark plus a parenthesized pair of
+  short alternatives, `동의하십니까? (예, 아니오)`) or `multiple_mark_slots`
+  (two or more empty `[ ]`/□ slots, the 주민등록 등초본 선택 필드). Previously
+  the two legally identical PPS consent questions received **opposite** verdicts
+  because `paraPrIDRef` 18 is reused by a heading and 21 is not, so a style id
+  decided which one was protected. The verdict reached a gate rather than only a
+  report: `check_residue` treats `removal_targets` as its authority (T47), so
+  the consent text sat in the forbidden set and the only route to a pass was a
+  hand-written `--keep`. Measured over all 12 corpus forms: `removal_targets`
+  79 → 76, `guide_text` unchanged at 268. Statutory *notice* prose on the same
+  form carries no answer slot and still needs an explicit keep — a stated limit,
+  because that is domain knowledge belonging in a module vocabulary rather than
+  in core (T43).
+
 - **T79:** the story inventory now rejects case-fold duplicate ZIP members and
   has an explicit CLI contract: exit 0 for a passed graph, 2 for argparse or
   output/usage errors, and 3 for a refused/unknown package. Help and output are
