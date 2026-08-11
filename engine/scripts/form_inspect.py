@@ -1180,6 +1180,20 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
                 # 동의 표기 절차가 어느 문서에도 없어 모듈 소스를 읽어야 했다.
                 if answer_slot:
                     entry["answer_slot"] = answer_slot
+                    # A marking site needs an EDITABLE address, and legacy
+                    # `para_idx` is not one — `preedit` and `--full-text PARA:N`
+                    # both take the depth-first `at_para`. The bridge existed
+                    # only on `anchor_records`, so it was available exactly when
+                    # the paragraph happened to be an anchor: on this corpus the
+                    # 수집ㆍ이용 consent question has it (39 -> 42) and its
+                    # 제3자 twin does not, which is the same paraPr accident
+                    # T110 removed from the removal verdict. Resolved the same
+                    # way anchors do, and omitted rather than guessed when the
+                    # binding is not provable.
+                    at_para = _resolve_at_para(
+                        p, depth_records.get(sname, []))
+                    if at_para is not None:
+                        entry["at_para"] = at_para
                 guide_text.append(entry)
                 guide_charpr_ids.update(cids)
                 guide_parapr_ids.add(para_pr)

@@ -215,6 +215,60 @@ def test_both_pps_consent_questions_get_the_same_verdict():
     assert targets, "removal_targets went empty — the filter over-fired"
 
 
+@pytest.mark.parametrize("rel,expected", [
+    # (para_idx -> at_para).  The two numbers differ on every instance, which is
+    # why fill-recipe tells the reader to read at_para and never retype
+    # para_idx: `--full-text PARA:N` takes at_para and silently returns a
+    # DIFFERENT paragraph when handed a para_idx.
+    ("grant/pps-jeongbogonggae-donguiseo.hwpx", {39: 42, 54: 58}),
+    ("converted/jumin-deungchobon-sinchengseo.hwpx", {50: 52, 73: 75}),
+])
+def test_answer_slots_carry_an_editable_address(rel, expected):
+    """T111 — a marking site is useless without the address an edit takes.
+
+    The para_idx -> at_para bridge previously existed only on `anchor_records`,
+    so it was present exactly when the paragraph happened to be an anchor: the
+    수집ㆍ이용 consent question had it and its 제3자 twin did not, the same
+    paraPr accident T110 removed from the removal verdict.
+    """
+    profile, _ = form_inspect.analyze(_corpus(rel), want_baseline=False)
+    slots = {g["para_idx"]: g.get("at_para")
+             for g in profile["guide_text"] if g.get("answer_slot")}
+    assert slots == expected
+    # Verify against the address CONSUMER rather than the profile's own
+    # arithmetic: --full-text PARA:<at_para> must land on the same paragraph.
+    resolved, _b = form_inspect.analyze(
+        _corpus(rel), want_baseline=False,
+        full_text=[("para", at_para) for at_para in expected.values()])
+    landed = {row["at_para"]: row["text"].strip()
+              for row in resolved["full_text"]}
+    for para_idx, at_para in expected.items():
+        entry = next(g for g in profile["guide_text"]
+                     if g["para_idx"] == para_idx)
+        assert landed[at_para] == entry["text"].strip(), (
+            f"at_para {at_para} does not address para_idx {para_idx}")
+    # And the trap the recipe warns about: a para_idx retyped as an address
+    # lands somewhere else, silently.
+    wrong, _b = form_inspect.analyze(
+        _corpus(rel), want_baseline=False,
+        full_text=[("para", idx) for idx in expected])
+    assert [row["text"].strip() for row in wrong["full_text"]] != \
+        [landed[a] for a in expected.values()]
+
+
+def test_at_para_is_omitted_rather_than_guessed():
+    """Fail-closed: the field is absent when the binding is unprovable, so a
+    consumer can distinguish 'no addressable seat' from address 0."""
+    profile, _ = form_inspect.analyze(
+        _corpus("grant/pps-jeongbogonggae-donguiseo.hwpx"),
+        want_baseline=False)
+    for g in profile["guide_text"]:
+        if not g.get("answer_slot"):
+            assert "at_para" not in g
+        elif "at_para" in g:
+            assert isinstance(g["at_para"], int) and g["at_para"] >= 0
+
+
 def test_jumin_selection_fields_are_not_removal_targets():
     profile, _ = form_inspect.analyze(
         _corpus("converted/jumin-deungchobon-sinchengseo.hwpx"),
