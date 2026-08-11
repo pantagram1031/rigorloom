@@ -22,7 +22,12 @@ EXACT actions:
     `certified_runtime_unbound`; certificate files and live checks are
     diagnostic-only and cannot promote a receipt or submission grade until a
     separately reviewed runtime-v2/root/receipt contract is released;
-   `experimental-rhwp` remains diagnostic-only.
+    `experimental-rhwp` remains diagnostic-only.
+    T150 `renderer_runtime_v2.py` remains outside this proof ladder: its
+    `rigorloom/renderer-runtime-v2/v1` `rhwp_pdf` receipt has
+    `dependency_closure: unknown`, proof grade `none`, and submission grade
+    `false`; equation-bearing input is refused, and no automatic route can
+    promote it or feed `new_report`.
    A native Hancom receipt is renderer provenance, not a readability
    certification: its bound glyph-quality result may be `unknown` for an
    uninspectable Type3 font and still retain `hancom`, while a confirmed
