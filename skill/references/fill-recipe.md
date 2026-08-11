@@ -673,15 +673,32 @@ verbatim:
 charPr ids, run count and the single `(인)` all survive; the name sits on the
 rule.
 
-**Stated limit — a whitespace-only rule is not reachable.** For at_para 18 the
-ruled run is nothing but spaces, and `preedit replace` refuses a whitespace-only
-key outright (`빈(공백뿐인) 키는 치환 불가`). That refusal is right in general —
-an all-whitespace key is meaningless as a text key — but it means the only
-shipped route to that seat is extending the label run, which is exactly the edit
-that orphans the rule. So on this seat, correct rendering is currently not
-achievable offline. Check `ruled` before you fill: if the ruled run has no
-non-whitespace anchor, say so in your report rather than filling it and calling
-it done.
+**A whitespace-only rule takes an address, not a key (T115).** For at_para 18
+the ruled run is nothing but spaces, so there is no string to match, and
+`preedit replace` refuses a whitespace-only key outright
+(`빈(공백뿐인) 키는 치환 불가`). That refusal is right and stays: tier A compares
+run text *stripped*, so a whitespace-only key is a wildcard over every
+whitespace-only run — scoping it to one paragraph does not save it, because this
+paragraph has two such runs, the indent and the rule.
+
+Use `set-runs`, which addresses the run instead of matching it:
+
+```
+python engine/scripts/preedit.py set-runs $W/filled.hwpx \
+    --out $W/filled2.hwpx --run "18,2=서울특별시 강남구 테헤란로 100        "
+```
+
+The address is the `at_para` and `runs[].index` the profile already reports, and
+`runs[].ruled` tells you which one to name. The run's opener is never rewritten,
+so its `charPrIDRef` — and therefore the rule — survives: measured on the corpus
+form, the value lands in run 2 with `charpr` 19 and `ruled: true`, run count and
+every charPr id unchanged.
+
+It refuses rather than guesses: an out-of-range paragraph or run index is an
+error that reports the count it found, a duplicate address is an error (no silent
+last-write-wins), and a paragraph whose only run has no `<hp:t>` — an empty
+cell's self-closing run — is sent to `fill-cells`, which owns that structure.
+Re-applying the same value is content-identical.
 
 ## 4. What a correct run looks like
 

@@ -234,6 +234,23 @@ the kernel's contract shape.
 
 ### Added
 
+- **T115:** `preedit set-runs` — a third operation that addresses structure
+  instead of matching text, the same move `fill-cells` made for empty cells. It
+  writes one run's text at `(at_para, run)` and **never rewrites the run's
+  opener**, so its `charPrIDRef` survives and a value written into a ruled blank
+  sits on the rule (T112). The address is exactly what `form_inspect
+  --full-text` already reports, with `runs[].ruled` naming which run. This closes
+  the limit T112 had to state: a ruled blank of nothing but spaces gives
+  `replace` no string to match, and a whitespace-only key cannot be the answer —
+  tier A compares run text *stripped*, so such a key is a wildcard over every
+  whitespace-only run, and scoping it to one paragraph still leaves the indent
+  run ambiguous with the rule. Refuses rather than guesses: an out-of-range
+  paragraph or run index reports the count it found, a duplicate address is an
+  error, and a paragraph whose only run has no `<hp:t>` is sent to `fill-cells`.
+  Only the edited paragraph's own `linesegarray` is dropped (T24) — a nested
+  paragraph's cached coordinates are preserved. Re-applying the same value is
+  content-identical.
+
 - **T114:** `expectations.protected_text` — a distribution module declares the
   text that must **survive** a fill, and core consumes the list rather than
   containing it (T43). A 동의서's PIPA §22 고지 (동의 거부권 및 불이익) looks exactly

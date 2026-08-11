@@ -52,6 +52,7 @@ can see it without reading source (T41).
 | `visual_verify --expectations` `fill_map` presence check | **presence anywhere** — asks "is this value visible in the render", not "where" | it is an existence proof by design; location is `check_residue`'s job |
 | `visual_verify --expectations` `forbidden_text` | **EXHAUSTIVE per page** — one finding per page the string appears on | nothing to scope |
 | `visual_verify --expectations` `protected_text` | **WHOLE INVENTORY ENTRY** — forwarded as `--keep`, and `check_residue` matches a keep against the entire normalized entry, never a substring of it. Recorded as `deterministic.residue_keep.module_protected_keep`, apart from the operator's `explicit_keep` | ship the full paragraph; a shorter prefix keeps nothing and fails silently |
+| `preedit set-runs` | **address-keyed** (`at_para,run`) — writes one run's text and never rewrites its opener, so the run's `charPrIDRef` survives. That is the point: a form's blank is a ruled run, and only a value written INTO it sits on the rule (T112). Refuses an out-of-range address with the count it found, a duplicate address, and a paragraph whose only run has no `<hp:t>` (that is `fill-cells`) | the address, from `--full-text`'s `at_para` + `runs[].index`; `runs[].ruled` says which run |
 | `form_inspect --full-text` | **address-keyed**, read-only (`[TABLE:]ROW,COL`) | the address |
 
 **The scoped form for paragraph text is `at_para`.** It is to a paragraph what
