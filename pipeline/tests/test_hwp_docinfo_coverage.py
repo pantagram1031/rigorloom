@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import re
 import struct
 import sys
 import zlib
@@ -696,3 +697,108 @@ def test_public_manifest_outcome_inventory_is_privacy_safe():
         result = coverage.inspect_path(root / item["path"])
         assert (result["status"], result.get("reason")) == (
             "refused", "bodytext.envelope_incomplete")
+
+
+# ---------------------------------------------------------------------------
+# T96: the reason vocabulary is the receipt contract
+# ---------------------------------------------------------------------------
+
+def _raised_reasons() -> set[str]:
+    """Every reason literal this module can raise, parsed from its source.
+
+    Parsing the source rather than importing a list is the point: the first
+    release of this lane declared a vocabulary that had drifted away from its
+    own raise sites, and only a check anchored to those sites can notice that.
+    """
+    text = (SCRIPTS / "hwp_docinfo_coverage.py").read_text(encoding="utf-8")
+    return set(re.findall(r'CoverageError\("([a-z_.]+)"\)', text))
+
+
+def test_reason_vocabulary_matches_the_source():
+    """Both declared sets must equal what the code actually raises.
+
+    Asserted in both directions. A declared-but-unraisable token advertises a
+    distinction the scanner cannot make -- the first release shipped 22 of
+    them, including ``docinfo.version_tail``, which no path emits. A
+    raised-but-undeclared token means a receipt can carry a reason outside its
+    own vocabulary; the first release did that too, with
+    ``bodytext.envelope_incomplete``, the only reason the public corpus
+    actually produces.
+    """
+    raised = _raised_reasons()
+    dotted = {reason for reason in raised if "." in reason}
+    underscore = raised - dotted
+    assert coverage._BLOCKING_TOKENS == dotted
+    assert coverage._OPERATIONAL_REASONS == underscore
+    assert not (coverage._BLOCKING_TOKENS & coverage._OPERATIONAL_REASONS)
+    assert (coverage._BLOCKING_TOKENS | coverage._OPERATIONAL_REASONS) == raised
+
+
+def test_dotted_reasons_are_stream_scoped_and_underscored_ones_are_not():
+    """The spelling carries meaning, so pin the rule that assigns it.
+
+    Dotted means "a claim about the scanned document", and every such claim
+    names the stream it concerns. Underscore means "the run could not
+    proceed", which is deliberately silent about the document.
+    """
+    for reason in coverage._BLOCKING_TOKENS:
+        stream, _, rest = reason.partition(".")
+        assert stream in ("docinfo", "bodytext"), reason
+        assert rest and "." not in rest, reason
+    for reason in coverage._OPERATIONAL_REASONS:
+        assert "." not in reason, reason
+
+
+def test_no_condition_has_two_spellings():
+    """The exact T96 regression.
+
+    ``bodytext.paragraph_invalid`` and ``bodytext_paragraph_invalid`` were both
+    live for one logical condition -- the first at the ParaHeader length check,
+    the second three branches later -- so a consumer matching on ``reason`` saw
+    what looked like two unrelated failures. Fail if any two reasons differ
+    only by dot-versus-underscore.
+    """
+    flattened: dict[str, list[str]] = {}
+    for reason in _raised_reasons():
+        flattened.setdefault(reason.replace(".", "_"), []).append(reason)
+    assert {key: sorted(names)
+            for key, names in flattened.items() if len(names) > 1} == {}
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("short_idmappings", "docinfo.id_mappings_length"),
+    ("negative_counts", "docinfo.id_mappings_count_invalid"),
+    ("unknown_tag", "docinfo.definition_unknown"),
+])
+def test_document_refusals_report_dotted_reasons(tmp_path: Path, case: str,
+                                                 expected: str):
+    """Anchor the vocabulary to behaviour, not only to the source text.
+
+    Before T96 exactly one test in this file asserted a reason string, which is
+    how the other thirty drifted unnoticed for a whole lane.
+    """
+    counts = [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0]
+    if case == "short_idmappings":
+        props = _record(source.TAG_DOCUMENT_PROPERTIES, _props())
+        full_ids = _record(source.TAG_ID_MAPPINGS, _id_payload(counts))
+        tail = _docinfo()[len(props) + len(full_ids):]
+        docinfo = props + _record(source.TAG_ID_MAPPINGS, b"\x00" * 60) + tail
+    elif case == "negative_counts":
+        docinfo = _docinfo(counts=[-1] + counts[1:])
+    else:
+        docinfo = _docinfo() + _record(0x1D, b"x", level=0)
+    result = coverage.inspect_path(_hwp(tmp_path / (case + ".hwp"),
+                                        docinfo=docinfo))
+    assert (result["status"], result["reason"]) == ("refused", expected)
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("missing.hwp", "input_unavailable"),
+    ("wrong.hwpx", "extension_not_hwp"),
+])
+def test_operational_refusals_stay_underscored(tmp_path: Path, name: str,
+                                               expected: str):
+    """A run that never reached the document must not name a stream."""
+    result = coverage.inspect_path(tmp_path / name)
+    assert (result["status"], result["reason"]) == ("refused", expected)
+    assert expected in coverage._OPERATIONAL_REASONS
