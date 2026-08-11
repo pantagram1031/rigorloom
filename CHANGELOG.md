@@ -232,6 +232,28 @@ the kernel's contract shape.
   returning only the requested paragraph's own exact text/runs in preedit's
   document order.
 
+### Added
+
+- **T114:** `expectations.protected_text` — a distribution module declares the
+  text that must **survive** a fill, and core consumes the list rather than
+  containing it (T43). A 동의서's PIPA §22 고지 (동의 거부권 및 불이익) looks exactly
+  like removable guide text to core, so `check_residue` held it in the forbidden
+  set and the only route to a green gate was a hand-written `--keep` — the symptom
+  T31 recorded as a defect. `visual_verify` forwards the declaration and records
+  it as `deterministic.residue_keep.module_protected_keep`, apart from the
+  operator's `explicit_keep`, because "I hand-wrote this keep" and "the module
+  says this is statutory" are different claims. Declaring one string in both
+  `protected_text` and `forbidden_text` is refused rather than resolved, and
+  `story_edit` scope refuses the key outright since that scope never runs the
+  residue leg. Measured on A2's artifact: 4 hand-written keeps → 0, and with
+  neither the gate correctly fails. The grant payload's list is derived, not
+  remembered: a regression asserts it equals the 동의서's actual `removal_targets`,
+  which after T110 is exactly the three notices. **Caller constraint:** module
+  expectations are payload the caller passes, so merge
+  `modules/<family>/references/visual_expectations/<family>.json` into your
+  `--expectations` file; an empty `module_protected_keep` on a 동의서 means the
+  merge was forgotten.
+
 ### Fixed
 
 - **T113:** the eval harness now checks that the agent wrote what the task asked

@@ -1157,7 +1157,8 @@ def validate_operation_scope(expectations, args):
             "story_edit operation_scope requires a non-empty "
             "expectations.required_text list")
     allowed = {"operation_scope", "required_text", "forbidden_text"}
-    conflict_keys = set(("fill_map", "declared_blank", "intentionally_blank"))
+    conflict_keys = set(("fill_map", "declared_blank",
+                         "intentionally_blank", "protected_text"))
     unknown = sorted(set(expectations) - allowed - conflict_keys)
     if unknown:
         return None, (
@@ -1208,6 +1209,11 @@ def validate_operation_scope(expectations, args):
     if any(name in expectations for name in DECLARED_BLANK_ALIASES):
         conflicts.extend(name for name in DECLARED_BLANK_ALIASES
                          if name in expectations)
+    # protected_text feeds the residue keep list, which this scope does not run
+    # at all — accepting it would let a caller believe a statutory keep was
+    # honoured when nothing consumed it.
+    if "protected_text" in expectations:
+        conflicts.append("protected_text")
     if getattr(args, "keep", None) or getattr(args, "keep_pattern", None) is not None:
         conflicts.extend(flag for flag, present in (
             ("--keep", bool(getattr(args, "keep", None))),
@@ -1451,20 +1457,69 @@ def _fill_landed(keys, matched, target, haystack):
     return False
 
 
+def validate_protected_text(expectations):
+    """``expectations.protected_text`` — module-declared must-survive text.
+
+    A 동의서's 고지 (PIPA §22: 동의 거부권 및 불이익) is removable-looking guide
+    text that is legally required to stay, so `check_residue` holds it in the
+    forbidden set and the only route to a pass was a hand-written ``--keep``
+    (T31 recorded that shape as a defect). The vocabulary belongs to the
+    module, not to core (T43): `modules/<family>/references/visual_expectations`
+    already carries `forbidden_text` and `intentionally_blank`, and this joins
+    them.
+
+    Validated fail-closed rather than read loosely: a malformed entry in a KEEP
+    list silently widens what may survive, which is the one direction a residue
+    gate must never drift in.
+
+    Returns (tuple, error).
+    """
+    declared = expectations.get("protected_text")
+    if declared is None:
+        return (), None
+    if (not isinstance(declared, list) or not declared
+            or any(not isinstance(item, str) or not item.strip()
+                   or len(item) > _MAX_REQUIRED_TEXT_CHARS
+                   for item in declared)):
+        return None, (
+            "expectations.protected_text must be a non-empty list of non-empty "
+            f"strings (max {_MAX_REQUIRED_TEXT_CHARS} chars)")
+    forbidden = {item for item in (expectations.get("forbidden_text") or [])
+                 if isinstance(item, str)}
+    both = sorted(set(declared) & forbidden)
+    if both:
+        # One declaration says this text must survive and the other says it must
+        # be gone. Refuse instead of inventing a precedence rule: whichever way
+        # a silent winner fell, one of the two module claims would be a lie.
+        return None, (
+            "expectations declares the same text in protected_text and "
+            f"forbidden_text: {both}")
+    return tuple(declared), None
+
+
 def build_residue_argv(form_profile, artifact, *, keep=(), keep_pattern=None,
-                       fill_map=None):
+                       fill_map=None, protected=()):
     """``check_residue`` argv plus the keep report the verdict records.
 
     ``fill_map`` is the PATH to the map file: the derived keep list and the
     per-occurrence fill attribution are two halves of one mechanism, so the
     delegate gets the map too (``--fill-map``).
 
+    ``protected`` is ``expectations.protected_text`` — text a MODULE declares
+    must survive a fill, e.g. a 동의서's PIPA §22 고지. It is recorded apart from
+    ``explicit_keep`` on purpose: "the operator hand-wrote this keep" and "the
+    module says this text is statutory" are different claims, and collapsing
+    them would hide that the hand-written list is the thing being eliminated
+    (T31 recorded a hand-built --keep as a defect, not as the interface).
+
     Returns (argv, report, error).
     """
     argv = ["--form-profile", str(form_profile), "--artifact", str(artifact)]
     report = {"explicit_keep": list(keep), "keep_pattern": keep_pattern,
+              "module_protected_keep": list(protected),
               "derived_keep": [], "consumed": [], "unfilled": [],
               "fill_map": None}
+    keep = list(keep) + [item for item in protected if item not in keep]
     derived = []
     if fill_map is not None:
         mapping, error = load_fill_map(fill_map)
@@ -2425,6 +2480,10 @@ def verify(args):
     if scope_error:
         return usage_error(str(artifact), "visual_verify", scope_error)
 
+    protected_text, protected_error = validate_protected_text(expectations)
+    if protected_error:
+        return usage_error(str(artifact), "visual_verify", protected_error)
+
     # ONE fill map, whichever flag carried it (see reconcile_fill_map): a CLI
     # --fill-map now seeds expectations.fill_map, so it can no longer leave the
     # fill-value presence check and the T30 post-flight silently inactive.
@@ -2588,7 +2647,8 @@ def verify(args):
     if args.form_profile:
         residue_argv, residue_keep, error = build_residue_argv(
             args.form_profile, artifact, keep=args.keep,
-            keep_pattern=args.keep_pattern, fill_map=residue_fill_map)
+            keep_pattern=args.keep_pattern, fill_map=residue_fill_map,
+            protected=protected_text)
         if error:
             extra = ({"ambiguous_fill_keys": residue_keep["ambiguous_fill_keys"]}
                      if "ambiguous_fill_keys" in residue_keep else None)

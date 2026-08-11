@@ -7,6 +7,12 @@
     "예시)"
   ],
   "_forbidden_text_note": "Every entry is something the FORM told the applicant to remove, not a preference of ours. The guide-deletion instruction includes itself ('해당 안내를 포함한'), the ~~~~ and ㅇㅇㅇ runs are the form's worked-example stand-ins where the applicant's own words and name go, and '예시)' marks the sample rows beside them. A render still showing any of them is a packet that went out with its scaffolding attached.",
+  "protected_text": [
+    "조달청은 우수제품 심사를 위하여 아래와 같이 개인정보를 수집ㆍ이용 및 제3자에게 제공하고자 합니다.  내용을 자세히 읽으신 후 동의 여부를 결정하여 주십시오.",
+    "※ 위의 개인정보 수집ㆍ이용에 대한 동의를 거부할 권리가 있습니다. 그러나 동의를 거부할 경우 원활한 우수제품심사를 할 수 없어 공정조달시스템 이용이 제한됩니다.",
+    "※ 위의 개인정보 제공에 대한 동의를 거부할 권리가 있습니다. 그러나 동의를 거부할 경우 원활한 우수제품심사를 할 수 없어 공정조달시스템 이용이 제한됩니다."
+  ],
+  "_protected_text_note": "The exact opposite claim to forbidden_text, and this family needs both: a 지원사업 form tells the applicant to delete its own scaffolding, while a 동의서 carries 고지 that is legally required to STAY (개인정보 보호법 §22 — the 동의 거부권 and the 불이익 that follows refusing). Those paragraphs look exactly like removable guide text to core — note_prefix ※, black, instructional — so they land in removal_targets and check_residue holds their text in the forbidden set, and before this key the ONLY route to a green residue gate was a hand-written --keep. T31 recorded that shape as a defect, not as the interface. The vocabulary belongs here rather than in core (T43): core consumes a module list, it does not contain one. Measured on pps-jeongbogonggae-donguiseo after T110: these three ARE every remaining removal target on the blank form, so a 동의서 has no deletable guide text at all — which is the right answer for a document whose every printed sentence is either a field or a legal notice. Entries must be the whole paragraph, normalized: check_residue matches a keep against the entire inventory entry, not a substring of it.",
   "intentionally_blank": [
     "(서명 또는 인)",
     "(인)",

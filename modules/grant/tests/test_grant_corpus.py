@@ -474,3 +474,59 @@ class TestRulesBiteOnTheRealPacket:
         fill_map.write_text('{"생년월일": "900101-1234567"}', encoding="utf-8")
         verdict, code = cg.check(path, baseline=KSTARTUP, fill_map=fill_map)
         assert code == 0, verdict["hard"]
+
+
+# --------------------------------------------------------------------------- #
+# T114 — the module's protected_text is DERIVED from the form, not remembered.
+# --------------------------------------------------------------------------- #
+
+class TestProtectedTextMatchesTheForm:
+    """`protected_text` says "this text is legally required to survive". A list
+    of remembered sentences drifts the moment the guide detector moves, and the
+    drift is silent because a keep that matches nothing just keeps nothing.
+
+    Measured after T110: the 동의서's REMAINING removal targets are exactly the
+    PIPA §22 고지 paragraphs — a 동의서 has no deletable guide text at all. So the
+    two sets must be equal, and either side changing is a decision someone has
+    to make on purpose.
+    """
+
+    EXPECTATIONS = (_MODULE_ROOT / "references" / "visual_expectations"
+                    / "grant.json")
+
+    def _declared(self) -> set:
+        import json
+        payload = json.loads(self.EXPECTATIONS.read_text(encoding="utf-8"))
+        return {" ".join(item.split())
+                for item in payload["protected_text"]}
+
+    def _removal_targets(self) -> set:
+        import form_inspect
+        profile, _ = form_inspect.analyze(str(DONGUISEO), want_baseline=False)
+        targets = {row["para_idx"] for row in profile["removal_targets"]}
+        return {" ".join((row["text"] or "").split())
+                for row in profile["guide_text"]
+                if row["para_idx"] in targets}
+
+    def test_the_declared_set_equals_the_forms_removal_targets(self):
+        declared, actual = self._declared(), self._removal_targets()
+        assert declared == actual, {
+            "declared_but_not_removable": sorted(declared - actual),
+            "removable_but_unprotected": sorted(actual - declared)}
+
+    def test_the_sets_are_non_empty_and_are_the_statutory_notices(self):
+        """Non-vacuity: two empty sets are also equal."""
+        declared = self._declared()
+        assert len(declared) == 3, sorted(declared)
+        assert sum(1 for item in declared
+                   if "거부할 권리가 있습니다" in item) == 2
+        assert any("동의 여부를 결정하여 주십시오" in item for item in declared)
+
+    def test_no_protected_entry_is_also_forbidden(self):
+        """The module must not claim both about one string; visual_verify
+        refuses that, and this catches it in the payload instead of at run
+        time."""
+        import json
+        payload = json.loads(self.EXPECTATIONS.read_text(encoding="utf-8"))
+        assert not (set(payload["protected_text"])
+                    & set(payload.get("forbidden_text") or []))
