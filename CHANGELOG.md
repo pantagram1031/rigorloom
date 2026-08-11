@@ -10,6 +10,20 @@ the kernel's contract shape.
 
 ### Added
 
+- **T150:** added a quarantine-only `rigorloom/renderer-runtime-v2/v1`
+  receipt lane for one explicitly supplied, SHA-256-pinned `rhwp_pdf` binary.
+  The runner owns the pre-created `output/proof/renderer-runtime-v2/<run-id>`
+  leaf, stages the source and binary, invokes only the fixed `--version` and
+  `export-pdf` argv, and binds source, certificate, PDF, process state,
+  timeout/overflow, environment policy, and contained-child policy through
+  bounded no-follow captures and final rebinds. Equation-bearing HWPX is
+  refused before execution. The certificate is captured but not semantically
+  validated, dependency closure is `unknown`, comparison is `unknown`, render
+  is `not_run`, proof is `none`, submission is false, and promotion is
+  `not_run`. This lane never feeds `doc_backend`, Stage 0/5/6, `new_report`,
+  canonical output, or certified routing; it ships no operator binary,
+  certificate, document, or corpus bytes.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one

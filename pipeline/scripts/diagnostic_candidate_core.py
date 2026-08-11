@@ -26,6 +26,7 @@ __all__ = [
     "write_bytes", "node_identity", "same_file_identity", "remove_owned",
     "remove_owned_dir", "rollback_publication", "publish_owner_token_pair",
     "publish_owner_token_receipt",
+    "DirectoryBinding",
     "prepare_root", "capture_root_guard", "check_root_guard",
     "configure_windows_job", "terminate_windows_descendants",
     "run_child_capture",
@@ -43,6 +44,373 @@ class CoreError(Exception):
 FileIdentity = tuple[int, int, int, int, int, str]
 NodeIdentity = Callable[[Path], FileIdentity]
 RemoveOwned = Callable[[Path, FileIdentity | None], bool]
+
+
+class DirectoryBinding:
+    """Hold a directory identity for no-follow relative operations.
+
+    POSIX uses an ``O_DIRECTORY|O_NOFOLLOW`` descriptor and ``dir_fd`` calls.
+    Windows holds a backup-semantics directory handle with delete sharing
+    disabled; callers still perform the final identity check before return.
+    """
+
+    def __init__(self, path: Path, *, fd: int | None = None,
+                 handle: Any = None):
+        self.path = path.expanduser().absolute()
+        self.fd = fd
+        self.handle = handle
+        self.real_path: str | None = None
+        try:
+            if self.fd is not None:
+                opened = os.fstat(self.fd)
+                if not stat.S_ISDIR(opened.st_mode):
+                    raise CoreError("directory_binding_unavailable")
+                self.identity = self._stable_identity(opened)
+                self.real_path = self._fd_real_path(self.fd)
+            elif self.handle is not None:
+                self.identity = self._handle_identity(self.handle)
+                self.real_path = self._handle_real_path(self.handle)
+            else:
+                raise CoreError("directory_binding_unavailable")
+            expected = self._normalise_path(str(self.path))
+            if self.real_path is None or self._normalise_path(
+                    self.real_path) != expected:
+                raise CoreError("directory_binding_unavailable")
+        except CoreError:
+            self.close()
+            raise
+        except (OSError, RuntimeError, ValueError, TypeError):
+            self.close()
+            raise CoreError("directory_binding_unavailable")
+
+    @staticmethod
+    def _stable_identity(info: os.stat_result) -> FileIdentity:
+        """Return directory identity without mutable size/time/digest fields."""
+        return (getattr(info, "st_dev", 0), getattr(info, "st_ino", 0),
+                0, 0, 0, "")
+
+    @staticmethod
+    def _normalise_path(value: str) -> str:
+        if os.name == "nt":
+            if value.startswith("\\\\?\\UNC\\"):
+                value = "\\\\" + value[8:]
+            elif value.startswith("\\\\?\\"):
+                value = value[4:]
+        return os.path.normcase(os.path.realpath(value))
+
+    @staticmethod
+    def _fd_real_path(fd: int) -> str | None:
+        try:
+            return os.readlink(f"/proc/self/fd/{fd}")
+        except (OSError, ValueError, TypeError):
+            try:
+                import fcntl
+                getpath = getattr(fcntl, "F_GETPATH", 50)
+                value = fcntl.fcntl(fd, getpath, bytes(1024))
+                if isinstance(value, bytes):
+                    return os.fsdecode(value.split(b"\\0", 1)[0])
+            except (AttributeError, OSError, ValueError, TypeError):
+                pass
+        return None
+
+    @staticmethod
+    def _handle_real_path(handle: Any) -> str | None:
+        try:
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetFinalPathNameByHandleW.argtypes = [
+                ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32,
+                ctypes.c_uint32,
+            ]
+            kernel.GetFinalPathNameByHandleW.restype = ctypes.c_uint32
+            size = 512
+            while size <= 32768:
+                buffer = ctypes.create_unicode_buffer(size)
+                result = kernel.GetFinalPathNameByHandleW(
+                    handle, buffer, size, 0)
+                if result == 0:
+                    return None
+                if result < size:
+                    return buffer.value
+                size *= 2
+        except (AttributeError, OSError, ValueError, TypeError):
+            return None
+        return None
+
+    @staticmethod
+    def _handle_identity(handle: Any) -> FileIdentity:
+        """Read Windows volume/file-index identity from the held handle."""
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        class _ByHandle(ctypes.Structure):
+            _fields_ = [
+                ("file_attributes", ctypes.c_uint32),
+                ("creation_time", ctypes.c_ulonglong),
+                ("last_access_time", ctypes.c_ulonglong),
+                ("last_write_time", ctypes.c_ulonglong),
+                ("volume_serial", ctypes.c_uint32),
+                ("file_size_high", ctypes.c_uint32),
+                ("file_size_low", ctypes.c_uint32),
+                ("number_of_links", ctypes.c_uint32),
+                ("file_index_high", ctypes.c_uint32),
+                ("file_index_low", ctypes.c_uint32),
+            ]
+        kernel.GetFileInformationByHandle.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_ByHandle)]
+        kernel.GetFileInformationByHandle.restype = ctypes.c_int
+        info = _ByHandle()
+        if not kernel.GetFileInformationByHandle(handle, ctypes.byref(info)):
+            raise CoreError("directory_binding_unavailable")
+        index = (int(info.file_index_high) << 32) | int(info.file_index_low)
+        return (int(info.volume_serial), index, 0, 0, 0, "")
+
+    @classmethod
+    def open(cls, path: Path, reason: str = "directory_binding_unavailable"):
+        try:
+            supplied = path.expanduser().absolute()
+            info = supplied.lstat()
+            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & reparse):
+                raise CoreError(reason)
+            if os.name != "nt":
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(str(supplied), flags)
+                opened = os.fstat(fd)
+                if ((getattr(opened, "st_dev", 0), getattr(opened, "st_ino", 0))
+                        != (getattr(info, "st_dev", 0), getattr(info, "st_ino", 0))):
+                    os.close(fd)
+                    raise CoreError(reason)
+                return cls(supplied, fd=fd)
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [
+                ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+                ctypes.c_void_p,
+            ]
+            kernel.CreateFileW.restype = ctypes.c_void_p
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel.CloseHandle.restype = ctypes.c_int
+            handle = kernel.CreateFileW(
+                str(supplied), 0x0001,
+                0x00000001 | 0x00000002, None, 3, 0x02000000, None)
+            invalid = ctypes.c_void_p(-1).value
+            if not handle or handle == invalid:
+                raise CoreError(reason)
+            # Bind the handle to the directory observed before CreateFileW.
+            # The handle blocks subsequent delete/rename, but a replacement
+            # could otherwise win between the initial lstat and this open.
+            post = supplied.lstat()
+            if (not stat.S_ISDIR(post.st_mode) or stat.S_ISLNK(post.st_mode)
+                    or getattr(post, "st_file_attributes", 0) & reparse
+                    or (getattr(post, "st_dev", 0), getattr(post, "st_ino", 0))
+                    != (getattr(info, "st_dev", 0), getattr(info, "st_ino", 0))):
+                kernel.CloseHandle(ctypes.c_void_p(handle))
+                raise CoreError(reason)
+            return cls(supplied, handle=handle)
+        except CoreError:
+            raise
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            raise CoreError(reason)
+
+    def check(self) -> None:
+        try:
+            info = self.path.lstat()
+            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & reparse):
+                raise CoreError("directory_binding_changed")
+            if self.fd is not None:
+                held = os.fstat(self.fd)
+                actual = self._stable_identity(held)
+                if ((getattr(info, "st_dev", 0), getattr(info, "st_ino", 0))
+                        != (self.identity[0], self.identity[1])
+                        or not same_file_identity(actual, self.identity)):
+                    raise CoreError("directory_binding_changed")
+                real = self._fd_real_path(self.fd)
+            else:
+                actual = self._handle_identity(self.handle)
+                if not same_file_identity(actual, self.identity):
+                    raise CoreError("directory_binding_changed")
+                real = self._handle_real_path(self.handle)
+            expected = self._normalise_path(str(self.path))
+            if real is None or self._normalise_path(real) != expected:
+                raise CoreError("directory_binding_changed")
+        except CoreError:
+            raise
+        except (OSError, RuntimeError, ValueError, TypeError):
+            raise CoreError("directory_binding_changed")
+
+    def open_file(self, name: str, flags: int, mode: int = 0o600) -> int:
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            flags |= getattr(os, "O_BINARY", 0)
+            if self.fd is not None:
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                return os.open(name, flags, mode, dir_fd=self.fd)
+            return os.open(str(self.path / name), flags, mode)
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_open_failed")
+
+    def open_directory(self, name: str) -> "DirectoryBinding":
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            if self.fd is not None:
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                child_fd = os.open(name, flags, dir_fd=self.fd)
+                return DirectoryBinding(self.path / name, fd=child_fd)
+            child_path = self.path / name
+            return DirectoryBinding.open(child_path,
+                                         reason="directory_binding_open_failed")
+        except CoreError:
+            raise
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_open_failed")
+
+    def write_bytes(self, name: str, data: bytes, mode: int = 0o600) -> FileIdentity:
+        fd = self.open_file(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+                info = os.fstat(stream.fileno())
+                return (getattr(info, "st_dev", 0), getattr(info, "st_ino", 0),
+                        getattr(info, "st_size", 0),
+                        getattr(info, "st_mtime_ns", 0),
+                        getattr(info, "st_ctime_ns", 0),
+                        hashlib.sha256(data).hexdigest())
+        except (OSError, TypeError, ValueError):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise CoreError("directory_binding_write_failed")
+
+    def file_identity(self, name: str, max_bytes: int = 64 * 1024 * 1024) -> FileIdentity:
+        fd = self.open_file(name, os.O_RDONLY)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise CoreError("directory_binding_file_invalid")
+            if before.st_size < 0 or before.st_size > max_bytes:
+                raise CoreError("file_too_large")
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                chunk = os.read(fd, min(65536, max_bytes - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise CoreError("file_too_large")
+                digest.update(chunk)
+            after = os.fstat(fd)
+            # Reading a just-created file can update platform access/status
+            # timestamps (notably Windows ctime).  Digest, size, and inode are
+            # the custody identity for this held-dir publication seam; the
+            # format-specific capture path still enforces full generation
+            # timestamps before/after its bounded read.
+            if ((getattr(before, "st_dev", 0), getattr(before, "st_ino", 0),
+                 getattr(before, "st_size", 0))
+                    != (getattr(after, "st_dev", 0), getattr(after, "st_ino", 0),
+                        total)):
+                raise CoreError("directory_binding_file_changed")
+            return (getattr(after, "st_dev", 0), getattr(after, "st_ino", 0),
+                    total, getattr(after, "st_mtime_ns", 0),
+                    getattr(after, "st_ctime_ns", 0), digest.hexdigest())
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def mkdir(self, name: str, mode: int = 0o700) -> None:
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            if self.fd is not None:
+                os.mkdir(name, mode, dir_fd=self.fd)
+            else:
+                os.mkdir(str(self.path / name), mode)
+        except FileExistsError:
+            raise
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_mkdir_failed")
+
+    def link(self, source: Path, name: str) -> None:
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            if self.fd is not None:
+                os.link(str(source), name, dst_dir_fd=self.fd)
+            else:
+                os.link(str(source), str(self.path / name))
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_link_failed")
+
+    def unlink(self, name: str) -> None:
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            if self.fd is not None:
+                os.unlink(name, dir_fd=self.fd)
+            else:
+                os.unlink(str(self.path / name))
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_unlink_failed")
+
+    def rmdir(self, name: str) -> None:
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or name in {".", ".."}):
+            raise CoreError("directory_binding_name_invalid")
+        self.check()
+        try:
+            if self.fd is not None:
+                os.rmdir(name, dir_fd=self.fd)
+            else:
+                os.rmdir(str(self.path / name))
+        except (OSError, TypeError, ValueError):
+            raise CoreError("directory_binding_rmdir_failed")
+
+    def close(self) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+        if self.handle is not None:
+            try:
+                import ctypes
+                kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                kernel.CloseHandle(ctypes.c_void_p(self.handle))
+            except (AttributeError, OSError, TypeError):
+                pass
+            self.handle = None
+
+    def __del__(self):  # pragma: no cover - interpreter cleanup fallback
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def read_regular_once(path: Path, max_bytes: int, reason: str) -> bytes:
@@ -223,8 +591,11 @@ def publish_owner_token_pair(
         node_identity_fn: NodeIdentity,
         same_identity_fn: Callable[[FileIdentity, FileIdentity], bool],
         remove_owned_fn: RemoveOwned,
-        rollback_fn: Callable[..., None],
-        token_prefix: str = ".t86-owner-",
+         rollback_fn: Callable[..., None],
+         candidate_name: str = "candidate.hwpx",
+         final_commit_fn: Callable[[], None] | None = None,
+         directory_binding: DirectoryBinding | None = None,
+         token_prefix: str = ".t86-owner-",
 ) -> dict[str, Any]:
     """Receipt-first/candidate-last publication with an ownership token.
 
@@ -238,28 +609,99 @@ def publish_owner_token_pair(
     candidate_identity: FileIdentity | None = None
     token_target: Path | None = None
     token_identity: FileIdentity | None = None
+    run_binding: DirectoryBinding | None = None
+    created_run = False
     receipt_target = run_path / "receipt.json"
-    candidate_target = run_path / "candidate.hwpx"
+    if candidate_name not in {"candidate.hwpx", "artifact.pdf"}:
+        raise CoreError("diagnostic_publish_failed")
+    candidate_target = run_path / candidate_name
     if link_fn is None:
         link_fn = os.link
+
+    def public_identity(path: Path) -> FileIdentity:
+        if run_binding is not None and path.parent == run_path:
+            return run_binding.file_identity(path.name)
+        return node_identity_fn(path)
+
+    def publish_write(path: Path, data: bytes) -> FileIdentity | None:
+        if run_binding is not None and path.parent == run_path:
+            return run_binding.write_bytes(path.name, data)
+        else:
+            write_bytes_fn(path, data)
+        return None
+
+    def publish_link(source: str, target: str) -> None:
+        if run_binding is not None and Path(target).parent == run_path:
+            run_binding.link(Path(source), Path(target).name)
+        else:
+            link_fn(source, target)
+
+    def publish_unlink(path: Path, identity: FileIdentity | None) -> bool:
+        if run_binding is not None and path.parent == run_path and identity is not None:
+            try:
+                actual = run_binding.file_identity(path.name)
+                if same_identity_fn(actual, identity):
+                    run_binding.unlink(path.name)
+                    return True
+            except CoreError:
+                return False
+        return remove_owned_fn(path, identity)
+
+    def rollback_bound() -> None:
+        """Rollback only through the held run/root directory when available."""
+        if run_binding is not None:
+            for name, identity in (("receipt.json", receipt_identity),
+                                   (candidate_name, candidate_identity),
+                                   (token_target.name if token_target else "",
+                                    token_identity)):
+                if not name or identity is None:
+                    continue
+                try:
+                    if same_identity_fn(run_binding.file_identity(name), identity):
+                        run_binding.unlink(name)
+                except CoreError:
+                    pass
+            try:
+                if directory_binding is not None and created_run:
+                    directory_binding.rmdir(run_id)
+            except CoreError:
+                pass
+            return
+        if directory_binding is not None:
+            if created_run:
+                try:
+                    directory_binding.rmdir(run_id)
+                except CoreError:
+                    pass
+            return
+        rollback_fn(
+            run_path, reserved_identity, receipt_target, receipt_identity,
+            candidate_target, candidate_identity, token_target, token_identity)
     try:
         check_root_guard_fn(root_guard)
-        os.mkdir(str(run_path))
+        if directory_binding is not None:
+            directory_binding.mkdir(run_id)
+            created_run = True
+            run_binding = directory_binding.open_directory(run_id)
+        else:
+            os.mkdir(str(run_path))
+            created_run = True
         reserved_identity = node_identity_fn(run_path)
         check_root_guard_fn(root_guard, refresh=True)
         token_target = run_path / (token_prefix + secrets.token_hex(16))
-        write_bytes_fn(token_target, secrets.token_bytes(32))
-        token_identity = node_identity_fn(token_target)
+        token_identity = publish_write(token_target, secrets.token_bytes(32))
+        if token_identity is None:
+            token_identity = public_identity(token_target)
         reserved_identity = node_identity_fn(run_path)
         staged_receipt = publish_stage / "receipt.json"
         receipt_identity = node_identity_fn(staged_receipt)
         check_root_guard_fn(root_guard)
-        link_fn(str(staged_receipt), str(receipt_target))
+        publish_link(str(staged_receipt), str(receipt_target))
         reserved_identity = node_identity_fn(run_path)
-        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+        if not same_identity_fn(public_identity(receipt_target), receipt_identity):
             raise CoreError("diagnostic_publish_failed")
         validate_receipt_fn(receipt_target, staged_candidate)
-        if not same_identity_fn(node_identity_fn(receipt_target), receipt_identity):
+        if not same_identity_fn(public_identity(receipt_target), receipt_identity):
             raise CoreError("diagnostic_publish_failed")
 
         # Adapter-controlled source/binary/output checks run only after the
@@ -267,33 +709,60 @@ def publish_owner_token_pair(
         before_candidate_link_fn()
         candidate_identity = node_identity_fn(staged_candidate)
         check_root_guard_fn(root_guard)
-        link_fn(str(staged_candidate), str(candidate_target))
+        publish_link(str(staged_candidate), str(candidate_target))
         reserved_identity = node_identity_fn(run_path)
-        if not same_identity_fn(node_identity_fn(candidate_target), candidate_identity):
+        if not same_identity_fn(public_identity(candidate_target), candidate_identity):
             raise CoreError("diagnostic_publish_failed")
         validate_receipt_fn(receipt_target, candidate_target)
-        if (not same_identity_fn(node_identity_fn(receipt_target), receipt_identity)
-                or not same_identity_fn(node_identity_fn(candidate_target), candidate_identity)):
+        if (not same_identity_fn(public_identity(receipt_target), receipt_identity)
+                or not same_identity_fn(public_identity(candidate_target), candidate_identity)):
             raise CoreError("diagnostic_publish_failed")
+        if final_commit_fn is not None:
+            final_commit_fn()
+        # The root guard is the final directory-custody check.  No guard or
+        # callback follows the receipt/candidate checks below.
+        # Detach staged hard-links before token removal so a committed public
+        # pair is always owner-only even if temporary-directory cleanup fails.
+        if not remove_owned_fn(publish_stage / "receipt.json", receipt_identity):
+            raise CoreError("diagnostic_publish_failed")
+        if not remove_owned_fn(publish_stage / candidate_name, candidate_identity):
+            raise CoreError("diagnostic_publish_failed")
+        for target, identity in ((receipt_target, receipt_identity),
+                                 (candidate_target, candidate_identity)):
+            info = target.lstat()
+            if (not stat.S_ISREG(info.st_mode)
+                    or stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_nlink", 1) != 1
+                    or not same_identity_fn(public_identity(target), identity)):
+                raise CoreError("diagnostic_publish_failed")
+        validate_receipt_fn(receipt_target, candidate_target)
+        if (not same_identity_fn(public_identity(receipt_target), receipt_identity)
+                or not same_identity_fn(public_identity(candidate_target), candidate_identity)):
+            raise CoreError("diagnostic_publish_failed")
+        # The final path/root guard precedes the last held-directory identity
+        # checks and token removal.  No callback or path-based validation may
+        # run after this point.
         check_root_guard_fn(root_guard)
-        if not remove_owned_fn(token_target, token_identity):
+        if run_binding is not None:
+            for target, identity in ((receipt_target, receipt_identity),
+                                     (candidate_target, candidate_identity)):
+                if not same_identity_fn(public_identity(target), identity):
+                    raise CoreError("diagnostic_publish_failed")
+        if not publish_unlink(token_target, token_identity):
             raise CoreError("diagnostic_publish_failed")
         return payload
     except FileExistsError:
-        rollback_fn(
-            run_path, reserved_identity, receipt_target, receipt_identity,
-            candidate_target, candidate_identity, token_target, token_identity)
+        rollback_bound()
         raise CoreError("run_exists")
     except CoreError:
-        rollback_fn(
-            run_path, reserved_identity, receipt_target, receipt_identity,
-            candidate_target, candidate_identity, token_target, token_identity)
+        rollback_bound()
         raise
     except OSError:
-        rollback_fn(
-            run_path, reserved_identity, receipt_target, receipt_identity,
-            candidate_target, candidate_identity, token_target, token_identity)
+        rollback_bound()
         raise CoreError("diagnostic_publish_failed")
+    finally:
+        if run_binding is not None:
+            run_binding.close()
 
 
 def publish_owner_token_receipt(
@@ -658,10 +1127,21 @@ def run_child_capture(
         argv: list[str], *, timeout: float, cwd: Path | None = None,
         env: dict[str, str] | None = None,
         timeout_validator: Callable[[float], float] | None = None,
-        max_output_bytes: int = 8 * 1024 * 1024):
+        max_output_bytes: int = 8 * 1024 * 1024,
+        return_evidence: bool = False):
     """Run one bounded child with POSIX group/Windows Job containment."""
+    if type(return_evidence) is not bool:
+        raise CoreError("return_evidence_invalid")
     if timeout_validator is not None:
         timeout = timeout_validator(timeout)
+    def failed_result():
+        result = (-1, False, False)
+        if not return_evidence:
+            return result
+        return result + ({
+            "output": {"sha256": hashlib.sha256(b"").hexdigest(), "bytes": 0},
+            "error": {"sha256": hashlib.sha256(b"").hexdigest(), "bytes": 0},
+        },)
     job = None
     job_kernel = None
     windows_suspended = os.name == "nt"
@@ -675,7 +1155,7 @@ def run_child_capture(
                             | 0x00000004) if windows_suspended else 0),
         )
     except (OSError, ValueError, TypeError):
-        return -1, False, False
+        return failed_result()
     if os.name == "nt":
         try:
             job, job_kernel = _configure_windows_job(proc)
@@ -687,28 +1167,33 @@ def run_child_capture(
                 pass
             if job and job_kernel is not None:
                 job_kernel.CloseHandle(job)
-            return -1, False, False
+            return failed_result()
     stdout_total = [0]
     stderr_total = [0]
+    stdout_digest = hashlib.sha256()
+    stderr_digest = hashlib.sha256()
     overflow = [False]
-    stop = threading.Event()
 
-    def drain(pipe, total):
+    def drain(pipe, total, digest):
         try:
-            while not stop.is_set():
+            while True:
                 chunk = pipe.read(65536)
                 if not chunk:
                     return
                 total[0] += len(chunk)
+                digest.update(chunk)
                 if total[0] > max_output_bytes:
                     overflow[0] = True
-                    stop.set()
                     return
         except OSError:
             return
 
-    threads = [threading.Thread(target=drain, args=(proc.stdout, stdout_total), daemon=True),
-               threading.Thread(target=drain, args=(proc.stderr, stderr_total), daemon=True)]
+    threads = [threading.Thread(target=drain,
+                                args=(proc.stdout, stdout_total, stdout_digest),
+                                daemon=True),
+               threading.Thread(target=drain,
+                                args=(proc.stderr, stderr_total, stderr_digest),
+                                daemon=True)]
     for thread in threads:
         thread.start()
     deadline = time.monotonic() + timeout
@@ -764,12 +1249,21 @@ def run_child_capture(
         code = -1
     if not timed_out and not overflow[0]:
         kill_tree()
-    stop.set()
     for thread in threads:
-        thread.join(timeout=1)
+        thread.join(timeout=2)
+    if any(thread.is_alive() for thread in threads):
+        overflow[0] = True
     if job and job_kernel is not None:
         try:
             job_kernel.CloseHandle(job)
         except OSError:
             pass
-    return code, timed_out, overflow[0]
+    result = (code, timed_out, overflow[0])
+    if not return_evidence:
+        return result
+    return result + ({
+        "output": {"sha256": stdout_digest.hexdigest(),
+                   "bytes": stdout_total[0]},
+        "error": {"sha256": stderr_digest.hexdigest(),
+                   "bytes": stderr_total[0]},
+    },)
