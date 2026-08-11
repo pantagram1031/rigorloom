@@ -268,6 +268,7 @@ class TestCoreBundle:
                 install / "pipeline" / "scripts" / "doc_backend.py",
                 install / "pipeline" / "scripts" / "submission_preflight.py",
                 install / "pipeline" / "scripts" / "story_graph.py",
+                install / "pipeline" / "scripts" / "hwpx_definition_graph.py",
                 install / "pipeline" / "scripts" / "story_edit.py",
                 install / "pipeline" / "scripts" / "hwp_ingress.py",
                 install / "pipeline" / "scripts" / "hwp_source_coverage.py",
@@ -365,6 +366,7 @@ class TestCoreBundle:
         with zipfile.ZipFile(bundle) as archive:
             names.update(archive.namelist())
         assert "pipeline/scripts/story_graph.py" in names
+        assert "pipeline/scripts/hwpx_definition_graph.py" in names
         assert "pipeline/scripts/story_edit.py" in names
         assert "pipeline/scripts/hwp_ingress.py" in names
         assert "pipeline/scripts/diagnostic_candidate_core.py" in names
@@ -438,6 +440,7 @@ class TestCoreBundle:
 
         for script_name in (
                 "doc_backend.py", "submission_preflight.py",
+                "hwpx_definition_graph.py",
                 "renderer_runtime_v2.py", "render_cert_envelope_v2.py",
                 "renderer_certificate_composite_v1.py"):
             script = destination / "pipeline" / "scripts" / script_name
