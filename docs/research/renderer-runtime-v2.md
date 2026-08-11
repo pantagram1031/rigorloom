@@ -53,6 +53,12 @@ certificate, artifact, root, and receipt bytes, but it does not authenticate
 child-process evidence; that evidence remains
 `execution.evidence_authentication: not_established`.
 
+The receipt parser rejects `NaN`, `Infinity`, and `-Infinity` recursively with
+`receipt_nonfinite_value`, and receipt writers use `allow_nan=False`. T156 is a
+finite-JSON boundary only; T151/T152 parsing remains strict and unchanged, with
+no canonical JSON, HMAC, authentication, route, proof, promotion, or privacy
+expansion.
+
 Equation-bearing HWPX is refused before a child starts. The structural
 equation preflight is only an exclusion guard; it does not interpret HwpEqn
 or prove equation semantics. Malformed, unreadable, replaced, stale,

@@ -86,6 +86,15 @@ the kernel's contract shape.
   diagnostic-only with `proof_grade: none`. T155 is duplicate-member rejection
   only; it does not expand canonical JSON, non-finite-value, or HMAC semantics.
 
+- **T156:** finite-JSON enforcement now rejects `NaN`, `Infinity`, and
+  `-Infinity` recursively in generic document-evidence and T150 receipt input,
+  with `receipt_nonfinite_value`; receipt writers use `allow_nan=False` and
+  render-certificate thresholds must be finite. Legacy v1 external certificate
+  JSON still reports `certificate_invalid_json`, while an outer CLI parse
+  failure remains `operation_failed`. T151 and T152 were already strict and
+  remain unchanged. This is finite-JSON enforcement only: it adds no canonical
+  JSON, HMAC, authentication, routing, proof, promotion, or privacy expansion.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one

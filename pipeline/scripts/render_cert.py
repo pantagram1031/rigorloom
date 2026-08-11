@@ -34,9 +34,15 @@ CERTIFICATE_HMAC_FIELD = "certificate_hmac_sha256"
 
 
 def _json_bytes(payload) -> bytes:
-    return json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except ValueError as exc:
+        if "Out of range float values" in str(exc):
+            raise ValueError("nonfinite_json_value") from exc
+        raise
 
 
 def _reject_duplicate_json_pairs(pairs):
@@ -49,8 +55,24 @@ def _reject_duplicate_json_pairs(pairs):
     return payload
 
 
+def _reject_nonfinite_json_constant(_constant: str):
+    raise ValueError("nonfinite_json_value")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("nonfinite_json_value")
+    return parsed
+
+
 def _json_loads(text: str):
-    return json.loads(text, object_pairs_hook=_reject_duplicate_json_pairs)
+    return json.loads(
+        text,
+        object_pairs_hook=_reject_duplicate_json_pairs,
+        parse_constant=_reject_nonfinite_json_constant,
+        parse_float=_parse_finite_json_float,
+    )
 
 
 def _sha256_file(path: str | Path) -> str:
@@ -76,7 +98,13 @@ def write_json(path: str | Path, payload: dict) -> None:
     temporary = Path(handle.name)
     try:
         with handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            try:
+                json.dump(payload, handle, ensure_ascii=False, indent=2,
+                          allow_nan=False)
+            except ValueError as exc:
+                if "Out of range float values" in str(exc):
+                    raise ValueError("nonfinite_json_value") from exc
+                raise
             handle.write("\n")
         os.replace(temporary, target)
     finally:
@@ -97,6 +125,15 @@ def _result(ok: bool, reason_codes: list[str], **extra) -> dict:
         "reason_codes": codes or [primary],
     }
     payload.update(extra)
+    return payload
+
+
+def _strict_output_payload(payload: dict) -> dict:
+    """Return payload only when it can be emitted as standard JSON."""
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return _result(False, ["operation_failed"])
     return payload
 
 
@@ -460,8 +497,14 @@ def _validate_thresholds(thresholds) -> dict:
     normalized = {"page_count_exact": True}
     for key in ("word_anchor_px", "raster_changed_channel_ratio"):
         value = thresholds[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"threshold {key} must be a non-negative number")
+        try:
+            finite = math.isfinite(value)
+        except (OverflowError, TypeError):
+            finite = False
+        if not finite or value < 0:
+            raise ValueError(f"threshold {key} must be a finite non-negative number")
         normalized[key] = float(value)
     if "min_matched_unique_words" in thresholds:
         value = thresholds["min_matched_unique_words"]
@@ -932,9 +975,20 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
         payload = _result(False, ["operation_failed"], error=str(exc))
         code = 3
+    safe_payload = _strict_output_payload(payload)
+    if safe_payload is not payload:
+        payload = safe_payload
+        code = 3
     if getattr(args, "out", None):
-        write_json(args.out, payload)
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+        try:
+            write_json(args.out, payload)
+        except (OSError, TypeError, ValueError):
+            payload = _result(False, ["operation_failed"])
+            code = 3
+    try:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    except (OSError, TypeError, UnicodeError, ValueError):
+        return 3
     return code
 
 

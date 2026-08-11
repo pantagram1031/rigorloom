@@ -764,3 +764,50 @@ def test_cli_analyzed_result_still_uses_quarantine_exit_three(
     ])
     assert code == runtime.EXIT_REFUSED
     assert json.loads(capsys.readouterr().out) == analyzed
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_runtime_json_nonfinite_values_refuse_parser_writer_and_cli(
+    tmp_path, literal, capsys,
+):
+    with pytest.raises(runtime.RuntimeRefusal) as encoded:
+        runtime._json_bytes({"value": float(literal)})
+    assert encoded.value.reason == "receipt_nonfinite_value"
+
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(f'{{"value":{literal}}}', encoding="ascii")
+    with pytest.raises(runtime.RuntimeRefusal) as decoded:
+        runtime._read_receipt(receipt)
+    assert decoded.value.reason == "receipt_nonfinite_value"
+
+    with pytest.raises(runtime.RuntimeRefusal) as printed:
+        runtime._print({"value": float(literal)})
+    assert printed.value.reason == "receipt_nonfinite_value"
+    assert capsys.readouterr().out == ""
+
+
+def test_runtime_finite_exponent_parser_remains_finite():
+    assert runtime._parse_finite_json_float("1e3") == 1000.0
+
+
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_runtime_verify_cli_reports_closed_nonfinite_reason(
+    tmp_path, literal, capsys,
+):
+    _binary, _source, _certificate, workspace = _fixture(tmp_path)
+    run_dir = _output_root(workspace) / RUN_ID
+    run_dir.mkdir()
+    (run_dir / "artifact.pdf").write_bytes(b"placeholder")
+    (run_dir / "receipt.json").write_text(
+        f'{{"value":{literal}}}', encoding="ascii")
+    code = runtime.main([
+        "verify", str(workspace), "--run-id", RUN_ID,
+        "--binary", str(tmp_path / "missing-renderer"),
+        "--certificate", str(tmp_path / "missing-certificate"),
+    ])
+    assert code == runtime.EXIT_REFUSED
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason"] == "receipt_nonfinite_value"
+    assert literal not in json.dumps(payload, ensure_ascii=True)

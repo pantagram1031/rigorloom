@@ -127,6 +127,31 @@ def test_non_none_legacy_grade_without_receipt_is_hard(tmp_path, monkeypatch):
     assert any(item["code"] == "proof_receipt_missing" for item in verdict["hard"])
 
 
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_submission_preflight_nonfinite_receipt_is_hard_and_privacy_safe(
+    tmp_path, monkeypatch, literal,
+):
+    ws, artifact = _workspace(tmp_path)
+    _valid_receipt(ws, artifact)
+    receipt_path = ws / document_evidence.RECEIPT_REL
+    raw = receipt_path.read_text(encoding="utf-8")
+    assert '  "exit_code": 0,' in raw
+    receipt_path.write_text(raw.replace(
+        '  "exit_code": 0,', f'  "exit_code": {literal},', 1),
+        encoding="utf-8")
+    monkeypatch.setattr(submission_preflight, "_hwpx_text", lambda path: "content")
+    verdict, code = submission_preflight.check(ws)
+    assert code == 3
+    finding = next(item for item in verdict["hard"]
+                   if item["code"] == "proof_receipt_invalid")
+    assert any(error["code"] == "receipt_nonfinite_value"
+               for error in finding["errors"])
+    finding_json = json.dumps(finding, ensure_ascii=True, allow_nan=False)
+    assert literal not in finding_json
+    assert str(ws) not in finding_json
+
+
 def test_legacy_certified_grade_is_quarantined_even_with_certificate_config(
     tmp_path, monkeypatch,
 ):

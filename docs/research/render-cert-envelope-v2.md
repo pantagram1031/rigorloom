@@ -69,7 +69,13 @@ refuse duplicate object members recursively; certificate `verify`/`check`
 reports `certificate_invalid_json`, while an outer CLI operation that cannot
 parse its input reports `operation_failed`. This is duplicate-member rejection
 only; it does not expand canonical JSON, non-finite-value, or HMAC semantics.
-T151 does not upgrade the closed
+T156 separately enforces finite JSON for the legacy external and inline inputs:
+`NaN`, `Infinity`, and `-Infinity` are rejected recursively, while
+`verify`/`check` retain `certificate_invalid_json` and an outer CLI parse failure
+retains `operation_failed`; thresholds must be finite. T151 and T152 were
+already strict and remain unchanged. This is finite-JSON enforcement only: no
+canonical JSON, HMAC, authentication, route, proof, promotion, or privacy
+expansion. T151 does not upgrade the closed
 `certified_runtime_unbound` route, enable certified execution, or promote a
 PDF. The result ceiling is always `proof_grade: none`,
 `submission_grade: false`, `promotion: not_run`, and
