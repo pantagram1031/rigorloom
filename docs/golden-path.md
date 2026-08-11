@@ -219,6 +219,40 @@ scanned, execution/render stay not run, comparison stays unknown, proof is
 none, and submission is false. Every analyzed or refused invocation exits 3.
 Never route the receipt to Stage 0, canonical output, rendering, or submission.
 
+## 0A.7 Quarantine-only renderer runtime v2 (T150)
+
+T150 is an explicitly requested runtime diagnostic, not a Stage 5 backend or
+certified-render release. Pre-create the exact workspace leaf
+`output/proof/renderer-runtime-v2`, then supply an operator-owned binary and
+opaque certificate with their SHA-256 pins:
+
+```sh
+python pipeline/scripts/renderer_runtime_v2.py inspect WORKSPACE \
+  --run-id 0123456789abcdef --renderer-id rhwp_pdf \
+  --binary RHWP_BINARY --binary-sha256 SHA256 \
+  --certificate CERTIFICATE --certificate-sha256 SHA256
+python pipeline/scripts/renderer_runtime_v2.py verify WORKSPACE \
+  --run-id 0123456789abcdef --binary RHWP_BINARY --certificate CERTIFICATE
+```
+
+The lane stages `output/out.hwpx` as a private `input.hwpx` and invokes only
+the fixed `rhwp_pdf` `--version` and `export-pdf INPUT -o OUTPUT` argv. It
+captures one owned `artifact.pdf` plus `receipt.json` under the opaque run id,
+with strict no-follow source/binary/certificate/output reads, a minimal
+environment, private cwd, contained child, bounded output, and final
+generation rebinds. Equation-bearing HWPX is refused before the child starts.
+
+The receipt schema is `rigorloom/renderer-runtime-v2/v1`. It records
+`dependency_closure: unknown`, certificate validation `not_run`, comparison
+`unknown`, render `not_run`, `proof_grade: none`, `submission_grade: false`,
+and promotion `not_run`. A successful child or readable PDF is not render
+quality, native parity, or submission proof. The route never writes
+`output/proof/backend/receipt.json`, changes `output/out.hwpx`, enters
+`doc_backend`, Stage 0/5/6, or `new_report`, and does not alter the closed
+`CERTIFIED_PROOF_RELEASE_ENABLED` policy or the
+`certified_runtime_unbound` grade. No binary, certificate, document, or corpus
+artifact is shipped in a bundle.
+
 ## 0B. Inspect story topology without reading text
 
 When a workflow needs to understand headers, footers, notes, or nested table

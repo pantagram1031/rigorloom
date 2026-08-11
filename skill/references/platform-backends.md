@@ -59,6 +59,22 @@ T93 custody note: the shipped runtime keeps
 renderer execution, and PDF promotion therefore remain quarantined with
 `certified_runtime_unbound` and proof grade `none`.
 
+## Quarantine diagnostics (not executable receipt backends)
+
+T150 `renderer_runtime_v2.py` is a separate quarantine-only diagnostic. It is
+not one of the executable backend IDs above and never writes
+`output/proof/backend/receipt.json`. Its fixed `rhwp_pdf` child is bound by the
+`rigorloom/renderer-runtime-v2/v1` receipt under the pre-created
+`output/proof/renderer-runtime-v2/<run-id>` leaf. The receipt keeps
+`dependency_closure: unknown`, refuses equation-bearing input with
+`equation_input_unsupported`, and remains `proof_grade: none` and
+`submission_grade: false`; there is no automatic route to Stage 0, Stage 5,
+Stage 6, `new_report`, or certified proof.
+
+| Diagnostic | Route and receipt boundary | Automatic rule |
+|---|---|---|
+| `T150 renderer_runtime_v2` | Operator-pinned `rhwp_pdf` with fixed `export-pdf` argv; receipt-only runtime binding under `rigorloom/renderer-runtime-v2/v1` | No automatic backend selection or promotion; dependency closure is unknown, equation input is refused, and proof/submission stay none/false. |
+
 Receipt artifact roles are closed as well: `source_form`, `assembled_hwpx`,
 `rendered_pdf`, and `diagnostic_svg`. Successful structural assembly records
 exit code `0` but remains grade `none` until an executed renderer supplies a
