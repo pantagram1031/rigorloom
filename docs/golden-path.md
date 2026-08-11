@@ -604,6 +604,19 @@ python modules/report/scripts/pipeline_ctl.py check <WS> submission_preflight
   reported as informational `reproducible_here` facts; a historically valid
   Windows receipt is not invalidated merely because the delivery host lacks
   Hancom.
+  T159 additionally binds private measurements before any renderer output is
+  trusted: validate one safe non-dot manifest ID segment before `mkdir`, bind
+  `argv[0]` to the configured binary, and capture bounded no-follow regular
+  one-link source/reference/candidate generations before and after render.
+  Require the exact manifest reference hash; refuse a fresh candidate or
+  alternate output, and refuse `candidate_pdf` aliasing the manifest reference
+  PDF or source document. `issue_certificate` revalidates the live manifest
+  and every document/reference/candidate path and hash, with a second rebind
+  before HMAC. These remain pathful private measure/certify payloads/stdout;
+  public verify is exactly four fields and check adds only eligible. Generic
+  `write_json`/`doc_backend` and authentication, execution, eligibility,
+  routing, proof, submission, and promotion semantics remain unchanged, with
+  both release switches false.
 
 ## 6. Where you land
 

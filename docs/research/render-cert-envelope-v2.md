@@ -108,6 +108,23 @@ refusal is the pathless `operation_failed` result. Generic `write_json`,
 remain pathful private v1 files; stdout/privacy, authentication, routing,
 proof, submission, and release-switch semantics are unchanged.
 
+T159 tightens the legacy private measurement binding without changing its
+public boundary. A manifest document id is validated as one safe non-dot
+segment before its candidate directory is created; `argv[0]` must resolve to
+the configured renderer binary. Source, reference, and candidate snapshots
+are bounded no-follow regular one-link generations captured before and after
+render. The manifest reference hash must match exactly, and a fresh candidate
+or alternate renderer output is refused. Certificate issuance also refuses a
+`candidate_pdf` that aliases either the manifest reference PDF or source
+document; `issue_certificate` revalidates the live manifest and every
+document/reference/candidate path and hash, then performs a second rebind
+before HMAC. The pathful measure/certify payload and stdout remain private v1
+operator artifacts. Public `verify_certificate` remains exactly
+`ok`/`reason_code`/`reason`/`reason_codes`, and `check_document` adds only
+`eligible`; generic `write_json` and `doc_backend` behavior is unchanged.
+There is no authentication, execution, eligibility, routing, proof,
+submission, or promotion expansion, and both release switches remain false.
+
 The core bundle ships the Python entry point and its ordinary script imports
 only. It ships no binary, source document, reference PDF, private manifest,
 operator key, certificate, or corpus artifact. Clean extracted `--help` must

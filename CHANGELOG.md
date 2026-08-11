@@ -123,6 +123,24 @@ the kernel's contract shape.
   authentication, routing, proof, submission, and release-switch semantics
   are unchanged.
 
+- **T159:** legacy private measurement binding now accepts only a safe single
+  non-dot manifest ID segment, validated before its candidate directory is
+  created. The configured renderer binds `argv[0]` to the configured binary.
+  Before and after rendering, source, reference, and candidate files are
+  captured as bounded no-follow regular one-link generations; the manifest
+  reference hash must match exactly, and a fresh candidate plus any alternate
+  renderer output are refused rather than overwritten or selected ambiguously.
+  `issue_certificate` revalidates the live manifest and every document,
+  reference, and candidate path and hash, with a second rebind before HMAC;
+  candidate output aliasing either the manifest reference PDF or source
+  document is refused. These are private operator checks: measure/certify
+  payloads and stdout remain pathful v1 artifacts, while public
+  `verify_certificate` remains exactly four fields (`ok`, `reason_code`,
+  `reason`, `reason_codes`) and `check` adds only `eligible`. Generic
+  `write_json`/`doc_backend` behavior and authentication, execution,
+  eligibility, routing, proof, submission, and promotion semantics remain
+  unchanged; both release switches remain false.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
