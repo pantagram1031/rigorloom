@@ -28,6 +28,9 @@ generations match. `verify` performs the same captured-snapshot joins against
 the canonical composite receipt and re-runs both underlying verifiers; it
 refuses replaced, unrelated, or ambiguous captured generations. It does not
 claim that mutable live paths remain unchanged after their bounded capture.
+A composite rebinds and integrity-joins the captured T150 receipt, but it does
+not authenticate T150 version/render process evidence;
+`execution.evidence_authentication` remains `not_established`.
 A matching result is still diagnostic and cannot be used as a release or
 submission decision.
 
@@ -53,7 +56,8 @@ It retains `dependency_closure: unknown`, `comparison: {"state":"unknown"}`,
 `submission_grade: false`, and `promotion: not_run`.
 
 The composite itself is not HMAC-authenticated; its body digest is an
-integrity check only. T151 validation still requires the operator key used by
+integrity check only and does not upgrade T150 child-process evidence to an
+authenticated claim. T151 validation still requires the operator key used by
 the signed certificate, but that key and all private profile material remain
 out of the receipt.
 

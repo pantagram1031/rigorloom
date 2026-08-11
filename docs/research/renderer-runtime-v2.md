@@ -27,9 +27,16 @@ The receipt schema is `rigorloom/renderer-runtime-v2/v1`. It binds the
 captured source, binary, opaque certificate snapshot, produced PDF, fixed
 argv-template digest, version-process result, render-process result, timeout
 and overflow state, minimal environment digest, private staging cwd policy,
-and contained-child process policy. Child stdout/stderr are reduced to byte
-counts and SHA-256 values; streams, paths, argv, source text, and certificate
-contents are not published.
+and a platform-specific child-process policy. `execution.process_policy` is
+`windows_job_kill_on_close_v1` on Windows and `posix_process_group_v1` on
+POSIX. `execution.descendant_containment` and
+`execution.evidence_authentication` are both `not_established`. Child
+stdout/stderr are reduced to byte counts and SHA-256 values; streams, paths,
+argv, source text, and certificate contents are not published.
+`inspect` emits the producer host's local policy token. `verify` accepts either
+closed recorded token, `windows_job_kill_on_close_v1` or
+`posix_process_group_v1`, so a receipt can be checked on another host; the
+legacy `contained_child_v1` token is rejected.
 
 ## Evidence ceiling
 
@@ -41,7 +48,10 @@ captured and hash-bound but its semantics are deliberately not validated
 `not_run`, `proof_grade` is `none`, `submission_grade` is `false`, and
 `promotion` is `not_run`. A successful child and a readable PDF therefore do
 not establish native layout, visual quality, Hancom parity, or submission
-readiness.
+readiness. Receipt verification rebinds the current source, binary,
+certificate, artifact, root, and receipt bytes, but it does not authenticate
+child-process evidence; that evidence remains
+`execution.evidence_authentication: not_established`.
 
 Equation-bearing HWPX is refused before a child starts. The structural
 equation preflight is only an exclusion guard; it does not interpret HwpEqn
@@ -56,11 +66,17 @@ also a refusal.
 The run root and workspace are checked for symlink/reparse ancestry and held
 through the operation. Input, binary, certificate, staged output, and final
 receipt are captured through bounded no-follow regular-file reads and rebound
-before publication/verification. The child runs with a minimal environment,
-private cwd, and process-tree containment. Publication is receipt-first and
+before publication/verification. On Windows the child uses a suspended launch
+assigned to a kill-on-close Job (`windows_job_kill_on_close_v1`); on POSIX it
+uses a new process group (`posix_process_group_v1`). Ordinary descendants that
+remain in the Job/process group are cleaned up. A POSIX descendant that calls
+`setsid()` can escape, and brokered processes outside the Job/process group are
+outside the claim. This lane provides no memory, process-count, CPU,
+filesystem, or network isolation. Publication is receipt-first and
 output-last; rollback can remove only the operation's owned inode. Verification
 rechecks current source, binary, certificate, artifact, root, and receipt
-generations before returning success.
+generations before returning success, without authenticating child-process
+evidence.
 
 ## Routing and distribution boundary
 

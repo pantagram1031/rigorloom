@@ -28,6 +28,21 @@ def test_t150_research_note_pins_the_closed_runtime_boundary():
         "certified_runtime_unbound",
         "new_report.py",
         "CP949",
+        "windows_job_kill_on_close_v1",
+        "posix_process_group_v1",
+        "execution.descendant_containment",
+        "execution.evidence_authentication",
+        "not_established",
+        "setsid()",
+        "brokered",
+        "filesystem",
+        "network",
+        "Receipt verification rebinds",
+        "without authenticating",
+        "child-process evidence",
+        "producer host's local policy token",
+        "accepts either\nclosed recorded token",
+        "legacy `contained_child_v1` token is rejected",
     ):
         assert token in text
     lowered = text.casefold()
@@ -67,6 +82,38 @@ def test_t150_routing_docs_repeat_quarantine_and_no_autoroute():
         assert token in combined
     assert "proof_grade` is `none" in combined
     assert "submission_grade` is `false" in combined
+
+
+def test_t154_docs_correct_platform_and_evidence_claims():
+    research = _read("docs/research/renderer-runtime-v2.md")
+    golden = _read("docs/golden-path.md")
+    operations = _read("skill/references/operations.md")
+    trouble = _read("docs/trouble-table.md")
+    changelog = _read("CHANGELOG.md")
+    combined = "\n".join((research, golden, operations, trouble, changelog))
+
+    for token in (
+        "windows_job_kill_on_close_v1",
+        "posix_process_group_v1",
+        "execution.descendant_containment",
+        "execution.evidence_authentication",
+        "not_established",
+        "ordinary descendants",
+        "setsid()",
+        "brokered",
+        "resource/filesystem/network",
+        "does not authenticate",
+        "proof `none`",
+        "submission `false`",
+        "promotion `not_run`",
+    ):
+        assert token in combined
+
+    assert "process-tree containment" not in golden
+    assert "process-tree containment" not in research
+    assert "shared process-tree/TOCTOU" not in trouble
+    assert "no source text/IDs/raw bytes/paths" in trouble
+    assert trouble.index("| T154 |") < trouble.index("| T153 |")
 
 
 def test_backend_table_does_not_promote_unreleased_advisory_proof():
