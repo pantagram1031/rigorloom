@@ -21,7 +21,9 @@ Output schema (see probe()):
       "capabilities": {"hancom_com": bool, "soffice_path": str|None,
                        "soffice_wsl": bool, "h2orestart": "yes"|"no"|"unknown",
                        "rhwp_path": str|None, "rhwp_wsl": bool,
-                       "rhwp_version": str|None, "rhwp_reason": str},
+                       "rhwp_version": str|None, "rhwp_reason": str,
+                       "render_certificate_configured": bool,
+                       "render_certificate_reason": str},
       "renderers": [{"name": str, "wsl": bool, "argv": list[str]|None}, ...]
     }
 No timestamps — the output is a pure function of machine state, kept
@@ -260,12 +262,14 @@ def _probe_rhwp() -> dict:
     }
 
 
-def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
-    """Verify an explicitly configured certificate without a document check.
+def _probe_certified_renderer() -> tuple[dict | None, bool | None, str | None]:
+    """Report the quarantined certificate configuration without probing it.
 
-    Document-envelope membership is checked later by ``render_cert check``.
-    With no environment configuration this function is not called, preserving
-    the historical probe schema byte-for-byte.
+    The default quarantined path does not open, verify, or use a configured
+    certificate to construct a renderer command.  An explicit release switch
+    retains the historical private compatibility route; its public capability
+    projection still records only a boolean and closed reason, never the
+    configured certificate path.
     """
     configured = os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "").strip()
     if not configured:
@@ -275,17 +279,19 @@ def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
             and document_evidence.CERTIFIED_PROOF_RELEASE_ENABLED):
         # Certificate verification and renderer command/version probing are
         # diagnostic-only while the certified runtime is quarantined.
-        return None, certificate_path, "certified_runtime_unbound"
+        return None, True, "certified_runtime_unbound"
     try:
-        verification = render_cert.verify_certificate(certificate_path)
+        # This is a private, switch-gated compatibility route.  The public
+        # capability projection below never exposes the configured path.
+        verification = render_cert._verify_certificate_rich(certificate_path)
     except Exception:
-        return None, certificate_path, "certificate_probe_failed"
+        return None, True, "certificate_probe_failed"
     reason = str(verification.get("reason_code", "certificate_probe_failed"))
     if verification.get("ok") is not True:
-        return None, certificate_path, reason
+        return None, True, reason
     certificate = verification.get("certificate")
     if not isinstance(certificate, dict):
-        return None, certificate_path, "certificate_schema_invalid"
+        return None, True, "certificate_schema_invalid"
     argv = certificate.get("renderer_argv")
     if (not isinstance(argv, list) or not argv
             or not any("{in}" in str(item) for item in argv)
@@ -293,7 +299,7 @@ def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
                 "{out}" in str(item) or "{outdir}" in str(item)
                 for item in argv
             )):
-        return None, certificate_path, "certificate_runtime_command_invalid"
+        return None, True, "certificate_runtime_command_invalid"
     renderer_id = str(certificate.get("renderer_id", "renderer"))
     renderer = {
         "name": f"certified_{renderer_id}",
@@ -302,9 +308,11 @@ def _probe_certified_renderer() -> tuple[dict | None, str | None, str | None]:
         "binary_path": certificate.get("renderer_binary_path"),
         "version": certificate.get("renderer_version"),
         "proof_grade": "certified",
+        # Private compatibility channel only; public probe filters the whole
+        # certified renderer before exposing its renderer list.
         "certificate": certificate_path,
     }
-    return renderer, certificate_path, reason
+    return renderer, True, reason
 
 
 def _build_renderers(
@@ -347,9 +355,14 @@ def _build_renderers(
     return renderers
 
 
-def probe() -> dict:
+def probe(*, include_private: bool = False) -> dict:
     """Run every capability probe (each already self-guarded) and assemble the
-    capabilities + renderers document. Never raises."""
+    capabilities + renderers document. Never raises.
+
+    The default projection is safe for public tables/JSON.  Internal routing
+    may opt into the legacy switch-gated certified renderer through the private
+    channel; that channel is never used by the public CLI.
+    """
     try:
         hancom_com = _probe_hancom_com()
     except Exception:
@@ -386,20 +399,27 @@ def probe() -> dict:
     }
     certified_renderer = None
     if os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "").strip():
-        try:
-            certified_renderer, certificate_path, certificate_reason = (
-                _probe_certified_renderer()
-            )
-        except Exception:
-            certificate_path = os.path.abspath(os.path.expanduser(
-                os.environ.get("RIGORLOOM_RENDER_CERTIFICATE", "")
-            ))
-            certificate_reason = "certificate_probe_failed"
-        capabilities["render_certificate"] = certificate_path
+        if include_private:
+            try:
+                certified_renderer, certificate_configured, certificate_reason = (
+                    _probe_certified_renderer()
+                )
+            except Exception:
+                certificate_configured = True
+                certificate_reason = "certificate_probe_failed"
+        else:
+            # Public capability probes remain quarantined even when an
+            # operator has enabled the dormant release switch.  The private
+            # workspace selector opts into `_probe_certified_renderer`.
+            certificate_configured = True
+            certificate_reason = "certified_runtime_unbound"
+        capabilities["render_certificate_configured"] = bool(certificate_configured)
         capabilities["render_certificate_reason"] = certificate_reason
     return {
         "capabilities": capabilities,
-        "renderers": _build_renderers(capabilities, certified_renderer),
+        "renderers": _build_renderers(
+            capabilities, certified_renderer if include_private else None,
+        ),
     }
 
 
@@ -460,9 +480,9 @@ def format_table(result: dict) -> str:
         ("rhwp_version", str(caps.get("rhwp_version"))),
         ("rhwp_reason", str(caps.get("rhwp_reason"))),
     ]
-    if "render_certificate" in caps:
+    if "render_certificate_configured" in caps:
         rows += [
-            ("render_certificate", str(caps.get("render_certificate"))),
+            ("render_certificate_configured", str(caps.get("render_certificate_configured"))),
             ("render_certificate_reason", str(caps.get("render_certificate_reason"))),
         ]
     width = max(len(label) for label, _ in rows)

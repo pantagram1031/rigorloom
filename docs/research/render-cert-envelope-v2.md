@@ -75,7 +75,22 @@ T156 separately enforces finite JSON for the legacy external and inline inputs:
 retains `operation_failed`; thresholds must be finite. T151 and T152 were
 already strict and remain unchanged. This is finite-JSON enforcement only: no
 canonical JSON, HMAC, authentication, route, proof, promotion, or privacy
-expansion. T151 does not upgrade the closed
+expansion.
+
+T157 closes the public boundary around the quarantined legacy v1 API without
+changing its private operator artifacts. Public `verify_certificate(...)`
+summaries contain exactly `ok`, `reason_code`, `reason`, and `reason_codes`;
+`check_document(...)` and the `check` CLI add only `eligible`. These summaries
+do not contain a raw `error`, local path, argv, feature map, certificate
+payload, or renderer stdout/stderr. Successful `measure` and `certify` output
+files remain private, pathful v1 operator artifacts and are never public
+receipts. The legacy CLI has `measure`, `certify`, and `check` only; there is no
+`verify` subcommand, although the Python verification API remains available to
+quarantined consumers. `render_probe` publishes only the boolean
+`render_certificate_configured` and closed `render_certificate_reason`, never
+the configured path. Existing reason tokens are preserved; this boundary
+changes no authentication, execution, eligibility semantics, routing, proof,
+submission behavior, or release switches. T151 does not upgrade the closed
 `certified_runtime_unbound` route, enable certified execution, or promote a
 PDF. The result ceiling is always `proof_grade: none`,
 `submission_grade: false`, `promotion: not_run`, and
