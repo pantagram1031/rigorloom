@@ -234,6 +234,24 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T111:** answering a consent question is now a documented operation, and the
+  paragraph that needs answering now has an address. `fill-recipe.md` §3b covers
+  it with the measured constraints, and every `answer_slot` entry in a profile
+  carries `at_para` — resolved by the same `_resolve_at_para` the anchors use,
+  and omitted rather than guessed when the binding is unprovable. Previously the
+  legacy `para_idx` → editable `at_para` bridge existed only on
+  `anchor_records`, so it was present exactly when the paragraph happened to be
+  an anchor: the 수집ㆍ이용 consent question had it (39 → 42) and its 제3자 twin
+  did not. `--full-text PARA:N` takes `at_para` and echoes the number under both
+  key names, so retyping a `para_idx` there silently returns a different
+  paragraph. **The constraint the recipe now states: on a glyphless form no gate
+  checks whether the consent was marked.** `(예,  아니오)` carries no mark glyph,
+  so `consent_unmarked` skips with `no_mark_glyphs` — the same line a passing run
+  emits whether or not the consents were answered — while kstartup's
+  `( ■동의함  □동의하지 않음 )` is glyph-bearing and required, so there the rule
+  fires and HARDs. The tool never picks the answer either; marking a consent is
+  the applicant's decision.
+
 - **T110:** `form_inspect` no longer offers a statutory consent question up for
   deletion. A guide paragraph carrying an **answer slot** is a marking site, not
   a deletion site, and is excluded from `removal_targets` on content, with the
