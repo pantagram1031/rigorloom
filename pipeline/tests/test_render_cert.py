@@ -882,9 +882,442 @@ class RenderCertTestCase(unittest.TestCase):
             renderer_binary=self.binary,
             renderer_version="mock 1.0",
         )
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes"},
+        )
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["reason_code"], "certificate_invalid_json")
-        self.assertEqual(set(result), {"ok", "reason_code", "reason", "reason_codes"})
+
+    def test_verify_refuses_certificate_generation_mutated_during_key_load(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-key-load-mutation.json"
+        render_cert.write_json(cert_path, certificate)
+        original_loader = render_cert.receipt_sign.load_operator_key
+
+        def load_then_mutate(*args, **kwargs):
+            payload = json.loads(cert_path.read_text(encoding="utf-8"))
+            payload["renderer_id"] = "certificate-key-load-canary"
+            cert_path.write_text(json.dumps(payload), encoding="utf-8")
+            return original_loader(*args, **kwargs)
+
+        with mock.patch.object(
+            render_cert.receipt_sign, "load_operator_key",
+            side_effect=load_then_mutate,
+        ):
+            result = render_cert.verify_certificate(
+                cert_path, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "certificate_changed")
+
+    def test_verify_refuses_manifest_mutation_after_hash_and_parse(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        original_loader = render_cert.load_manifest
+        mutated = {"done": False}
+
+        def load_then_mutate(path, *, require_ready=True):
+            payload = original_loader(path, require_ready=require_ready)
+            if not mutated["done"]:
+                mutated["done"] = True
+                manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+                manifest["documents"][0]["generator"]["source"] = (
+                    "manifest-reader-canary"
+                )
+                self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+            return payload
+
+        with mock.patch.object(render_cert, "load_manifest", side_effect=load_then_mutate):
+            result = render_cert.verify_certificate(
+                certificate, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "manifest_changed")
+
+    def test_verify_refuses_binary_mutation_after_hash_before_version_probe(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        original_binary = self.binary.read_bytes()
+        mutated = {"done": False}
+
+        original_capture = render_cert._capture_private_generation
+
+        def capture_then_mutate(path, reason):
+            generation = original_capture(path, reason)
+            if reason == "renderer_binary_changed" and not mutated["done"]:
+                mutated["done"] = True
+                self.binary.write_bytes(original_binary + b"binary-reader-canary")
+            return generation
+
+        with mock.patch.object(
+            render_cert, "_capture_private_generation",
+            side_effect=capture_then_mutate,
+        ):
+            result = render_cert.verify_certificate(
+                certificate, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "renderer_binary_changed")
+
+    def test_check_refuses_document_mutation_after_feature_extraction(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        original_extract = render_cert.feature_extract.extract_feature_counts
+        original_document = self.doc.read_bytes()
+
+        def extract_then_mutate(path):
+            features = original_extract(path)
+            self.doc.write_bytes(original_document + b"document-reader-canary")
+            return features
+
+        with mock.patch.object(
+            render_cert.feature_extract, "extract_feature_counts",
+            side_effect=extract_then_mutate,
+        ):
+            result = render_cert.check_document(
+                self.doc, certificate, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "document_changed")
+
+    def test_check_refuses_certificate_mutation_after_feature_extraction(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        certificate_path = self.root / "check-certificate.json"
+        render_cert.write_json(certificate_path, certificate)
+        original_extract = render_cert.feature_extract.extract_feature_counts
+
+        def extract_then_mutate(path):
+            features = original_extract(path)
+            certificate_path.write_bytes(certificate_path.read_bytes() + b"check-cert-canary")
+            return features
+
+        with mock.patch.object(
+            render_cert.feature_extract, "extract_feature_counts",
+            side_effect=extract_then_mutate,
+        ):
+            result = render_cert.check_document(
+                self.doc, certificate_path, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "certificate_changed")
+
+    def test_check_refuses_manifest_mutation_after_feature_extraction(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        original_extract = render_cert.feature_extract.extract_feature_counts
+
+        def extract_then_mutate(path):
+            features = original_extract(path)
+            self.manifest.write_bytes(self.manifest.read_bytes() + b"check-manifest-canary")
+            return features
+
+        with mock.patch.object(
+            render_cert.feature_extract, "extract_feature_counts",
+            side_effect=extract_then_mutate,
+        ):
+            result = render_cert.check_document(
+                self.doc, certificate, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "manifest_changed")
+
+    def test_check_refuses_binary_mutation_after_feature_extraction(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        original_extract = render_cert.feature_extract.extract_feature_counts
+
+        def extract_then_mutate(path):
+            features = original_extract(path)
+            self.binary.write_bytes(self.binary.read_bytes() + b"check-binary-canary")
+            return features
+
+        with mock.patch.object(
+            render_cert.feature_extract, "extract_feature_counts",
+            side_effect=extract_then_mutate,
+        ):
+            result = render_cert.check_document(
+                self.doc, certificate, renderer_binary=self.binary,
+                renderer_version="mock 1.0",
+            )
+
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "renderer_binary_changed")
+
+    def test_verify_refuses_certificate_hardlink_and_symlink_aliases(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        cert_path = self.root / "certificate-alias-source.json"
+        render_cert.write_json(cert_path, certificate)
+        aliases = []
+        hardlink = self.root / "certificate-hardlink.json"
+        try:
+            os.link(cert_path, hardlink)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"hardlink unavailable: {exc}")
+        aliases.append(hardlink)
+        symlink = self.root / "certificate-symlink.json"
+        try:
+            symlink.symlink_to(cert_path)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            aliases.append(symlink)
+
+        for alias in aliases:
+            with self.subTest(alias=alias.name):
+                result = render_cert.verify_certificate(
+                    alias, renderer_binary=self.binary,
+                    renderer_version="mock 1.0",
+                )
+                self.assertEqual(
+                    set(result), {"ok", "reason_code", "reason", "reason_codes"},
+                )
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["reason_code"], "certificate_changed")
+
+    def test_verify_refuses_manifest_and_binary_hardlink_or_symlink_aliases(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        manifest_aliases = []
+        binary_aliases = []
+        manifest_hardlink = self.root / "manifest-hardlink.json"
+        binary_hardlink = self.root / "binary-hardlink.bin"
+        try:
+            os.link(self.manifest, manifest_hardlink)
+            os.link(self.binary, binary_hardlink)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"hardlink unavailable: {exc}")
+        manifest_aliases.append(manifest_hardlink)
+        binary_aliases.append(binary_hardlink)
+        manifest_symlink = self.root / "manifest-symlink.json"
+        binary_symlink = self.root / "binary-symlink.bin"
+        try:
+            manifest_symlink.symlink_to(self.manifest)
+            binary_symlink.symlink_to(self.binary)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            manifest_aliases.append(manifest_symlink)
+            binary_aliases.append(binary_symlink)
+
+        for manifest_alias in manifest_aliases:
+            aliased = deepcopy(certificate)
+            aliased["corpus_manifest_path"] = str(manifest_alias)
+            aliased["corpus_manifest_hash"] = _sha256(manifest_alias)
+            self._resign(aliased)
+            with self.subTest(alias=manifest_alias.name):
+                result = render_cert.verify_certificate(
+                    aliased, renderer_binary=self.binary,
+                    renderer_version="mock 1.0",
+                )
+                self.assertEqual(
+                    set(result), {"ok", "reason_code", "reason", "reason_codes"},
+                )
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["reason_code"], "manifest_changed")
+
+        for alias in manifest_aliases:
+            alias.unlink(missing_ok=True)
+
+        for binary_alias in binary_aliases:
+            aliased = deepcopy(certificate)
+            aliased["renderer_binary_path"] = str(binary_alias)
+            aliased["renderer_binary_hash"] = _sha256(binary_alias)
+            self._resign(aliased)
+            with self.subTest(alias=binary_alias.name):
+                result = render_cert.verify_certificate(
+                    aliased, renderer_version="mock 1.0",
+                )
+                self.assertEqual(
+                    set(result), {"ok", "reason_code", "reason", "reason_codes"},
+                )
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["reason_code"], "renderer_binary_changed")
+
+    def test_verify_refuses_certificate_manifest_and_binary_interior_parent_symlinks(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        cert_path = self.root / "parent-source-certificate.json"
+        render_cert.write_json(cert_path, certificate)
+        aliases = []
+        for label, target, field, reason in (
+            ("certificate", cert_path, None, "certificate_changed"),
+            ("manifest", self.manifest, "corpus_manifest_path", "manifest_changed"),
+            ("binary", self.binary, "renderer_binary_path", "renderer_binary_changed"),
+        ):
+            alias_dir = self.root / f"{label}-parent-alias"
+            try:
+                alias_dir.symlink_to(self.root, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlink unavailable: {exc}")
+            alias_path = alias_dir / target.name
+            aliases.append(alias_dir)
+            if field is None:
+                result = render_cert.verify_certificate(
+                    alias_path, renderer_binary=self.binary,
+                    renderer_version="mock 1.0",
+                )
+            else:
+                aliased = deepcopy(certificate)
+                aliased[field] = str(alias_path)
+                if field == "corpus_manifest_path":
+                    aliased["corpus_manifest_hash"] = _sha256(alias_path)
+                else:
+                    aliased["renderer_binary_hash"] = _sha256(alias_path)
+                self._resign(aliased)
+                result = render_cert.verify_certificate(
+                    aliased, renderer_binary=self.binary if field == "corpus_manifest_path" else None,
+                    renderer_version="mock 1.0",
+                )
+            with self.subTest(label=label):
+                self.assertEqual(
+                    set(result), {"ok", "reason_code", "reason", "reason_codes"},
+                )
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["reason_code"], reason)
+
+    def test_check_refuses_document_interior_parent_symlink(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        alias_dir = self.root / "document-parent-alias"
+        try:
+            alias_dir.symlink_to(self.root, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink unavailable: {exc}")
+        result = render_cert.check_document(
+            alias_dir / self.doc.name, certificate,
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+        )
+        self.assertEqual(
+            set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["eligible"], result)
+        self.assertEqual(result["reason_code"], "document_changed")
+
+    def test_check_refuses_document_hardlink_or_symlink_alias(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        aliases = []
+        hardlink = self.root / "document-hardlink.hwpx"
+        try:
+            os.link(self.doc, hardlink)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"hardlink unavailable: {exc}")
+        aliases.append(hardlink)
+        symlink = self.root / "document-symlink.hwpx"
+        try:
+            symlink.symlink_to(self.doc)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            aliases.append(symlink)
+
+        for alias in aliases:
+            with self.subTest(alias=alias.name):
+                result = render_cert.check_document(
+                    alias, certificate, renderer_binary=self.binary,
+                    renderer_version="mock 1.0",
+                )
+                self.assertEqual(
+                    set(result), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+                )
+                self.assertFalse(result["ok"], result)
+                self.assertFalse(result["eligible"], result)
+                self.assertEqual(result["reason_code"], "document_changed")
+
+    def test_verify_and_check_do_not_require_historical_measurement_files(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-08-12T00:00:00Z",
+        )
+        current_document = self.root / "current-document.hwpx"
+        shutil.copyfile(self.doc, current_document)
+        self.doc.unlink()
+        self.reference.unlink()
+        for candidate in self.candidates.values():
+            candidate.unlink()
+
+        verified = render_cert.verify_certificate(
+            certificate, renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        checked = render_cert.check_document(
+            current_document, certificate, renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        self.assertEqual(
+            set(verified), {"ok", "reason_code", "reason", "reason_codes"},
+        )
+        self.assertTrue(verified["ok"], verified)
+        self.assertEqual(
+            set(checked), {"ok", "reason_code", "reason", "reason_codes", "eligible"},
+        )
+        self.assertTrue(checked["ok"], checked)
+        self.assertTrue(checked["eligible"], checked)
 
     def test_consumer_rejects_conflicting_duplicate_with_valid_last_value(self):
         certificate = render_cert.issue_certificate(
