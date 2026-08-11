@@ -265,3 +265,51 @@ def test_t160_docs_pin_producer_snapshot_integrity_boundary():
     assert trouble.index("| T157 |") < trouble.index("| T156 |")
     assert trouble.index("| T156 |") < trouble.index("| T155 |")
     assert "| T109 |" not in trouble
+
+
+def test_t161_docs_pin_reader_snapshot_custody_boundary():
+    paths = (
+        "CHANGELOG.md",
+        "docs/trouble-table.md",
+        "docs/research/render-cert-envelope-v2.md",
+    )
+    combined = " ".join(" ".join(_read(path).split()) for path in paths)
+    for token in (
+        "T161",
+        "reader-side verifier custody",
+        "current certificate",
+        "manifest",
+        "renderer binary",
+        "check_document",
+        "bounded no-follow regular one-link snapshots",
+        "captured bytes",
+        "owned staged copies",
+        "self-hash/HMAC",
+        "feature extraction",
+        "renderer-version checks",
+        "final rebind",
+        "symlink",
+        "hardlink",
+        "certificate_changed",
+        "manifest_changed",
+        "renderer_binary_changed",
+        "document_changed",
+        "Historical measurement document/reference/candidate paths are not reread",
+        "not public dependencies",
+        "public `verify_certificate` remains exactly",
+        "`check_document` adds only `eligible`",
+        "private rich route",
+        "Schema",
+        "routing",
+        "proof",
+        "submission",
+        "promotion",
+        "release switches",
+    ):
+        assert token in combined
+
+    trouble = _read("docs/trouble-table.md")
+    assert trouble.index("| T161 |") < trouble.index("| T160 |")
+    assert trouble.index("| T160 |") < trouble.index("| T159 |")
+    assert trouble.index("| T159 |") < trouble.index("| T158 |")
+    assert "| T109 |" not in trouble

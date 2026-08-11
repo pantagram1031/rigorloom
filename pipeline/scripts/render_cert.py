@@ -755,6 +755,17 @@ def _stage_private_snapshot(directory: str | Path, name: str, generation: dict) 
     return target
 
 
+def _parse_private_json_snapshot(generation: dict):
+    """Parse JSON only from an already captured private generation."""
+    raw = generation.get("raw") if isinstance(generation, dict) else None
+    if not isinstance(raw, bytes):
+        raise ValueError("snapshot_generation_invalid")
+    try:
+        return _json_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        raise ValueError("snapshot_json_invalid")
+
+
 def load_manifest(path: str | Path, *, require_ready: bool = True) -> dict:
     manifest_path = Path(path)
     payload = _read_json(manifest_path)
@@ -1560,13 +1571,31 @@ def _verify_certificate_rich(
     renderer_binary: str | Path | None = None,
     renderer_version: str | None = None,
 ) -> dict:
-    source_path = Path(certificate).resolve() if isinstance(certificate, (str, Path)) else None
+    source_path = (
+        _absolute_lexical(certificate)
+        if isinstance(certificate, (str, Path)) else None
+    )
     base = source_path.parent if source_path else Path.cwd()
+    certificate_snapshot = None
     try:
-        cert = _read_json(source_path) if source_path else certificate
-    except FileNotFoundError:
-        return _result(False, ["certificate_missing"])
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        if source_path is not None:
+            certificate_snapshot = _capture_private_generation(
+                source_path, "certificate_changed",
+            )
+            cert = _parse_private_json_snapshot(certificate_snapshot)
+        else:
+            cert = certificate
+    except ValueError as exc:
+        if source_path is not None and str(exc) == "certificate_changed":
+            try:
+                source_path.lstat()
+            except FileNotFoundError:
+                return _result(False, ["certificate_missing"])
+            except (OSError, TypeError, ValueError):
+                pass
+            return _result(False, ["certificate_changed"])
+        return _result(False, ["certificate_invalid_json"])
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
         return _result(False, ["certificate_invalid_json"])
     if not isinstance(cert, dict):
         return _result(False, ["certificate_schema_invalid"])
@@ -1623,16 +1652,26 @@ def _verify_certificate_rich(
         return _result(False, ["certificate_schema_invalid"])
 
     try:
-        manifest_path = _resolve_recorded_path(cert["corpus_manifest_path"], base)
+        manifest_path = _resolve_recorded_lexical_path(
+            cert["corpus_manifest_path"], base,
+        )
+        manifest_snapshot = _capture_private_generation(
+            manifest_path, "manifest_changed",
+        )
     except (OSError, TypeError, ValueError):
-        return _result(False, ["manifest_missing"])
-    if not manifest_path.is_file():
-        return _result(False, ["manifest_missing"])
-    if _sha256_file(manifest_path) != cert["corpus_manifest_hash"]:
+        return _result(False, ["manifest_changed"])
+    if manifest_snapshot["sha256"] != cert["corpus_manifest_hash"]:
         return _result(False, ["manifest_hash_mismatch"])
     try:
-        manifest = load_manifest(manifest_path, require_ready=True)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        with tempfile.TemporaryDirectory(prefix="render-cert-manifest-") as stage_root:
+            staged_manifest = _stage_private_snapshot(
+                stage_root, manifest_path.name, manifest_snapshot,
+            )
+            manifest = load_manifest(staged_manifest, require_ready=True)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        # The staged bytes, rather than the live manifest path, are the
+        # manifest claims input.  A parse/staging failure is not a live-path
+        # custody result; the initial and final captures own that boundary.
         return _result(False, ["manifest_invalid"])
     hancom_versions = {entry["hancom_version"] for entry in manifest["documents"]}
     if hancom_versions != {cert["hancom_version"]}:
@@ -1652,24 +1691,79 @@ def _verify_certificate_rich(
         return _result(False, ["certificate_stats_mismatch"])
 
     try:
-        binary = Path(renderer_binary).expanduser().resolve() if renderer_binary is not None \
-            else _resolve_recorded_path(cert["renderer_binary_path"], base)
+        binary = (
+            _absolute_lexical(renderer_binary)
+            if renderer_binary is not None
+            else _resolve_recorded_lexical_path(cert["renderer_binary_path"], base)
+        )
+        binary_snapshot = _capture_private_generation(
+            binary, "renderer_binary_changed",
+        )
     except (OSError, TypeError, ValueError):
-        return _result(False, ["renderer_binary_missing"])
-    if not binary.is_file():
-        return _result(False, ["renderer_binary_missing"])
-    if _sha256_file(binary) != cert["renderer_binary_hash"]:
+        return _result(False, ["renderer_binary_changed"])
+    if binary_snapshot["sha256"] != cert["renderer_binary_hash"]:
         return _result(False, ["renderer_binary_hash_mismatch"])
-    live_version = renderer_version if renderer_version is not None else _probe_renderer_version(binary)
+    if renderer_version is None:
+        try:
+            with tempfile.TemporaryDirectory(prefix="render-cert-binary-") as stage_root:
+                staged_binary = _stage_private_snapshot(
+                    stage_root, binary.name, binary_snapshot,
+                )
+                # Preserve an executable probe contract without reopening the
+                # live binary.  The captured bytes remain the only input.
+                staged_binary.chmod(0o700)
+                live_version = _probe_renderer_version(staged_binary)
+        except (OSError, TypeError, ValueError):
+            return _result(False, ["renderer_probe_failed"])
+    else:
+        live_version = renderer_version
     if live_version is None:
         return _result(False, ["renderer_probe_failed"])
     if str(live_version).strip() != str(cert["renderer_version"]).strip():
         return _result(False, ["renderer_version_mismatch"])
+
+    # Final current-dependency rebinds are the last fallible filesystem work
+    # before the rich result is returned.  No historical measurement paths are
+    # opened here; those are producer-only evidence bound by T160.
+    if source_path is not None:
+        try:
+            certificate_after = _capture_private_generation(
+                source_path, "certificate_changed",
+            )
+        except (OSError, TypeError, ValueError):
+            return _result(False, ["certificate_changed"])
+        if not _same_private_generation(certificate_snapshot, certificate_after):
+            return _result(False, ["certificate_changed"])
+    try:
+        manifest_after = _capture_private_generation(
+            manifest_path, "manifest_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return _result(False, ["manifest_changed"])
+    if not _same_private_generation(manifest_snapshot, manifest_after):
+        return _result(False, ["manifest_changed"])
+    try:
+        binary_after = _capture_private_generation(
+            binary, "renderer_binary_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return _result(False, ["renderer_binary_changed"])
+    if not _same_private_generation(binary_snapshot, binary_after):
+        return _result(False, ["renderer_binary_changed"])
     return _result(
         True, ["certificate_valid"], certificate=cert,
         certificate_path=str(source_path) if source_path else None,
         manifest_path=str(manifest_path), renderer_binary=str(binary),
         renderer_version=str(live_version).strip(),
+        # Private custody bindings are consumed only by check_document after
+        # feature extraction.  Public verify strips all rich fields, while
+        # the switch-gated renderer probe reads only its existing pathful
+        # certificate/renderer members.
+        _custody={
+            "certificate": certificate_snapshot,
+            "manifest": manifest_snapshot,
+            "binary": binary_snapshot,
+        },
     )
 
 
@@ -1724,9 +1818,60 @@ def check_document(
             verification.get("reason_code", "certificate_invalid")
         ])), "eligible": False}
     try:
-        features = feature_extract.extract_feature_counts(document)
+        document_snapshot = _capture_private_generation(
+            document, "document_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return {**_result(False, ["document_changed"]), "eligible": False}
+    try:
+        with tempfile.TemporaryDirectory(prefix="render-cert-document-") as stage_root:
+            staged_document = _stage_private_snapshot(
+                stage_root, Path(document).name, document_snapshot,
+            )
+            features = feature_extract.extract_feature_counts(staged_document)
     except Exception:
         return {**_result(False, ["document_unreadable"]), "eligible": False}
+    # The last custody block binds every current dependency after the staged
+    # document has been analyzed.  It deliberately performs no callback,
+    # parsing, or filesystem work after its final capture; envelope decisions
+    # below are in-memory only.  Historical measurement paths are excluded.
+    try:
+        document_after = _capture_private_generation(
+            document, "document_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return {**_result(False, ["document_changed"]), "eligible": False}
+    if not _same_private_generation(document_snapshot, document_after):
+        return {**_result(False, ["document_changed"]), "eligible": False}
+    custody = verification.get("_custody")
+    if not isinstance(custody, dict):
+        return {**_result(False, ["certificate_invalid"]), "eligible": False}
+    certificate_snapshot = custody.get("certificate")
+    if verification.get("certificate_path") is not None:
+        try:
+            certificate_after = _capture_private_generation(
+                verification["certificate_path"], "certificate_changed",
+            )
+        except (OSError, TypeError, ValueError):
+            return {**_result(False, ["certificate_changed"]), "eligible": False}
+        if not _same_private_generation(certificate_snapshot, certificate_after):
+            return {**_result(False, ["certificate_changed"]), "eligible": False}
+    try:
+        manifest_after = _capture_private_generation(
+            verification["manifest_path"], "manifest_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return {**_result(False, ["manifest_changed"]), "eligible": False}
+    if not _same_private_generation(custody.get("manifest"), manifest_after):
+        return {**_result(False, ["manifest_changed"]), "eligible": False}
+    try:
+        binary_after = _capture_private_generation(
+            verification["renderer_binary"], "renderer_binary_changed",
+        )
+    except (OSError, TypeError, ValueError):
+        return {**_result(False, ["renderer_binary_changed"]), "eligible": False}
+    if not _same_private_generation(custody.get("binary"), binary_after):
+        return {**_result(False, ["renderer_binary_changed"]), "eligible": False}
     unknown = sorted(tag for tag in features if tag.startswith("unknown:"))
     if unknown:
         return {**_result(False, ["unknown_feature"]), "eligible": False}

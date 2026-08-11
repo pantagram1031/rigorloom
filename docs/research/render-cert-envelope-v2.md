@@ -143,6 +143,21 @@ private v1 operator outputs; final pre-HMAC manifest drift publishes no stale
 certificate artifact, while generic failure/projection semantics otherwise
 remain unchanged.
 
+T161 adds reader-side verifier custody only for the current dependencies of
+legacy v1 verification: the certificate file, manifest, renderer binary, and the
+`check_document` input are each captured as bounded no-follow regular one-link
+snapshots. Parsing, certificate self-hash/HMAC checks, manifest claims, feature
+extraction, and renderer-version checks consume those captured bytes or owned
+staged copies; a final rebind immediately before return refuses symlink,
+reparse, hardlink, or other identity drift with the closed
+`certificate_changed`, `manifest_changed`, `renderer_binary_changed`, or
+`document_changed` reasons. Historical measurement
+document/reference/candidate paths are not reread and are not public
+dependencies. Public `verify_certificate` remains exactly the four-field
+projection and `check_document` adds only `eligible`; the private rich route
+remains quarantined. Schema, routing, proof, submission, promotion, and both
+release switches are unchanged.
+
 The core bundle ships the Python entry point and its ordinary script imports
 only. It ships no binary, source document, reference PDF, private manifest,
 operator key, certificate, or corpus artifact. Clean extracted `--help` must

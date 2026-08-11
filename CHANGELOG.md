@@ -156,6 +156,21 @@ the kernel's contract shape.
   artifact. The public verify/check projection, schema, routing, proof, release
   switches, and generic failure/projection semantics otherwise remain unchanged.
 
+- **T161:** legacy v1 reader verification now captures the current certificate,
+  manifest, renderer binary, and `check_document` input as bounded no-follow
+  regular one-link snapshots. Parsing, certificate self-hash/HMAC checks,
+  manifest claims, feature extraction, and renderer-version checks consume the
+  captured bytes or owned staged copies, then perform a final rebind of every
+  current dependency before returning; symlink, reparse, hardlink, and other
+  identity drift cases refuse with the closed `certificate_changed`,
+  `manifest_changed`, `renderer_binary_changed`, or `document_changed` reasons.
+  Historical measurement
+  document/reference/candidate paths are not reread and are not public
+  dependencies. Public `verify_certificate` remains exactly four fields and
+  `check_document` adds only `eligible`; the private rich route remains
+  quarantined. Schema, routing, proof, submission, promotion, and release
+  switches are unchanged.
+
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
   reject interior symlink/reparse parents, bind hash/size/identity from one
