@@ -518,6 +518,14 @@ def grid_tables(model: dict, vocabulary: dict) -> list:
             "colCnt": table["colCnt"], "rowCnt": table["rowCnt"],
             "rows": len(by_row), "header_row": header_row,
             "signature": signature,
+            # Every row's labels, kept so matching can ask "what does this
+            # table look like at the row the BASELINE calls its header" instead
+            # of only comparing two independently-derived header rows (T117).
+            "labels_by_row": {
+                row: sorted({label for label in (
+                    _signature_text(cell["text"], vocabulary)
+                    for cell in cells) if label})
+                for row, cells in by_row.items()},
         })
     return grids
 
@@ -546,7 +554,25 @@ def match_grid(wanted: dict, candidates: list, vocabulary: dict) -> dict | None:
         return None
     best, best_score = None, 0.0
     for candidate in candidates:
-        shared = len(labels & set(candidate["signature"])) / len(labels)
+        # Two readings, and the better one wins. A candidate's OWN header row is
+        # re-derived per document, so a legitimate fill can move it: the header
+        # row is "the first row with >= header_min_labels non-empty cells", and
+        # writing a value into a sparse earlier row promotes THAT row, making
+        # the operator's own text part of the table's identity. Measured on
+        # kstartup table 0 — filling (0,1) moved header_row 1 -> 0 and turned
+        # the signature from the form's three labels into
+        # ["과제(창업아이템)명", <the filled value>], so the table paired with
+        # nothing and was reported deleted (T117). Asking what the candidate
+        # looks like at the row the BASELINE calls its header keeps identity on
+        # the baseline's side, which is the T49/T100 rule: never judge the
+        # artifact by something derived differently on the two sides.
+        readings = [set(candidate["signature"])]
+        at_baseline_row = candidate.get("labels_by_row", {}).get(
+            wanted["header_row"])
+        if at_baseline_row:
+            readings.append(set(at_baseline_row))
+        shared = max(len(labels & reading) / len(labels)
+                     for reading in readings)
         if shared < ratio:
             continue
         score = shared + (0.001 if candidate["colCnt"] == wanted["colCnt"]

@@ -248,6 +248,22 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T117:** a legitimate fill no longer makes `check_grant` report a table as
+  deleted. `grid_tables` derives a table's identity from the first row carrying
+  at least `header_min_labels` non-empty cells, **per document**, so writing a
+  value into a sparse earlier row promotes that row to header and puts the
+  operator's own text into the table's signature. Measured on kstartup table 0:
+  filling the cell A3's prompt names moved `header_row` 1 → 0, left the two
+  signatures disjoint, and produced `table_structure_lost` — which made A3's
+  `grant_structure` check unsatisfiable by any fill that does what the task asks.
+  `match_grid` now compares the baseline signature against two readings of each
+  candidate — its own derived header row, and its labels at the row the baseline
+  calls its header — so identity stays on the baseline's side (the T49/T100 rule).
+  The relaxation only adds matches, so the proof is the still-catches set: a
+  deleted table and genuinely rewritten header labels both still HARD, and the
+  mutations pair exactly (dropping the fix fails the defect test, accepting any
+  candidate fails the rewritten-labels test). Found by the A3 clean-room run.
+
 - **T116:** the residue gate could not run at all on a form whose inventory
   contains a literal `--`. Every caller built the keep list as two argv tokens,
   `["--keep", entry]`, and argparse reads a bare `--` as its end-of-options

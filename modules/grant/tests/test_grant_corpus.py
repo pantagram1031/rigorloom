@@ -530,3 +530,112 @@ class TestProtectedTextMatchesTheForm:
         payload = json.loads(self.EXPECTATIONS.read_text(encoding="utf-8"))
         assert not (set(payload["protected_text"])
                     & set(payload.get("forbidden_text") or []))
+
+
+# --------------------------------------------------------------------------- #
+# T117 - a fill must not make a table look deleted.
+#
+# grid_tables picks the header row as "the first row with >= header_min_labels
+# non-empty cells", per document. kstartup table 0's row 0 is a label plus an
+# EMPTY fill target, so the blank form's header row is 1. Writing the value the
+# A3 prompt supplies promotes row 0 to header, and the signature becomes the
+# label plus the operator's own text - zero overlap with the baseline, so the
+# table paired with nothing and check_grant reported it deleted.
+# --------------------------------------------------------------------------- #
+
+class TestAFillDoesNotLookLikeADeletedTable:
+
+    FILL_TARGET = (0, 1)
+
+    def _filled(self, tmp_path):
+        """Write the first value A3's prompt supplies, and nothing else."""
+        import json
+        import subprocess
+        out = tmp_path / "filled.hwpx"
+        cell_map = tmp_path / "cells.json"
+        cell_map.write_text(
+            json.dumps({"0,1": "저전력 초음파 누수 탐지 모듈"},
+                       ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable,
+             str(_REPO_ROOT / "engine" / "scripts" / "preedit.py"),
+             "fill-cells", str(KSTARTUP), "--out", str(out),
+             "--table", "0", "--map", str(cell_map)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        assert proc.returncode == 0, proc.stderr
+        return out
+
+    def test_filling_the_forms_own_fill_target_stays_clean(self, tmp_path):
+        """Failing before: code 3, hard 1, table_structure_lost at table 0."""
+        verdict, code = cg.check(self._filled(tmp_path), baseline=KSTARTUP)
+        assert (code, verdict["counts"]["hard"]) == (0, 0), codes(verdict)
+
+    def test_the_fill_really_does_move_the_header_row(self, tmp_path):
+        """Non-vacuity: if the header row stopped moving, the test above would
+        pass for a reason that has nothing to do with the fix."""
+        vocabulary = cg.load_vocabulary(None)
+        blank = [g for g in cg.grid_tables(cg.document_model(str(KSTARTUP)),
+                                           vocabulary) if g["index"] == 0][0]
+        filled = [g for g in cg.grid_tables(
+            cg.document_model(str(self._filled(tmp_path))), vocabulary)
+            if g["index"] == 0][0]
+        assert blank["header_row"] != filled["header_row"], (
+            blank["header_row"], filled["header_row"])
+        assert not (set(blank["signature"]) & set(filled["signature"])), (
+            "the two independently-derived signatures must still be disjoint - "
+            "that disjointness is the defect this fix works around")
+
+    def test_a_deleted_table_is_still_reported(self, tmp_path):
+        """The relaxation only ADDS matches, so this is the proof it did not
+        blind the rule."""
+        def drop_first_table(xml):
+            start = xml.find("<hp:tbl")
+            if start < 0:
+                return xml
+            depth = 0
+            for token in re.finditer(r"<hp:tbl\b|</hp:tbl>", xml[start:]):
+                if token.group(0).startswith("</"):
+                    depth -= 1
+                    if depth == 0:
+                        return xml[:start] + xml[start + token.end():]
+                else:
+                    depth += 1
+            return xml
+
+        path = rewrite(KSTARTUP, tmp_path / "deleted.hwpx", drop_first_table)
+        verdict, code = cg.check(path, baseline=KSTARTUP)
+        assert code == 3
+        assert "table_structure_lost" in codes(verdict)
+
+    def test_genuinely_rewritten_header_labels_are_still_reported(self, tmp_path):
+        """Identity loss that is NOT a fill: the header labels themselves
+        replaced. Uses the literal corpus strings - the box glyph prefix is part
+        of them, and a scramble that misses it silently proves nothing."""
+        def scramble(xml):
+            xml = xml.replace("<hp:t>구분</hp:t>",
+                              "<hp:t>ZZZ완전히다른라벨A</hp:t>")
+            xml = re.sub(r"<hp:t>[^<]{0,4}1\. 기술이전 완료</hp:t>",
+                         "<hp:t>ZZZ완전히다른라벨B</hp:t>", xml)
+            xml = re.sub(r"<hp:t>[^<]{0,4}2\. 기술이전[^<]*</hp:t>",
+                         "<hp:t>ZZZ완전히다른라벨C</hp:t>", xml)
+            return xml
+
+        path = rewrite(KSTARTUP, tmp_path / "scrambled.hwpx", scramble)
+        verdict, code = cg.check(path, baseline=KSTARTUP)
+        assert code == 3, codes(verdict)
+        assert "table_structure_lost" in codes(verdict)
+
+    def test_the_scramble_fixture_actually_changed_the_labels(self, tmp_path):
+        """Guards the fixture, not the product. My first attempt at this
+        scramble targeted '1. 기술이전 완료' without the box glyph, so it matched
+        nothing and the test passed while proving nothing."""
+        def scramble(xml):
+            return xml.replace("<hp:t>구분</hp:t>",
+                               "<hp:t>ZZZ완전히다른라벨A</hp:t>")
+
+        path = rewrite(KSTARTUP, tmp_path / "one_label.hwpx", scramble)
+        with zipfile.ZipFile(path) as archive:
+            body = "".join(
+                archive.read(name).decode("utf-8") for name in archive.namelist()
+                if name.lower().startswith("contents/section"))
+        assert "ZZZ완전히다른라벨A" in body
