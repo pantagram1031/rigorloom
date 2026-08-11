@@ -273,3 +273,93 @@ def test_the_rules_map_is_the_shared_implementation(module):
     assert "rule_states" in source
     assert 'RULE_STATES = ("hard"' not in source, (
         f"check_{module} re-declares the state vocabulary instead of importing it")
+
+
+# --------------------------------------------------------------------------- #
+# T120 - a key a kind never reads is refused, so an assertion cannot be dead.
+#
+# Found by an INVALID mutation during T118: adding a `strings:` list to a `file`
+# check changed nothing, because the harness never reads it there. An author
+# could ship a task whose intended assertion did nothing and see it validate.
+# The other half of _CHECK_KINDS - that set refuses an unknown kind, this one
+# refuses a key the kind will never look at.
+# --------------------------------------------------------------------------- #
+
+def _check(kind, **extra):
+    base = {"id": "probe", "kind": kind}
+    base.update(extra)
+    return {
+        "schema": cleanroom.TASK_SCHEMA,
+        "id": "probe-task",
+        "family": "grant",
+        "prompt": "probe",
+        "input_files": ["tests/corpus/forms/grant/pps-jeongbogonggae-donguiseo.hwpx"],
+        "expected_behavior": ["[judgment] probe"],
+        "machine_checks": [base],
+    }
+
+
+def test_a_strings_list_on_a_file_check_is_refused_by_name():
+    with pytest.raises(cleanroom.CleanroomError) as exc:
+        cleanroom.validate_task(_check(
+            "file", path="x", mode="nonempty", strings=["dead"]))
+    message = str(exc.value)
+    assert "strings" in message and "silently dead" in message
+
+
+def test_a_path_on_a_text_absent_check_is_refused_by_name():
+    """The mirror case, so the rule is not one-directional."""
+    with pytest.raises(cleanroom.CleanroomError) as exc:
+        cleanroom.validate_task(_check(
+            "text_absent", artifact="a.hwpx", strings=["x"], path="dead"))
+    assert "path" in str(exc.value)
+
+
+@pytest.mark.parametrize("kind,extra", [
+    ("file", {"path": "x", "mode": "nonempty"}),
+    ("python", {"argv": ["a.py"]}),
+    ("text_present", {"artifact": "a.hwpx", "strings": ["x"]}),
+    ("unmodified", {"input": "form.hwpx"}),
+])
+def test_json_file_and_assert_json_stay_legal_on_every_kind(kind, extra):
+    """T118 and T119 assert rule outcomes from `file` checks, so the assertion
+    pass must remain kind-independent. If this ever tightens, both break."""
+    cleanroom.validate_task(_check(
+        kind, json_file="v.json", assert_json=['rules.x == "clean"'], **extra))
+
+
+def test_expect_exit_is_legal_where_the_dispatcher_compares_it():
+    """Measured, not assumed: python, shell AND residue all compare a return
+    code against expect_exit. A first version of the table omitted residue and
+    refused six shipped tasks — the code was right and the table was wrong."""
+    for kind, extra in (
+            ("python", {"argv": ["a.py"]}),
+            ("shell", {"command": "echo hi"}),
+            ("residue", {"profile": "p.json", "artifact": "a.hwpx"})):
+        cleanroom.validate_task(_check(kind, expect_exit=3, **extra))
+
+
+def test_every_key_in_the_table_is_one_the_dispatcher_reads():
+    """Guards the table against inventing a key nobody consumes - the same
+    failure the table exists to prevent, pointed at itself."""
+    source = (ROOT / "evals" / "cleanroom.py").read_text(encoding="utf-8")
+    body = source[source.index("def run_machine_check"):]
+    read = set(re.findall(r'check\.get\("([a-z_]+)"', body))
+    read |= set(re.findall(r'check\["([a-z_]+)"\]', body))
+    declared = set(cleanroom._COMMON_CHECK_KEYS)
+    for keys in cleanroom._CHECK_KIND_KEYS.values():
+        declared |= set(keys)
+    # id/kind/description are consumed by the runner and the report, not by the
+    # dispatcher body, so they are exempt by name rather than by accident.
+    unread = sorted(declared - read - {"id", "kind", "description"})
+    assert not unread, unread
+
+
+def test_every_shipped_task_still_validates():
+    """The empirical guard, and the one that earned its place: it caught the
+    table refusing six real tasks over `expect_exit` on a residue check."""
+    paths = sorted((ROOT / "evals" / "tasks").glob("*.yaml"))
+    assert len(paths) >= 8, [p.name for p in paths]
+    for path in paths:
+        cleanroom.validate_task(
+            yaml.safe_load(path.read_text(encoding="utf-8")), source=path.name)

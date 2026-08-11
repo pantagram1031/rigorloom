@@ -261,6 +261,18 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T120:** `validate_task` refuses a key the check's kind never reads, so an
+  assertion cannot be silently dead. A `strings:` list under a `file` check used
+  to validate and do nothing - found by an invalid mutation during T118, where
+  the mutation changed no behaviour, which is what exposed it. `json_file` and
+  `assert_json` stay legal on every kind, because the assertion pass runs after
+  the kind dispatch and T118/T119 depend on that. The per-kind table is measured
+  against the dispatcher rather than invented: a first version omitted
+  `expect_exit` from the `residue` kind and refused six shipped tasks, and the
+  code was right - the residue branch does compare a return code against it. Two
+  guards keep it honest: every declared key must be one the dispatcher reads, and
+  every shipped task must still validate.
+
 - **T119:** `check_hr` and `check_minwon` publish the same rule-outcome map, H1
   and P2 assert outcomes, and T118's `KNOWN_NAME_SEARCH_DEBT` is now empty — no
   shipped task searches for a rule name in a verdict any more. `rule_states` lives
