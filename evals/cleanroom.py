@@ -296,6 +296,41 @@ _CHECK_KINDS = {"python", "shell", "file", "geometry", "idempotence",
                 "residue", "text_present", "text_absent", "unmodified"}
 _FILE_MODES = {"exists", "absent", "nonempty"}
 
+#: Keys every check may carry, whatever its kind. ``json_file``/``assert_json``
+#: are here because the assertion pass runs AFTER the kind dispatch, so a
+#: ``file`` check legitimately carries them — T118 and T119 depend on exactly
+#: that, and putting them under ``python`` would break both.
+_COMMON_CHECK_KEYS = frozenset({
+    "id", "kind", "description", "requires_module", "blocked_on",
+    "json_file", "assert_json",
+})
+
+#: Keys each kind actually READS, derived from run_machine_check's dispatch
+#: rather than invented. The other half of _CHECK_KINDS: that set refuses an
+#: unknown KIND, this one refuses a key the kind will never look at.
+#:
+#: Why it matters (T120): a `strings:` list under a `file` check validated
+#: cleanly and did nothing, so an author could ship a task whose intended
+#: assertion was silently dead. Found by an invalid mutation during T118 — the
+#: mutation changed no behaviour, which is what exposed it.
+_CHECK_KIND_KEYS = {
+    "python": frozenset({"argv", "expect_exit"}),
+    "shell": frozenset({"command", "expect_exit"}),
+    "file": frozenset({"path", "mode"}),
+    "geometry": frozenset({"before", "after"}),
+    "idempotence": frozenset({"before", "after"}),
+    # expect_exit belongs here too, MEASURED: the residue branch compares the
+    # delegate's return code against it (gate_ok = proc.returncode ==
+    # expect_exit). Six shipped tasks carry it, and a first version of this
+    # table omitted it and refused all six — the code was right and the table
+    # was wrong, which is why every shipped task must validate before this ships.
+    "residue": frozenset({"profile", "artifact", "baseline",
+                          "require_consumed", "expect_exit"}),
+    "unmodified": frozenset({"input"}),
+    "text_present": frozenset({"artifact", "strings"}),
+    "text_absent": frozenset({"artifact", "strings"}),
+}
+
 #: Why a prompt-named value is not asserted by any machine check. Closed, so
 #: that ``uncurated`` stays a countable debt instead of a shrug (#61).
 UNASSERTED_REASONS = frozenset({
@@ -408,6 +443,12 @@ def validate_task(task: dict[str, Any], source: str = "<task>") -> None:
         if kind not in _CHECK_KINDS:
             fail(f"machine_check {cid!r}: kind must be one of "
                  f"{sorted(_CHECK_KINDS)} (got {kind!r})")
+        allowed = _COMMON_CHECK_KEYS | _CHECK_KIND_KEYS[kind]
+        inapplicable = sorted(set(check) - allowed)
+        if inapplicable:
+            fail(f"machine_check {cid!r}: kind {kind!r} never reads "
+                 f"{inapplicable} — the key would be silently dead. "
+                 f"Allowed here: {sorted(allowed)}")
         if "requires_module" in check:
             required = check["requires_module"]
             if not isinstance(required, str) or not _MODULE_NAME_RE.fullmatch(

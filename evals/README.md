@@ -298,6 +298,13 @@ Machine-check kinds:
 | `residue` | `check_residue` exit 0 **and** non-vacuous |
 | `text_present` / `text_absent` | strings survive / are gone in the artifact's extracted text. **Never on a rule name in a verdict JSON** — see below |
 
+**A key a kind never reads is refused (T120).** `_CHECK_KINDS` closes the set of
+kinds; `_CHECK_KIND_KEYS` closes the set of keys each kind may carry. A `strings:`
+list under a `file` check used to validate cleanly and do nothing, so a task
+could ship with an assertion that was silently dead. `json_file` and
+`assert_json` are legal on **every** kind, because the assertion pass runs after
+the kind dispatch - that is deliberate and two shipped guards depend on it.
+
 `assert_json` is a small expression language: `len(anchors) >= 29`,
 `table_map[0].rowCnt == 19`, `constraints.max_pages == null`. It is accepted on
 **every** kind, not just `python` — a `file` check can carry it, which is how a
