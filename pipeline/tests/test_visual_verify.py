@@ -1631,7 +1631,8 @@ def test_form_fill_without_a_keep_list_cannot_pass(tmp_path):
     assert "협업제품명" in surviving          # a label, not residue
     assert "[별지 제2호의 8서식]" in surviving  # survives a legitimate fill
     assert verdict["deterministic"]["residue_keep"] == {
-        "explicit_keep": [], "keep_pattern": None, "derived_keep": [],
+        "explicit_keep": [], "keep_pattern": None,
+        "module_protected_keep": [], "derived_keep": [],
         "consumed": [], "unfilled": [], "fill_map": None, "keep_total": 0}
 
 
@@ -3824,3 +3825,85 @@ def test_t104_a_pdf_baseline_still_needs_no_conversion(tmp_path, monkeypatch):
         already, tmp_path)
     assert (calls, conversion, skip, error) == ([], None, None, None)
     assert path == already
+
+
+# --------------------------------------------------------------------------- #
+# T114 — expectations.protected_text: a MODULE declares what must survive.
+# --------------------------------------------------------------------------- #
+
+def test_protected_text_absent_is_not_an_error():
+    assert visual_verify.validate_protected_text({}) == ((), None)
+    assert visual_verify.validate_protected_text(
+        {"forbidden_text": ["x"]}) == ((), None)
+
+
+@pytest.mark.parametrize("declared", [
+    [],            # present but empty says nothing; an empty claim is a mistake
+    "notalist",
+    ["ok", ""],     # a blank entry would keep everything that normalizes to ""
+    ["ok", 7],
+])
+def test_a_malformed_protected_text_is_refused(declared):
+    """Fail closed. A bad entry in a KEEP list widens what may survive, which
+    is the one direction a residue gate must never drift in."""
+    value, error = visual_verify.validate_protected_text(
+        {"protected_text": declared})
+    assert value is None and "protected_text" in error
+
+
+def test_the_same_text_cannot_be_both_protected_and_forbidden():
+    """Two module claims that contradict each other are refused rather than
+    resolved: whichever way a silent winner fell, one claim would be a lie."""
+    value, error = visual_verify.validate_protected_text(
+        {"protected_text": ["※ 고지"], "forbidden_text": ["※ 고지", "예시)"]})
+    assert value is None
+    assert "protected_text and forbidden_text" in error
+    assert "※ 고지" in error
+
+
+def test_module_protected_keeps_are_forwarded_and_recorded_apart():
+    """`--keep` from the operator and `protected_text` from the module are
+    different claims, so the verdict records them separately — otherwise the
+    hand-written list, which is the thing being eliminated, would be invisible."""
+    argv, report, error = visual_verify.build_residue_argv(
+        "profile.json", "art.hwpx", keep=("operator says so",),
+        protected=("모듈이 법정 문구라고 선언", "두 번째"))
+    assert error is None
+    kept = [argv[i + 1] for i, a in enumerate(argv) if a == "--keep"]
+    assert kept == ["operator says so", "모듈이 법정 문구라고 선언", "두 번째"]
+    assert report["explicit_keep"] == ["operator says so"]
+    assert report["module_protected_keep"] == ["모듈이 법정 문구라고 선언",
+                                               "두 번째"]
+    assert report["keep_total"] == 3
+
+
+def test_a_protected_entry_the_operator_also_passed_is_not_duplicated():
+    argv, report, error = visual_verify.build_residue_argv(
+        "profile.json", "art.hwpx", keep=("같은 문구",), protected=("같은 문구",))
+    assert error is None
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "--keep"] == ["같은 문구"]
+    assert report["keep_total"] == 1
+    # Both records still say who claimed it; dedup is about argv, not provenance.
+    assert report["explicit_keep"] == ["같은 문구"]
+    assert report["module_protected_keep"] == ["같은 문구"]
+
+
+def test_story_edit_scope_refuses_a_fill_path_protected_text():
+    """story_edit keeps a closed vocabulary; protected_text is fill-path, so it
+    is refused explicitly rather than silently ignored."""
+    class _Args:
+        artifact = "a.hwpx"
+        pdf = "a.pdf"
+        baseline = "b.hwpx"
+        conversion_record = "c.json"
+
+    ok, no_error = visual_verify.validate_operation_scope(
+        {"operation_scope": "story_edit", "required_text": ["x"],
+         "forbidden_text": ["y"]}, _Args())
+    assert (ok, no_error) == ("story_edit", None), "fixture must be valid first"
+
+    scope, error = visual_verify.validate_operation_scope(
+        {"operation_scope": "story_edit", "required_text": ["x"],
+         "forbidden_text": ["y"], "protected_text": ["z"]}, _Args())
+    assert scope is None
+    assert error and "protected_text" in error

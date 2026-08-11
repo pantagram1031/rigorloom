@@ -51,6 +51,7 @@ can see it without reading source (T41).
 | `visual_verify` `declared_blank` / `intentionally_blank` | **ALL matching seats** — normalized containment either direction, so one entry can cover several seats; every suppression is recorded in `deterministic.declared_blank` with its source | name the seat exactly; read the recorded list back |
 | `visual_verify --expectations` `fill_map` presence check | **presence anywhere** — asks "is this value visible in the render", not "where" | it is an existence proof by design; location is `check_residue`'s job |
 | `visual_verify --expectations` `forbidden_text` | **EXHAUSTIVE per page** — one finding per page the string appears on | nothing to scope |
+| `visual_verify --expectations` `protected_text` | **WHOLE INVENTORY ENTRY** — forwarded as `--keep`, and `check_residue` matches a keep against the entire normalized entry, never a substring of it. Recorded as `deterministic.residue_keep.module_protected_keep`, apart from the operator's `explicit_keep` | ship the full paragraph; a shorter prefix keeps nothing and fails silently |
 | `form_inspect --full-text` | **address-keyed**, read-only (`[TABLE:]ROW,COL`) | the address |
 
 **The scoped form for paragraph text is `at_para`.** It is to a paragraph what
@@ -122,7 +123,8 @@ are not recoverable from it).
 | `page_parity` | `imposition_mismatch` | no | — | correctly isolated: both counts are of the same artifact |
 | `orientation` | `imposition_mismatch` | no | — | WARN only; landscape is a form property, so attribution would help but the severity never accused the fill |
 | `text_length` / `page_content` | `blank_render` | no | — | correctly isolated: a render with no text is not a render, whatever the form looked like |
-| `forbidden_text` | `guide_text_visible` | no | — | declaration-driven; the blank-derived half is the module keep policy, not this leg |
+| `forbidden_text` | `guide_text_visible` | no | — | declaration-driven; the blank-derived half is the module keep policy, not this leg — and since T114 that half has a name: `protected_text` |
+| `protected_text` | `guide_text_visible` (the keep side) | n/a | the module's declaration | the exact opposite claim to `forbidden_text`, and a family needs both: a 지원사업 form tells the applicant to delete its own scaffolding, a 동의서 carries 고지 that must STAY (PIPA §22). Declaring one string in both is refused rather than resolved — a silent precedence rule would make one module claim a lie. `story_edit` scope refuses the key outright, because that scope never runs the residue leg and a keep nothing consumes reads as honoured |
 | `required_text` | `required_text_missing` | no | — | correctly isolated: the requirement is about the edit |
 
 ### Module and pipeline checkers
