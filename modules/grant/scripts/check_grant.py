@@ -89,6 +89,7 @@ from checker_base import (  # noqa: E402
     _utf8_stdio,
     cli_main,
     exit_code,
+    resolve_state,
     usage_error,
     verdict_skeleton,
 )
@@ -1218,9 +1219,13 @@ def check(
                 exit_code(hard=hard))
 
     classification = classify_state(model, vocab, baseline_model)
-    state = classification["state"] if mode == "auto" else mode
-    classification["mode"] = mode
-    classification["state_used"] = state
+    # The helper applies the declared mode AND reports a declaration
+    # that disagrees with the evidence (T103); recording the override
+    # in a sibling key was never the same as saying the two differ.
+    conflict = resolve_state(classification, mode)
+    state = classification["state_used"]
+    if conflict:
+        warn.append(conflict)
     classification["families"] = families
     classification["fill_map_declared"] = len(declared_values(declared_map))
 
