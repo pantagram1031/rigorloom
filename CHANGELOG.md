@@ -234,6 +234,23 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T113:** the eval harness now checks that the agent wrote what the task asked
+  for. Each task carries a `requested_values_present` check listing the literal
+  strings its prompt supplies, and `tests/test_prompt_values_are_accounted.py`
+  parses the prompt and fails on any value that is neither asserted nor listed in
+  the new `unasserted_prompt_values` block with a reason from a closed vocabulary
+  (`prose`, `composite`, `format_unknown`, `in_blank_form`, `expected_absent`,
+  `uncurated`, pinned at 0). Previously the gates verified only the internal
+  consistency of what the agent asserted, so A2's prompt could supply
+  `본인 성명: 김도현`, no check name it, the value never be written, and the run
+  still reach `verdict: pass`. The capability was not missing — `text_present`
+  existed and every task used it, as a spot check on a form string rather than on
+  the request: across 8 tasks the prompts named **39 values and 7 were asserted
+  anywhere**. All 39 are now curated from measurement, including 4 verified to be
+  in the blank form already, where asserting them would pass for an agent that did
+  nothing. Guarded in both directions: a stale exemption naming a value the prompt
+  no longer contains fails too.
+
 - **T112:** a form's blank is a run whose charPr draws a rule, and the fill path
   could not see it. `--full-text` run records now carry `ruled: true` when the
   run's charPr has a non-`NONE` `underline` (present only when true, so the

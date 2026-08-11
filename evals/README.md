@@ -312,6 +312,44 @@ Checks with `blocked_on` are skipped with the reason recorded (PDF-measured
 page budgets need a renderer the clean room does not have; repeat-fill
 idempotence needs a second-pass artifact).
 
+### `unasserted_prompt_values` — the request has to be accounted for
+
+The machine checks verify the internal consistency of what an agent produced.
+For a long time none of them verified **fidelity to what was asked**, and the A2
+run showed the cost: the prompt supplied `본인 성명: 김도현`, no check named it,
+the value was never written, and every gate passed. Measured across the eight
+tasks at that point, the prompts named **39 values and 7 were asserted anywhere**.
+
+The capability was already here — `text_present` — it simply was not used for the
+request. So each task now carries a `requested_values_present` check listing the
+literal strings its prompt supplies, and
+`tests/test_prompt_values_are_accounted.py` parses the prompt and **fails on any
+value that is neither asserted nor listed** in `unasserted_prompt_values`:
+
+```yaml
+unasserted_prompt_values:
+  - value: "전자파일"
+    why: in_blank_form
+    note: >-
+      measured: a printed option label, marked rather than written
+```
+
+`why` is a closed vocabulary (`cleanroom.UNASSERTED_REASONS`), because an open
+one becomes a shrug:
+
+| `why` | means |
+|---|---|
+| `prose` | the bullet is a brief or an instruction, not a literal to write |
+| `composite` | one bullet carries several fields; the parts are asserted individually |
+| `format_unknown` | the form renders it in its own format, so no literal is expected |
+| `in_blank_form` | **measured** to be in the blank form already — `text_present` there would pass for an agent that did nothing |
+| `expected_absent` | the task expects it *not* to be written; must be backed by a `text_absent` check, or the reason is a dodge |
+| `uncurated` | not yet decided. Counted, and the count is pinned at **0** |
+
+Two directions are guarded, because the second is the one that rots: a value the
+prompt names must be accounted for, **and** an exemption naming a value the
+prompt no longer contains fails as stale.
+
 ### `requires_module: NAME` — the per-module check gate
 
 A machine check that calls into a distribution module's payload only means

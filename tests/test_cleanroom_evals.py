@@ -637,11 +637,26 @@ class TestTaskRun:
         # "기 업 명" is printed in TWO blocks of this form (신청기업 / 협업기업),
         # so it is scoped by paragraph address — an unscoped key would be
         # refused, and the assertion below proves that is what happens (T41).
+        # T113: this map used to fill four seats and the task's checks still came
+        # back green, because nothing compared the artifact against the REQUEST.
+        # `requested_values_present` does, so "faithful" now means writing every
+        # value A1's prompt supplies — which is what this fixture claims to be.
+        # Two more keys need addresses for reasons the tool reports itself:
+        # `http://` matches 15 places (14 are raw substrings outside any
+        # paragraph), and `전    화` is printed in both the 신청기업 and the
+        # 참여기업 block.
         mapping = {
             "우(     -     )": "우 서울특별시 강남구 테헤란로 100",
             "년      월      일": "2026년   8월   20일",
-            "기 업 명": {"text": "기 업 명 한빛정밀", "at_para": 6},
+            "기 업 명": {"text": "기 업 명 한빛정밀 주식회사", "at_para": 6},
             "협업제품명": "협업제품명 저진동 정밀 이송 스테이지",
+            "사업자등록번호": "사업자등록번호 214-81-00000",
+            "http://": {"text": "http://hanbit-precision.example.kr",
+                        "at_para": 16},
+            "대표자명": "대표자명 김도현",
+            "성    명": "성    명 이서준",
+            "소속/직위": "소속/직위 기술연구소 책임연구원",
+            "전    화": {"text": "전    화 02-000-0000", "at_para": 22},
         }
         (work / "map.json").write_text(
             json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
