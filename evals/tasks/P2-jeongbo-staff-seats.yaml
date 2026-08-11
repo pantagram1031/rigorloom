@@ -28,6 +28,24 @@ baseline: jeongbo-gonggae-cheongguseo.hwpx
 input_files:
   - tests/corpus/forms/converted/jeongbo-gonggae-cheongguseo.hwpx
 
+# Values this prompt names that no machine check asserts, with the reason.
+# tests/test_prompt_values_are_accounted.py parses the prompt and fails on any
+# value that is neither asserted nor listed here, so the gap between what was
+# asked and what is checked stays counted rather than silent (#61).
+unasserted_prompt_values:
+  - value: "전자파일"
+    why: in_blank_form
+    note: >-
+      measured: a printed option label, marked rather than written; text_present would pass on the blank form
+  - value: "전자우편 등"
+    why: in_blank_form
+    note: >-
+      measured: a printed option label, marked rather than written
+  - value: "감면 대상 아님"
+    why: in_blank_form
+    note: >-
+      measured: 감면 대상 아님 is printed on the form; the fill marks it
+
 expected_behavior:
   - "[judgment] 접수번호, 접수일, 처리기간과 아래쪽 접수증 블록(접수번호/청구인 성명/접수부서/접수자 성명)은 접수 기관 몫임을 알아보고 쓰지 않는다. 서식이 스스로 '색상이 어두운 칸은 신청인(대리인)이 작성하지 않습니다'라고 말한다."
   - "[judgment] 생년월일(성별), 여권ㆍ외국인등록번호, 사업자(법인ㆍ단체)등록번호는 사용자가 주지 않았으므로 비워 두고 무엇이 비었는지 되돌려 알려준다. 절대 임의 생성하지 않는다."
@@ -168,3 +186,18 @@ machine_checks:
     strings:
       - "untouched"
       - "shaded"
+
+  # #61 — the values the prompt supplies. Before this, the harness verified the
+  # internal consistency of what the agent claimed and never fidelity to what
+  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
+  # value was never written while every gate passed.
+  - id: requested_values_present
+    kind: text_present
+    description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "서울특별시 종로구 사직로 161"
+      - "010-0000-0000"
+      - "seoyeon@example.com"
+      - "2026년 상반기 지역 문화재 보수 공사 계약 현황 일체"
+      - "2026년 8월 20일"

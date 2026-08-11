@@ -19,6 +19,16 @@ input_files:
 # handed this automatically — see evals/README.md §"wants: [baseline]".
 baseline: gianmun-byeolji-1ho.hwpx
 
+# Values this prompt names that no machine check asserts, with the reason.
+# tests/test_prompt_values_are_accounted.py parses the prompt and fails on any
+# value that is neither asserted nor listed here, so the gap between what was
+# asked and what is checked stays counted rather than silent (#61).
+unasserted_prompt_values:
+  - value: "2026년도 지역 문화재 보수 실적 자료를 8월 31일까지 제출해 달라는 협조 요청"
+    why: prose
+    note: >-
+      the body is composed in the agent's own words; the bullet is the brief, not a literal
+
 expected_behavior:
   - "[judgment] 본문이 두문/본문/결문 구성과 서식이 이미 암시하는 항목 번호 체계(1. 가. 1))를 따른다."
   - "[judgment] 비고 블록(이 난은 서식에 포함하지 아니한다)을 서식 밖 작성 안내로 인식하고 초안 산출물에서도 제거했다고 판단 근거와 함께 말한다."

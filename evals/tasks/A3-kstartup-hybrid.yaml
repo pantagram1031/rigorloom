@@ -24,6 +24,16 @@ input_files:
 # document.state_basis falls back to "date_seat_only".
 baseline: kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx
 
+# Values this prompt names that no machine check asserts, with the reason.
+# tests/test_prompt_values_are_accounted.py parses the prompt and fails on any
+# value that is neither asserted nor listed here, so the gap between what was
+# asked and what is checked stays counted rather than silent (#61).
+unasserted_prompt_values:
+  - value: "기술이전 완료"
+    why: in_blank_form
+    note: >-
+      measured: already in the blank form's extracted text, so text_present cannot tell a fill from a no-op
+
 expected_behavior:
   - "[judgment] 고정 그리드(신청서 표)와 흐르는 본문(사업계획서)을 서로 다른 편집 체제로 다룬다. 표에는 값만 넣고, 본문에는 산문을 쓴다."
   - "[judgment] 색이 들어간 작성 안내문을 본문 초안과 구분하고, 지울지 남길지 판단 근거를 밝힌다."
@@ -164,3 +174,14 @@ machine_checks:
     strings:
       - "length_budget_unverified"
       - "not_declared"
+
+  # #61 — the values the prompt supplies. Before this, the harness verified the
+  # internal consistency of what the agent claimed and never fidelity to what
+  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
+  # value was never written while every gate passed.
+  - id: requested_values_present
+    kind: text_present
+    description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)
+    artifact: "${WORK}/filled.hwpx"
+    strings:
+      - "이서준"
