@@ -80,6 +80,7 @@ from checker_base import (  # noqa: E402
     exit_code,
     resolve_state,
     usage_error,
+    rule_states,
     verdict_skeleton,
 )
 import check_residue  # noqa: E402  (core: render-critical XML validation)
@@ -87,6 +88,21 @@ import form_inspect  # noqa: E402  (core engine: paragraph/cell scanners)
 from hwpx_tables import attr as tbl_attr, scan_tables  # noqa: E402
 
 CHECKER = "check_minwon"
+
+#: This checker's rule inventory. Needed so a rule that never appears in any
+#: bucket can be reported ``clean`` rather than by silence — the convention T118
+#: retired. DERIVED, not remembered: a regression parses this module's own
+#: ``_finding("<name>"`` and ``{"rule": "<name>"}`` literals and asserts set
+#: equality, so adding a rule without listing it here fails.
+RULES = (
+    "addressee_line_lost", "artifact_malformed", "artifact_missing",
+    "byeolji_header_lost", "checkbox_option_lost",
+    "checkbox_selection_absent", "guide_block_lost",
+    "identity_seat_autofilled", "identity_value_invented",
+    "minwon_structure_absent", "paper_spec_footer_lost",
+    "placeholder_glyphs_retained", "seal_seat_overwritten",
+    "signature_marker_lost", "staff_seat_filled", "staff_seat_removed",
+)
 VOCABULARY_SCHEMA = "rigorloom-minwon-vocabulary/v1"
 DEFAULT_VOCABULARY = MODULE_ROOT / "references" / "minwon_vocabulary.json"
 
@@ -1164,6 +1180,7 @@ def _verdict(artifact_path, classification, hard, warn, info, skipped) -> dict:
             "document": classification,
             "seats": info,
             "skipped": skipped,
+            "rules": rule_states(RULES, hard, warn, skipped),
         },
         counts={
             "hard": len(hard),

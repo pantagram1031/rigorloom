@@ -162,20 +162,10 @@ def test_the_reason_vocabulary_is_closed_and_the_debt_is_countable():
 #: and a fixed one forces this list down on purpose - the same countable-debt
 #: shape as `uncurated` in the prompt-value guard.
 #:
-#: Closing these needs `check_hr` and `check_minwon` to publish a `rules` outcome
-#: map the way `check_grant` now does; the grant instances (A2, A3) are already
-#: converted. Deliberately not done in one slice: two more checkers and two more
-#: task rewrites is a different change, and a resisting slice is a signal.
-KNOWN_NAME_SEARCH_DEBT = [
-    "H1-labor-contract-fill.yaml:hr_version_rules_were_decided:"
-    "template_version_changed",
-    "H1-labor-contract-fill.yaml:hr_version_rules_were_decided:"
-    "template_version_mixed",
-    "P2-jeongbo-staff-seats.yaml:minwon_staff_rules_were_decided:"
-    "staff_seat_filled",
-    "P2-jeongbo-staff-seats.yaml:minwon_staff_rules_were_decided:"
-    "staff_seat_removed",
-]
+#: EMPTY as of T119: check_hr and check_minwon publish the map too, and every
+#: task asserts an outcome. Kept as a list rather than deleted so a new
+#: instance has an obvious, named place to be refused from.
+KNOWN_NAME_SEARCH_DEBT: list = []
 
 def _rule_vocabulary() -> set:
     """Every rule name any shipped checker can emit, parsed from the source.
@@ -228,3 +218,58 @@ def test_the_rule_vocabulary_parser_still_finds_the_grant_rules():
     for expected in ("table_structure_lost", "budget_total_mismatch",
                      "consent_unmarked", "example_placeholder_retained"):
         assert expected in vocabulary, sorted(vocabulary)
+
+
+# --------------------------------------------------------------------------- #
+# T119 - every checker that publishes a rules map declares a DERIVED inventory.
+#
+# A hand-written RULES tuple rots the moment someone adds a rule: the new name
+# never appears in the map, so `rules.<new>` raises KeyError in a task assertion
+# or, worse, the rule is simply invisible. So the tuple is asserted against the
+# module's own emitted literals rather than trusted.
+# --------------------------------------------------------------------------- #
+
+RULES_MAP_CHECKERS = ("grant", "hr", "minwon")
+
+
+def _emitted_rule_names(source: str) -> set:
+    """The names this module can actually put in a bucket."""
+    names = set(re.findall(r'_finding\(\s*"([a-z_]+)"', source))
+    names |= set(re.findall(r'"rule":\s*"([a-z_]+)"', source))
+    return names
+
+
+@pytest.mark.parametrize("module", RULES_MAP_CHECKERS)
+def test_the_declared_rule_inventory_equals_what_the_module_emits(module):
+    path = (ROOT / "modules" / module / "scripts" / f"check_{module}.py")
+    source = path.read_text(encoding="utf-8")
+    block = re.search(r"^RULES\s*=\s*\((.*?)\)", source, re.M | re.S)
+    assert block, f"check_{module} must declare a RULES inventory"
+    declared = set(re.findall(r'"([a-z_]+)"', block.group(1)))
+    emitted = _emitted_rule_names(source)
+    # ONE direction, and it is the dangerous one: a rule that fires without
+    # being declared never appears in the map at all, so a task asserting its
+    # outcome would KeyError or, worse, the rule would be invisible.
+    #
+    # The other direction is deliberately NOT asserted. check_grant emits
+    # several rules from DATA tables — ("account_number_invented",
+    # "account_number_re", "account_like") iterated in a loop and passed to
+    # _finding as a variable — so no literal-scanning extractor can see them.
+    # My first version of this test demanded equality and failed on four such
+    # rules; a guard that would make you delete a legitimate declaration is
+    # worse than no guard. Declared-but-unseen reads "clean" forever, which is
+    # honest for a rule this build cannot fire.
+    assert emitted <= declared, sorted(emitted - declared)
+    assert len(declared) >= 10, sorted(declared)  # non-vacuity
+    assert len(emitted) >= 5, sorted(emitted)     # the extractor still works
+
+
+@pytest.mark.parametrize("module", RULES_MAP_CHECKERS)
+def test_the_rules_map_is_the_shared_implementation(module):
+    """One vocabulary, not three (T101). Each checker delegates to
+    checker_base.rule_states rather than carrying its own copy."""
+    source = (ROOT / "modules" / module / "scripts"
+              / f"check_{module}.py").read_text(encoding="utf-8")
+    assert "rule_states" in source
+    assert 'RULE_STATES = ("hard"' not in source, (
+        f"check_{module} re-declares the state vocabulary instead of importing it")

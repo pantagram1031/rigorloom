@@ -85,6 +85,7 @@ from checker_base import (  # noqa: E402
     exit_code,
     resolve_state,
     usage_error,
+    rule_states,
     verdict_skeleton,
 )
 import check_residue  # noqa: E402  (core: render-critical XML validation)
@@ -92,6 +93,21 @@ import form_inspect  # noqa: E402  (core engine: paragraph/cell scanners)
 from hwpx_tables import scan_tables  # noqa: E402
 
 CHECKER = "check_hr"
+
+#: This checker's rule inventory. Needed so a rule that never appears in any
+#: bucket can be reported ``clean`` rather than by silence — the convention T118
+#: retired. DERIVED, not remembered: a regression parses this module's own
+#: ``_finding("<name>"`` and ``{"rule": "<name>"}`` literals and asserts set
+#: equality, so adding a rule without listing it here fails.
+RULES = (
+    "artifact_malformed", "artifact_missing", "clause_block_lost",
+    "clause_lost", "clause_renumbered", "clause_text_consumed",
+    "contract_variant_lost", "hr_structure_absent",
+    "identity_seat_autofilled", "option_slot_lost", "party_block_lost",
+    "party_half_filled", "seat_unfilled", "signature_marker_lost",
+    "statute_reference_invented", "statute_reference_lost",
+    "template_version_changed", "template_version_mixed",
+)
 VOCABULARY_SCHEMA = "rigorloom-hr-vocabulary/v1"
 DEFAULT_VOCABULARY = MODULE_ROOT / "references" / "hr_vocabulary.json"
 
@@ -1158,6 +1174,7 @@ def _verdict(artifact_path, classification, hard, warn, info, skipped) -> dict:
             "document": classification,
             "seats": info,
             "skipped": skipped,
+            "rules": rule_states(RULES, hard, warn, skipped),
         },
         counts={
             "hard": len(hard),
