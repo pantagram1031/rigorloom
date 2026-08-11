@@ -234,6 +234,31 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T112:** a form's blank is a run whose charPr draws a rule, and the fill path
+  could not see it. `--full-text` run records now carry `ruled: true` when the
+  run's charPr has a non-`NONE` `underline` (present only when true, so the
+  record shape stays as pinned), and `fill-recipe.md` §3c says to write the value
+  **into** the ruled run rather than after the label. Extending the label run
+  leaves the value unruled and pushes the rule along until it wraps — A2's
+  accepted artifact rendered exactly that on the `주       소 :` line. Every
+  deterministic check passed, because the charPr id never changed and no text went
+  missing; the **vision half did catch it** as `alignment_drift` `warn` and named
+  the mechanism exactly, but a warn does not block, so the run finished
+  `acceptance: true` with no blockers. The fix is to stop creating the finding.
+  While correcting that, `alignment_drift`'s per-class entry still read
+  `Deterministic: NONE` although T102 had corrected the class table to `PARTIAL` —
+  the document contradicting itself about the class that slice existed to fix.
+  Both per-class lines now lead with the table's token, and a new guard asserts
+  leading-token agreement so the second copy cannot drift again. Finding the
+  underline needed a parser fix of its own: a real
+  charPr body is 649 chars with `underline` at offset 462, past the 400-char
+  window the neighbouring `fontRef` lookup uses, so the body is now bounded by
+  the charPr boundary — and a regression pins that a short definition still does
+  not inherit its neighbour's rule. **Stated limit:** a whitespace-only rule
+  cannot be keyed, because `preedit replace` refuses a whitespace-only key, so on
+  that seat extending the label run remains the only shipped route and correct
+  rendering is not achievable offline today.
+
 - **T111:** answering a consent question is now a documented operation, and the
   paragraph that needs answering now has an address. `fill-recipe.md` §3b covers
   it with the measured constraints, and every `answer_slot` entry in a profile

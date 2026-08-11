@@ -142,6 +142,50 @@ def test_the_derivation_finds_the_detectors_it_should():
     assert "missing_glyphs" not in detected
 
 
+def _leading_verdict(text: str) -> str:
+    """The first coverage token in a coverage statement."""
+    match = re.search(r"\b(FULL|PARTIAL|NONE)\b", text)
+    return match.group(1) if match else ""
+
+
+def _per_class_verdicts() -> dict[str, str]:
+    """``class -> leading token of its §2 section's ``Deterministic:`` line``."""
+    markdown = RUBRIC.read_text(encoding="utf-8")
+    out = {}
+    for section in re.finditer(r"^### `([a-z_]+)`.*?(?=^### |\Z)", markdown,
+                               re.M | re.S):
+        line = re.search(r"\*\*Deterministic:\*\*([^\n]*(?:\n[^\n*][^\n]*)?)",
+                         section.group(0))
+        if line:
+            out[section.group(1)] = _leading_verdict(line.group(1))
+    return out
+
+
+def test_the_per_class_sections_do_not_restate_a_different_verdict():
+    """The class table is the tested source; §2 is a second copy of the claim.
+
+    T102 corrected `alignment_drift` in the table and left §2 saying NONE, so
+    the shipped document contradicted itself about the very class that slice
+    existed to fix — a second copy is exactly how a derived column rots. The
+    rule is leading-token agreement, so a section may still go on to name
+    coverage in another run, as `missing_glyphs` does in both places.
+    """
+    rows = _rubric_rows()
+    per = _per_class_verdicts()
+    assert len(per) >= 8, per  # non-vacuity: the section parser still matches
+    # A section that describes the mechanism without naming a token (as
+    # `blank_render` does) restates nothing and cannot contradict anything —
+    # that is the preferred shape, so it is not required to carry a verdict.
+    stated = {cls: verdict for cls, verdict in per.items() if verdict}
+    assert len(stated) >= 5, stated
+    mismatched = {
+        cls: {"table": _leading_verdict(rows[cls]), "per_class": verdict}
+        for cls, verdict in stated.items()
+        if cls in rows and _leading_verdict(rows[cls]) != verdict
+    }
+    assert not mismatched, mismatched
+
+
 def test_the_vision_owned_hard_class_is_not_claimed_as_deterministic():
     """VISION_HARD_CLASSES is the source of truth for who decides.
 
