@@ -1626,3 +1626,148 @@ class TestFillCellsMultilineCli:
                     "--parapr-per-cell", "0,0=35")
         assert proc.returncode == 0, proc.stdout
         assert json.loads(proc.stdout)["cells"][0]["parapr"] == "35"
+
+
+# ---------------------------------------------------------------------------
+# 1c) T115 — set_runs: (at_para, run) 주소로 런 텍스트 쓰기
+#
+# 괘선 빈칸은 공백뿐인 런이라 텍스트 키로 잡을 문자열이 없고, 공백뿐인 키는
+# tier A의 strip-비교에서 모든 공백 런에 매치되는 와일드카드다(#66 실측).
+# 그래서 주소로 쓰는 별개 오퍼레이션이다.
+# ---------------------------------------------------------------------------
+
+class TestSetRuns:
+
+    def _doc(self, tmp_path, name="sr.hwpx"):
+        return make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC(P(R(0, "라벨 : "), R(0, "        ")),
+                P(R(0, "다른 문단"))),
+            name=name)
+
+    def test_writes_the_addressed_run_and_leaves_the_other_alone(self, tmp_path):
+        src = self._doc(tmp_path)
+        out = tmp_path / "o.hwpx"
+        result = preedit.set_runs(src, out, [(0, 1, "값")])
+        assert result == {"ok": True, "written": 1,
+                          "runs": [{"at_para": 0, "run": 1, "charpr": "0",
+                                    "previous": "        "}]}
+        xml = section_xml(out)
+        assert "<hp:t>값</hp:t>" in xml
+        assert "<hp:t>라벨 : </hp:t>" in xml       # the label run is untouched
+        assert "<hp:t>다른 문단</hp:t>" in xml     # so is the other paragraph
+
+    def test_the_run_opener_and_its_charpr_are_never_rewritten(self, tmp_path):
+        """The whole point: writing INTO the ruled run is what keeps the rule
+        under the value, and the rule lives on the run's charPrIDRef."""
+        src = self._doc(tmp_path)
+        out = tmp_path / "o.hwpx"
+        before = section_xml(src).count('<hp:run charPrIDRef="0">')
+        preedit.set_runs(src, out, [(0, 1, "값")])
+        assert section_xml(out).count('<hp:run charPrIDRef="0">') == before
+
+    def test_an_out_of_range_run_index_is_refused_with_the_count(self, tmp_path):
+        src = self._doc(tmp_path)
+        with pytest.raises(preedit.PreeditError) as exc:
+            preedit.set_runs(src, tmp_path / "o.hwpx", [(0, 5, "값")])
+        assert "텍스트 런 2개" in str(exc.value)
+        assert not (tmp_path / "o.hwpx").exists()
+
+    def test_an_out_of_range_paragraph_is_refused_with_the_count(self, tmp_path):
+        src = self._doc(tmp_path)
+        with pytest.raises(preedit.PreeditError) as exc:
+            preedit.set_runs(src, tmp_path / "o.hwpx", [(99, 0, "값")])
+        assert "문단 2개" in str(exc.value)
+        assert not (tmp_path / "o.hwpx").exists()
+
+    def test_a_duplicate_address_is_refused(self, tmp_path):
+        """No silent last-write-wins, the same rule fill_cells keeps."""
+        src = self._doc(tmp_path)
+        with pytest.raises(preedit.PreeditError):
+            preedit.set_runs(src, tmp_path / "o.hwpx",
+                             [(0, 1, "a"), (0, 1, "b")])
+
+    def test_a_run_with_no_hp_t_is_refused_and_names_fill_cells(self, tmp_path):
+        """An empty cell's self-closing run is the other operation's territory.
+        Creating an <hp:t> here would give two operations two different models
+        of one structure."""
+        src = make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0"/></hp:p>'),
+            name="empty.hwpx")
+        with pytest.raises(preedit.PreeditError) as exc:
+            preedit.set_runs(src, tmp_path / "o.hwpx", [(0, 0, "값")])
+        # `paragraph_text_runs` never returns a run without <hp:t>, so the
+        # out-of-range message is where this case surfaces — it has to name the
+        # operation that owns the structure.
+        assert "텍스트 런 0개" in str(exc.value)
+        assert "fill_cells" in str(exc.value)
+
+    def test_two_runs_in_one_paragraph_both_land(self, tmp_path):
+        """The second write re-reads offsets, since the first shifted them."""
+        src = self._doc(tmp_path)
+        out = tmp_path / "o.hwpx"
+        result = preedit.set_runs(src, out, [(0, 0, "새 라벨 : "), (0, 1, "값")])
+        assert result["written"] == 2
+        xml = section_xml(out)
+        assert "<hp:t>새 라벨 : </hp:t>" in xml and "<hp:t>값</hp:t>" in xml
+
+    def test_a_run_split_into_several_hp_t_yields_the_value_exactly_once(
+            self, tmp_path):
+        """Real HWPX splits one run into several <hp:t> segments. The value goes
+        into the first and the rest are emptied, so the run reads as the value
+        once — writing it into each segment would repeat it silently.
+
+        Found by mutation: nothing asserted this until the mutation that writes
+        every segment passed the whole suite.
+        """
+        src = make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                '<hp:t>앞</hp:t><hp:t>  </hp:t><hp:t>뒤</hp:t>'
+                '</hp:run></hp:p>'),
+            name="split.hwpx")
+        out = tmp_path / "o.hwpx"
+        result = preedit.set_runs(src, out, [(0, 0, "값")])
+        assert result["runs"][0]["previous"] == "앞  뒤"
+        xml = section_xml(out)
+        assert xml.count("값") == 1, xml
+        # and the run still has its three <hp:t> shells, two of them empty
+        assert xml.count("<hp:t>") == 3
+        runs = preedit.paragraph_text_runs(
+            xml[xml.index("<hp:p "):xml.index("</hp:p>") + len("</hp:p>")])
+        assert [r["text"] for r in runs] == ["값"]
+
+    def test_reapplying_the_same_value_is_content_identical(self, tmp_path):
+        src = self._doc(tmp_path)
+        once, twice = tmp_path / "1.hwpx", tmp_path / "2.hwpx"
+        preedit.set_runs(src, once, [(0, 1, "값")])
+        preedit.set_runs(once, twice, [(0, 1, "값")])
+        assert content_fingerprint(once) == content_fingerprint(twice)
+
+    def test_only_the_changed_paragraphs_lineseg_is_dropped(self, tmp_path):
+        """T24 for the paragraph that changed, byte-fidelity for the rest —
+        including a nested paragraph inside the edited one, whose cached
+        coordinates are still valid."""
+        nested = ('<hp:p paraPrIDRef="34">' + R(0, "셀 문단")
+                  + '<hp:linesegarray><hp:lineseg textpos="9"/>'
+                    '</hp:linesegarray></hp:p>')
+        src = make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                '<hp:t>라벨</hp:t>'
+                '<hp:tbl id="9" rowCnt="1" colCnt="1"><hp:tr><hp:tc>'
+                '<hp:subList>' + nested + '</hp:subList>'
+                '</hp:tc></hp:tr></hp:tbl></hp:run>'
+                '<hp:linesegarray><hp:lineseg textpos="0"/></hp:linesegarray>'
+                '</hp:p>',
+                P(R(0, "뒤 문단"))
+                + '<hp:linesegarray><hp:lineseg textpos="5"/>'
+                  '</hp:linesegarray>'),
+            name="lineseg.hwpx")
+        out = tmp_path / "o.hwpx"
+        preedit.set_runs(src, out, [(0, 0, "새 라벨")])
+        xml = section_xml(out)
+        assert 'textpos="0"' not in xml     # the edited paragraph's own: gone
+        assert 'textpos="9"' in xml         # the nested paragraph's: preserved
+        assert 'textpos="5"' in xml         # an untouched paragraph's: preserved

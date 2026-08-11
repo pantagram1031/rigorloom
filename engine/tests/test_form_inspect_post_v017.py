@@ -518,15 +518,30 @@ def test_extending_the_label_run_leaves_the_value_off_the_rule(tmp_path):
     assert any(r.get("ruled") and not r["text"].strip() for r in after), (
         "the ruled blank survives as an orphan")
 
-    # And the obvious remedy is not available on THIS seat: its rule is a
-    # whitespace-only run, and a whitespace-only key is refused outright — so
-    # extending the label run is the only shipped route, which is what orphans
-    # the rule. Recorded as a stated limit, not worked around here.
+    # `replace` still cannot reach this seat, and that refusal is correct: the
+    # rule is a whitespace-only run, and tier A compares run text stripped, so a
+    # whitespace-only key is a wildcard over every whitespace-only run. Scoping
+    # to one paragraph does not save it — this paragraph has two such runs, the
+    # indent and the rule.
     with pytest.raises(preedit.PreeditError):
         preedit.replace_placeholders(
             str(PPS_SIGNATURE_FORM), tmp_path / "unreachable.hwpx",
             {blank["text"]: {"text": "서울특별시 강남구" + " " * 20,
                              "at_para": 18}})
+
+    # T115 closes it with an ADDRESS instead of a key: the value lands in the
+    # ruled run, so the rule runs under it, and no charPr id moves.
+    fixed = tmp_path / "on-the-rule.hwpx"
+    result = preedit.set_runs(
+        str(PPS_SIGNATURE_FORM), fixed,
+        [(18, blank["index"], "서울특별시 강남구 테헤란로 100" + " " * 8)])
+    assert result["written"] == 1
+    assert result["runs"][0]["charpr"] == blank["charpr"]
+    on_rule = form_inspect.analyze(
+        str(fixed), full_text=[("para", 18)])[0]["full_text"][0]["runs"]
+    carrying = [r for r in on_rule if "서울특별시" in r["text"]]
+    assert carrying and all(r.get("ruled") for r in carrying), on_rule
+    assert [r["charpr"] for r in on_rule] == [r["charpr"] for r in runs]
 
 
 def test_a_rule_fused_with_a_marker_can_be_written_on(tmp_path):
