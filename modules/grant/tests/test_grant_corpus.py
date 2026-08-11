@@ -693,3 +693,48 @@ class TestRuleStatesAreExplicit:
             warn=[],
             skipped=[{"rule": "table_structure_lost", "reason": "no_baseline"}])
         assert states["table_structure_lost"] == "hard"
+
+
+class TestOtherCheckersPublishTheSameMap:
+    """T119 - hr and minwon publish `rules` too, so no task needs to search for
+    a rule name in a verdict any more."""
+
+    HR_FORM = CORPUS / "converted" / "moel-pyojun-geunrogyeyakseo-2025.hwpx"
+    MINWON_FORM = CORPUS / "converted" / "jeongbo-gonggae-cheongguseo.hwpx"
+
+    def _states(self, module_name, form):
+        import importlib
+        import sys
+        scripts = _REPO_ROOT / "modules" / module_name / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        module = importlib.import_module(f"check_{module_name}")
+        if not form.is_file():
+            pytest.skip(f"{form.name} absent")
+        verdict, code = module.check(form, baseline=form)
+        return module, verdict, code
+
+    def test_hr_reports_the_version_rules_H1_asserts(self):
+        module, verdict, code = self._states("hr", self.HR_FORM)
+        assert code == 0
+        assert set(verdict["rules"]) == set(module.RULES)
+        for name in ("template_version_changed", "template_version_mixed"):
+            assert verdict["rules"][name] == "clean", verdict["rules"][name]
+
+    def test_minwon_reports_the_staff_rules_P2_asserts(self):
+        module, verdict, code = self._states("minwon", self.MINWON_FORM)
+        assert code == 0
+        assert set(verdict["rules"]) == set(module.RULES)
+        for name in ("staff_seat_filled", "staff_seat_removed"):
+            assert verdict["rules"][name] == "clean", verdict["rules"][name]
+
+    def test_a_fired_rule_moves_the_state_in_the_shared_helper(self):
+        """Discrimination, at the shared implementation rather than per module:
+        a rule in a bucket must not read clean, and severity wins over a skip."""
+        import checker_base
+        states = checker_base.rule_states(
+            ("a", "b", "c"),
+            hard=[{"code": "a"}],
+            warn=[{"code": "b"}],
+            skipped=[{"rule": "b"}, {"rule": "c"}])
+        assert states == {"a": "hard", "b": "warn", "c": "skipped"}

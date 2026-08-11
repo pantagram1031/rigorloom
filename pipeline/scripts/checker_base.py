@@ -35,6 +35,32 @@ def exit_code(*, hard: Sequence[Any] = (), usage: bool = False) -> int:
 #: The declared-mode value that means "trust the derived state".
 STATE_MODE_AUTO = "auto"
 
+#: Every rule's outcome, one word each. Shared rather than copied per checker
+#: (T101: one vocabulary, never two) — T118 introduced it in check_grant and
+#: T119 lifted it here so check_hr and check_minwon report the same shape.
+RULE_STATES = ("hard", "warn", "skipped", "clean")
+
+
+def rule_states(rules, hard, warn, skipped) -> dict:
+    """rule name -> "hard" | "warn" | "skipped" | "clean", for every rule.
+
+    ``rules`` is the checker's own name inventory, so a rule that never appears
+    in any bucket is reported ``clean`` — the thing the old "absent from the
+    verdict means it passed" convention tried to express by silence, and could
+    not (T118: a name is also written as a positive acknowledgment and as a
+    permanent skipped row).
+
+    Precedence is severity first: a rule that fired somewhere is reported by its
+    worst outcome, so a skip elsewhere can never mask a finding.
+    """
+    seen: dict = {}
+    for bucket, rows in (("hard", hard), ("warn", warn), ("skipped", skipped)):
+        for row in rows or ():
+            name = row.get("code") or row.get("rule")
+            if name in rules and name not in seen:
+                seen[name] = bucket
+    return {name: seen.get(name, "clean") for name in rules}
+
 
 def resolve_state(classification: MutableMapping[str, Any],
                   mode: str) -> Mapping[str, Any] | None:

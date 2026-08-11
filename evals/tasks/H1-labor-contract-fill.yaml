@@ -145,17 +145,21 @@ machine_checks:
       - "document.party_seats_filled >= 2"
 
   - id: hr_version_rules_were_decided
-    kind: text_absent
+    kind: file
     requires_module: hr
-    description: 서식 판본 규칙이 건너뛰어지지도, 적발되지도 않았는가
-    # Each rule name appears in the verdict only when it was skipped
-    # (undecidable) or fired. Its ABSENCE is the machine-readable proof that the
-    # versioned-pair rules ran and passed — which is why this family was the
-    # third work-type module.
-    artifact: "${WORK}/hr_verdict.json"
-    strings:
-      - "template_version_changed"
-      - "template_version_mixed"
+    description: 서식 판본 규칙이 각각 어떤 결과였는지 이름으로 확인
+    # T119: was text_absent on the rule NAMES, on the reasoning that a name
+    # appears "only when skipped or fired". That was never true — a name is also
+    # written as a positive acknowledgment — and T118 measured the cost on the
+    # sibling grant task, where an equivalent check could not pass even on the
+    # pristine form. check_hr now publishes each rule's outcome, so state it.
+    # Measured on this family's blank form: both are "clean".
+    path: "${WORK}/hr_verdict.json"
+    mode: nonempty
+    json_file: "${WORK}/hr_verdict.json"
+    assert_json:
+      - 'rules.template_version_changed != "hard"'
+      - 'rules.template_version_mixed != "hard"'
 
   - id: hr_stayed_on_the_2025_revision
     kind: text_present
