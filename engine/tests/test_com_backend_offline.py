@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import types
 import zipfile
 
 HERE = os.path.dirname(__file__)
@@ -28,6 +29,23 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import com_backend  # noqa: E402
+
+# A subprocess bound in a test exists to stop a HANG, not to police speed. It
+# was 10s here, and the privacy test below failed once in a full-suite run
+# (issue #70) with no other explanation. Measured afterwards on this bench,
+# 15 samples per condition, timing exactly this spawn (a cold interpreter
+# importing com_backend and refusing a missing file):
+#
+#     idle            min 2.31s   median 2.76s   p90 3.58s   max  3.82s
+#     under CPU load  min 4.37s   median 9.00s   p90 14.17s  max 36.46s
+#
+# 10s sat BELOW the loaded median, so a saturated run raced the bound rather
+# than the code failing — the process exits 3 either way, which is why the
+# flake looked like a privacy regression. 120s is above the measured worst
+# case and matches the one other deliberately generous bound in the tree
+# (tests/test_cli_cp949_help.py); at ~43x the idle median, a spawn that trips
+# it is hung, not slow. tests/test_subprocess_bounds.py holds the floor.
+HANG_TIMEOUT = 120
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +117,7 @@ def test_inspect_cli_exposes_privacy_safe_fingerprint_mode():
     completed = subprocess.run(
         [sys.executable, com_backend.__file__, "inspect", "--help"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=10)
+        timeout=HANG_TIMEOUT)
     assert completed.returncode == 0
     assert "--privacy-safe" in completed.stdout
     assert "Traceback" not in completed.stderr
@@ -111,11 +129,60 @@ def test_inspect_privacy_safe_failure_does_not_echo_source_path(tmp_path):
         [sys.executable, com_backend.__file__, "inspect", "--file",
          str(missing), "--privacy-safe"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=10)
+        timeout=HANG_TIMEOUT)
     assert completed.returncode == 3
     assert completed.stdout.strip() == '{"ok": false, "reason": "inspect_failed"}'
     assert "PRIVATE-CANARY" not in completed.stdout + completed.stderr
     assert "Traceback" not in completed.stdout + completed.stderr
+
+
+def test_privacy_safe_refusal_in_the_exception_path_stays_silent(
+        monkeypatch, capsys, tmp_path):
+    """The OTHER privacy-safe refusal, the one a missing file never reaches.
+
+    com_backend refuses in two places: an availability guard before COM is
+    touched (the test above) and the exception handler around the open/inspect
+    call. Both print the same payload, and only the first had coverage — found
+    by mutation, when planting the source path in the handler's payload left
+    the suite green.
+
+    This runs in-process precisely because the handler needs a file that
+    EXISTS and then fails to open, which offline means faking the failure
+    rather than spawning anything. The injected exception carries the path in
+    its message, which is the realistic leak vector: not a deliberate echo but
+    an error string that happens to contain the filename.
+    """
+    document = tmp_path / "PRIVATE-CANARY.hwp"
+    document.write_bytes(b"not a real hwp")
+    # The guard also requires pyhwpx to import; inject it so the branch under
+    # test is reached whether or not the bench has Hancom installed.
+    monkeypatch.setitem(sys.modules, "pyhwpx", types.ModuleType("pyhwpx"))
+    opened = []
+
+    def _exploding_open_hwp(filepath, *args, **kwargs):
+        opened.append(filepath)
+        raise RuntimeError("HwpCtrl could not open %s" % filepath)
+
+    monkeypatch.setattr(com_backend, "open_hwp", _exploding_open_hwp)
+    monkeypatch.setattr(sys, "argv", [
+        "com_backend.py", "inspect", "--file", str(document), "--privacy-safe"])
+
+    code = None
+    try:
+        com_backend.main()
+    except SystemExit as exc:
+        code = exc.code
+    captured = capsys.readouterr()
+    both = captured.out + captured.err
+
+    # Non-vacuity first: the availability guard emits an identical payload, so
+    # without this the test would pass while never reaching the handler at all.
+    assert opened == [str(document)]
+    assert code == 3
+    assert captured.out.strip() == '{"ok": false, "reason": "inspect_failed"}'
+    assert "PRIVATE-CANARY" not in both
+    assert "HwpCtrl" not in both
+    assert "Traceback" not in both
 
 
 # ---------------------------------------------------------------------------

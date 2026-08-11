@@ -291,6 +291,20 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T121:** a privacy test's own subprocess bound was inside the distribution
+  of a normal loaded spawn, so a saturated suite raced the bound instead of
+  testing the code. Measured rather than guessed - 15 samples of exactly that
+  spawn gave an idle median of 2.76s and a loaded median of 9.00s with a worst
+  case of 36.46s, and the bound was 10s. Because the process exits 3 whether it
+  refuses or is killed, the flake presented as a privacy regression, which is
+  the worst possible disguise for a timeout. The bound is now a named constant
+  carrying the measurement, and `tests/test_subprocess_bounds.py` holds a floor
+  derived from it. Mutation testing then found the real hole: `inspect
+  --privacy-safe` refuses in two places and only the availability guard was
+  covered, so planting the source path in the exception handler's payload left
+  the suite green. That branch now has an in-process test that reaches it
+  without spawning anything.
+
 - **T120:** `validate_task` refuses a key the check's kind never reads, so an
   assertion cannot be silently dead. A `strings:` list under a `file` check used
   to validate and do nothing - found by an invalid mutation during T118, where
