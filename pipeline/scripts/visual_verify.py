@@ -718,9 +718,33 @@ def resolve_baseline(baseline, out_dir):
                 "re-run on the operator machine, or pass the blank form's "
                 "already-rendered PDF as --baseline"), None
         out_pdf = Path(out_dir) / f"{path.stem}_baseline.pdf"
+        # T104: reuse a conversion this run can PROVE, instead of paying for it
+        # again. The canonical recipe verifies in two passes and passes the
+        # blank form on both, so an accepted fill cost three serial Hancom
+        # conversions -- artifact once, baseline twice -- on the slowest step in
+        # the loop, on a machine two lanes now share.
+        #
+        # Proven, not cached: the sidecar T38 already writes binds a PDF to the
+        # exact source bytes it came from, so reuse is a hash comparison rather
+        # than an mtime guess. Any failure to prove it -- no sidecar, a
+        # different blank form, an edited one, a regenerated PDF -- falls
+        # through and converts, because "cannot prove" means convert, never
+        # accept. The PDF is not substitutable for the .hwpx either way: the T40
+        # charPr leg reads the blank form's XML, which is why --baseline still
+        # names the document.
+        if out_pdf.is_file():
+            reused, _unprovable = load_conversion_record(
+                conversion_record_path(out_pdf), path, out_pdf)
+            if reused is not None:
+                reused = dict(reused)
+                reused["baseline_conversion_reused"] = True
+                return Path(out_pdf), reused, None, None
         pdf_path, conversion, error = convert_to_pdf(path, out_pdf)
         if error:
             return None, conversion, None, f"--baseline conversion failed: {error}"
+        if isinstance(conversion, dict):
+            conversion = dict(conversion)
+            conversion["baseline_conversion_reused"] = False
         return Path(pdf_path), conversion, None, None
     return path, None, None, None
 
