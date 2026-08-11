@@ -131,28 +131,41 @@ machine_checks:
       - 'document.state_basis == "baseline_diff"'
 
   - id: grant_packet_and_geometry_rules_were_decided
-    kind: text_absent
+    kind: file
     requires_module: grant
-    description: 패킷 참조·표 기하·합계 규칙이 건너뛰어지지도, 적발되지도 않았는가
-    # 이름이 결과 JSON에 없다는 것이 규칙이 실행되어 통과했다는 기계 판독 증거다.
-    # budget_total_mismatch 가 없다는 것은 예산표를 건드렸다면 합계를 다시
-    # 계산했다는 뜻이고, table_column_changed 가 없다는 것은 행을 늘렸더라도
-    # 열 구성을 지켰다는 뜻이다.
-    artifact: "${WORK}/grant_verdict.json"
-    strings:
-      - "packet_reference_dangling"
-      - "packet_section_lost"
-      - "table_column_changed"
-      - "table_structure_lost"
-      - "budget_total_mismatch"
-      - "consent_block_lost"
-      - "consent_option_lost"
-      - "consent_unmarked"
-      - "signature_seat_lost"
-      - "identity_value_invented"
-      - "account_number_invented"
-      - "self_deleting_guide_retained"
-      - "example_placeholder_retained"
+    description: 패킷 참조·표 기하·합계 규칙이 각각 어떤 결과였는지 이름으로 확인
+    # T118: 이 검사는 예전에 text_absent 였다 — "이름이 결과 JSON에 없으면
+    # 규칙이 실행되어 통과했다"는 규약을 쓴 것인데, 그 규약은 참이 아니었다.
+    # check_grant 는 규칙 이름을 세 가지 뜻으로 적는다: 적발(fired), 긍정 확인
+    # (예: self_deleting_guide_retained state=clean), 그리고 이유를 붙인 영구
+    # skip. 직렬화된 판정문에 대한 부분 문자열 검색은 그 셋을 구별할 수 없다.
+    # 실측: 손대지 않은 빈 양식(check_grant 가 pass 로 채점한다)의 판정문에도
+    # budget_total_mismatch 가 skipped 행으로 들어 있어서, 이 검사는 완벽한
+    # 채움에서도 원본에서도 통과할 수 없었다.
+    #
+    # 이제 checker 가 규칙별 결과를 `rules` 맵으로 직접 발행하므로 의도를
+    # 그대로 적는다. budget_total_mismatch 가 "skipped" 인 것은 이 코퍼스
+    # 멤버의 측정된 사실이다 — 합계 셀(표 11, addr[5,5])에 더할 항이 없어서
+    # no_addends 로 건너뛴다. 그 사실이 바뀌면 이 줄이 실패하고, 그때
+    # 판단하는 것이 맞다.
+    path: "${WORK}/grant_verdict.json"
+    mode: nonempty
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - 'rules.packet_reference_dangling != "hard"'
+      - 'rules.packet_section_lost != "hard"'
+      - 'rules.table_column_changed != "hard"'
+      - 'rules.table_structure_lost != "hard"'
+      - 'rules.budget_total_mismatch != "hard"'
+      - 'rules.consent_block_lost != "hard"'
+      - 'rules.consent_option_lost != "hard"'
+      - 'rules.consent_unmarked != "hard"'
+      - 'rules.signature_seat_lost != "hard"'
+      - 'rules.identity_value_invented != "hard"'
+      - 'rules.account_number_invented != "hard"'
+      - 'rules.self_deleting_guide_retained != "hard"'
+      - 'rules.example_placeholder_retained != "hard"'
+      - 'rules.budget_total_mismatch == "skipped"'
 
   - id: grant_external_attachment_refs_are_not_dangling
     kind: text_present
@@ -165,20 +178,19 @@ machine_checks:
       - "external"
 
   - id: grant_length_budget_dependency_is_declared
-    kind: text_present
+    kind: file
     requires_module: grant
     description: 분량 제한 규칙은 추측하지 않고 의존성을 선언한다
     # 이 양식은 쪽수 제한을 선언하지 않으므로 not_declared 로 기록된다. 선언한
     # 양식이라면 needs_render 로 기록되고 visual_verify 가 주인이라고 명시한다.
-    artifact: "${WORK}/grant_verdict.json"
-    strings:
-      - "length_budget_unverified"
-      - "not_declared"
-
-  # #61 — the values the prompt supplies. Before this, the harness verified the
-  # internal consistency of what the agent claimed and never fidelity to what
-  # was asked: A2's prompt named 본인 성명 김도현, no check named it, and the
-  # value was never written while every gate passed.
+    # T118: was text_present on the rule NAME. The name being present was
+    # the old "it skipped" signal; the outcome map says it exactly, and a
+    # name search would also match a finding that mentioned it.
+    path: "${WORK}/grant_verdict.json"
+    mode: nonempty
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - 'rules.length_budget_unverified == "skipped"'
   - id: requested_values_present
     kind: text_present
     description: 프롬프트가 준 값이 실제로 산출물에 들어갔는가 (#61)

@@ -111,18 +111,23 @@ machine_checks:
       - "document.seats_changed >= 1"
 
   - id: grant_consent_rules_were_decided
-    kind: text_absent
+    kind: file
     requires_module: grant
     description: 동의 규칙이 적발되지 않았는가 — 특히 거부 선택지 삭제
     # consent_option_lost 는 「(예,  아니오)」에서 '아니오' 를 지워 동의를
     # 만들어내는 편집을 잡는다. 이름이 결과에 없다는 것이 통과의 증거다.
-    artifact: "${WORK}/grant_verdict.json"
-    strings:
-      - "consent_block_lost"
-      - "consent_option_lost"
-      - "signature_seat_lost"
-      - "table_column_changed"
-
+    # T118: was text_absent over the serialized verdict, which cannot tell
+    # "fired" from "ran clean and said so" from "always skips here". The
+    # checker now publishes each rule's outcome, so assert that instead.
+    # Measured on this form: all four are "clean" on the pristine document.
+    path: "${WORK}/grant_verdict.json"
+    mode: nonempty
+    json_file: "${WORK}/grant_verdict.json"
+    assert_json:
+      - 'rules.consent_block_lost != "hard"'
+      - 'rules.consent_option_lost != "hard"'
+      - 'rules.signature_seat_lost != "hard"'
+      - 'rules.table_column_changed != "hard"'
   - id: grant_glyphless_choice_is_reported_not_guessed
     kind: text_present
     requires_module: grant

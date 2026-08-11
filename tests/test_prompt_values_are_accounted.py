@@ -141,3 +141,90 @@ def test_the_reason_vocabulary_is_closed_and_the_debt_is_countable():
     # rather than left unasserted: a new task shipping `uncurated` entries has to
     # move this number on purpose.
     assert total == 0, {"total": total, "per_task": uncurated}
+
+
+# --------------------------------------------------------------------------- #
+# T118 - a rule NAME is never searched for as a substring of a verdict JSON.
+#
+# evals/README.md documented the convention "a rule name absent from the verdict
+# JSON means it ran and passed". check_grant does not honour it: it writes a rule
+# name as a finding, as a positive acknowledgment, AND as a permanent skipped row
+# with a reason. A3 asserted 13 names absent and could never pass - not on a
+# perfect fill, and not on the pristine corpus form that check_grant grades
+# `pass`, because budget_total_mismatch is a permanent `skipped` row.
+#
+# Third instance of an eval check that cannot be satisfied (T106, T107), so the
+# durable half is this guard rather than a third one-off repair.
+# --------------------------------------------------------------------------- #
+
+
+#: The instances of the name-search class still open, pinned so a NEW one fails
+#: and a fixed one forces this list down on purpose - the same countable-debt
+#: shape as `uncurated` in the prompt-value guard.
+#:
+#: Closing these needs `check_hr` and `check_minwon` to publish a `rules` outcome
+#: map the way `check_grant` now does; the grant instances (A2, A3) are already
+#: converted. Deliberately not done in one slice: two more checkers and two more
+#: task rewrites is a different change, and a resisting slice is a signal.
+KNOWN_NAME_SEARCH_DEBT = [
+    "H1-labor-contract-fill.yaml:hr_version_rules_were_decided:"
+    "template_version_changed",
+    "H1-labor-contract-fill.yaml:hr_version_rules_were_decided:"
+    "template_version_mixed",
+    "P2-jeongbo-staff-seats.yaml:minwon_staff_rules_were_decided:"
+    "staff_seat_filled",
+    "P2-jeongbo-staff-seats.yaml:minwon_staff_rules_were_decided:"
+    "staff_seat_removed",
+]
+
+def _rule_vocabulary() -> set:
+    """Every rule name any shipped checker can emit, parsed from the source.
+
+    Three shapes, because only ONE checker of fifteen declares a RULES tuple —
+    measured, after a first version of this guard covered the grant module alone
+    and silently missed H1 searching for check_hr rule names (T118).
+    """
+    names: set = set()
+    for path in (ROOT / "modules").rglob("scripts/check_*.py"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        block = re.search(r"^RULES\s*=\s*\((.*?)\)", text, re.M | re.S)
+        if block:
+            names.update(re.findall(r'"([a-z_]+)"', block.group(1)))
+        names.update(re.findall(r'_finding\(\s*"([a-z_]+)"', text))
+        names.update(re.findall(r'"rule":\s*"([a-z_]+)"', text))
+    return names
+
+
+def test_no_task_searches_for_a_rule_name_in_a_verdict_json():
+    """Assert the rule's OUTCOME, never the presence of its name.
+
+    A substring search over a serialized verdict cannot tell "fired" from "ran
+    clean and said so" from "always skips for this document".
+    """
+    vocabulary = _rule_vocabulary()
+    assert len(vocabulary) >= 15, sorted(vocabulary)  # non-vacuity
+    offenders = []
+    for name, task in ALL:
+        for check in task.get("machine_checks") or []:
+            if check.get("kind") not in ("text_present", "text_absent"):
+                continue
+            artifact = str(check.get("artifact") or "")
+            if "verdict" not in artifact:
+                continue
+            for string in check.get("strings") or []:
+                if string in vocabulary:
+                    offenders.append(f"{name}:{check.get('id')}:{string}")
+    assert sorted(offenders) == KNOWN_NAME_SEARCH_DEBT, {
+        "new": sorted(set(offenders) - set(KNOWN_NAME_SEARCH_DEBT)),
+        "fixed_but_still_pinned": sorted(
+            set(KNOWN_NAME_SEARCH_DEBT) - set(offenders)),
+    }
+
+
+def test_the_rule_vocabulary_parser_still_finds_the_grant_rules():
+    """Guards the parser, not the tasks: if RULES stops matching, the guard
+    above passes for every task at once."""
+    vocabulary = _rule_vocabulary()
+    for expected in ("table_structure_lost", "budget_total_mismatch",
+                     "consent_unmarked", "example_placeholder_retained"):
+        assert expected in vocabulary, sorted(vocabulary)
