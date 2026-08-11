@@ -147,9 +147,9 @@ def test_submission_preflight_nonfinite_receipt_is_hard_and_privacy_safe(
                    if item["code"] == "proof_receipt_invalid")
     assert any(error["code"] == "receipt_nonfinite_value"
                for error in finding["errors"])
-    rendered = json.dumps(verdict, ensure_ascii=True, allow_nan=False)
-    assert literal not in rendered
-    assert str(ws) not in rendered
+    finding_json = json.dumps(finding, ensure_ascii=True, allow_nan=False)
+    assert literal not in finding_json
+    assert str(ws) not in finding_json
 
 
 def test_legacy_certified_grade_is_quarantined_even_with_certificate_config(
