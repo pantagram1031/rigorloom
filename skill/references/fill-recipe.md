@@ -585,6 +585,13 @@ and `consent_unmarked` still
 form's row.** That is the constraint above, demonstrated end to end: the
 checker's output does not move when you answer the question.
 
+**Check where the mark lands.** The appended mark lengthens a line that the form
+sized for its own text, so it can wrap. In A2's run the second consent line
+ended `… (예,  아니오) ⇒` with `예` alone on the next line — legible, and the
+vision half reported it as `alignment_drift` `warn`, but it reads worse than the
+first line where the identical mark fit. If the render wraps, either shorten the
+mark or address that paragraph on its own with `at_para` and a shorter token.
+
 If you genuinely need to answer the two questions differently, address them per
 paragraph with the `at_para` values from the table above:
 
@@ -604,6 +611,66 @@ paragraph with the `at_para` values from the table above:
   removable guide text, so they must be named in an explicit `--keep` or the
   residue gate HARDs on correct content. That is a known open defect, not a
   property of consent forms.
+
+## 3c. A form's blank is a ruled run — put the value on the rule (T112)
+
+The blank you write into is usually not empty space. It is a run whose charPr
+carries `underline`, and that rule is what the reader sees as the line to write
+on. Since T112 the profile says which run it is: a `--full-text` run record
+carries **`ruled: true`** when its charPr draws a rule. The key is present only
+when true, so an ordinary run record keeps its `{index, text, charpr}` shape.
+
+Measured on `pps-jeongbogonggae-donguiseo` (2 of its 40 charPr ids are ruled):
+
+| `at_para` | seat | runs | where the rule is |
+|---|---|---|---|
+| 18 | `주       소 :` | `'   '` / label / 46 spaces | run 2, **whitespace only** |
+| 20 | `업체명(성명) :` | label / spaces + `(인)` | run 1, **fused with the marker** |
+| 64 | `본인 성명 (서명 또는 인)` | one run: label + blank + marker | **no rule at all** |
+
+**The rule to follow: write the value into the ruled run, not after the label.**
+Extending the label run leaves the value in a run with no rule while the ruled
+run survives beside it — and because the label run got longer, the rule is
+pushed along and can wrap onto the next line, rendering as a stray line under
+nothing.
+
+That is not hypothetical. A2's accepted artifact filled 주소 by extending the
+label run, and its own page crop shows the address on one line with an orphaned
+rule below it.
+
+**What caught it, and what did not.** Every deterministic check passed — the
+run's charPr id never changed and no text went missing, so nothing text-shaped
+could see it. The **vision half did catch it**, as `alignment_drift` `warn` on
+page 1, and diagnosed the mechanism exactly ("the form's own trailing blank run
+(46 spaces, underline charPr, never written to by the fill) wrapping onto its own
+line because the label run it follows was extended"). But `alignment_drift` is
+`warn`, and warns do not block: that run finished `counts: {"hard": 0, "warn":
+8}`, `acceptance: true`, `acceptance_blockers: []`.
+
+So the lesson is not "the gates are blind here" — it is that **an operator who
+reads only `verdict` ships this.** Read the warns, and better, do not create the
+finding: write into the ruled run.
+
+For a rule fused with a marker (at_para 20) the fix is direct — the marker gives
+the key a non-whitespace anchor, so write onto the rule and reproduce the marker
+verbatim:
+
+```json
+{"                     (인)": {"text": "   테스트상사            (인)", "at_para": 20}}
+```
+
+charPr ids, run count and the single `(인)` all survive; the name sits on the
+rule.
+
+**Stated limit — a whitespace-only rule is not reachable.** For at_para 18 the
+ruled run is nothing but spaces, and `preedit replace` refuses a whitespace-only
+key outright (`빈(공백뿐인) 키는 치환 불가`). That refusal is right in general —
+an all-whitespace key is meaningless as a text key — but it means the only
+shipped route to that seat is extending the label run, which is exactly the edit
+that orphans the rule. So on this seat, correct rendering is currently not
+achievable offline. Check `ruled` before you fill: if the ruled run has no
+non-whitespace anchor, say so in your report rather than filling it and calling
+it done.
 
 ## 4. What a correct run looks like
 

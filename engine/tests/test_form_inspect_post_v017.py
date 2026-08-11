@@ -423,3 +423,133 @@ def test_full_text_para_cli_and_bad_addresses_are_fail_closed(tmp_path):
         )
         assert bad.returncode == 2, (spec, bad.stdout, bad.stderr)
         assert not out.exists()
+
+
+# --------------------------------------------------------------------------- #
+# T112 — a form's blank is a RULED run, and the value has to land on the rule.
+# --------------------------------------------------------------------------- #
+
+def _pps_runs(at_para):
+    profile = form_inspect.analyze(
+        str(PPS_SIGNATURE_FORM), full_text=[("para", at_para)])[0]
+    return profile["full_text"][0]["runs"]
+
+
+@pytest.mark.parametrize("at_para,ruled_indexes", [
+    (18, [2]),   # 주소: leading spaces, label run, ruled blank run
+    (20, [1]),   # 업체명(성명): label run, then the rule fused with (인)
+    (64, []),    # 본인 성명: one run, no rule at all
+])
+def test_ruled_runs_are_named_on_the_real_form(at_para, ruled_indexes):
+    if not PPS_SIGNATURE_FORM.is_file():
+        pytest.skip("PPS corpus absent")
+    runs = _pps_runs(at_para)
+    assert [r["index"] for r in runs if r.get("ruled")] == ruled_indexes
+    # `ruled` is present only when true, so the run-record shape asserted by
+    # the CLI test above is unchanged for every ordinary run.
+    for run in runs:
+        assert set(run) <= {"index", "text", "charpr", "ruled"}
+
+
+def test_ruled_is_a_narrow_signal_not_a_blanket():
+    """Non-vacuity in both directions: if every charPr looked ruled the flag
+    would carry no information, and if none did the seat would be unfindable."""
+    if not PPS_SIGNATURE_FORM.is_file():
+        pytest.skip("PPS corpus absent")
+    with zipfile.ZipFile(PPS_SIGNATURE_FORM) as z:
+        header = "".join(
+            z.read(n).decode("utf-8") for n in z.namelist()
+            if "header" in n.lower())
+    defs = form_inspect._charpr_defs(header)
+    ruled = {cid for cid in defs if form_inspect._is_ruled(defs, cid)}
+    assert 0 < len(ruled) < len(defs) // 4, (len(ruled), len(defs))
+
+
+def test_a_short_charpr_does_not_inherit_its_neighbours_rule():
+    """The body bound is the charPr boundary, not a fixed window.
+
+    Measured: a real charPr body is 649 chars with `underline` at offset 462,
+    so a 400-char window cannot see it — but searching the rest of the header
+    would attribute a neighbour's rule to a short definition. Both directions
+    are wrong, and this pins the second one.
+    """
+    header = (
+        '<hh:charPr id="1" height="1000"><hh:fontRef hangul="1"/></hh:charPr>'
+        '<hh:charPr id="2" height="1000"><hh:fontRef hangul="1"/>'
+        '<hh:underline type="BOTTOM" shape="SOLID" color="#000000"/>'
+        '</hh:charPr>'
+        '<hh:charPr id="3" height="1000"/>'
+    )
+    defs = form_inspect._charpr_defs(header)
+    assert defs["1"]["underline"] in (None, "NONE")
+    assert defs["2"]["underline"] == "BOTTOM"
+    assert not form_inspect._is_ruled(defs, "1")
+    assert form_inspect._is_ruled(defs, "2")
+    # A self-closing definition has no body at all.
+    assert not form_inspect._is_ruled(defs, "3")
+
+
+def test_extending_the_label_run_leaves_the_value_off_the_rule(tmp_path):
+    """The finding T112 records, asserted rather than described.
+
+    The T52 pattern above writes the value into the LABEL run and shortens the
+    marker run's padding. That preserves every charPr id and paragraph identity
+    — which is all T52 asserts — but the value then sits in a run with no rule
+    while the ruled run survives beside it. On A2's accepted artifact the
+    address line rendered exactly that way: the value on one line and an
+    orphaned rule below it, and both the deterministic checks and the vision
+    pass let it through.
+    """
+    if not PPS_SIGNATURE_FORM.is_file():
+        pytest.skip("PPS corpus absent")
+    runs = _pps_runs(18)
+    label, blank = runs[1], runs[2]
+    assert not label.get("ruled") and blank.get("ruled")
+
+    wrong = tmp_path / "label-run.hwpx"
+    preedit.replace_placeholders(
+        str(PPS_SIGNATURE_FORM), wrong,
+        {label["text"]: {"text": label["text"] + "서울특별시 강남구", "at_para": 18}})
+    after = form_inspect.analyze(
+        str(wrong), full_text=[("para", 18)])[0]["full_text"][0]["runs"]
+    carrying = [r for r in after if "서울특별시" in r["text"]]
+    assert carrying and not any(r.get("ruled") for r in carrying), (
+        "the value must be off the rule for this to be the defect it is")
+    assert any(r.get("ruled") and not r["text"].strip() for r in after), (
+        "the ruled blank survives as an orphan")
+
+    # And the obvious remedy is not available on THIS seat: its rule is a
+    # whitespace-only run, and a whitespace-only key is refused outright — so
+    # extending the label run is the only shipped route, which is what orphans
+    # the rule. Recorded as a stated limit, not worked around here.
+    with pytest.raises(preedit.PreeditError):
+        preedit.replace_placeholders(
+            str(PPS_SIGNATURE_FORM), tmp_path / "unreachable.hwpx",
+            {blank["text"]: {"text": "서울특별시 강남구" + " " * 20,
+                             "at_para": 18}})
+
+
+def test_a_rule_fused_with_a_marker_can_be_written_on(tmp_path):
+    """The seat that IS reachable, and the pattern to use on it.
+
+    at_para 20's rule shares its run with the `(인)` marker, so the key has a
+    non-whitespace anchor and the value can be written ONTO the rule with the
+    marker reproduced verbatim. charPr ids, run count and the marker all hold.
+    """
+    if not PPS_SIGNATURE_FORM.is_file():
+        pytest.skip("PPS corpus absent")
+    runs = _pps_runs(20)
+    blank = runs[1]
+    assert blank.get("ruled") and blank["text"].rstrip().endswith("(인)")
+
+    out = tmp_path / "onto-the-rule.hwpx"
+    preedit.replace_placeholders(
+        str(PPS_SIGNATURE_FORM), out,
+        {blank["text"]: {"text": "   테스트상사" + " " * 24 + "(인)",
+                         "at_para": 20}})
+    after = form_inspect.analyze(
+        str(out), full_text=[("para", 20)])[0]["full_text"][0]["runs"]
+    carrying = [r for r in after if "테스트상사" in r["text"]]
+    assert carrying and all(r.get("ruled") for r in carrying)
+    assert [r["charpr"] for r in after] == [r["charpr"] for r in runs]
+    assert sum(r["text"].count("(인)") for r in after) == 1
