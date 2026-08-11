@@ -84,6 +84,14 @@ class RenderCertTestCase(unittest.TestCase):
         self.doc = self.root / "document.hwpx"
         _write_hwpx(self.doc)
         self.features = feature_extract.extract_feature_counts(self.doc)
+        self.reference = self.root / "reference.pdf"
+        self.reference.write_bytes(b"reference fixture")
+        self.candidates = {
+            "train-a": self.root / "train-a-candidate.pdf",
+            "holdout-a": self.root / "holdout-a-candidate.pdf",
+        }
+        for entry_id, candidate in self.candidates.items():
+            candidate.write_bytes(f"candidate {entry_id}".encode("ascii"))
         self.manifest = self.root / "manifest.json"
         self.profile_root = self.root / "profile"
         self.profile_root.mkdir()
@@ -109,14 +117,18 @@ class RenderCertTestCase(unittest.TestCase):
                     "id": "train-a", "split": "train", "document": "document.hwpx",
                     "generator": {"type": "sanitized-template", "source": "fixture"},
                     "features": self.features,
-                    "reference_pdf": {"path": "reference.pdf", "sha256": "0" * 64},
+                    "reference_pdf": {
+                        "path": "reference.pdf", "sha256": _sha256(self.reference),
+                    },
                     "hancom_version": "Hancom 2024.0",
                 },
                 {
                     "id": "holdout-a", "split": "holdout", "document": "document.hwpx",
                     "generator": {"type": "sanitized-template", "source": "fixture"},
                     "features": self.features,
-                    "reference_pdf": {"path": "reference.pdf", "sha256": "0" * 64},
+                    "reference_pdf": {
+                        "path": "reference.pdf", "sha256": _sha256(self.reference),
+                    },
                     "hancom_version": "Hancom 2024.0",
                 },
             ],
@@ -139,9 +151,21 @@ class RenderCertTestCase(unittest.TestCase):
             },
             "documents": [
                 {"id": "train-a", "split": "train", "features": self.features,
-                 "metrics": _metrics()},
+                 "ok": True, "metrics": _metrics(),
+                 "document": str(self.doc),
+                 "document_sha256": _sha256(self.doc),
+                 "reference_pdf": str(self.reference),
+                 "reference_pdf_sha256": _sha256(self.reference),
+                 "candidate_pdf": str(self.candidates["train-a"]),
+                 "candidate_pdf_sha256": _sha256(self.candidates["train-a"])},
                 {"id": "holdout-a", "split": "holdout", "features": self.features,
-                 "metrics": _metrics(page_exact=holdout_pass)},
+                 "ok": True, "metrics": _metrics(page_exact=holdout_pass),
+                 "document": str(self.doc),
+                 "document_sha256": _sha256(self.doc),
+                 "reference_pdf": str(self.reference),
+                 "reference_pdf_sha256": _sha256(self.reference),
+                 "candidate_pdf": str(self.candidates["holdout-a"]),
+                 "candidate_pdf_sha256": _sha256(self.candidates["holdout-a"])},
             ],
         }
 
@@ -193,14 +217,25 @@ class RenderCertTestCase(unittest.TestCase):
         larger = dict(self.features, tables=2)
         measurements["documents"] = [
             {"id": "small-train", "split": "train", "features": smaller,
-             "metrics": _metrics()},
+             "ok": True, "metrics": _metrics()},
             {"id": "small-holdout", "split": "holdout", "features": smaller,
-             "metrics": _metrics(page_exact=False)},
+             "ok": True, "metrics": _metrics(page_exact=False)},
             {"id": "large-train", "split": "train", "features": larger,
-             "metrics": _metrics()},
+             "ok": True, "metrics": _metrics()},
             {"id": "large-holdout", "split": "holdout", "features": larger,
-             "metrics": _metrics()},
+             "ok": True, "metrics": _metrics()},
         ]
+        for record in measurements["documents"]:
+            candidate = self.root / f"{record['id']}.pdf"
+            candidate.write_bytes(record["id"].encode("ascii"))
+            record.update({
+                "document": str(self.doc),
+                "document_sha256": _sha256(self.doc),
+                "reference_pdf": str(self.reference),
+                "reference_pdf_sha256": _sha256(self.reference),
+                "candidate_pdf": str(candidate),
+                "candidate_pdf_sha256": _sha256(candidate),
+            })
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
         template = manifest["documents"][0]
         manifest["documents"] = []
@@ -1014,6 +1049,47 @@ class RenderCertTestCase(unittest.TestCase):
                     render_cert.load_manifest(self.manifest)
                 self._write_manifest()
 
+    def test_manifest_document_id_refuses_unsafe_path_segment_before_work_dir(self):
+        for index, bad_id in enumerate(
+                ("../escape", "nested/id", ".", "..", "C:\\escape")):
+            with self.subTest(bad_id=bad_id):
+                payload = json.loads(self.manifest.read_text(encoding="utf-8"))
+                payload["documents"][0]["id"] = bad_id
+                self.manifest.write_text(json.dumps(payload), encoding="utf-8")
+                work_dir = self.root / f"measure-work-unsafe-{index}"
+                escaped = self.root / "escape"
+                nested = work_dir / "nested"
+                drive_target = Path(
+                    f"{self.root.drive}\\t159-unsafe-drive-{index}"
+                )
+                before_drive = drive_target.exists()
+                try:
+                    with self.assertRaises(ValueError):
+                        render_cert.measure_corpus(
+                            "mock", self.manifest, work_dir=work_dir,
+                            renderer_binary=self.binary,
+                            renderer_version="mock 1.0",
+                            renderer_argv=[str(self.binary), "{in}", "{out}"],
+                            render_callback=lambda entry, source, candidate: None,
+                        )
+                    self.assertFalse(work_dir.exists())
+                    self.assertFalse(escaped.exists())
+                    self.assertFalse(nested.exists())
+                    self.assertEqual(drive_target.exists(), before_drive)
+                finally:
+                    self._write_manifest()
+
+    def test_resolve_renderer_refuses_argv_zero_not_matching_configured_binary(self):
+        other = self.root / "other-renderer.bin"
+        other.write_bytes(b"different renderer")
+
+        with self.assertRaises(ValueError):
+            render_cert.resolve_renderer(
+                "mock", renderer_binary=self.binary,
+                renderer_argv=[str(other), "{in}", "{out}"],
+                renderer_version="mock 1.0",
+            )
+
     def test_renderer_version_mismatch_is_refused(self):
         certificate = render_cert.issue_certificate(
             self._measurements(), self._thresholds(),
@@ -1345,6 +1421,201 @@ class RenderCertTestCase(unittest.TestCase):
             record["metrics"]["page_count"]["exact"]
             for record in measured["documents"]
         ))
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_refuses_preexisting_stale_candidate_generation(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        work_dir = self.root / "stale-measure-work"
+        stale_dir = work_dir / "train-a"
+        stale_dir.mkdir(parents=True)
+        stale = stale_dir / "candidate.pdf"
+        shutil.copyfile(reference, stale)
+
+        measured = render_cert.measure_corpus(
+            "mock", self.manifest, work_dir=work_dir,
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+            renderer_argv=[str(self.binary), "{in}", "{out}"],
+            render_callback=lambda entry, source, candidate: None,
+            dpi=72,
+        )
+
+        self.assertFalse(measured["documents"][0]["ok"])
+        self.assertIn(
+            "renderer_output_stale",
+            measured["documents"][0]["reason_codes"],
+        )
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_refuses_source_mutation_during_render(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        def mutate_source(entry, source, candidate):
+            source.write_bytes(source.read_bytes() + b"source-generation-mutation")
+            return reference
+
+        measured = render_cert.measure_corpus(
+            "mock", self.manifest, work_dir=self.root / "source-mutation-work",
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+            renderer_argv=[str(self.binary), "{in}", "{out}"],
+            render_callback=mutate_source, dpi=72,
+        )
+
+        self.assertFalse(measured["documents"][0]["ok"])
+        self.assertIn(
+            "document_changed",
+            measured["documents"][0]["reason_codes"],
+        )
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_refuses_reference_mutation_during_render(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        replacement = self.root / "replacement-reference.pdf"
+        candidate_source = self.root / "candidate-source.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        document = fitz.open()
+        document.new_page().insert_text((100, 72), "alpha beta gamma")
+        document.save(replacement)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        def mutate_reference(entry, source, candidate):
+            shutil.copyfile(reference, candidate_source)
+            shutil.copyfile(replacement, reference)
+            return candidate_source
+
+        measured = render_cert.measure_corpus(
+            "mock", self.manifest, work_dir=self.root / "reference-mutation-work",
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+            renderer_argv=[str(self.binary), "{in}", "{out}"],
+            render_callback=mutate_reference, dpi=72,
+        )
+
+        self.assertFalse(measured["documents"][0]["ok"])
+        self.assertIn(
+            "reference_pdf_changed",
+            measured["documents"][0]["reason_codes"],
+        )
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_issue_certificate_refuses_fabricated_measurement_generation_hash(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        measured = render_cert.measure_corpus(
+            "mock", self.manifest, work_dir=self.root / "issue-measure-work",
+            renderer_binary=self.binary, renderer_version="mock 1.0",
+            renderer_argv=[str(self.binary), "{in}", "{out}"],
+            render_callback=lambda entry, source, candidate: reference,
+            dpi=72,
+        )
+        for field, forged in (
+            ("document_sha256", "0" * 64),
+            ("reference_pdf_sha256", "0" * 64),
+            ("candidate_pdf_sha256", "0" * 64),
+            ("document", str(self.root / "forged-document.hwpx")),
+            ("reference_pdf", str(self.root / "forged-reference.pdf")),
+            ("candidate_pdf", str(self.root / "forged-candidate.pdf")),
+        ):
+            with self.subTest(field=field):
+                tampered = deepcopy(measured)
+                tampered["documents"][0][field] = forged
+                with self.assertRaises(ValueError):
+                    render_cert.issue_certificate(
+                        tampered, self._thresholds(),
+                        issued_at="2026-08-12T00:00:00Z",
+                    )
+
+    def test_issue_certificate_refuses_candidate_aliasing_source_or_reference(self):
+        for alias_field in ("reference_pdf", "document"):
+            with self.subTest(alias_field=alias_field):
+                tampered = deepcopy(self._measurements())
+                record = tampered["documents"][0]
+                record["candidate_pdf"] = record[alias_field]
+                if alias_field == "reference_pdf":
+                    record["candidate_pdf_sha256"] = record["reference_pdf_sha256"]
+                else:
+                    record["candidate_pdf_sha256"] = record["document_sha256"]
+                with self.assertRaisesRegex(ValueError, "measurement_candidate_alias"):
+                    render_cert.issue_certificate(
+                        tampered, self._thresholds(),
+                        issued_at="2026-08-12T00:00:00Z",
+                    )
+
+    def test_issue_uses_lexical_manifest_join_not_resolving_helper(self):
+        with mock.patch.object(
+            render_cert, "_resolve_recorded_path",
+            side_effect=AssertionError("legacy resolving helper must not run"),
+        ):
+            certificate = render_cert.issue_certificate(
+                self._measurements(), self._thresholds(),
+                issued_at="2026-08-12T00:00:00Z",
+            )
+        self.assertEqual(certificate["schema_version"], 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path-alias regression")
+    def test_issue_accepts_windows_short_path_alias_for_bound_document(self):
+        import ctypes
+
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short.restype = ctypes.c_uint32
+        source = str(self.doc)
+        size = 512
+        buffer = ctypes.create_unicode_buffer(size)
+        result = get_short(source, buffer, size)
+        if not result or buffer.value.casefold() == source.casefold():
+            self.skipTest("short-path alias unavailable")
+        tampered = deepcopy(self._measurements())
+        short_root = Path(buffer.value).parent
+        tampered["corpus"]["manifest_path"] = str(
+            short_root / self.manifest.name,
+        )
+        for record in tampered["documents"]:
+            record["document"] = str(short_root / self.doc.name)
+            record["reference_pdf"] = str(short_root / self.reference.name)
+            record["candidate_pdf"] = str(
+                short_root / self.candidates[record["id"]].name,
+            )
+        certificate = render_cert.issue_certificate(
+            tampered, self._thresholds(), issued_at="2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(certificate["schema_version"], 1)
 
     @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
     def test_pdf_metrics_include_exact_pages_word_anchors_and_raster_ratio(self):

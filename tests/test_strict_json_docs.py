@@ -169,3 +169,55 @@ def test_t158_docs_pin_legacy_private_artifact_custody_boundary():
     assert trouble.index("| T157 |") < trouble.index("| T156 |")
     assert trouble.index("| T156 |") < trouble.index("| T155 |")
     assert "| T109 |" not in trouble
+
+
+def test_t159_docs_pin_legacy_private_measurement_binding_boundary():
+    paths = (
+        "CHANGELOG.md",
+        "README.md",
+        "docs/trouble-table.md",
+        "docs/golden-path.md",
+        "docs/research/render-cert-envelope-v2.md",
+    )
+    combined = " ".join(" ".join(_read(path).split()) for path in paths)
+    for token in (
+        "T159",
+        "safe single non-dot manifest ID segment",
+        "before `mkdir`",
+        "argv[0]",
+        "configured binary",
+        "bounded no-follow regular one-link",
+        "source, reference, and candidate",
+        "before and after render",
+        "manifest reference hash",
+        "fresh candidate",
+        "alternate output",
+        "candidate_pdf",
+        "aliases either the manifest reference PDF or source document",
+        "issue_certificate",
+        "live manifest",
+        "every document/reference/candidate path and hash",
+        "second rebind",
+        "before HMAC",
+        "pathful private measure/certify payload",
+        "public `verify_certificate` remains exactly four",
+        "check` adds only `eligible`",
+        "generic `write_json`",
+        "`doc_backend`",
+        "authentication",
+        "execution",
+        "eligibility",
+        "routing",
+        "proof",
+        "submission",
+        "promotion",
+        "both release switches remain false",
+    ):
+        assert token in combined
+
+    trouble = _read("docs/trouble-table.md")
+    assert trouble.index("| T159 |") < trouble.index("| T158 |")
+    assert trouble.index("| T158 |") < trouble.index("| T157 |")
+    assert trouble.index("| T157 |") < trouble.index("| T156 |")
+    assert trouble.index("| T156 |") < trouble.index("| T155 |")
+    assert "| T109 |" not in trouble
