@@ -28,6 +28,13 @@ EXACT actions:
     `dependency_closure: unknown`, proof grade `none`, and submission grade
     `false`; equation-bearing input is refused, and no automatic route can
     promote it or feed `new_report`.
+    T151 `render_cert_envelope_v2.py` is likewise outside this proof ladder. Its
+    private-manifest `rigorloom/render-cert-envelope/v2` output is an exact,
+    pathless hash/HMAC diagnostic; `runtime_binding` is `not_established`,
+    `proof_grade` is `none`, `submission_grade` is `false`, and `promotion` is
+    `not_run`. It cannot select a renderer, write the backend receipt, or
+    promote a PDF, and legacy v1 certificates remain quarantined while both
+    release switches are false.
    A native Hancom receipt is renderer provenance, not a readability
    certification: its bound glyph-quality result may be `unknown` for an
    uninspectable Type3 font and still retain `hancom`, while a confirmed
