@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -10,6 +12,7 @@ import stat
 import shutil
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from copy import deepcopy
@@ -25,6 +28,20 @@ import render_cert  # noqa: E402
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _duplicate_json_line(raw: str, fragment: str) -> str:
+    lines = raw.splitlines()
+    for index, line in enumerate(lines):
+        if fragment not in line:
+            continue
+        if line.lstrip().startswith(fragment):
+            indent = line[:len(line) - len(line.lstrip())]
+            lines.insert(index + 1, indent + fragment)
+        else:
+            lines[index] = line.replace(fragment, fragment + "," + fragment, 1)
+        return "\n".join(lines) + "\n"
+    raise AssertionError(f"missing JSON line {fragment!r}")
 
 
 def _write_hwpx(
@@ -201,6 +218,188 @@ class RenderCertTestCase(unittest.TestCase):
         )
         self.assertTrue(result["eligible"], result)
         self.assertEqual(result["reason_code"], "eligible")
+
+    def test_direct_and_consumer_loaders_reject_duplicate_certificate_keys(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "duplicate-certificate.json"
+        raw = json.dumps(certificate, ensure_ascii=False, indent=2) + "\n"
+        cert_path.write_text(_duplicate_json_line(
+            raw, '"schema_version": 1,'), encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            render_cert._read_json(cert_path)
+
+        result = render_cert.verify_certificate(
+            cert_path,
+            renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "certificate_invalid_json")
+
+    def test_consumer_rejects_conflicting_duplicate_with_valid_last_value(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "conflicting-duplicate-certificate.json"
+        raw = json.dumps(certificate, ensure_ascii=False, indent=2) + "\n"
+        needle = '  "renderer_id": "mock",'
+        self.assertEqual(raw.count(needle), 1)
+        raw = raw.replace(
+            needle, '  "renderer_id": "forged",\n' + needle, 1)
+        cert_path.write_text(raw, encoding="utf-8")
+
+        result = render_cert.verify_certificate(
+            cert_path,
+            renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "certificate_invalid_json")
+
+    def test_consumer_rejects_forged_first_valid_last_hmac_duplicate(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "shadowed-hmac-certificate.json"
+        lines = (json.dumps(certificate, ensure_ascii=False, indent=2)
+                 + "\n").splitlines()
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith('"certificate_hmac_sha256":'):
+                indent = line[:len(line) - len(line.lstrip())]
+                valid_line = line
+                forged_line = (
+                    indent + '"certificate_hmac_sha256": "' + "f" * 64
+                    + '",')
+                lines[index:index + 1] = [forged_line, valid_line]
+                break
+        else:
+            raise AssertionError("certificate HMAC member missing")
+        cert_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = render_cert.verify_certificate(
+            cert_path,
+            renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason_code"], "certificate_invalid_json")
+
+    def test_unique_key_reordering_and_whitespace_remain_accepted(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "reordered-certificate.json"
+        reordered = {
+            key: certificate[key] for key in reversed(certificate)
+        }
+        cert_path.write_text(
+            "\n  \n" + json.dumps(reordered, ensure_ascii=False, indent=4)
+            + "\n\n",
+            encoding="utf-8",
+        )
+        result = render_cert.verify_certificate(
+            cert_path,
+            renderer_binary=self.binary,
+            renderer_version="mock 1.0",
+        )
+        self.assertTrue(result["ok"], result)
+
+    def test_cli_check_rejects_duplicate_nested_certificate_key(self):
+        certificate = render_cert.issue_certificate(
+            self._measurements(), self._thresholds(),
+            issued_at="2026-07-20T00:00:00Z",
+        )
+        cert_path = self.root / "duplicate-nested-certificate.json"
+        raw = json.dumps(certificate, ensure_ascii=False, indent=2) + "\n"
+        cert_path.write_text(_duplicate_json_line(
+            raw, '"page_count_exact": true,'), encoding="utf-8")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = render_cert.main([
+                "check", str(self.doc), str(cert_path),
+                "--renderer-binary", str(self.binary),
+                "--renderer-version", "mock 1.0",
+            ])
+        self.assertEqual(code, 3)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(payload["reason_code"], "certificate_invalid_json")
+
+    def test_inline_thresholds_loader_rejects_duplicate_key(self):
+        args = types.SimpleNamespace(
+            thresholds='{"page_count_exact":true,"page_count_exact":false}',
+            word_anchor_px=None,
+            raster_changed_channel_ratio=None,
+            min_matched_unique_words=None,
+        )
+        with self.assertRaises(ValueError):
+            render_cert._threshold_args(args)
+
+    def test_cli_certify_rejects_duplicate_measurement_threshold_inputs(self):
+        measurement_path = self.root / "duplicate-measurements.json"
+        raw_measurements = (
+            json.dumps(self._measurements(), ensure_ascii=False, indent=2)
+            + "\n"
+        )
+        needle = '  "schema_version": 1,'
+        self.assertEqual(raw_measurements.count(needle), 1)
+        measurement_path.write_text(
+            raw_measurements.replace(
+                needle, '  "schema_version": 999,\n' + needle, 1),
+            encoding="utf-8",
+        )
+        threshold_path = self.root / "duplicate-thresholds.json"
+        threshold_path.write_text(
+            '{"page_count_exact":false,"page_count_exact":true}',
+            encoding="utf-8",
+        )
+        cases = (
+            (
+                ["--measurements", str(measurement_path),
+                 "--thresholds", json.dumps(self._thresholds())],
+                "measurement_file",
+            ),
+            (
+                ["--measurements", str(self.root / "missing.json"),
+                 "--thresholds", str(threshold_path)],
+                "threshold_file",
+            ),
+            (
+                ["--measurements", str(self.root / "missing.json"),
+                 "--thresholds",
+                 '{"page_count_exact":true,"page_count_exact":false}'],
+                "inline_thresholds",
+            ),
+        )
+        for args, label in cases:
+            with self.subTest(label=label):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    code = render_cert.main(["certify", *args])
+                self.assertEqual(code, 3)
+                payload = json.loads(stdout.getvalue())
+                self.assertFalse(payload["ok"], payload)
+                self.assertEqual(payload["reason_code"], "operation_failed")
+                self.assertEqual(payload["error"], "duplicate_json_key")
+                self.assertNotIn(str(self.root), stdout.getvalue())
+
+    def test_manifest_loader_rejects_duplicate_top_level_or_nested_key(self):
+        for fragment in ('"schema_version": 1', '"id": "train-a"'):
+            with self.subTest(fragment=fragment):
+                raw = self.manifest.read_text(encoding="utf-8")
+                self.manifest.write_text(
+                    _duplicate_json_line(raw, fragment), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    render_cert.load_manifest(self.manifest)
+                self._write_manifest()
 
     def test_renderer_version_mismatch_is_refused(self):
         certificate = render_cert.issue_certificate(

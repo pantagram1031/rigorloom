@@ -70,6 +70,33 @@ def _valid_receipt(ws: Path, artifact: Path, grade: str = "hancom"):
     document_evidence.write_receipt(ws, receipt)
 
 
+def _prepend_conflicting_duplicate_receipt_grade(ws: Path) -> None:
+    receipt_path = ws / document_evidence.RECEIPT_REL
+    raw = receipt_path.read_text(encoding="utf-8")
+    needle = '  "proof_grade": "hancom",'
+    assert raw.count(needle) == 1
+    receipt_path.write_text(
+        raw.replace(needle, '  "proof_grade": "certified",\n' + needle, 1),
+        encoding="utf-8",
+    )
+
+
+def _prepend_shadowed_execution_canary(ws: Path) -> None:
+    receipt_path = ws / document_evidence.RECEIPT_REL
+    raw = receipt_path.read_text(encoding="utf-8")
+    needle = '    "backend": "native_hancom_windows",'
+    assert raw.count(needle) == 1
+    receipt_path.write_text(
+        raw.replace(
+            needle,
+            '    "backend": "canary-C:/Users/Alice/secret.hwpx",\n'
+            + needle,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _quality_for(pdf: Path, *, state: str = "passed",
                  reason: str = "passed") -> dict:
     digest = hashlib.sha256(pdf.read_bytes()).hexdigest()
@@ -124,6 +151,43 @@ def test_valid_windows_receipt_survives_linux_host_probe(tmp_path, monkeypatch):
     assert code == 0, verdict
     assert verdict["proof_grade"] == "hancom"
     assert any("informational" in note for note in verdict["notes"])
+
+
+def test_submission_preflight_rejects_conflicting_duplicate_receipt_grade(
+    tmp_path, monkeypatch,
+):
+    ws, artifact = _workspace(tmp_path)
+    _valid_receipt(ws, artifact)
+    _prepend_conflicting_duplicate_receipt_grade(ws)
+    monkeypatch.setattr(
+        submission_preflight, "_hwpx_text", lambda path: "content")
+    verdict, code = submission_preflight.check(ws)
+    assert code == 3
+    finding = next(item for item in verdict["hard"]
+                   if item["code"] == "proof_receipt_invalid")
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in finding["errors"])
+    assert str(ws) not in json.dumps(finding["errors"], ensure_ascii=False)
+
+
+def test_submission_preflight_rejects_shadowed_execution_canary(
+    tmp_path, monkeypatch,
+):
+    ws, artifact = _workspace(tmp_path)
+    _valid_receipt(ws, artifact)
+    _prepend_shadowed_execution_canary(ws)
+    monkeypatch.setattr(
+        submission_preflight, "_hwpx_text", lambda path: "content")
+    verdict, code = submission_preflight.check(ws)
+    assert code == 3
+    finding = next(item for item in verdict["hard"]
+                   if item["code"] == "proof_receipt_invalid")
+    assert any(error["code"] == "receipt_duplicate_key"
+               for error in finding["errors"])
+    rendered = json.dumps(finding["errors"], ensure_ascii=False)
+    assert "canary-" not in rendered
+    assert "secret.hwpx" not in rendered
+    assert str(ws) not in rendered
 
 
 def test_verdict_receipt_grade_mismatch_is_hard(tmp_path, monkeypatch):
