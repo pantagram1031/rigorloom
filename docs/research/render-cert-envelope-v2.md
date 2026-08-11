@@ -125,6 +125,24 @@ operator artifacts. Public `verify_certificate` remains exactly
 There is no authentication, execution, eligibility, routing, proof,
 submission, or promotion expansion, and both release switches remain false.
 
+T160 hardens only the legacy producer-side measurement generation. Each
+document/reference/candidate input is captured into an owned bounded
+snapshot file, and feature extraction, renderer input, and PDF metrics consume
+those captured files rather than rereading live paths. After metrics, the
+final live document/reference/candidate generations are rebound; only non-restored
+final drift refuses the private record. A mutation restored before the final
+check cannot alter snapshot-derived metrics. During
+`issue_certificate`, the operator key is loaded before a final immediate
+rebind of the live manifest and every measurement document/reference/candidate
+generation; only that final bound state is allowed into the HMAC claim. This
+does not add reader-side verifier custody: public `verify_certificate` remains
+the exact four-field projection and `check_document` adds only `eligible`.
+Schema, routing, proof, submission, promotion, and both release switches are
+unchanged. Successful measure/certify artifacts and stdout remain pathful
+private v1 operator outputs; final pre-HMAC manifest drift publishes no stale
+certificate artifact, while generic failure/projection semantics otherwise
+remain unchanged.
+
 The core bundle ships the Python entry point and its ordinary script imports
 only. It ships no binary, source document, reference PDF, private manifest,
 operator key, certificate, or corpus artifact. Clean extracted `--help` must

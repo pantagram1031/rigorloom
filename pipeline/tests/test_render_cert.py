@@ -1470,7 +1470,7 @@ class RenderCertTestCase(unittest.TestCase):
         self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
 
         def mutate_source(entry, source, candidate):
-            source.write_bytes(source.read_bytes() + b"source-generation-mutation")
+            self.doc.write_bytes(self.doc.read_bytes() + b"source-generation-mutation")
             return reference
 
         measured = render_cert.measure_corpus(
@@ -1523,6 +1523,292 @@ class RenderCertTestCase(unittest.TestCase):
             "reference_pdf_changed",
             measured["documents"][0]["reason_codes"],
         )
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_uses_owned_snapshots_for_feature_renderer_and_metrics(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        work_dir = self.root / "owned-snapshot-work"
+        live_candidate = work_dir / "train-a" / "candidate.pdf"
+        original_metrics = render_cert.compare_pdf_metrics
+        seen: dict[str, object] = {"metrics_candidate_paths": []}
+
+        def extract_features(path):
+            source = Path(path)
+            seen["feature_path"] = source
+            seen["feature_bytes"] = source.read_bytes()
+            return self.features
+
+        def render(entry, source, candidate):
+            source = Path(source)
+            seen["renderer_path"] = source
+            seen["renderer_bytes"] = source.read_bytes()
+            shutil.copyfile(reference, candidate)
+            return candidate
+
+        def compare(reference_path, candidate_path, *, dpi):
+            reference_path = Path(reference_path)
+            candidate_path = Path(candidate_path)
+            seen["metrics_reference_path"] = reference_path
+            seen["metrics_reference_bytes"] = reference_path.read_bytes()
+            seen["metrics_candidate_paths"].append(candidate_path)
+            seen.setdefault("metrics_candidate_bytes", []).append(
+                candidate_path.read_bytes()
+            )
+            return original_metrics(reference_path, candidate_path, dpi=dpi)
+
+        with (
+            mock.patch.object(
+                render_cert.feature_extract, "extract_feature_counts",
+                side_effect=extract_features,
+            ),
+            mock.patch.object(
+                render_cert, "compare_pdf_metrics", side_effect=compare,
+            ),
+        ):
+            measured = render_cert.measure_corpus(
+                "mock", self.manifest, work_dir=work_dir,
+                renderer_binary=self.binary, renderer_version="mock 1.0",
+                renderer_argv=[str(self.binary), "{in}", "{out}"],
+                render_callback=render, dpi=72,
+            )
+
+        self.assertTrue(all(record["ok"] for record in measured["documents"]))
+        original_document_bytes = self.doc.read_bytes()
+        self.assertNotEqual(seen["feature_path"], self.doc)
+        self.assertEqual(seen["feature_bytes"], original_document_bytes)
+        self.assertNotEqual(seen["renderer_path"], self.doc)
+        self.assertEqual(seen["renderer_bytes"], original_document_bytes)
+        self.assertNotEqual(seen["metrics_reference_path"], reference)
+        self.assertEqual(seen["metrics_reference_bytes"], reference.read_bytes())
+        self.assertTrue(seen["metrics_candidate_paths"])
+        self.assertTrue(all(
+            path not in {
+                live_candidate,
+                work_dir / "holdout-a" / "candidate.pdf",
+            }
+            for path in seen["metrics_candidate_paths"]
+        ))
+        self.assertTrue(all(
+            raw == reference.read_bytes()
+            for raw in seen["metrics_candidate_bytes"]
+        ))
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_preserves_source_basename_for_renderer_output(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        source = self.root / "source-name.hwpx"
+        shutil.copyfile(self.doc, source)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["documents"][0]["document"] = source.name
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        def fake_run(command, **kwargs):
+            source_path = Path(command[2])
+            output_dir = Path(command[4])
+            shutil.copyfile(reference, output_dir / f"{source_path.stem}.pdf")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(render_cert.subprocess, "run", side_effect=fake_run):
+            measured = render_cert.measure_corpus(
+                "mock", self.manifest, work_dir=self.root / "basename-work",
+                renderer_binary=self.binary, renderer_version="mock 1.0",
+                renderer_argv=[str(self.binary), "--emit", "{in}", "--outdir", "{outdir}"],
+                dpi=72,
+            )
+
+        self.assertTrue(all(record["ok"] for record in measured["documents"]))
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_metrics_live_candidate_mutation_restore_uses_owned_snapshot(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        work_dir = self.root / "metrics-restore-work"
+        live_candidate = work_dir / "train-a" / "candidate.pdf"
+        original_metrics = render_cert.compare_pdf_metrics
+        mutated = {"done": False}
+
+        def render(entry, source, candidate):
+            shutil.copyfile(reference, candidate)
+            return candidate
+
+        def compare(reference_path, candidate_path, *, dpi):
+            candidate_path = Path(candidate_path)
+            self.assertNotEqual(candidate_path, live_candidate)
+            if not mutated["done"]:
+                mutated["done"] = True
+                raw = live_candidate.read_bytes()
+                stat_result = live_candidate.stat()
+                live_candidate.write_bytes(raw + b"temporary-metric-mutation")
+                live_candidate.write_bytes(raw)
+                os.utime(
+                    live_candidate,
+                    ns=(stat_result.st_atime_ns, stat_result.st_mtime_ns),
+                )
+            return original_metrics(reference_path, candidate_path, dpi=dpi)
+
+        with mock.patch.object(render_cert, "compare_pdf_metrics", side_effect=compare):
+            measured = render_cert.measure_corpus(
+                "mock", self.manifest, work_dir=work_dir,
+                renderer_binary=self.binary, renderer_version="mock 1.0",
+                renderer_argv=[str(self.binary), "{in}", "{out}"],
+                render_callback=render, dpi=72,
+            )
+
+        self.assertTrue(mutated["done"])
+        self.assertTrue(all(record["ok"] for record in measured["documents"]))
+
+    @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
+    def test_measure_refuses_nonrestored_candidate_mutation_during_metrics(self):
+        import fitz
+
+        reference = self.root / "reference.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "alpha beta gamma")
+        document.save(reference)
+        document.close()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for entry in manifest["documents"]:
+            entry["reference_pdf"]["sha256"] = _sha256(reference)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        work_dir = self.root / "metrics-drift-work"
+        live_candidate = work_dir / "train-a" / "candidate.pdf"
+        original_metrics = render_cert.compare_pdf_metrics
+
+        def render(entry, source, candidate):
+            shutil.copyfile(reference, candidate)
+            return candidate
+
+        replacement = self.root / "metrics-drift-replacement.pdf"
+        replacement_doc = fitz.open()
+        replacement_doc.new_page().insert_text((140, 72), "different content")
+        replacement_doc.save(replacement)
+        replacement_doc.close()
+
+        def compare(reference_path, candidate_path, *, dpi):
+            shutil.copyfile(replacement, live_candidate)
+            return original_metrics(reference_path, candidate_path, dpi=dpi)
+
+        with mock.patch.object(render_cert, "compare_pdf_metrics", side_effect=compare):
+            measured = render_cert.measure_corpus(
+                "mock", self.manifest, work_dir=work_dir,
+                renderer_binary=self.binary, renderer_version="mock 1.0",
+                renderer_argv=[str(self.binary), "{in}", "{out}"],
+                render_callback=render, dpi=72,
+            )
+
+        self.assertFalse(measured["documents"][0]["ok"])
+
+    def test_issue_refuses_manifest_drift_before_self_hash_and_cli_has_no_certificate_output(self):
+        measurements = self._measurements()
+        original_key_loader = render_cert.receipt_sign.load_operator_key
+
+        def key_then_mutate(*args, **kwargs):
+            payload = json.loads(self.manifest.read_text(encoding="utf-8"))
+            payload["documents"][0]["generator"]["source"] = "manifest-drift-before-hmac"
+            self.manifest.write_text(json.dumps(payload), encoding="utf-8")
+            return original_key_loader(*args, **kwargs)
+
+        with mock.patch.object(
+            render_cert.receipt_sign, "load_operator_key", side_effect=key_then_mutate,
+        ):
+            with self.assertRaisesRegex(ValueError, "manifest_changed"):
+                render_cert.issue_certificate(
+                    measurements, self._thresholds(),
+                    issued_at="2026-08-12T00:00:00Z",
+                )
+
+        self._write_manifest()
+        measurements_path = self.root / "manifest-drift-measurements.json"
+        measurements_path.write_text(json.dumps(measurements), encoding="utf-8")
+        output = self.root / "manifest-drift-certificate.json"
+        with mock.patch.object(
+            render_cert.receipt_sign, "load_operator_key", side_effect=key_then_mutate,
+        ):
+            code = render_cert.main([
+                "certify", "--measurements", str(measurements_path),
+                "--thresholds", json.dumps(self._thresholds()),
+                "--issued-at", "2026-08-12T00:00:00Z", "--out", str(output),
+            ])
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
+
+    def test_issue_refuses_candidate_drift_during_final_manifest_rebind_and_cli_writes_nothing(self):
+        measurements = self._measurements()
+        candidate = self.candidates["train-a"]
+        original_candidate = candidate.read_bytes()
+        original_capture = render_cert._capture_private_generation
+
+        def mutate_on_final_manifest_capture(path, reason):
+            result = mutate_on_final_manifest_capture.original(path, reason)
+            if reason == "manifest_changed":
+                mutate_on_final_manifest_capture.manifest_calls += 1
+                # The fourth manifest capture is the old implementation's
+                # final post-validation rebind.  Mutating here must be caught
+                # by the reordered all-generation final pass.
+                if mutate_on_final_manifest_capture.manifest_calls == 4:
+                    candidate.write_bytes(original_candidate + b"late-candidate-drift")
+            return result
+
+        mutate_on_final_manifest_capture.original = original_capture
+        mutate_on_final_manifest_capture.manifest_calls = 0
+        with mock.patch.object(
+            render_cert, "_capture_private_generation",
+            side_effect=mutate_on_final_manifest_capture,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "measurement_candidate_changed|manifest_changed",
+            ):
+                render_cert.issue_certificate(
+                    measurements, self._thresholds(),
+                    issued_at="2026-08-12T00:00:00Z",
+                )
+
+        candidate.write_bytes(original_candidate)
+        measurements_path = self.root / "candidate-drift-measurements.json"
+        measurements_path.write_text(json.dumps(measurements), encoding="utf-8")
+        output = self.root / "candidate-drift-certificate.json"
+        mutate_on_final_manifest_capture.manifest_calls = 0
+        with mock.patch.object(
+            render_cert, "_capture_private_generation",
+            side_effect=mutate_on_final_manifest_capture,
+        ):
+            code = render_cert.main([
+                "certify", "--measurements", str(measurements_path),
+                "--thresholds", json.dumps(self._thresholds()),
+                "--issued-at", "2026-08-12T00:00:00Z", "--out", str(output),
+            ])
+        self.assertEqual(code, 3)
+        self.assertFalse(output.exists())
 
     @unittest.skipUnless(importlib.util.find_spec("fitz"), "PyMuPDF not installed")
     def test_issue_certificate_refuses_fabricated_measurement_generation_hash(self):
