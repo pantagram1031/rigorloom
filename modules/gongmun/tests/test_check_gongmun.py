@@ -338,6 +338,74 @@ class TestSealSlot:
         assert "seal_slot_removed" not in codes(verdict)
 
 
+
+    # ----------------------------------------------------------------- #
+    # T105 — the baseline excuses, and only that direction
+    # ----------------------------------------------------------------- #
+    def test_seal_residue_the_blank_form_also_prints_is_not_a_defect(
+            self, tmp_path):
+        """The T105 defect. A blank form may print something inside its own
+        직인 box — a size hint, a bracketed instruction — and that text is the
+        form's, not the fill's. The sibling rule `seal_slot_removed` two lines
+        up already read `baseline_model` from the same scope; this one did not,
+        so the pristine form read as overwritten."""
+        printed = "직인 (35mm)"
+        blank = fx.write_gongmun(tmp_path / "blank.hwpx", fx.BLANK,
+                                 seal=printed)
+        artifact = fx.write_gongmun(tmp_path / "filled.hwpx", fx.FINISHED,
+                                    seal=printed)
+        verdict, code = run(artifact, baseline=blank)
+        assert "seal_slot_overwritten" not in codes(verdict)
+        assert code == 0
+        seals = [row for row in verdict["seats"] if row.get("seat") == "seal"]
+        # residual_text strips the label and the vocabulary noise, so the
+        # recorded value is the residue itself, not the printed cell text.
+        assert seals and seals[0]["inherited_residue"]
+
+    def test_seal_residue_the_fill_added_is_still_hard_with_a_baseline(
+            self, tmp_path):
+        """The still-catches. Inheriting the form's own hint must not excuse a
+        name typed into the slot on top of it."""
+        blank = fx.write_gongmun(tmp_path / "blank.hwpx", fx.BLANK,
+                                 seal="직인 (35mm)")
+        artifact = fx.write_gongmun(tmp_path / "filled.hwpx", fx.FINISHED,
+                                    seal="직인 (35mm) 국가유산청장")
+        verdict, code = run(artifact, baseline=blank)
+        assert "seal_slot_overwritten" in codes(verdict)
+        assert code == 3
+
+    def test_a_blank_form_without_that_residue_does_not_excuse_it(
+            self, tmp_path):
+        """The baseline must match THIS slot, not merely exist.
+
+        A blank form whose seal box prints nothing extra cannot excuse residue
+        in the artifact's box — otherwise passing any baseline at all would
+        launder the finding.
+        """
+        blank = fx.write_gongmun(tmp_path / "blank.hwpx", fx.BLANK,
+                                 seal="직인")
+        artifact = fx.write_gongmun(tmp_path / "filled.hwpx", fx.FINISHED,
+                                    seal="직인 국가유산청장")
+        verdict, code = run(artifact, baseline=blank)
+        assert "seal_slot_overwritten" in codes(verdict)
+        assert code == 3
+
+    def test_no_baseline_still_hards_exactly_as_before(self, tmp_path):
+        """Deliberately unchanged, and this is a correction to my own first cut.
+
+        That version downgraded the no-baseline case to a WARN so it could
+        report "cannot attribute". An existing test disproved it: a name in the
+        seal box is caught with no baseline at all, that is the common case,
+        and trading a working true positive for a false positive the corpus
+        never exhibits is the wrong way round. The baseline EXCUSES; it never
+        becomes a precondition for accusing.
+        """
+        artifact = fx.write_gongmun(tmp_path / "filled.hwpx", fx.FINISHED,
+                                    seal="직인 (35mm)")
+        verdict, code = run(artifact)
+        assert "seal_slot_overwritten" in codes(verdict)
+        assert code == 3
+
 # --------------------------------------------------------------------------- #
 # R6/R7/R8 — finishing rules
 # --------------------------------------------------------------------------- #

@@ -175,10 +175,14 @@ Two open gaps, both recorded rather than quietly fixed:
   SURVIVAL of that inherited text is precisely the defect. Inheritance is not
   exculpatory here. A gate must not blame the artifact for an inherited
   property — unless the rule is about the inheritance itself.
-- `check_gongmun` `seal_slot_overwritten` ignores the `baseline_model` its
-  sibling `seal_slot_removed` reads from the same scope, comparing against a
-  generic label vocabulary instead. Empirically clean on the corpus, so
-  theoretical — the fix is to copy `check_minwon`'s design.
+- **Closed as T105.** `check_gongmun` `seal_slot_overwritten` now compares each
+  slot with its own residue in the blank form, keyed by `(table, addr)`, which
+  is `check_minwon`'s design ported across. The baseline **excuses and never
+  accuses**: with no baseline the behaviour is unchanged, and a HARD becomes an
+  info only on positive proof that the blank form printed that same residue in
+  that same slot. That direction was a correction — the first cut downgraded the
+  no-baseline case to a WARN, and an existing test disproved it by asserting
+  that a name in the seal box is caught with no baseline at all.
 
 A structural near-miss worth knowing: every module checker HARDs
 `artifact_malformed` and returns **before** the baseline is loaded, even though
