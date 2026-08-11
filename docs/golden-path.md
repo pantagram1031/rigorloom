@@ -131,11 +131,14 @@ python pipeline/scripts/hwp_java_diagnostic_candidate.py run FORM.hwp \
 ```
 
 The source first passes T85. The fixed source bridge runs with one staged JAR,
-closed JVM flags/environment, process-tree containment, bounded output, and
-no network/Maven discovery. The Java launcher is rehashed but the surrounding
-runtime is deliberately labeled unbound. The wrapper canonicalizes only the
-known ZIP envelope and closed absent auxiliary-rootfile defect, records that
-count, then requires the unchanged T85 HWPX validator. The receipt is
+closed JVM flags/environment, the shared platform-specific process boundary
+(Windows Job / POSIX process group), bounded output, and no network/Maven
+discovery. Ordinary descendants that remain in the Job/process group are
+cleaned; escaped descendants, brokered processes, and resource/filesystem/
+network isolation are outside the claim. The Java launcher is rehashed but the
+surrounding runtime is deliberately labeled unbound. The wrapper canonicalizes
+only the known ZIP envelope and closed absent auxiliary-rootfile defect,
+records that count, then requires the unchanged T85 HWPX validator. The receipt is
 `rigorloom/hwp-java-diagnostic-candidate/v1` with comparison `unknown`, render
 `not_run`, proof `none`, and submission false. Both raw candidate layout and
 receipt are rejected by `new_report`; no JAR/JRE/class/corpus bytes ship.
@@ -239,13 +242,21 @@ The lane stages `output/out.hwpx` as a private `input.hwpx` and invokes only
 the fixed `rhwp_pdf` `--version` and `export-pdf INPUT -o OUTPUT` argv. It
 captures one owned `artifact.pdf` plus `receipt.json` under the opaque run id,
 with strict no-follow source/binary/certificate/output reads, a minimal
-environment, private cwd, contained child, bounded output, and final
-generation rebinds. Equation-bearing HWPX is refused before the child starts.
+environment, private cwd, and final generation rebinds. The receipt records
+`windows_job_kill_on_close_v1` on Windows or `posix_process_group_v1` on POSIX;
+ordinary descendants that remain in the Job/process group are cleaned, while a
+POSIX `setsid()` descendant and brokered processes outside that boundary are
+not claimed. `execution.descendant_containment` and
+`execution.evidence_authentication` are `not_established`; there is no
+memory, process-count, CPU, filesystem, or network isolation claim.
+Equation-bearing HWPX is refused before the child starts.
 
 The receipt schema is `rigorloom/renderer-runtime-v2/v1`. It records
 `dependency_closure: unknown`, certificate validation `not_run`, comparison
 `unknown`, render `not_run`, `proof_grade: none`, `submission_grade: false`,
-and promotion `not_run`. A successful child or readable PDF is not render
+and promotion `not_run`. Verification rebinds current source, binary,
+certificate, artifact, root, and receipt bytes but does not authenticate
+child-process evidence. A successful child or readable PDF is not render
 quality, native parity, or submission proof. The route never writes
 `output/proof/backend/receipt.json`, changes `output/out.hwpx`, enters
 `doc_backend`, Stage 0/5/6, or `new_report`, and does not alter the closed

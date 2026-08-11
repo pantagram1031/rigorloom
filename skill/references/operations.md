@@ -434,18 +434,29 @@ python pipeline/scripts/renderer_runtime_v2.py verify WORKSPACE \
 
 The closed adapter stages `output/out.hwpx` as `input.hwpx` and invokes only
 `rhwp_pdf --version` followed by `rhwp_pdf export-pdf INPUT -o OUTPUT`. It
-uses a private cwd, a minimal environment, contained child processes, bounded
-no-follow regular-file captures, and final source/binary/certificate/output/
-receipt rebinds. Equation-bearing HWPX refuses with
-`equation_input_unsupported` before either child starts. The receipt schema is
-`rigorloom/renderer-runtime-v2/v1`; its only persistent files are
-`<run-id>/artifact.pdf` and `<run-id>/receipt.json`.
+uses a private cwd, a minimal environment, bounded no-follow regular-file
+captures, and final source/binary/certificate/output/receipt rebinds. The
+receipt records `windows_job_kill_on_close_v1` on Windows or
+`posix_process_group_v1` on POSIX. Ordinary descendants that remain in the
+Job/process group are cleaned; a POSIX `setsid()` descendant and brokered
+processes outside that boundary are not claimed, and no memory, process-count,
+CPU, filesystem, or network isolation is provided. Equation-bearing HWPX
+refuses with `equation_input_unsupported` before either child starts. The
+receipt schema is `rigorloom/renderer-runtime-v2/v1`; its only persistent files
+are `<run-id>/artifact.pdf` and `<run-id>/receipt.json`.
+`inspect` emits the producer host's local policy token; `verify` accepts either
+closed recorded token for cross-host checking, while legacy `contained_child_v1`
+is rejected.
 
 The receipt records `dependency_closure: unknown`, certificate validation
 `not_run`, comparison `unknown`, render `not_run`, proof `none`, submission
-false, and promotion `not_run`. It contains no source text, paths, argv, child
-streams, or certificate contents. Never route it to `doc_backend`, Stage 0/5/6,
-canonical output, `new_report`, or `output/proof/backend/receipt.json`.
+false, promotion `not_run`, `execution.descendant_containment: not_established`,
+and `execution.evidence_authentication: not_established`. Verification rebinds
+current source, binary, certificate, artifact, root, and receipt bytes but does
+not authenticate child-process evidence. It contains no source text, paths,
+argv, child streams, or certificate contents. Never route it to `doc_backend`,
+Stage 0/5/6, canonical output, `new_report`, or
+`output/proof/backend/receipt.json`.
 `CERTIFIED_PROOF_RELEASE_ENABLED` remains false and certified routing remains
 `certified_runtime_unbound`; no binary, certificate, document, or corpus bytes
 are installed or shipped.

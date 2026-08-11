@@ -32,6 +32,11 @@ def test_t152_research_note_pins_the_closed_composite_contract():
         "promotion: not_run",
         "does not execute a renderer",
         "auto-routes",
+        "integrity-joins the captured T150 receipt",
+        "T150 version/render process evidence",
+        "execution.evidence_authentication",
+        "not_established",
+        "does not upgrade T150 child-process evidence",
         "ADVISORY_PROOF_RELEASE_ENABLED=False",
         "CERTIFIED_PROOF_RELEASE_ENABLED=False",
     ):

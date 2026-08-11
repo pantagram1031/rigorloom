@@ -15,9 +15,9 @@ the kernel's contract shape.
   The runner owns the pre-created `output/proof/renderer-runtime-v2/<run-id>`
   leaf, stages the source and binary, invokes only the fixed `--version` and
   `export-pdf` argv, and binds source, certificate, PDF, process state,
-  timeout/overflow, environment policy, and contained-child policy through
-  bounded no-follow captures and final rebinds. Equation-bearing HWPX is
-  refused before execution. The certificate is captured but not semantically
+  timeout/overflow, environment policy, and a platform-specific process
+  policy through bounded no-follow captures and final rebinds. Equation-bearing
+  HWPX is refused before execution. The certificate is captured but not semantically
   validated, dependency closure is `unknown`, comparison is `unknown`, render
   is `not_run`, proof is `none`, submission is false, and promotion is
   `not_run`. This lane never feeds `doc_backend`, Stage 0/5/6, `new_report`,
@@ -64,6 +64,17 @@ the kernel's contract shape.
   `comparison: {state: unknown}`, `render: {state: not_run}`, `proof_grade: none`,
   `submission_grade: false`, and `promotion: not_run`; no release switch or
   existing runtime/certificate behavior changes.
+
+- **T154:** clarified the T150 execution boundary. Windows uses
+  `windows_job_kill_on_close_v1`; POSIX uses `posix_process_group_v1`.
+  `execution.descendant_containment` and
+  `execution.evidence_authentication` remain `not_established`: ordinary
+  descendants that stay in the Job/process group are cleaned, but a POSIX
+  `setsid()` descendant and brokered processes outside that boundary are not
+  claimed. The lane supplies no memory, process-count, CPU, filesystem, or
+  network isolation. Receipt verification rebinds current artifact and receipt
+  bytes but does not authenticate child-process evidence; proof remains `none`,
+  submission `false`, and promotion `not_run`.
 
 - **T93:** hardened the generic document-evidence receipt and artifact
   custody boundary. Captures now require no-follow regular one-link files,
