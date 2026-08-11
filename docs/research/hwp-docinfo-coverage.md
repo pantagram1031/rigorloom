@@ -57,13 +57,53 @@ python pipeline/scripts/hwp_docinfo_coverage.py verify INPUT.hwp --coverage-root
 The only public artifact is
 `hwp-docinfo-coverage/<run-id>/receipt.json`. The receipt carries only the
 current source hash/byte/version descriptor, closed count keys, aggregate
-counts, closed states, and schema-owned reason tokens. It carries no raw IDs,
+counts, closed states, and reason tokens (see below). It carries no raw IDs,
 source text, style names, numbering formats, bullet glyphs, raw record bytes,
 metadata, absolute paths, argv, stdout, or stderr. Verification rereads the
 current source and receipt and rejects drift, forged eligibility, noncanonical
 JSON, receipt hard links, symlinks/reparse paths, changed roots, and unexpected
 run layout. A hardlinked source is permitted because the receipt binds the
 captured source bytes rather than claiming exclusive custody of the input.
+
+## Reason tokens
+
+The spelling of a reason is part of the contract, and the two spellings mean
+different things.
+
+- **Dotted** (`docinfo.…`, `bodytext.…`) is a claim about the scanned
+  document's structure, prefixed by the stream it concerns. These 31 tokens are
+  the `blocking_tokens` vocabulary and follow the same convention as
+  `supported_tokens`.
+- **Underscore** (`input_unavailable`, `receipt_not_canonical`, …) means the
+  run could not proceed. These 20 tokens say nothing about the document, which
+  is the point: a missing file is not a finding about a form.
+
+The first release of this lane got this wrong in three ways at once, and the
+corrections are worth recording because nothing caught them for a whole lane:
+23 dotted tokens were declared of which **22 were raised by no code path**
+(including `docinfo.version_tail`, so the receipt advertised a version-tail
+distinction the scanner cannot actually make); one logical condition was
+spelled two ways, `bodytext.paragraph_invalid` at the ParaHeader length check
+and `bodytext_paragraph_invalid` three branches later; and
+`bodytext.envelope_incomplete` — the only reason the entire public corpus
+produces — appeared in no declared set. The root cause is plain in hindsight:
+exactly one test asserted a reason string, so the other thirty were free to
+drift.
+
+`test_reason_vocabulary_matches_the_source` now parses every reason literal out
+of the module and asserts set equality in both directions, plus disjointness,
+so a divergence has to announce itself. Representative refusals also assert
+their exact reason, anchoring the vocabulary to behaviour rather than only to
+source text.
+
+**Stated limit.** `reason` is not validated against these sets at runtime. A
+refusal can carry a reason raised upstream by `diagnostic_candidate_core`
+(5 literals), `hwp_ingress` (127) or `hwp_source_coverage` (48); closing that
+would require a cross-module reason registry of roughly 200 tokens over four
+modules, which is its own reviewed slice rather than a change to this lane.
+What is verified meanwhile is the property that matters for privacy: every
+upstream reason is a fixed literal, with no f-string, `%`, `format` or
+concatenation, so no path or filename can reach a receipt through this field.
 
 ## Version policy and sources
 
