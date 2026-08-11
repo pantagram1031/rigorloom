@@ -12,11 +12,13 @@ import json
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import stat
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,7 @@ from typing import Callable
 
 import feature_extract
 import receipt_sign
+import diagnostic_candidate_core
 
 
 SCHEMA_VERSION = 1
@@ -85,6 +88,484 @@ def _sha256_file(path: str | Path) -> str:
 
 def _sha256_payload(payload) -> str:
     return hashlib.sha256(_json_bytes(payload)).hexdigest()
+
+
+PRIVATE_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _private_json_bytes(payload: dict) -> bytes:
+    """Encode a private measure/certificate artifact once before publication."""
+    try:
+        return (json.dumps(
+            payload, ensure_ascii=False, indent=2, allow_nan=False,
+        ) + "\n").encode("utf-8")
+    except ValueError as exc:
+        if "Out of range float values" in str(exc):
+            raise ValueError("nonfinite_json_value") from exc
+        raise
+
+
+def _private_capture_bound(binding, name: str, *, lexical_path: Path | None = None,
+                           parent_guard: dict | None = None):
+    """Capture one bounded generation from one opened no-follow handle.
+
+    Publication cleanup uses the held directory descriptor.  The final
+    success check additionally supplies ``lexical_path`` so the requested
+    output spelling is reopened no-follow and rebound to the same generation
+    immediately before return.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    if parent_guard is not None:
+        diagnostic_candidate_core.check_root_guard(parent_guard)
+    if lexical_path is not None:
+        try:
+            fd = os.open(str(lexical_path), flags)
+        except (OSError, TypeError, ValueError) as exc:
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed") from exc
+    elif binding.fd is not None:
+        try:
+            fd = os.open(name, flags, dir_fd=binding.fd)
+        except (OSError, TypeError, ValueError) as exc:
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed") from exc
+    else:
+        fd = binding.open_file(name, flags)
+    try:
+        before = os.fstat(fd)
+        if parent_guard is not None:
+            diagnostic_candidate_core.check_root_guard(parent_guard)
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if (not stat.S_ISREG(before.st_mode)
+                or getattr(before, "st_file_attributes", 0) & reparse
+                or before.st_size < 0
+                or before.st_size > PRIVATE_ARTIFACT_MAX_BYTES):
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                fd, min(65536, PRIVATE_ARTIFACT_MAX_BYTES - total + 1),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > PRIVATE_ARTIFACT_MAX_BYTES:
+                raise diagnostic_candidate_core.CoreError(
+                    "private_output_changed")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(fd)
+        stable = (
+            getattr(before, "st_dev", 0), getattr(before, "st_ino", 0),
+            before.st_size, getattr(before, "st_nlink", 0),
+            getattr(before, "st_mtime_ns", 0),
+            getattr(before, "st_ctime_ns", 0),
+        )
+        final = (
+            getattr(after, "st_dev", 0), getattr(after, "st_ino", 0),
+            after.st_size, getattr(after, "st_nlink", 0),
+            getattr(after, "st_mtime_ns", 0),
+            getattr(after, "st_ctime_ns", 0),
+        )
+        if stable != final or after.st_size != len(raw):
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed")
+
+        # Rebind the path spelling to the same opened generation while the
+        # handle remains live.  POSIX uses the held dirfd; Windows' held
+        # directory handle blocks parent deletion/rename.
+        if lexical_path is not None:
+            path_info = lexical_path.lstat()
+        elif binding.fd is not None:
+            path_info = os.stat(name, dir_fd=binding.fd, follow_symlinks=False)
+        else:
+            path_info = (binding.path / name).lstat()
+        if parent_guard is not None:
+            diagnostic_candidate_core.check_root_guard(parent_guard)
+        if ((getattr(path_info, "st_dev", 0), getattr(path_info, "st_ino", 0),
+             getattr(path_info, "st_size", 0),
+             getattr(path_info, "st_nlink", 0),
+             getattr(path_info, "st_mtime_ns", 0),
+             getattr(path_info, "st_ctime_ns", 0),
+             stat.S_IFMT(getattr(path_info, "st_mode", 0)),
+             getattr(path_info, "st_file_attributes", 0))
+                != (getattr(after, "st_dev", 0), getattr(after, "st_ino", 0),
+                    getattr(after, "st_size", 0),
+                    getattr(after, "st_nlink", 0),
+                    getattr(after, "st_mtime_ns", 0),
+                    getattr(after, "st_ctime_ns", 0),
+                    stat.S_IFMT(getattr(after, "st_mode", 0)),
+                    getattr(after, "st_file_attributes", 0))):
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed")
+
+        # The path rebind itself is a race seam: a same-size in-place write
+        # can occur immediately after the path stat.  Rewind the still-held
+        # descriptor and read a second generation before returning; no path
+        # operation follows this final raw/identity check.
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            second_chunks: list[bytes] = []
+            second_total = 0
+            while True:
+                chunk = os.read(
+                    fd, min(65536,
+                           PRIVATE_ARTIFACT_MAX_BYTES - second_total + 1),
+                )
+                if not chunk:
+                    break
+                second_total += len(chunk)
+                if second_total > PRIVATE_ARTIFACT_MAX_BYTES:
+                    raise diagnostic_candidate_core.CoreError(
+                        "private_output_changed")
+                second_chunks.append(chunk)
+            second_raw = b"".join(second_chunks)
+            final_after = os.fstat(fd)
+        except diagnostic_candidate_core.CoreError:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed") from exc
+        if ((second_raw != raw or second_total != len(raw)
+             or getattr(final_after, "st_dev", 0)
+                != getattr(after, "st_dev", 0)
+             or getattr(final_after, "st_ino", 0)
+                != getattr(after, "st_ino", 0)
+             or getattr(final_after, "st_size", 0)
+                != getattr(after, "st_size", 0)
+             or getattr(final_after, "st_nlink", 0)
+                != getattr(after, "st_nlink", 0)
+             or getattr(final_after, "st_mtime_ns", 0)
+                != getattr(after, "st_mtime_ns", 0)
+             or getattr(final_after, "st_ctime_ns", 0)
+                != getattr(after, "st_ctime_ns", 0))):
+            raise diagnostic_candidate_core.CoreError(
+                "private_output_changed")
+        identity = (
+            getattr(final_after, "st_dev", 0),
+            getattr(final_after, "st_ino", 0),
+            second_total, getattr(final_after, "st_mtime_ns", 0),
+            getattr(final_after, "st_ctime_ns", 0),
+            hashlib.sha256(second_raw).hexdigest(),
+        )
+        return identity, getattr(final_after, "st_nlink", 0), second_raw
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _private_bound_identity(binding, name: str):
+    identity, nlink, _ = _private_capture_bound(binding, name)
+    return identity, nlink
+
+
+def _private_same_identity(actual, expected) -> bool:
+    return diagnostic_candidate_core.same_file_identity(actual, expected)
+
+
+def _private_bound_rename(binding, source: str, destination: str) -> None:
+    if binding.fd is not None:
+        os.rename(source, destination, src_dir_fd=binding.fd,
+                  dst_dir_fd=binding.fd)
+    else:
+        binding.check()
+        os.rename(str(binding.path / source), str(binding.path / destination))
+
+
+def _private_bound_link(binding, source: str, destination: str) -> None:
+    if binding.fd is not None:
+        binding.check()
+        os.link(source, destination, src_dir_fd=binding.fd,
+                dst_dir_fd=binding.fd)
+    else:
+        binding.link(binding.path / source, destination)
+
+
+def _private_restore_quarantine(binding, quarantine: str, original: str) -> None:
+    try:
+        _private_bound_link(binding, quarantine, original)
+    except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+        return
+    try:
+        if binding.fd is not None:
+            os.unlink(quarantine, dir_fd=binding.fd)
+        else:
+            binding.unlink(quarantine)
+    except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+        pass
+
+
+def _private_quarantine_owned(binding, name: str, expected,
+                              *, allow_partial: bool = False) -> bool:
+    """Move a candidate to a unique bound name before identity inspection."""
+    quarantine = f".{name}.rollback.{secrets.token_hex(16)}"
+    try:
+        _private_bound_rename(binding, name, quarantine)
+    except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+        return False
+    try:
+        actual, nlink, observed = _private_capture_bound(binding, quarantine)
+        owned = _private_same_identity(actual, expected)
+        if allow_partial and expected[5] == "":
+            owned = (actual[0], actual[1]) == (expected[0], expected[1])
+        if not owned:
+            _private_restore_quarantine(binding, quarantine, name)
+            return False
+        # Rebind the quarantine generation immediately before deletion.  A
+        # same-name overwrite after the first capture is foreign and must be
+        # restored/preserved rather than unlinked.
+        confirmed, confirmed_nlink, confirmed_raw = _private_capture_bound(
+            binding, quarantine,
+        )
+        if ((not _private_same_identity(confirmed, actual))
+                or confirmed_nlink != nlink or confirmed_raw != observed):
+            _private_restore_quarantine(binding, quarantine, name)
+            return False
+        # Atomically move the confirmed generation once more before deletion.
+        # A replacement after the second capture therefore lands in the final
+        # quarantine name and is rechecked instead of being unlinked blindly.
+        final_name = f"{quarantine}.final.{secrets.token_hex(16)}"
+        try:
+            _private_bound_rename(binding, quarantine, final_name)
+        except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+            _private_restore_quarantine(binding, quarantine, name)
+            return False
+        try:
+            final_actual, final_nlink, final_raw = _private_capture_bound(
+                binding, final_name,
+            )
+            final_owned = _private_same_identity(final_actual, expected)
+            if allow_partial and expected[5] == "":
+                final_owned = (final_actual[0], final_actual[1]) == (
+                    expected[0], expected[1],
+                )
+            if (not final_owned or final_nlink != nlink
+                    or final_raw != observed):
+                _private_restore_quarantine(binding, final_name, name)
+                return False
+            if binding.fd is not None:
+                os.unlink(final_name, dir_fd=binding.fd)
+            else:
+                binding.unlink(final_name)
+            return True
+        except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+            # If the unlink completed but reported a post-commit fault, the
+            # final quarantine is gone and ownership was already resolved.
+            try:
+                if binding.fd is not None:
+                    os.stat(final_name, dir_fd=binding.fd,
+                            follow_symlinks=False)
+                else:
+                    (binding.path / final_name).lstat()
+            except FileNotFoundError:
+                return True
+            except (OSError, TypeError, ValueError):
+                return False
+            _private_restore_quarantine(binding, final_name, name)
+            return False
+    except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+        # If the unlink completed but reported a post-commit fault, the
+        # quarantine is gone and ownership was already resolved.
+        try:
+            if binding.fd is not None:
+                os.stat(quarantine, dir_fd=binding.fd, follow_symlinks=False)
+            else:
+                (binding.path / quarantine).lstat()
+        except FileNotFoundError:
+            return True
+        except (OSError, TypeError, ValueError):
+            return False
+        _private_restore_quarantine(binding, quarantine, name)
+        return False
+
+
+def _private_validate_target(binding, name: str, expected, raw: bytes,
+                             *, lexical_path: Path | None = None,
+                             parent_guard: dict | None = None) -> None:
+    actual, nlink, observed = _private_capture_bound(
+        binding, name, lexical_path=lexical_path,
+        parent_guard=parent_guard,
+    )
+    if (nlink != 1 or not _private_same_identity(actual, expected)
+            or observed != raw):
+        raise diagnostic_candidate_core.CoreError("private_output_changed")
+
+
+def _private_stage_bytes(binding, name: str, raw: bytes):
+    """Create a temp with an owned pre-write identity, then fsync its bytes."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    if binding.fd is not None:
+        binding.check()
+        fd = os.open(name, flags, 0o600, dir_fd=binding.fd)
+    else:
+        fd = binding.open_file(name, flags, 0o600)
+    before = os.fstat(fd)
+    owned_identity = (
+        getattr(before, "st_dev", 0), getattr(before, "st_ino", 0), 0,
+        getattr(before, "st_mtime_ns", 0), getattr(before, "st_ctime_ns", 0), "",
+    )
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            fd = None
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        identity, nlink, observed = _private_capture_bound(binding, name)
+        if nlink != 1 or observed != raw:
+            raise diagnostic_candidate_core.CoreError("private_output_changed")
+        return identity
+    except diagnostic_candidate_core.CoreError as exc:
+        setattr(exc, "private_owned_identity", owned_identity)
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        error = diagnostic_candidate_core.CoreError("private_output_write_failed")
+        setattr(error, "private_owned_identity", owned_identity)
+        raise error from exc
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _write_private_artifact_json(path: str | Path, payload: dict) -> None:
+    """Publish a fresh private measure/certificate artifact with custody."""
+    target = Path(path).expanduser().absolute()
+    parent = target.parent
+    raw = _private_json_bytes(payload)
+    if len(raw) > PRIVATE_ARTIFACT_MAX_BYTES:
+        raise diagnostic_candidate_core.CoreError("private_output_too_large")
+    # Bind the complete lexical parent chain before opening the held leaf.
+    # A regular immediate parent can still be reached through an interior
+    # symlink/reparse alias; reject that spelling rather than allowing the
+    # private artifact to escape the caller's canonical output tree.
+    try:
+        parent_guard = diagnostic_candidate_core.capture_root_guard(
+            parent, parent.resolve(strict=True),
+        )
+        diagnostic_candidate_core.check_root_guard(parent_guard)
+    except diagnostic_candidate_core.CoreError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise diagnostic_candidate_core.CoreError(
+            "private_output_parent_invalid",
+        ) from exc
+    try:
+        binding = diagnostic_candidate_core.DirectoryBinding.open(
+            parent, reason="private_output_parent_invalid",
+        )
+    except diagnostic_candidate_core.CoreError:
+        raise
+
+    temporary = f".{target.name}.{secrets.token_hex(16)}.tmp"
+    staged_identity = None
+    target_identity = None
+    linked = False
+    try:
+        diagnostic_candidate_core.check_root_guard(parent_guard)
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise diagnostic_candidate_core.CoreError("private_output_exists")
+
+        try:
+            staged_identity = _private_stage_bytes(binding, temporary, raw)
+        except diagnostic_candidate_core.CoreError as exc:
+            staged_identity = getattr(exc, "private_owned_identity", None)
+            raise
+        # Staging intentionally changes the held directory's timestamps;
+        # refresh the generation while retaining its device/inode guard.
+        diagnostic_candidate_core.check_root_guard(
+            parent_guard, refresh=True,
+        )
+        # No-replace publication is relative to the held parent.  A target
+        # created after the initial lstat therefore fails without overwrite.
+        diagnostic_candidate_core.check_root_guard(parent_guard)
+        _private_bound_link(binding, temporary, target.name)
+        linked = True
+        target_identity, _ = _private_bound_identity(binding, target.name)
+        if not _private_same_identity(target_identity, staged_identity):
+            raise diagnostic_candidate_core.CoreError("private_output_changed")
+
+        # The parent guard is checked before final artifact validation.  No
+        # path-based work follows the final bound identity check on success.
+        binding.check()
+        diagnostic_candidate_core.check_root_guard(
+            parent_guard, refresh=True,
+        )
+        detached = _private_quarantine_owned(
+            binding, temporary, staged_identity,
+        )
+        try:
+            binding.check()
+            diagnostic_candidate_core.check_root_guard(
+                parent_guard, refresh=True,
+            )
+            _private_validate_target(
+                binding, target.name, staged_identity, raw,
+                lexical_path=target, parent_guard=parent_guard,
+            )
+        except diagnostic_candidate_core.CoreError:
+            if detached:
+                raise
+            raise
+        # If cleanup raised after unlinking the token, target validation above
+        # proves the commit completed; do not turn it into a false failure.
+        temporary = ""
+        return
+    except FileExistsError:
+        raise diagnostic_candidate_core.CoreError("private_output_exists")
+    except (diagnostic_candidate_core.CoreError, OSError, TypeError, ValueError):
+        # Roll back only identities created by this call.  Bound relative
+        # operations remain usable even when the parent spelling was swapped.
+        # A link primitive may create the destination and then raise before
+        # returning (or before this function records ``linked``).  Probe the
+        # target whenever we have the staged identity; the bound quarantine
+        # helper removes it only when it is still ours and preserves foreign
+        # replacements.
+        if staged_identity is not None:
+            removed_target = _private_quarantine_owned(
+                binding, target.name, staged_identity,
+            )
+            if not removed_target and temporary:
+                # If the source temp was replaced just before link, the
+                # operation-created target is a hardlink to that foreign temp.
+                # Remove only the target generation sharing the temp inode;
+                # preserve the foreign temp for the caller.
+                try:
+                    temp_actual, _, _ = _private_capture_bound(
+                        binding, temporary,
+                    )
+                    target_actual, target_nlink, _ = _private_capture_bound(
+                        binding, target.name,
+                    )
+                    if (target_nlink >= 2
+                            and _private_same_identity(
+                                target_actual, temp_actual)):
+                        _private_quarantine_owned(
+                            binding, target.name, temp_actual,
+                        )
+                except (diagnostic_candidate_core.CoreError, OSError,
+                        TypeError, ValueError):
+                    pass
+        if temporary:
+            cleanup_identity = staged_identity
+            if cleanup_identity is not None:
+                _private_quarantine_owned(
+                    binding, temporary, cleanup_identity,
+                    allow_partial=cleanup_identity[5] == "",
+                )
+        raise diagnostic_candidate_core.CoreError("private_output_publish_failed")
+    finally:
+        binding.close()
 
 
 def write_json(path: str | Path, payload: dict) -> None:
@@ -988,8 +1469,14 @@ def main(argv: list[str] | None = None) -> int:
         code = 3
     if getattr(args, "out", None):
         try:
-            write_json(args.out, payload)
+            if args.command in {"measure", "certify"}:
+                _write_private_artifact_json(args.out, payload)
+            else:
+                write_json(args.out, payload)
         except (OSError, TypeError, ValueError):
+            payload = _result(False, ["operation_failed"])
+            code = 3
+        except diagnostic_candidate_core.CoreError:
             payload = _result(False, ["operation_failed"])
             code = 3
     try:
