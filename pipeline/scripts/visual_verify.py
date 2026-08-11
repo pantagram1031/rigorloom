@@ -2158,6 +2158,13 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
                         "dropped: read the render to confirm the seat is "
                         "legible (T40)")
                     report["inherited"] += 1
+                    # One vocabulary for one question (T101). This leg answered
+                    # it first, in form_baseline_* keys; those stay as the
+                    # detail, but the closed tri-state every other
+                    # format_noncompliance leg reports has to be here too, or a
+                    # consumer filtering on it silently skips the strongest
+                    # baseline comparison in the file.
+                    evidence["inherited"] = INHERITED_YES
                     out.append(finding(
                         "fill_charpr_script_inherited", "warn",
                         cls="format_noncompliance",
@@ -2169,6 +2176,20 @@ def check_fill_charpr_script(artifact, expectations, baseline_form=None):
                     "the blank form's exact run in the same seat carries a "
                     "DIFFERENT signature, so the fill changed it")
         evidence["form_baseline_note"] = form_seat_note
+        # T101, same vocabulary as every other format_noncompliance leg. "no"
+        # is claimed only when the blank form's own run in this seat was
+        # positively identified AND its signature differs — that is the one
+        # case where the fill demonstrably changed it. Every other outcome (no
+        # .hwpx baseline, the seat not found, an undefined charPr) is UNKNOWN
+        # rather than "no", because failing to find the evidence is not the
+        # same as finding the fill guilty.
+        identified = (form_cid is not None
+                      and form_profiles.get(form_cid) is not None)
+        if identified and evidence.get("form_baseline_differing"):
+            evidence["inherited"] = INHERITED_NO
+        else:
+            evidence["inherited"] = INHERITED_UNKNOWN
+            evidence["inherited_reason"] = form_seat_note
         evidence["note"] = (
             "fill-modified run inherits a script/scale/offset the document "
             "body does not use; nominal height is unchanged so charpr_check "
