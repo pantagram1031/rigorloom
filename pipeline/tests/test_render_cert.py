@@ -638,43 +638,36 @@ class RenderCertTestCase(unittest.TestCase):
         output = parent / "certificate.json"
         payload = {"private": "final-rebind"}
         replacement = b"X" * len(render_cert._private_json_bytes(payload))
-        rebind_calls = 0
+        real_validate = render_cert._private_validate_target
+        real_lstat = Path.lstat
+        mutated = False
 
-        if os.name == "nt":
-            real_lstat = Path.lstat
+        def validate_then_mutate(binding, name, expected, raw, **kwargs):
+            nonlocal mutated
+            if kwargs.get("lexical_path") != output:
+                return real_validate(binding, name, expected, raw, **kwargs)
 
             def lstat_then_mutate(path):
-                nonlocal rebind_calls
+                nonlocal mutated
                 result = real_lstat(path)
-                if path == output:
-                    rebind_calls += 1
-                    # The initial absent-target lstat raises before this
-                    # wrapper can count; the second successful target lstat
-                    # is the final capture path-rebind seam.
-                    if rebind_calls == 2:
-                        output.write_bytes(replacement)
+                if path == output and not mutated:
+                    output.write_bytes(replacement)
+                    mutated = True
                 return result
 
-            patcher = mock.patch.object(Path, "lstat", new=lstat_then_mutate)
-        else:
-            real_stat = render_cert.os.stat
+            # Scope the mutation to the final lexical validation.  POSIX and
+            # Windows take different earlier identity paths, so counting raw
+            # os.stat calls made this regression miss the Linux seam in CI.
+            with mock.patch.object(Path, "lstat", new=lstat_then_mutate):
+                return real_validate(binding, name, expected, raw, **kwargs)
 
-            def stat_then_mutate(path, *args, **kwargs):
-                nonlocal rebind_calls
-                result = real_stat(path, *args, **kwargs)
-                if path == output.name and kwargs.get("dir_fd") is not None:
-                    rebind_calls += 1
-                    if rebind_calls == 2:
-                        output.write_bytes(replacement)
-                return result
-
-            patcher = mock.patch.object(render_cert.os, "stat",
-                                        side_effect=stat_then_mutate)
-
-        with patcher:
+        with mock.patch.object(
+                render_cert, "_private_validate_target",
+                side_effect=validate_then_mutate):
             with self.assertRaises(diagnostic_candidate_core.CoreError):
                 render_cert._write_private_artifact_json(output, payload)
 
+        self.assertTrue(mutated)
         self.assertEqual(output.read_bytes(), replacement)
 
     def test_private_certify_final_lexical_capture_rejects_parent_swap(self):
