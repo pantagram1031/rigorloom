@@ -520,8 +520,14 @@ def _build_payload(*, binary: dict[str, Any], source: dict[str, Any],
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
-    return (json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                       separators=(",", ":")) + "\n").encode("utf-8")
+    try:
+        return (json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"), allow_nan=False)
+                + "\n").encode("utf-8")
+    except ValueError as exc:
+        if "Out of range float values" in str(exc):
+            raise RuntimeRefusal("receipt_nonfinite_value") from exc
+        raise
 
 
 def _validate_payload(payload: Any, *, run_id: str | None = None,
@@ -626,7 +632,9 @@ def _read_receipt(path: Path, *, allow_hardlink: bool = False,
         snapshot = _capture_file(path, MAX_RECEIPT_BYTES, "receipt_invalid",
                                  allow_hardlink=allow_hardlink)
         payload = json.loads(snapshot["data"].decode("utf-8"),
-                             object_pairs_hook=_no_duplicate_keys)
+                             object_pairs_hook=_no_duplicate_keys,
+                             parse_constant=_reject_nonfinite_json_constant,
+                             parse_float=_parse_finite_json_float)
         _validate_payload(
             payload, run_id=run_id,
             require_local_process_policy=not allow_cross_host_process_policy)
@@ -646,6 +654,17 @@ def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise RuntimeRefusal("receipt_duplicate_key")
         result[key] = value
     return result
+
+
+def _reject_nonfinite_json_constant(_constant: str) -> None:
+    raise RuntimeRefusal("receipt_nonfinite_value")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise RuntimeRefusal("receipt_nonfinite_value")
+    return parsed
 
 
 def _node_identity(path: Path) -> tuple[int, int, int, int, int, str]:
@@ -1137,8 +1156,9 @@ def verify_runtime(*, workspace: str | Path, run_id: str,
 
 def _print(payload: dict[str, Any]) -> None:
     try:
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False,
-                                    sort_keys=True, separators=(",", ":")) + "\n")
+        sys.stdout.write(_json_bytes(payload).decode("utf-8"))
+    except RuntimeRefusal:
+        raise
     except (BrokenPipeError, OSError, UnicodeError):
         raise RuntimeRefusal("output_write_failed")
 

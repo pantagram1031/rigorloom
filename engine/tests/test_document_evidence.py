@@ -379,6 +379,45 @@ def test_receipt_unique_key_reordering_and_whitespace_remain_accepted(tmp_path):
     assert loaded["schema"] == evidence.RECEIPT_SCHEMA
 
 
+@pytest.mark.parametrize(
+    "literal", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_receipt_nonfinite_json_values_are_rejected_at_decode_and_public_load(
+    tmp_path, literal,
+):
+    ws = _workspace(tmp_path)
+    receipt_path = ws / evidence.RECEIPT_REL
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    secret = "canary-C:/Users/Alice/secret.hwpx"
+    raw = (f'{{"{secret}":{{"value":{literal}}}}}').encode("ascii")
+    receipt_path.write_bytes(raw)
+
+    with pytest.raises(evidence.EvidenceError) as direct:
+        evidence._decode_receipt_bytes(raw)
+    assert [item["code"] for item in direct.value.errors] == [
+        "receipt_nonfinite_value"
+    ]
+
+    with pytest.raises(evidence.EvidenceError) as public:
+        evidence.load_and_validate_receipt(ws)
+    assert [item["code"] for item in public.value.errors] == [
+        "receipt_nonfinite_value"
+    ]
+    assert secret not in str(public.value.errors)
+
+
+def test_receipt_finite_exponent_remains_valid_json():
+    assert evidence._decode_receipt_bytes(b'{"value":1e3}') == {"value": 1000.0}
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_receipt_nonfinite_values_are_rejected_by_canonical_writer(value):
+    with pytest.raises(evidence.EvidenceError) as exc:
+        evidence._canonical_bytes({"nested": {"value": value}})
+    assert [item["code"] for item in exc.value.errors] == [
+        "receipt_nonfinite_value"
+    ]
+
+
 def test_backend_evidence_pairing_and_roles_fail_closed(tmp_path):
     ws = _workspace(tmp_path)
     source = _write_bound(ws, "form_copy.hwpx", b"source")

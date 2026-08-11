@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as _datetime
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -417,6 +418,22 @@ class EvidenceError(ValueError):
         return {"ok": False, "errors": self.errors}
 
 
+def _reject_nonfinite_values(value: Any, path: str = "receipt") -> None:
+    """Reject JSON numeric values outside RFC 8259's finite set."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise EvidenceError({
+            "code": "receipt_nonfinite_value",
+            "path": path,
+            "message": "receipt contains a non-finite JSON number",
+        })
+    if isinstance(value, dict):
+        for child in value.values():
+            _reject_nonfinite_values(child, path)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _reject_nonfinite_values(child, path)
+
+
 def _now_utc() -> str:
     return (_datetime.datetime.now(_datetime.timezone.utc)
             .isoformat(timespec="seconds").replace("+00:00", "Z"))
@@ -426,7 +443,9 @@ def _canonical_bytes(payload: dict[str, Any], *, omit_hash: bool = False) -> byt
     value = dict(payload)
     if omit_hash:
         value.pop("receipt_sha256", None)
-    return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
+    _reject_nonfinite_values(value)
+    return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2,
+                       allow_nan=False)
             + "\n").encode("utf-8")
 
 
@@ -1347,6 +1366,7 @@ def validate_receipt(
     if not isinstance(receipt, dict):
         raise EvidenceError({"code": "invalid_receipt", "path": "receipt",
                              "message": "receipt must be a JSON object"})
+    _reject_nonfinite_values(receipt)
     _walk_forbidden(receipt, "receipt", errors)
     _validate_key_set(
         receipt, _TOP_LEVEL_ALLOWED, _TOP_LEVEL_REQUIRED, "receipt", errors,
@@ -1937,11 +1957,28 @@ def _reject_duplicate_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]
     return payload
 
 
+def _reject_nonfinite_json_constant(_constant: str) -> None:
+    raise EvidenceError({
+        "code": "receipt_nonfinite_value",
+        "path": RECEIPT_REL.as_posix(),
+        "message": "receipt contains a non-finite JSON number",
+    })
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        _reject_nonfinite_json_constant(value)
+    return parsed
+
+
 def _decode_receipt_bytes(raw: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(
             raw.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_json_pairs,
+            parse_constant=_reject_nonfinite_json_constant,
+            parse_float=_parse_finite_json_float,
         )
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise EvidenceError({
