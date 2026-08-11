@@ -161,6 +161,7 @@ _CORE_REQUIRED_FILES = (
     "pipeline/scripts/hwp_source_coverage.py",
     "pipeline/scripts/hwp_docinfo_coverage.py",
     "pipeline/scripts/hwp_equation_diagnostic.py",
+    "pipeline/scripts/hwpx_definition_graph.py",
     "pipeline/scripts/renderer_runtime_v2.py",
     "pipeline/scripts/render_cert_envelope_v2.py",
     "pipeline/scripts/renderer_certificate_composite_v1.py",
