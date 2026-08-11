@@ -261,6 +261,18 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T119:** `check_hr` and `check_minwon` publish the same rule-outcome map, H1
+  and P2 assert outcomes, and T118's `KNOWN_NAME_SEARCH_DEBT` is now empty — no
+  shipped task searches for a rule name in a verdict any more. `rule_states` lives
+  in `pipeline/scripts/checker_base.py`, one implementation for all three
+  checkers rather than a copy each (T101), and a test asserts none of them
+  re-declares the state vocabulary. The hr (18) and minwon (16) rule inventories
+  are derived from what each module emits, and the four names the two tasks assert
+  were measured `clean` on their pristine forms first. The inventory guard
+  deliberately asserts only `emitted <= declared`: `check_grant` emits several
+  rules from data tables that no literal scanner can see, so demanding equality
+  would make you delete a legitimate declaration.
+
 - **T118:** an eval task asserts a rule's **outcome**, never the presence of its
   name in a verdict JSON. `evals/README.md` documented "a name absent means it ran
   and passed"; that was never true, because a checker writes a rule name as a

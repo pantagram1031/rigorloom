@@ -85,7 +85,9 @@ for _dir in (CORE_SCRIPTS_DIR, ENGINE_SCRIPTS_DIR, SCRIPTS_DIR):
     if str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
 
-from checker_base import (  # noqa: E402
+from checker_base import (
+    RULE_STATES,
+    rule_states as _shared_rule_states,  # noqa: E402
     _utf8_stdio,
     cli_main,
     exit_code,
@@ -1277,24 +1279,13 @@ def check(
 #: and could never pass, because ``budget_total_mismatch`` is a permanent
 #: ``skipped`` row (``no_addends``) present even in the pristine form that this
 #: checker grades ``pass`` (T118).
-RULE_STATES = ("hard", "warn", "skipped", "clean")
-
-
 def rule_states(hard, warn, skipped) -> dict:
-    """rule name -> "hard" | "warn" | "skipped" | "clean", for every rule.
+    """This module's rule inventory, delegated to the shared implementation.
 
-    Precedence is severity first: a rule that fired somewhere is reported by its
-    worst outcome, so a rule that both warned and skipped elsewhere still reads
-    as ``warn``. ``clean`` means it ran and found nothing — the thing the old
-    convention tried to express by silence.
+    Kept as a thin wrapper so callers and tests keep one entry point per
+    checker; the behaviour lives in checker_base (T119).
     """
-    states = {}
-    for bucket, rows in (("hard", hard), ("warn", warn), ("skipped", skipped)):
-        for row in rows:
-            name = row.get("code") or row.get("rule")
-            if name in RULES and name not in states:
-                states[name] = bucket
-    return {name: states.get(name, "clean") for name in RULES}
+    return _shared_rule_states(RULES, hard, warn, skipped)
 
 
 def _verdict(artifact_path, classification, hard, warn, info, skipped) -> dict:

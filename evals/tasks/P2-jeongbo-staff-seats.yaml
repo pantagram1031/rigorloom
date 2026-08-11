@@ -161,18 +161,21 @@ machine_checks:
       - "document.cells_changed >= 1"
 
   - id: minwon_staff_rules_were_decided
-    kind: text_absent
+    kind: file
     requires_module: minwon
-    description: staff_seat_filled / staff_seat_removed 가 건너뛰어지지도, 적발되지도 않았는가
-    # The rule name appears in the verdict in exactly two situations: as a
-    # `skipped[].rule` (undecidable — the P1 case) or as a `hard[].code` (the
-    # office's block was written into or deleted). Its ABSENCE from the verdict
-    # is therefore the machine-readable proof that both rules ran and passed —
-    # which is the whole reason this task was added.
-    artifact: "${WORK}/minwon_verdict.json"
-    strings:
-      - "staff_seat_filled"
-      - "staff_seat_removed"
+    description: staff_seat_filled / staff_seat_removed 가 각각 어떤 결과였는지 확인
+    # T119: was text_absent on the rule NAMES. The old comment claimed a name
+    # appears "in exactly two situations", skipped or fired; a checker also
+    # writes it as a positive acknowledgment, so a substring search over the
+    # serialized verdict cannot tell those apart (T118 measured that class).
+    # check_minwon now publishes each rule's outcome. Measured on this form:
+    # both are "clean".
+    path: "${WORK}/minwon_verdict.json"
+    mode: nonempty
+    json_file: "${WORK}/minwon_verdict.json"
+    assert_json:
+      - 'rules.staff_seat_filled != "hard"'
+      - 'rules.staff_seat_removed != "hard"'
 
   - id: minwon_staff_seats_were_recognized
     kind: text_present
