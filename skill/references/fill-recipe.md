@@ -485,6 +485,126 @@ python pipeline/scripts/visual_verify.py \
 
 ---
 
+## 3b. Marking a consent choice (T111)
+
+A 동의서 asks a question and expects the applicant to answer it. That is not a
+fill in the sense the rest of this recipe means — the seat already contains its
+final text — so the steps above do not cover it. Everything below is measured on
+the corpus, not inferred.
+
+**Two shapes, and they are not equally verifiable.** `consent_groups()` in the
+grant module counts options by glyph when at least `min_options` (2) marking
+glyphs are present, and otherwise by *exact* token match against the
+vocabulary's `option_labels`:
+
+| form | inner text | basis | `glyph_bearing` | `required` | `consent_unmarked` |
+|---|---|---|---|---|---|
+| pps-jeongbogonggae-donguiseo | `(예,  아니오)` | tokens | **false** | false | **skipped**, `no_mark_glyphs` |
+| kstartup-jiwon-sincheongseo | `( ■동의함  □동의하지 않음 )` | glyphs | true | true | fires; unmarked + `required` + `final` is HARD |
+
+Both forms carry exactly 2 groups. Exact token match rather than substring is
+load-bearing: `예` is a substring of 예비창업자 / 예시 / 예정.
+
+Every number in that table is pinned by existing regressions rather than
+restated here — `test_donguiseo_offers_two_glyphless_choices`,
+`test_the_glyphless_choices_are_skipped_with_a_reason`, and
+`test_the_consent_choices_are_two_and_both_are_required` in
+`modules/grant/tests/test_grant_corpus.py`. If this table and those tests ever
+disagree, the tests are right.
+
+**The consequence to internalize: on a glyphless form, no gate checks whether
+you marked it.** R4a has nothing to count, so it skips with
+`{"rule": "consent_unmarked", "reason": "no_mark_glyphs", "groups": 2}` — that
+exact line appears in a passing A2 verdict whose consents *were* marked, and it
+would appear identically if they were not. The mark is therefore only ever as
+trustworthy as your own report of it. **Say in your summary which consents you
+marked and with what value**; nothing downstream will say it for you.
+
+**And never choose the answer yourself.** The checker's own wording is the
+policy: marking a consent "is the applicant's decision to make, never the
+tool's". If the operator did not supply a decision, leave the group unmarked and
+report it as unanswered. An unmarked consent is a visible, correctable state; a
+consent you invented is a legal declaration made on someone else's behalf.
+
+### Finding the slots
+
+`form_inspect` marks them, since T110:
+
+```
+python engine/scripts/form_inspect.py $W/form.hwpx --out $W/profile.json
+```
+
+Each `guide_text[]` entry that is a marking site carries `answer_slot`:
+`interrogative_enumeration` (a question plus a parenthesized pair of
+alternatives) or `multiple_mark_slots` (two or more empty `[ ]`/□ slots). Those
+paragraphs are excluded from `removal_targets` — they are marking sites, never
+deletion candidates.
+
+Such an entry also carries **`at_para`**, which is the address an edit takes.
+`para_idx` is not: it is a legacy scan counter, and the two numbers differ on
+every corpus instance.
+
+| form | slot | `para_idx` | `at_para` |
+|---|---|---|---|
+| pps-jeongbogonggae-donguiseo | 수집ㆍ이용 동의 | 39 | **42** |
+| pps-jeongbogonggae-donguiseo | 제3자 제공 동의 | 54 | **58** |
+| jumin-deungchobon-sinchengseo | 등초본 선택 필드 ×2 | 50, 73 | **52, 75** |
+
+`--full-text PARA:N` also takes `at_para`, and it echoes the number back under
+both key names — so passing a `para_idx` there returns a *different paragraph*
+without complaining. `PARA:39` on this form returns an empty paragraph, not the
+consent question. Read `at_para` from the profile; never retype `para_idx`.
+
+`at_para` is omitted rather than guessed when the binding cannot be proven, so
+treat its absence as "no addressable seat" and fall back to matching on text.
+
+### Marking a glyphless group
+
+One call does both occurrences. The two consent questions on
+pps-jeongbogonggae-donguiseo share the identical seat text, so
+`all_occurrences` is the correct scope rather than a shortcut:
+
+```
+python engine/scripts/preedit.py replace $W/filled.hwpx \
+    --map $W/consent.json --out $W/filled2.hwpx
+```
+
+```json
+{"(예,  아니오)": {"text": "(예,  아니오) ⇒ 예", "all_occurrences": true}}
+```
+
+Measured on the corpus form: `{"ok": true, "hits": {"(예,  아니오)": 2},
+"scope": {"(예,  아니오)": "all_occurrences"}}`. Keep the enumeration and append
+the decision — do not overwrite `(예, 아니오)` with `예`, or the question loses
+the options it offered and `consent_option_lost` has a real change to report.
+
+Running `check_grant` on that output: `verdict: pass`, `hard: 0`,
+`consent_groups` still 2 with inner text `예,아니오` — the enumeration survived —
+and `consent_unmarked` still
+`{"reason": "no_mark_glyphs", "groups": 2}`, **byte-identical to the blank
+form's row.** That is the constraint above, demonstrated end to end: the
+checker's output does not move when you answer the question.
+
+If you genuinely need to answer the two questions differently, address them per
+paragraph with the `at_para` values from the table above:
+
+```json
+{"(예,  아니오)": {"text": "(예,  아니오) ⇒ 예", "at_para": 42}}
+```
+
+### What must not move
+
+- The `□ 개인정보 수집ㆍ이용 동의` / `□ … 제3자 제공 동의` lines are **section
+  headings**, not choices — `consent_groups()` does not report them. Their `□`
+  is decoration. Marking or deleting one is wrong in both directions.
+- The consent question paragraph itself survives, and since T110 it is no longer
+  in `check_residue`'s forbidden set, so no `--keep` is needed for it.
+- **Still needed:** the statutory notice paragraphs on the same form
+  (`※ … 동의를 거부할 권리가 있습니다`, PIPA §22 고지) are still classified as
+  removable guide text, so they must be named in an explicit `--keep` or the
+  residue gate HARDs on correct content. That is a known open defect, not a
+  property of consent forms.
+
 ## 4. What a correct run looks like
 
 Exit **0**, and the verdict says all of this:
