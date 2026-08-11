@@ -391,6 +391,18 @@ workspaces/  local run data; ignored by Git
   stdout/privacy, authentication, routing, proof, submission, or release-switch
   semantics. `render_probe` publishes only
   `render_certificate_configured` and closed `render_certificate_reason`.
+  T159 adds the private measurement binding boundary: each manifest id is one
+  safe non-dot segment validated before `mkdir`, `argv[0]` must be the
+  configured binary, and bounded no-follow regular one-link source, reference,
+  and candidate snapshots must match before and after render. The manifest
+  reference hash is exact; fresh candidate or alternate output is refused,
+  and `candidate_pdf` may not alias the manifest reference PDF or source
+  document. `issue_certificate` revalidates the live manifest and all
+  document/reference/candidate path and hash fields, then performs a second
+  rebind before HMAC. Measure/certify payloads and stdout remain private and
+  pathful; public verify stays at four fields and check at five. Generic
+  `write_json`/`doc_backend`, authentication, execution, eligibility, routing,
+  proof, submission, promotion, and both false release switches are unchanged.
   `certified_runtime_unbound` prevents `submission_preflight` from accepting
   the grade until a separately reviewed runtime binding is released. T151's
   `rigorloom/render-cert-envelope/v2` pathless envelope is an independent

@@ -21,7 +21,7 @@ import tempfile
 import stat
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 import feature_extract
@@ -31,9 +31,15 @@ import diagnostic_candidate_core
 
 SCHEMA_VERSION = 1
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MANIFEST_ID_RE = re.compile(r"^[^./\\]+$")
 DEFAULT_DPI = 300
 DEFAULT_RENDER_TIMEOUT = 240.0
 CERTIFICATE_HMAC_FIELD = "certificate_hmac_sha256"
+
+
+def _absolute_lexical(path: str | Path) -> Path:
+    """Normalize ``..`` without resolving a symlink leaf or ancestor."""
+    return Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
 
 
 def _json_bytes(payload) -> bytes:
@@ -632,6 +638,72 @@ def _validate_feature_map(value, *, allow_none: bool = False) -> dict[str, int] 
     return dict(sorted(normalized.items()))
 
 
+def _validate_manifest_document_id(value) -> str:
+    if (not isinstance(value, str) or not value
+            or MANIFEST_ID_RE.fullmatch(value) is None
+            or value in {".", ".."}
+            or ":" in value
+            or "\x00" in value
+            or PureWindowsPath(value).drive
+            or PureWindowsPath(value).is_absolute()):
+        raise ValueError("manifest_document_id_invalid")
+    return value
+
+
+def _capture_private_generation(path: str | Path, reason: str) -> dict:
+    """Capture one no-follow, bounded, one-link file generation.
+
+    Measurement records are private pathful artifacts, but their hashes must
+    still describe a single stable generation rather than a path that can be
+    replaced between ``stat`` and read.  The parent is held for the complete
+    capture and the returned raw bytes are retained only in-process.
+    """
+    try:
+        target = Path(path).expanduser().absolute()
+        parent = target.parent
+        resolved_parent = parent.resolve(strict=True)
+        guard = diagnostic_candidate_core.capture_root_guard(parent, resolved_parent)
+        diagnostic_candidate_core.check_root_guard(guard)
+        binding = diagnostic_candidate_core.DirectoryBinding.open(
+            parent, reason=reason,
+        )
+        try:
+            diagnostic_candidate_core.check_root_guard(guard)
+            identity, nlink, raw = _private_capture_bound(
+                binding, target.name, parent_guard=guard,
+            )
+            diagnostic_candidate_core.check_root_guard(guard)
+            if nlink != 1:
+                raise diagnostic_candidate_core.CoreError(reason)
+            return {
+                "path": target,
+                "identity": identity,
+                "nlink": nlink,
+                "raw": raw,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            }
+        finally:
+            binding.close()
+    except diagnostic_candidate_core.CoreError as exc:
+        raise ValueError(reason) from exc
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        # Do not expose a private path or platform detail in measurement
+        # records; callers map this stable token to their record reason.
+        raise ValueError(reason) from exc
+
+
+def _same_private_generation(first: dict, second: dict) -> bool:
+    return (
+        isinstance(first, dict) and isinstance(second, dict)
+        and first.get("sha256") == second.get("sha256")
+        and first.get("bytes") == second.get("bytes")
+        and first.get("nlink") == second.get("nlink") == 1
+        and _private_same_identity(first.get("identity"), second.get("identity"))
+        and first.get("raw") == second.get("raw")
+    )
+
+
 def load_manifest(path: str | Path, *, require_ready: bool = True) -> dict:
     manifest_path = Path(path)
     payload = _read_json(manifest_path)
@@ -645,8 +717,11 @@ def load_manifest(path: str | Path, *, require_ready: bool = True) -> dict:
     for raw in documents:
         if not isinstance(raw, dict):
             raise ValueError("every corpus entry must be an object")
-        entry_id = raw.get("id")
-        if not isinstance(entry_id, str) or not entry_id or entry_id in seen:
+        try:
+            entry_id = _validate_manifest_document_id(raw.get("id"))
+        except ValueError:
+            raise
+        if entry_id in seen:
             raise ValueError("corpus entry ids must be unique non-empty strings")
         seen.add(entry_id)
         if raw.get("split") not in {"train", "holdout"}:
@@ -846,6 +921,16 @@ def resolve_renderer(
             ]
         else:
             renderer_argv = [str(binary), "{in}", "{out}"]
+    if (not isinstance(renderer_argv, list) or not renderer_argv
+            or not isinstance(renderer_argv[0], str)
+            or not renderer_argv[0].strip()):
+        raise ValueError("renderer_argv_invalid")
+    try:
+        argv_binary = Path(renderer_argv[0]).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError("renderer_argv_binary_mismatch") from exc
+    if argv_binary != binary:
+        raise ValueError("renderer_argv_binary_mismatch")
     version = renderer_version or _probe_renderer_version(binary)
     if not version:
         raise ValueError(f"renderer version probe failed: {binary}")
@@ -896,23 +981,46 @@ def measure_corpus(
             "id": entry["id"], "split": entry["split"],
             "features": entry["features"], "ok": False, "reason_codes": [],
         }
-        document = (manifest_path.parent / entry["document"]).resolve()
-        reference = (manifest_path.parent / entry["reference_pdf"]["path"]).resolve()
+        document = _absolute_lexical(manifest_path.parent / entry["document"])
+        reference = _absolute_lexical(
+            manifest_path.parent / entry["reference_pdf"]["path"],
+        )
         candidate_dir = root / entry["id"]
-        candidate_dir.mkdir(parents=True, exist_ok=True)
         candidate = candidate_dir / "candidate.pdf"
+        generated = candidate_dir / f"{document.stem}.pdf"
         try:
-            if not document.is_file():
-                raise ValueError("document_missing")
-            if not reference.is_file():
-                raise ValueError("reference_pdf_missing")
-            if _sha256_file(reference) != entry["reference_pdf"]["sha256"]:
+            candidate_dir.mkdir(parents=True, exist_ok=True)
+            dir_info = candidate_dir.lstat()
+            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if (not stat.S_ISDIR(dir_info.st_mode) or stat.S_ISLNK(dir_info.st_mode)
+                    or getattr(dir_info, "st_file_attributes", 0) & reparse):
+                raise ValueError("renderer_output_path_invalid")
+            # Every renderer run owns a fresh output generation.  A stale
+            # candidate or alternate renderer filename is never overwritten.
+            for stale in (candidate, generated):
+                try:
+                    stale.lstat()
+                except FileNotFoundError:
+                    continue
+                raise ValueError("renderer_output_stale")
+
+            document_before = _capture_private_generation(
+                document, "document_missing",
+            )
+            reference_before = _capture_private_generation(
+                reference, "reference_pdf_missing",
+            )
+            if reference_before["sha256"] != entry["reference_pdf"]["sha256"]:
                 raise ValueError("reference_pdf_hash_mismatch")
-            actual_features = feature_extract.extract_feature_counts(document)
+            actual_features = feature_extract.extract_feature_counts(
+                document_before["path"],
+            )
             if actual_features != entry["features"]:
                 raise ValueError("manifest_feature_mismatch")
             if render_callback is not None:
-                callback_output = render_callback(entry, document, candidate)
+                callback_output = render_callback(
+                    entry, document_before["path"], candidate,
+                )
                 if callback_output is not None:
                     callback_path = Path(callback_output)
                     if callback_path.resolve() != candidate.resolve():
@@ -932,21 +1040,42 @@ def measure_corpus(
                 }
                 if completed.returncode != 0:
                     raise ValueError("renderer_nonzero")
-                generated = candidate_dir / f"{document.stem}.pdf"
                 if not candidate.is_file() and generated.is_file():
                     generated.replace(candidate)
-            if not candidate.is_file():
-                raise ValueError("renderer_output_missing")
+            if generated != candidate:
+                try:
+                    generated.lstat()
+                except FileNotFoundError:
+                    pass
+                else:
+                    # Two renderer output generations are ambiguous; do not
+                    # silently choose one while leaving the other unbound.
+                    raise ValueError("renderer_output_ambiguous")
+            document_after = _capture_private_generation(
+                document, "document_changed",
+            )
+            if not _same_private_generation(document_before, document_after):
+                raise ValueError("document_changed")
+            reference_after = _capture_private_generation(
+                reference, "reference_pdf_changed",
+            )
+            if not _same_private_generation(reference_before, reference_after):
+                raise ValueError("reference_pdf_changed")
+            candidate_after = _capture_private_generation(
+                candidate, "renderer_output_missing",
+            )
             record.update({
                 "ok": True,
-                "document": str(document),
-                "document_sha256": _sha256_file(document),
-                "reference_pdf": str(reference),
-                "reference_pdf_sha256": _sha256_file(reference),
-                "candidate_pdf": str(candidate),
-                "candidate_pdf_sha256": _sha256_file(candidate),
+                "document": str(document_before["path"]),
+                "document_sha256": document_before["sha256"],
+                "reference_pdf": str(reference_before["path"]),
+                "reference_pdf_sha256": reference_before["sha256"],
+                "candidate_pdf": str(candidate_after["path"]),
+                "candidate_pdf_sha256": candidate_after["sha256"],
                 "renderer_run": completed_record,
-                "metrics": compare_pdf_metrics(reference, candidate, dpi=dpi),
+                "metrics": compare_pdf_metrics(
+                    reference_before["path"], candidate_after["path"], dpi=dpi,
+                ),
             })
         except subprocess.TimeoutExpired:
             record["reason_codes"].append("renderer_timeout")
@@ -1079,6 +1208,117 @@ def _measurement_records_for_manifest(
     return normalized
 
 
+def _validate_measurement_generations(
+    manifest_path: Path, manifest_documents: list[dict], records: list[dict],
+    measurement_base: Path,
+) -> list[dict]:
+    """Rebind every recorded source/reference/candidate before signing.
+
+    The measurement JSON is an operator-private artifact, but it is still an
+    input to a certificate claim.  A path or digest supplied by that artifact
+    is accepted only when it names the manifest's document/reference and a
+    fresh candidate generation whose current bounded snapshot matches exactly.
+    """
+    normalized = _measurement_records_for_manifest(manifest_documents, records)
+    captured: list[tuple[dict, dict, dict, dict]] = []
+    for entry, record in zip(manifest_documents, normalized):
+        required = (
+            "document", "document_sha256", "reference_pdf",
+            "reference_pdf_sha256", "candidate_pdf", "candidate_pdf_sha256",
+        )
+        if any(key not in record for key in required):
+            raise ValueError("measurement_generation_binding_missing")
+        if any(
+            not isinstance(record[key], str) or not record[key]
+            for key in ("document", "reference_pdf", "candidate_pdf")
+        ):
+            raise ValueError("measurement_generation_binding_invalid")
+        if any(
+            not isinstance(record[key], str)
+            or SHA256_RE.fullmatch(record[key].lower()) is None
+            for key in (
+                "document_sha256", "reference_pdf_sha256", "candidate_pdf_sha256",
+            )
+        ):
+            raise ValueError("measurement_generation_hash_invalid")
+
+        expected_document = _absolute_lexical(
+            manifest_path.parent / entry["document"],
+        )
+        expected_reference = _absolute_lexical(
+            manifest_path.parent / entry["reference_pdf"]["path"],
+        )
+        try:
+            recorded_document = _absolute_lexical(
+                Path(record["document"]) if Path(record["document"]).is_absolute()
+                else measurement_base / record["document"],
+            )
+            recorded_reference = _absolute_lexical(
+                Path(record["reference_pdf"])
+                if Path(record["reference_pdf"]).is_absolute()
+                else measurement_base / record["reference_pdf"],
+            )
+            recorded_candidate = _absolute_lexical(
+                Path(record["candidate_pdf"])
+                if Path(record["candidate_pdf"]).is_absolute()
+                else measurement_base / record["candidate_pdf"],
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise ValueError("measurement_generation_binding_invalid") from exc
+        if recorded_document != expected_document:
+            raise ValueError("measurement_document_path_mismatch")
+        if recorded_reference != expected_reference:
+            raise ValueError("measurement_reference_path_mismatch")
+        if recorded_candidate in {recorded_document, recorded_reference}:
+            raise ValueError("measurement_candidate_alias")
+
+        document_snapshot = _capture_private_generation(
+            recorded_document, "measurement_document_changed",
+        )
+        reference_snapshot = _capture_private_generation(
+            recorded_reference, "measurement_reference_changed",
+        )
+        candidate_snapshot = _capture_private_generation(
+            recorded_candidate, "measurement_candidate_changed",
+        )
+        if (_private_same_identity(candidate_snapshot["identity"], document_snapshot["identity"])
+                or _private_same_identity(
+                    candidate_snapshot["identity"], reference_snapshot["identity"],
+                )):
+            raise ValueError("measurement_candidate_alias")
+        if document_snapshot["sha256"] != record["document_sha256"].lower():
+            raise ValueError("measurement_document_changed")
+        if reference_snapshot["sha256"] != record["reference_pdf_sha256"].lower():
+            raise ValueError("measurement_reference_changed")
+        if candidate_snapshot["sha256"] != record["candidate_pdf_sha256"].lower():
+            raise ValueError("measurement_candidate_changed")
+        if reference_snapshot["sha256"] != entry["reference_pdf"]["sha256"]:
+            raise ValueError("reference_pdf_hash_mismatch")
+        captured.append((record, document_snapshot, reference_snapshot,
+                         candidate_snapshot))
+    # Rebind every component once more after the complete record set has been
+    # inspected.  A source/reference/candidate mutation between two first
+    # captures must not be able to become a signed measurement by timing its
+    # write in that gap.
+    for record, document_before, reference_before, candidate_before in captured:
+        document_after = _capture_private_generation(
+            document_before["path"], "measurement_document_changed",
+        )
+        reference_after = _capture_private_generation(
+            reference_before["path"], "measurement_reference_changed",
+        )
+        candidate_after = _capture_private_generation(
+            candidate_before["path"], "measurement_candidate_changed",
+        )
+        if not _same_private_generation(document_before, document_after):
+            raise ValueError("measurement_document_changed")
+        if not _same_private_generation(reference_before, reference_after):
+            raise ValueError("measurement_reference_changed")
+        if not _same_private_generation(candidate_before, candidate_after):
+            raise ValueError("measurement_candidate_changed")
+    return normalized
+
+
 def _derive_certificate_claims(
     manifest_documents: list[dict], records, thresholds: dict,
 ) -> dict:
@@ -1152,11 +1392,23 @@ def issue_certificate(
         raise ValueError("measurements do not contain a corpus manifest path")
     manifest_base = measurement_path.parent if measurement_path else Path.cwd()
     manifest_path = _resolve_recorded_path(manifest_raw, manifest_base)
-    if not manifest_path.is_file() or _sha256_file(manifest_path) != manifest_hash:
+    manifest_snapshot = _capture_private_generation(
+        manifest_path, "manifest_changed",
+    )
+    if (not isinstance(manifest_hash, str)
+            or manifest_snapshot["sha256"] != manifest_hash.lower()):
         raise ValueError("measurement corpus manifest hash does not verify")
     manifest = load_manifest(manifest_path, require_ready=True)
+    manifest_final = _capture_private_generation(
+        manifest_path, "manifest_changed",
+    )
+    if not _same_private_generation(manifest_snapshot, manifest_final):
+        raise ValueError("manifest_changed")
+    bound_documents = _validate_measurement_generations(
+        manifest_path, manifest["documents"], documents, manifest_base,
+    )
     claims = _derive_certificate_claims(
-        manifest["documents"], documents, threshold_values,
+        manifest["documents"], bound_documents, threshold_values,
     )
     measurement_records = claims["records"]
     hancom_versions = {entry["hancom_version"] for entry in manifest["documents"]}
