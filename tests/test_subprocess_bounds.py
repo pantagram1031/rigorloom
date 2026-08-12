@@ -22,6 +22,14 @@ to announce itself.
 
 Scope, stated rather than implied:
 
+* The files scanned are the ones **pytest itself** will run, taken from
+  ``pytestconfig.getini("testpaths")`` and expanded the way pytest expands it.
+  The first version of this guard walked the whole checkout instead, and on the
+  operator's bench that reached ``scratch/linux-hwp-poc/src/pyhwp`` — an
+  untracked vendored Python 2 tree whose ``print`` statements made ``ast.parse``
+  raise, so three tests here died on a file that is not part of this project and
+  that no CI job or fresh worktree has (T122). A rule about the suite's own
+  bounds has no business reading anything the suite does not run.
 * ``subprocess.run`` with a ``timeout=`` is the entire surface in the suite
   today — ``check_output``, ``check_call``, ``communicate`` and ``Popen`` carry
   no bound anywhere, and the six ``.wait(timeout=2)`` calls in
@@ -38,7 +46,10 @@ Scope, stated rather than implied:
 from __future__ import annotations
 
 import ast
+import glob
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,12 +62,33 @@ FLOOR_SECONDS = 20.0
 # its own measurement, not merely the floor.
 MEASURED_WORST_SECONDS = 36.46
 
-_SKIP_PARTS = {".git", ".venv", "site-packages", "node_modules", "__pycache__"}
+
+@pytest.fixture(scope="module")
+def suite_roots(pytestconfig) -> list[Path]:
+    """The directories pytest will actually collect, from its own resolved ini.
+
+    Derived from the consumer rather than remembered: `testpaths` is a glob list
+    (`modules/*/tests`) by contract, and pytest expands it with `glob.iglob` in
+    `Config._decide_args`, so this expands it the same way instead of restating
+    the module layout. Nothing outside it is in scope — see the module
+    docstring for the vendored Python 2 tree that taught us why.
+    """
+    roots: list[Path] = []
+    for entry in pytestconfig.getini("testpaths"):
+        for match in sorted(glob.glob(str(REPO_ROOT / entry))):
+            path = Path(match)
+            if path.is_dir():
+                roots.append(path)
+    assert roots, ("testpaths resolved to no directory at all; this guard would "
+                   "then scan nothing and pass vacuously")
+    return roots
 
 
-def _test_sources() -> list[Path]:
-    return [p for p in sorted(REPO_ROOT.rglob("test_*.py"))
-            if not _SKIP_PARTS.intersection(p.parts)]
+def _test_sources(roots) -> list[Path]:
+    found: list[Path] = []
+    for root in roots:
+        found.extend(sorted(root.rglob("test_*.py")))
+    return sorted(set(found))
 
 
 def _module_number_constants(tree: ast.Module) -> dict[str, float]:
@@ -110,11 +142,27 @@ def spawn_bounds(source: str) -> list[tuple[int, float | None]]:
     return found
 
 
-def _all_bounds() -> list[tuple[Path, int, float | None]]:
+def _show(path: Path) -> str:
+    """Repo-relative when possible; a test may pass a root outside the repo."""
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _all_bounds(roots) -> list[tuple[Path, int, float | None]]:
     rows: list[tuple[Path, int, float | None]] = []
-    for path in _test_sources():
-        for lineno, value in spawn_bounds(
-                path.read_text(encoding="utf-8", errors="replace")):
+    for path in _test_sources(roots):
+        source = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            bounds = spawn_bounds(source)
+        except SyntaxError as exc:
+            raise AssertionError(
+                "%s is inside testpaths but does not parse (%s). pytest cannot "
+                "collect it either, so fix or move the file — do not widen this "
+                "guard's exclusions to hide it."
+                % (_show(path), exc)) from None
+        for lineno, value in bounds:
             rows.append((path, lineno, value))
     return rows
 
@@ -123,10 +171,10 @@ def _all_bounds() -> list[tuple[Path, int, float | None]]:
 # the floor
 # ---------------------------------------------------------------------------
 
-def test_no_spawn_bound_sits_inside_the_loaded_distribution():
+def test_no_spawn_bound_sits_inside_the_loaded_distribution(suite_roots):
     too_tight = [
-        "%s:%d timeout=%s" % (path.relative_to(REPO_ROOT).as_posix(), lineno, value)
-        for path, lineno, value in _all_bounds()
+        "%s:%d timeout=%s" % (_show(path), lineno, value)
+        for path, lineno, value in _all_bounds(suite_roots)
         if value is not None and value < FLOOR_SECONDS
     ]
     assert not too_tight, (
@@ -136,11 +184,11 @@ def test_no_spawn_bound_sits_inside_the_loaded_distribution():
         "measurement:\n  %s" % (FLOOR_SECONDS, "\n  ".join(too_tight)))
 
 
-def test_a_spawn_bound_is_a_number_the_guard_can_read():
+def test_a_spawn_bound_is_a_number_the_guard_can_read(suite_roots):
     """A bound behind an import, a call or an expression is a bound nobody audits."""
     unresolvable = [
-        "%s:%d" % (path.relative_to(REPO_ROOT).as_posix(), lineno)
-        for path, lineno, value in _all_bounds() if value is None
+        "%s:%d" % (_show(path), lineno)
+        for path, lineno, value in _all_bounds(suite_roots) if value is None
     ]
     assert not unresolvable, (
         "these timeouts are neither a literal nor a module-level constant in "
@@ -158,13 +206,38 @@ def test_the_measured_privacy_spawn_clears_its_own_measurement():
             "timeout=%s" % (lineno, MEASURED_WORST_SECONDS, value))
 
 
-def test_the_scan_actually_reaches_the_suite():
+def test_the_scan_actually_reaches_the_suite(suite_roots):
     """A scanner that silently matches nothing passes every assertion above."""
-    rows = _all_bounds()
+    rows = _all_bounds(suite_roots)
     files = {path for path, _, _ in rows}
     assert len(rows) >= 10, rows
     assert len(files) >= 4, files
     assert any(p.name == "test_com_backend_offline.py" for p in files), files
+
+
+def test_the_scan_is_the_suite_not_the_whole_checkout(suite_roots):
+    """The defect this guard shipped with (T122).
+
+    It walked `REPO_ROOT.rglob` and reached an untracked vendored Python 2 tree
+    in the operator's checkout, so `ast.parse` raised and three tests here died
+    on a file no CI job or fresh worktree has. The scope is now what pytest
+    collects, and that has to stay true.
+    """
+    assert REPO_ROOT not in suite_roots, (
+        "the repo root is not a test root; scanning it walks the whole checkout")
+    scanned = _test_sources(suite_roots)
+    outside = [p.as_posix() for p in scanned
+               if not any(p.is_relative_to(root) for root in suite_roots)]
+    assert not outside, outside
+
+    # The empirical half. `scratch/` is where this checkout keeps unpacked
+    # third-party sources; it is not in testpaths, so nothing there may be
+    # scanned. Conditional on the directory existing, because a fresh clone and
+    # every CI runner lack it — which is exactly why the bug shipped green.
+    if (REPO_ROOT / "scratch").is_dir():
+        stray = [p.relative_to(REPO_ROOT).as_posix() for p in scanned
+                 if "scratch" in p.parts]
+        assert not stray, stray
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +278,16 @@ def test_scanner_reports_an_unreadable_bound_rather_than_skipping_it():
         "    subprocess.run(['y'], timeout=60 * 2)\n"
     )
     assert [value for _, value in spawn_bounds(source)] == [None, None]
+
+
+def test_an_unparseable_in_scope_file_is_named_not_a_bare_syntaxerror(tmp_path):
+    """A file the suite DOES collect and cannot parse is a loud, named failure.
+
+    T122 narrowed the scope; it must not also start swallowing a broken file
+    that is genuinely in scope. pytest could not collect such a file either, so
+    the guard says which file and why instead of dying inside ``ast.parse``.
+    """
+    bad = tmp_path / "test_vendored_py2.py"
+    bad.write_text('print "python 2 statement"\n', encoding="utf-8")
+    with pytest.raises(AssertionError, match="test_vendored_py2.py"):
+        _all_bounds([tmp_path])
