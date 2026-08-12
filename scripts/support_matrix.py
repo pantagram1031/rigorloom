@@ -33,6 +33,9 @@ Pointer kinds, and what "resolves" means for each:
                               the `capabilities` dict literal by AST, so the
                               contract is checked without depending on what this
                               particular host answers.
+    record:<filename>         evals/records/<filename> exists and declares a
+                              schema. A published result a reader can inspect
+                              without re-running anything.
 
 A pointer proves an assertion EXISTS and is runnable by a third party. It does
 not prove the assertion is strong. That distinction is stated in the generated
@@ -54,7 +57,7 @@ TASKS_DIR = REPO_ROOT / "evals" / "tasks"
 MODULES_DIR = REPO_ROOT / "modules"
 
 STATUSES = ("supported", "partially", "unsupported", "unknown")
-POINTER_KINDS = ("test", "eval", "doc", "probe")
+POINTER_KINDS = ("test", "eval", "doc", "probe", "record")
 REASON_REQUIRED = tuple(s for s in STATUSES if s != "supported")
 
 _STATUS_LABEL = {
@@ -177,6 +180,18 @@ def resolve_pointer(pointer: str, *, root: Path | None = None,
             return f"{rel} has no heading text {heading!r}"
         return None
 
+    if kind == "record":
+        path = root / "evals" / "records" / target
+        if not path.is_file():
+            return f"no such committed record: {target}"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"{target} is not readable JSON: {exc}"
+        if not isinstance(payload, dict) or not payload.get("schema"):
+            return f"{target} declares no schema, so its shape is unknown"
+        return None
+
     keys = probe_keys if probe_keys is not None else probe_capability_keys()
     if target not in keys:
         return f"render_probe emits no capability {target!r}"
@@ -242,6 +257,12 @@ def validate(claims: list[dict], *, root: Path | None = None) -> list[str]:
             problems.append(
                 f"{where}: status {status!r} must carry a reason so the downgrade "
                 "explains itself")
+        if status == "supported" and claim.get("reason"):
+            problems.append(
+                f"{where}: a 'supported' row must NOT carry a reason. Needing to "
+                "explain a caveat means the capability is partially supported. "
+                "This also stops a downgraded row being upgraded while its own "
+                "reason still says half of it is unpublished")
 
     problems.extend(_coverage_problems(claims, root=root))
     return problems
@@ -288,6 +309,12 @@ def render_matrix(claims: list[dict] | None = None) -> str:
         "`unknown` is a real answer and is used where evidence lives in the other",
         "lane's harness and has not been reproduced here. A missing result is",
         "never counted as parity.",
+        "",
+        "Known limit of this mechanism: it checks that a pointer RESOLVES, not",
+        "that the pointers COVER the capability text. A `supported` row citing a",
+        "narrow test still validates. Two rules narrow it — a `supported` row may",
+        "not carry a reason, and a downgrade must — but adversarial review is",
+        "still the control.",
         "",
         "| Capability | Status | Platforms | Evidence | Reason |",
         "|---|---|---|---|---|",

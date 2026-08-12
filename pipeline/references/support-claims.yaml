@@ -181,17 +181,21 @@ claims:
       - eval:R1-nrf-profile
       - doc:evals/README.md#assert_json
 
-  - id: eval-pack-published-run-record
-    capability: A committed per-task run record from a clean-bundle install
-    status: unsupported
-    platforms: [Windows]
+  - id: eval-pack-published-record
+    capability: A committed per-task record from a clean-bundle install
+    status: partially
+    platforms: [Windows, macOS, Linux]
     reason: >-
-      evals/run_record.schema.json defines the shape and no records are
-      committed, so nothing in the repository publishes a per-task result. The
-      joint objective asks for exactly this. Producing one needs the eval tasks
-      run to completion on a Hancom bench, serial with an exact tasklist
-      pre-check, which has not been done in this lane.
+      The deterministic half is published: every task materialized into a
+      clean-room root installed from bundles, machine checks executed, 24 of 91
+      checks passing against the blank form with no completion present. The
+      other half is NOT published - no agent-completion run record exists, so
+      nothing shows an agent solving a task, and evals/run_record.schema.json
+      has no instance. That needs the tasks run to completion on a Hancom bench,
+      serial with an exact tasklist pre-check.
     evidence:
+      - record:2026-08-12-clean-bundle-machine-checks.json
+      - doc:evals/records/README.md#Committed pack records
       - doc:evals/README.md#assert_json
 
   # ------------------------------------------------------------- platforms ---

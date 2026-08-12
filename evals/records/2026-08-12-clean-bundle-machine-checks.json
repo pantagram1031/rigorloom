@@ -1,0 +1,606 @@
+{
+  "schema": "rigorloom-pack-machine-check-record/v1",
+  "recorded": "2026-08-12",
+  "main_commit": "67f4b97",
+  "what_this_is": "Every shipped eval task materialized into a clean-room root installed from bundles, with its machine checks executed. This is the deterministic half of the pack.",
+  "what_this_is_not": "NOT an agent-completion run record. No agent solved these tasks: every task reports deliverable_present false, so nothing here carries a transcript or a judgment and evals/run_record.schema.json is not the schema used. No COM conversion or render was performed.",
+  "how_to_read_a_failed_check": "Because no deliverable exists, a failed check means the check had nothing to read, NOT that the product misbehaved. Only the passing checks carry information here, and it is a real one: they read the blank form and the shipped engine out of a clean bundle install and agreed. Per-check causes are deliberately NOT classified — an earlier draft classified them from failure text and got 12 of 91 wrong.",
+  "install": {
+    "bundles": {
+      "rigorloom-core-0.17.0.zip": {
+        "sha256": "8fd525f165089a4007b121a50764c47425e498676ca22537ec85a5f4e58019ba",
+        "bytes": 856255
+      },
+      "rigorloom-gongmun-0.17.0.zip": {
+        "sha256": "9c60f937264937f0cbe44b2b174cf80af8e7b7efdd996d92f029552d993ab3fb",
+        "bytes": 46019
+      },
+      "rigorloom-grant-0.17.0.zip": {
+        "sha256": "87fc88e40ad6168d35e725865e9cbc5a8be9856a6711d16c6bb8d0ed01960047",
+        "bytes": 76045
+      },
+      "rigorloom-hr-0.17.0.zip": {
+        "sha256": "beccb6c5e9566dceb695614cdc997944ca623c52ebf0842af7e04a108ea906d6",
+        "bytes": 64125
+      },
+      "rigorloom-minwon-0.17.0.zip": {
+        "sha256": "8657adaf5f15f305faf23f2d90f155adbdf804e2e3dd01deeea84b80c7d94ec9",
+        "bytes": 54525
+      },
+      "rigorloom-report-0.17.0.zip": {
+        "sha256": "14bb6739cb211b01b6dd2f8d4f49cf0917eab73f71d0088a983d18fcc0c7bdca",
+        "bytes": 244027
+      },
+      "rigorloom-style-0.17.0.zip": {
+        "sha256": "8fe375a2f3b73ebaa850c3010eb1a2c27c473668fa771a482a3f9f7493bcb8ed",
+        "bytes": 33878
+      }
+    },
+    "enabled_modules": [
+      "gongmun",
+      "grant",
+      "hr",
+      "minwon",
+      "report",
+      "style"
+    ],
+    "contained": true,
+    "gaps": [],
+    "failures": [],
+    "platform": "win32"
+  },
+  "totals": {
+    "tasks": 8,
+    "tasks_with_a_deliverable": 0,
+    "checks_total": 91,
+    "passed": 24,
+    "failed": 65,
+    "skipped": 2
+  },
+  "tasks": [
+    {
+      "task_id": "A1-pps-recognize-fill",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "grant",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 11,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "grant_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "protected_prose_survives",
+          "kind": "text_present"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": [
+        {
+          "id": "repeat_fill_idempotent",
+          "kind": "idempotence",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "task_id": "A2-pps-consent-checkboxes",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "grant",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 13,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "grant_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "instruction_prose_protected",
+          "kind": "text_present"
+        },
+        {
+          "id": "section_bullets_intact",
+          "kind": "text_present"
+        },
+        {
+          "id": "grant_structure",
+          "kind": "python"
+        },
+        {
+          "id": "grant_consent_rules_were_decided",
+          "kind": "file"
+        },
+        {
+          "id": "grant_glyphless_choice_is_reported_not_guessed",
+          "kind": "text_present"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "task_id": "A3-kstartup-hybrid",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "grant",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 14,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "grant_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "grant_structure",
+          "kind": "python"
+        },
+        {
+          "id": "grant_packet_and_geometry_rules_were_decided",
+          "kind": "file"
+        },
+        {
+          "id": "grant_external_attachment_refs_are_not_dangling",
+          "kind": "text_present"
+        },
+        {
+          "id": "grant_length_budget_dependency_is_declared",
+          "kind": "file"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": [
+        {
+          "id": "page_budget",
+          "kind": "python",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "task_id": "G1-gianmun-body-edit",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "gongmun",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 11,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "gongmun_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "page_metrics_unchanged",
+          "kind": "python"
+        },
+        {
+          "id": "form_furniture_intact",
+          "kind": "text_present"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "bigo_removed",
+          "kind": "text_absent"
+        },
+        {
+          "id": "gongmun_structure",
+          "kind": "python"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "task_id": "H1-labor-contract-fill",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "hr",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 13,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "hr_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "clause_text_intact",
+          "kind": "text_present"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "hr_structure",
+          "kind": "python"
+        },
+        {
+          "id": "hr_version_rules_were_decided",
+          "kind": "file"
+        },
+        {
+          "id": "hr_stayed_on_the_2025_revision",
+          "kind": "text_present"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "task_id": "P1-jumin-recognize-fill",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "petition",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 11,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "minwon_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "guidance_and_signature_protected",
+          "kind": "text_present"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "minwon_structure",
+          "kind": "python"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "task_id": "P2-jeongbo-staff-seats",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "petition",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 13,
+      "passed": [
+        {
+          "id": "profile_blank",
+          "kind": "python"
+        },
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "minwon_blank_form_shape",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "filled_produced",
+          "kind": "file"
+        },
+        {
+          "id": "profile_filled",
+          "kind": "python"
+        },
+        {
+          "id": "geometry_unchanged",
+          "kind": "geometry"
+        },
+        {
+          "id": "residue_clean",
+          "kind": "residue"
+        },
+        {
+          "id": "furniture_and_statute_intact",
+          "kind": "text_present"
+        },
+        {
+          "id": "values_written",
+          "kind": "text_present"
+        },
+        {
+          "id": "minwon_structure",
+          "kind": "python"
+        },
+        {
+          "id": "minwon_staff_rules_were_decided",
+          "kind": "file"
+        },
+        {
+          "id": "minwon_staff_seats_were_recognized",
+          "kind": "text_present"
+        },
+        {
+          "id": "requested_values_present",
+          "kind": "text_present"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "task_id": "R1-nrf-profile",
+      "materialized": true,
+      "deliverable_present": false,
+      "inputs": 1,
+      "prompt_written": true,
+      "family": "research",
+      "enabled_modules": [
+        "gongmun",
+        "grant",
+        "hr",
+        "minwon",
+        "report",
+        "style"
+      ],
+      "checks_total": 5,
+      "passed": [
+        {
+          "id": "original_untouched",
+          "kind": "unmodified"
+        },
+        {
+          "id": "profile_reference",
+          "kind": "python"
+        },
+        {
+          "id": "constraints_absent_is_the_truth",
+          "kind": "python"
+        }
+      ],
+      "failed": [
+        {
+          "id": "profile_produced",
+          "kind": "file"
+        },
+        {
+          "id": "fill_report_dry_run",
+          "kind": "python"
+        }
+      ],
+      "skipped": []
+    }
+  ]
+}
