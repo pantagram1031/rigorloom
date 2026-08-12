@@ -153,7 +153,12 @@ def test_privacy_safe_refusal_in_the_exception_path_stays_silent(
     an error string that happens to contain the filename.
     """
     document = tmp_path / "PRIVATE-CANARY.hwp"
-    document.write_bytes(b"not a real hwp")
+    # A plausible container, not arbitrary bytes: since T123 the ingress refuses
+    # a non-document before COM, so junk here would never reach the exception
+    # handler this test exists to cover. The OLE header is what a real HWP 5.x
+    # file starts with; everything after it is Hancom's problem, which is the
+    # failure being simulated.
+    document.write_bytes(com_backend.OLE_MAGIC + b"\x00" * 64)
     # The guard also requires pyhwpx to import; inject it so the branch under
     # test is reached whether or not the bench has Hancom installed.
     monkeypatch.setitem(sys.modules, "pyhwpx", types.ModuleType("pyhwpx"))

@@ -368,6 +368,30 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T123:** ingress refuses a file that exists but is not a document, before COM
+  starts. T25 closed the missing-input case with the note that says why - Hwp
+  opens a blank document and the blank artifact leaves as `ok: true` - and a
+  0-byte file named `.hwp` had the identical failure mode: it inspected as
+  `{"ok": true, "pages": 1, "controls_total": 2}`, so on the machine-to-machine
+  privacy-safe surface a truncated upload was indistinguishable from a real
+  one-page document. `document_shape_reason` reads the first eight bytes and
+  names the problem; the container signatures are measured against this repo's
+  corpus (10/10 `.hwp` are OLE compound files, 12/12 `.hwpx` are ZIP) rather
+  than recalled, and a test asserts every corpus form is still accepted. The
+  detailed vocabulary is for a human at the CLI: the privacy-safe surface
+  collapses it to one `source_not_a_document` token and still never echoes the
+  path. This is a byte check, not a validity claim - a well-formed but corrupt
+  document still reaches Hancom, which is the only thing that can judge it.
+  Order is load-bearing and CI proved it: checking pyhwpx availability first
+  answered `source_not_a_document` on a Windows bench with Hancom and
+  `inspect_failed` on all four runners, one input with two answers. The input's
+  shape is now decided before the host's capability. A measured side effect
+  closes #70's mechanism rather than accommodating it - the refusal no longer
+  imports pyhwpx to answer a question that does not need it, so the spawn the
+  flaky privacy test bounds went from an idle median of 2.76s and a loaded
+  median of 9.00s to 0.12s and 0.51s, with a loaded worst case of 0.67s against
+  a 120s bound (179x headroom, up from 3.3x).
+
 - **T122:** the T121 subprocess-bound guard scanned the whole checkout instead
   of the suite, so on a working copy carrying unpacked third-party sources it
   walked an untracked vendored Python 2 tree, `ast.parse` raised on a `print`

@@ -86,11 +86,62 @@ def _kill_stale_hwp():
             pass
 
 
+# T123: T25 (below) closed the MISSING-input case, and a file that exists but
+# is not a document has the identical failure mode — Hwp opens a blank document
+# and a blank artifact leaves as ok:true. Measured: a 0-byte file named .hwp
+# inspected as {"ok": true, "pages": 1, "controls_total": 2}, so for a
+# machine-to-machine ingress a truncated upload was indistinguishable from a
+# real one-page document.
+#
+# The signatures are measured against this repo's corpus rather than recalled:
+# 10/10 of tests/corpus/forms/**/*.hwp begin d0 cf 11 e0 a1 b1 1a e1 (the OLE
+# compound-file header that carries HWP 5.x) and 12/12 of the .hwpx begin
+# 50 4b 03 04 (the ZIP local-file header that carries OWPML). Only the first
+# four to eight bytes are read, and no token derived here carries file content.
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+ZIP_MAGIC = b"PK\x03\x04"
+DOCUMENT_MAGIC = (OLE_MAGIC, ZIP_MAGIC)
+
+# Closed set. The privacy-safe surface publishes NONE of these — it collapses
+# them to one token (see PRIVACY_SAFE_NOT_A_DOCUMENT), because "empty" versus
+# "wrong container" is diagnostic detail for a human running the CLI, not
+# something a fingerprint consumer needs.
+NOT_A_DOCUMENT_REASONS = ("empty_file", "truncated_header", "unknown_container",
+                          "unreadable")
+PRIVACY_SAFE_NOT_A_DOCUMENT = "source_not_a_document"
+
+
+def document_shape_reason(filepath):
+    """None when the leading bytes are an HWP or HWPX container; else a token.
+
+    Deliberately a byte check and nothing more. It is not a validity claim about
+    the document — a corrupt-but-well-formed container still reaches Hancom,
+    which is the only thing that can judge it. This rejects the case Hancom
+    silently accepts by inventing a blank document.
+    """
+    try:
+        with open(filepath, "rb") as handle:
+            head = handle.read(8)
+    except OSError:
+        return "unreadable"
+    if not head:
+        return "empty_file"
+    if len(head) < 4:
+        return "truncated_header"
+    if not any(head.startswith(magic) for magic in DOCUMENT_MAGIC):
+        return "unknown_container"
+    return None
+
+
 def open_hwp(filepath, visible=False, kill_stale=False):
     # T25: 입력 파일이 없으면 Hwp가 빈 문서를 조용히 열어 백지 산출물이
     # ok:true로 나간다 — 존재 검사는 COM 기동 전에, 소리나게.
     if not Path(filepath).exists():
         _die(f"입력 파일 없음: {filepath}")
+    # T123: 같은 이유로, 존재하지만 문서가 아닌 파일도 COM 기동 전에 거른다.
+    shape = document_shape_reason(filepath)
+    if shape:
+        _die(f"입력 파일이 문서가 아님({shape}): {filepath}")
     try:
         from pyhwpx import Hwp
     except ImportError:
@@ -1717,14 +1768,35 @@ def main():
         if args.cmd == "inspect":
             if args.privacy_safe:
                 try:
-                    available = Path(args.file).is_file()
+                    present = Path(args.file).is_file()
                 except OSError:
-                    available = False
+                    present = False
+                if not present:
+                    print(json.dumps(
+                        {"ok": False, "reason": "inspect_failed"},
+                        ensure_ascii=False))
+                    sys.exit(3)
+                # T123: refuse a non-document before COM, with ONE token — the
+                # caller needs to know its upload is not a document, not which
+                # way it is broken, and the path never appears.
+                #
+                # ORDER IS LOAD-BEARING. The INPUT's shape is decided before the
+                # HOST's capability, so a broken upload gets the same answer with
+                # or without pyhwpx installed. The first version checked
+                # availability first and CI proved the cost: a 0-byte file was
+                # `source_not_a_document` on this Windows bench and
+                # `inspect_failed` on all four runners — one input, two answers,
+                # decided by something the caller cannot see. Whether the host
+                # can open documents at all is a separate question, answered
+                # below and only once the input is known to be a document.
+                if document_shape_reason(args.file):
+                    print(json.dumps(
+                        {"ok": False, "reason": PRIVACY_SAFE_NOT_A_DOCUMENT},
+                        ensure_ascii=False))
+                    sys.exit(3)
                 try:
                     __import__("pyhwpx")
                 except ImportError:
-                    available = False
-                if not available:
                     print(json.dumps(
                         {"ok": False, "reason": "inspect_failed"},
                         ensure_ascii=False))
