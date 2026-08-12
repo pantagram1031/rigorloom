@@ -368,6 +368,18 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T122:** the T121 subprocess-bound guard scanned the whole checkout instead
+  of the suite, so on a working copy carrying unpacked third-party sources it
+  walked an untracked vendored Python 2 tree, `ast.parse` raised on a `print`
+  statement, and three of its own tests died on a file that is not part of this
+  project. Its scope is now what pytest itself collects, taken from
+  `pytestconfig.getini("testpaths")` and expanded the way pytest expands it -
+  derived from the consumer rather than restating the module layout. A file that
+  IS in scope and does not parse now fails by name instead of dying inside
+  `ast.parse`. Caught by the post-merge recheck on the real bench: the fresh
+  worktree and all four CI jobs were green, because none of them has the
+  directory that triggers it.
+
 - **T121:** a privacy test's own subprocess bound was inside the distribution
   of a normal loaded spawn, so a saturated suite raced the bound instead of
   testing the code. Measured rather than guessed - 15 samples of exactly that
