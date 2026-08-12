@@ -121,9 +121,70 @@ def test_a_probe_pointer_the_prober_never_emits_is_refused():
     assert any("emits no capability" in p for p in problems), problems
 
 
+def test_a_record_pointer_to_a_missing_file_is_refused():
+    problems = _problems(_claim(evidence=["record:never-published.json"]))
+    assert any("no such committed record" in p for p in problems), problems
+
+
+def test_a_record_without_a_schema_is_refused(tmp_path, monkeypatch):
+    """A published result whose shape is undeclared is not evidence of anything."""
+    records = tmp_path / "evals" / "records"
+    records.mkdir(parents=True)
+    (records / "shapeless.json").write_text('{"totals": {}}', encoding="utf-8")
+    why = sm.resolve_pointer("record:shapeless.json", root=tmp_path,
+                             probe_keys={"hancom_com"})
+    assert why and "declares no schema" in why, why
+
+
+def test_a_record_that_is_not_json_is_refused(tmp_path):
+    records = tmp_path / "evals" / "records"
+    records.mkdir(parents=True)
+    (records / "broken.json").write_text("not json at all", encoding="utf-8")
+    why = sm.resolve_pointer("record:broken.json", root=tmp_path,
+                             probe_keys={"hancom_com"})
+    assert why and "not readable JSON" in why, why
+
+
+def test_the_committed_record_says_what_it_is_not():
+    """The record must not be readable as an agent-completion result.
+
+    It is pointed at by a `partially` row precisely because half is missing; if
+    the file stopped saying so, the row would start overclaiming by association.
+    """
+    import json
+    path = (REPO_ROOT / "evals" / "records"
+            / "2026-08-12-clean-bundle-machine-checks.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema"] == "rigorloom-pack-machine-check-record/v1"
+    assert "NOT an agent-completion run record" in payload["what_this_is_not"]
+    assert payload["totals"]["tasks_with_a_deliverable"] == 0
+    assert payload["totals"]["passed"] > 0, "a record of nothing proves nothing"
+    # No absolute path may ship in a committed record.
+    text = path.read_text(encoding="utf-8")
+    assert "C:\\" not in text and "C:/" not in text
+    assert "/home/" not in text
+
+
 def test_an_unknown_pointer_kind_is_refused():
     problems = _problems(_claim(evidence=["screenshot:looks-fine.png"]))
     assert any("unknown pointer kind" in p for p in problems), problems
+
+
+def test_supported_carrying_a_reason_is_refused():
+    """Found by mutation: upgrading a downgraded row validated cleanly.
+
+    The validator checks that evidence RESOLVES, not that it COVERS the whole
+    capability, so a "partially" row flipped to "supported" slipped through with
+    its own reason still explaining what was unpublished. A supported row that
+    needs a caveat is not supported.
+
+    This narrows the hole; it does not close it. A `supported` row whose pointers
+    resolve but cover less than its capability text still validates, and no
+    mechanism here can judge that. Adversarial review remains the control, and
+    the generated document says so.
+    """
+    problems = _problems(_claim(reason="half of this is not published"))
+    assert any("must NOT carry a reason" in p for p in problems), problems
 
 
 def test_a_status_outside_the_vocabulary_is_refused():

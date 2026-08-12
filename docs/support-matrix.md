@@ -13,6 +13,12 @@ not `supported` states a reason.
 lane's harness and has not been reproduced here. A missing result is
 never counted as parity.
 
+Known limit of this mechanism: it checks that a pointer RESOLVES, not
+that the pointers COVER the capability text. A `supported` row citing a
+narrow test still validates. Two rules narrow it — a `supported` row may
+not carry a reason, and a downgrade must — but adversarial review is
+still the control.
+
 | Capability | Status | Platforms | Evidence | Reason |
 |---|---|---|---|---|
 | Offline HWPX text replacement that preserves the rest of the file | supported | Windows, macOS, Linux | `test:engine/tests/test_preedit.py::test_basic_hits_reported_and_original_untouched`<br>`test:engine/tests/test_preedit.py::test_zero_hit_key_raises_and_no_output`<br>`doc:skill/references/operations.md#preedit` | — |
@@ -29,8 +35,8 @@ never counted as parity.
 | Bundle builds are byte-identical across runs of the same tree | supported | Windows, macOS, Linux | `test:tests/test_package_module.py::test_two_builds_of_the_same_tree_are_byte_identical`<br>`test:tests/test_package_module.py::test_touching_payload_mtimes_leaves_the_bytes_identical`<br>`test:tests/test_package_module.py::test_there_are_bundles_to_reproduce` | — |
 | A bundle installs into an empty root and nothing resolves back to the source checkout | supported | Windows, macOS, Linux | `test:tests/test_package_module.py::test_core_bundle_contains_core_surface_and_no_module_payloads`<br>`test:tests/test_package_module.py::test_tampered_file_and_unlisted_file_fail_verification`<br>`doc:docs/skills-install.md#Running the installer` | — |
 | The clean-room eval pack defines and validates its tasks and machine checks | supported | Windows, macOS, Linux | `eval:A1-pps-recognize-fill`<br>`eval:G1-gianmun-body-edit`<br>`eval:R1-nrf-profile`<br>`doc:evals/README.md#assert_json` | — |
-| A committed per-task run record from a clean-bundle install | unsupported | Windows | `doc:evals/README.md#assert_json` | evals/run_record.schema.json defines the shape and no records are committed, so nothing in the repository publishes a per-task result. The joint objective asks for exactly this. Producing one needs the eval tasks run to completion on a Hancom bench, serial with an exact tasklist pre-check, which has not been done in this lane. |
+| A committed per-task record from a clean-bundle install | partially supported | Windows, macOS, Linux | `record:2026-08-12-clean-bundle-machine-checks.json`<br>`doc:evals/records/README.md#Committed pack records`<br>`doc:evals/README.md#assert_json` | The deterministic half is published: every task materialized into a clean-room root installed from bundles, machine checks executed, 24 of 91 checks passing against the blank form with no completion present. The other half is NOT published - no agent-completion run record exists, so nothing shows an agent solving a task, and evals/run_record.schema.json has no instance. That needs the tasks run to completion on a Hancom bench, serial with an exact tasklist pre-check. |
 | Linux — offline editing, deterministic gates, packaging | partially supported | Linux | `test:tests/test_cli_cp949_help.py::test_help_is_cp949_safe`<br>`test:tests/test_cli_cp949_help.py::test_discovery_found_the_shipped_clis` | CI runs the full suite on ubuntu in both core-only and all-modules configurations, so the offline engine, the gates and packaging are exercised. Hancom COM does not exist there, so conversion and render proof are unavailable rather than untested. |
 | macOS — any capability | unknown | macOS | `doc:docs/capability-matrix.md#Capability matrix` | No macOS bench and no macOS CI job exists, so nothing here has been observed on macOS. The code paths are the same as Linux for offline work, but that is inference, and inference is not evidence. |
 
-17 claims: 11 supported, 3 partially supported, 1 unsupported, 2 unknown.
+17 claims: 11 supported, 4 partially supported, 0 unsupported, 2 unknown.
