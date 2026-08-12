@@ -129,16 +129,26 @@ claims:
       - probe:soffice_path
       - probe:rhwp_path
 
-  - id: legacy-v1-render-certificate
-    capability: Legacy v1 render-certificate custody — snapshot binding, generation revalidation, refusal of symlink/reparse/hardlink leaves
+  - id: legacy-v1-capture-one-link-custody
+    capability: Legacy v1 private capture binds a no-follow one-link file generation and refuses a hardlinked or symlinked leaf
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:pipeline/tests/test_render_cert_custody_reproduction.py::test_a_clean_one_link_file_is_captured
+      - test:pipeline/tests/test_render_cert_custody_reproduction.py::test_a_hardlinked_leaf_is_refused
+      - test:pipeline/tests/test_render_cert_custody_reproduction.py::test_a_symlinked_leaf_is_refused
+      - test:pipeline/tests/test_render_cert_custody_reproduction.py::test_a_refusal_never_carries_the_private_path
+
+  - id: legacy-v1-render-certificate-rebinding
+    capability: Legacy v1 render-certificate rebinding — generation revalidation after metrics, ownership-aware rollback across parent-swap races, post-key manifest ordering
     status: unknown
     platforms: [Windows]
     reason: >-
-      Implemented and asserted in the other lane (PRs #134-#137). NOT reproduced
-      in this lane: doing so needs symlink, hardlink and reparse-point fixtures
-      plus a race harness on Windows, which is a slice rather than a spot check.
-      Until then this is the other lane's record, and a missing result is not
-      counted as parity. #131 and #133 from the same series WERE reproduced here.
+      Implemented and asserted in the other lane (PRs #134-#137). The capture
+      half was reproduced here and has its own row; THIS half was not. It needs a
+      full renderer run and a race harness, which is a slice rather than a spot
+      check, so it remains the other lane's record and is not counted as parity.
+      #131 and #133 from the same series were also reproduced here.
     evidence:
       - doc:docs/trouble-table.md#Trouble table
 

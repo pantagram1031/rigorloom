@@ -10,6 +10,19 @@ the kernel's contract shape.
 
 ### Added
 
+- **T126:** a cross-lane reproduction of the private-capture custody claims from
+  PRs #134-#137, written from this side against the shipped code rather than
+  derived from the PR text. Reproduced: a clean one-link file is captured with an
+  identity, a one-link count and a sha256 over the exact bytes read; a hardlinked
+  leaf is refused; a symlinked leaf is refused; and a refusal carries neither the
+  private path nor any platform detail, because every failure funnels through one
+  reason token on purpose. The support claim splits in two as a result - the
+  capture half is now `supported` with its own evidence, and generation rebinding,
+  ownership-aware rollback across parent-swap races and post-key manifest ordering
+  stay `unknown`, since those need a full renderer run and a race harness. A
+  missing result is still not parity.
+
+
 - **T125:** the first committed pack record,
   `evals/records/2026-08-12-clean-bundle-machine-checks.json`, plus
   `evals/records/README.md` describing what a record is and is not. Every shipped
