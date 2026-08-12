@@ -174,6 +174,63 @@ def test_privacy_safe_refuses_a_non_document_with_one_token(monkeypatch, capsys,
         assert reason not in both
 
 
+class _BlockPyhwpx:
+    """Meta-path finder that makes ``import pyhwpx`` fail, to model a bench
+    without Hancom — the state of every CI runner and of macOS/Linux."""
+
+    @staticmethod
+    def find_spec(name, path=None, target=None):
+        if name == "pyhwpx" or name.startswith("pyhwpx."):
+            raise ImportError("blocked: modelling a bench without pyhwpx")
+        return None
+
+
+@pytest.mark.parametrize("pyhwpx_present", [True, False])
+def test_the_same_broken_upload_gets_the_same_token_either_way(
+        monkeypatch, capsys, tmp_path, pyhwpx_present):
+    """Order regression: the INPUT is judged before the HOST's capability.
+
+    The first version of this slice checked pyhwpx availability first, so a
+    0-byte file answered `source_not_a_document` on a Windows bench with Hancom
+    and `inspect_failed` on all four CI runners — one input, two answers,
+    decided by something the caller cannot see. CI caught it; this pins it.
+    """
+    empty = tmp_path / "PRIVATE-CANARY.hwp"
+    empty.write_bytes(b"")
+    if pyhwpx_present:
+        monkeypatch.setitem(sys.modules, "pyhwpx", types.ModuleType("pyhwpx"))
+    else:
+        monkeypatch.delitem(sys.modules, "pyhwpx", raising=False)
+        monkeypatch.setattr(sys, "meta_path", [_BlockPyhwpx, *sys.meta_path])
+    monkeypatch.setattr(sys, "argv", [
+        "com_backend.py", "inspect", "--file", str(empty), "--privacy-safe"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        com_backend.main()
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 3
+    assert json.loads(captured.out) == {
+        "ok": False, "reason": com_backend.PRIVACY_SAFE_NOT_A_DOCUMENT}
+    assert "PRIVATE-CANARY" not in captured.out + captured.err
+
+
+def test_a_missing_file_keeps_its_own_token(monkeypatch, capsys, tmp_path):
+    """T25/T121's contract: absent is `inspect_failed`, not `not_a_document`.
+
+    Without this, moving the shape check earlier would quietly reclassify a
+    missing file, since opening one also fails.
+    """
+    monkeypatch.setitem(sys.modules, "pyhwpx", types.ModuleType("pyhwpx"))
+    monkeypatch.setattr(sys, "argv", [
+        "com_backend.py", "inspect", "--file",
+        str(tmp_path / "absent.hwp"), "--privacy-safe"])
+    with pytest.raises(SystemExit) as exit_info:
+        com_backend.main()
+    assert exit_info.value.code == 3
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False, "reason": "inspect_failed"}
+
+
 def test_privacy_safe_cli_refuses_a_zero_byte_upload(tmp_path):
     """End to end through the real CLI, no COM: the reproduction from #73."""
     empty = tmp_path / "PRIVATE-CANARY.hwp"

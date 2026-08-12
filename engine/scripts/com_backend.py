@@ -1768,14 +1768,10 @@ def main():
         if args.cmd == "inspect":
             if args.privacy_safe:
                 try:
-                    available = Path(args.file).is_file()
+                    present = Path(args.file).is_file()
                 except OSError:
-                    available = False
-                try:
-                    __import__("pyhwpx")
-                except ImportError:
-                    available = False
-                if not available:
+                    present = False
+                if not present:
                     print(json.dumps(
                         {"ok": False, "reason": "inspect_failed"},
                         ensure_ascii=False))
@@ -1783,9 +1779,26 @@ def main():
                 # T123: refuse a non-document before COM, with ONE token — the
                 # caller needs to know its upload is not a document, not which
                 # way it is broken, and the path never appears.
+                #
+                # ORDER IS LOAD-BEARING. The INPUT's shape is decided before the
+                # HOST's capability, so a broken upload gets the same answer with
+                # or without pyhwpx installed. The first version checked
+                # availability first and CI proved the cost: a 0-byte file was
+                # `source_not_a_document` on this Windows bench and
+                # `inspect_failed` on all four runners — one input, two answers,
+                # decided by something the caller cannot see. Whether the host
+                # can open documents at all is a separate question, answered
+                # below and only once the input is known to be a document.
                 if document_shape_reason(args.file):
                     print(json.dumps(
                         {"ok": False, "reason": PRIVACY_SAFE_NOT_A_DOCUMENT},
+                        ensure_ascii=False))
+                    sys.exit(3)
+                try:
+                    __import__("pyhwpx")
+                except ImportError:
+                    print(json.dumps(
+                        {"ok": False, "reason": "inspect_failed"},
                         ensure_ascii=False))
                     sys.exit(3)
             hwp = open_hwp(args.file)

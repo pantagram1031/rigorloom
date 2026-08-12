@@ -382,6 +382,15 @@ the kernel's contract shape.
   collapses it to one `source_not_a_document` token and still never echoes the
   path. This is a byte check, not a validity claim - a well-formed but corrupt
   document still reaches Hancom, which is the only thing that can judge it.
+  Order is load-bearing and CI proved it: checking pyhwpx availability first
+  answered `source_not_a_document` on a Windows bench with Hancom and
+  `inspect_failed` on all four runners, one input with two answers. The input's
+  shape is now decided before the host's capability. A measured side effect
+  closes #70's mechanism rather than accommodating it - the refusal no longer
+  imports pyhwpx to answer a question that does not need it, so the spawn the
+  flaky privacy test bounds went from an idle median of 2.76s and a loaded
+  median of 9.00s to 0.12s and 0.51s, with a loaded worst case of 0.67s against
+  a 120s bound (179x headroom, up from 3.3x).
 
 - **T122:** the T121 subprocess-bound guard scanned the whole checkout instead
   of the suite, so on a working copy carrying unpacked third-party sources it
