@@ -352,6 +352,22 @@ workspaces/  local run data; ignored by Git
 
 ## Project status
 
+Per-capability support, with an evidence pointer on every row, is in
+[`docs/support-matrix.md`](docs/support-matrix.md). It is generated from
+`pipeline/references/support-claims.yaml`, and the generator **refuses a
+`supported` row whose evidence pointers do not resolve** — the table cannot
+claim more than this tree can show. Read a pointer as *this assertion exists and
+you can run it*, not as *this assertion is strong*.
+
+Two limits worth stating here rather than only in that table:
+
+- **No committed per-task run record.** `evals/run_record.schema.json` defines
+  the shape; no records are published, so nothing in the repository shows a
+  per-task result from a clean-bundle install.
+- **The legacy v1 render-certificate custody work is unverified across lanes.**
+  It is implemented and asserted by its own suite, but has not been reproduced
+  independently, so it is classified `unknown` rather than counted as parity.
+
 - **Stable**: the stage state machine, the `bundle` backend, the nine
   content sub-checkers, `submission_preflight`'s form-hash and proof-grade
   checks, and the read-only Studio.

@@ -1,0 +1,220 @@
+# Capability support claims (T124).
+#
+# The standing goal requires every capability classified supported / partially /
+# unsupported / unknown WITH REPRODUCIBLE EVIDENCE, and forbids claiming parity
+# by inference. scripts/support_matrix.py renders this into
+# docs/support-matrix.md and refuses a `supported` row whose evidence pointers do
+# not resolve, so a claim here cannot outrun the tree.
+#
+# A pointer means "this assertion exists and a third party can run it". It does
+# NOT mean "this assertion is strong". Where the only possible evidence is a run
+# this repo cannot perform offline — a Hancom COM conversion, a vision pass, the
+# other lane's certificate harness — the status is partially or unknown with the
+# reason stated, never supported.
+#
+# `covers:` is checked against DERIVED sets: every installed distribution module
+# and every shipped eval task must be covered by some claim, so a new module
+# cannot go unclassified in silence.
+schema: rigorloom-support-claims/v1
+claims:
+  # ---------------------------------------------------------------- editing ---
+  - id: offline-hwpx-text-edit
+    capability: Offline HWPX text replacement that preserves the rest of the file
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:engine/tests/test_preedit.py::test_basic_hits_reported_and_original_untouched
+      - test:engine/tests/test_preedit.py::test_zero_hit_key_raises_and_no_output
+      - doc:skill/references/operations.md#preedit
+
+  - id: offline-run-addressed-write
+    capability: Writing a specific run by address, keeping its character shape
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:engine/tests/test_preedit.py::test_a_run_with_no_hp_t_is_refused_and_names_fill_cells
+      - doc:docs/trouble-table.md#Trouble table
+
+  - id: offline-empty-cell-fill
+    capability: Filling a table cell that contains no text run
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:engine/tests/test_preedit.py::test_truly_empty_cell_is_routed_to_fill_cells
+
+  # ---------------------------------------------------------------- ingress ---
+  - id: ingress-non-document-refusal
+    capability: Refusing a file that is not an HWP/HWPX container before COM starts
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:engine/tests/test_ingress_document_shape.py::test_every_real_corpus_document_is_accepted
+      - test:engine/tests/test_ingress_document_shape.py::test_a_non_document_is_named
+      - test:engine/tests/test_ingress_document_shape.py::test_open_hwp_refuses_a_non_document_before_touching_com
+
+  - id: privacy-safe-fingerprint
+    capability: Machine-to-machine document fingerprint that never emits the source path, preview text, field names or exception detail
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:engine/tests/test_com_backend_offline.py::test_inspect_privacy_safe_is_hash_and_counts_only
+      - test:engine/tests/test_com_backend_offline.py::test_inspect_privacy_safe_failure_does_not_echo_source_path
+      - test:engine/tests/test_com_backend_offline.py::test_privacy_safe_refusal_in_the_exception_path_stays_silent
+      - test:engine/tests/test_ingress_document_shape.py::test_the_same_broken_upload_gets_the_same_token_either_way
+
+  # ------------------------------------------------------------------ gates ---
+  - id: deterministic-residue-gate
+    capability: Deterministic residue gate — unfilled seats and leftover guide text are found without a rendered page
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:pipeline/tests/test_check_residue.py::test_real_pps_retained_guide_is_not_residue
+      - test:pipeline/tests/test_check_residue.py::test_verdict_carries_form_hash_and_counts
+      - doc:skill/references/visual-rubric.md#Visual rubric
+
+  - id: visual-verification
+    capability: Visual verification of a rendered page
+    status: partially
+    platforms: [Windows]
+    reason: >-
+      The deterministic half is covered offline and gates on its own. The closed
+      visual judgement is a separate pass that needs a rendered page and a vision
+      verdict, so it cannot be asserted by the offline suite; a text gate is
+      never render evidence.
+    evidence:
+      - test:pipeline/tests/test_visual_verify.py::test_incident_t24_overprint_is_vision_required_and_targeted
+      - test:pipeline/tests/test_visual_verify.py::test_incident_t24_recorded_vision_verdict_expresses_the_defect
+
+  - id: module-checker-contract
+    capability: Per-module structure checkers publish a rule-outcome map with severity ordering
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    covers:
+      - module:gongmun
+      - module:grant
+      - module:hr
+      - module:minwon
+      - module:report
+      - module:style
+    evidence:
+      - test:modules/gongmun/tests/test_check_gongmun.py::test_blank_form_reports_the_unfilled_shape_and_passes
+      - test:modules/grant/tests/test_grant_check.py::test_a_missing_artifact_is_hard_never_a_silent_pass
+      - test:modules/hr/tests/test_hr_check.py::test_missing_artifact_is_hard_not_a_silent_pass
+      - test:modules/minwon/tests/test_check_minwon.py::test_missing_artifact_is_hard_not_a_silent_pass
+      - test:modules/report/tests/test_check_canonical.py::test_literal_null_with_done_delivery_stage_is_hard
+      - test:modules/style/tests/test_check_style.py::test_default_prose_pack_loads
+
+  # ------------------------------------------------------- render / convert ---
+  - id: hancom-com-convert
+    capability: HWP to PDF conversion through Hancom COM, with page-count parity
+    status: partially
+    platforms: [Windows]
+    reason: >-
+      Windows with Hancom installed only. The offline suite covers the
+      print-method normalisation and the parity plumbing, but no CI job can run
+      the conversion itself, so the end-to-end claim rests on operator-bench runs
+      recorded in the trouble table rather than on an automated gate.
+    evidence:
+      - test:engine/tests/test_com_backend_offline.py::test_stage_normalizes_nonzero_print_method
+      - test:engine/tests/test_com_backend_offline.py::test_pdf_page_count_counts_and_fails_closed
+
+  - id: render-capability-probe
+    capability: Reporting which render backends this host actually has, without leaking paths
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:pipeline/tests/test_render_probe.py::test_well_formed_json_with_all_keys_when_everything_absent
+      - test:pipeline/tests/test_render_probe.py::test_subprocess_failures_are_tolerated_as_unknown_not_raised
+      - probe:hancom_com
+      - probe:soffice_path
+      - probe:rhwp_path
+
+  - id: legacy-v1-render-certificate
+    capability: Legacy v1 render-certificate custody — snapshot binding, generation revalidation, refusal of symlink/reparse/hardlink leaves
+    status: unknown
+    platforms: [Windows]
+    reason: >-
+      Implemented and asserted in the other lane (PRs #134-#137). NOT reproduced
+      in this lane: doing so needs symlink, hardlink and reparse-point fixtures
+      plus a race harness on Windows, which is a slice rather than a spot check.
+      Until then this is the other lane's record, and a missing result is not
+      counted as parity. #131 and #133 from the same series WERE reproduced here.
+    evidence:
+      - doc:docs/trouble-table.md#Trouble table
+
+  # ------------------------------------------------ install / distribution ---
+  - id: reproducible-bundles
+    capability: Bundle builds are byte-identical across runs of the same tree
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:tests/test_package_module.py::test_two_builds_of_the_same_tree_are_byte_identical
+      - test:tests/test_package_module.py::test_touching_payload_mtimes_leaves_the_bytes_identical
+      - test:tests/test_package_module.py::test_there_are_bundles_to_reproduce
+
+  - id: clean-bundle-install-isolation
+    capability: A bundle installs into an empty root and nothing resolves back to the source checkout
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:tests/test_package_module.py::test_core_bundle_contains_core_surface_and_no_module_payloads
+      - test:tests/test_package_module.py::test_tampered_file_and_unlisted_file_fail_verification
+      - doc:docs/skills-install.md#Running the installer
+
+  # ------------------------------------------------------------ eval harness --
+  - id: eval-task-definitions
+    capability: The clean-room eval pack defines and validates its tasks and machine checks
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    covers:
+      - eval:A1-pps-recognize-fill
+      - eval:A2-pps-consent-checkboxes
+      - eval:A3-kstartup-hybrid
+      - eval:G1-gianmun-body-edit
+      - eval:H1-labor-contract-fill
+      - eval:P1-jumin-recognize-fill
+      - eval:P2-jeongbo-staff-seats
+      - eval:R1-nrf-profile
+    evidence:
+      - eval:A1-pps-recognize-fill
+      - eval:G1-gianmun-body-edit
+      - eval:R1-nrf-profile
+      - doc:evals/README.md#assert_json
+
+  - id: eval-pack-published-run-record
+    capability: A committed per-task run record from a clean-bundle install
+    status: unsupported
+    platforms: [Windows]
+    reason: >-
+      evals/run_record.schema.json defines the shape and no records are
+      committed, so nothing in the repository publishes a per-task result. The
+      joint objective asks for exactly this. Producing one needs the eval tasks
+      run to completion on a Hancom bench, serial with an exact tasklist
+      pre-check, which has not been done in this lane.
+    evidence:
+      - doc:evals/README.md#assert_json
+
+  # ------------------------------------------------------------- platforms ---
+  - id: platform-linux
+    capability: Linux — offline editing, deterministic gates, packaging
+    status: partially
+    platforms: [Linux]
+    reason: >-
+      CI runs the full suite on ubuntu in both core-only and all-modules
+      configurations, so the offline engine, the gates and packaging are
+      exercised. Hancom COM does not exist there, so conversion and render proof
+      are unavailable rather than untested.
+    evidence:
+      - test:tests/test_cli_cp949_help.py::test_help_is_cp949_safe
+      - test:tests/test_cli_cp949_help.py::test_discovery_found_the_shipped_clis
+
+  - id: platform-macos
+    capability: macOS — any capability
+    status: unknown
+    platforms: [macOS]
+    reason: >-
+      No macOS bench and no macOS CI job exists, so nothing here has been
+      observed on macOS. The code paths are the same as Linux for offline work,
+      but that is inference, and inference is not evidence.
+    evidence:
+      - doc:docs/capability-matrix.md#Capability matrix
