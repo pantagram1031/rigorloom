@@ -929,11 +929,17 @@ Keep-list semantics by document family:
 
 - **Report finals**: default `--keep-pattern` (numbered headings) is right —
   guide/placeholder text must be gone.
-- **Form fills** (labels legitimately survive): pass the label anchors as
-  `--keep` entries (derive: profile anchors minus the keys your fill
-  consumed). With `guide_text: 0` forms the gate then only proves consumed
-  placeholders are gone — state that honestly; do not blanket-keep with a
-  match-all pattern.
+- **Form fills** (labels legitimately survive): pass the surviving inventory
+  entries as `--keep` entries. The derivation is
+  **`(anchors ∪ placeholders)` minus the entries your fill consumed** — the
+  same formula `visual_verify --fill-map` computes for you (§10), stated once so
+  the two paths cannot drift apart. Anchors alone is NOT enough and the
+  difference is not academic: a form's own cross-reference to another
+  attachment's 서식 number is classified under `placeholders`, so an
+  anchors-only keep list leaves it forbidden and a correct fill HARDs on text it
+  never touched (T132). With `guide_text: 0` forms the gate then only proves
+  consumed placeholders are gone — state that honestly; do not blanket-keep with
+  a match-all pattern.
 - **Prefix-preserving fills** need `--fill-map MAP.json`, not `--keep`
   (T31). Filling a labeled field keeps the label as a prefix, so the key text
   survives INSIDE the value: `" http://"` → `" http://hanbit.example.kr"`,

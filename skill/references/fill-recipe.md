@@ -332,7 +332,10 @@ not suppress surviving form text.
   exactly the string `--full-text` handed you.
 - For a **`fill-cells` target**, nothing was consumed: the label lives in a
   *different cell* and must survive. Key it by the **cell address**,
-  `"2,7"`. Key it by its label instead and the derivation drops that label from
+  `"2,7"` — which on this form is the 법인등록번호 blank, its label sitting at
+  `(2,6)`. Re-derive addresses per document rather than carrying these over:
+  사업자등록번호 is a *different* field one row down at `"3,7"`, and the two read
+  alike at a glance. Key it by its label instead and the derivation drops that label from
   the keep list, and the gate then HARDs on the form's own printed label —
   measured on this form: keying 협업기간 by `"협 업 기 간"` produces
   `form_residue: 협 업 기 간`, a failure on a perfectly correct fill.
