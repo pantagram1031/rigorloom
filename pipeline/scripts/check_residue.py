@@ -570,6 +570,7 @@ def check(
     keep_pattern: str = DEFAULT_KEEP_PATTERN,
     keep: tuple[str, ...] | list[str] = (),
     fill_map: dict | None = None,
+    expect_text: tuple[str, ...] | list[str] = (),
 ) -> tuple[dict, int]:
     profile_path = Path(form_profile)
     artifact_path = Path(artifact)
@@ -691,11 +692,61 @@ def check(
             "context": row["context"][0] if row["context"] else None,
         })
 
+    # T130: the gate could only say what must be ABSENT. There was no shipped
+    # offline way to say what must be PRESENT, so a clean-room run confirming
+    # that its values landed and that three statutory notices survived had to
+    # hand-roll a zip/XML scan — not a shipped tool, so unrepeatable and absent
+    # from every receipt. `visual_verify --expectations` can assert presence but
+    # needs a render, which on Windows means starting Hancom.
+    #
+    # Compared against the SAME normalized haystack the residue scan uses, and
+    # the declared string is normalized the same way: otherwise a caller's
+    # double space would miss a document that is byte-identical apart from
+    # whitespace collapsing.
+    # A miss is not always an absence, and collapsing the two would be the
+    # wrong fix. This corpus splits words across runs — the PPS consent notice
+    # extracts as 「…권리가 있 습니다. 그러 나…」 because `artifact_text` joins XML
+    # entries with a space — so a caller declaring the natural sentence gets a
+    # miss on a document that does contain it, just not as one literal. Matching
+    # against a whitespace-stripped haystack would fix that and turn the flag
+    # into a wildcard (T115's lesson about whitespace keys), so instead the
+    # finding NAMES which of the two it is.
+    squashed = _WS_RE.sub("", haystack)
+    missing = []
+    for text in expect_text:
+        if _normalize(text) in haystack:
+            continue
+        split_run = _WS_RE.sub("", text) in squashed
+        missing.append({"text": text,
+                        "reason": "split_across_runs" if split_run
+                                  else "absent"})
+        hard.append({
+            "code": "expected_text_missing",
+            "msg": ("a string the caller declared must be present is split "
+                    "across runs, so it is in the document but not as one "
+                    "literal — declare the run-split form or assert a "
+                    "fragment that does not cross a run boundary"
+                    if split_run else
+                    "a string the caller declared must be present is absent "
+                    "from the artifact's text"),
+            "at": text,
+            "reason": "split_across_runs" if split_run else "absent",
+        })
+
     extra = {
         "form_hash": profile.get("form_hash"),
         "artifact": str(artifact_path),
         "residue": residue,
     }
+    if expect_text:
+        extra["expected_text"] = {
+            "declared": list(expect_text),
+            "missing": missing,
+            # A text gate is never render evidence. Presence in the text is a
+            # complete claim about TEXT and says nothing about whether the
+            # string is visible, unclipped or on the page the reader expects.
+            "evidence_level": "text",
+        }
     if fill_map is not None:
         extra["fill_attribution"] = {
             "keys": sorted(str(key) for key in fill_map),
@@ -710,6 +761,7 @@ def check(
             "hard": len(hard), "warn": len(warn),
             "forbidden": len(forbidden), "kept": len(kept),
             "residue": len(residue),
+            "expected_text_missing": len(missing),
         },
     )
     return verdict, exit_code(hard=hard)
@@ -751,6 +803,18 @@ def main(argv=None) -> int:
              "value still HARD",
     )
 
+    parser.add_argument(
+        "--expect-text", action="append", default=[],
+        help="exact text that MUST be present in the artifact (repeatable). "
+             "Compared against the same normalized text the residue scan uses, "
+             "and the declared string is normalized the same way, so whitespace "
+             "differences do not create a false miss. A value that STARTS WITH "
+             "'-' must use the '=' form, for the same argparse reason as "
+             "--keep (T116). This is a TEXT-level claim and never render "
+             "evidence: it says the string is in the document, not that it is "
+             "visible or unclipped (T130)",
+    )
+
     def _invoke(args):
         fill_map = None
         if args.fill_map:
@@ -763,6 +827,7 @@ def main(argv=None) -> int:
             keep_pattern=args.keep_pattern,
             keep=tuple(args.keep),
             fill_map=fill_map,
+            expect_text=tuple(args.expect_text),
         )
 
     return cli_main(parser, _invoke, argv)

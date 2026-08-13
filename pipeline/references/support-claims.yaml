@@ -27,6 +27,35 @@ claims:
       - test:engine/tests/test_preedit.py::test_zero_hit_key_raises_and_no_output
       - doc:skill/references/operations.md#preedit
 
+  - id: offline-text-presence-assertion
+    capability: >-
+      Asserting offline that a required string is present in the artifact's
+      TEXT, with a miss distinguishing absent from split-across-runs
+    status: supported
+    platforms: [Windows, macOS, Linux]
+    evidence:
+      - test:pipeline/tests/test_expect_text.py::test_an_absent_string_is_a_hard_finding
+      - test:pipeline/tests/test_expect_text.py::test_a_run_split_string_says_so_rather_than_absent
+      - test:pipeline/tests/test_expect_text.py::test_the_verdict_labels_its_own_evidence_level
+      - doc:skill/references/operations.md#4-check_residue
+
+  - id: offline-consent-mark-verification
+    capability: Verifying offline that a glyphless consent choice was actually marked
+    status: unsupported
+    platforms: [Windows, macOS, Linux]
+    reason: >-
+      A choice printed as (예, 아니오) with no checkbox glyph cannot be read
+      deterministically, so check_grant reports marked_consent_options 0 even on
+      an accepted verdict and consent_unmarked comes back skipped with reason
+      no_mark_glyphs (T111). T130's --expect-text closes the string half of this
+      gap - a notice that must survive can now be asserted offline - and not the
+      mark half. On a consent form the property the operator cares about most
+      therefore still rests on the filling agent's own report, or on a render
+      plus a human reading it.
+    evidence:
+      - test:modules/grant/tests/test_grant_check.py::test_a_glyphless_choice_is_skipped_with_a_reason_not_guessed
+      - test:pipeline/tests/test_expect_text.py::test_the_verdict_labels_its_own_evidence_level
+
   - id: offline-run-addressed-write
     capability: Writing a specific run by address, keeping its character shape
     status: supported
