@@ -735,6 +735,30 @@ python engine/scripts/preedit.py set-runs $W/filled.hwpx \
     --out $W/filled2.hwpx --run "18,2=서울특별시 강남구 테헤란로 100        "
 ```
 
+**A seat with no rule at all is still one run, and you rewrite it (at_para 64).**
+The third row of the table above went unanswered for two clean-room runs, and
+both guessed their way through it. The shape is one unruled run holding
+everything — measured on this form, `'본인    성명               (서명 또는 인)'`
+is `runs[0]`, `ruled` absent. So there is no ruled run to address and no marker
+riding a rule to key on; the whole seat is one string.
+
+Address it and rewrite it, reproducing the label AND the marker verbatim with the
+value between them:
+
+```
+python engine/scripts/preedit.py set-runs $W/filled.hwpx     --out $W/filled2.hwpx     --run "64,0=본인    성명    이서연         (서명 또는 인)"
+```
+
+Verified on the corpus form: the receipt reports `charpr: "37"` and reading the
+paragraph back shows the same id, so the run's character shape survives exactly
+as it does for the other two shapes.
+
+**The name is yours to write; the marker is not.** SKILL.md's contract that
+signature cells stay blank is about the MARK — `(서명 또는 인)` and `(인)` are
+reproduced byte-identically and a human still signs. Writing the applicant's own
+name into the seat beside it is not signing, and leaving that seat empty when the
+operator supplied the name is not caution, it is an unfilled field.
+
 The address is the `at_para` and `runs[].index` the profile already reports, and
 `runs[].ruled` tells you which one to name. The run's opener is never rewritten,
 so its `charPrIDRef` — and therefore the rule — survives: measured on the corpus
