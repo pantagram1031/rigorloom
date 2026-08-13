@@ -435,6 +435,20 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T133:** the bundled `skill/SKILL.md` closed on "Module skill fragments ...
+  are appended below by the installer", and for that file the sentence is false
+  and always will be: it is the pre-install source, `scripts/sync_local.py` does
+  the appending, and the result lands in the installed copy under the Claude
+  skills directory. A clean-room agent read the sentence there, found nothing
+  appended, confirmed the module was enabled, and reported the installer as
+  broken — the installer was fine, the composed copy is 735 lines and carries
+  every fragment, and nothing in the bundled file said which copy the reader was
+  holding. Extracting a bundle and opening `skill/SKILL.md` is the obvious thing
+  to do. The closing passage now names the installer, the destination, and the
+  fact that this copy never carries the fragments; a guard pins all three and
+  checks that `sync_local.py` really is the composer rather than trusting the
+  sentence.
+
 - **T132:** `operations.md` stated the form-fill keep-list derivation twice and
   differently. The section documenting the standalone `check_residue` call said
   to derive it from `profile anchors minus the keys your fill consumed`; the

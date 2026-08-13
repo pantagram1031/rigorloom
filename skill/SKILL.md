@@ -336,4 +336,12 @@ quality route for rendered PDF glyphs; text extraction alone is not visible
 glyph proof, and an `advisory` grade is never Hancom parity.
 
 Module skill fragments (report pipeline, style/humanize, gongmun/공문) are
-appended below by the installer when their distribution modules are enabled.
+appended by `scripts/sync_local.py` at install time, when their distribution
+modules are enabled, into the INSTALLED copy under the Claude skills directory
+(`<skills-root>/<skill-name>/SKILL.md`).
+
+**This file is the pre-install source and never carries them.** If you are
+reading it straight out of an extracted bundle, the fragments are not below and
+never will be — read the installed copy instead. A clean-room agent read this
+sentence here, found nothing appended, and reported the installer as broken; the
+installer was fine and this copy was not the one to read (T133).
