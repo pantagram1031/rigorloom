@@ -411,7 +411,11 @@ def test_full_text_para_cli_and_bad_addresses_are_fail_closed(tmp_path):
         "para_idx": 1,
         "section": "Contents/section0.xml",
         "text": "selected",
-        "runs": [{"index": 0, "text": "selected", "charpr": "0"}],
+        # color_anomaly is False, not absent: this fixture's charPr carries a
+        # readable colour, so the verdict was made (T128). Absence would mean
+        # "could not judge", which is a different claim.
+        "runs": [{"index": 0, "text": "selected", "charpr": "0",
+                  "color_anomaly": False}],
     }]
 
     for spec in ("PARA:nope", "PARA:99"):
@@ -446,9 +450,14 @@ def test_ruled_runs_are_named_on_the_real_form(at_para, ruled_indexes):
     runs = _pps_runs(at_para)
     assert [r["index"] for r in runs if r.get("ruled")] == ruled_indexes
     # `ruled` is present only when true, so the run-record shape asserted by
-    # the CLI test above is unchanged for every ordinary run.
+    # the CLI test above is unchanged for every ordinary run. `color_anomaly`
+    # is different on purpose (T128): it is present whenever the colour COULD
+    # be read, because absence has to keep meaning "not judged" — the whole
+    # point of T127 was that reporting an unexamined property as clean is not
+    # a check. `color_value` rides along only when the verdict is true.
     for run in runs:
-        assert set(run) <= {"index", "text", "charpr", "ruled"}
+        assert set(run) <= {"index", "text", "charpr", "ruled",
+                            "color_anomaly", "color_value"}
 
 
 def test_ruled_is_a_narrow_signal_not_a_blanket():
