@@ -416,6 +416,21 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T128:** a paragraph seat now gets the colour verdict T127 added, on the
+  `--full-text` run record. T127 reached table cells only: `_fill_preflight`
+  has one call site, inside the table walk, so a form whose seats are top-level
+  paragraphs profiles as `fill_target_count: 0` and received no pre-flight at
+  all — and the writers for those seats check nothing, because `set-runs`
+  deliberately never rewrites the run opener. Found by a clean-room agent
+  filling the standard labour contract, whose fill was clean only by luck of the
+  form: it verified the ten charPr ids it wrote into by calling `_charpr_defs`
+  itself, since no shipped surface reported colour for a paragraph seat. Same
+  predicate as the table pre-flight and the guide-text classifier, so three
+  consumers cannot disagree; an unreadable colour omits the key rather than
+  reporting clean. Measured limit, stated: a paragraph seat still gets no
+  script verdict, and on the 주민등록 등초본 form 12 of 68 body charPrs differ
+  from the baseline on the five script properties.
+
 - **T127:** the T30 fill pre-flight reported `script_anomaly: false` — its own
   documented meaning is *checked and clean* — about colour it never examined.
   `charpr_script` does not parse colour at all, so a fill inheriting a
