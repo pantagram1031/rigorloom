@@ -414,6 +414,25 @@ the kernel's contract shape.
   returning only the requested paragraph's own exact text/runs in preedit's
   document order.
 
+### Added
+
+- **T130:** `check_residue --expect-text` asserts offline that a string MUST be
+  present. The gate could only say what must be absent, so a clean-room run
+  confirming its values landed and three statutory notices survived hand-rolled
+  a zip/XML scan — not a shipped tool, therefore unrepeatable and absent from
+  every receipt, while `visual_verify --expectations` can assert presence but
+  needs a render, which on Windows means starting Hancom. On its first real use
+  the flag DISAGREED with the run that motivated it: the agent reported
+  「동의를 거부할 권리가 있습니다」 present verbatim, and it is not — this corpus
+  breaks words at run boundaries and the notice extracts as 「…권리가 있 습니다」.
+  Collapsing that into a whitespace-stripped match would have made the flag a
+  wildcard (T115), so a miss instead names which kind it is: `absent`, or
+  `split_across_runs` when the string is in the document but not as one literal.
+  The verdict labels its own `evidence_level: "text"`, because presence in the
+  text says nothing about whether the string renders visibly. A caller who
+  declares nothing gets no block published, so an empty claim cannot read as a
+  check that ran.
+
 ### Fixed
 
 - **T129:** `_parse_constraints` was handed `guide_text` only, so a budget the
