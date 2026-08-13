@@ -416,6 +416,23 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T129:** `_parse_constraints` was handed `guide_text` only, so a budget the
+  form states in a plain bullet never reached it. The nrf 결과보고서 양식 says
+  「◦ 결과보고서의 전체 분량은 15쪽 이상, 글자크기는 12포인트 권장」 and that line is
+  neither colored nor an instruction keyword nor a ※ note prefix, so it is
+  filed under `anchors` and never under `guide_text`; the regexes were already
+  correct and yield 15 and 12 when run against it. The profile published
+  `constraints` all-null anyway, which downstream is the difference between a
+  checked length budget and `length_budget_unverified: not_declared`. Measured
+  before widening: the old input detects a constraint on ZERO of the ten corpus
+  forms, the widened input changes exactly ONE — nrf gains its own stated
+  `base_pt: 12` and `min_pages: 15` — and the other nine stay all-null, which
+  makes them the false-positive fixtures. Found by a clean-room agent that
+  traced it to the call site rather than reporting the symptom. Stated limit,
+  pinned by a test: the shipped regex cannot tell a requirement about THIS
+  document from a page count citing another one, so if such a form appears the
+  fix is a scope rule, not a wider input.
+
 - **T128:** a paragraph seat now gets the colour verdict T127 added, on the
   `--full-text` run record. T127 reached table cells only: `_fill_preflight`
   has one call site, inside the table walk, so a form whose seats are top-level

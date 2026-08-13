@@ -38,13 +38,23 @@ machine_checks:
     json_file: "${WORK}/reference.profile.json"
     assert_json: ["len(anchors) >= 70", "len(table_map) >= 3", "len(guide_text) >= 20"]
 
-  - id: constraints_absent_is_the_truth
+  - id: constraints_match_what_the_form_declares
     kind: python
-    description: 분량 제약은 실제로 선언돼 있지 않다 - 없는 것을 없다고 보고해야 한다
+    # T129: this check used to be `constraints_absent_is_the_truth`, asserting
+    # base_pt == null with the description "분량 제약은 실제로 선언돼 있지 않다".
+    # THAT WAS FALSE. The form declares its own budget in its guide table —
+    # 「◦ 결과보고서의 전체 분량은 15쪽 이상, 글자크기는 12포인트 권장」 — and the
+    # profile reported nothing only because _parse_constraints was fed
+    # guide_text while that sentence is a plain ◦ bullet filed under anchors.
+    # The check had pinned the defect as ground truth and its own name claimed
+    # otherwise. max_pages stays null and that half was always right: 15쪽
+    # 이상 is a MINIMUM, and this form declares no maximum — which is the
+    # distinction the old check was accidentally standing on.
+    description: 양식이 스스로 선언한 분량·글자크기가 프로파일에 그대로 나와야 하고, 선언하지 않은 상한은 null이어야 한다
     argv: ["engine/scripts/form_inspect.py", "${INPUTS}/nrf-gyeolgwa-bogoseo-yangsik.hwpx", "--out", "${WORK}/reference.profile.json"]
     expect_exit: 0
     json_file: "${WORK}/reference.profile.json"
-    assert_json: ["constraints.max_pages == null", "constraints.base_pt == null"]
+    assert_json: ["constraints.min_pages == 15", "constraints.base_pt == 12", "constraints.max_pages == null"]
 
   - id: fill_report_dry_run
     kind: python
