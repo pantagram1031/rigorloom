@@ -783,12 +783,17 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--keep-pattern", default=DEFAULT_KEEP_PATTERN,
-        help="regex for anchors that legitimately remain (default: numbered "
-             "section headings)",
+        help="regex for INVENTORY ENTRIES that legitimately remain "
+             "(default: numbered section headings). It is matched against "
+             "every forbidden row whatever its source — anchor, guide "
+             "text or placeholder — not anchors alone; the narrower "
+             "wording used to say otherwise (T131)",
     )
     parser.add_argument(
         "--keep", action="append", default=[],
-        help="exact anchor text to keep (repeatable). A value that STARTS WITH "
+        help="exact INVENTORY ENTRY text to keep (repeatable) — an anchor, a "
+             "guide entry or a placeholder, compared after whitespace "
+             "normalization, not anchors alone (T131). A value that STARTS WITH "
              "'-' must use the '=' form — write --keep=-- , never --keep -- , "
              "because argparse reads a bare '--' as its end-of-options marker "
              "and the value never arrives (T116). Real forms print '--' as a "
