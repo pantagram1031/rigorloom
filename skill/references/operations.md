@@ -563,7 +563,7 @@ python engine/scripts/form_inspect.py FORM.hwpx --out profile.json
 
 Offline (no Hancom), `.hwpx` only. `profile.json` keys: `form_hash`,
 `anchors` (headings/labels, in scan order), `placeholders`, `guide_text`,
-`constraints` (base_pt / line_spacing_pct / max_pages — 0 detected on
+`constraints` is parsed from the form's own printed text — `guide_text` AND `anchors`, because a budget stated in a plain `◦` bullet lands in anchors only (T129). `constraints` (base_pt / line_spacing_pct / max_pages — 0 detected on
 fixed-grid forms; the fill gate there is layout immutability, not budget),
 `page_metrics`, `table_map` (per-table `index`/`depth`, per-cell
 `addr`/`span`/size/borderFill/shading/classification/`text_preview` +
