@@ -435,6 +435,22 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T131:** `fill-recipe.md` §3c tabulated three seat shapes and worked through
+  two. The row for `at_para 64` — one unruled run holding label, blank and
+  marker together — was never revisited, and two independent clean-room runs hit
+  it and both guessed. They guessed right, which is what made it worth fixing
+  rather than shrugging: a table that names a case reads as a promise to handle
+  it. The row now has a worked answer verified on the corpus form (`set-runs`
+  addressing the single run; the receipt and the read-back both report charPr 37,
+  so the character shape survives as it does for the other two shapes), plus the
+  distinction that makes it safe — the name is writable, the marker is
+  reproduced byte-identically and a human still signs.
+  `tests/test_fill_recipe_seat_shapes.py` reads the seat numbers out of the table
+  and requires each to reappear below it, so a fourth row cannot be added without
+  an answer. Also corrects `--keep-pattern` and `--keep` help, which described
+  themselves as anchor-only while `derive_forbidden` applies both to every
+  inventory row — anchor, guide text and placeholder alike.
+
 - **T129:** `_parse_constraints` was handed `guide_text` only, so a budget the
   form states in a plain bullet never reached it. The nrf 결과보고서 양식 says
   「◦ 결과보고서의 전체 분량은 15쪽 이상, 글자크기는 12포인트 권장」 and that line is
