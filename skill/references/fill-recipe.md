@@ -120,6 +120,24 @@ prose is spread across 144 ids whose heaviest carries 323, so blue wins the
 maximum even though black is 72% of the document's body weight. Recommending the
 baseline there re-ships the bug.
 
+**A paragraph seat gets the same verdict, on the run record (T128).** The
+pre-flight above runs for table `fill_target` cells only — one call site, inside
+the table walk — so a form whose seats are top-level paragraphs profiles as
+`fill_target_count: 0` and gets no pre-flight at all. The standard labour
+contract is that form. `--full-text PARA:N` now reports `color_anomaly` (and
+`color_value`) on each `runs[]` entry, next to the `ruled` marker you already
+read to pick the seat, decided by the same predicate. Neither `set-runs` nor
+`replace --at-para` checks anything itself: `set-runs` never rewrites the run
+opener, which is exactly why the seat's own charPr — and its colour — is what
+the value inherits.
+
+Still uncovered, stated rather than implied: a paragraph seat gets **no script
+verdict**. `script_anomaly` needs the body baseline, which `--full-text` does
+not thread, so a ruled run that differs on supscript/ratio/offset renders
+displaced with nothing warning you. That is not hypothetical — on the 주민등록
+등초본 form 12 of 68 body charPrs differ from the baseline on those five
+properties, while the labour contract has none.
+
 Use the profile-level **`body_black_charpr`** instead. It applies the same
 heaviest-run rule to black/auto runs only, and prefers one at the *same nominal
 height* as the baseline — swapping a 10pt blue seat for a 12pt black one fixes

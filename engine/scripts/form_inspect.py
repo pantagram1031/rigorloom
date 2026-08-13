@@ -916,10 +916,27 @@ def _run_record(run, defs):
     괘선 런이 곧 값을 써 넣을 자리다. 라벨 런에 이어 쓰면 괘선이 값과 분리돼
     남는다 — A2 산출물의 주소 줄에서 실제로 그렇게 렌더됐고, 결정론적 검사와
     vision 모두 통과했다.
+
+    ``color_anomaly``는 T30 사전 점검과 **같은 판정을 문단 좌석에도** 붙인다
+    (T128). `_fill_preflight`는 호출 지점이 `_table_map` 하나뿐이라 표 셀에만
+    걸린다 — 근로계약서처럼 좌석이 전부 최상위 문단인 문서는
+    `fill_target_count: 0`으로 나와 사전 점검을 아예 받지 못했고, 문단 좌석을
+    쓰는 `set-runs`/`replace --at-para`도 자체 charPr 검사가 없다. 술어는
+    guide_text의 `reason: "colored"`를 내리는 `_is_black_or_auto` 그대로다 —
+    표 셀과 문단 좌석이 같은 속성을 다르게 보고하면 안 된다(T101).
+
+    세 상태를 지킨다: 색을 못 읽으면 키가 아예 없고(=판정 안 함), 검정/auto면
+    False, 아니면 True와 함께 ``color_value``.
     """
     out = {"index": run["index"], "text": run["text"], "charpr": run["charpr"]}
     if _is_ruled(defs or {}, run["charpr"]):
         out["ruled"] = True
+    entry = (defs or {}).get(run["charpr"])
+    if entry is not None and "color" in entry:
+        color = entry.get("color")
+        out["color_anomaly"] = not _is_black_or_auto(color)
+        if out["color_anomaly"]:
+            out["color_value"] = color
     return out
 
 
@@ -941,7 +958,8 @@ def _full_text(section_names, z, wanted, defs=None):
     wanted: [(table_index|None, row, col), ...] (table_index None은 표 0),
         또는 [("para", at_para), ...].
     반환: 셀 요청에는 [{table, addr:{row,col}, text, truncated_preview,
-        runs:[{index, text, charpr}]}], 문단 요청에는 [{at_para, para_idx,
+        runs:[{index, text, charpr, ruled?, color_anomaly?, color_value?}]}],
+        문단 요청에는 [{at_para, para_idx,
         section, text, runs:[{index, text, charpr}]}]. 문단 ``at_para``가
         ``preedit``와 같은 0-based 문서 순서 주소다. ``para_idx``는
         이 결과 안에서만 유지하는 backward-compatible alias이며, profile의
