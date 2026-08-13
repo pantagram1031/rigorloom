@@ -1387,7 +1387,23 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
     has_eq_placeholder = any("수식" in a or "식" in a for a in placeholders) or \
         any("수식" in g["text"] for g in guide_text)
 
-    constraints = _parse_constraints([g["text"] for g in guide_text])
+    # T129: the parser used to be handed guide_text ONLY, so a budget the form
+    # states in a plain bullet never reached it. The nrf 결과보고서 양식 says
+    # 「◦ 결과보고서의 전체 분량은 15쪽 이상, 글자크기는 12포인트 권장」 and that
+    # line is a plain ◦ bullet — neither colored nor instruction nor
+    # note_prefix — so it lands in `anchors` and not in `guide_text`. The
+    # regexes were already right: run against that sentence they yield 15 and
+    # 12. The profile published constraints all-null anyway, which downstream
+    # is the difference between a checked length budget and
+    # `length_budget_unverified: not_declared`.
+    #
+    # Measured before widening, on all ten corpus forms: current behaviour
+    # detects a constraint on ZERO of them, the widened input changes exactly
+    # ONE (nrf gains base_pt=12, min_pages=15 — its own stated requirement),
+    # and the other nine stay all-null. Zero false positives, and those nine
+    # are the regression fixtures for that.
+    constraints = _parse_constraints(
+        [g["text"] for g in guide_text] + list(anchors))
 
     # blanks_before(Rule 1): 각 anchor 문단 앞의 pristine-form 빈 문단 개수.
     # tidy_hwpx --before가 앵커당 몇 개까지 남겨야(keep_n) 양식 원본 여백을
