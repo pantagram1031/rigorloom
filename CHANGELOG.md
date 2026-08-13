@@ -416,6 +416,25 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T127:** the T30 fill pre-flight reported `script_anomaly: false` — its own
+  documented meaning is *checked and clean* — about colour it never examined.
+  `charpr_script` does not parse colour at all, so a fill inheriting a
+  guide-blue run passed the pre-flight and shipped text that reads as a form
+  hint. `color_anomaly` now carries the same three-state contract, decided by
+  the predicate that classifies `guide_text reason: "colored"` so the two halves
+  of `form_inspect` cannot disagree, and judged before the script early-return
+  so a document with no derivable baseline still gets a colour verdict. The
+  remedy needed its own field: `charpr_suggested` is the body baseline and the
+  body baseline can be coloured — on the kstartup form guide blue holds 378
+  characters in one charPr while black prose spreads across 144 ids topping out
+  at 323, so blue wins the maximum despite black being 72% of body weight.
+  `body_black_charpr` applies the same rule to black runs only and prefers one
+  at the baseline's nominal height, because swapping a 10pt blue seat for a 12pt
+  black one trades one defect for another. `body_baseline_charpr` is untouched:
+  its tie-break must stay identical to visual_verify's. Found by a clean-room
+  agent whose own prose came back classified as guide text while every cell it
+  touched reported `script_anomaly: false`.
+
 - **T123:** ingress refuses a file that exists but is not a document, before COM
   starts. T25 closed the missing-input case with the note that says why - Hwp
   opens a blank document and the blank artifact leaves as `ok: true` - and a

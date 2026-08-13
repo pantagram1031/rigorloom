@@ -835,6 +835,12 @@ hand (the structure-only contract above forbids exactly that):
    `supscript`/`subscript`/`ratio`/`relSz`/`offset`; `false` = checked and
    clean; `null` = could not be judged), and `charpr_suggested` (the baseline
    id to use instead). `script_anomaly_targets` lists just the anomalies.
+   Also `color_anomaly` (T127): `true` = the inherited run is not black/auto,
+   so the fill would render in the form's guide colour. The five script
+   properties do not include colour, so `script_anomaly: false` never covered
+   it. For the remedy use the profile-level `body_black_charpr`, NOT
+   `charpr_suggested` — the body baseline can itself be coloured, and on the
+   kstartup form it is.
 2. **Check.** `script_anomaly_targets == []` → fill normally, nothing to do.
 3. **Fill with the suggested id.** For each anomalous target pass
    `--charpr-per-cell ROW,COL=<charpr_suggested>`.
