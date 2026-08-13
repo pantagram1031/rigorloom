@@ -435,6 +435,20 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T132:** `operations.md` stated the form-fill keep-list derivation twice and
+  differently. The section documenting the standalone `check_residue` call said
+  to derive it from `profile anchors minus the keys your fill consumed`; the
+  `visual_verify` section 283 lines later gave `(anchors ∪ placeholders)` minus
+  the consumed entries. Anchors alone is not enough and the gap is reachable:
+  `_profile_inventory` puts `placeholder`-sourced rows in the forbidden set, so a
+  form's own cross-reference to another attachment's 서식 number stays forbidden
+  under an anchors-only keep list, and a clean-room run following the narrower
+  sentence verbatim got a HARD on text its fill never touched. One formula now,
+  named on both paths, with a guard asserting that no derivation says anchors
+  without placeholders. Also names the field the worked `fill.json` address
+  belongs to: `"2,7"` is the 법인등록번호 blank on that form while 사업자등록번호 is
+  a different field one row down at `"3,7"` — the example was always correct, and
+  carrying its addresses across documents is what is not.
 - **T131:** `fill-recipe.md` §3c tabulated three seat shapes and worked through
   two. The row for `at_para 64` — one unruled run holding label, blank and
   marker together — was never revisited, and two independent clean-room runs hit
