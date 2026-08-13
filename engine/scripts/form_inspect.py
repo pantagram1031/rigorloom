@@ -43,12 +43,23 @@ v2 추가 섹션(form_profile.json):
 T30 사전 점검(fill 대상 charPr):
   body_baseline_charpr    — 문서 자신의 본문 baseline charPr(id/height_pt/
                             script signature). 상단에 한 번 보고한다.
+  body_black_charpr       — 같은 규칙을 **검정 계열 런만** 놓고 한 번 더 적용한
+                            결과(id/height_pt/color). baseline은 가장 무거운 한
+                            id이고 그 id가 파랑일 수 있어서 따로 둔다(T127).
   table_map[*].cells[*]   — classification=="fill_target" 셀에만:
       charpr             채우기가 **상속할** 런의 charPrIDRef
       script_anomaly     그 charPr이 baseline과 supscript/subscript/ratio/
                          relSz/offset 중 하나라도 다른가(True/False,
                          판정 불가면 None)
-      charpr_suggested   대신 써야 할 id(= baseline id)
+      color_anomaly      그 charPr의 textColor가 검정/auto가 **아닌가**(True면
+                         채우기가 안내문 색으로 나간다). script_anomaly가 보는
+                         다섯 속성에 색은 없어서 파랑 상속이 "검사했고 깨끗"으로
+                         통과했다(T127). 판정은 이 파일의 guide_text 검출기가 쓰는
+                         술어 그대로. baseline이 필요 없으므로 script_anomaly가
+                         None인 문서에서도 판정된다. True일 때 color_value 동반.
+      charpr_suggested   대신 써야 할 id(= baseline id). **색에는 이 값을 쓰지
+                         말 것** — baseline 자체가 파랑일 수 있다. 색이 이상하면
+                         상단 body_black_charpr을 쓴다.
   script_anomaly_targets  — script_anomaly인 대상 셀만 모은 목록(빠른 확인용).
   spacer_cells            — 구조용 빈 칸 목록({table, addr, pattern}).
   fill_target_count       — spacer를 제외한 실제 채우기 대상 수.
@@ -606,19 +617,36 @@ def _body_charpr_weights(section_names, z):
     return weights
 
 
-def _fill_preflight(raw_body, script_profiles, baseline_id):
+def _fill_preflight(raw_body, script_profiles, baseline_id, charpr_defs=None):
     """fill_target 셀 하나의 T30 사전 점검 필드.
 
     charpr가 안 잡히거나(쓸 런이 없다 — fill-cells도 거부한다) baseline/프로파일이
     없으면 script_anomaly는 **판정하지 않은 것**을 뜻하는 None이다. False(=검사했고
     깨끗하다)와 구별된다 — 못 본 것을 깨끗하다고 보고하면 사전 점검이 아니다.
+
+    color_anomaly는 그 원칙을 색에도 적용한다(T127). script_anomaly는
+    supscript/subscript/ratio/relSz/offset **다섯 개만** 비교하므로, 안내문 파랑을
+    물려받는 채우기도 script_anomaly=False(=검사했고 깨끗)로 통과했다. 판정은 이
+    파일의 guide_text 검출기가 쓰는 술어(_is_black_or_auto) 그대로여서, 사전 점검이
+    예측하는 것과 사후에 붙는 분류가 어긋날 수 없다.
     """
     run_charpr = fill_target_run_charpr(raw_body)
     profile = script_profiles.get(run_charpr)
     baseline_profile = script_profiles.get(baseline_id)
     out = {"charpr": run_charpr,
            "script_anomaly": None,
+           "color_anomaly": None,
            "charpr_suggested": baseline_id}
+    # 색은 baseline이 필요 없다 — 본문이 무슨 색이든 검정이 아닌 런을 물려받으면
+    # 그 채우기는 안내문처럼 보인다. 그래서 script의 early-return **앞에서** 판정한다:
+    # baseline을 못 구한 문서도 색 판정은 받는다.
+    if run_charpr is not None and charpr_defs:
+        entry = charpr_defs.get(run_charpr)
+        if entry is not None and "color" in entry:
+            color = entry.get("color")
+            out["color_anomaly"] = not _is_black_or_auto(color)
+            if out["color_anomaly"]:
+                out["color_value"] = color
     if run_charpr is None or profile is None or baseline_profile is None:
         return out
     differing = charpr_script.differing_keys(profile, baseline_profile)
@@ -866,7 +894,7 @@ def _table_map(section_names, z, defs, borderfill_shaded,
                 raw_body = entry.pop("_raw_body", None)
                 if entry["classification"] == "fill_target" and raw_body is not None:
                     entry.update(_fill_preflight(
-                        raw_body, script_profiles or {}, baseline_id))
+                        raw_body, script_profiles or {}, baseline_id, defs))
 
             tables.append({
                 "index": idx,
@@ -1143,14 +1171,42 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
     # T30 사전 점검의 기준선 — 문서 자신의 본문 charPr. table_map보다 먼저
     # 구해야 한다(fill_target 셀마다 이 id와 비교하므로).
     script_profiles = charpr_script.profiles_from_header(header_xml)
-    script_baseline_id = charpr_script.body_baseline_id(
-        _body_charpr_weights(section_names, z))
+    body_weights = _body_charpr_weights(section_names, z)
+    script_baseline_id = charpr_script.body_baseline_id(body_weights)
     baseline_profile = script_profiles.get(script_baseline_id)
     body_baseline_charpr = {
         "id": script_baseline_id,
         "height_pt": (baseline_profile or {}).get("height_pt"),
         "signature": (charpr_script.signature(baseline_profile)
                       if baseline_profile else None),
+    }
+    # T127: body_baseline_charpr는 **가장 무거운 한 id**이고 그 id가 검정이 아닐 수
+    # 있다. kstartup 양식에서 실제로 그렇다 — 안내문 파랑이 charPr 하나에 뭉쳐
+    # 378자, 가장 무거운 검정은 144개 id에 흩어져 323자라서 파랑이 최댓값을 이긴다
+    # (검정은 본문 무게의 72%인데도). 그래서 색이 이상한 좌석에 baseline을 권하면
+    # 파랑을 또 권하게 된다. 검정 계열만 놓고 같은 규칙으로 한 번 더 뽑아 별도로
+    # 보고한다. body_baseline_charpr의 타이브레이크는 visual_verify와 **같아야**
+    # 하므로 건드리지 않는다.
+    black_weights = {cid: w for cid, w in body_weights.items()
+                     if _is_black_or_auto((defs.get(cid) or {}).get("color"))}
+    # 크기까지 맞춘다: 10pt 파랑 좌석을 12pt 검정으로 바꾸면 색은 고치고 크기를
+    # 깨뜨린다. T30의 전제가 "명목 height는 동일"이므로(signature 참조) baseline과
+    # 같은 height의 검정을 먼저 찾고, 없으면 검정 중 가장 무거운 것으로 내려간다.
+    baseline_pt = (baseline_profile or {}).get("height_pt")
+    same_pt = {}
+    if baseline_pt is not None:
+        same_pt = {cid: w for cid, w in black_weights.items()
+                   if (script_profiles.get(cid) or {}).get("height_pt")
+                   == baseline_pt}
+    body_black_id = charpr_script.body_baseline_id(same_pt or black_weights)
+    black_profile = script_profiles.get(body_black_id)
+    black_pt = (black_profile or {}).get("height_pt")
+    body_black_charpr = {
+        "id": body_black_id,
+        "height_pt": black_pt,
+        "color": (defs.get(body_black_id) or {}).get("color"),
+        "same_height_as_baseline": (None if body_black_id is None
+                                    else black_pt == baseline_pt),
     }
 
     table_map = _table_map(section_names, z, defs, borderfill_shaded,
@@ -1344,6 +1400,7 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
         "removal_policy": removal_policy,
         "page_metrics": page_metrics,
         "body_baseline_charpr": body_baseline_charpr,
+        "body_black_charpr": body_black_charpr,
         "table_map": table_map,
         "script_anomaly_targets": [
             {"table": t["index"], "addr": c["addr"], "charpr": c["charpr"],

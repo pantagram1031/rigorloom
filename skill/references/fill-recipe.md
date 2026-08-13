@@ -98,6 +98,35 @@ Contrast, same form, same command family:
   run 2, so `--at-cell '15,0#2=…'`. Guessing "first run" would have deleted the
   regulation sentence.
 
+### 1.1b `script_anomaly: false` says nothing about colour (T127)
+
+`script_anomaly` compares five charPr properties — `supscript`, `subscript`,
+`ratio`, `relSz`, `offset`. Colour is not one of them, and before T127 nothing
+in the pre-flight looked at colour at all. So a fill that inherits a guide-blue
+run reported `script_anomaly: false`, which the field docs define as *checked
+and clean*, and shipped text that reads as a form hint rather than an answer.
+
+Read **`color_anomaly`** as well. Same three states: `true` = the inherited run
+is not black/auto, `false` = checked and it is, `null` = could not judge. It is
+decided by the same predicate that classifies a run as `guide_text`
+`reason: "colored"`, so the pre-flight cannot promise something the post-flight
+then contradicts. Colour needs no baseline, so it is judged even on a document
+whose `script_anomaly` is `null`.
+
+**Do not reach for `charpr_suggested` to fix a colour.** That field is the body
+baseline, and the body baseline can itself be coloured. On the kstartup form it
+is: guide blue is concentrated in one charPr carrying 378 characters while black
+prose is spread across 144 ids whose heaviest carries 323, so blue wins the
+maximum even though black is 72% of the document's body weight. Recommending the
+baseline there re-ships the bug.
+
+Use the profile-level **`body_black_charpr`** instead. It applies the same
+heaviest-run rule to black/auto runs only, and prefers one at the *same nominal
+height* as the baseline — swapping a 10pt blue seat for a 12pt black one fixes
+the colour and breaks the size. `same_height_as_baseline` says whether that
+preference was satisfiable; if it is `false`, the id still fixes the colour but
+you are changing the size too, so decide deliberately.
+
 ### 1.1 `script_anomaly` is a *question*, not a verdict — and the usual answer is "the form designed it that way"
 
 A `script_anomaly` says only *this cell's charPr differs from the body baseline
