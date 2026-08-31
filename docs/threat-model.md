@@ -1,0 +1,353 @@
+# Threat model — agent-native desktop
+
+Status: Phase 0 deliverable. This document is **adversarial review input**, not
+a security claim. It maps each trust boundary to abuse cases, and for every
+abuse case it separates four things that are routinely confused:
+
+- what this checkout **already enforces**, with a `file:line` you can open;
+- what a design draft only **plans**, with the section that plans it;
+- which **existing tests** pin the implemented half;
+- what is **left over**, and which program phase owns closing it.
+
+Rules this document holds itself to:
+
+1. **No uncited control.** If a row claims something is enforced, the citation
+   is a real line in this tree. Line numbers were re-read against the working
+   checkout, not copied from another document.
+2. **A missing control is a GAP, not a silence.** Every GAP names the phase
+   that should build it. `docs/product-direction.md` §8.1 (branch
+   `docs/product-direction-desktop`) defines Phase 0–6; that is the phase
+   vocabulary used here.
+3. **No fabricated tests.** Every test file named below exists in this
+   checkout. Where nothing pins a control, the cell says `none`.
+4. **Planned is not implemented.** Rows citing `docs/runtime-protocol-v0.md`
+   or `docs/desktop-architecture.md` are citing *design drafts*. Both say so
+   in their own first paragraph. Nothing in either is running.
+
+Companions: `docs/runtime-protocol-v0.md` (wire contract),
+`docs/desktop-architecture.md` (process model and boundaries),
+`docs/desktop-acceptance.md` (the six acceptance tasks that demonstrate the
+closures), `SECURITY.md` (disclosure policy — not a substitute for this
+model), `CONTRIBUTING.md` (the adversarial-review discipline this document
+serves), `docs/support-matrix.md` (what is actually demonstrated today).
+
+---
+
+## 0. Boundary map
+
+`docs/desktop-architecture.md` §2 names five boundaries. This model uses those
+five and adds four that fall outside a single Runtime session but are inside
+the product's blast radius.
+
+| ID | Boundary | Less-trusted producer | More-trusted consumer | Areas covered here |
+| --- | --- | --- | --- | --- |
+| B1 | External agent / Agent Host to Runtime | model output, external MCP client | Runtime authority surface | 5, 6, 7 |
+| B2 | Desktop shell to Runtime | shell process (host authority, still separate) | Runtime | 6, 8 |
+| B3 | Runtime to worker subprocess | worker stdout, exit status, timing | Runtime | 4 |
+| B4 | Untrusted document bytes to engine | HWP/HWPX file, its archive and XML | parser and renderer | 1, 2, 3 |
+| B5 | Runtime to published artifact | candidate bytes, verdicts, receipts | the evidence record | 11 |
+| B6 | Module / UI panel to host origin | module payloads, panel JS | Studio or Desktop page origin | 8 |
+| B7 | Provider and credential surface | provider endpoints, token stores | Agent Host, OS credential store | 9 |
+| B8 | Distribution channel to installed machine | bundles, installers, dependencies | the user's machine | 10 |
+| B9 | Workspace to anything off-device | logs, receipts, crash data, screenshots | disk, network, another person | 12 |
+
+Two structural facts constrain everything below.
+
+**Authority is a channel property, not a payload field.** Stated as a product
+rule in `docs/product-direction.md` §5.9 rule 1, specified at
+`docs/runtime-protocol-v0.md` §4, and the only *shipped* analogue is Studio's
+action gate: the token exists only when `STUDIO_ALLOW_ACTIONS=1` was set in the
+launching environment (`studio/main.py:84-86`) and the per-request check reads
+headers, never the body (`studio/main.py:993`).
+
+**Nothing named "Runtime", "Desktop", "MCP server" or "Agent Host" exists in
+this tree.** Every row for areas 5, 6 and 7 is therefore GAP-dominated by
+construction. That is the honest state, and the acceptance document says which
+of those rows can be demonstrated headlessly before a shell exists.
+
+---
+
+## Area 1 — Crafted HWP/HWPX documents
+
+Boundary B4. The file is hostile until proven otherwise.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Byte-scan spoofing: a file that is not an OLE/CFB container but carries an `HWP Document File` signature in its payload | HWP5 is walked structurally through FAT, mini-FAT and the directory tree before the 256-byte FileHeader is read; the module states it does not search raw bytes for `FileHeader` (`pipeline/scripts/hwp_ingress.py:2-9`, signatures at `:34-35`) | `docs/runtime-protocol-v0.md` §6 routes `workspace/openPath` and `workspace/importAttachment` through this same ingress | `pipeline/tests/test_hwp_ingress.py`, `engine/tests/test_ingress_document_shape.py` | Structural walk covers HWP5. HWPX is a zip and is bounded (Area 2) rather than structurally typed the same way. |
+| Non-document accepted, or a broken upload getting two different answers depending on whether Hancom is installed | Input shape is decided **before** host capability; the ordering is marked load-bearing in the source (`engine/scripts/com_backend.py:1783`), refusal is one token (`engine/scripts/com_backend.py:111`, emitted at `:1794`) | `docs/runtime-protocol-v0.md` §3.3 keeps the two-token refusal vocabulary for `document/summary` | `engine/tests/test_ingress_document_shape.py`, `engine/tests/test_com_backend_offline.py` | None material for this pair; the property is tested and documented in `docs/support-matrix.md` row "Refusing a file that is not an HWP/HWPX container before COM starts". |
+| Encrypted, DRM-protected, password-protected or script-bearing HWP5 opened anyway | Any FileHeader property bit above bit 0 refuses with `protected_properties`; the bit names include `password`, `script`, `drm`, `certificate`, `privacy_security` (`pipeline/scripts/hwp_ingress.py:582-591`) | `docs/runtime-protocol-v0.md` §6 (`workspace/openPath` is host-only and ingress-validated) | `pipeline/tests/test_hwp_ingress.py` | The refusal is **categorical**: a legitimately distributable-flagged document is refused too. That is fail-closed and correct here, but it is a false-block surface `CONTRIBUTING.md` explicitly warns about; it needs a corpus check before Desktop shows it to a user. **Phase 3.** |
+| Unsupported HWP5 version parsed as if supported | `hwp_version_unsupported` refusal on the version gate (`pipeline/scripts/hwp_ingress.py:575`) | none beyond reuse | `pipeline/tests/test_hwp_ingress.py` | HWPX has no equivalent version gate; the OPF/container parse is the only shape check (`pipeline/scripts/hwp_ingress.py:937`, `:987`). **Phase 1.** |
+| Unsupported structure silently dropped so the user believes the document was understood | Structure inspection reports what it found, and an undecidable property omits its key rather than guessing — `_run_record` omits `color_anomaly` when the colour cannot be read (`engine/scripts/form_inspect.py:913`); rule outcomes are a closed four-word vocabulary with a row for every declared rule (`pipeline/scripts/checker_base.py:41`, `:44`) | `docs/runtime-protocol-v0.md` §2 "CapabilitySet" three-state honesty; §3.4 forbids the Runtime renumbering the graph | `engine/tests/test_form_inspect.py`, `pipeline/tests/test_checker_base.py` | No inventory of *unsupported* structures exists as a first-class output — absence of a node is not currently distinguishable from "this structure is not modelled". **Phase 1** (`document/graph` shape) and **Phase 3** (UI must show it). |
+| External links or remote references in a document cause a fetch | No network client exists in the document path. The nearest positive statements are `pipeline/scripts/render_probe.py:3` (probes, never launches) and `pipeline/scripts/renderer_runtime_v2.py:47` (`ENV_POLICY = "minimal_allowlist_v1"`) | `docs/runtime-protocol-v0.md` §7 invariant "No ambient network"; `docs/product-direction.md` §6 principle 5 | none — no test asserts the absence of a socket in the document path | **GAP.** Absence of a network call today is an emergent property, not an enforced one, and a renderer worker (COM, LibreOffice) is a third-party process that *can* reach the network. **Phase 1** for a Runtime-level assertion; **Phase 6** for the renderer half. |
+| Embedded objects (OLE, images, fonts) processed by an unhardened path | Image handling exists in the *authoring* direction only: `engine/scripts/xml_backend.py:862` reads dimensions for an image being inserted. Nothing inspects an embedded object arriving in an untrusted document. | `docs/desktop-architecture.md` §1.4 puts renderers in a short-lived, serialized worker | none | **GAP.** No embedded-object policy: no allowlist of embedded types, no refusal of an unexpected `BinData` stream, no bound on embedded resource count. **Phase 1** for the refusal vocabulary, **Phase 4** for the UI state. |
+
+---
+
+## Area 2 — Archive and XML resource exhaustion
+
+Boundary B4. This is the area with the clearest split between "explicitly
+bounded" and "not bounded at all".
+
+| Dimension | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Total input size | `MAX_INPUT_BYTES = 256 MiB`, checked before any parsing (`pipeline/scripts/hwp_ingress.py:40`, enforced at `:596`); refusal `input_too_large` | `docs/runtime-protocol-v0.md` §6 routes host ingress through this module | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Archive member count | `MAX_HWPX_MEMBERS = 1024` (`pipeline/scripts/hwp_ingress.py:41`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Archive bytes on disk / compressed bytes | `MAX_HWPX_ARCHIVE_BYTES = 64 MiB` (`:42`), `MAX_HWPX_COMPRESSED_BYTES = 32 MiB` (`:43`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Per-member decompressed size | `MAX_HWPX_MEMBER_BYTES = 64 MiB` (`:44`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Total decompressed size | `MAX_HWPX_TOTAL_UNCOMPRESSED = 128 MiB` (`:45`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Compression ratio (zip bomb) | `MAX_HWPX_COMPRESSION_RATIO = 100` (`:46`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| CFB chain / directory / mini-FAT walk bounds | `MAX_CHAIN_SECTORS`, `MAX_DIRECTORY_ENTRIES` (both 1e6) and `MAX_MINIFAT_ENTRIES` (`pipeline/scripts/hwp_ingress.py:47-50`) | as above | `pipeline/tests/test_hwp_ingress.py` | none material |
+| Member path names (zip slip inside a document archive) | Ingress uses `posixpath` for member names (`pipeline/scripts/hwp_ingress.py:19`) and never extracts to disk; the extract-to-disk path that *does* exist refuses zip-slip, symlink members and symlink parents member-by-member (`pipeline/scripts/ws_snapshot.py:238`, `:254`, `:290`) | `docs/desktop-architecture.md` §2 B4 | `pipeline/tests/test_ws_snapshot.py`, `pipeline/tests/test_hwp_ingress.py` | The snapshot restore path is hardened; a future "extract a document member to disk" path would need the same treatment and does not inherit it. **Phase 1.** |
+| **XML depth** | **GAP — none.** `grep` for `MAX_XML_DEPTH` / a depth counter over `engine/scripts` and `pipeline/scripts` returns nothing. Parsing is stdlib `xml.etree.ElementTree` (`pipeline/scripts/hwp_ingress.py:31` and `:937`/`:987`; `pipeline/scripts/check_residue.py:54`, `:521`, `:541`; `engine/scripts/preedit.py:89`, `:404`) | `docs/product-direction.md` §6 principle 3 names XML depth as a required ceiling; no design section specifies it | `pipeline/tests/test_check_residue.py` pins the *malformed*-XML refusal, not a depth bound | **GAP.** Byte bounds cap the input, so unbounded depth is a stack/CPU cost against a ≤64 MiB member, not an unbounded one — but "bounded by the byte limit" is inference, not a measured ceiling. **Phase 1** owns declaring and testing an explicit depth bound. |
+| **XML node count / entity expansion** | **GAP — none.** No node-count bound and no entity or DTD policy is set on any parser in the tree | `docs/product-direction.md` §6 principle 3 | none | **GAP.** Python's stdlib ElementTree is documented as vulnerable to entity-expansion classes of attack; the tree neither hardens the parser nor asserts the input has no internal DTD subset. **Phase 1**, and it should be one shared hardened-parser seam rather than four call sites. |
+| **Text size returned to a caller** | Exact text is opt-in (`--full-text`, `engine/scripts/form_inspect.py:943`) and structure-only is the default contract (`engine/scripts/form_inspect.py:17-27`); `text_preview` reports `truncated: true` rather than silently cutting | `docs/runtime-protocol-v0.md` §3.5 states the GAP itself and specifies "cap and refuse, do not truncate" for `document/readRegion`; §6 repeats it | `engine/tests/test_form_inspect.py` | **GAP** on the size bound. Opt-in limits *who* asks, not *how much* comes back. **Phase 1.** |
+| **Image pixel dimensions** | **GAP — none** on the ingress side. Pixel reads exist only for images being authored in (`engine/scripts/xml_backend.py:862`, `:942`) | `docs/product-direction.md` §6 principle 3 names image dimensions | none | **GAP.** A decompression-bomb image inside an opened document has no ceiling; the ≤64 MiB member bound is the only backstop. **Phase 1** for the bound, **Phase 4** for the render path that would actually decode it. |
+| Recursion (archive within archive) | Ingress reads members; it does not recurse into a member as a new container. No explicit recursion-depth counter exists. | `docs/desktop-architecture.md` §2 B4 | `pipeline/tests/test_hwp_ingress.py` | **Partial GAP.** Non-recursion is a property of the current code shape, not a declared and tested refusal. Any future attachment-expansion feature must not inherit the assumption. **Phase 1.** |
+| Wall-clock time | Bounded per child process: `run_child_capture(timeout=…)` (`pipeline/scripts/diagnostic_candidate_core.py:1128`), `MAX_TIMEOUT = 300.0` (`pipeline/scripts/renderer_runtime_v2.py:65`), and the bound is *measured* rather than guessed (`tests/test_subprocess_bounds.py`) | `docs/desktop-architecture.md` §2 B3 | `tests/test_subprocess_bounds.py`, `pipeline/tests/test_diagnostic_candidate_core.py` | Timeouts bound **child** work. In-process parsing (`form_inspect`, `preedit`, `check_residue` when called as a library) has no time bound. `docs/desktop-architecture.md` §7 Q4 is exactly this open question. **Phase 1.** |
+| Memory | **GAP — none.** No memory ceiling, no `RLIMIT_AS`, no Windows Job memory limit; the Windows Job object is configured for kill-on-close only (`pipeline/scripts/diagnostic_candidate_core.py:942`, `:1059`) | `docs/product-direction.md` §6 principle 4 (process separation) implies it; no design section specifies a memory limit | none | **GAP.** The Job object is the natural place for a Windows memory cap and it is already there for lifecycle. **Phase 1** to add the limit, **Phase 6** to measure it on a clean machine. |
+
+---
+
+## Area 3 — Filesystem
+
+Boundaries B4 and B5. This is the strongest area in the tree; the GAPs are at
+the edges the Runtime introduces.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Path traversal out of the workspace | `_safe_relative_path` refuses non-relative, traversal-bearing and post-resolution escapes (`engine/scripts/document_evidence.py:558`, refusal `path_escape` at `:589`) | `docs/runtime-protocol-v0.md` §4 makes `workspace/openPath` and `artifact/exportTo` host-only; `docs/desktop-architecture.md` §3.1 says use both existing implementations, not a merge | `engine/tests/test_document_evidence.py`, `pipeline/tests/test_document_evidence_preflight.py` | none material for receipt-relative paths |
+| Traversal via a Studio URL slug | Slug regex plus a resolved-parent containment check (`studio/main.py:98`, `safe_workspace` at `:101`) | `docs/runtime-protocol-v0.md` §6 (`workspace/list`) says lift this into a shared module rather than duplicate it a third time | `tests/test_studio.py::test_workspace_traversal_rejected` | Narrower than the two evidence-layer implementations and hard-wired to a `report-` slug shape. A non-report workspace family has no slug today. **Phase 1.** |
+| Symlink at the artifact leaf | Bound artifact must exist and must not be a symlink; refusal `artifact_missing` (`engine/scripts/document_evidence.py:606`); no-follow single-link open at `:264` | `docs/desktop-architecture.md` §3.1 | `engine/tests/test_document_evidence.py`, `pipeline/tests/test_render_cert_custody_reproduction.py` | none material |
+| Reparse point / junction in a parent component (Windows) | `_check_directory_chain` walks every existing parent and refuses a symlink or reparse component (`engine/scripts/document_evidence.py:611`, refusals at `:639` and `:646`); reparse detection at `:176`; 8.3-vs-long-name aliasing handled without resolving away an interior junction (`:558` onward) | `docs/desktop-architecture.md` §3.1 | `engine/tests/test_document_evidence.py` | none material |
+| Hardlinked leaf used to alias a file into the evidence set | Legacy v1 private capture binds a no-follow one-link file and refuses a hardlinked or symlinked leaf; the seam is the no-follow single-link open at `engine/scripts/document_evidence.py:264`, asserted end-to-end for that capture path | none new | `pipeline/tests/test_render_cert_custody_reproduction.py` | The one-link rule is proven for the legacy v1 capture path. Whether every future Runtime capture inherits it is a build decision. **Phase 1.** |
+| Parent directory swapped after the lexical walk and restored before the next read (TOCTOU) | Second custody binding through the kernel-resolved path of an open fd (`engine/scripts/document_evidence.py:209`); `DirectoryBinding` re-verifies identity on every operation and refuses `directory_binding_changed` (`pipeline/scripts/diagnostic_candidate_core.py:51`, refusal at `:226`); identity re-checked around capture (`engine/scripts/document_evidence.py:384-395`) | `docs/desktop-architecture.md` §3.1 | `engine/tests/test_document_evidence.py`, `pipeline/tests/test_diagnostic_candidate_core.py` | none material |
+| Pre-existing destination silently overwritten | `write_bytes` refuses an existing path with `run_exists` (`pipeline/scripts/diagnostic_candidate_core.py:473`, raise at `:758` for a duplicate run id); source immutability is enforced at each backend — `preedit` requires `--out` (`engine/scripts/preedit.py:2335`), `xml_backend` requires `--save-as` to differ from `--file`, `com_backend` does not overwrite without `--save-as` | `docs/runtime-protocol-v0.md` §7 invariant "Source immutability" | `engine/tests/test_preedit.py`, `pipeline/tests/test_diagnostic_candidate_core.py`, `engine/tests/test_xml_backend.py` | none material |
+| Rollback deleting a file the process does not own | Removal is ownership-checked: `remove_owned` / `remove_owned_dir` take an expected identity and `rollback_publication` removes only owned files before rebinding the reserved directory (`pipeline/scripts/diagnostic_candidate_core.py:514`, `:533`, `:548`) | `docs/desktop-architecture.md` §4 row "Candidate publication interrupted" | `pipeline/tests/test_diagnostic_candidate_core.py` | none material for the candidate lane. No equivalent ownership discipline exists for a future `workspace/delete`, which has no entrypoint at all (`docs/runtime-protocol-v0.md` §4). **Phase 4.** |
+| Temp-file leakage (a staged copy of a private document left behind) | The quarantined lane declares `CWD_POLICY = "private_stage"` (`pipeline/scripts/renderer_runtime_v2.py:58`) and stages the adapter under a pre-created run leaf | `docs/desktop-architecture.md` §4 | `pipeline/tests/test_renderer_runtime_v2.py` | **Partial GAP.** No cross-cutting temp policy: `pipeline/scripts/hwp_ingress.py` imports `tempfile` (`:25`) and the COM path stages files, but no single owner guarantees cleanup on crash. `HwpInstanceLock` lives in `%TEMP%` by design (`engine/scripts/guards.py:231`). **Phase 4** (cancellation/crash) and **Phase 6** (clean-machine evidence). |
+
+---
+
+## Area 4 — Parser / renderer compromise
+
+Boundary B3. Assume the worker is already attacker-controlled; the question is
+what it can reach.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| A compromised parser compromises the whole application process | Every engine entrypoint is a one-shot process today, and Studio — the only shipped UI that operates the pipeline — routes every mutating action through a subprocess rather than in-process work (`studio/main.py:73` `_ACTION_KINDS`, dispatch at `:1197`) | `docs/desktop-architecture.md` §1.2–§1.4 puts parsing and rendering in separate short-lived workers; `docs/product-direction.md` §5.2 "No shell should import the parser and renderer stack directly" | `tests/test_studio.py` | **Open design question, not a GAP with an answer.** `docs/desktop-architecture.md` §7 Q4 asks whether the parser worker is a subprocess at all, since `form_inspect` already imports `preedit` in-process (`engine/scripts/form_inspect.py:92`). Latency versus isolation is undecided. **Phase 1.** |
+| Child outlives its parent / leaves grandchildren running | POSIX `start_new_session` plus a process group, Windows a kill-on-close Job object with a race-free suspended launch (`pipeline/scripts/diagnostic_candidate_core.py:1128`, Job at `:942` and `:1059`, targeted teardown at `:1064`); the policy token is recorded (`pipeline/scripts/renderer_runtime_v2.py:48-51`) | `docs/runtime-protocol-v0.md` §1.3 (EOF kills owned children); `docs/desktop-architecture.md` §4 | `pipeline/tests/test_diagnostic_candidate_core.py` | **Stated, not hidden:** a descendant that creates its own session is *not* proven contained (`pipeline/scripts/diagnostic_candidate_core.py:1136-1139`), and the receipt says so — `DESCENDANT_CONTAINMENT = "not_established"` (`pipeline/scripts/renderer_runtime_v2.py:56`). Closing it needs an OS-level container. **Phase 6.** |
+| Unbounded child output exhausts the parent | Output is drained into size-bounded hashes, `MAX_CHILD_OUTPUT_BYTES` (`pipeline/scripts/renderer_runtime_v2.py:64`, ingress copy at `pipeline/scripts/hwp_ingress.py:48`), with an overflow flag returned rather than a truncated value | `docs/runtime-protocol-v0.md` §1.1 "Bounded frame size" — `MAX_FRAME_BYTES` on read and write, oversized inbound line refused **unparsed** | `pipeline/tests/test_diagnostic_candidate_core.py` | Per-frame protocol bound is GAP because there are no frames. **Phase 1.** |
+| A hung renderer hangs the UI | Per-child timeout with a measured floor (`tests/test_subprocess_bounds.py` records loaded median 9.00s, worst observed 36.46s) and `MAX_TIMEOUT = 300.0` (`pipeline/scripts/renderer_runtime_v2.py:65`) | `docs/runtime-protocol-v0.md` §1.2 cancellation is cooperative and only between steps or by terminating a bounded child | `tests/test_subprocess_bounds.py` | Cancellation mid-COM is an open question with a real incident behind it: terminating Hancom mid-edit is what T21 exists to prevent (`engine/scripts/guards.py:231-240`). `docs/runtime-protocol-v0.md` §8 Q5 asks whether a COM plan is simply non-cancellable. **Phase 4.** |
+| Worker inherits the user's whole environment | `ENV_POLICY = "minimal_allowlist_v1"` (`pipeline/scripts/renderer_runtime_v2.py:47`), stdin `DEVNULL` (`pipeline/scripts/diagnostic_candidate_core.py:1158`) | `docs/desktop-architecture.md` §2 B3 | `pipeline/tests/test_renderer_runtime_v2.py` | **Scoped GAP.** The allowlist is declared for the quarantined lane only; `com_backend` inherits the parent environment. `docs/desktop-architecture.md` §7 Q5 is exactly this. Hancom reads user-profile state, so an allowlist there is a behaviour change, not a pure hardening. **Phase 4.** |
+| Worker writes outside a narrow working directory | `CWD_POLICY = "private_stage"` (`pipeline/scripts/renderer_runtime_v2.py:58`); the diagnostic root must be pre-created with an exact schema leaf (`prepare_root`, `pipeline/scripts/diagnostic_candidate_core.py:874`) with a root guard captured and rechecked (`:904`, `:919`) | `docs/desktop-architecture.md` §2 B3 | `pipeline/tests/test_diagnostic_candidate_core.py`, `pipeline/tests/test_renderer_runtime_v2.py` | The cwd is narrow; the filesystem is not. No OS sandbox constrains where a renderer may write. **Phase 6.** |
+| Worker output is trusted as structured data | Adapter stdout is parsed with a hardened decoder that rejects non-finite constants (`pipeline/scripts/doc_backend.py:105`) and duplicate keys (`pipeline/scripts/renderer_runtime_v2.py:635`); stdout and stderr are kept as two separately hashed, separately counted streams (`pipeline/scripts/diagnostic_candidate_core.py:1128`) | `docs/runtime-protocol-v0.md` §1.1 keeps duplicate-key and finite-JSON rejection and forbids widening their meaning | `pipeline/tests/test_renderer_runtime_v2.py`, `tests/test_strict_json_docs.py` | none material |
+| Crash treated as success | `run_child_capture` returns a failure tuple rather than raising (`pipeline/scripts/diagnostic_candidate_core.py:1145` `failed_result`); exit contract is a closed three-value set (`pipeline/scripts/checker_base.py:13-16`); `derive_proof_grade` returns `none` for any non-success terminal state (`engine/scripts/document_evidence.py:780`, test at `:791`) | `docs/desktop-architecture.md` §4 | `pipeline/tests/test_diagnostic_candidate_core.py`, `engine/tests/test_document_evidence.py`, `pipeline/tests/test_checker_base.py` | none material |
+
+---
+
+## Area 5 — Prompt injection
+
+Boundary B1. Nothing in this area is implemented, because no model-facing
+surface exists in this tree. The controls that *do* exist are the ones that
+make injection non-fatal: the model has nowhere to escalate to.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Document text carrying instructions is treated as instruction rather than data | **GAP — none.** No component in this tree passes document text to a model. Text extraction is opt-in and structure-only by default (`engine/scripts/form_inspect.py:17-27`, `:943`) | `docs/product-direction.md` §5.9 rule 2 ("Document text and external tool results may contain prompt injection"); `docs/product-direction.md` §8.1 Phase 5 lists prompt-injection cases as an exit item | none | **GAP.** **Phase 5** owns the cases; **Phase 1** owns the structural precondition (document text reaches a model only through a bounded, opt-in `document/readRegion`). |
+| Embedded instructions cause an operation the user did not ask for | The operation vocabulary is closed and validated before execution: unknown op refused before Hancom starts (`engine/scripts/com_backend.py:1689`, validator `:1670`, required keys `:1626`), `SUPPORTED_OPS` in the offline builder (`engine/scripts/xml_backend.py:27`) | `docs/runtime-protocol-v0.md` §3.7 composes these into `PlanValidation`; §4 keeps `plan/apply` off the agent list entirely | `engine/tests/test_com_backend_offline.py`, `engine/tests/test_xml_backend.py` | The closed vocabulary bounds *what* an injected instruction could ask for; it does not stop it asking. The human approval gate is the actual control and it is GAP at the Runtime level. **Phase 1** (`approval/resolve` host-only), **Phase 4** (the UI that makes review real). |
+| Injected text obtains a capability the host policy forbids | Authority is not derivable from content anywhere today: the only shipped authority check reads the environment and headers (`studio/main.py:84-86`, `:993`) | `docs/runtime-protocol-v0.md` §4: a `params.authority` member is an `unknown_field` refusal and an authority-shaped claim anywhere in a payload is ignored and logged | `tests/test_studio.py::test_action_post_is_forbidden_by_default`, `::test_action_post_rejected_without_token` | **GAP** at the Runtime layer; the Studio analogue is the only evidence. Acceptance task E is the demonstration. **Phase 1** headless, **Phase 5** with a real agent. |
+| Model tool access is broader than the task | **GAP — none.** No tool surface exists | `docs/product-direction.md` §5.5: MCP exposes only the agent-safe subset and "does not expose unrestricted document write, shell, approval, arbitrary export, arbitrary file read, or network tools"; `docs/runtime-protocol-v0.md` §4 enumerates the agent-safe method list | none | **GAP.** **Phase 2** owns the MCP surface, **Phase 5** the embedded providers. |
+| Third-party tool output (a renderer, a converter) treated as trusted | Adapter stdout is hardened and hash-bounded (Area 4, `pipeline/scripts/doc_backend.py:105`, `pipeline/scripts/diagnostic_candidate_core.py:1128`) | `docs/desktop-architecture.md` §2 B3 | `pipeline/tests/test_renderer_runtime_v2.py` | Hardened as *data*. Nothing yet marks renderer text as untrusted when it is later shown to a model or a user. **Phase 5.** |
+| No hostile-document regression corpus | **GAP — none.** `tests/corpus/forms/` holds public blank statutory forms with a sha256-pinned manifest (`tests/corpus/forms/manifest.json`); none is adversarial | `docs/desktop-acceptance.md` task E defines the hostile-document task and its synthetic-only rule | `pipeline/tests/test_hwp_ingress.py` covers malformed containers, not injected instructions | **GAP.** A synthetic hostile-document fixture (instruction text inside a form field) can be built with no Hancom and no private data. **Phase 1** can create it; **Phase 5** consumes it. |
+
+---
+
+## Area 6 — Agent authority
+
+Boundaries B1 and B2. The invariant under attack is
+`docs/product-direction.md` §5.10: one `OperationPlan` path, different
+authority at the ends.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| A client declares itself host (`client_role: host`) and is believed | **GAP — none** at the Runtime layer. Studio's precedent: the action token exists only if the launching environment set `STUDIO_ALLOW_ACTIONS=1` (`studio/main.py:84-86`) and the check reads headers (`studio/main.py:993`) | `docs/product-direction.md` §5.9 rule 1; `docs/runtime-protocol-v0.md` §4 makes authority a connection property and `params.authority` an `unknown_field` refusal | `tests/test_studio.py::test_action_post_is_forbidden_by_default` | **GAP.** **Phase 1.** Acceptance task D is the demonstration. |
+| An agent forges or self-serves an approval | `gate` never fabricates human approval: a human gate resolves only from a matching line in the workspace's `APPROVALS.md` (`modules/report/scripts/pipeline_ctl.py:1112`), and with no such line the command fails with "gate pending; human must edit APPROVALS.md" (`:1159`). Gate states are a closed set (`:90`) with `GREEN_GATE_STATES` at `:109` | `docs/runtime-protocol-v0.md` §3.8: `approval/request` is agent-safe, `approval/resolve` is host-only, and "the Runtime must not gain a way to approve that `pipeline_ctl` does not already have" | `modules/report/tests/` suite exercises `pipeline_ctl`; `tests/test_studio.py::test_action_rejects_gate_absent_from_workspace_header` and `::test_action_rejects_gate_absent_from_stage_graph` pin the gate-name half | **Partial.** The non-fabrication property is real and shipped for the report module's gate machine. It is not yet a Runtime-level authority boundary, and Studio *does* expose `approve-human-gate` as an action kind (`studio/main.py:73`) behind the token. **Phase 1.** |
+| Stale plan reused after the document changed underneath it | Per-run exact-byte precondition exists (`--at-cell-expect`, `engine/scripts/preedit.py:2454`, writes nothing on mismatch) and a document-level hash exists (`form_hash`, `engine/scripts/form_inspect.py:1418`); receipts re-validate against current bytes (`engine/scripts/document_evidence.py:1356`) | `docs/runtime-protocol-v0.md` §5.2 introduces `plan_stale` as the binding refusal; §7 lists the invariant | `engine/tests/test_preedit.py`, `engine/tests/test_form_inspect.py`, `engine/tests/test_document_evidence.py` | **GAP** on the plan object itself — no plan exists to be stale. Also open: what binds a plan when the source is binary `.hwp` rather than `.hwpx` (`docs/runtime-protocol-v0.md` §8 Q3). **Phase 1.** |
+| Output substitution — the approved plan is not the plan that ran | `com_backend` validates the whole op batch before Hancom starts, so a bad step cannot leave a half-edited document (`engine/scripts/com_backend.py:1670`, refusal `:1689`) | `docs/runtime-protocol-v0.md` §3.6: the OperationPlan binds the exact bytes it was computed against and the batch-validate-then-execute discipline is reused | `engine/tests/test_com_backend_offline.py` | **GAP.** Nothing binds an approval record to a plan hash today. **Phase 1** for the binding, **Phase 4** for the receipt field a reviewer can check. |
+| Hidden operation injected into an otherwise-reviewed plan | Same closed-vocabulary validation as above; `preedit` refuses to mix its two addressing modes in one call (`engine/scripts/preedit.py:2552-2555`) | `docs/runtime-protocol-v0.md` §6 (`plan/apply`): one plan, one backend; a mixed plan is `invalid_params` | `engine/tests/test_preedit.py` | **GAP.** Review UI does not exist, so "reviewed" has no meaning yet. **Phase 4.** |
+| A model creates a proof claim | `derive_proof_grade` takes no probe input and fails closed to `none` (`engine/scripts/document_evidence.py:780`, `:787-792`); capability is explicitly not proof (`engine/scripts/document_evidence.py:5-9`); the quarantined candidate lane states in its own contract that it claims no proof and promotes nothing (`pipeline/scripts/renderer_runtime_v2.py:1-10`) | `docs/runtime-protocol-v0.md` §3.9 and §3.12: the Runtime never promotes a candidate | `engine/tests/test_document_evidence.py`, `pipeline/tests/test_renderer_runtime_v2.py`, `tests/test_renderer_runtime_v2_docs.py` | This is the best-defended row in the model. Residual risk is presentational: a UI summary can still *say* "verified" over an honest `none`. See Area 11. **Phase 3/4.** |
+
+---
+
+## Area 7 — External MCP clients
+
+Boundary B1. **No MCP server exists in this tree** — a repository-wide search
+for an MCP implementation finds only an unrelated identifier in
+`modules/style/tests/test_prose_fidelity.py`. Every row is therefore a design
+row with an existing primitive to reuse.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Client reaches a workspace outside its allowed root | Reusable primitives only: `safe_workspace` slug containment (`studio/main.py:101`), `_safe_relative_path` (`engine/scripts/document_evidence.py:558`), `DirectoryBinding` identity re-verification (`pipeline/scripts/diagnostic_candidate_core.py:51`) | `docs/product-direction.md` §5.5: a standalone MCP server "requires an explicit allowed root or an attached host-created session, and refuses traversal, symlink/reparse escape, and client-declared host privilege" | `tests/test_studio.py`, `engine/tests/test_document_evidence.py` (primitives only) | **GAP.** **Phase 2.** |
+| Host-only methods exposed through the adapter | none | `docs/runtime-protocol-v0.md` §4 fixes the host-only and agent-safe lists; `docs/product-direction.md` §5.5 sets the default policy to inspect-and-propose | none | **GAP.** The adapter must be a strict subset by construction — an allowlist, not a denylist. **Phase 2.** Acceptance task D. |
+| Confused deputy: the adapter runs with host authority on the client's behalf | Studio precedent for a per-request check that is not inferable from the body (`studio/main.py:993`) | `docs/desktop-architecture.md` §2 B1: an Agent Host "is not a child of the Runtime"; authority comes from how the connection was created | `tests/test_studio.py::test_action_post_rejected_with_wrong_host` | **GAP.** Highest-severity unbuilt row in this model: an adapter launched by a host process is the natural place for authority to collapse. **Phase 2.** |
+| Oversized or malformed payload from the client | Existing byte and strict-JSON discipline to reuse (`pipeline/scripts/renderer_runtime_v2.py:63-64`; duplicate-key rejection at `engine/scripts/document_evidence.py:1940`/`:1979`, `pipeline/scripts/hwp_ingress.py:1103`, `pipeline/scripts/renderer_runtime_v2.py:635`) | `docs/runtime-protocol-v0.md` §1.1: `MAX_FRAME_BYTES`, oversized inbound line refused with `frame_too_large` **without being parsed** | `tests/test_strict_json_docs.py`, `pipeline/tests/test_renderer_runtime_v2.py` | **GAP** on the frame bound. **Phase 1.** |
+| Denial of service by request volume or long-running calls | Per-child timeout and bounded output (Area 4) | `docs/runtime-protocol-v0.md` §1.2 cooperative cancellation; no concurrency or rate policy is specified | `tests/test_subprocess_bounds.py` | **GAP.** No queue depth, no concurrency cap, no per-connection budget is designed. **Phase 2.** |
+| A consequential operation completes with no confirmation | `pipeline_ctl` never fabricates approval (`modules/report/scripts/pipeline_ctl.py:1112`, `:1159`) | `docs/runtime-protocol-v0.md` §4: `approval/resolve` is host-only; `plan/apply` is not on the agent list at all in v0 | `tests/test_studio.py` (gate-name binding half) | **GAP** at the Runtime layer. Note the open question: whether `plan/apply` ever becomes agent-safe is undecided (`docs/runtime-protocol-v0.md` §8 Q2). **Phase 2/5.** |
+
+---
+
+## Area 8 — Modules and UI panels
+
+Boundary B6. This area has a **verified current-state finding**, not a
+hypothetical.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Core silently depends on a module, so a module can change core behaviour | Core never learns a module's name; contributions arrive through typed accessors (`pipeline/scripts/module_registry.py:14-15`, accessors including `enabled_studio_panels()` at `:727`) | `docs/runtime-protocol-v0.md` §2 "CapabilitySet" keeps the property for the Runtime | `pipeline/tests/test_module_registry.py`, `tests/test_studio.py::test_api_panels_is_empty_core_only` | none material |
+| A module with an incompatible version loads anyway | `requires.rigorloom` is checked against the project version and an unsatisfied range is a load refusal (`pipeline/scripts/module_registry.py:22-23`, implemented in `ModuleRegistry` at `:509`); an invalid declaration is loud, never a silent skip (`:19-21`) | `docs/runtime-protocol-v0.md` §2 cites this as the precedent for the protocol's own hard version gate | `pipeline/tests/test_module_registry.py` | none material |
+| **A module panel's JavaScript runs in the Studio page origin and can reach the action token** | **This is a real, verified current-state finding, not a planned risk.** `GET /api/panels/{id}/entry` (`studio/main.py:943`) serves a module's panel payload; the page fetches it and, when the content type is JavaScript, injects it as a `<script>` element into the same document (`studio/index.html:111`), or otherwise sets `innerHTML` and re-executes any `<script>` it contains (`:112`). That origin holds the action token — it is templated into a meta tag (`studio/main.py:1805`, `studio/index.html:6`) and read into a page variable (`studio/index.html:43`) — and `runAction` is additionally handed to every panel renderer as a callback (`studio/index.html:121`, invoked with `X-Studio-Token` at `:92`). | `docs/product-direction.md` §5.7 acknowledges exactly this: first-party panels "execute trusted UI payloads in the same Studio origin … That is acceptable for a trusted local installation model; it is not a safe marketplace-plugin model." §5.8 splits data-only packs from executable third-party modules. `docs/desktop-architecture.md` §7 Q1 asks whether Studio becomes a Runtime client or stays a peer. | `tests/test_studio.py::test_shell_renders_module_panels_and_has_no_report_ui`, `::test_api_panels_lists_module_panels_and_serves_entries`, `::test_api_panel_entry_unknown_or_bad_id` pin the panel mechanism. **No test asserts that a panel cannot reach the action token** — because today it can. | **Accepted for Studio under the trusted-install model; a blocker for anything third-party.** The privilege a panel inherits is exactly the action surface: `check-gate, approve-human-gate, run-checker, build-bundle, build-hwpx` (`studio/main.py:73`) — which includes approving a human gate. Desktop must not inherit this shape. **Phase 3** must decide the panel trust model before shipping panels in a shell; **Phase 6** must state it in the packaging docs. |
+| Third-party executable module marketed as safe | Distribution modules are installation-time trusted Python and JavaScript; the registry gates versions and dependencies (`pipeline/scripts/module_registry.py:12-28`) but performs no signature check | `docs/product-direction.md` §5.8: executable third-party modules "require signatures, permissions, review, and process isolation before they can be marketed as safe plugins"; §8.2 defers public third-party plugins entirely | `pipeline/tests/test_module_registry.py` | **GAP by decision, not by oversight.** The product direction explicitly defers this past Developer Preview. The control needed now is that packaging *says so*. **Phase 6.** |
+| Data-only pack smuggles executable content | none — the registry does not classify a contribution as data-only versus executable | `docs/product-direction.md` §5.8 names the data-only pack as a narrower trust model | none | **GAP.** The distinction is stated as product direction with no mechanism behind it. **Phase 6.** |
+
+---
+
+## Area 9 — Credentials
+
+Boundary B7. **No credential handling exists in this tree.** A search for
+keyring, OAuth, or API-key handling across the pipeline and engine returns
+nothing; `pipeline/scripts/personalization_ctl.py` matches only on an unrelated
+YAML-lexer identifier.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Provider tokens stored in a plaintext settings file | Nothing stores tokens. The closest shipped rule is that backend specifics live in an operator-private config the repo does not carry: "There are NO hardcoded personal model/CLI specifics here" (`pipeline/scripts/backend_precheck.py:9-12`) | `docs/product-direction.md` §5.6: "Provider secrets belong in the OS credential store. Ordinary settings files contain only non-secret configuration." | none | **GAP.** **Phase 5** owns secure settings (it is a named Phase 5 exit item). |
+| OAuth flow mishandled (redirect, token replay) | none — no OAuth surface | none specified beyond §5.6 | none | **GAP. Phase 5.** |
+| Rigorloom reads another application's private token cache | none — no such code exists | `docs/product-direction.md` §5.5: "Claude Code and Codex use their own authentication. Rigorloom must never read or copy another application's private token cache." | none | **GAP** on enforcement; the rule is stated. A negative test (no read under another tool's config root) is cheap and worth having. **Phase 2.** |
+| Credentials leak into logs or error payloads | The house discipline is real and shipped for adjacent secrets: the COM privacy-safe inspect never echoes the source path (`engine/scripts/com_backend.py:1794`), equation preflight refusals never echo the LaTeX (`engine/scripts/com_backend.py:1693-1699`), and node identity is never serialized into a receipt (`engine/scripts/document_evidence.py:182`) | `docs/desktop-architecture.md` §3.3 extends this to log lines, error payloads and event frames | `engine/tests/test_com_backend_offline.py` | **Partial.** The pattern exists; no credential-specific redaction does, because there are no credentials. **Phase 5.** |
+| Credentials in a crash report | none — no crash reporting exists | `docs/product-direction.md` §6 principle 14 (private by default; crash uploads off unless deliberately enabled) | none | **GAP. Phase 6.** |
+| Credentials in the process environment visible to a worker | `ENV_POLICY = "minimal_allowlist_v1"` for the quarantined lane (`pipeline/scripts/renderer_runtime_v2.py:47`) | `docs/desktop-architecture.md` §7 Q5 asks whether the allowlist should extend to COM | `pipeline/tests/test_renderer_runtime_v2.py` | **Scoped GAP** — the same one as Area 4. If provider secrets ever enter the Runtime's environment, the COM inheritance path becomes a leak. **Phase 5.** |
+| OS credential storage used incorrectly (wrong scope, wrong account) | none | `docs/product-direction.md` §5.6 and §7 (OS credential storage is a named shell-spike criterion) | none | **GAP. Phase 3** must measure it in the shell spike; **Phase 5** implements. |
+
+---
+
+## Area 10 — Updates and installers
+
+Boundary B8. Distribution today is a bundle plus a local installer, not a
+signed desktop update channel.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Tampered bundle installed | Manifest with per-file sha256 (`scripts/package_module.py:67` `MANIFEST_SCHEMA`, hashing at `:371`/`:375`) and `verify_bundle` re-hashes as tamper detection (`:804`) | `docs/desktop-architecture.md` §6 requires a `runtime/` tree to accept the same contract | `tests/test_package_module.py::test_tampered_file_and_unlisted_file_fail_verification` | Integrity without authenticity: a manifest hash proves the bundle matches *its own* manifest, not that the manifest came from the project. **Phase 6.** |
+| Bundle bytes not reproducible, so an inserted file cannot be detected by comparison | Pinned `ZIP_EPOCH` (`scripts/package_module.py:105`) and a deterministic writer (`_write_bundle_zip`, `:439`); the stated purpose is that a published sha256 is re-derivable rather than trusted (`:37-38`, `:76`) | `docs/desktop-architecture.md` §6 | `tests/test_package_module.py::test_two_builds_of_the_same_tree_are_byte_identical`, `::test_touching_payload_mtimes_leaves_the_bytes_identical`, `tests/test_cleanroom_evals.py` | none material for bundles |
+| Private content shipped in a bundle | Every bundle passes the privacy gate before it is written (`scripts/package_module.py:457`, contract at `:25-28`), and bundles never apply the corpus binary allowlist (`CONTRIBUTING.md` "Privacy scan clean") | `docs/desktop-architecture.md` §6 | `tests/test_package_module.py`, `pipeline/tests/test_privacy_scan.py` | none material |
+| An installer overwrites hand-edited local state, or a partial install leaves a broken tree | Atomic swap via rename with a tested rollback (`scripts/sync_local.py:991` `_atomic_install`, `:1028` `apply_plan`); a sibling lock (`:54`); hand-edited install files are refused as drift rather than overwritten (`scripts/sync_local.py:15-20`) | `docs/desktop-architecture.md` §6 makes Runtime code *base* content under this rule | `tests/test_sync_local.py` | Covers the skill install, not a desktop installer. **Phase 6.** |
+| **Signed manifests / code signing** | **GAP — none.** No signing, no Authenticode, no sigstore/cosign anywhere in `.github`, `scripts`, or `pyproject.toml` | `docs/product-direction.md` §6 principle 15 and §8.1 Phase 6 | none | **GAP. Phase 6.** Named explicitly as a Developer Preview gate. |
+| **Rollback protection (downgrade attack)** | **GAP — none.** `sync_local` has *install* rollback; nothing prevents installing an older version | `docs/product-direction.md` §6 principle 15 | none | **GAP. Phase 6.** |
+| **Dependency pinning** | **Partial GAP.** `pyproject.toml` declares only floor constraints in optional extras (`pyproject.toml:8-12`, e.g. `fastapi>=0.100`); nothing is pinned or hash-locked. The mitigating property is that the pipeline kernel is stdlib-only by contract (`CONTRIBUTING.md` "Code style"; `pipeline/scripts/module_registry.py:29-31`) | `docs/product-direction.md` §6 principle 15 | `tests/test_cleanroom_evals.py` proves a core install works from bundles with no extras | **GAP** for the shell and renderer extras. A desktop package ships a resolved dependency set the repo does not currently record. **Phase 6.** |
+| **SBOM and provenance** | **GAP — none.** No SBOM is generated | `docs/product-direction.md` §6 principle 15 and §8.1 Phase 6 ("dependencies and SBOM") | none | **GAP. Phase 6.** |
+| **Branch protection / required checks on release branches** | **Partial.** One CI workflow exists (`.github/workflows/ci.yml`). Repository branch-protection settings are not visible from the tree and cannot be cited. | `docs/product-direction.md` §10: "desktop and release branches should require the relevant CI and packaging checks before distribution" | `tests/test_release_docs.py`, `tests/test_support_matrix.py` (doc-truth gates) | **Unverifiable from the checkout.** State it as a repo-settings action item, not a code control. **Phase 6.** |
+| Compromised distribution channel (GitHub Releases replaced) | Re-derivable bundle hashes (above) are the only defence | `docs/product-direction.md` §6 principle 15 ("reproducible or independently verifiable build records") | `tests/test_package_module.py` | **GAP.** Reproducibility lets a *diligent* user detect substitution; it does not stop it. Signing is the missing half. **Phase 6.** |
+
+---
+
+## Area 11 — Evidence integrity
+
+Boundary B5. The project's core value claim lives here, and it is the
+best-implemented area in the tree.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| A stale receipt silently applies to a later file | `validate_receipt` re-checks the bound bytes (`engine/scripts/document_evidence.py:1356`); `write_receipt` validates, publishes and rebinds identity after the write (`:1998`); artifacts are captured as a workspace-relative path plus sha256 plus byte count (`:457`, descriptor at `:652`) | `docs/runtime-protocol-v0.md` §3.12 | `engine/tests/test_document_evidence.py`, `pipeline/tests/test_document_evidence_preflight.py`, `tests/test_document_evidence_docs.py` | none material |
+| A fabricated receipt is accepted | Closed vocabularies with `_validate_enum` refusal (`engine/scripts/document_evidence.py:824`; `RECEIPT_SCHEMA` `:29`, `BACKEND_IDS` `:32`, `EVIDENCE_CLASSES` `:40`, `ARTIFACT_ROLES` `:47`); duplicate JSON members rejected recursively because "the default decoder keeps the last duplicate value, which can turn a forged receipt into a different in-memory payload than the bytes an operator inspected" (`engine/scripts/document_evidence.py:1940`, wired at `:1979`); non-finite numbers rejected (`:1960`, `:1968`); malformed and wrong-type payloads named separately (`:1985`, `:1991`) | `docs/runtime-protocol-v0.md` §1.1 and §5.1 keep these codes verbatim and forbid widening their meaning | `engine/tests/test_document_evidence.py`, `tests/test_strict_json_docs.py`, `tests/test_document_evidence_docs.py` | Integrity, not authenticity — the receipt is not signed. `pipeline/scripts/renderer_runtime_v2.py:57` says so in its own vocabulary: `EVIDENCE_AUTHENTICATION = "not_established"`. **Phase 6.** |
+| Candidate swapped between publication and reading | Owner-token publication with rollback (`publish_owner_token_pair`, `publish_owner_token_receipt`, `rollback_publication` — `pipeline/scripts/diagnostic_candidate_core.py:26`, `:580`, `:770`, `:548`); a duplicate run id is `run_exists` rather than an overwrite (`:758`); atomic publication with an fd-bound destination directory (`engine/scripts/document_evidence.py:1573`, `os.fsync` at `:1737`, `os.replace(..., src_dir_fd=…)` at `:1766`) | `docs/desktop-architecture.md` §2 B5 | `pipeline/tests/test_diagnostic_candidate_core.py`, `pipeline/tests/test_renderer_runtime_v2.py`, `engine/tests/test_document_evidence.py` | none material |
+| Proof-grade confusion — capability read as proof | `derive_proof_grade` takes no renderer-probe input and fails closed to `none` (`engine/scripts/document_evidence.py:780`, `:787-792`); the separation is stated at `engine/scripts/document_evidence.py:5-9` | `docs/runtime-protocol-v0.md` §3.12; `docs/product-direction.md` §6 principle 9 | `engine/tests/test_document_evidence.py`, `tests/test_render_cert_envelope_v2_docs.py` | none material |
+| Renderer-run confused with visual pass | The quarantined lane's own contract states it publishes diagnostic evidence only — no certificate validated, no proof claimed, no grade promoted (`pipeline/scripts/renderer_runtime_v2.py:1-10`); `visual_verify` splits the deterministic half from the vision half and never calls a model (`pipeline/scripts/visual_verify.py:6-8`), with a six-value exit matrix (`:23-37`) | `docs/runtime-protocol-v0.md` §3.11 requires `verify/visual` to surface `acceptance`, `acceptance_waivers` and `deterministic.skipped` as first-class fields and calls a bare `ok: true` a lie | `pipeline/tests/test_visual_verify.py`, `pipeline/tests/test_renderer_runtime_v2.py` | none material at the verdict layer. `docs/support-matrix.md` records the visual row as *partially supported* for exactly this reason. |
+| A verification that could not run is treated as a pass | `acceptance: true` claims every check in `SAFETY_CHECKS` actually ran (`pipeline/scripts/visual_verify.py:179`); a run that could not is `safety_incomplete`, exit 3; the only way past is `--accept-without`, recorded as `acceptance_waivers` in the verdict (`:2865`). Rule outcomes include `skipped` as a *reported* state, and every declared rule gets a row — "absent means it passed" was retired (`pipeline/scripts/checker_base.py:41`, `:44-55`). A missing pinned artifact is HARD, never a silent pass (`pipeline/scripts/check_residue.py:610`); a malformed section is HARD before any text scan, because scanning its bytes "would certify an unopenable document" (`pipeline/scripts/check_residue.py:34-41`, `:646`) | `docs/runtime-protocol-v0.md` §5.3 severity mapping: `warn` is carried, never promoted or dropped; `skipped` is carried with its reason | `pipeline/tests/test_visual_verify.py`, `pipeline/tests/test_checker_base.py`, `pipeline/tests/test_check_residue.py` | none material at the verdict layer |
+| A text-level claim read as a render claim | `--expect-text` labels its own evidence level in-band: `expected_text.evidence_level = "text"` (`pipeline/scripts/check_residue.py:748`, comment at `:745`: "A text gate is never render evidence") | `docs/runtime-protocol-v0.md` §3.11 requires the field be carried through | `pipeline/tests/test_expect_text.py` (including `::test_the_verdict_labels_its_own_evidence_level`) | none material |
+| A verdict contradicts itself | `verdict_contradiction` when `converged: true` meets `status: escalate_human` (`pipeline/scripts/verdict_schema.py:43`); a declared mode contradicting the derived state is a WARN that names both (`pipeline/scripts/checker_base.py:93`) | `docs/runtime-protocol-v0.md` §5.1 keeps both codes | `pipeline/tests/test_verdict_schema.py`, `pipeline/tests/test_state_declaration_conflict.py` | none material |
+| **UI summary disagrees with the canonical verdict** | Studio binds its proof badge to the canonical file rather than the newest JSON it can find (`tests/test_studio.py::test_verdict_bound_to_canonical_file_not_spoofable_by_newer_json`, `::test_verdict_absent_when_no_canonical_file`) | `docs/product-direction.md` §10: "Studio documentation should distinguish current diagnostic behavior from the future Desktop contract and stay synchronized with canonical verdict behavior" | `tests/test_studio.py` | **Partial GAP for Desktop.** Studio has one anti-spoofing property tested. A new shell inherits none of it, and the direction's own measure list names false-pass rate as a product metric (`docs/product-direction.md` §9). **Phase 3** must re-establish it in the shell; **Phase 4** in the receipt viewer. |
+| Missing verifier treated as success | The exit contract is closed at three values (`pipeline/scripts/checker_base.py:13-16`, repeated at `pipeline/scripts/renderer_runtime_v2.py:67-69`); `privacy_scan` documents that anything other than 0/2/3 means the process crashed and is a bug, not a verdict (`pipeline/scripts/privacy_scan.py:29-36`) | `docs/runtime-protocol-v0.md` §1.3 forbids a fourth exit code | `pipeline/tests/test_checker_base.py`, `pipeline/tests/test_privacy_scan.py` | none material |
+
+---
+
+## Area 12 — Privacy
+
+Boundary B9. `SECURITY.md` puts leakage of personal data, credentials, or
+private form content through logs, artifacts, or Studio explicitly in scope.
+
+| Abuse case | Implemented control | Planned control | Tests that pin it | Residual risk / GAP owner |
+| --- | --- | --- | --- | --- |
+| Document text or field names in a machine-readable surface | Ingress's public JSON surface carries no paths, document text, stream names, command output or raw control identifiers, stated as a module contract (`pipeline/scripts/hwp_ingress.py:7-9`); COM inspect has a `--privacy-safe` mode that omits preview text, field names and equation scripts (`engine/scripts/com_backend.py:1719`) | `docs/desktop-architecture.md` §3.3: log lines, error payloads and event frames are distribution-adjacent and inherit this | `pipeline/tests/test_hwp_ingress.py`, `engine/tests/test_com_backend_offline.py::test_inspect_privacy_safe_is_hash_and_counts_only` | Privacy-safe is a *mode*, not the default for every surface. Which Runtime responses are privacy-safe by default is undecided. **Phase 1.** |
+| Raw local paths in an artifact or a refusal | Absolute paths never appear in a receipt — the serialized receipt always stores workspace-relative paths (`engine/scripts/document_evidence.py:1146`); local node identity is never serialized (`:182`); a privacy-safe COM refusal does not echo the source path (`engine/scripts/com_backend.py:1794`) | `docs/product-direction.md` §6 principle 2: agent-facing responses use scoped identifiers, not arbitrary absolute paths | `engine/tests/test_document_evidence.py`, `engine/tests/test_com_backend_offline.py::test_inspect_privacy_safe_failure_does_not_echo_source_path` | none material for receipts and privacy-safe inspect. Ordinary CLI errors do print paths; that is appropriate for an operator surface and inappropriate for an agent-facing one. **Phase 1** must say which is which. |
+| Private content committed to the repository | `privacy_scan.py` is the gate: binary office documents, denylisted strings, Windows user-profile paths and email addresses are HARD, with a sha256-pinned corpus allowlist whose contents are still content-scanned (`pipeline/scripts/privacy_scan.py:1-25`); every bundle runs it before it is written (`scripts/package_module.py:457`) | `docs/product-direction.md` §6 principle 16 | `pipeline/tests/test_privacy_scan.py`, `tests/test_package_module.py` | **Read the scope carefully.** Scanning a *working tree* also walks untracked files, so a dirty worktree can report findings that are not in the shipped surface. The shipped-surface claim is the scan over tracked content and over a staged bundle. State which one a given run was. |
+| A gate claims more than it checked | An unreadable path is a HARD `unreadable_file` finding, never a silent skip and never downgraded to WARN, and the summary carries `summary.incomplete` (`pipeline/scripts/privacy_scan.py:16-25`, finding at `:166-169`) | `docs/desktop-architecture.md` §3.3 | `pipeline/tests/test_privacy_scan.py` | none material |
+| Telemetry sent without consent | No telemetry exists | `docs/product-direction.md` §6 principle 14: telemetry, crash uploads, cloud sync and model calls are off unless deliberately enabled, and what may leave the device is disclosed before it does; §8.1 Phase 5 lists that disclosure as an exit item | none | **GAP** on enforcement, satisfied today by absence. Absence is not a control once a shell exists. **Phase 5/6.** |
+| Crash report uploads document content | No crash reporting exists | `docs/product-direction.md` §6 principle 14 | none | **GAP. Phase 6.** |
+| Screenshots or previews leak content | Preview rendering is local; the deliverable preview is loaded into a sandboxed iframe (`studio/index.html:88`). Nothing uploads an image. | `docs/product-direction.md` §7 requires real screenshots for visual review — those are a *review* artifact and must use synthetic or public documents (`docs/product-direction.md` §6 principle 16) | `tests/test_studio.py` | **Process risk, not a code risk.** Review screenshots are the most likely accidental egress of private document content in this program. `docs/desktop-acceptance.md` makes synthetic/public-only a precondition of every task. **Phase 3 onward.** |
+| Document content transmitted to a model provider | No provider transmission exists. Network is absent from the document path (Area 1). | `docs/product-direction.md` §5.6 puts network in Agent Host and nowhere else, "deliberately", so document processing stays offline even when the product can talk to a model | none | **GAP** on enforcement. The boundary is designed but unbuilt, and it is the single most consequential privacy boundary in the product. **Phase 5.** |
+| Workspace removal leaves private content behind | `ws_snapshot` covers `bundle/`, `output/`, `PIPELINE.md`, `.pipeline/` (`pipeline/scripts/ws_snapshot.py:29`) with a required `.sha256` sidecar; restore is member-by-member with zip-slip and symlink refusals (`:238`, `:254`, `:290`, entry `:477`) | `docs/runtime-protocol-v0.md` §4: `workspace/delete` is host-only and should be snapshot-then-remove | `pipeline/tests/test_ws_snapshot.py` | **GAP.** No deletion entrypoint exists at all, so "remove this workspace and everything it touched" has no implementation and no definition of what *everything* covers (temp stages, `%TEMP%` locks, renderer scratch). **Phase 4.** |
+
+---
+
+## 13. GAP register by phase
+
+Every GAP above, collected. This is the closure list acceptance evidence should
+eventually retire.
+
+| Phase | GAPs this phase owns |
+| --- | --- |
+| Phase 1 — Runtime Protocol v0 and headless slice | XML depth bound (2); XML node-count and entity policy (2); `document/readRegion` size bound (2); image pixel bound (2); recursion refusal made explicit (2); in-process time bound (2); memory ceiling (2); shared slug/workspace resolution module (3); one-link capture inherited by Runtime capture (3); unsupported-structure inventory (1); HWPX version/shape gate (1); embedded-object policy (1); Runtime-level network assertion (1); `MAX_FRAME_BYTES` (4, 7); authority-as-channel enforcement (5, 6); host-only `approval/resolve` (6); plan-to-approval binding (6); plan staleness and the `.hwp` binding question (6); hostile-document fixture (5); which responses are privacy-safe by default (12) |
+| Phase 2 — CLI and MCP parity | MCP allowed-root and attached-session policy (7); strict agent-safe subset by construction (7); confused-deputy prevention (7); per-connection DoS budget (7); negative test that no other tool's token cache is read (9) |
+| Phase 3 — Read-only Desktop | Panel trust model before shipping panels in a shell (8); `protected_properties` false-block corpus check (1); canonical-verdict binding re-established in the shell (11); OS credential storage measured in the shell spike (9) |
+| Phase 4 — Verified Desktop editing | Cancellation semantics mid-COM (4); COM environment allowlist decision (4, 9); temp-file cleanup owner (3); ownership discipline for `workspace/delete` (3, 12); review UI that makes "reviewed" meaningful (6); receipt viewer that shows the plan binding (6) |
+| Phase 5 — Agent-native operation | Prompt-injection cases (5); model tool surface (5); renderer output marked untrusted downstream (5); secure provider settings and OS credential store (9); credential redaction in logs (9); telemetry consent and disclosure (12); the Agent-Host network boundary itself (12) |
+| Phase 6 — Developer Preview hardening | Descendant containment beyond process-group/Job (4); OS sandbox for renderer writes (4); signed manifests and code signing (10); rollback protection (10); dependency pinning for shell and renderer extras (10); SBOM and provenance (10); branch protection on release branches (10); receipt authenticity, not just integrity (11); crash-report policy (9, 12); clean-machine measurement of every bound (2) |
+
+---
+
+## 14. What this model does not cover
+
+Stated so the omissions are deliberate rather than discovered later.
+
+- **Repository and account security.** Branch protection, secret scanning
+  settings, and maintainer account hardening are repository settings; they
+  cannot be cited from a checkout and are listed in Area 10 as an action item
+  rather than a control.
+- **Hancom Office's own attack surface.** COM drives a third-party
+  application. Its parser is not ours; the model's position is containment
+  (Area 4) and serialization (`pipeline/scripts/hwp_ingress.py:1186`,
+  `engine/scripts/guards.py:231`), not assurance.
+- **Cryptographic review of the receipt scheme.** Receipts are hash-bound and
+  explicitly not authenticated
+  (`pipeline/scripts/renderer_runtime_v2.py:57`); a signature design is Phase 6
+  work and needs its own review.
+- **Multi-user or networked deployment.** The product is local-first
+  (`docs/product-direction.md` §1). Nothing here models a shared host.
+- **Availability as a security property.** Resource bounds here exist to keep
+  a hostile document from taking the application down, not to provide a
+  service-level guarantee.
+
+---
+
+## 15. Review notes on the design drafts
+
+`docs/runtime-protocol-v0.md` and `docs/desktop-architecture.md` are read-only
+input to this model. Re-reading their citations against the working checkout
+found four off-by-a-few line references. None changes a claim; all are worth
+correcting so the next reader's `grep` lands on the right line.
+
+| Draft | Cited | Actual | What is really there |
+| --- | --- | --- | --- |
+| `docs/runtime-protocol-v0.md` §3.12 | `engine/scripts/document_evidence.py:39` (`EVIDENCE_CLASSES`), `:46` (`ARTIFACT_ROLES`) | `:40`, `:47` | `:39` and `:46` are the closing braces of the preceding frozensets |
+| `docs/runtime-protocol-v0.md` §3.11 | `pipeline/scripts/check_residue.py:745` (`evidence_level`) | `:748` | `:745` is the "A text gate is never render evidence" comment; the field is three lines below |
+| `docs/runtime-protocol-v0.md` §3.11 | `pipeline/scripts/check_residue.py:769` (CLI) | `:770` | `def main` is at `:770`; `docs/desktop-architecture.md` §1.3 cites `:770` correctly |
+| `docs/desktop-architecture.md` §3.1 | `pipeline/scripts/diagnostic_candidate_core.py:50` (`DirectoryBinding`) | `:51` | `:50` is blank |
+
+One substantive observation for the program, not a correction:
+`docs/desktop-architecture.md` §2 B1 cites Studio's action gate as the
+precedent for authority-by-channel, and it is the right precedent — but the
+same file's page origin is where that gate is currently weakest (Area 8).
+Citing Studio as the model for B1 while Studio's own panel origin holds the
+action token is worth an explicit note in that section, so a reader does not
+carry the pattern across whole.
