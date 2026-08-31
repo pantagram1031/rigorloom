@@ -89,7 +89,7 @@ COM. Existing entrypoints:
 | Job | Script |
 | --- | --- |
 | COM edit batch / convert | `engine/scripts/com_backend.py:1723` / `:1751` |
-| capability probe (never launches Hancom) | `pipeline/scripts/render_probe.py:3` |
+| capability probe (never launches Hancom) | `pipeline/scripts/render_probe.py:4` |
 | quarantined rhwp candidate render | `pipeline/scripts/renderer_runtime_v2.py:1` |
 | render-and-judge loop, deterministic half | `pipeline/scripts/visual_verify.py:2980` |
 

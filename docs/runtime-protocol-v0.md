@@ -592,7 +592,7 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | Exact-byte binding, stale plans refuse | `engine/scripts/preedit.py:2454` (`--at-cell-expect`, writes nothing on mismatch); `engine/scripts/form_inspect.py:1418` (`form_hash`); `engine/scripts/document_evidence.py:1356` (`validate_receipt` re-checks bytes) |
 | Fail closed | `engine/scripts/document_evidence.py:780` (`derive_proof_grade` → `none` on anything unknown); `pipeline/scripts/check_residue.py:99` (an untrustworthy removal policy falls back to the strict legacy mode); `pipeline/scripts/submission_preflight.py:1` |
 | Explicit unavailable / unknown | `pipeline/scripts/render_probe.py:22` (`"yes"|"no"|"unknown"` + reason strings); `engine/scripts/form_inspect.py:913` (key omitted when undecidable); `pipeline/scripts/checker_base.py:41` (`skipped` is a reported state) |
-| No ambient network | `studio/README.md:6` ("no CDN or network dependency"); `pipeline/scripts/render_probe.py:3` (probes, never launches); `pipeline/scripts/renderer_runtime_v2.py:47` (`ENV_POLICY = "minimal_allowlist_v1"`). The Runtime inherits this: no socket, no HTTP client, no DNS. |
+| No ambient network | `studio/README.md:6` ("no CDN or network dependency"); `pipeline/scripts/render_probe.py:4` (probes, never launches); `pipeline/scripts/renderer_runtime_v2.py:47` (`ENV_POLICY = "minimal_allowlist_v1"`). The Runtime inherits this: no socket, no HTTP client, no DNS. |
 | Core stays module-agnostic | `pipeline/scripts/module_registry.py:15` (core never learns a module's name); typed accessors at `:694`–`:751`; `studio/main.py:20` follows the same rule |
 | No second editing engine | this document: every mutating method routes to `preedit`, `xml_backend` or `com_backend` |
 
