@@ -345,6 +345,9 @@ waits for the user.
 | D4 | Update `pyproject.toml` `description` to match the agent-native identity. | **Open — deferred.** Package metadata is shipped content; group it with D2/D3 rather than drifting a third identity into the tree. |
 | D5 | One roadmap ladder. Phase 0–6 is canonical; M0–M5 is superseded and retained only as a translation table. | **Accepted.** Recorded in `product-direction.md` §8. |
 | D6 | `docs/support-matrix.md` remains the single capability authority. Direction and program documents point at it and never restate capability. | **Accepted.** |
+| D7 | Studio stays a diagnostic/operator surface and later becomes a Runtime client; its action mode is not the product path. Two authority models do not ship side by side. | **Accepted** (2026-09-01, from the Track B architecture audit). |
+| D8 | `plan/apply` is host-only in Protocol v0. The one-OperationPlan-path invariant is satisfied by shared propose/validate; application authority stays with the host. | **Accepted** (2026-09-01). |
+| D9 | An OperationPlan declares its backend explicitly; a mixed-backend plan is `invalid_params`. The Phase 1 slice implements the offline `preedit` backend only; COM and `xml_backend` op kinds refuse with a named `unsupported_backend`. Rich refusal payloads pass through the protocol unflattened. `HwpInstanceLock` wiring is parked to Phase 4+ (it changes `--kill-stale` semantics for CLI users). | **Accepted** (2026-09-01). |
 
 None of D2, D3, or D4 should be executed as a side effect of a documentation
 PR. They are listed so that the mismatch is on the record and visible, which is
