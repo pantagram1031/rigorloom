@@ -6,6 +6,11 @@
   direction: Rigorloom as a local-first, verifiable HWP/HWPX desktop
   workbench, with its initial product wedge, trust model, roadmap, and
   non-goals. It does not add or imply current capability.
+- [plans/agent-native-desktop-goal.md](plans/agent-native-desktop-goal.md) —
+  the durable Claude Goal specification for the agent-native Desktop program:
+  Fable 5 orchestration, Opus 5 workstreams, architecture invariants, phases,
+  acceptance tasks, security boundaries, verification, and Git policy. This is
+  a target and execution contract, not a current-capability claim.
 - [support-matrix.md](support-matrix.md) — current per-capability status and
   executable evidence pointers; use this instead of inferring support from a
   roadmap or plan.
@@ -62,13 +67,14 @@ not living documentation:
 
 ## `plans/`
 
-[plans/](plans/) holds the design history behind each release wave — one doc
-per hardening or feature wave, for example
+[plans/](plans/) holds the design history behind each release wave and durable
+program contracts. Historical examples include
 [plans/v0.11-Z5.md](plans/v0.11-Z5.md),
 [plans/p0-parity-report.md](plans/p0-parity-report.md), and
 [plans/v0.16-unified-core-and-modules.md](plans/v0.16-unified-core-and-modules.md).
-These are point-in-time design and status records, not living documentation.
 
 For current behavior, prefer [support-matrix.md](support-matrix.md), the release
-records, and [CHANGELOG.md](../CHANGELOG.md). For the proposed next product
-boundary and work order, use [product-direction.md](product-direction.md).
+records, and [CHANGELOG.md](../CHANGELOG.md). For the proposed product boundary,
+use [product-direction.md](product-direction.md). For the long-running Claude
+Goal execution contract, use
+[plans/agent-native-desktop-goal.md](plans/agent-native-desktop-goal.md).
