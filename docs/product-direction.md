@@ -98,13 +98,16 @@ to verify.
 
 The initial audience is:
 
-- people completing Korean government, school, HR, and grant forms where the
-  original layout must survive;
+- people completing Korean government, civil, HR, grant, and other fixed-layout
+  forms where the original layout must survive;
 - developers and advanced operators automating HWPX documents;
 - teams that need reviewable, repeatable document transformations rather than
   one-off macro scripts;
 - AI-agent users who want a model to propose document work while deterministic
   software remains the authority.
+
+School and corporate forms remain future audiences until representative corpus
+and acceptance-task evidence exist for those families.
 
 ### Core user journey
 
@@ -257,8 +260,8 @@ that model.
 ### Windows first, architecture not Windows-only
 
 The first complete desktop product should target Windows. The strongest current
-proof path depends on locally installed Hancom Office and COM, and Windows is
-where users most commonly handle native HWP workflows.
+proof path depends on locally installed Hancom Office and COM, and that path is
+demonstrated only on Windows.
 
 The application-service protocol and HWPX/XML engine should remain portable.
 Linux and macOS can support the evidence that has actually been demonstrated,
@@ -360,9 +363,10 @@ Add natural-language assistance only after M2 provides a safe operation path:
 - no direct shell, arbitrary filesystem, or ambient network capability;
 - deterministic post-operation verification independent of the proposing model.
 
-Exit when a hostile document cannot make the agent read another file, contact a
-network service, bypass review, or relabel unavailable evidence as success in the
-published threat-model test suite.
+Exit when the published threat-model suite contains defined hostile-document
+cases and demonstrates that they cannot make the agent read another file,
+contact a network service, bypass review, or relabel unavailable evidence as
+success within the tested application boundary.
 
 ### M4 — Secure distribution and ecosystem
 
