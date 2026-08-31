@@ -273,7 +273,7 @@ three registries, and they are not the same set:
 replace_all, insert_blank_before, insert_picture, set_line_spacing`.
 
 **COM (Windows + Hancom only) — `engine/scripts/com_backend.py:1598`**
-23 ops in `OPS`, required keys in `OP_REQUIRED_KEYS` (`:1626`), validated
+22 ops in `OPS`, required keys in `OP_REQUIRED_KEYS` (`:1626`), validated
 before Hancom launches by `_validate_ops` (`:1670`).
 
 Only the COM registry can insert native equations, pictures, hyperlinks and
@@ -389,7 +389,7 @@ paper over:
 
 `--expect-text` (T130, `pipeline/scripts/check_residue.py:812`) is a
 **text-level** claim and its verdict says so in-band:
-`expected_text.evidence_level = "text"` (`:745`). Carry that field through;
+`expected_text.evidence_level = "text"` (`:748`). Carry that field through;
 it is the difference between "the string is in the document" and "the reader
 can see it."
 
@@ -399,8 +399,8 @@ Producer: `engine/scripts/document_evidence.py`.
 
 - Schema id `rigorloom/document-evidence/v1` at `:29`; canonical location
   `output/proof/backend/receipt.json` at `:30`.
-- Closed vocabularies: `BACKEND_IDS` (`:32`), `EVIDENCE_CLASSES` (`:39`),
-  `ARTIFACT_ROLES` (`:46` — `source_form`, `assembled_hwpx`, `rendered_pdf`,
+- Closed vocabularies: `BACKEND_IDS` (`:32`), `EVIDENCE_CLASSES` (`:40`),
+  `ARTIFACT_ROLES` (`:47` — `source_form`, `assembled_hwpx`, `rendered_pdf`,
   `diagnostic_svg`). An unknown value is a validation error
   (`_validate_enum`, `:824`).
 - Build / validate / load: `build_receipt` (`:1125`), `validate_receipt`
@@ -435,7 +435,7 @@ authoritative.
 Producer: `pipeline/scripts/ws_snapshot.py`. Snapshots cover
 `bundle/`, `output/`, `PIPELINE.md`, `.pipeline/`
 (`pipeline/scripts/ws_snapshot.py:29`), archives carry a required `.sha256`
-sidecar (`:50`), and restore is member-by-member with zip-slip, symlink-member
+sidecar (`:51`), and restore is member-by-member with zip-slip, symlink-member
 and symlink-parent refusals (`:238`, `:254`, `:290`). Exit contract 0/2/3
 (`:32`, `:36`).
 
