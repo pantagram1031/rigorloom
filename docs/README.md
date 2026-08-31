@@ -26,7 +26,9 @@
   roadmap or plan.
 - [release-v0.17.0.md](release-v0.17.0.md) — the v0.17.0 validation record:
   bundle inventory, suite matrix, clean-room campaigns, privacy evidence, and
-  known limits.
+  known limits. Note: the `v0.17.0` tag exists but no v0.17.0 GitHub Release
+  has been published — see the repository truth audit in
+  [plans/agent-native-desktop-program.md](plans/agent-native-desktop-program.md) §5.
 - [release-v0.16.0.md](release-v0.16.0.md) — the preceding unified-core and
   distribution-module release record.
 - [architecture.md](architecture.md) — the current pipeline/kernel
