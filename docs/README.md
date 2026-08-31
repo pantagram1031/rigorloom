@@ -2,15 +2,25 @@
 
 ## Start here
 
-- [product-direction.md](product-direction.md) — the proposed living product
-  direction: Rigorloom as a local-first, verifiable HWP/HWPX desktop
-  workbench, with its initial product wedge, trust model, roadmap, and
-  non-goals. It does not add or imply current capability.
+- [product-direction.md](product-direction.md) — the living product direction:
+  Rigorloom as an agent-native, local-first HWP/HWPX desktop editor and
+  automation runtime with verifiable operations. Covers the initial product
+  wedge, the one-Workspace/two-views product shape, the eight product surfaces
+  and the host-vs-agent authority model, the shared `OperationPlan` invariant,
+  the trust model, the Phase 0–6 roadmap, and the non-goals. Explanatory, not
+  normative; it does not add or imply current capability.
+- [plans/agent-native-desktop-program.md](plans/agent-native-desktop-program.md)
+  — the living program document: current phase and status, the phase ladder
+  with entry/exit criteria, the PR dependency graph, the repository truth audit
+  (release, tag, and repository-description mismatches as observed), the open
+  Phase 0 decisions, standing constraints, and open risks. Read this to know
+  where the program stands.
 - [plans/agent-native-desktop-goal.md](plans/agent-native-desktop-goal.md) —
   the durable Claude Goal specification for the agent-native Desktop program:
   Fable 5 orchestration, Opus 5 workstreams, architecture invariants, phases,
   acceptance tasks, security boundaries, verification, and Git policy. This is
-  a target and execution contract, not a current-capability claim.
+  the normative target and execution contract, not a current-capability claim.
+  Where it and product-direction.md disagree, this document wins.
 - [support-matrix.md](support-matrix.md) — current per-capability status and
   executable evidence pointers; use this instead of inferring support from a
   roadmap or plan.
@@ -19,9 +29,10 @@
   known limits.
 - [release-v0.16.0.md](release-v0.16.0.md) — the preceding unified-core and
   distribution-module release record.
-- [architecture.md](architecture.md) — current runtime architecture. The
-  proposed Desktop/Application Service boundary is defined separately in
-  [product-direction.md](product-direction.md).
+- [architecture.md](architecture.md) — the current pipeline/kernel
+  architecture. The proposed Desktop/Runtime boundary (formerly called
+  "Application Service") is defined separately in
+  [product-direction.md](product-direction.md) §5.
 
 ## Operate the current product
 
@@ -74,7 +85,9 @@ program contracts. Historical examples include
 [plans/v0.16-unified-core-and-modules.md](plans/v0.16-unified-core-and-modules.md).
 
 For current behavior, prefer [support-matrix.md](support-matrix.md), the release
-records, and [CHANGELOG.md](../CHANGELOG.md). For the proposed product boundary,
-use [product-direction.md](product-direction.md). For the long-running Claude
-Goal execution contract, use
+records, and [CHANGELOG.md](../CHANGELOG.md). For the product boundary, use
+[product-direction.md](product-direction.md). For program status, phase gates,
+and the PR graph, use
+[plans/agent-native-desktop-program.md](plans/agent-native-desktop-program.md).
+For the normative long-running Claude Goal execution contract, use
 [plans/agent-native-desktop-goal.md](plans/agent-native-desktop-goal.md).
