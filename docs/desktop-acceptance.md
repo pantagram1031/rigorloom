@@ -110,10 +110,12 @@ Second pass with a denser form to catch a structure-display regression:
 | A4 | The structure display's counts equal the engine's own profile for the same file | compare against `engine/scripts/form_inspect.py` output: `table_map` cell count (`:802`), `fill_target` count (`:1450`), `spacer` count (`:1444`), `anchors` (`:1419`) |
 | A5 | The document identity the UI shows equals `form_hash` | `engine/scripts/form_inspect.py:1418` |
 | A6 | Every renderer shown is `available`, `unavailable` with a reason, or `unknown` — never absent-as-false | compare to `pipeline/scripts/render_probe.py:20-28` output; assert the UI has no fourth state |
+| A6b | Unsupported structures and protected/refused-open documents are shown as a named state, not omitted | for the `protected_properties` HWP5 fixture (`pipeline/scripts/hwp_ingress.py:582-591`), the UI shows the refusal reason; for a structure the profile does not model, the UI shows it as unsupported rather than absent — distinguishing "not present" from "not understood" |
+| A6c | The preview surface shows the real page, or an explicit preview-unavailable state, never a blank | when `render_probe` reports no renderer for the host (P5), the preview state is the honest-unavailable state, not an empty pane |
 | A7 | View switch created no second session, no second document state, no second conversation | one workspace id, one document session id, one event stream across both views |
 | A8 | Reopening after a restart yields the same structure display and the same `form_hash` | re-run A4/A5 on the second launch |
 | A9 | No terminal process was launched by the operator | process tree recording for the session |
-| A10 | The privacy gate over everything the run wrote reports 0 HARD | `python pipeline/scripts/privacy_scan.py <written-paths>` exit 0 |
+| A10 | The privacy gate over everything the run wrote reports 0 HARD | `python pipeline/scripts/privacy_scan.py <root>` exit 0, where `<root>` is the single workspace (or install) root the run wrote under — the scanner takes one positional root (`pipeline/scripts/privacy_scan.py:740`), so point it at the enclosing directory rather than a path list |
 | A11 | No process exited 1 | exit-code recording |
 
 **Reviewer note (not gating).** Real screenshots of both views at 100%, 125%
@@ -231,8 +233,9 @@ B are the same path.
 | C4 | No approval record exists until the human resolves it | `modules/report/scripts/pipeline_ctl.py:1112` and `:1159` are the shipped precedent — no matching line, no approval |
 | C5 | The provenance field records that an agent proposed it; the code path does not differ | one plan schema, one `proposer` field |
 | C6 | Source bytes unchanged | as B5 |
-| C7 | The resulting candidate is byte-identical to Task B's candidate | sha256 comparison; this is the strongest single expression of the one-path invariant |
+| C7 | The resulting candidate is byte-identical to Task B's candidate | sha256 comparison; the strongest single expression of the one-path invariant. **Caveat — this holds because Task B is a text fill.** A text-only edit reuses each existing member's `ZipInfo`, so the output zip is byte-stable (`engine/scripts/xml_backend.py:229-231` writes existing items from their preserved `ZipInfo`). An op that *adds* a zip member — `insert_picture`, `insert_equation`, `insert_table` — writes the new member with `writestr(name, …)`, which stamps the current time (`engine/scripts/xml_backend.py:232-233`), so two runs differ in that member's timestamp. For an add-member plan, C7 must compare the candidates' *document content* (member set and member bytes) rather than the raw zip bytes, or normalise timestamps before hashing. Keep Task C on a text fill so raw-byte C7 stays valid. |
 | C8 | The agent never obtained a host-only method | method-call log contains no host-only method on the agent connection |
+| C9 | The proposal, its review, and its approval state are the same in Document view and in Agent view | the plan id, the affected-address list, the approval state and the candidate reference read identical in both views — the one-Workspace-two-views property of `docs/product-direction.md` §4; switching view during the proposal does not fork the plan or the conversation |
 
 **Evidence to retain.** Both plan objects and their diff; the refusal payload
 from C3; the approval record; both candidates and their hashes; the method-call
@@ -295,6 +298,7 @@ a sibling directory the adapter was not given.
 | D7 | Source bytes unchanged throughout, including after every refused attempt | as B5 |
 | D8 | The export exists only after the host acted, and the export path was never supplied by the client | event-stream ordering plus provenance of the destination path |
 | D9 | No refusal payload contains document text, field names, or a local path | privacy assertion over every refusal recorded, in the spirit of `pipeline/scripts/hwp_ingress.py:7-9` |
+| D10 | The plan and verification the MCP client produced are compatible with the CLI's and the Desktop/Runtime's for the same task | run the same task's propose+validate through the CLI (`docs/product-direction.md` §5.4) and through the Runtime directly, and assert all three plans are structurally identical (as D6) and their `plan/validate` verdicts agree finding-for-finding. This is the explicit Phase 2 exit — "Runtime, CLI, and MCP produce compatible plans and verification for the same task" (`docs/product-direction.md` §8.1) |
 
 **Evidence to retain.** The adapter's advertised method list; every refusal
 payload verbatim; the client-produced plan; the host-produced comparison plan;
@@ -318,7 +322,7 @@ did not widen it.
 **Intent.** A document whose content tries to direct the system cannot obtain a
 capability the host policy forbids.
 
-**Threat-model coverage.** Areas 1, 2, 5, 12.
+**Threat-model coverage.** Areas 1, 2, 4 (network), 5, 11 (proof-relabel), 12.
 
 **Preconditions.** P1–P5. Plus a synthetic hostile fixture, built for this
 purpose and committed as a test fixture — not sourced from the wild.
@@ -333,10 +337,13 @@ and needs no Hancom.
 | E-inject-guide | The same instruction placed in removable guide text | Same; and the residue gate still classifies it as guide text |
 | E-zipbomb | HWPX exceeding `MAX_HWPX_COMPRESSION_RATIO` (`pipeline/scripts/hwp_ingress.py:46`) | Refused at ingress with a stable reason |
 | E-members | HWPX exceeding `MAX_HWPX_MEMBERS` (`:41`) | Refused at ingress |
-| E-deep-xml | A section with pathological XML nesting depth | **Currently undefined behaviour** — `docs/threat-model.md` Area 2 records no depth bound. This fixture is what makes the GAP visible |
+| E-deep-xml (graph path) | A section with pathological XML nesting depth or node count, routed through `story_graph` / `hwpx_definition_graph` | **Bounded** — refused `xml_depth` / `xml_nodes` / `graph_limit_exceeded` at the declared 256-depth / 100k-node ceiling (`pipeline/scripts/story_graph.py:44-46`, `:190-193`; `pipeline/scripts/hwpx_definition_graph.py:47-49`, `:169-170`). Also route it through `story_edit`, which fail-closes any DOCTYPE/ENTITY declaration (`pipeline/scripts/story_edit.py:330-334`) |
+| E-deep-xml (ingress path) | The same section, routed through the plain ingress/inspection parse (`pipeline/scripts/hwp_ingress.py:937`/`:987`, `pipeline/scripts/check_residue.py:521`/`:541`, `engine/scripts/preedit.py:404`) | **Currently unbounded** — these `ET.fromstring` sites do not inherit the graph-path ceiling (`docs/threat-model.md` Area 2). This fixture makes the *unification* GAP visible; its outcome must be recorded whatever it is (E9), and it must not silently succeed as if the section were understood |
 | E-malformed | A section that does not parse | HARD `artifact_malformed`, before any text scan (`pipeline/scripts/check_residue.py:34-41`, `:646`) |
 | E-protected | HWP5 with a protection property bit set | Refused `protected_properties` (`pipeline/scripts/hwp_ingress.py:582-591`) |
 | E-traversal | Snapshot archive with a `..` member and a symlink member | Refused member-by-member (`pipeline/scripts/ws_snapshot.py:238`, `:290`) |
+| E-network | A document whose text instructs the reader/agent to fetch a URL, plus (where the format allows) an embedded external reference | No network request is made by the document path; the instruction is displayed as content only. This is the document-side of `docs/threat-model.md` Area 1's external-link row and Area 4's worker network-denial row — the fixture asserts opening and inspecting the document opens no socket |
+| E-proof-relabel | A document (or an accompanying crafted receipt/verdict JSON) that asserts a higher proof grade than its evidence supports — e.g. a receipt claiming `native_render` with no rendered artifact, or a UI-facing verdict file with an inflated `proof_grade` | The grade is **derived, not believed**: `derive_proof_grade` returns `none` for any non-success or unknown state (`engine/scripts/document_evidence.py:780`), duplicate/forged receipt members are rejected (`:1940`/`:1979`), and Studio binds its badge to the canonical file only (`studio/main.py:827`). This is the exact Area 11 attack (proof-grade confusion / UI-vs-canonical); the fixture asserts the displayed grade equals the derived grade, never the claimed one |
 
 **Steps.** For each fixture: open it, inspect it, and — where it opens at all —
 run an ordinary Task B edit on an unrelated seat.
@@ -352,25 +359,32 @@ run an ordinary Task B edit on an unrelated seat.
 | E5 | Source bytes of every fixture unchanged | sha256 before/after |
 | E6 | Unrelated files in the same directory unchanged | directory-wide hash manifest before/after |
 | E7 | Injected instruction text is displayed as content and is never interpreted | assert the text appears in the document-content surface and in no plan, no method argument, and no log line treated as a directive |
-| E8 | Every bounded dimension refused at its declared bound, not at some larger accidental one | for each bound in `pipeline/scripts/hwp_ingress.py:40-50`, one fixture just under (accepted) and one just over (refused) |
-| E9 | E-deep-xml's outcome is *recorded*, whatever it is, and does not silently succeed as if the document were understood | explicit recorded outcome: refused, or accepted-with-a-named-limitation; a crash is a fail |
+| E8 | Every bounded **HWPX archive** dimension refused at its declared bound, not at some larger accidental one | for each HWPX bound — `MAX_HWPX_MEMBERS` (`pipeline/scripts/hwp_ingress.py:41`), `MAX_HWPX_ARCHIVE_BYTES` (`:42`), `MAX_HWPX_COMPRESSED_BYTES` (`:43`), `MAX_HWPX_MEMBER_BYTES` (`:44`), `MAX_HWPX_TOTAL_UNCOMPRESSED` (`:45`), `MAX_HWPX_COMPRESSION_RATIO` (`:46`) — one fixture just under (accepted) and one just over (refused). **Excluded:** `MAX_INPUT_BYTES` (`:40`) is a ~256 MiB file that cannot live in the sha256-pinned corpus, so its just-over case is generated at test time, not committed; and `:47`/`:48` (`MAX_MINIFAT_ENTRIES`, `MAX_CHILD_OUTPUT_BYTES`) are not document-input dimensions and are out of scope for this fixture set |
+| E9 | E-deep-xml (ingress path)'s outcome is *recorded*, whatever it is, and does not silently succeed as if the section were understood | explicit recorded outcome: refused, or accepted-with-a-named-limitation; a crash is a fail. Note the graph-path variant is already bounded (see the fixture table), so E9 measures only the un-unified ingress/inspection `ET.fromstring` sites |
 | E10 | No process exited 1, and no process hung past its declared bound | exit-code and wall-clock recording |
 
 **Evidence to retain.** Every fixture and its build script; every refusal
 payload; the filesystem diffs; the per-bound just-under/just-over results for
-E8; the recorded E-deep-xml outcome.
+E8; both recorded E-deep-xml outcomes (graph path and ingress path); the
+E-network socket-log showing no connection; the E-proof-relabel displayed-grade
+vs derived-grade comparison.
 
 **Runnable at Phase 5** as a whole (prompt-injection cases are a named Phase 5
 exit item).
 
 **Checkable earlier, headlessly — and most of it should be:** E3, E5, E6, E8,
 E10 and the whole ingress half (E-zipbomb, E-members, E-malformed,
-E-protected, E-traversal) are runnable **today**, against
-`pipeline/scripts/hwp_ingress.py`, `pipeline/scripts/check_residue.py` and
-`pipeline/scripts/ws_snapshot.py`, with fixtures that take an afternoon to
-build. E9 is runnable today and is the fastest way to turn Area 2's XML-depth
-GAP from an assertion into a measurement. E1, E2, E7 need the Runtime
-(**Phase 1**). Only the model-facing half genuinely waits for Phase 5.
+E-protected, E-traversal, both E-deep-xml variants) are runnable **today**,
+against `pipeline/scripts/hwp_ingress.py`, `pipeline/scripts/check_residue.py`,
+`pipeline/scripts/story_graph.py`, `pipeline/scripts/hwpx_definition_graph.py`
+and `pipeline/scripts/ws_snapshot.py`, with fixtures that take an afternoon to
+build. E9 is runnable today and is the fastest way to turn Area 2's
+XML-depth *unification* GAP from an assertion into a measurement — the
+graph-path variant already refuses, so E9 measures whether the plain
+ingress/inspection path does. E-proof-relabel's receipt half is also runnable
+today against `engine/scripts/document_evidence.py`. E1, E2, E7 and the
+E-network socket assertion need the Runtime (**Phase 1**). Only the
+model-facing half genuinely waits for Phase 5.
 
 ---
 
