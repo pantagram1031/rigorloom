@@ -641,3 +641,72 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
    (`studio/main.py:1005`). A subscriber that reconnects cannot say "resume
    after event N". Does the Event object gain a monotonic id, and who assigns
    it?
+
+---
+
+## 9. Implementation status (Phase 1 slice)
+
+Implemented in `runtime/` on this branch. Everything not listed is still GAP.
+The slice serves the offline `preedit` backend only (orchestrator decision D9);
+`xml` and `com` plans, and op kinds those backends own, are refused with
+`unsupported_backend` naming the backend that would serve them.
+
+### Methods
+
+| Method | Status | Where |
+| --- | --- | --- |
+| `initialize` | implemented | `runtime/scripts/rt_server.py` `_m_initialize` |
+| `capabilities/list` | implemented (no render probe) | `_m_capabilities` |
+| `session/list` | implemented | `_m_session_list` |
+| `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
+| `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
+| `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
+| `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan` |
+| `plan/validate` | implemented, profile-derived (see below) | `rt_plan.validate_plan` |
+| `plan/get`, `approval/get` | implemented | `rt_server` |
+| `approval/request` (agent) | implemented | `rt_plan.request_approval` |
+| `approval/resolve` (host) | implemented, binds plan id + plan hash | `rt_plan.resolve_approval` |
+| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan` |
+| `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
+| cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
+| `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `event/subscribe`, `verify/*` | GAP | — |
+
+Cancellation is spelled `{"kind":"cancel","id":...}` rather than a `$/cancel`
+method: a cancel is not a request, it takes no response, and the reader thread
+must act on it while a request is still in flight.
+
+### Codes
+
+All twelve transport codes from §5.2 are implemented and closed
+(`runtime/scripts/rt_codes.py`), plus `unsupported_backend`,
+`unknown_op_kind`, `plan_invalid`, `approval_binding_mismatch`,
+`approval_already_resolved`, `region_too_large`, `source_rejected`,
+`candidate_hash_mismatch`, `receipt_body_mismatch`, `backend_refused`,
+`publication_failed`. `authority_denied` is NOT implemented and should be
+dropped from v0: authority is registry membership, so a host-only method is
+`unknown_method` on an agent connection, with `knownOnHostEntry: true` carrying
+the diagnostic §4 wanted.
+
+### Three corrections to this document, found by implementing it
+
+1. **§5.1 was wrong about the receipt codes.** `receipt_duplicate_key` and
+   `receipt_nonfinite_value` cannot be "reused verbatim" for the transport:
+   they name a *receipt* and carry `path: output/proof/backend/receipt.json`
+   (`engine/scripts/document_evidence.py:1952`). A duplicate member in a
+   request frame is not a receipt defect. Frames use `duplicate_key` /
+   `nonfinite_number`; the receipt-reading path keeps the `receipt_*` spelling
+   where it is true.
+2. **§3.7's "route to the preedit validator without executing" is not
+   reachable.** `preedit` raises its refusals from inside its edit path
+   (`engine/scripts/preedit.py:136`, `:180`, `:221`) and ships no dry run.
+   Validation is therefore derived from the same facts via `form_inspect`'s
+   preflight fields — which does reproduce the T30 anomaly and the ambiguous
+   cell run under preedit's own code names — and everything it cannot reach is
+   listed in `preflight.deferred` instead of being assumed clean.
+3. **Sessions cannot be per-connection.** `workspace/openPath` is host-only and
+   `plan/propose` is agent-safe, so with per-connection state an agent
+   connection could never reach a document and the whole agent surface would be
+   decorative. Sessions, plans and approvals are keyed on disk under `--root`,
+   the way a report workspace already is
+   (`modules/report/scripts/pipeline_ctl.py:1112`). Concurrency across
+   processes is last-writer-wins, which is the slice's largest unresolved risk.
