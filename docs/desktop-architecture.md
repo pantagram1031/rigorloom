@@ -221,7 +221,7 @@ Runtime should use both, not merge them.
 
 **Generic quarantine primitives — `pipeline/scripts/diagnostic_candidate_core.py`**
 
-`DirectoryBinding` (`:50`) holds a directory identity: POSIX
+`DirectoryBinding` (`:51`) holds a directory identity: POSIX
 `O_DIRECTORY|O_NOFOLLOW` + `dir_fd` operations; Windows a backup-semantics
 handle with delete sharing disabled, plus a final identity check on return
 (`:56`). Every operation through it re-verifies identity and refuses with
