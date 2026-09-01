@@ -37,6 +37,7 @@ export function SeatEditor({
   onCancel,
   className = "seat-input",
   style,
+  caret,
 }: {
   value: string;
   onCommit: (next: string) => void;
@@ -44,6 +45,15 @@ export function SeatEditor({
   /** The page surface sizes its field from the seat's rect; the tree does not. */
   className?: string;
   style?: React.CSSProperties;
+  /**
+   * Where the caret goes, as a character offset the RUNTIME resolved from its
+   * own per-character boxes (`charX`, §12.2). `undefined` selects the whole
+   * value, which is what a seat wants: an empty cell being filled has nothing
+   * to stand inside. `null` means the line carried no character boxes and the
+   * click SNAPPED to the front — the same visible result as offset 0 and a
+   * different fact, which is why the caller keeps them apart and says which.
+   */
+  caret?: number | null;
 }) {
   const [text, setText] = useState(value);
   const field = useRef<HTMLInputElement>(null);
@@ -51,7 +61,15 @@ export function SeatEditor({
 
   useEffect(() => {
     field.current?.focus();
-    field.current?.select();
+    if (caret === undefined) {
+      field.current?.select();
+      return;
+    }
+    const at = Math.max(0, Math.min(caret ?? 0, value.length));
+    field.current?.setSelectionRange(at, at);
+    // On mount only: re-running this on every keystroke would drag the cursor
+    // back to where the click landed, mid-word.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

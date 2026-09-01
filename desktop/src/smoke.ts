@@ -52,8 +52,10 @@ import {
   setState,
   setView,
   sharedStateSignature,
+  type QueuedFillOp,
+  type QueuedRunOp,
 } from "./store";
-import type { EditableRegion, GeometryMapping, HostEvent } from "./types";
+import type { EditableRegion, GeometryMapping, GeometrySpan, HostEvent } from "./types";
 
 interface SmokeConfig {
   phase: string | null;
@@ -159,6 +161,21 @@ async function waitFor(
 
 function hasHangul(text: string): boolean {
   return /[가-힣]/.test(text);
+}
+
+/**
+ * The queue's cell ops, narrowed. The queue now holds two kinds — `fill_cell`
+ * from a seat and `set_run` from a caret in a paragraph line — and a check
+ * that reached for `.row` on whatever happened to be first would be reading a
+ * field the other kind does not have.
+ */
+function fillOps(): QueuedFillOp[] {
+  return getState().draft.ops.filter((op): op is QueuedFillOp => op.kind === "fill_cell");
+}
+
+/** The queue's paragraph-run ops, narrowed for the same reason. */
+function runOps(): QueuedRunOp[] {
+  return getState().draft.ops.filter((op): op is QueuedRunOp => op.kind === "set_run");
 }
 
 /** Read the launcher's intent before anything renders. */
@@ -522,11 +539,12 @@ async function phaseEdit(config: SmokeConfig) {
   await settled(120);
   check("committing an edit queues one op", getState().draft.ops.length === 1,
     JSON.stringify(getState().draft.ops.map((o) => o.text)));
+  const firstFill = fillOps()[0];
   check("the queued op carries the seat's address",
-    getState().draft.ops[0]?.table === clean.table &&
-      getState().draft.ops[0]?.row === clean.row &&
-      getState().draft.ops[0]?.col === clean.col,
-    `${getState().draft.ops[0]?.table}/${getState().draft.ops[0]?.row}/${getState().draft.ops[0]?.col}`);
+    firstFill?.table === clean.table &&
+      firstFill?.row === clean.row &&
+      firstFill?.col === clean.col,
+    `${firstFill?.table}/${firstFill?.row}/${firstFill?.col}`);
   check("the queued op records what was there before",
     getState().draft.ops[0]?.before !== undefined,
     JSON.stringify(getState().draft.ops[0]?.before));
@@ -599,7 +617,7 @@ async function phaseEdit(config: SmokeConfig) {
     check("the refusal carries the charPr the engine itself suggests",
       typeof anomaly?.charPrSuggested === "string" && String(anomaly.charPrSuggested).length > 0,
       String(anomaly?.charPrSuggested));
-    const flaggedOp = getState().draft.ops.find(
+    const flaggedOp = fillOps().find(
       (o) => o.table === flagged.table && o.row === flagged.row && o.col === flagged.col,
     );
     if (flaggedOp) {
@@ -1368,7 +1386,8 @@ async function phaseOverlay(config: SmokeConfig) {
 
     target?.click();
     await settled(240);
-    const edit = getState().inlineEdit;
+    const opened = getState().inlineEdit;
+    const edit = opened?.kind === "cell" ? opened : null;
     checkDom("clicking an editable target opened the SAME inline editor the tree uses",
       !!document.querySelector('[data-testid="seat-input"]'), String(edit?.table));
     // ON the page, not beside it. The first run of this branch found the
@@ -1393,7 +1412,7 @@ async function phaseOverlay(config: SmokeConfig) {
 
     await commitEdit("지면에서 입력");
     await settled(400);
-    const op = getState().draft.ops.find((o) => o.text === "지면에서 입력");
+    const op = fillOps().find((o) => o.text === "지면에서 입력");
     check("the overlay edit landed in the same review queue as a tree edit",
       !!op && op.kind === "fill_cell" && op.origin === "user", JSON.stringify(op ?? null));
     check("the queued op targets the seat that was clicked",
@@ -1417,9 +1436,222 @@ async function phaseOverlay(config: SmokeConfig) {
       `${getState().draft.ops.length} ops queued`);
   }
 
+  // --- THE CARET, on a real paragraph line -----------------------------------
+  //
+  // The other half of "editing on the page", and until this slice the missing
+  // half: a seat is an empty cell, and a form is mostly not empty cells. A
+  // uniquely-mapped PARAGRAPH line is body text a person stands in and
+  // retypes, and it reaches the same queue through `set_run` — an operation
+  // the runtime already had. Nothing new was added to the registry for it.
+  //
+  // The refusal is asserted as hard as the success. A paragraph of several
+  // runs looks identical on the page to one with a single run, and the
+  // difference is knowable only by asking the runtime: corpus-wide, 314 of 365
+  // mapped paragraph lines hold one run and 51 do not.
+  await caretChecks(g.spans ?? []);
+
   setCenterMode("text");
   await settled();
   checkAlive("the overlay phase");
+}
+
+/**
+ * Everything the caret has to be true about, on whatever this page really has.
+ *
+ * Split out because `phaseOverlay` is already long, and because the shot phase
+ * needs the same "find a line that actually takes a caret" walk — a page's
+ * first mapped paragraph is very often one of the 51 that refuse, and a
+ * harness that clicked the first one and reported "no caret" would be
+ * measuring its own choice of line rather than the feature.
+ */
+async function caretChecks(spans: GeometrySpan[]) {
+  const { addressIsCaretTarget, caretOffsetAt, clickOverlaySpan } = await import("./actions");
+  const caretSpans = spans.filter(
+    (s) => s.confidence === "unique" && addressIsCaretTarget(s.address),
+  );
+  const withOffsets = caretSpans.filter((s) => !!s.charX);
+
+  const geometry = getState().geometry;
+  check("the runtime says whether it read sub-line offsets for this page",
+    geometry?.charOffsets?.state === "read" ||
+      geometry?.charOffsets?.state === "page_too_dense",
+    `${geometry?.charOffsets?.state} — ${geometry?.charOffsets?.lines}/${geometry?.charOffsets?.of} lines, ${geometry?.charOffsets?.chars} chars`);
+  check("every span carrying offsets carries one x per character plus the end",
+    spans.every((s) => !s.charX || s.charX.length === s.text.length + 1),
+    `${spans.filter((s) => s.charX && s.charX.length !== s.text.length + 1).length} spans disagree`);
+  check("offsets are fractions of the page, in the same system as the rects",
+    spans.every((s) => !s.charX || (s.charX[0] >= 0 && s.charX[s.charX.length - 1] <= 1)),
+    `${withOffsets.length} of ${spans.length} spans carry offsets`);
+
+  // The measurement this half of the phase exists to take.
+  check("MEASURED: how many lines on this page can hold a caret",
+    true,
+    `${caretSpans.length} uniquely-mapped paragraph lines · ${withOffsets.length} of them ` +
+      `with per-character offsets · out of ${spans.length} spans`);
+
+  if (caretSpans.length === 0) {
+    check("this page had a mapped paragraph line to click", false,
+      "no unique paragraph address on this page — the caret path was not exercised here");
+    return;
+  }
+
+  checkDom("a caret target is drawn as one, and is not dressed as a fill seat",
+    document.querySelectorAll('.ov[data-caret-target="true"]').length === caretSpans.length,
+    `${document.querySelectorAll('.ov[data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
+  const firstTarget = document.querySelector<HTMLElement>('.ov[data-caret-target="true"]');
+  if (firstTarget) {
+    checkDom("and it says it is text, not a button",
+      window.getComputedStyle(firstTarget).cursor === "text",
+      window.getComputedStyle(firstTarget).cursor);
+  }
+
+  // WALK until one takes a caret. Every refusal on the way is a check of its
+  // own, because a refusal that went unrecorded would let this phase pass on a
+  // page where the caret never worked.
+  let placed: GeometrySpan | null = null;
+  const refusals: string[] = [];
+  for (const span of caretSpans) {
+    // Click at a fraction inside the line rather than at its left edge, so the
+    // offset that comes back is one the runtime resolved rather than a zero
+    // that would have been right by accident.
+    const rect = span.rect;
+    const midway = rect[0] + (rect[2] - rect[0]) * 0.6;
+    await clickOverlaySpan(span, midway);
+    await settled(160);
+    const pick = getState().overlayPick;
+    if (pick?.kind === "caret") {
+      placed = span;
+      break;
+    }
+    if (pick?.kind === "no_caret") refusals.push(`${pick.refusal}`);
+  }
+
+  check("every line that refused a caret named WHICH refusal, from the closed set",
+    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(r)),
+    refusals.length ? refusals.join(", ") : "no line refused on this page");
+
+  if (!placed) {
+    check("some line on this page took a caret", false,
+      `all ${caretSpans.length} mapped paragraph lines refused: ${refusals.join(", ")}`);
+    return;
+  }
+
+  const edit = getState().inlineEdit;
+  const runEdit = edit?.kind === "run" ? edit : null;
+  check("clicking a mapped paragraph line put a real caret in it",
+    !!runEdit, JSON.stringify(getState().overlayPick ?? null));
+  checkDom("the field is IN the line the runtime measured, not beside the page",
+    !!document.querySelector('[data-testid="overlay-caret-editing"] [data-testid="seat-input"]'),
+    document
+      .querySelector('[data-testid="seat-input"]')
+      ?.closest("[data-testid]")
+      ?.getAttribute("data-testid") ?? "nowhere");
+  check("the caret opened on the paragraph the SPAN carries, not a neighbour",
+    !!runEdit && runEdit.atPara === placed.address?.atPara,
+    `${runEdit?.atPara} vs ${placed.address?.atPara}`);
+  check("the field holds the run's own text, read from document/readRegion",
+    !!runEdit && runEdit.before.trim().length > 0 &&
+      runEdit.before.replace(/\s+/g, " ").trim() === placed.text.replace(/\s+/g, " ").trim(),
+    `${JSON.stringify(runEdit?.before ?? null)} vs ${JSON.stringify(placed.text)}`);
+
+  // THE OFFSET. Measured, or honestly absent — never a plausible-looking zero.
+  const expected = placed.charX
+    ? caretOffsetAt(placed, placed.rect[0] + (placed.rect[2] - placed.rect[0]) * 0.6)
+    : null;
+  check("the caret offset is the one the runtime's own character boxes resolve",
+    !!runEdit && runEdit.caret === expected,
+    `caret ${runEdit?.caret} vs charX-derived ${expected} (${placed.charX ? "offsets present" : "no offsets on this line"})`);
+  if (placed.charX) {
+    check("and a click past the line's start did not silently snap to zero",
+      (runEdit?.caret ?? 0) > 0,
+      `offset ${runEdit?.caret} into a line of ${placed.text.length} characters`);
+  }
+  const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+  checkDom("the browser caret sits where the runtime said, not at the front",
+    !!field && field.selectionStart === (runEdit?.caret ?? 0),
+    `selectionStart ${field?.selectionStart} vs ${runEdit?.caret}`);
+
+  checkDom("the status bar prints the offset, or says it snapped to the line start",
+    domText('[data-testid="status-overlay-pick"]').includes(
+      runEdit?.caret === null ? "줄 앞" : "번째 글자 앞",
+    ),
+    domText('[data-testid="status-overlay-pick"]'));
+  checkDom("위치 says paragraph, chunk and offset — not a cell address",
+    domText('[data-testid="status-where"]').includes("문단") &&
+      domText('[data-testid="status-where"]').includes("덩어리"),
+    domText('[data-testid="status-where"]'));
+  // The insert/overwrite indicator was 삽입/수정 없음 for the life of this
+  // product, and it was true: there was no character-level caret. There is one
+  // now, so it says 삽입 — and never 수정, because nothing here overwrites.
+  checkDom("the 입력 indicator finally has something true to say",
+    domText('[data-testid="verification-bar"]').includes("삽입") &&
+      !domText('[data-testid="verification-bar"]').includes("삽입/수정 없음"),
+    domText('[data-testid="verification-bar"]').slice(0, 200));
+
+  // 글꼴, over a caret. §14's fourth field, and the reason it was added.
+  const faceCell = document.querySelector('[data-testid="typeface-name"]');
+  check("the toolbar names the face this RUN is set in, from the document's header",
+    (faceCell?.getAttribute("data-face") ?? "").length > 0,
+    `${faceCell?.getAttribute("data-face")} · ${domText('[data-testid="tool-charpr"]')}`);
+  const sizeCell = document.querySelector('[data-testid="size-value"]');
+  check("and the size is labelled as the RENDER's, not as a declared one",
+    sizeCell?.getAttribute("data-source") === (placed.sizePt ? "render" : "baseline"),
+    `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${placed.sizePt}`);
+
+  // TYPE. The same commit path a seat uses, into the same queue.
+  const TYPED = "지면에서 고쳐 쓴 문장";
+  const queuedBeforeCaret = getState().draft.ops.length;
+  await commitEdit(TYPED);
+  await settled(500);
+  const runOp = runOps().find((o) => o.text === TYPED);
+  check("typing into a paragraph line landed in the SAME review queue",
+    !!runOp && runOp.origin === "user", JSON.stringify(runOp ?? null));
+  check("and it queued a set_run op — the operation the runtime already had",
+    runOp?.kind === "set_run", runOp?.kind ?? "none");
+  check("the queued op names the paragraph and the run, not a cell",
+    !!runOp && runOp.atPara === placed.address?.atPara,
+    `atPara ${runOp?.atPara} run ${runOp?.run} vs span atPara ${placed.address?.atPara}`);
+  check("it records what the line said before, for the queue's before → after",
+    !!runOp && runOp.before.replace(/\s+/g, " ").trim() === placed.text.replace(/\s+/g, " ").trim(),
+    JSON.stringify(runOp?.before ?? null));
+  check("the caret produced ONE op, not a second path's duplicate",
+    getState().draft.ops.length === queuedBeforeCaret + 1,
+    `${queuedBeforeCaret} → ${getState().draft.ops.length} ops`);
+
+  // AND IT REACHES THE WIRE. A queue row and a plan op that disagreed about
+  // the address would be an approval bound to a paragraph nobody chose.
+  const plan = getState().draft.plan;
+  check("one plan path: the queue rebuilt a plan over the caret's op",
+    !!plan?.planId,
+    plan?.planId ?? JSON.stringify(getState().draft.error ?? "no plan"));
+  const plannedRuns = (plan?.ops ?? [])
+    .filter((o) => o.kind === "set_run")
+    .map((o) => {
+      const p = o.params as Record<string, unknown>;
+      return `${p.atPara}#${p.run}=${p.text}`;
+    });
+  check("and the plan the RUNTIME returned names that paragraph and run",
+    plannedRuns.includes(`${runOp?.atPara}#${runOp?.run}=${TYPED}`),
+    `${plannedRuns.join(", ") || "no set_run ops in the plan"}`);
+  const validation = getState().draft.validation;
+  check("plan/validate accepted the paragraph op against the run inventory",
+    !!validation &&
+      !(validation.hard ?? []).some((f) => f.at === `ops[${runOp?.opId}]`),
+    `${validation?.verdict} · ${JSON.stringify((validation?.hard ?? []).map((f) => f.code))}`);
+
+  // The tree shows it too. One queue means one queue.
+  setCenterMode("text");
+  await settled(260);
+  checkDom("the paragraph edit shows in 본문 보기 as well, as a proposal",
+    domText('[data-testid="view-document"]').includes(TYPED),
+    document.querySelectorAll('.queued[data-kind="set_run"]').length + " queued run rows");
+  setCenterMode("page");
+  await settled(200);
+
+  await removeOp(runOp!.opId);
+  await settled(300);
+  check("and it can be taken back out of the queue like any other op",
+    !runOps().some((o) => o.text === TYPED), `${getState().draft.ops.length} ops left`);
 }
 
 /**
@@ -1495,12 +1727,101 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   // substitution at all, which is a refusal, and photographing the refusal is
   // the point: a screenshot of a feature working on a machine where it does not
   // work is the exact thing this harness exists not to produce.
-  if (stop === "overlay" || stop === "overlay-live" || stop === "overlay-seat") {
+  if (
+    stop === "overlay" ||
+    stop === "overlay-live" ||
+    stop === "overlay-seat" ||
+    stop === "overlay-caret"
+  ) {
     const { loadGeometry, selectSession } = await import("./actions");
     const staged = (await rt.smokeConfig()).stagedSession;
     if (stop !== "overlay-live" && staged) {
       await selectSession(staged);
       await settled(300);
+    }
+
+    // THE CARET SHOT, and the IME's page-surface target.
+    //
+    // Two callers again, and the same split the seat shot has: the screenshot
+    // wants the line caught mid-edit with text in it, and `ime.ps1` needs the
+    // field left exactly as the runtime handed it so the only thing that ends
+    // up in it is what real scan codes typed.
+    //
+    // The line is FOUND, never written down. Most mapped paragraph lines on a
+    // corpus page are one of the 51 corpus-wide that hold several runs and
+    // refuse a caret, so a shot aimed at "the first mapped line" would
+    // photograph a refusal about half the time and call it a caret. This walks
+    // pages and lines until the runtime actually places one.
+    if (stop === "overlay-caret") {
+      const { addressIsCaretTarget, clickOverlaySpan } = await import("./actions");
+      const imeEmpty = (await rt.smokeConfig()).imeEmpty === true;
+      setCenterMode("page");
+      let found: { page: number; span: GeometrySpan } | null = null;
+      for (let p = 1; p <= 8 && !found; p += 1) {
+        await loadGeometry(p);
+        await settled(120);
+        const probe = getState().geometry;
+        if (!probe?.available) break;
+        await renderCurrentPage(p);
+        await settled(300);
+        await loadGeometry(p);
+        await settled(300);
+        for (const span of (getState().geometry?.spans ?? []).filter(
+          (s) => s.confidence === "unique" && addressIsCaretTarget(s.address) && !!s.charX,
+        )) {
+          await clickOverlaySpan(span, span.rect[0] + (span.rect[2] - span.rect[0]) * 0.6);
+          await settled(180);
+          if (getState().inlineEdit?.kind === "run") {
+            found = { page: p, span };
+            break;
+          }
+        }
+        if ((probe.pageCount ?? 1) <= p) break;
+      }
+      await settled(200);
+      const caretField = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+      if (caretField && !imeEmpty) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(caretField, "지면 위에서 고쳐 쓴 문장");
+        caretField.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (caretField && imeEmpty) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(caretField, "");
+        caretField.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await settled(250);
+      const open = getState().inlineEdit;
+      await rt.smokeReady({
+        view: `shot-${stop}`,
+        editorOpen: !!document.querySelector(
+          '[data-testid="overlay-caret-editing"] [data-testid="seat-input"]',
+        ),
+        selection: selectionId(getState().selection),
+        caret: open?.kind === "run" ? open.caret : null,
+        page: found?.page ?? null,
+        devicePixelRatio: window.devicePixelRatio,
+        cssViewport: `${window.innerWidth}x${window.innerHeight}`,
+      });
+      if (imeEmpty) {
+        // Wait for real scan codes, then report what the app COMMITTED — the
+        // value that would become a `set_run` op, not a keystroke count.
+        for (let i = 0; i < 240 && getState().lastCommit === null; i += 1) {
+          await settled(250);
+        }
+        const commit = getState().lastCommit;
+        const queuedRun = runOps().find(
+          (op) => open?.kind === "run" && op.atPara === open.atPara && op.run === open.run,
+        );
+        await rt.smokeFinal({
+          value: commit?.value ?? null,
+          composed: commit?.composed ?? false,
+          queued: queuedRun?.text ?? null,
+          kind: queuedRun?.kind ?? null,
+          planned:
+            getState().draft.plan?.ops.map((op) => (op.params as { text?: string }).text) ?? [],
+        });
+      }
+      return;
     }
     // THE MARQUEE SHOT. A real seat on a real page, opened into the real inline
     // editor with a value part-typed into it — the interaction the product is
@@ -1727,7 +2048,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
         await settled(250);
       }
       const commit = getState().lastCommit;
-      const queuedOp = getState().draft.ops.find(
+      const queuedOp = fillOps().find(
         (op) => op.table === first.table && op.row === first.row && op.col === first.col,
       );
       await rt.smokeFinal({

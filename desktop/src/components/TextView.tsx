@@ -44,15 +44,23 @@ import {
   selectionId,
   setSelection,
   useWorkspace,
+  opTargetId,
   type QueuedOp,
   type Selection,
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
 
-/** A queued edit, drawn in the document as a proposal. */
+/**
+ * A queued edit, drawn in the document as a proposal.
+ *
+ * Takes either kind. A sentence typed into a paragraph on the PAGE has to show
+ * up in the tree exactly as a seat fill does — one queue means one queue, and
+ * an edit that were visible in only the surface it was made on would be two
+ * queues wearing one name.
+ */
 function QueuedValue({ op }: { op: QueuedOp }) {
   return (
-    <span className="queued" data-testid={`queued-${op.table}-${op.row}-${op.col}`}>
+    <span className="queued" data-testid={`queued-${opTargetId(op)}`} data-kind={op.kind}>
       {op.before.trim().length > 0 ? (
         <>
           <s className="was">{op.before}</s>
@@ -129,15 +137,27 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
   const queuedOps = useWorkspace((s) => s.draft.ops);
   const scroller = useRef<HTMLDivElement>(null);
 
-  const queuedByCell = useMemo(() => {
+  // Both kinds, keyed by the node they land on: a cell for `fill_cell`, the
+  // paragraph for `set_run`. One map, so a queued edit is drawn in the tree
+  // whichever surface it was typed on.
+  const queuedByNode = useMemo(() => {
     const map = new Map<string, QueuedOp>();
-    for (const op of queuedOps) map.set(cellKey(op.table, op.row, op.col), op);
+    for (const op of queuedOps) {
+      map.set(
+        op.kind === "fill_cell" ? cellKey(op.table, op.row, op.col) : `p:${op.atPara}`,
+        op,
+      );
+    }
     return map;
   }, [queuedOps]);
 
-  const editingId = inlineEdit
-    ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
-    : null;
+  // The tree mounts the editor for a CELL only. A caret in a paragraph line is
+  // a page-surface interaction: the tree has no line boxes, so it has nowhere
+  // honest to put one, and this is that absence rather than a second editor.
+  const editingId =
+    inlineEdit && inlineEdit.kind === "cell"
+      ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
+      : null;
 
   /** Address -> its full text, so a cell can find its own runs in O(1). */
   const byAddr = useMemo(() => {
@@ -273,7 +293,7 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                       `${table.index}:${cell.addr.row}:${cell.addr.col}`,
                     );
                     const seat = cell.classification === "fill_target";
-                    const queued = queuedByCell.get(id) ?? null;
+                    const queued = queuedByNode.get(id) ?? null;
                     const editing = editingId === id;
                     return (
                       <td
@@ -356,9 +376,13 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                   title={`at_para ${para.at_para}`}
                   onClick={() => select({ kind: "paragraph", atPara: para.at_para })}
                 >
-                  {region?.runs?.length
-                    ? region.runs.map((run) => <Run key={run.index} run={run} />)
-                    : para.text}
+                  {queuedByNode.get(id) ? (
+                    <QueuedValue op={queuedByNode.get(id)!} />
+                  ) : region?.runs?.length ? (
+                    region.runs.map((run) => <Run key={run.index} run={run} />)
+                  ) : (
+                    para.text
+                  )}
                 </p>
               );
             })}
