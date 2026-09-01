@@ -14,6 +14,20 @@ sys.path.insert(0, str(SCRIPTS))
 
 import diagnostic_candidate_core as core  # noqa: E402
 
+# A spawn bound here is a HANG detector, not a stopwatch (T134 — the T121
+# class in a second spelling). These four calls assert ``timed_out is False``
+# on healthy children, and the old ``timeout=5.0`` sat BELOW the measured
+# loaded median cold spawn of 9.00s (tests/test_subprocess_bounds.py carries
+# the measurement: idle median 2.76s, loaded median 9.00s, loaded max 36.46s)
+# — so under load the bound killed a healthy child and the test flaked, while
+# the floor guard reported the tree clean because its scanner only read
+# ``subprocess.run(timeout=)`` and this bound is spelled through
+# ``run_child_capture``. 120s matches the deliberately-generous-bound
+# convention (engine/tests/test_com_backend_offline.py HANG_TIMEOUT): a child
+# that trips it is hung, not slow.
+HANG_TIMEOUT = 120.0
+
+
 
 def test_run_child_capture_evidence_is_hash_and_count_only() -> None:
     script = (
@@ -22,7 +36,7 @@ def test_run_child_capture_evidence_is_hash_and_count_only() -> None:
         "sys.stderr.buffer.write(bytes((110,111,105,115,101,10)))"
     )
     result = core.run_child_capture(
-        [sys.executable, "-c", script], timeout=5.0,
+        [sys.executable, "-c", script], timeout=HANG_TIMEOUT,
         return_evidence=True,
     )
     code, timed_out, overflow, evidence = result
@@ -36,7 +50,7 @@ def test_run_child_capture_evidence_is_hash_and_count_only() -> None:
                   "bytes": len(b"noise\n")},
     }
     assert core.run_child_capture(
-        [sys.executable, "-c", "pass"], timeout=5.0
+        [sys.executable, "-c", "pass"], timeout=HANG_TIMEOUT
     ) == (0, False, False)
 
 
@@ -80,13 +94,21 @@ def test_run_child_capture_cleans_ordinary_grandchild_cross_platform(tmp_path: P
         f"open({str(pid_path)!r}, 'w').write(str(os.getpid())); "
         "time.sleep(30)"
     )
+    # T134: the parent must not exit until the grandchild has WRITTEN its pid.
+    # A blind sleep(0.3) lost that race under load — a cold python grandchild
+    # takes a loaded-median 9.00s to start (tests/test_subprocess_bounds.py),
+    # so cleanup killed it before the pid existed and the file never appeared
+    # no matter how long the test polled afterwards. The wait is bounded and
+    # exits the moment the file exists, so the fast path costs milliseconds.
     parent = (
-        "import subprocess,sys,time; "
-        f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
-        "time.sleep(0.3)"
+        "import os.path,subprocess,sys,time\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        "end = time.time() + 60\n"
+        f"while not os.path.exists({str(pid_path)!r}) and time.time() < end:\n"
+        "    time.sleep(0.05)\n"
     )
     result = core.run_child_capture(
-        [sys.executable, "-c", parent], timeout=5.0, return_evidence=True)
+        [sys.executable, "-c", parent], timeout=HANG_TIMEOUT, return_evidence=True)
     assert result[:3] == (0, False, False), result[:3]
     for _ in range(100):
         if pid_path.exists():
@@ -126,14 +148,19 @@ def test_run_child_capture_posix_process_group_boundary_has_no_live_escape(
         "int(os.environ['PARENT_PGRP']))))); "
         "time.sleep(0.2)"
     )
+    # T134: same handshake as the cross-platform test — wait for the record,
+    # never a blind sleep (this arm runs on the POSIX CI runners, which are
+    # loaded machines).
     parent = (
-        "import os,subprocess,sys,time; "
-        "env=dict(os.environ, PARENT_PGRP=str(os.getpgrp())); "
-        f"subprocess.Popen([sys.executable, '-c', {child!r}], env=env); "
-        "time.sleep(0.4)"
+        "import os,os.path,subprocess,sys,time\n"
+        "env = dict(os.environ, PARENT_PGRP=str(os.getpgrp()))\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], env=env)\n"
+        "end = time.time() + 60\n"
+        f"while not os.path.exists({str(record_path)!r}) and time.time() < end:\n"
+        "    time.sleep(0.05)\n"
     )
     result = core.run_child_capture(
-        [sys.executable, "-c", parent], timeout=5.0, return_evidence=True)
+        [sys.executable, "-c", parent], timeout=HANG_TIMEOUT, return_evidence=True)
     assert result[:3] == (0, False, False), result[:3]
     for _ in range(100):
         if record_path.exists():
