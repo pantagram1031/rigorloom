@@ -222,9 +222,33 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         "ops": normalised,
         "state": "proposed",
     }
+    payload["opsHash"] = ops_hash(backend, bound_sha256, normalised)
     payload["planHash"] = hashlib.sha256(
         canonical_bytes(payload, omit=("state",))).hexdigest()
     return OperationPlan(payload)
+
+
+def ops_hash(backend: str, bound_sha256: str, ops: list) -> str:
+    """Hash the INTENT: this document, this backend, these operations.
+
+    Two hashes, two jobs, and conflating them is how a parity claim turns into
+    a tautology:
+
+      * ``planHash`` covers the whole object, identity and timestamp included.
+        That is what an approval binds to, and it must differ between two
+        proposals of the same edit — otherwise approving one would approve the
+        other (``resolve_approval`` below).
+      * ``opsHash`` covers only what the caller asked for against the bytes it
+        asked against. It is identical whenever the document, the target and
+        the operation are identical, no matter which front end proposed it or
+        when. That is the Phase 2 exit property, and
+        ``tests/test_runtime_parity.py`` measures it.
+    """
+    return hashlib.sha256(canonical_bytes({
+        "backend": backend,
+        "boundSha256": bound_sha256,
+        "ops": ops,
+    })).hexdigest()
 
 
 # --- validation -------------------------------------------------------------

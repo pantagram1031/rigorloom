@@ -13,6 +13,9 @@ The design doc worried that registry-absence loses the distinction between
 "this build cannot" and "you may not" (docs/runtime-protocol-v0.md §4). It is
 recovered without a permission check: an ``unknown_method`` error names
 ``knownOnHostEntry`` when the method exists in the host table.
+
+This module owns transport only. Every operation lives in ``rt_core`` so the
+CLI and the MCP adapter reach the same objects (Phase 2).
 """
 from __future__ import annotations
 
@@ -23,18 +26,9 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from rt_apply import Cancelled, apply_plan, list_candidates, read_receipt  # noqa: E402
-from rt_codes import (  # noqa: E402
-    IMPL_VERSION,
-    KNOWN_BACKENDS,
-    MAX_FRAME_BYTES,
-    MAX_REGION_BYTES,
-    MAX_SOURCE_BYTES,
-    PROTOCOL_VERSION,
-    SUPPORTED_BACKENDS,
-    RpcError,
-)
-from rt_engine import EngineTools  # noqa: E402
+from rt_apply import Cancelled  # noqa: E402
+from rt_codes import PROTOCOL_VERSION, MAX_FRAME_BYTES, RpcError  # noqa: E402
+from rt_core import AGENT_METHODS, HOST_ONLY_METHODS, RuntimeCore  # noqa: E402
 from rt_jsonl import (  # noqa: E402
     READ_EOF,
     READ_LINE,
@@ -44,30 +38,6 @@ from rt_jsonl import (  # noqa: E402
     decode_frame,
     log,
     read_raw_frame,
-)
-from rt_plan import (  # noqa: E402
-    COM_OP_KINDS,
-    ApprovalRecord,
-    OperationPlan,
-    DEFERRED_REFUSALS,
-    PREEDIT_NOT_IMPLEMENTED,
-    PREEDIT_OP_KINDS,
-    XML_OP_KINDS,
-    build_plan,
-    request_approval,
-    resolve_approval,
-    safe_full_text_specs,
-    validate_plan,
-    wanted_full_text,
-)
-from rt_session import (  # noqa: E402
-    SessionStore,
-    bound_region_result,
-    document_graph,
-    document_summary,
-    editable_regions,
-    full_text_spec,
-    load_profile,
 )
 
 ENTRIES = ("host", "agent")
@@ -109,8 +79,7 @@ class RuntimeServer:
         if entry not in ENTRIES:
             raise ValueError(f"entry must be one of {ENTRIES}")
         self.entry = entry
-        self.store = SessionStore(Path(root))
-        self.tools = EngineTools(engine_root)
+        self.core = RuntimeCore(root, engine_root)
         self._in = stdin if stdin is not None else sys.stdin.buffer
         self._write_lock = threading.Lock()
         self.out = FrameWriter(stdout if stdout is not None else sys.stdout.buffer,
@@ -125,7 +94,7 @@ class RuntimeServer:
 
     # -- registries ---------------------------------------------------------
     def _agent_methods(self) -> dict:
-        return {
+        methods = {
             "initialize": self._m_initialize,
             "capabilities/list": self._m_capabilities,
             "session/list": self._m_session_list,
@@ -139,13 +108,24 @@ class RuntimeServer:
             "candidate/list": self._m_candidate_list,
             "receipt/read": self._m_receipt_read,
         }
+        # One roster (rt_core.AGENT_METHODS). Adding a handler without listing
+        # it there — or the reverse — must be loud, because the MCP adapter
+        # derives its whole tool surface from that tuple.
+        assert set(methods) == set(AGENT_METHODS), (
+            "agent handler map and rt_core.AGENT_METHODS disagree: "
+            f"{sorted(set(methods) ^ set(AGENT_METHODS))}")
+        return methods
 
     def _host_only_methods(self) -> dict:
-        return {
+        methods = {
             "workspace/openPath": self._m_open_path,
             "approval/resolve": self._m_approval_resolve,
             "plan/apply": self._m_plan_apply,
         }
+        assert set(methods) == set(HOST_ONLY_METHODS), (
+            "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
+            f"{sorted(set(methods) ^ set(HOST_ONLY_METHODS))}")
+        return methods
 
     def _build_registry(self) -> dict:
         methods = self._agent_methods()
@@ -155,6 +135,15 @@ class RuntimeServer:
 
     def host_method_names(self) -> list[str]:
         return sorted(self._host_only_methods())
+
+    # backwards-compatible accessors for the modules and tests that had them
+    @property
+    def store(self):
+        return self.core.store
+
+    @property
+    def tools(self):
+        return self.core.tools
 
     # -- loop ---------------------------------------------------------------
     def _read_loop(self, inbox: "queue.Queue") -> None:
@@ -248,7 +237,7 @@ class RuntimeServer:
                     "unknown_method", f"this build has no method {method!r}",
                     method=method, entry=self.entry,
                     known=sorted(self._methods),
-                    knownOnHostEntry=method in self._host_only_methods())
+                    knownOnHostEntry=method in HOST_ONLY_METHODS)
             params = frame.get("params")
             if params is not None and not isinstance(params, dict):
                 raise RpcError("invalid_params", "params must be an object")
@@ -275,7 +264,7 @@ class RuntimeServer:
                 raise Cancelled()
         return tick
 
-    # -- methods ------------------------------------------------------------
+    # -- methods: parameter validation, then straight to the core ------------
     def _m_initialize(self, params: dict, _id) -> dict:
         if self.initialized:
             raise RpcError("already_initialized",
@@ -300,202 +289,91 @@ class RuntimeServer:
         self.initialized = True
         return {
             "protocolVersion": PROTOCOL_VERSION,
-            "implVersion": IMPL_VERSION,
+            "implVersion": self.core.capabilities(
+                entry=self.entry, methods=list(self._methods))["implVersion"],
             "entry": self.entry,
             "unknownFieldPolicy": policy,
-            "capabilities": self._capability_snapshot(),
+            "capabilities": self.core.capability_snapshot(
+                methods=list(self._methods)),
         }
 
     def _capability_snapshot(self) -> dict:
-        tools = self.tools.availability()
-        backends = {
-            "preedit": {
-                "state": tools["preedit"]["state"],
-                "reason": tools["preedit"]["reason"],
-                "opKinds": sorted(PREEDIT_OP_KINDS),
-                "notImplemented": list(PREEDIT_NOT_IMPLEMENTED),
-            },
-            "xml": {"state": "unavailable",
-                    "reason": "declared by the protocol; not executed by this build",
-                    "opKinds": sorted(XML_OP_KINDS)},
-            "com": {"state": "unavailable",
-                    "reason": "declared by the protocol; not executed by this build",
-                    "opKinds": sorted(COM_OP_KINDS)},
-        }
-        return {
-            "methods": sorted(self._methods),
-            "backends": backends,
-            "supportedBackends": list(SUPPORTED_BACKENDS),
-            "knownBackends": list(KNOWN_BACKENDS),
-            "tools": tools,
-            "limits": {
-                "maxFrameBytes": MAX_FRAME_BYTES,
-                "maxRegionBytes": MAX_REGION_BYTES,
-                "maxSourceBytes": MAX_SOURCE_BYTES,
-            },
-            "deferredRefusals": list(DEFERRED_REFUSALS),
-            "unavailable": {
-                "renderProbe": "not wired in this slice; no renderer capability "
-                               "is reported and none is claimed",
-                "descendantContainment": "not_established",
-            },
-        }
+        """Kept for callers that used it before the core existed."""
+        return self.core.capability_snapshot(methods=list(self._methods))
 
     def _m_capabilities(self, params: dict, _id) -> dict:
         _object(params, set(), where="capabilities/list.params",
                 policy=self.unknown_field_policy)
-        return {"protocolVersion": PROTOCOL_VERSION, "implVersion": IMPL_VERSION,
-                "entry": self.entry, **self._capability_snapshot()}
+        return self.core.capabilities(entry=self.entry, methods=list(self._methods))
 
     def _m_open_path(self, params: dict, _id) -> dict:
         params = _object(params, {"path"}, required=("path",),
                          where="workspace/openPath.params",
                          policy=self.unknown_field_policy)
-        session = self.store.open_path(params["path"])
-        return session.summary()
+        return self.core.open_path(params["path"])
 
     def _m_session_list(self, params: dict, _id) -> dict:
         _object(params, set(), where="session/list.params",
                 policy=self.unknown_field_policy)
-        return {"sessions": self.store.list()}
+        return self.core.session_list()
 
     def _m_document_inspect(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "include"}, required=("sessionId",),
                          where="document/inspect.params",
                          policy=self.unknown_field_policy)
-        session = self.store.get(params["sessionId"])
-        include = params.get("include") or ["summary", "graph", "regions"]
-        if (not isinstance(include, list)
-                or not all(item in ("summary", "graph", "regions") for item in include)):
-            raise RpcError("invalid_params",
-                           "include must be a subset of summary, graph, regions",
-                           offered=include)
-        profile = load_profile(self.tools, session, tag="base")
-        out: dict = {"sessionId": session.id,
-                     "documentHash": profile.get("form_hash")}
-        if "summary" in include:
-            out["summary"] = document_summary(profile, session)
-        if "graph" in include:
-            out["graph"] = document_graph(profile, session)
-        if "regions" in include:
-            out["regions"] = editable_regions(profile, session)
-        return out
+        include = params.get("include")
+        if include is not None and not isinstance(include, list):
+            raise RpcError("invalid_params", "include must be an array")
+        return self.core.document_inspect(params["sessionId"], include)
 
     def _m_document_read_region(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "regions"},
                          required=("sessionId", "regions"),
                          where="document/readRegion.params",
                          policy=self.unknown_field_policy)
-        session = self.store.get(params["sessionId"])
         regions = params["regions"]
-        if not isinstance(regions, list) or not regions:
-            raise RpcError("invalid_params", "regions must be a non-empty array")
-        specs = []
-        for index, entry in enumerate(regions):
-            entry = _object(entry, {"table", "row", "col", "atPara"},
-                            where=f"regions[{index}]",
-                            policy=self.unknown_field_policy)
-            if "atPara" not in entry and not {"row", "col"} <= set(entry):
-                raise RpcError("invalid_params",
-                               f"regions[{index}] needs atPara, or row and col")
-            try:
-                spec = full_text_spec(entry)
-            except (TypeError, ValueError, KeyError) as exc:
-                raise RpcError("invalid_params",
-                               f"regions[{index}] is not an address: {exc}") from exc
-            if spec not in specs:
-                specs.append(spec)
-        profile = load_profile(self.tools, session, tag=f"region-{len(specs)}",
-                               full_text=specs)
-        return bound_region_result({
-            "sessionId": session.id,
-            "documentHash": profile.get("form_hash"),
-            "regions": profile.get("full_text", []),
-        })
+        if isinstance(regions, list):
+            regions = [
+                _object(entry, {"table", "row", "col", "atPara"},
+                        where=f"regions[{index}]",
+                        policy=self.unknown_field_policy)
+                if isinstance(entry, dict) else entry
+                for index, entry in enumerate(regions)
+            ]
+        return self.core.document_read_region(params["sessionId"], regions)
 
     def _m_plan_propose(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "backend", "ops", "proposer"},
                          required=("sessionId", "backend", "ops"),
                          where="plan/propose.params",
                          policy=self.unknown_field_policy)
-        session = self.store.get(params["sessionId"])
-        plan = build_plan(
-            session_id=session.id,
-            backend=_text(params["backend"], "backend"),
-            ops=params["ops"],
-            proposer=params.get("proposer") or f"{self.entry}-client",
-            bound_sha256=session.current_source_sha256(),
-        )
-        self._save_plan(plan)
-        return {"plan": plan.public()}
-
-    def _plan(self, plan_id) -> OperationPlan:
-        payload = self.store.load_record("plans", plan_id)
-        if payload is None:
-            raise RpcError("unknown_plan", "no such plan under this root",
-                           planId=plan_id)
-        return OperationPlan(payload)
-
-    def _save_plan(self, plan: OperationPlan) -> None:
-        self.store.save_record("plans", plan.id, plan.payload)
-
-    def _validated(self, plan) -> dict:
-        session = self.store.get(plan.payload["sessionId"])
-        base = load_profile(self.tools, session, tag="base")
-        profile = base
-        specs = safe_full_text_specs(wanted_full_text(plan), base)
-        if specs:
-            try:
-                profile = load_profile(self.tools, session,
-                                       tag=f"plan-{plan.id[:12]}", full_text=specs)
-            except RpcError:
-                # A paragraph address out of range makes form_inspect exit 2.
-                # Degrade to the base profile; the validator then reports
-                # run_inventory_unavailable rather than assuming clean.
-                profile = base
-        return validate_plan(plan, profile=profile,
-                             current_sha256=session.current_source_sha256())
+        return self.core.plan_propose(
+            params["sessionId"], _text(params["backend"], "backend"),
+            params["ops"], params.get("proposer") or f"{self.entry}-client")
 
     def _m_plan_validate(self, params: dict, _id) -> dict:
         params = _object(params, {"planId"}, required=("planId",),
                          where="plan/validate.params",
                          policy=self.unknown_field_policy)
-        plan = self._plan(params["planId"])
-        report = self._validated(plan)
-        plan.state = "validated" if report["ok"] else "invalid"
-        self._save_plan(plan)
-        return {"validation": report}
+        return self.core.plan_validate(params["planId"])
 
     def _m_plan_get(self, params: dict, _id) -> dict:
         params = _object(params, {"planId"}, required=("planId",),
                          where="plan/get.params", policy=self.unknown_field_policy)
-        return {"plan": self._plan(params["planId"]).public()}
+        return self.core.plan_get(params["planId"])
 
     def _m_approval_request(self, params: dict, _id) -> dict:
         params = _object(params, {"planId", "requestedBy"}, required=("planId",),
                          where="approval/request.params",
                          policy=self.unknown_field_policy)
-        plan = self._plan(params["planId"])
-        record = request_approval(plan, params.get("requestedBy")
-                                  or f"{self.entry}-client")
-        self._save_approval(record)
-        return {"approval": record.public()}
-
-    def _approval(self, approval_id) -> ApprovalRecord:
-        payload = self.store.load_record("approvals", approval_id)
-        if payload is None:
-            raise RpcError("unknown_approval", "no such approval under this root",
-                           approvalId=approval_id)
-        return ApprovalRecord(payload)
-
-    def _save_approval(self, record: ApprovalRecord) -> None:
-        self.store.save_record("approvals", record.id, record.payload)
+        return self.core.approval_request(
+            params["planId"], params.get("requestedBy") or f"{self.entry}-client")
 
     def _m_approval_get(self, params: dict, _id) -> dict:
         params = _object(params, {"approvalId"}, required=("approvalId",),
                          where="approval/get.params",
                          policy=self.unknown_field_policy)
-        return {"approval": self._approval(params["approvalId"]).public()}
+        return self.core.approval_get(params["approvalId"])
 
     def _m_approval_resolve(self, params: dict, _id) -> dict:
         params = _object(params, {"approvalId", "planId", "planHash", "decision",
@@ -503,71 +381,29 @@ class RuntimeServer:
                          required=("approvalId", "planId", "planHash", "decision"),
                          where="approval/resolve.params",
                          policy=self.unknown_field_policy)
-        record = self._approval(params["approvalId"])
-        plan = self._plan(params["planId"])
-        report = self._validated(plan)
-        if report["stale"]:
-            raise RpcError("plan_stale",
-                           "the source changed after this plan was proposed; it "
-                           "cannot be approved",
-                           planId=plan.id, boundSha256=plan.payload["boundSha256"],
-                           currentSha256=report["currentSha256"])
-        resolve_approval(record, plan_id=_text(params["planId"], "planId"),
-                         plan_hash=_text(params["planHash"], "planHash"),
-                         decision=_text(params["decision"], "decision"),
-                         approver=params.get("approver") or "host-operator")
-        plan.state = "approved" if record.state == "approved" else "rejected"
-        self._save_approval(record)
-        self._save_plan(plan)
-        return {"approval": record.public()}
+        return self.core.approval_resolve(
+            params["approvalId"], _text(params["planId"], "planId"),
+            _text(params["planHash"], "planHash"),
+            _text(params["decision"], "decision"),
+            params.get("approver") or "host-operator")
 
     def _m_plan_apply(self, params: dict, request_id) -> dict:
         params = _object(params, {"planId", "approvalId"},
                          required=("planId", "approvalId"),
                          where="plan/apply.params",
                          policy=self.unknown_field_policy)
-        plan = self._plan(params["planId"])
-        record = self._approval(params["approvalId"])
-        if record.payload["planId"] != plan.id or record.payload["planHash"] != plan.hash:
-            raise RpcError("approval_binding_mismatch",
-                           "that approval does not bind this plan",
-                           approvalId=record.id, planId=plan.id,
-                           boundPlanId=record.payload["planId"],
-                           boundPlanHash=record.payload["planHash"],
-                           planHash=plan.hash)
-        if record.state != "approved":
-            raise RpcError("plan_not_approved",
-                           f"the approval for this plan is {record.state}",
-                           planId=plan.id, approvalId=record.id, state=record.state)
-        session = self.store.get(plan.payload["sessionId"])
-        report = self._validated(plan)
-        if report["stale"]:
-            raise RpcError("plan_stale",
-                           "the source changed after this plan was approved",
-                           planId=plan.id, boundSha256=plan.payload["boundSha256"],
-                           currentSha256=report["currentSha256"])
-        if not report["ok"]:
-            raise RpcError("plan_invalid",
-                           "this plan does not validate against the current "
-                           "document",
-                           planId=plan.id, hard=report["hard"])
-        result = apply_plan(self.tools, session, plan, record,
-                            checkpoint=self._checkpoint(request_id))
-        plan.state = "applied"
-        self._save_plan(plan)
-        return {"candidate": result}
+        return self.core.plan_apply(params["planId"], params["approvalId"],
+                                    checkpoint=self._checkpoint(request_id))
 
     def _m_candidate_list(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId"}, required=("sessionId",),
                          where="candidate/list.params",
                          policy=self.unknown_field_policy)
-        session = self.store.get(params["sessionId"])
-        return {"sessionId": session.id, "candidates": list_candidates(session)}
+        return self.core.candidate_list(params["sessionId"])
 
     def _m_receipt_read(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "runId"},
                          required=("sessionId", "runId"),
                          where="receipt/read.params",
                          policy=self.unknown_field_policy)
-        session = self.store.get(params["sessionId"])
-        return {"receipt": read_receipt(session, params["runId"])}
+        return self.core.receipt_read(params["sessionId"], params["runId"])

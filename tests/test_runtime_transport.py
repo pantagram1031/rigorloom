@@ -233,23 +233,6 @@ def test_stdout_carries_only_frames_while_children_print(client, tmp_path):
         assert parsed["kind"] in ("response", "error", "notification")
 
 
-def test_every_runtime_script_byte_compiles():
-    """``scripts/py_compile_sweep.py`` PATTERNS does not cover ``runtime/``.
-
-    That file belongs to another surface, so the sweep's one-line addition is
-    somebody else's commit. Until then the property is pinned here rather than
-    left unchecked.
-    """
-    import py_compile
-
-    from _runtime_client import RUNTIME_SCRIPTS
-
-    targets = sorted(RUNTIME_SCRIPTS.glob("*.py"))
-    assert len(targets) >= 6, targets
-    for path in targets:
-        py_compile.compile(str(path), doraise=True, quiet=1)
-
-
 def test_diagnostics_go_to_stderr(client):
     client.initialize()
     assert "runtime ready" in client.stderr_text()

@@ -710,3 +710,101 @@ the diagnostic §4 wanted.
    the way a report workspace already is
    (`modules/report/scripts/pipeline_ctl.py:1112`). Concurrency across
    processes is last-writer-wins, which is the slice's largest unresolved risk.
+
+---
+
+## 10. Phase 2 — CLI and MCP parity
+
+The exit criterion is "the same document, target, and proposed operation
+produce compatible plan and verification representations through Runtime, CLI
+and MCP". `tests/test_runtime_parity.py` measures it against a corpus form;
+this section records what "compatible" was made to mean and what changed to
+make it measurable.
+
+### One domain layer
+
+`runtime/scripts/rt_core.py` now holds every operation. The three front ends
+own only their own concerns:
+
+| Front end | Owns |
+| --- | --- |
+| `rt_server.py` | JSONL framing, the initialize handshake, the unknown-field policy, cancellation, and which methods a connection can reach |
+| `cli.py` | argument parsing and process exit codes |
+| `mcp_server.py` | JSON-RPC 2.0 over stdio and the MCP tool envelope |
+
+A plan proposed through the CLI and a plan proposed over the server differ in
+exactly two things: the `proposer` string the caller supplies, and the identity
+fields every proposal has anyway.
+
+### Two hashes, because one could not do both jobs
+
+`planHash` covers the whole plan object — `planId`, `createdUtc`, `sessionId`,
+`proposer` included. That is correct for what it is: the thing an approval
+binds to (`resolve_approval` refuses a decision naming a different hash). It
+is therefore never equal between two proposals, which makes it useless as a
+parity measure.
+
+So `OperationPlan` gained **`opsHash`**: `sha256` over the canonical
+`{backend, boundSha256, ops}` — this document, this backend, these operations.
+It is identical whenever the document, the target and the operation are
+identical, whichever front end proposed it and whenever. Parity is stated
+against `opsHash`; the approval binding stays on `planHash`. The parity suite
+asserts both directions — same `opsHash`, and three *different* `planHash`es —
+so the property cannot degrade into "every plan is the same plan".
+
+### What the parity suite proves
+
+- `opsHash` identical through server, CLI and MCP, and recomputable from first
+  principles rather than merely equal;
+- the plan objects field-for-field equal once identity fields are removed;
+- validation returns the same verdict, hard codes, warn codes, staleness and
+  `preflight.deferred` — proven on a clean plan *and* on a T30 anomaly;
+- a refusal reads identically through all three doors, `data` included;
+- a candidate applied from a CLI-authored plan and one applied from a
+  server-authored plan have the same SHA-256;
+- an MCP-authored plan, approved on the CLI and applied over the server, lands
+  on that same SHA-256 — the cross-front-end handoff;
+- the MCP tool surface equals a live agent registry minus `initialize`,
+  derived from `RuntimeServer(entry="agent")` rather than from a list.
+
+### CLI exit codes
+
+`0` succeeded · `2` usage · `3` refusal · `4` internal. The fourth extends the
+repository's 0/2/3 contract (`pipeline/scripts/checker_base.py:13-16`)
+deliberately: an automation must be able to tell a refusal from a crash, and
+collapsing them hides the crash. A successful exit does not imply verification
+ran — `apply` reports `checks.ranAll` and `checks.acceptance` separately, and
+`--require-checks` / `verify` are the fail-closed readings.
+
+### MCP framing
+
+Newline-delimited JSON-RPC 2.0, per the MCP stdio transport: messages are
+newline-delimited and must not contain embedded newlines. `Content-Length`
+header framing belongs to the Language Server Protocol, not to MCP, whose
+second transport is HTTP rather than a header-framed pipe. The adapter
+therefore reuses `rt_jsonl.read_raw_frame` unchanged, inheriting its size cap
+and its duplicate-key and non-finite refusals. Implemented methods:
+`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`.
+Nothing else is claimed — no resources, prompts, sampling or logging.
+
+A domain refusal comes back as a tool result with `isError: true` carrying the
+full structured payload, not as a JSON-RPC error: the model needs the escape
+hatch the engine put in it.
+
+### Method roster
+
+`rt_core.AGENT_METHODS` and `rt_core.HOST_ONLY_METHODS` are the one roster.
+`rt_server` asserts its handler maps match them at construction; `mcp_server`
+derives its tool surface from `AGENT_METHODS` and fails at import if a method
+has no schema or a schema names a host-only method. Adding an agent method
+therefore surfaces it on the CLI and in MCP, or breaks loudly.
+
+`RuntimeCore.candidate_verify` is domain but deliberately NOT in `METHODS`: the
+CLI's `verify` composes it, and the wire does not grow a tool for it.
+
+### Still GAP after Phase 2
+
+`artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`,
+`workspace/restore`, `workspace/delete`, `event/subscribe`, `verify/*` as
+protocol methods, renderer capability reporting, and descendant containment for
+child processes.
