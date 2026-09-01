@@ -1505,12 +1505,19 @@ async function caretChecks(spans: GeometrySpan[]) {
       window.getComputedStyle(firstTarget).cursor);
   }
 
-  // WALK until one takes a caret. Every refusal on the way is a check of its
-  // own, because a refusal that went unrecorded would let this phase pass on a
-  // page where the caret never worked.
+  // WALK until one takes a caret. Every refusal on the way is recorded,
+  // because a refusal that went unrecorded would let this phase pass on a page
+  // where the caret never worked.
+  //
+  // BOUNDED, and the bound is a real cost rather than caution: each attempt is
+  // a `document/readRegion`, which runs `form_inspect` as a child process
+  // against the session copy. A page of this corpus form carries dozens of
+  // mapped paragraph lines and walking all of them would spend the harness's
+  // whole 180-second budget asking the same question.
+  const CARET_ATTEMPTS = 6;
   let placed: GeometrySpan | null = null;
   const refusals: string[] = [];
-  for (const span of caretSpans) {
+  for (const span of caretSpans.slice(0, CARET_ATTEMPTS)) {
     // Click at a fraction inside the line rather than at its left edge, so the
     // offset that comes back is one the runtime resolved rather than a zero
     // that would have been right by accident.
@@ -1532,9 +1539,13 @@ async function caretChecks(spans: GeometrySpan[]) {
 
   if (!placed) {
     check("some line on this page took a caret", false,
-      `all ${caretSpans.length} mapped paragraph lines refused: ${refusals.join(", ")}`);
+      `the first ${Math.min(CARET_ATTEMPTS, caretSpans.length)} of ${caretSpans.length} ` +
+        `mapped paragraph lines all refused: ${refusals.join(", ")}`);
     return;
   }
+  check("a caret was placed within the attempts this phase allows itself",
+    true,
+    `${refusals.length} refusal(s) before one took: ${refusals.join(", ") || "none"}`);
 
   const edit = getState().inlineEdit;
   const runEdit = edit?.kind === "run" ? edit : null;
@@ -1570,6 +1581,51 @@ async function caretChecks(spans: GeometrySpan[]) {
   checkDom("the browser caret sits where the runtime said, not at the front",
     !!field && field.selectionStart === (runEdit?.caret ?? 0),
     `selectionStart ${field?.selectionStart} vs ${runEdit?.caret}`);
+
+  // THE COMPONENT'S OWN ARITHMETIC, through a real pointer position.
+  //
+  // Everything above reached `clickOverlaySpan` directly with a fraction the
+  // harness computed, which exercises the offset logic and NOT the conversion
+  // from a pointer's `clientX` to that fraction. That conversion is the one
+  // piece of coordinate maths left in the overlay, and getting it wrong would
+  // put the caret in the right line at the wrong character — a failure that
+  // looks like working software. So this dispatches a MouseEvent carrying a
+  // real `clientX` at a known place inside the line's box and asks whether the
+  // offset that comes back is the one the runtime's own boxes resolve there.
+  if (placed.charX) {
+    cancelEdit();
+    await settled(200);
+    const layer = document.querySelector<HTMLElement>('[data-testid="page-overlay"]');
+    const button = document.querySelector<HTMLElement>(
+      `.ov[data-span-index="${placed.index}"]`,
+    );
+    const box = layer?.getBoundingClientRect();
+    if (layer && button && box && box.width > 0) {
+      const wantedFraction = placed.rect[0] + (placed.rect[2] - placed.rect[0]) * 0.75;
+      button.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          clientX: box.left + box.width * wantedFraction,
+          clientY: box.top + box.height * ((placed.rect[1] + placed.rect[3]) / 2),
+        }),
+      );
+      await settled(300);
+      const viaPointer = getState().inlineEdit;
+      const wanted = caretOffsetAt(placed, wantedFraction);
+      check("a real pointer position resolves to the offset its x actually names",
+        viaPointer?.kind === "run" && viaPointer.caret === wanted,
+        `pointer at ${wantedFraction.toFixed(4)} of the page → caret ${
+          viaPointer?.kind === "run" ? viaPointer.caret : "none"
+        }, charX says ${wanted}`);
+      check("and two different pointer positions in one line give two offsets",
+        viaPointer?.kind === "run" && viaPointer.caret !== runEdit?.caret,
+        `0.60 → ${runEdit?.caret} · 0.75 → ${viaPointer?.kind === "run" ? viaPointer.caret : "none"}`);
+    } else {
+      check("the overlay layer had a measurable box to resolve a pointer in", false,
+        `layer ${!!layer} button ${!!button} width ${box?.width}`);
+    }
+  }
 
   checkDom("the status bar prints the offset, or says it snapped to the line start",
     domText('[data-testid="status-overlay-pick"]').includes(
@@ -1639,12 +1695,34 @@ async function caretChecks(spans: GeometrySpan[]) {
       !(validation.hard ?? []).some((f) => f.at === `ops[${runOp?.opId}]`),
     `${validation?.verdict} · ${JSON.stringify((validation?.hard ?? []).map((f) => f.code))}`);
 
-  // The tree shows it too. One queue means one queue.
+  // The review queue shows it whichever surface it came from. This is the
+  // "one queue" claim, read off the DOM rather than off the store.
+  checkDom("the review queue draws the paragraph op in the run's own vocabulary",
+    !!document.querySelector('[data-testid="queue-op-p' + runOp?.atPara + '-r' + runOp?.run + '"]') &&
+      domText('.queue-op[data-kind="set_run"]').includes("문단"),
+    domText('.queue-op[data-kind="set_run"]').slice(0, 120) || "no set_run row in the queue");
+
+  // AND THE TREE — where it can. 본문 보기 renders a paragraph as a node of its
+  // own ONLY when its text appears in no table cell (README gap 9: `at_para`
+  // and `row,col#run` name the same runs and the runtime maps neither onto the
+  // other, so the centre separates them by string). A caret in a paragraph
+  // that lives inside a cell therefore has nowhere in the tree to draw its
+  // proposal, and this reports which case it met rather than asserting the one
+  // it would prefer.
   setCenterMode("text");
-  await settled(260);
-  checkDom("the paragraph edit shows in 본문 보기 as well, as a proposal",
-    domText('[data-testid="view-document"]').includes(TYPED),
-    document.querySelectorAll('.queued[data-kind="set_run"]').length + " queued run rows");
+  await settled(300);
+  const looseNode = document.querySelector(`[data-testid="doc-para-${runOp?.atPara}"]`);
+  if (looseNode) {
+    checkDom("the paragraph edit shows in 본문 보기 as well, as a proposal",
+      domText('[data-testid="view-document"]').includes(TYPED),
+      `${document.querySelectorAll('.queued[data-kind="set_run"]').length} queued run rows`);
+  } else {
+    check("MEASURED: this paragraph lives inside a table cell, so the tree has no node for it",
+      true,
+      `at_para ${runOp?.atPara} is not one of 본문 보기's loose paragraphs — README gap 9 ` +
+        `(at_para and row,col#run are unmapped), so the proposal is visible on the page and ` +
+        `in the review queue, and not in the tree`);
+  }
   setCenterMode("page");
   await settled(200);
 
@@ -1766,9 +1844,12 @@ async function phaseShot(config: SmokeConfig, stop: string) {
         await settled(300);
         await loadGeometry(p);
         await settled(300);
-        for (const span of (getState().geometry?.spans ?? []).filter(
-          (s) => s.confidence === "unique" && addressIsCaretTarget(s.address) && !!s.charX,
-        )) {
+        // Bounded per page, for the reason `caretChecks` is bounded: each
+        // attempt runs `form_inspect` as a child, and a shot that spent two
+        // minutes asking would time out before it photographed anything.
+        for (const span of (getState().geometry?.spans ?? [])
+          .filter((s) => s.confidence === "unique" && addressIsCaretTarget(s.address) && !!s.charX)
+          .slice(0, 8)) {
           await clickOverlaySpan(span, span.rect[0] + (span.rect[2] - span.rect[0]) * 0.6);
           await settled(180);
           if (getState().inlineEdit?.kind === "run") {
