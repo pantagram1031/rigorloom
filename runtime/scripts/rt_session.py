@@ -552,6 +552,42 @@ def charpr_faces(profile: dict) -> dict:
     return faces if isinstance(faces, dict) else {}
 
 
+def region_runs_with_faces(profile: dict) -> list:
+    """``full_text`` regions, each run carrying the face its charPr resolves to.
+
+    The SAME join §14 already publishes for a fill seat's shape
+    (``regions[].charPrFace``), applied to the run inventory a caller asks for
+    by address. Without it a paragraph run reaches a client as an integer, and
+    an editor with a caret standing in that run can only print the integer —
+    exactly the state gap 16 closed for seats and left open here.
+
+    Spelled ``charpr_face`` because the object it joins is the engine's, and
+    every other key on a run (``charpr``, ``color_anomaly``) is spelled that
+    way. One mixed vocabulary across two objects costs less than two
+    vocabularies inside one.
+
+    A run whose charPr resolves to nothing gets ``null``: the document did not
+    say. That absence is not ``summary.typefaces.state == "unavailable"``,
+    which means nothing looked, and the two stay apart here as everywhere else.
+    """
+    faces = charpr_faces(profile)
+    out = []
+    for entry in profile.get("full_text", []) or []:
+        if not isinstance(entry, dict):
+            out.append(entry)
+            continue
+        row = dict(entry)
+        runs = row.get("runs")
+        if isinstance(runs, list):
+            row["runs"] = [
+                dict(run, charpr_face=faces.get(str(run.get("charpr"))))
+                if isinstance(run, dict) else run
+                for run in runs
+            ]
+        out.append(row)
+    return out
+
+
 def _with_face(shape, faces: dict):
     """A charPr shape plus the face the document declares for it."""
     if not isinstance(shape, dict):

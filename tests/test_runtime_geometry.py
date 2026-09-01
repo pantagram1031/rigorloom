@@ -1046,3 +1046,180 @@ def test_a_form_the_grid_cannot_reach_places_nothing_and_says_why(tmp_path):
     extracted = rt_geometry.extract_page(
         module, CORPUS_RENDERS / f"{slug}.pdf", 0)
     assert len(extracted["drawnCells"]) < 5, "the page really is barely ruled"
+
+
+# --- sub-line offsets: where each character begins --------------------------
+#
+# The gap §12.6 recorded as "a span is a line; a click resolves to the line's
+# address, not to a character offset within it". A line still IS the mapping
+# unit -- nothing about matching changed -- but the line now carries the x
+# where each of its characters starts, read from the same render, so an editor
+# can put a caret inside a line instead of only at its front.
+#
+# What these pin is the refusals. Boxes that are not one-per-character, or not
+# left to right, produce NO offsets rather than approximate ones: a caret
+# placed from a guess is a cursor standing where the glyph is not, which is
+# the same fabrication as a synthesized rect.
+
+def test_char_edges_refuses_a_count_that_does_not_match_the_text():
+    spans = [{"chars": [{"c": "가", "bbox": (10, 0, 20, 12)}]}]
+    assert rt_geometry.char_edges(spans, "가나") is None
+
+
+def test_char_edges_refuses_boxes_that_run_backwards():
+    spans = [{"chars": [{"c": "가", "bbox": (30, 0, 40, 12)},
+                        {"c": "나", "bbox": (10, 0, 20, 12)}]}]
+    assert rt_geometry.char_edges(spans, "가나") is None
+
+
+def test_char_edges_refuses_a_span_with_no_char_boxes_at_all():
+    assert rt_geometry.char_edges([{"text": "가나"}], "가나") is None
+
+
+def test_char_edges_gives_one_x_per_character_plus_the_last_right_edge():
+    spans = [{"chars": [{"c": "가", "bbox": (10, 0, 20, 12)},
+                        {"c": "나", "bbox": (20, 0, 31, 12)}]}]
+    assert rt_geometry.char_edges(spans, "가나") == [10.0, 20.0, 31.0]
+
+
+def test_line_size_refuses_a_line_whose_spans_disagree():
+    """A PyMuPDF line splits at every font run, so it CAN carry two sizes.
+    Reporting one of them would be a pick, and this file does not pick."""
+    assert rt_geometry.line_size([{"size": 11.0}, {"size": 14.0}]) is None
+    assert rt_geometry.line_size([{"size": 11.0}, {"size": 11.004}]) == 11.0
+    assert rt_geometry.line_size([{"size": 11.0}, {}]) is None
+
+
+@needs_rasterizer
+def test_every_span_carries_where_its_characters_begin(core, tmp_path):
+    session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
+    _attach_pdf(core, session, _form_pdf(tmp_path / "f.pdf"))
+    result = core.document_page_geometry(session)
+
+    assert result["charOffsets"]["state"] == "read"
+    assert result["charOffsets"]["reason"] is None
+    assert result["charOffsets"]["lines"] == result["charOffsets"]["of"] > 0
+    for span in result["spans"]:
+        xs = span["charX"]
+        assert len(xs) == len(span["text"]) + 1, span["text"]
+        assert xs == sorted(xs), span["text"]
+        assert all(0.0 <= x <= 1.0 for x in xs)
+        # The offsets live in the SAME coordinate system as the rect, which is
+        # what lets a client multiply both by one pixel width.
+        assert xs[0] >= span["rect"][0] - 1e-3
+        assert xs[-1] <= span["rect"][2] + 1e-3
+
+
+@needs_rasterizer
+def test_the_capability_advertises_sub_line_offsets_before_a_page_is_asked_for():
+    """A build either extracts them or it does not, and the packaged bundle's
+    role check asserts this rather than discovering it on a user's first
+    click."""
+    capability = rt_geometry.geometry_capability()
+    assert capability["charOffsets"]["emitted"] is True
+    assert capability["charOffsets"]["field"] == "spans[].charX"
+    assert capability["charOffsets"]["unit"] == "normalized"
+    assert (capability["charOffsets"]["states"]
+            == list(rt_geometry.CHAR_OFFSET_STATES))
+    assert capability["spanUnit"] == "line", "the MAPPING unit did not change"
+
+
+@needs_rasterizer
+def test_a_page_past_the_density_bound_drops_offsets_and_says_so(
+        core, tmp_path, monkeypatch):
+    """The bound is on the FRAME, not on the feature. Positions survive; the
+    offsets do not, and the answer names the reason rather than going quiet."""
+    session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
+    _attach_pdf(core, session, _form_pdf(tmp_path / "f.pdf"))
+    monkeypatch.setattr(rt_geometry, "MAX_CHAR_EDGES_PER_PAGE", 1)
+    result = core.document_page_geometry(session)
+
+    assert result["available"] is True
+    assert result["spans"], "the positions are unaffected"
+    assert all("charX" not in span for span in result["spans"])
+    assert result["charOffsets"]["state"] == "page_too_dense"
+    assert "1 bound" in result["charOffsets"]["reason"]
+    assert result["charOffsets"]["lines"] == 0
+    assert result["charOffsets"]["chars"] > 1
+
+
+@needs_rasterizer
+def test_a_pdf_with_no_form_scan_still_carries_offsets(core, tmp_path):
+    """A page with no mapping has real positions, and the offsets are part of
+    them. A client that could place a caret on a mapped page but not on an
+    unmapped one would be reporting the mapping's absence as the renderer's."""
+    pdf = _form_pdf(tmp_path / "standalone.pdf")
+    session = core.open_path(str(pdf))["sessionId"]
+    result = core.document_page_geometry(session)
+    assert result["mapping"]["state"] == "unavailable"
+    assert all("charX" in span for span in result["spans"])
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_the_line_text_did_not_move_when_the_extraction_did():
+    """THE LOAD-BEARING ONE. Reading per-character boxes meant reading the page
+    as ``rawdict`` rather than ``dict``, and the mapping matches on the text
+    that traversal assembles. If the two disagreed anywhere, every address on
+    every page would be up for renegotiation. They are compared here on all
+    ten real Hancom renders rather than argued about."""
+    module = rt_render.rasterizer_module()
+    lines = 0
+    for slug in sorted(CORPUS_SEATS):
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        document = module.open(str(pdf))
+        try:
+            for page in range(document.page_count):
+                loaded = document.load_page(page)
+                legacy = []
+                for block in loaded.get_text("dict").get("blocks", []):
+                    for line in block.get("lines", []) or []:
+                        text = "".join(str(s.get("text") or "")
+                                       for s in (line.get("spans") or []))
+                        if text.strip():
+                            legacy.append((text, tuple(line.get("bbox") or ())))
+                now = rt_geometry.extract_page(module, pdf, page)["lines"]
+                assert [(x["text"], tuple(x["bbox"])) for x in now] == legacy, \
+                    f"{slug} page {page}: the line inventory moved"
+                lines += len(now)
+        finally:
+            document.close()
+    assert lines == 2591, f"the corpus render carries {lines} lines"
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_the_real_renders_resolve_every_line_to_its_characters():
+    """Measured, not assumed: how much of the corpus a caret can reach mid-line.
+
+    Every one of the 2,591 lines across 51 real Hancom-rendered pages resolves
+    one box per character, in order. That is the number the Desktop's status
+    bar promises when it does NOT say it snapped to the line start."""
+    module = rt_render.rasterizer_module()
+    total = resolved = sized = 0
+    for slug in sorted(CORPUS_SEATS):
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        document = module.open(str(pdf))
+        try:
+            pages = document.page_count
+        finally:
+            document.close()
+        for page in range(pages):
+            extracted = rt_geometry.extract_page(module, pdf, page)
+            width, height = extracted["widthPt"], extracted["heightPt"]
+            for index, line in enumerate(extracted["lines"]):
+                span = rt_geometry.base_span(index, line, width, height,
+                                             with_chars=True)
+                total += 1
+                if "sizePt" in span:
+                    sized += 1
+                if "charX" not in span:
+                    continue
+                resolved += 1
+                xs = span["charX"]
+                assert len(xs) == len(span["text"]) + 1
+                assert xs == sorted(xs)
+    assert (total, resolved) == (2591, 2591), (total, resolved)
+    # 83 lines are set in two sizes at once, so they carry no single size --
+    # which is the honest answer, and the reason the field is optional.
+    assert sized == 2508, sized
