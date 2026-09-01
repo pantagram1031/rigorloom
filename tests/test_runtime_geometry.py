@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -624,3 +625,424 @@ def test_a_rule_drawn_as_a_thin_filled_box_still_counts():
     assert rt_geometry.cluster_rules(vertical) == [], "0.6pt is not a rule"
     rules = rt_geometry.cluster_rules(horizontal)
     assert len(rules) == 1 and rules[0][1] == [[10.0, 110.0]]
+
+
+# --- alignment: earned from an anchor, and abandoned where it is not ---------
+
+def _grid_cells(cols, *, top=100.0, bottom=130.0, left=100.0, width=90.0):
+    """``cols`` drawn cells in one row, edge to edge."""
+    return [(left + i * width, top, left + (i + 1) * width, bottom)
+            for i in range(cols)]
+
+
+def _row_profile(entries, table=0, row=5):
+    """entries: [(col, text, classification)] -> a one-row form scan."""
+    cells = []
+    for col, text, classification in entries:
+        cells.append({"addr": {"row": row, "col": col},
+                      "text_preview": text,
+                      "classification": classification})
+    return {"anchor_records": [], "table_map": [{"index": table,
+                                                 "cells": cells}]}
+
+
+def _span_at(rect, address, *, index=0, text="x", confidence="unique"):
+    span = {"index": index, "text": text, "rect": rect, "address": address,
+            "confidence": confidence}
+    return span
+
+
+def _line_at(text, box):
+    return {"text": text, "bbox": list(box), "spanCount": 1}
+
+
+def _norm():
+    normalize = rt_geometry.normalizer()
+    assert normalize is not None
+    return normalize
+
+
+def test_an_anchor_carries_its_neighbours_along_the_drawn_row():
+    """The label is matched; the empty seat beside it is not, and cannot be.
+
+    It gets a rect because the page draws a box there AND the walk to it
+    passed through a cell whose text the render confirmed.
+    """
+    cells = _grid_cells(3)
+    profile = _row_profile([(0, "성명", "static"),
+                            (1, "", "fill_target"),
+                            (2, "", "fill_target")])
+    spans = [_span_at([0.2, 0.2, 0.3, 0.24],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed[(0, 5, 1)] == cells[1]
+    assert placed[(0, 5, 2)] == cells[2]
+    assert absences == {}
+
+
+def test_the_walk_stops_where_the_page_contradicts_the_scan():
+    """A box holding the wrong text ends the walk; nothing past it is placed."""
+    cells = _grid_cells(4)
+    profile = _row_profile([(0, "성명", "static"),
+                            (1, "", "fill_target"),
+                            (2, "생년월일", "static"),
+                            (3, "", "fill_target")])
+    spans = [_span_at([0.2, 0.2, 0.3, 0.24],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0)),
+             # the third box says something the scan never declared there
+             _line_at("주소", (290.0, 105.0, 340.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed == {(0, 5, 1): cells[1]}, "the seat before the lie is fine"
+    assert (0, 5, 3) not in placed, "nothing past a contradiction is placed"
+    assert absences["cell_mismatch"] == 1
+    assert absences["no_anchor_in_row"] == 1
+
+
+def test_a_seat_whose_box_already_holds_text_is_refused():
+    """An empty cell that is not empty on the page is somebody else's box."""
+    cells = _grid_cells(2)
+    profile = _row_profile([(0, "성명", "static"), (1, "", "fill_target")])
+    spans = [_span_at([0.2, 0.2, 0.3, 0.24],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0)),
+             _line_at("이미 찬 값", (200.0, 105.0, 250.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed == {}
+    assert absences["cell_mismatch"] == 1
+
+
+def test_an_anchor_that_cannot_verify_itself_vouches_for_nothing():
+    """Gating the anchor on its own cell text is what removed the last 31
+    wrong correspondences in the corpus audit."""
+    cells = _grid_cells(3)
+    profile = _row_profile([(0, "성명", "static"),
+                            (1, "", "fill_target"),
+                            (2, "", "fill_target")])
+    spans = [_span_at([0.2, 0.2, 0.3, 0.24],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    # the box the anchor landed in carries different text than the scan says
+    lines = [_line_at("전혀 다른 말", (110.0, 105.0, 160.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed == {}
+    assert absences["alignment_failed"] == 1
+
+
+def test_a_gap_in_the_drawn_grid_stops_the_walk():
+    """Where the form draws no box, there is no seat -- the row does not
+    reconcile and the cells past the hole stay absent."""
+    cells = [(100.0, 100.0, 190.0, 130.0), (190.0, 100.0, 280.0, 130.0),
+             # a deliberate hole, then the row resumes
+             (400.0, 100.0, 490.0, 130.0)]
+    profile = _row_profile([(0, "성명", "static"),
+                            (1, "", "fill_target"),
+                            (2, "", "fill_target")])
+    spans = [_span_at([0.2, 0.2, 0.3, 0.24],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed == {(0, 5, 1): cells[1]}
+    assert absences["grid_gap"] == 1
+    assert absences["no_anchor_in_row"] == 1
+
+
+def test_two_anchors_that_disagree_refuse_the_cell_between_them():
+    """One declared row, two drawn bands -- a header repeated down the page.
+
+    Each anchor walks its own band and reaches col 1 in a different box. There
+    is no way to tell which band the scan meant, so col 1 is refused. Averaging
+    them, or taking the first, is the T41 mistake in a new costume.
+    """
+    upper = _grid_cells(3, top=100.0, bottom=130.0)
+    lower = _grid_cells(3, top=200.0, bottom=230.0)
+    cells = upper + lower
+    profile = _row_profile([(0, "가", "static"),
+                            (1, "", "fill_target"),
+                            (2, "다", "static")])
+    spans = [_span_at([0.22, 0.21, 0.3, 0.25],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0}),
+             _span_at([0.58, 0.41, 0.66, 0.45],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 2},
+                      index=1)]
+    lines = [_line_at("가", (110.0, 105.0, 150.0, 120.0)),
+             _line_at("다", (290.0, 205.0, 330.0, 220.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert (0, 5, 1) not in placed
+    assert absences["alignment_failed"] == 1
+
+
+def test_a_table_nothing_identified_here_is_absent_with_its_own_reason():
+    profile = _row_profile([(0, "성명", "static"), (1, "", "fill_target")])
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, [], _grid_cells(2), [], 500.0, 500.0, _norm())
+    assert placed == {}
+    assert absences == {"no_anchor_on_page": 1}
+
+
+def test_a_page_with_no_drawn_grid_says_so(tmp_path):
+    profile = _row_profile([(0, "성명", "static"), (1, "", "fill_target")])
+    seats, absences = rt_geometry.derive_seats(
+        profile, [], [], 500.0, 500.0, cells=[], lines=[],
+        normalize=_norm())
+    assert seats == []
+    assert absences == {"no_drawn_grid": 1}
+
+
+def test_every_absence_reason_is_in_the_closed_set():
+    assert set(rt_geometry.ABSENCE_REASONS) == {
+        "no_drawn_grid", "no_anchor_on_page", "no_anchor_in_row",
+        "grid_gap", "cell_mismatch", "alignment_failed"}
+
+
+# --- the anchor supply, and what it still refuses ----------------------------
+
+def test_one_anchor_and_one_cell_name_one_place_so_it_anchors():
+    """Ambiguous about what to CALL it, not about where it is."""
+    span = {"confidence": "ambiguous", "address": None, "candidates": [
+        {"kind": "anchor", "text": "성명"},
+        {"kind": "cell", "table": 0, "row": 5, "col": 0}]}
+    assert rt_geometry.sole_cell_address(span) == (0, 5, 0)
+
+
+def test_two_distinct_cells_still_refuse_to_anchor():
+    """T41 untouched: a label on six sheets pins nothing."""
+    span = {"confidence": "ambiguous", "address": None, "candidates": [
+        {"kind": "cell", "table": 0, "row": 1, "col": 0},
+        {"kind": "cell", "table": 0, "row": 9, "col": 0}]}
+    assert rt_geometry.sole_cell_address(span) is None
+
+
+def test_anchoring_never_writes_an_address_onto_an_ambiguous_span():
+    """The wire contract is unchanged; this reading is internal to seating."""
+    normalize = _norm()
+    cells = [{"addr": {"row": 1, "col": 0}, "text_preview": "근 무 장 소",
+              "classification": "static"},
+             {"addr": {"row": 9, "col": 0}, "text_preview": "근 무 장 소",
+              "classification": "static"}]
+    targets, _ = rt_geometry.build_targets(_profile(cells=cells), normalize)
+    spans = rt_geometry.map_spans([_line("근 무 장 소")], targets, normalize,
+                                  100, 100)
+    assert spans[0]["address"] is None
+    assert spans[0]["confidence"] == "ambiguous"
+
+
+# --- the corpus measurement, which is the only evidence that counts ----------
+# These 10 PDFs are real Hancom output: engine/scripts/com_backend.py drove
+# Hancom Office 13.0.0.2986 on the operator machine (docs/research/
+# xc1-conversion-bench.md §4). Nothing here is drawn by this repo, which is
+# the entire point -- a border-finder validated against a fixture I drew
+# myself would prove nothing about Hancom's layout.
+
+CORPUS_RENDERS = (Path(__file__).resolve().parents[1] / "tests" / "corpus"
+                  / "forms" / "render")
+CORPUS_CONVERTED = (Path(__file__).resolve().parents[1] / "tests" / "corpus"
+                    / "forms" / "converted")
+
+#: Measured, per form: (editable fill regions, seats document/pageGeometry
+#: places). Recorded as data so a regression names the form it broke. The
+#: totals below are the deliverable's headline and are asserted exactly.
+CORPUS_SEATS = {
+    "admrul-gajokdolbom-hyuga-sinchengseo": (7, 5),
+    "gianmun-byeolji-1ho": (9, 0),
+    "gianmun-byeolji-2ho": (35, 3),
+    "jeongbo-gonggae-cheongguseo": (13, 0),
+    "jumin-deungchobon-sinchengseo": (5, 1),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (125, 55),
+    "moel-pyojun-geunrogyeyakseo-2013": (3, 0),
+    "moel-pyojun-geunrogyeyakseo-2025": (0, 0),
+    "nrf-gyeolgwa-bogoseo-yangsik": (5, 1),
+    "saeopja-deungnok-sinchengseo": (271, 8),
+}
+CORPUS_FILL_TOTAL = 473
+CORPUS_SEAT_TOTAL = 73
+
+have_renders = all((CORPUS_RENDERS / f"{slug}.pdf").is_file()
+                   for slug in CORPUS_SEATS)
+needs_corpus_renders = pytest.mark.skipif(
+    not have_renders,
+    reason=("the real Hancom renders are not on this machine; corpus seat "
+            "placement is UNPROVEN here and must not be asserted against a "
+            "PDF this repo drew itself"))
+
+
+def _profile_of(slug, tmp_path):
+    """The form scan, from the converted hwpx, via the engine's own tool."""
+    import subprocess
+    import sys as _sys
+
+    out = tmp_path / f"{slug}.json"
+    source = CORPUS_CONVERTED / f"{slug}.hwpx"
+    result = subprocess.run(
+        [_sys.executable,
+         str(Path(__file__).resolve().parents[1] / "engine" / "scripts"
+             / "form_inspect.py"), str(source), "--out", str(out)],
+        capture_output=True)
+    assert result.returncode == 0, result.stderr[:2000]
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def _seats_for_form(slug, profile):
+    """Every seat document/pageGeometry places across the form's pages."""
+    module = rt_render.rasterizer_module()
+    pdf = CORPUS_RENDERS / f"{slug}.pdf"
+    normalize = rt_geometry.normalizer()
+    document = module.open(str(pdf))
+    pages = document.page_count
+    document.close()
+    placed = {}
+    for page in range(pages):
+        extracted = rt_geometry.extract_page(module, pdf, page)
+        width, height = extracted["widthPt"], extracted["heightPt"]
+        targets, _ = rt_geometry.build_targets(profile, normalize)
+        spans = rt_geometry.map_spans(extracted["lines"], targets, normalize,
+                                      width, height)
+        seats, _ = rt_geometry.derive_seats(
+            profile, spans, extracted["drawnRects"], width, height,
+            cells=extracted["drawnCells"], lines=extracted["lines"],
+            normalize=normalize)
+        for seat in seats:
+            placed[(seat["table"], seat["row"], seat["col"])] = seat
+    return placed, pages
+
+
+@needs_rasterizer
+@needs_corpus_renders
+@pytest.mark.parametrize("slug", sorted(CORPUS_SEATS))
+def test_seats_placed_on_the_real_hancom_render(slug, tmp_path):
+    expected_fill, expected_seats = CORPUS_SEATS[slug]
+    profile = _profile_of(slug, tmp_path)
+    fills = sum(1 for table in profile.get("table_map") or []
+                for cell in table.get("cells") or []
+                if cell.get("classification") == "fill_target")
+    assert fills == expected_fill, "the form scan itself moved"
+    placed, _ = _seats_for_form(slug, profile)
+    assert len(placed) == expected_seats
+    assert all(seat["derivation"] == "cell_borders"
+               for seat in placed.values()), "text cannot reach an empty cell"
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_the_corpus_headline_number(tmp_path):
+    """0 of 473 was the measurement that opened this slice. This is where it
+    stands now, and it is asserted exactly so it cannot quietly drift."""
+    total_fill = sum(fill for fill, _ in CORPUS_SEATS.values())
+    total_seats = sum(seats for _, seats in CORPUS_SEATS.values())
+    assert total_fill == CORPUS_FILL_TOTAL
+    assert total_seats == CORPUS_SEAT_TOTAL
+
+
+@needs_rasterizer
+@needs_corpus_renders
+@pytest.mark.parametrize("slug", sorted(CORPUS_SEATS))
+def test_every_placed_seat_is_a_box_the_page_really_drew(slug, tmp_path):
+    """The audit that decides whether the number above is worth anything.
+
+    A seat must BE one of the reconstructed cells (not a rectangle derived
+    from one), and it must be empty in the render -- an empty fill cell whose
+    box holds text is a misalignment, however plausible the box looked.
+    """
+    module = rt_render.rasterizer_module()
+    profile = _profile_of(slug, tmp_path)
+    pdf = CORPUS_RENDERS / f"{slug}.pdf"
+    normalize = rt_geometry.normalizer()
+    document = module.open(str(pdf))
+    pages = document.page_count
+    document.close()
+    checked = 0
+    for page in range(pages):
+        extracted = rt_geometry.extract_page(module, pdf, page)
+        width, height = extracted["widthPt"], extracted["heightPt"]
+        targets, _ = rt_geometry.build_targets(profile, normalize)
+        spans = rt_geometry.map_spans(extracted["lines"], targets, normalize,
+                                      width, height)
+        seats, _ = rt_geometry.derive_seats(
+            profile, spans, extracted["drawnRects"], width, height,
+            cells=extracted["drawnCells"], lines=extracted["lines"],
+            normalize=normalize)
+        inside = rt_geometry.text_by_drawn_cell(
+            extracted["lines"], extracted["drawnCells"], normalize)
+        for seat in seats:
+            x0, y0, x1, y1 = seat["rect"]
+            assert 0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0, seat
+            box = (x0 * width, y0 * height, x1 * width, y1 * height)
+            drawn = next((cell for cell in extracted["drawnCells"]
+                          if all(abs(a - b) < 0.05
+                                 for a, b in zip(box, cell))), None)
+            assert drawn is not None, "a seat rect that nothing on the page drew"
+            assert not inside.get(drawn), "an empty seat whose box holds text"
+            checked += 1
+    assert checked == CORPUS_SEATS[slug][1]
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_seats_do_not_overlap_each_other_on_a_page(tmp_path):
+    """Two seats sharing a box would put one caret in two places."""
+    module = rt_render.rasterizer_module()
+    for slug in sorted(CORPUS_SEATS):
+        if not CORPUS_SEATS[slug][1]:
+            continue
+        profile = _profile_of(slug, tmp_path)
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        normalize = rt_geometry.normalizer()
+        document = module.open(str(pdf))
+        pages = document.page_count
+        document.close()
+        for page in range(pages):
+            extracted = rt_geometry.extract_page(module, pdf, page)
+            width, height = extracted["widthPt"], extracted["heightPt"]
+            targets, _ = rt_geometry.build_targets(profile, normalize)
+            spans = rt_geometry.map_spans(extracted["lines"], targets,
+                                          normalize, width, height)
+            seats, _ = rt_geometry.derive_seats(
+                profile, spans, extracted["drawnRects"], width, height,
+                cells=extracted["drawnCells"], lines=extracted["lines"],
+                normalize=normalize)
+            rects = [seat["rect"] for seat in seats]
+            for i, a in enumerate(rects):
+                for b in rects[i + 1:]:
+                    assert not (a[0] < b[2] and b[0] < a[2]
+                                and a[1] < b[3] and b[1] < a[3]), \
+                        f"{slug} page {page}: two seats share a box"
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_the_grid_is_zoom_independent(tmp_path):
+    """Normalized rects are the same fractions whatever dpi anyone renders at.
+
+    Geometry never sees a dpi, so the guard is that the same page read twice
+    gives identical fractions and that they are fractions, not points.
+    """
+    slug = "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+    profile = _profile_of(slug, tmp_path)
+    first, _ = _seats_for_form(slug, profile)
+    second, _ = _seats_for_form(slug, profile)
+    assert first.keys() == second.keys()
+    assert all(first[key]["rect"] == second[key]["rect"] for key in first)
+    assert all(0.0 <= value <= 1.0
+               for seat in first.values() for value in seat["rect"])
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_a_form_the_grid_cannot_reach_places_nothing_and_says_why(tmp_path):
+    """gianmun-byeolji-1ho is ruled with underlines, not boxes: 6 horizontal
+    rules and 4 verticals on the page, so almost nothing closes. Its 9 fill
+    regions are absent, and that is the correct answer, not a failure."""
+    slug = "gianmun-byeolji-1ho"
+    profile = _profile_of(slug, tmp_path)
+    placed, _ = _seats_for_form(slug, profile)
+    assert placed == {}
+    module = rt_render.rasterizer_module()
+    extracted = rt_geometry.extract_page(
+        module, CORPUS_RENDERS / f"{slug}.pdf", 0)
+    assert len(extracted["drawnCells"]) < 5, "the page really is barely ruled"
