@@ -25,6 +25,226 @@
   "grade": "own-uncertified",
   "grade_meaning": "rendered by Rigorloom's own OWPML renderer; NOT certified against a Hancom reference render. Certification is per document class via pipeline/scripts/render_cert.py.",
   "hwpunit_per_inch": 7200,
+  "line_boxes": [
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 773.2,
+      "y0": 111.5,
+      "y1": 136.5
+    },
+    {
+      "page": 1,
+      "x0": 461.8,
+      "x1": 665.8,
+      "y0": 183.84,
+      "y1": 226.84
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 164.2,
+      "y0": 260.48,
+      "y1": 293.48
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 178.2,
+      "y0": 291.68,
+      "y1": 324.68
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 172.2,
+      "y0": 326.28,
+      "y1": 359.28
+    },
+    {
+      "page": 1,
+      "x0": 559.8,
+      "x1": 567.8,
+      "y0": 827.56,
+      "y1": 860.56
+    },
+    {
+      "page": 1,
+      "x0": 643.62,
+      "x1": 683.62,
+      "y0": 914.58,
+      "y1": 941.58
+    },
+    {
+      "page": 1,
+      "x0": 503.77,
+      "x1": 623.77,
+      "y0": 908.6,
+      "y1": 949.6
+    },
+    {
+      "page": 1,
+      "x0": 116.14,
+      "x1": 306.14,
+      "y0": 1091.76,
+      "y1": 1116.76
+    },
+    {
+      "page": 1,
+      "x0": 414.82,
+      "x1": 610.82,
+      "y0": 1091.76,
+      "y1": 1116.76
+    },
+    {
+      "page": 1,
+      "x0": 696.28,
+      "x1": 910.28,
+      "y0": 1091.76,
+      "y1": 1116.76
+    },
+    {
+      "page": 1,
+      "x0": 116.14,
+      "x1": 170.14,
+      "y0": 1140.04,
+      "y1": 1165.04
+    },
+    {
+      "page": 1,
+      "x0": 116.14,
+      "x1": 152.14,
+      "y0": 1188.32,
+      "y1": 1213.32
+    },
+    {
+      "page": 1,
+      "x0": 234.14,
+      "x1": 515.14,
+      "y0": 1188.32,
+      "y1": 1213.32
+    },
+    {
+      "page": 1,
+      "x0": 558.22,
+      "x1": 594.22,
+      "y0": 1188.32,
+      "y1": 1213.32
+    },
+    {
+      "page": 1,
+      "x0": 664.72,
+      "x1": 963.72,
+      "y0": 1188.32,
+      "y1": 1213.32
+    },
+    {
+      "page": 1,
+      "x0": 116.14,
+      "x1": 134.14,
+      "y0": 1233.76,
+      "y1": 1258.76
+    },
+    {
+      "page": 1,
+      "x0": 234.14,
+      "x1": 324.14,
+      "y0": 1233.76,
+      "y1": 1258.76
+    },
+    {
+      "page": 1,
+      "x0": 614.5,
+      "x1": 621.5,
+      "y0": 1233.76,
+      "y1": 1258.76
+    },
+    {
+      "page": 1,
+      "x0": 631.46,
+      "x1": 745.46,
+      "y0": 1233.76,
+      "y1": 1258.76
+    },
+    {
+      "page": 1,
+      "x0": 116.14,
+      "x1": 216.14,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 346.1,
+      "x1": 446.1,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 614.5,
+      "x1": 621.5,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 631.46,
+      "x1": 817.46,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 858.18,
+      "x1": 865.18,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 869.48,
+      "x1": 947.48,
+      "y0": 1277.9,
+      "y1": 1302.9
+    },
+    {
+      "page": 1,
+      "x0": 800.4,
+      "x1": 1011.4,
+      "y0": 1353.56,
+      "y1": 1375.56
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 476.2,
+      "y0": 1374.6,
+      "y1": 1401.6
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 968.2,
+      "y0": 1404.6,
+      "y1": 1431.6
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 965.2,
+      "y0": 1434.6,
+      "y1": 1461.6
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 637.2,
+      "y0": 1464.6,
+      "y1": 1491.6
+    }
+  ],
+  "line_boxes_meaning": "every text line box drawn, in device pixels at this render's dpi; y bounds are the font's ascent/descent about the cached baseline, x bounds are the measured text extent (inline objects excluded). The comparison channel engine/scripts/render_scoreboard.py pairs these against a reference PDF's text lines.",
   "notes": [
     "line boxes come from the document's own cached hp:lineseg layout; line breaking matches the authoring engine, intra-line text extents do not (see fonts)",
     "character-level typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) is not applied",

@@ -1,0 +1,131 @@
+{
+  "caveats": [
+    "every number here depends on which fonts this machine has installed; see fonts.faces for what resolved and what was substituted",
+    "changed_channel_ratio is render_cert's raster channel verbatim and carries no threshold here — see thresholds.rationale",
+    "the reference raster is scaled to the candidate's pixel grid, never the reverse"
+  ],
+  "document": "gianmun-byeolji-1ho.hwpx",
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 13,
+    "cells": 34,
+    "paragraphs": 67,
+    "placeholders": 0,
+    "runs": 74,
+    "tables": 3,
+    "text_lines": 31
+  },
+  "fonts": {
+    "bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "note": "every HWP face in the document is rasterised with this one family; advance widths therefore differ from the authoring engine's",
+    "regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "source": "system"
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "measured against a Hancom reference render; the grade stays own-uncertified because the thresholds below are PROPOSED and not operator-ratified, and because pipeline/scripts/render_cert.py — the certification path — cannot score this renderer until it emits a PDF text layer.",
+  "label": "before-e2.3",
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": [
+    {
+      "changed_channel_ratio": 0.037861987,
+      "ink": {
+        "candidate": 0.010578,
+        "delta": 0.005843,
+        "reference": 0.004735
+      },
+      "page": 1,
+      "scored": true,
+      "ssim": 0.880991,
+      "ssim_blocks": 31080,
+      "text_line_iou": {
+        "candidate_lines": 31,
+        "mean": 0.024592,
+        "median": 0.0,
+        "pair_rate": 0.692308,
+        "pairs": 18,
+        "reference_lines": 26,
+        "unpaired_candidate": 13,
+        "unpaired_reference": 8
+      }
+    }
+  ],
+  "reference_geometry_scale": {
+    "comparable": false,
+    "declared_median_pt": 9.0,
+    "method": "glyph-weighted median of reference PDF span sizes over glyph-weighted median of declared hh:charPr@height x hh:ratio",
+    "reason": "the reference PDF is not a 1:1 render of the geometry this document declares; comparing against it measures the reference facility's print scaling, not the renderer. Metrics below are RELATIVE ONLY (a before/after delta on this same pair still shows movement) and the verdict is blocked.",
+    "reference_median_pt": 6.36,
+    "scale": 0.706667,
+    "tolerance": 0.05
+  },
+  "reference_pdf": "gianmun-byeolji-1ho.pdf",
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "scoreboard_version": "1",
+  "ssim_variant": "block-8x8 non-overlapping, C1=6.502500000000001, C2=58.522499999999994, L=255.0; in-repo implementation because scikit-image is not installed in this environment",
+  "summary": {
+    "changed_channel_ratio_mean": 0.037861987,
+    "ink_delta_abs_max": 0.005843,
+    "page_count": {
+      "candidate": 1,
+      "exact": true,
+      "reference": 1
+    },
+    "pages_scored": 1,
+    "ssim_mean": 0.880991,
+    "ssim_min": 0.880991,
+    "text_line_iou_mean": 0.024592,
+    "text_line_pair_rate_mean": 0.692308
+  },
+  "thresholds": {
+    "ink_delta_abs_max": 0.01,
+    "page_count_exact": true,
+    "ratified": false,
+    "rationale": "ssim_min and text_line_iou_mean_min are set below every measured value on the paired sample forms so that a regression fails and the current state passes; raster changed_channel_ratio carries NO threshold because a font-substituting renderer cannot reach a meaningful one and a threshold nobody can pass is not a gate.",
+    "ssim_min": 0.8,
+    "text_line_iou_mean_min": 0.45,
+    "text_line_pair_rate_min": 0.8
+  },
+  "verdict": {
+    "blocked": true,
+    "blocked_reason": "reference_geometry_scale",
+    "checks": [
+      {
+        "bound": true,
+        "check": "page_count_exact",
+        "pass": true,
+        "value": true
+      },
+      {
+        "bound": 0.8,
+        "check": "ssim_min",
+        "pass": true,
+        "value": 0.880991
+      },
+      {
+        "bound": 0.45,
+        "check": "text_line_iou_mean",
+        "pass": false,
+        "value": 0.024592
+      },
+      {
+        "bound": 0.8,
+        "check": "text_line_pair_rate_mean",
+        "pass": false,
+        "value": 0.692308
+      },
+      {
+        "bound": 0.01,
+        "check": "ink_delta_abs_max",
+        "pass": true,
+        "value": 0.005843
+      }
+    ],
+    "note": "a passing verdict against UNRATIFIED thresholds promotes nothing; the grade stays own-uncertified",
+    "pass": null,
+    "ratified": false
+  }
+}
