@@ -17,10 +17,107 @@
     }
   ],
   "fonts": {
-    "bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
-    "note": "every HWP face in the document is rasterised with this one family; advance widths therefore differ from the authoring engine's",
-    "regular": "C:\\Windows\\Fonts\\malgun.ttf",
-    "source": "system"
+    "characters_on_a_resolved_face": 397,
+    "characters_on_a_substituted_face": 0,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 119,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 3,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 74,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "한양견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 105,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 75,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 1.0,
+    "system_font_files_scanned": 457
   },
   "grade": "own-uncertified",
   "grade_meaning": "rendered by Rigorloom's own OWPML renderer; NOT certified against a Hancom reference render. Certification is per document class via pipeline/scripts/render_cert.py.",
@@ -29,219 +126,219 @@
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 725.2,
-      "y0": 111.5,
-      "y1": 136.5
+      "x1": 720.2,
+      "y0": 115.5,
+      "y1": 134.5
     },
     {
       "page": 1,
       "x0": 473.82,
       "x1": 653.78,
-      "y0": 183.84,
-      "y1": 226.84
+      "y0": 190.84,
+      "y1": 223.84
     },
     {
       "page": 1,
       "x0": 116.2,
       "x1": 161.08,
-      "y0": 260.48,
-      "y1": 293.48
+      "y0": 266.48,
+      "y1": 291.48
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 171.3,
-      "y0": 291.68,
-      "y1": 324.68
+      "x1": 173.24,
+      "y0": 297.68,
+      "y1": 322.68
     },
     {
       "page": 1,
       "x0": 116.2,
       "x1": 167.16,
-      "y0": 326.28,
-      "y1": 359.28
+      "y0": 332.28,
+      "y1": 357.28
     },
     {
       "page": 1,
       "x0": 559.92,
       "x1": 567.68,
-      "y0": 827.56,
-      "y1": 860.56
+      "y0": 833.56,
+      "y1": 858.56
     },
     {
       "page": 1,
       "x0": 643.62,
       "x1": 683.62,
-      "y0": 914.58,
-      "y1": 941.58
+      "y0": 918.58,
+      "y1": 939.58
     },
     {
       "page": 1,
       "x0": 481.27,
       "x1": 646.27,
-      "y0": 908.6,
-      "y1": 949.6
+      "y0": 915.6,
+      "y1": 946.6
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 289.76,
-      "y0": 1091.76,
-      "y1": 1116.76
+      "x1": 291.76,
+      "y0": 1095.76,
+      "y1": 1114.76
     },
     {
       "page": 1,
       "x0": 414.82,
-      "x1": 593.18,
-      "y0": 1091.76,
-      "y1": 1116.76
+      "x1": 595.18,
+      "y0": 1095.76,
+      "y1": 1114.76
     },
     {
       "page": 1,
       "x0": 696.28,
-      "x1": 891.38,
-      "y0": 1091.76,
-      "y1": 1116.76
+      "x1": 893.38,
+      "y0": 1095.76,
+      "y1": 1114.76
     },
     {
       "page": 1,
       "x0": 116.14,
       "x1": 167.62,
-      "y0": 1140.04,
-      "y1": 1165.04
+      "y0": 1144.04,
+      "y1": 1163.04
     },
     {
       "page": 1,
       "x0": 116.14,
       "x1": 150.88,
-      "y0": 1188.32,
-      "y1": 1213.32
+      "y0": 1192.32,
+      "y1": 1211.32
     },
     {
       "page": 1,
       "x0": 234.14,
-      "x1": 492.46,
-      "y0": 1188.32,
-      "y1": 1213.32
+      "x1": 497.46,
+      "y0": 1192.32,
+      "y1": 1211.32
     },
     {
       "page": 1,
       "x0": 558.22,
       "x1": 592.96,
-      "y0": 1188.32,
-      "y1": 1213.32
+      "y0": 1192.32,
+      "y1": 1211.32
     },
     {
       "page": 1,
       "x0": 664.72,
-      "x1": 937.26,
-      "y0": 1188.32,
-      "y1": 1213.32
+      "x1": 942.26,
+      "y0": 1192.32,
+      "y1": 1211.32
     },
     {
       "page": 1,
       "x0": 116.14,
       "x1": 134.14,
-      "y0": 1233.76,
-      "y1": 1258.76
+      "y0": 1237.76,
+      "y1": 1256.76
     },
     {
       "page": 1,
       "x0": 234.14,
       "x1": 319.1,
-      "y0": 1233.76,
-      "y1": 1258.76
+      "y0": 1237.76,
+      "y1": 1256.76
     },
     {
       "page": 1,
       "x0": 614.5,
       "x1": 621.5,
-      "y0": 1233.76,
-      "y1": 1258.76
+      "y0": 1237.76,
+      "y1": 1256.76
     },
     {
       "page": 1,
       "x0": 631.46,
       "x1": 737.9,
-      "y0": 1233.76,
-      "y1": 1258.76
+      "y0": 1237.76,
+      "y1": 1256.76
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 206.06,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "x1": 208.06,
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
       "x0": 346.1,
-      "x1": 436.02,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "x1": 438.02,
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
       "x0": 614.5,
       "x1": 621.5,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
       "x0": 631.46,
       "x1": 804.86,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
       "x0": 858.18,
       "x1": 865.18,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
       "x0": 869.48,
       "x1": 942.44,
-      "y0": 1277.9,
-      "y1": 1302.9
+      "y0": 1281.9,
+      "y1": 1300.9
     },
     {
       "page": 1,
-      "x0": 800.4,
+      "x0": 805.4,
       "x1": 1011.4,
-      "y0": 1353.56,
-      "y1": 1375.56
+      "y0": 1357.56,
+      "y1": 1374.56
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 472.0,
-      "y0": 1374.6,
-      "y1": 1401.6
-    },
-    {
-      "page": 1,
-      "x0": 116.2,
-      "x1": 1011.4,
-      "y0": 1404.6,
-      "y1": 1431.6
+      "x1": 476.0,
+      "y0": 1378.6,
+      "y1": 1399.6
     },
     {
       "page": 1,
       "x0": 116.2,
       "x1": 1011.4,
-      "y0": 1434.6,
-      "y1": 1461.6
+      "y0": 1408.6,
+      "y1": 1429.6
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 624.8,
-      "y0": 1464.6,
-      "y1": 1491.6
+      "x1": 1011.4,
+      "y0": 1438.6,
+      "y1": 1459.6
+    },
+    {
+      "page": 1,
+      "x0": 116.2,
+      "x1": 628.8,
+      "y0": 1468.6,
+      "y1": 1489.6
     }
   ],
   "line_boxes_meaning": "every text line box drawn, in device pixels at this render's dpi; y bounds are the font's ascent/descent about the cached baseline, x bounds are the measured text extent (inline objects excluded). The comparison channel engine/scripts/render_scoreboard.py pairs these against a reference PDF's text lines.",

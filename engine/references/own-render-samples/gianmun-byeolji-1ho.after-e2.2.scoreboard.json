@@ -25,35 +25,132 @@
     "text_line_pair_rate_min": 0.95
   },
   "fonts": {
-    "bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
-    "note": "every HWP face in the document is rasterised with this one family; advance widths therefore differ from the authoring engine's",
-    "regular": "C:\\Windows\\Fonts\\malgun.ttf",
-    "source": "system"
+    "characters_on_a_resolved_face": 397,
+    "characters_on_a_substituted_face": 0,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 119,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 3,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 74,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "한양견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 105,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 75,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 1.0,
+    "system_font_files_scanned": 457
   },
   "grade": "own-uncertified",
   "grade_meaning": "measured against a Hancom reference render; the grade stays own-uncertified because the thresholds below are PROPOSED and not operator-ratified, and because pipeline/scripts/render_cert.py — the certification path — cannot score this renderer until it emits a PDF text layer.",
-  "label": "before-e2.3",
+  "label": "after-e2.2",
   "page_size_px": [
     1191,
     1684
   ],
   "pages": [
     {
-      "changed_channel_ratio": 0.037861987,
+      "changed_channel_ratio": 0.038754468,
       "ink": {
-        "candidate": 0.010578,
-        "delta": 0.005843,
+        "candidate": 0.010733,
+        "delta": 0.005998,
         "reference": 0.004735
       },
       "page": 1,
       "scored": true,
-      "ssim": 0.880991,
+      "ssim": 0.88105,
       "ssim_blocks": 31080,
-      "ssim_inked": 0.098006,
-      "ssim_inked_blocks": 4087,
+      "ssim_inked": 0.100695,
+      "ssim_inked_blocks": 4092,
       "text_line_iou": {
         "candidate_lines": 31,
-        "mean": 0.024592,
+        "mean": 0.020607,
         "median": 0.0,
         "pair_rate": 0.692308,
         "pairs": 18,
@@ -78,19 +175,19 @@
   "scoreboard_version": "2",
   "ssim_variant": "block-8x8 non-overlapping, C1=6.502500000000001, C2=58.522499999999994, L=255.0; in-repo implementation because scikit-image is not installed in this environment",
   "summary": {
-    "changed_channel_ratio_mean": 0.037861987,
-    "ink_delta_abs_max": 0.005843,
+    "changed_channel_ratio_mean": 0.038754468,
+    "ink_delta_abs_max": 0.005998,
     "page_count": {
       "candidate": 1,
       "exact": true,
       "reference": 1
     },
     "pages_scored": 1,
-    "ssim_inked_mean": 0.098006,
-    "ssim_inked_min": 0.098006,
-    "ssim_mean": 0.880991,
-    "ssim_min": 0.880991,
-    "text_line_iou_mean": 0.024592,
+    "ssim_inked_mean": 0.100695,
+    "ssim_inked_min": 0.100695,
+    "ssim_mean": 0.88105,
+    "ssim_min": 0.88105,
+    "text_line_iou_mean": 0.020607,
     "text_line_pair_rate_mean": 0.692308
   },
   "thresholds": {
@@ -118,19 +215,19 @@
         "bound": 0.4,
         "check": "ssim_min",
         "pass": true,
-        "value": 0.880991
+        "value": 0.88105
       },
       {
         "bound": -0.1,
         "check": "ssim_inked_min",
         "pass": true,
-        "value": 0.098006
+        "value": 0.100695
       },
       {
         "bound": 0.2,
         "check": "text_line_iou_mean",
         "pass": false,
-        "value": 0.024592
+        "value": 0.020607
       },
       {
         "bound": 0.4,
@@ -142,7 +239,7 @@
         "bound": 0.05,
         "check": "ink_delta_abs_max",
         "pass": true,
-        "value": 0.005843
+        "value": 0.005998
       }
     ],
     "note": "a passing verdict against UNRATIFIED thresholds promotes nothing; the grade stays own-uncertified",

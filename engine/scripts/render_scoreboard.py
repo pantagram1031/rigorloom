@@ -105,7 +105,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_io import utf8_stdio  # noqa: E402
 import own_render  # noqa: E402
 
-SCOREBOARD_VERSION = "1"
+SCOREBOARD_VERSION = "2"
 DEFAULT_DPI = 144
 # A reference whose geometry scale is further than this from 1.0 is not a
 # render of the same page the document declares.  5% is wide enough to absorb
@@ -117,25 +117,52 @@ SSIM_L = 255.0
 SSIM_C1 = (0.01 * SSIM_L) ** 2
 SSIM_C2 = (0.03 * SSIM_L) ** 2
 INK_THRESHOLD = 128
+# A block whose mean is below this carries ink.  254/255 on a white ground is
+# roughly one fully black pixel in a 64-pixel block, i.e. the faintest mark a
+# renderer can actually make.
+SSIM_INK_BLOCK_MEAN = 254.0
 
-# Proposed, NOT ratified.  Derived from the measured state of the two sample
-# forms with headroom, and deliberately loose on the channels a
-# font-substituting raster renderer cannot win.  The operator ratifies (or
-# rejects) these; until then ``grade`` stays own-uncertified for every class.
+# Proposed, NOT ratified.  These are a REGRESSION FLOOR, not a fidelity bar:
+# each bound sits just below the worst value the seven comparable corpus forms
+# measure today, so a renderer change that makes any of them worse fails and
+# the current state passes.  Clearing this floor says only "no worse than
+# 2026-09"; it does not say the render is faithful.  ``FIDELITY_TARGET`` below
+# is what certification should eventually demand, and nothing today reaches it.
 PROPOSED_THRESHOLDS = {
     "page_count_exact": True,
-    "ssim_min": 0.80,
-    "text_line_iou_mean_min": 0.45,
-    "text_line_pair_rate_min": 0.80,
-    "ink_delta_abs_max": 0.010,
+    "ssim_min": 0.40,
+    "ssim_inked_min": -0.10,
+    "text_line_iou_mean_min": 0.20,
+    "text_line_pair_rate_min": 0.40,
+    "ink_delta_abs_max": 0.05,
     "ratified": False,
+    "kind": "regression_floor",
     "rationale": (
-        "ssim_min and text_line_iou_mean_min are set below every measured "
-        "value on the paired sample forms so that a regression fails and the "
-        "current state passes; raster changed_channel_ratio carries NO "
-        "threshold because a font-substituting renderer cannot reach a "
-        "meaningful one and a threshold nobody can pass is not a gate."
+        "measured worst-of-seven on the comparable corpus forms at 144 dpi: "
+        "ssim_min 0.4867 (jumin), ssim_inked_min -0.0224 (saeopja), "
+        "text_line_iou_mean 0.2470 (kstartup), text_line_pair_rate 0.4490 "
+        "(admrul), ink_delta_abs_max 0.0375 (kstartup). Each bound is set "
+        "below (or above, for the max) that worst value with a little "
+        "headroom. raster changed_channel_ratio carries NO threshold: a "
+        "font-substituting renderer cannot reach a meaningful one, and a gate "
+        "nobody can pass is not a gate."
     ),
+}
+
+# What a per-class `own-certified` grade should actually require.  Recorded so
+# the distance is visible and nothing here reads as "nearly certified"; NOT
+# evaluated, because failing every form against an aspiration is noise.
+FIDELITY_TARGET = {
+    "page_count_exact": True,
+    "ssim_min": 0.95,
+    "ssim_inked_min": 0.70,
+    "text_line_iou_mean_min": 0.80,
+    "text_line_pair_rate_min": 0.95,
+    "ink_delta_abs_max": 0.002,
+    "note": ("not evaluated. The gap to it is the honest measure of how far "
+             "tier 3 is from Hancom, and the largest remaining term is "
+             "sub-pixel glyph registration, not any single unimplemented "
+             "element."),
 }
 
 
@@ -192,15 +219,22 @@ def _block_means(image_f, blocks_wide, blocks_high):
 def ssim(reference_grey, candidate_grey, block=SSIM_BLOCK):
     """Block SSIM over two same-size mode-``L`` images.  See module docstring.
 
-    Returns ``(mean_ssim, block_count)``.  ``None`` block count means the
-    images were smaller than one block.
+    Returns ``(mean_ssim, block_count, inked_mean, inked_blocks)``.
+
+    ``inked_mean`` is the mean over blocks where either image has ink — a
+    block mean below ``SSIM_INK_BLOCK_MEAN``.  It exists because these are
+    government forms: most of a page is paper, every blank block scores ~1.0
+    on both sides, and the plain mean is therefore dominated by agreement
+    about emptiness.  Measured on this corpus, a change that moves the plain
+    mean by 0.004 moves the inked mean by an order of magnitude more.  Both
+    are reported; neither is presented as the other.
     """
     if reference_grey.size != candidate_grey.size:
         raise ValueError("ssim operands must be the same size")
     width, height = reference_grey.size
     bw, bh = width // block, height // block
     if bw < 1 or bh < 1:
-        return None, 0
+        return None, 0, None, 0
     box = (0, 0, bw * block, bh * block)
     ref = reference_grey.crop(box)
     cand = candidate_grey.crop(box)
@@ -220,6 +254,8 @@ def ssim(reference_grey, candidate_grey, block=SSIM_BLOCK):
     m_xy = _block_means(cross, bw, bh)
 
     total = 0.0
+    inked_total = 0.0
+    inked_blocks = 0
     for i in range(bw * bh):
         ux, uy = mu_x[i], mu_y[i]
         vx = m_xx[i] - ux * ux
@@ -227,8 +263,14 @@ def ssim(reference_grey, candidate_grey, block=SSIM_BLOCK):
         cxy = m_xy[i] - ux * uy
         numerator = (2 * ux * uy + SSIM_C1) * (2 * cxy + SSIM_C2)
         denominator = (ux * ux + uy * uy + SSIM_C1) * (vx + vy + SSIM_C2)
-        total += numerator / denominator if denominator else 1.0
-    return total / (bw * bh), bw * bh
+        value = numerator / denominator if denominator else 1.0
+        total += value
+        if ux < SSIM_INK_BLOCK_MEAN or uy < SSIM_INK_BLOCK_MEAN:
+            inked_total += value
+            inked_blocks += 1
+    return (total / (bw * bh), bw * bh,
+            (inked_total / inked_blocks) if inked_blocks else None,
+            inked_blocks)
 
 
 def _changed_channel_ratio(reference_rgb, candidate_rgb):
@@ -522,7 +564,7 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
         reference = ref_pages[index]
         ref_grey = reference.convert("L")
         cand_grey = candidate.convert("L")
-        value, blocks = ssim(ref_grey, cand_grey)
+        value, blocks, inked, inked_blocks = ssim(ref_grey, cand_grey)
         ref_ink = _ink_fraction(ref_grey)
         cand_ink = _ink_fraction(cand_grey)
         page_ref_lines = ref_lines[index] if index < len(ref_lines) else []
@@ -535,6 +577,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
             "scored": True,
             "ssim": round(value, 6) if value is not None else None,
             "ssim_blocks": blocks,
+            "ssim_inked": round(inked, 6) if inked is not None else None,
+            "ssim_inked_blocks": inked_blocks,
             "changed_channel_ratio": round(
                 _changed_channel_ratio(reference, candidate), 9),
             "ink": {
@@ -557,6 +601,7 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
 
     scored = [p for p in page_records if p.get("scored")]
     ssims = [p["ssim"] for p in scored if p["ssim"] is not None]
+    inked = [p["ssim_inked"] for p in scored if p["ssim_inked"] is not None]
     iou_means = [p["text_line_iou"]["mean"] for p in scored
                  if p["text_line_iou"]["mean"] is not None]
     pair_rates = [p["text_line_iou"]["pair_rate"] for p in scored
@@ -573,6 +618,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
         },
         "ssim_mean": round(sum(ssims) / len(ssims), 6) if ssims else None,
         "ssim_min": round(min(ssims), 6) if ssims else None,
+        "ssim_inked_mean": round(sum(inked) / len(inked), 6) if inked else None,
+        "ssim_inked_min": round(min(inked), 6) if inked else None,
         "text_line_iou_mean": round(sum(iou_means) / len(iou_means), 6)
         if iou_means else None,
         "text_line_pair_rate_mean": round(
@@ -619,6 +666,7 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
             "never the reverse",
         ],
         "thresholds": dict(PROPOSED_THRESHOLDS),
+        "fidelity_target": dict(FIDELITY_TARGET),
         "summary": summary,
         "verdict": verdict,
         "pages": page_records,
@@ -643,6 +691,7 @@ def evaluate(summary, thresholds, geometry=None):
         summary["page_count"]["exact"] is True, True)
     for key, bound_key, direction in (
         ("ssim_min", "ssim_min", "min"),
+        ("ssim_inked_min", "ssim_inked_min", "min"),
         ("text_line_iou_mean", "text_line_iou_mean_min", "min"),
         ("text_line_pair_rate_mean", "text_line_pair_rate_min", "min"),
         ("ink_delta_abs_max", "ink_delta_abs_max", "max"),

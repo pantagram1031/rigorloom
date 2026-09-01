@@ -69,9 +69,12 @@ def test_ssim_of_a_page_against_itself_is_one():
     draw = ImageDraw.Draw(image)
     draw.rectangle([40, 40, 200, 120], fill=0)
     draw.line([10, 200, 240, 210], fill=64, width=3)
-    value, blocks = render_scoreboard.ssim(image, image)
+    value, blocks, inked, inked_blocks = render_scoreboard.ssim(image, image)
     assert blocks == 32 * 32
     assert value == pytest.approx(1.0, abs=1e-9)
+    assert inked == pytest.approx(1.0, abs=1e-9)
+    # Only the drawn region counts as inked, and it is a real subset.
+    assert 0 < inked_blocks < blocks
 
 
 def test_ssim_falls_hard_on_an_inverted_page():
@@ -80,8 +83,27 @@ def test_ssim_falls_hard_on_an_inverted_page():
     image = Image.new("L", (256, 256), 255)
     ImageDraw.Draw(image).rectangle([40, 40, 200, 120], fill=0)
     inverted = image.point(lambda v: 255 - v)
-    value, _ = render_scoreboard.ssim(image, inverted)
+    value, _blocks, inked, _n = render_scoreboard.ssim(image, inverted)
     assert value < 0.1, value
+    assert inked < 0.1, inked
+
+
+def test_inked_ssim_ignores_the_paper_the_plain_mean_is_diluted_by():
+    """The reason ssim_inked exists, made falsifiable.
+
+    Two pages that agree everywhere except one small mark score close to 1.0
+    on the plain mean — most of a government form is paper — while the inked
+    mean, which only looks at blocks either page marked, sees the difference.
+    """
+    from PIL import Image, ImageDraw
+
+    left = Image.new("L", (512, 512), 255)
+    ImageDraw.Draw(left).rectangle([16, 16, 48, 48], fill=0)
+    right = Image.new("L", (512, 512), 255)
+    ImageDraw.Draw(right).rectangle([100, 100, 132, 132], fill=0)
+    plain, _b, inked, _n = render_scoreboard.ssim(left, right)
+    assert plain > 0.97, plain
+    assert inked < plain / 2.0, (plain, inked)
 
 
 def test_ssim_rejects_mismatched_sizes():
@@ -176,6 +198,7 @@ def test_a_blocked_verdict_is_not_a_failing_verdict():
     summary = {
         "page_count": {"exact": True, "reference": 1, "candidate": 1},
         "ssim_min": 0.99,
+        "ssim_inked_min": 0.95,
         "text_line_iou_mean": 0.9,
         "text_line_pair_rate_mean": 1.0,
         "ink_delta_abs_max": 0.0,
@@ -238,6 +261,28 @@ def test_cli_writes_a_scoreboard(tmp_path):
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload["grade"] == "own-uncertified"
     assert payload["thresholds"]["ratified"] is False
+
+
+def test_the_proposed_floor_is_a_floor_the_current_state_clears(tmp_path):
+    """A regression gate only works if today passes it.
+
+    The thresholds are set just below the worst comparable-form measurement,
+    so this is the test that would fail the day a renderer change makes any
+    scored channel worse than 2026-09.  ``jeongbo`` is one of the two
+    committed sample forms and the cheapest comparable one to score.
+    """
+    _need_fitz()
+    hwpx, pdf = _form("jeongbo-gonggae-cheongguseo")
+    report = render_scoreboard.score_form(hwpx, pdf, dpi=144)
+    failed = [c for c in report["verdict"]["checks"] if not c["pass"]]
+    assert report["verdict"]["blocked"] is False
+    assert failed == [], failed
+    assert report["verdict"]["pass"] is True
+    # ... and passing it promotes nothing.
+    assert report["grade"] == "own-uncertified"
+    assert report["thresholds"]["kind"] == "regression_floor"
+    assert report["fidelity_target"]["ssim_inked_min"] > \
+        report["thresholds"]["ssim_inked_min"]
 
 
 def test_cli_rejects_a_missing_reference(tmp_path):

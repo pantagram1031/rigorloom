@@ -372,14 +372,191 @@ _FONT_SEARCH = (
 )
 
 
-def resolve_fonts(repo_root: Path | None = None) -> dict:
-    """Pick the single face this render rasterises with.
+# Directories a system keeps its installed faces in.  Searched in order; a
+# missing directory is simply skipped.
+_SYSTEM_FONT_DIRS = (
+    r"C:\Windows\Fonts",
+    "~/AppData/Local/Microsoft/Windows/Fonts",
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "~/.fonts",
+    "~/.local/share/fonts",
+    "/System/Library/Fonts",
+    "/Library/Fonts",
+)
+_FONT_SUFFIXES = (".ttf", ".ttc", ".otf", ".otc")
 
-    Every HWP face name in the document (돋움, 바탕, 함초롬돋움, 한양신명조 …)
-    maps to this one family.  That is a *named fidelity limit*, not an
-    oversight: glyph advance widths differ between families, so intra-line
-    text extents drift from the authoring engine's even though the line boxes
-    (from the cached ``lineseg``) do not.
+# HWP writes the 한양 (Hanyang) foundry's faces with a 한양 prefix where the
+# font files' own name records use HY (한양신명조 vs HY신명조).  This is the one
+# systematic difference between what documents declare and what the installed
+# faces call themselves; everything else matches a name record directly.
+_FACE_PREFIX_ALIASES = (("한양", "hy"),)
+
+
+def _normalise_face(name):
+    """Casefold and drop the separators family names are inconsistent about."""
+    if not name:
+        return ""
+    return re.sub(r"[\s\-_]+", "", str(name)).casefold()
+
+
+def _sfnt_name_records(path):
+    """``[(face_index, {nameID: {text, ...}})]`` from a font file's name table.
+
+    Reads the OpenType ``name`` table straight out of the file — the public
+    format spec, seeked rather than slurped so a 20 MB CJK face costs a few
+    kilobytes.  This is what lets a document's 함초롬돋움 / 바탕 / HY신명조
+    resolve at all: the faces carry their Korean family names in their own
+    name records, and FreeType (hence Pillow) only ever exposes the English
+    one.
+    """
+    import struct
+    out = []
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+            if len(head) < 12:
+                return out
+            if head[:4] == b"ttcf":
+                count = struct.unpack_from(">I", head, 8)[0]
+                if count > 64:
+                    return out
+                raw = fh.read(4 * count)
+                if len(raw) < 4 * count:
+                    return out
+                bases = list(struct.unpack(">" + "I" * count, raw))
+            else:
+                bases = [0]
+            for index, base in enumerate(bases):
+                fh.seek(base + 4)
+                raw = fh.read(2)
+                if len(raw) < 2:
+                    continue
+                tables = struct.unpack(">H", raw)[0]
+                fh.seek(base + 12)
+                directory = fh.read(16 * tables)
+                offset = None
+                for i in range(tables):
+                    record = directory[16 * i:16 * i + 16]
+                    if len(record) < 16:
+                        break
+                    if record[:4] == b"name":
+                        offset = struct.unpack_from(">I", record, 8)[0]
+                        break
+                if offset is None:
+                    continue
+                fh.seek(offset)
+                header = fh.read(6)
+                if len(header) < 6:
+                    continue
+                _fmt, count, strings = struct.unpack(">HHH", header)
+                records = fh.read(12 * count)
+                fh.seek(offset + strings)
+                pool = fh.read(1 << 20)
+                names = {}
+                for i in range(count):
+                    chunk = records[12 * i:12 * i + 12]
+                    if len(chunk) < 12:
+                        break
+                    pid, _eid, _lid, nid, length, off = struct.unpack(
+                        ">HHHHHH", chunk)
+                    blob = pool[off:off + length]
+                    if len(blob) != length:
+                        continue
+                    try:
+                        if pid in (0, 3):
+                            text = blob.decode("utf-16-be")
+                        elif pid == 1:
+                            text = blob.decode("mac-roman")
+                        else:
+                            continue
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                    if text:
+                        names.setdefault(nid, set()).add(text)
+                if names:
+                    out.append((index, names))
+    except (OSError, ValueError, IndexError):
+        return []
+    return out
+
+
+class SystemFontIndex:
+    """Installed faces, keyed by every family name they declare.
+
+    Built once per process and shared, because a document asks for a handful
+    of families and the scan reads a few hundred files.  Deterministic: the
+    directories are searched in a fixed order and each directory's entries are
+    sorted, so two runs on one machine resolve the same file every time.
+    """
+
+    _shared = None
+
+    def __init__(self, directories=None):
+        import os
+        self.families = {}
+        self.scanned = 0
+        directories = directories or _SYSTEM_FONT_DIRS
+        for raw in directories:
+            base = Path(os.path.expanduser(raw))
+            if not base.is_dir():
+                continue
+            try:
+                paths = sorted(
+                    p for p in base.rglob("*")
+                    if p.suffix.lower() in _FONT_SUFFIXES and p.is_file())
+            except OSError:
+                continue
+            for path in paths:
+                self.scanned += 1
+                for index, names in _sfnt_name_records(path):
+                    subfamilies = {t.casefold()
+                                   for t in (names.get(2, set())
+                                             | names.get(17, set()))}
+                    bold = any("bold" in s for s in subfamilies)
+                    for nid in (16, 1, 4, 6):
+                        for text in sorted(names.get(nid, ())):
+                            key = _normalise_face(text)
+                            if not key:
+                                continue
+                            entry = self.families.setdefault(
+                                key, {"regular": None, "bold": None,
+                                      "family": text})
+                            slot = "bold" if bold else "regular"
+                            if entry[slot] is None:
+                                entry[slot] = (str(path), index)
+
+    @classmethod
+    def shared(cls):
+        if cls._shared is None:
+            cls._shared = cls()
+        return cls._shared
+
+    def lookup(self, face_name):
+        """The installed face a document's declared face name names, or None."""
+        key = _normalise_face(face_name)
+        if not key:
+            return None
+        hit = self.families.get(key)
+        if hit is not None:
+            return hit
+        for declared, installed in _FACE_PREFIX_ALIASES:
+            prefix = _normalise_face(declared)
+            if key.startswith(prefix):
+                hit = self.families.get(installed + key[len(prefix):])
+                if hit is not None:
+                    return hit
+        return None
+
+
+def resolve_fonts(repo_root: Path | None = None) -> dict:
+    """The fallback face — what a document's *unresolvable* faces render with.
+
+    Faces the document declares are resolved individually against the system
+    font index (``SystemFontIndex``).  This is the face that stands in when a
+    declared family is not installed, and it is the *only* face used when
+    ``RIGORLOOM_OWN_RENDER_FONT`` pins one.  Substitution is always named per
+    face in the sidecar.
     """
     import os
     repo_root = repo_root or Path(__file__).resolve().parents[2]
@@ -422,7 +599,7 @@ def pillow_available() -> bool:
 
 
 class FontBook:
-    """Deterministic (path, px) -> ImageFont cache.
+    """Deterministic (path, face index, px) -> ImageFont cache.
 
     ``layout_engine=BASIC`` is pinned on purpose: Pillow uses Raqm when the
     build has it, and Raqm's shaping differs from BASIC's, so the same script
@@ -437,17 +614,28 @@ class FontBook:
         self._cache = {}
         self._layout = getattr(ImageFont, "Layout", None)
 
-    def get(self, size_px: int, bold: bool = False):
+    def fallback(self, bold: bool = False):
+        return (self._paths["bold" if bold else "regular"], 0)
+
+    def get(self, size_px: int, bold: bool = False, face=None):
+        """``face`` is ``(path, index)``; ``None`` means the fallback face."""
         size_px = max(1, int(size_px))
-        key = (bold, size_px)
+        path, index = face if face else self.fallback(bold)
+        key = (path, index, size_px)
         hit = self._cache.get(key)
         if hit is not None:
             return hit
-        path = self._paths["bold" if bold else "regular"]
-        kwargs = {}
+        kwargs = {"index": index} if index else {}
         if self._layout is not None:
             kwargs["layout_engine"] = self._layout.BASIC
-        font = self._ImageFont.truetype(path, size_px, **kwargs)
+        try:
+            font = self._ImageFont.truetype(path, size_px, **kwargs)
+        except OSError:
+            path, index = self.fallback(bold)
+            kwargs = {}
+            if self._layout is not None:
+                kwargs["layout_engine"] = self._layout.BASIC
+            font = self._ImageFont.truetype(path, size_px, **kwargs)
         self._cache[key] = font
         return font
 
@@ -620,6 +808,14 @@ class OwnRenderer:
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
         self.fonts_meta = resolve_fonts(repo_root)
         self.fontbook = FontBook(self.fonts_meta)
+        # A pinned face means "rasterise everything with this one", which is
+        # what a machine-independent certification run wants; otherwise the
+        # document's own declared faces are resolved against the system.
+        self.pinned_face = self.fonts_meta.get("source") == "env"
+        self.font_index = (None if self.pinned_face
+                           else SystemFontIndex.shared())
+        self.face_resolution = {}
+        self._face_cache = {}
         self.skipped = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0}
@@ -785,10 +981,83 @@ class OwnRenderer:
     def _charpr(self, cid):
         return self.defs["char_pr"].get(cid or "", {})
 
-    def _font_for(self, cid, rel_sz=100):
+    def _face_for(self, cid, slot, bold):
+        """The installed face this run's ``hh:fontRef`` names for ``slot``.
+
+        ``hh:charPr/hh:fontRef`` carries one font id *per language slot*, and
+        ``hh:fontfaces`` resolves each id per slot to a face name.  That name
+        is matched against the system font index by the family names the
+        installed faces themselves declare — including their Korean ones,
+        which is what makes 함초롬돋움 / 바탕 / HY신명조 resolvable at all.
+
+        Returns ``(path, index)`` or ``None`` for "use the fallback face".
+        Every answer is recorded in ``face_resolution`` so the sidecar can
+        name, per face, what was resolved and what was substituted.
+        """
+        if self.font_index is None:
+            return None
+        key = (cid, slot, bold)
+        hit = self._face_cache.get(key)
+        if hit is not None:
+            hit[1]["characters"] += 1
+            return hit[0]
+        font_ids = self._charpr(cid).get("font_ids") or {}
+        face_name = None
+        for key in (slot, slot.upper()):
+            font_id = font_ids.get(key)
+            if font_id is None:
+                continue
+            table = (self.defs["fontfaces"].get(slot.upper())
+                     or self.defs["fontfaces"].get(slot) or {})
+            face_name = table.get(font_id)
+            if face_name:
+                break
+        if not face_name:
+            record = self._declare_face(None, slot, None, bold)
+            self._face_cache[key] = (None, record)
+            return None
+        entry = self.font_index.lookup(face_name)
+        chosen = None
+        if entry is not None:
+            chosen = entry["bold" if bold else "regular"] or entry["regular"] \
+                or entry["bold"]
+        record = self._declare_face(face_name, slot,
+                                    entry if chosen else None, bold)
+        self._face_cache[key] = (chosen, record)
+        return chosen
+
+    def _declare_face(self, face_name, slot, entry, bold):
+        key = (face_name or "(no hh:fontRef for this slot)", slot, bold)
+        record = self.face_resolution.get(key)
+        if record is None:
+            record = {
+                "declared": face_name,
+                "slot": slot,
+                "bold": bold,
+                "resolved": entry is not None,
+                "installed_family": entry["family"] if entry else None,
+                "file": None,
+                "characters": 0,
+            }
+            if entry is not None:
+                picked = entry["bold" if bold else "regular"] \
+                    or entry["regular"] or entry["bold"]
+                if picked:
+                    record["file"] = Path(picked[0]).name
+                    record["face_index"] = picked[1]
+            else:
+                record["substituted_with"] = Path(
+                    self.fonts_meta["bold" if bold else "regular"]).name
+            self.face_resolution[key] = record
+        record["characters"] += 1
+        return record
+
+    def _font_for(self, cid, rel_sz=100, slot="hangul"):
         cp = self._charpr(cid)
         pt = (cp.get("height_pt") or 10.0) * rel_sz / 100.0
-        return self.fontbook.get(self.pt_to_px(pt), bool(cp.get("bold")))
+        bold = bool(cp.get("bold"))
+        return self.fontbook.get(self.pt_to_px(pt), bold,
+                                 self._face_for(cid, slot, bold))
 
     def _typography(self, cid, ch):
         """``(ratio, spacing, relSz, offset)`` for ``ch`` under ``cid``.
@@ -842,13 +1111,14 @@ class OwnRenderer:
         if not text:
             return pieces
         run = []          # characters accumulating into a neutral piece
-        run_metrics = None
+        run_key = None    # (metrics, slot) the accumulated run belongs to
 
         def flush():
             if not run:
                 return
-            ratio, spacing, rel_sz, offset = run_metrics
-            font = self._font_for(cid, rel_sz)
+            metrics, slot = run_key
+            ratio, _spacing, rel_sz, offset = metrics
+            font = self._font_for(cid, rel_sz, slot)
             chunk = "".join(run)
             width = float(draw.textlength(chunk, font=font)) * ratio / 100.0
             size_px = font.size
@@ -860,15 +1130,19 @@ class OwnRenderer:
             run.clear()
 
         for ch in text:
+            slot = script_slot(ch)
             metrics = self._typography(cid, ch)
             self._note_typography(*metrics)
             ratio, spacing, rel_sz, offset = metrics
             neutral = metrics == NEUTRAL_TYPOGRAPHY
-            if neutral and run_metrics == NEUTRAL_TYPOGRAPHY:
+            key = (metrics, slot)
+            # A slot change is a face change (hh:fontRef is per slot), so it
+            # ends the run even when the metrics are identical.
+            if neutral and run_key == (NEUTRAL_TYPOGRAPHY, slot):
                 run.append(ch)
                 continue
             flush()
-            run_metrics = metrics
+            run_key = key
             if neutral:
                 run.append(ch)
                 continue
@@ -1473,6 +1747,56 @@ class OwnRenderer:
                           "element has no handler in this tier; nothing drawn"
                           )]["count"] = count
 
+    def _font_report(self):
+        """Per declared face: resolved against the system, or substituted.
+
+        The honesty rule in its sharpest form.  Before this the sidecar said
+        "every HWP face is rasterised with one family" — true, and useless for
+        judging a page, because it could not say *which* of the document's
+        faces the reader was actually looking at.  Now every declared face is
+        listed with the installed file that answered for it, or with the
+        substitute that stood in, and both are counted in characters.
+        """
+        faces = sorted(self.face_resolution.values(),
+                       key=lambda f: (not f["resolved"],
+                                      f["declared"] or "", f["slot"],
+                                      f["bold"]))
+        resolved = sum(f["characters"] for f in faces if f["resolved"])
+        substituted = sum(f["characters"] for f in faces if not f["resolved"])
+        total = resolved + substituted
+        for face in faces:
+            if not face["resolved"] and face["declared"]:
+                self._skip(
+                    f"hh:fontface[{face['declared']}]",
+                    "declared face is not installed on this machine; "
+                    "substituted, so advance widths differ from the "
+                    "authoring engine's")
+        return {
+            "fallback_regular": self.fonts_meta["regular"],
+            "fallback_bold": self.fonts_meta["bold"],
+            "fallback_source": self.fonts_meta["source"],
+            "pinned_single_face": self.pinned_face,
+            "system_font_files_scanned": (
+                self.font_index.scanned if self.font_index else 0),
+            "characters_on_a_resolved_face": resolved,
+            "characters_on_a_substituted_face": substituted,
+            "resolved_character_share": (
+                round(resolved / total, 6) if total else None),
+            "faces": faces,
+            "note": (
+                "declared faces are matched against the installed faces' own "
+                "family names, read from each font's OpenType name table "
+                "(including its Korean records, which FreeType does not "
+                "expose). A face that is not installed is substituted with "
+                "the fallback and named here and in elements_skipped; its "
+                "advance widths then differ from the authoring engine's. "
+                "This makes a render machine-dependent BY DESIGN: the same "
+                "document on a machine without these faces will not produce "
+                "the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one "
+                "face and take that variable out of the measurement."
+            ),
+        }
+
     def render(self):
         geo = self.page_geometry()
         pages = self.paginate()
@@ -1506,10 +1830,7 @@ class OwnRenderer:
             "page_size_px": [page_w, page_h],
             "page_geometry_hwpunit": geo,
             "hwpunit_per_inch": HWPUNIT_PER_INCH,
-            "fonts": dict(self.fonts_meta, note=(
-                "every HWP face in the document is rasterised with this one "
-                "family; advance widths therefore differ from the authoring "
-                "engine's")),
+            "fonts": self._font_report(),
             "elements_rendered": dict(self.counts),
             "typography": {
                 "applied_characters": dict(sorted(self.applied.items())),
