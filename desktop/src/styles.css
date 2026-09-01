@@ -2068,7 +2068,11 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .ruler {
   position: relative;
   height: 17px;
-  margin: 0 auto var(--s3);
+  /* Touching the page it measures. `box-sizing: border-box` matters: the page
+     figure's width is the same number, and a ruler two pixels wider would read
+     as a mistake rather than as a measurement. */
+  box-sizing: border-box;
+  margin: 0 auto 2px;
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: 2px;
