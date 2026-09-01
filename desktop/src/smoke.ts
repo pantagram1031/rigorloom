@@ -1396,6 +1396,16 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       await selectSession(staged);
       await settled(300);
     }
+    if (stop === "overlay-live" && config.corpus) {
+      // Open the HWPX AGAIN, unconditionally. The preamble only opens when
+      // nothing is active, and by this point `lastSessionId` in prefs is the
+      // staged session the previous shot selected — so the "no page here"
+      // capture came out showing a page, with overlays on it. A screenshot
+      // named for a refusal that photographs the working case is worse than no
+      // screenshot: it is the one kind of evidence that actively misleads.
+      await openPath(config.corpus);
+      await settled(300);
+    }
     setCenterMode("page");
     await renderCurrentPage(1);
     await settled(300);

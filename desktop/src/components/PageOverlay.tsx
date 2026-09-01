@@ -247,7 +247,7 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
 
   if (mapping?.state !== "ran") {
     return (
-      <p className="raster-note" data-testid="overlay-legend">
+      <p className="raster-note ov-legend" data-testid="overlay-legend">
         <Tag tone="none">대응 없음</Tag>
         {mapping?.reason ??
           "이 문서에는 대응시킬 서식 정보가 없어, 글자 위치는 있지만 주소가 없습니다."}
@@ -256,7 +256,7 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
   }
 
   return (
-    <p className="raster-note" data-testid="overlay-legend">
+    <p className="raster-note ov-legend" data-testid="overlay-legend">
       <Tag tone={editableSeats + editableSpans > 0 ? "fill" : "none"}>
         편집 가능 {editableSeats + editableSpans}
       </Tag>
