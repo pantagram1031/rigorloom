@@ -252,6 +252,48 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["sessionId"],
         },
     },
+    "module/list": {
+        "description": "The distribution modules installed here, which are "
+                       "enabled, and what each contributes — checkers, CLI "
+                       "commands, pack types, run modes, panels. A checker row "
+                       "says whether it can be run against a document session "
+                       "and, when it cannot, why.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    "module/check": {
+        "description": "Run a distribution module's declared checkers against "
+                       "the document in a session and return their findings "
+                       "with severity and, where the checker gives one, an "
+                       "address. Read-only: each checker sees a scratch copy. A "
+                       "checker that could not run is reported skipped or "
+                       "unavailable with a reason and is never counted as a "
+                       "pass, so acceptance:false with checks present is a real "
+                       "answer, not an error.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "module": {"type": "string",
+                           "description": "distribution module name, from "
+                                          "module_list"},
+                "checkers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string"},
+                    "description": "run only these checkers; default is every "
+                                   "checker the module declares",
+                },
+                "runId": {"type": "string",
+                          "description": "check a published candidate instead "
+                                         "of the session source; the source is "
+                                         "then supplied as its baseline"},
+                "timeoutSeconds": {"type": "number", "minimum": 1, "maximum": 600,
+                                   "description": "wall-clock bound for EACH "
+                                                  "checker"},
+            },
+            "required": ["sessionId", "module"],
+        },
+    },
     "receipt/read": {
         "description": "Read a candidate's receipt. Refuses if the candidate "
                        "bytes or the receipt body no longer match their hashes.",
@@ -353,6 +395,17 @@ class McpAdapter:
             return core.document_page_geometry(arguments.get("sessionId"),
                                                page=arguments.get("page", 0),
                                                run_id=arguments.get("runId"))
+        if method == "module/list":
+            return core.module_list()
+        if method == "module/check":
+            checkers = arguments.get("checkers")
+            if checkers is not None and not isinstance(checkers, list):
+                raise RpcError("invalid_params", "checkers must be an array")
+            return core.module_check(arguments.get("sessionId"),
+                                     arguments.get("module"),
+                                     checkers=checkers,
+                                     run_id=arguments.get("runId"),
+                                     timeout=arguments.get("timeoutSeconds"))
         if method == "event/poll":
             return core.event_poll(arguments.get("sessionId"),
                                    after=arguments.get("after", -1),

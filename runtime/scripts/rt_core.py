@@ -62,6 +62,11 @@ from rt_plan import (  # noqa: E402
     wanted_full_text,
 )
 from rt_geometry import geometry_capability, page_geometry  # noqa: E402
+from rt_module import (  # noqa: E402
+    module_capability,
+    module_list,
+    run_module_checks,
+)
 from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
@@ -93,6 +98,8 @@ AGENT_METHODS: tuple[str, ...] = (
     "document/render",
     "document/pageGeometry",
     "event/poll",
+    "module/list",
+    "module/check",
 )
 
 #: Agent-safe by authority, but transport-shaped: they push notifications, and
@@ -160,6 +167,7 @@ class RuntimeCore:
             },
             "render": render_capability(),
             "geometry": geometry_capability(),
+            "modules": module_capability(self.tools.root),
             "childPython": child_python_facts(),
             "deferredRefusals": list(DEFERRED_REFUSALS),
             "unavailable": {
@@ -421,6 +429,32 @@ class RuntimeCore:
             profile = None
         return page_geometry(session, page=page, run_id=run_id,
                              profile=profile, cache=self._geometry_cache)
+
+    # -- distribution modules -------------------------------------------------
+    def module_list(self) -> dict:
+        """Every declared distribution module and what it contributes here."""
+        return module_list(self.tools.root)
+
+    def module_check(self, session_id, module, *, checkers=None, run_id=None,
+                     timeout=None) -> dict:
+        """Run a module's declared checkers against this session's document.
+
+        Agent-safe: the checker contract is read-only, the subject handed to a
+        checker is a scratch copy that is deleted afterwards, and a module can
+        only be reached at all if the operator enabled it. See ``rt_module``
+        for the whole argument and its residual gap.
+        """
+        session = self.store.get(session_id)
+        session.ensure_dirs()
+        result = run_module_checks(session, engine_root=self.tools.root,
+                                   module=module, checkers=checkers,
+                                   run_id=run_id, timeout=timeout)
+        append_event(session, "module.checked", module=module,
+                     selected=result["counts"]["selected"],
+                     ran=result["counts"]["ran"],
+                     acceptance=result["acceptance"],
+                     runId=result["subject"]["runId"])
+        return result
 
     # -- events ---------------------------------------------------------------
     def event_poll(self, session_id, after: int = -1,
