@@ -28,9 +28,11 @@ import type {
   Capabilities,
   CredentialStatus,
   Finding,
+  GeometryResult,
   HostEvent,
   InspectResult,
   OperationPlan,
+  OverlayPick,
   PlanValidation,
   ProviderProfile,
   ProviderSettings,
@@ -271,6 +273,37 @@ export interface WorkspaceState {
   prepareError: RuntimeError | null;
   prepareNote: string | null;
 
+  // --- page geometry, and the overlay drawn from it (protocol §12) ----------
+  /**
+   * The geometry answer for the page on screen. Never derived, never patched:
+   * if the runtime says `available: false` the overlay draws NOTHING, because
+   * the alternative — a box interpolated from `summary.pageMetrics` — would be
+   * this shell inventing a layout and calling it the renderer's.
+   */
+  geometry: GeometryResult | null;
+  geometryPhase: Phase;
+  geometryError: RuntimeError | null;
+  /**
+   * Answers held per `(session, page)`.
+   *
+   * The rects are fractions of the page, so they are the same at every zoom;
+   * a zoom change multiplies by a different pixel size and re-asks nothing.
+   * §12.1 is explicit that bundling geometry into `render` would re-extract
+   * every glyph position on every zoom nudge, and a client that re-fetched on
+   * zoom would have paid that cost anyway.
+   */
+  geometryCache: Record<string, GeometryResult>;
+  /**
+   * Evidence support only: how many times the METHOD was actually called.
+   *
+   * A cache is invisible from the outside, and "zoom does not re-fetch" is
+   * exactly the sort of claim that quietly stops being true. The smoke reads
+   * this across a zoom sweep; nothing in the UI does.
+   */
+  geometryFetches: number;
+  /** What the last click on the page resolved to. Drives the status bar. */
+  overlayPick: OverlayPick | null;
+
   // --- chrome --------------------------------------------------------------
   /** Webview zoom factor, 0.5-2.0, persisted. */
   uiZoom: number;
@@ -461,6 +494,13 @@ const initial: WorkspaceState = {
   preparePhase: "idle",
   prepareError: null,
   prepareNote: null,
+
+  geometry: null,
+  geometryPhase: "idle",
+  geometryError: null,
+  geometryCache: {},
+  geometryFetches: 0,
+  overlayPick: null,
 
   uiZoom: 1,
   toast: null,

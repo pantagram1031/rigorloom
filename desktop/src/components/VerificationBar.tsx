@@ -75,6 +75,7 @@ export function VerificationBar({
   const page = useWorkspace((s) => s.page);
   const pageCount = useWorkspace((s) => s.render?.pageCount ?? 1);
   const selection = useWorkspace((s) => s.selection);
+  const overlayPick = useWorkspace((s) => s.overlayPick);
 
   // The address, spelled the way the runtime addresses it. Never a line and
   // column: this build has no caret and inventing one would be a lie about
@@ -136,6 +137,31 @@ export function VerificationBar({
         title="한글의 삽입/수정 표시에 해당하는 자리입니다. 이 빌드에는 글자 단위 커서가 없어 둘 중 어느 상태도 아닙니다."
         v={<Tag tone="none">삽입/수정 없음</Tag>}
       />
+      {/* What the last click ON THE PAGE resolved to. Only in 페이지 보기,
+          because that is the only mode where a click has a rectangle to have
+          landed in — and an ambiguous one says 후보 N개 rather than an
+          address, because there is no address yet and there will not be one
+          until a person picks. */}
+      {mode === "page" && overlayPick ? (
+        <Fact
+          k="지면 선택"
+          nonce={`${overlayPick.kind}-${overlayPick.label}`}
+          title={
+            overlayPick.kind === "ambiguous"
+              ? "같은 글자를 가진 주소가 여럿입니다. 런타임도 이 앱도 그 중 하나를 고르지 않습니다."
+              : "지면에서 누른 곳이 가리키는 주소입니다."
+          }
+          v={
+            <span
+              className={overlayPick.kind === "ambiguous" ? "mono warnish" : "mono"}
+              data-testid="status-overlay-pick"
+              data-pick-kind={overlayPick.kind}
+            >
+              {overlayPick.label}
+            </span>
+          }
+        />
+      ) : null}
       <div className="sep" />
       <Fact
         k="원본"
