@@ -10,21 +10,27 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   Activity,
+  AgentHostStatus,
   AppliedCandidate,
   ApprovalRecord,
   Candidate,
   Capabilities,
+  CredentialStatus,
   EventDelivery,
+  HostEvent,
+  HostRunPayload,
   InspectResult,
   OperationPlan,
   PlanValidation,
   PrepareResult,
+  ProviderProfile,
   Receipt,
   RegionText,
   RenderResult,
   RuntimeError,
   Session,
   SidecarStatus,
+  TaskPackList,
 } from "./types";
 
 export const EVENT_ACTIVITY = "runtime://activity";
@@ -39,6 +45,17 @@ export const EVENT_PANIC = "runtime://panic";
  * batched and keeps protocol chatter out of the document's own history.
  */
 export const EVENT_EVENTS = "runtime://events";
+
+/**
+ * The Agent Host's own event log, live while a turn is still running.
+ *
+ * A third channel rather than a filter on the second, for the same reason the
+ * second exists: these are the PROVIDER's events (`provider.request`,
+ * `tool.refused`, `runtime.result`), not the document's, and mixing them into
+ * `events.jsonl`'s history would make the document's own record untrue.
+ * Batched in Rust; see `src-tauri/src/agenthost.rs`.
+ */
+export const EVENT_AGENT = "agenthost://events";
 
 /** Normalise anything thrown across IPC into a RuntimeError. */
 export function asRuntimeError(value: unknown): RuntimeError {
@@ -263,6 +280,104 @@ export const runMockAgent = (sessionId: string, marker: string) =>
     marker,
   });
 
+// --- the Agent Host (Phase 5) -------------------------------------------------
+//
+// The composer's other end. Everything here crosses into a SEPARATE process
+// speaking `serve.py --entry agent`, which is what makes "the agent cannot
+// approve" a fact about the registry rather than a promise this shell keeps:
+// `approval/resolve` and `plan/apply` are not on that connection at all.
+//
+// No credential ever crosses this boundary. `credentialSet` is one-way — the
+// value goes to the OS store and the webview never asks for it back.
+
+export const agentHostStatus = () => invoke<AgentHostStatus>("agent_host_status");
+
+/** `--capabilities`. Keyless-honest: no document, no network, no key needed. */
+export const agentHostCapabilities = (provider: string, storeKey?: string | null) =>
+  invoke<{
+    exitCode: number;
+    payload: { ok: boolean; provider?: ProviderProfile; error?: RuntimeError };
+    credentialAttached: boolean;
+    stderr: string;
+  }>("agent_host_capabilities", { provider, storeKey: storeKey ?? null });
+
+/** Write the provider config. References only; a value is refused by name. */
+export const agentHostSaveConfig = (
+  provider: string,
+  settings: Record<string, unknown>,
+  hasCredential: boolean,
+) =>
+  invoke<{ path: string; config: Record<string, unknown> }>("agent_host_save_config", {
+    provider,
+    settings,
+    hasCredential,
+  });
+
+/** Read it back off disk, verbatim. The smoke asserts on what this returns. */
+export const agentHostReadConfig = (provider: string) =>
+  invoke<{ path: string; exists: boolean; config: Record<string, unknown> | null }>(
+    "agent_host_read_config",
+    { provider },
+  );
+
+export const agentHostRun = (params: {
+  sessionId: string;
+  instruction: string;
+  provider: string;
+  storeKey?: string | null;
+  scenario?: string | null;
+  turnId: string;
+}) =>
+  invoke<{
+    exitCode: number;
+    payload: HostRunPayload;
+    credentialAttached: boolean;
+    eventsPath: string;
+    stderr: string;
+    turnId: string;
+  }>("agent_host_run", {
+    sessionId: params.sessionId,
+    instruction: params.instruction,
+    provider: params.provider,
+    storeKey: params.storeKey ?? null,
+    scenario: params.scenario ?? null,
+    turnId: params.turnId,
+  });
+
+export const agentHostStop = () => invoke<boolean>("agent_host_stop");
+
+// --- the credential store -----------------------------------------------------
+// One direction. The value goes in; only present/absent comes out.
+
+export const credentialSet = (key: string, secret: string) =>
+  invoke<{ key: string; state: string; bytes: number }>("credential_set", { key, secret });
+
+export const credentialStatus = (key: string) =>
+  invoke<CredentialStatus>("credential_status", { key });
+
+export const credentialDelete = (key: string) =>
+  invoke<{ key: string; removed: boolean; state: string }>("credential_delete", { key });
+
+// --- 작업 팩 --------------------------------------------------------------------
+
+export const taskPacks = () => invoke<TaskPackList>("task_packs");
+
+// --- the window ----------------------------------------------------------------
+
+export const toggleFullscreen = () => invoke<boolean>("toggle_fullscreen");
+
+/** Read-only. The harness compares it with what the previous launch saved. */
+export const windowGeometry = () =>
+  invoke<{
+    width: number | null;
+    height: number | null;
+    x: number | null;
+    y: number | null;
+    maximized: boolean;
+    fullscreen: boolean;
+    scale: number;
+  } | null>("window_geometry");
+
 // --- preferences -------------------------------------------------------------
 
 export const loadPrefs = () => invoke<Record<string, unknown>>("prefs_load");
@@ -301,6 +416,15 @@ export function onActivity(handler: (batch: Activity[]) => void): Promise<Unlist
 /** Batched `event` notifications from every live subscription. */
 export function onEvents(handler: (batch: EventDelivery[]) => void): Promise<UnlistenFn> {
   return listen<EventDelivery[]>(EVENT_EVENTS, (e) => handler(e.payload));
+}
+
+/** Batched Agent Host events, tailed from the run's JSONL while it runs. */
+export function onAgentEvents(
+  handler: (batch: Array<{ turnId: string; event: HostEvent }>) => void,
+): Promise<UnlistenFn> {
+  return listen<Array<{ turnId: string; event: HostEvent }>>(EVENT_AGENT, (e) =>
+    handler(e.payload),
+  );
 }
 
 export function onStatus(handler: (s: SidecarStatus) => void): Promise<UnlistenFn> {

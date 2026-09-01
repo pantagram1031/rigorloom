@@ -12,6 +12,7 @@
  */
 import { useWorkspace } from "../store";
 import type { Session } from "../types";
+import { TaskPacks } from "./TaskPacks";
 
 export function SessionList({
   onSelect,
@@ -57,6 +58,7 @@ export function SessionList({
             문서 열기
           </button>
         </div>
+        <TaskPacks />
         <div className="section">
           <h3>작업 폴더</h3>
           <p className="prose mono" style={{ overflowWrap: "anywhere", userSelect: "text" }}>

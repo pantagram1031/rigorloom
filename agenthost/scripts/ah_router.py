@@ -195,6 +195,9 @@ class RouterAdapter(ProviderAdapter):
                     "unknown", "SSE support is gateway-specific; declare it"),
                 "resumableThread": cap(
                     "no", "chat completions is stateless; the host resends"),
+                "vision": cap(
+                    "unknown", "image input is gateway-specific and this "
+                               "adapter sends none; declare it in config"),
             },
             notes={"baseUrl": self.base_url,
                    "credentialRef": self.credential.public(), **self.notes},

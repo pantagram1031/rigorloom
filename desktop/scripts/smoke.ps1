@@ -31,6 +31,20 @@
                              assertion is that the refusal is drawn as a
                              designed state carrying the runtime's own detail,
                              not that it succeeds.
+    run 6 (phase "composer") PHASE 5. A typed instruction spawns the Agent
+                             Host with the MOCK provider, its events stream in
+                             live, its plan lands in the SAME queue as a manual
+                             edit, it cannot approve, and a human then does.
+    run 7 (phase "settings") provider settings written and read back with a
+                             FAKE credential. Nothing real is stored; the
+                             sentinel is then grepped for across the whole app
+                             data tree from OUT HERE, which is the check an
+                             in-app assertion cannot make.
+    run 8 (phase "chrome")   the editor toolbar, the ruler, the page footer,
+                             the status bar and 작업 팩, against real document
+                             and real module-registry data. Leaves a window
+                             geometry in prefs.
+    run 9 ("chrome-reattach") the window must come back where run 8 left it.
 
   The assertions live in the app (src/smoke.ts) and run through the same
   actions.ts functions a click calls. This script owns process lifecycle,
@@ -93,6 +107,20 @@ New-Item -ItemType Directory -Force -Path $AppData, $ExportDir | Out-Null
 # RELEASE executable — the only one this script ever launches — reach the
 # agent door without the button pretending to exist in a shipped install.
 $MockAgent = Join-Path $RepoRoot 'runtime\scripts\mock_agent.py'
+# Same trick for the Agent Host. The bundled sidecar carries its own copy since
+# Phase 5, so this is belt and braces rather than a requirement — but pointing
+# the release build at the checkout means the composer phase exercises the
+# script this branch actually changed, not whatever was frozen last.
+$AgentHost = Join-Path $RepoRoot 'agenthost\scripts\host.py'
+# The task-pack list needs the module DECLARATIONS. The bundle carries those
+# too now; this pins the run to the repo's copy for the same reason.
+$ModulesRoot = Join-Path $RepoRoot 'modules'
+
+# What must never appear in any file the app writes. `smoke.ts` puts this exact
+# string into the OS credential store and then drives the settings pane; the
+# grep after the run is the part an in-app assertion cannot do, because the app
+# can only show what it chose to hand the harness.
+$Sentinel = 'NOT-A-REAL-KEY-SENTINEL-4f3a9c7e21'
 
 function Invoke-Phase {
     param([string]$Phase, [string]$ReportPath)
@@ -104,6 +132,10 @@ function Invoke-Phase {
     $env:RIGORLOOM_SMOKE_REPORT = $ReportPath
     $env:RIGORLOOM_SMOKE_EXPORT = Join-Path $ExportDir 'candidate.hwpx'
     if (Test-Path $MockAgent) { $env:RIGORLOOM_MOCK_AGENT = $MockAgent }
+    if (Test-Path $AgentHost) { $env:RIGORLOOM_AGENT_HOST = $AgentHost }
+    if (Test-Path $ModulesRoot) { $env:RIGORLOOM_MODULES_ROOT = $ModulesRoot }
+    # The chrome phases write a second report; only they read it.
+    $env:RIGORLOOM_SMOKE_FINAL = Join-Path $RunDir "final-$Phase.json"
     # Redirect the app's own data dir so a developer's real prefs and sessions
     # are never read or written by the smoke.
     #
@@ -164,7 +196,8 @@ $ran = @()
 
 # Ordered, because run 2 depends on what run 1 left on disk. Everything after
 # that opens its own session and is order-independent.
-$phases = @('open', 'reattach', 'edit', 'agent', 'page')
+$phases = @('open', 'reattach', 'edit', 'agent', 'page',
+            'composer', 'settings', 'chrome', 'chrome-reattach')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 
 try {
@@ -217,12 +250,76 @@ try {
             $allOk = $false
         }
     }
+
+    # THE SECRET CHECK, from out here. The settings phase put $Sentinel into
+    # the OS credential store and then exercised every surface that could have
+    # copied it. This greps every byte the app wrote — provider config, prefs,
+    # the agent host's event JSONL, the session store, the smoke reports — for
+    # that exact string. An in-app assertion can only see what the app handed
+    # it; this sees the disk.
+    if ($ran -contains 'settings') {
+        $searched = 0
+        $leaks = @()
+        foreach ($file in (Get-ChildItem -Recurse -File $AppData, $RunDir -ErrorAction SilentlyContinue)) {
+            $searched++
+            try {
+                $bytes = [IO.File]::ReadAllBytes($file.FullName)
+                # Bytes, not text: an encoding guess could miss a match that a
+                # different reader would find, and "we did not decode it" is
+                # not the same as "it is not there".
+                $text = [Text.Encoding]::UTF8.GetString($bytes)
+                $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+                if ($text.Contains($Sentinel) -or $utf16.Contains($Sentinel)) {
+                    $leaks += $file.FullName
+                }
+            } catch {}
+        }
+        if ($leaks.Count -eq 0) {
+            Write-Host ("  [PASS] the credential sentinel appears in none of the {0} files the app wrote" -f $searched)
+        } else {
+            Write-Host ("  [FAIL] the credential sentinel leaked into {0} file(s):" -f $leaks.Count)
+            $leaks | ForEach-Object { Write-Host "         $_" }
+            $allOk = $false
+        }
+    }
+
+    # The window came back where it was left. Compared across a real process
+    # boundary, and from OUT HERE: run 8 reports the geometry it saved, run 9
+    # reports the geometry it restored. Asking run 9 to check its own prefs
+    # would be self-fulfilling — it writes them at startup from whatever it
+    # restored, so a restore that lost a frame's worth of pixels every launch
+    # would agree with itself forever.
+    if (($ran -contains 'chrome') -and ($ran -contains 'chrome-reattach')) {
+        $saved    = Join-Path $RunDir 'final-chrome.json'
+        $restored = Join-Path $RunDir 'final-chrome-reattach.json'
+        if ((Test-Path $saved) -and (Test-Path $restored)) {
+            $a = (Get-Content $saved    -Raw -Encoding UTF8 | ConvertFrom-Json).detail.geometry
+            $b = (Get-Content $restored -Raw -Encoding UTF8 | ConvertFrom-Json).detail.geometry
+            $same = ($a.maximized -eq $true -and $b.maximized -eq $true) -or (
+                ([math]::Abs($a.width  - $b.width)  -le 2) -and
+                ([math]::Abs($a.height - $b.height) -le 2) -and
+                ([math]::Abs($a.x - $b.x) -le 2) -and
+                ([math]::Abs($a.y - $b.y) -le 2))
+            if ($same) {
+                Write-Host ("  [PASS] the window came back to {0}x{1} at ({2},{3}) across a process boundary" -f `
+                    $b.width, $b.height, $b.x, $b.y)
+            } else {
+                Write-Host ("  [FAIL] run 8 was {0}x{1} at ({2},{3}); run 9 came back {4}x{5} at ({6},{7})" -f `
+                    $a.width, $a.height, $a.x, $a.y, $b.width, $b.height, $b.x, $b.y)
+                $allOk = $false
+            }
+        } else {
+            Write-Host "  [FAIL] one of the two chrome phases wrote no window report"
+            $allOk = $false
+        }
+    }
 }
 finally {
     if ($origAppData) { $env:RIGORLOOM_APPDATA = $origAppData }
     else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_CORPUS2, `
-        Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT `
+        Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT, `
+        Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL `
         -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     if (-not $KeepRoot) { Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue }

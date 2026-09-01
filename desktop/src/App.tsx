@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import {
   boot,
+  closeTopmostOverlay,
   copySelection,
   openDropped,
   openViaDialog,
@@ -10,8 +11,10 @@ import {
   restartRuntime,
   selectSession,
   stepUiZoom,
+  toggleFullscreen,
 } from "./actions";
 import { Logo } from "./components/Logo";
+import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
 import * as rt from "./runtime";
@@ -19,6 +22,7 @@ import {
   getState,
   pushActivity,
   pushEvents,
+  pushHostEvents,
   setState,
   setView,
   useWorkspace,
@@ -111,6 +115,11 @@ export default function App() {
       unlisteners.push(
         await rt.onEvents((batch) => pushEvents(batch.map((row) => row.event))),
       );
+      // The Agent Host's own log, live while a turn runs. A third channel
+      // rather than a filter on the second: these are the provider's events,
+      // not the document's, and the store folds them into the turn that owns
+      // them by id.
+      unlisteners.push(await rt.onAgentEvents(pushHostEvents));
       unlisteners.push(await rt.onStatus((s) => setState({ status: s })));
       // A Rust panic must be visible, not a silent disappearance.
       unlisteners.push(await rt.onPanic((p) => setState({ panic: p })));
@@ -150,6 +159,20 @@ export default function App() {
   // Ctrl+C copies the selected cell's text.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // F11 and Esc are window-level and reach past a focused field on
+      // purpose — every editor's are. Esc while a syllable is composing is the
+      // IME's own cancel, though, so it is left alone there.
+      if (e.key === "F11") {
+        e.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
+      if (e.key === "Escape" && !e.isComposing) {
+        // One place, one order: innermost overlay first. Handled centrally so
+        // two components cannot both decide what Esc meant.
+        if (closeTopmostOverlay()) e.preventDefault();
+        return;
+      }
       // A shortcut must never reach past a text field the user is typing in.
       // Ctrl+C inside the inline editor is a copy, not a "copy the selected
       // cell", and Ctrl+O while composing Hangul would throw the edit away.
@@ -285,6 +308,14 @@ export default function App() {
         <button className="ghost" title="Ctrl+O" onClick={() => void openViaDialog()}>
           문서 열기
         </button>
+        <button
+          className="ghost"
+          data-testid="open-settings"
+          title="에이전트 제공자 설정"
+          onClick={() => setState({ settingsOpen: true })}
+        >
+          설정
+        </button>
       </header>
 
       <div className="viewport">
@@ -299,6 +330,11 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* One mount, outside the view switch: the settings pane is chrome, not
+          part of either room, and reopening it after Ctrl+2 must not lose what
+          the probe found. */}
+      <Settings />
 
       {dragOver ? (
         <div className="dropveil" data-testid="dropveil">

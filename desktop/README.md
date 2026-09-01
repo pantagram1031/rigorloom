@@ -1,18 +1,33 @@
-# desktop/ — Rigorloom Desktop, Phase 4 verified editing
+# desktop/ — Rigorloom Desktop, Phase 5 agent-native
 
 Tauri 2 + React/TS shell over the real Runtime as a packaged Python sidecar.
 
-**A person can now change a document here, and prove what changed.** Click a
-채움 자리, type, and the value joins one OperationPlan; the Runtime says what is
-wrong with it before anything is written; a human resolves an approval bound to
-that exact plan hash; the plan applies to the session COPY and produces a
-candidate with its own sha256 beside an unmoved source hash; the receipt binds
-both. Nothing on that path is optimistic — every refusal the protocol declares
-has a drawn state, and the two things the application cannot do (re-run the
-checkers on demand, prove a render) still say so in as many words.
+**A person can now tell the agent what to do, and the agent still cannot do
+it.** Type an instruction; the shell spawns an Agent Host process on an
+AGENT-authority connection to the same workspace; it inspects, proposes and
+asks; its plan lands in the SAME review queue a typed cell value lands in, per
+op, marked as the agent's; and it stops, because `approval/resolve` and
+`plan/apply` are not in its registry at all. A human approves. That is the whole
+product claim, and Phase 5 is the slice where it stopped being a demo button and
+became a text box.
 
-Phase 3's read-only foundation and the design slice are still here and still
-true; what follows marks what Phase 4 changed.
+**And the window stopped looking like a web page.** There is an editor band
+above the paper now — the seat's 글자 모양, the body size, the view switch, one
+document zoom, the document's state — a ruler over 페이지 보기 drawn from the
+page's real margins, a page footer, and a status bar that carries 쪽 and 위치 and
+says outright that it has no 삽입/수정 state because it has no character cursor
+to be in one.
+
+**Phase 4's claim is unchanged and still holds.** A person can change a document
+here and prove what changed: one OperationPlan, a pre-write verdict, an approval
+bound to an exact plan hash, a candidate with its own sha256 beside an unmoved
+source hash, and a receipt binding both. Nothing on that path is optimistic —
+every refusal the protocol declares has a drawn state, and the things the
+application cannot do (re-run the checkers on demand, prove a render, stream a
+provider's text) still say so in as many words.
+
+Phase 3's read-only foundation, the design slice and Phase 4's editing loop are
+all still here and still true; what follows marks what Phase 5 changed.
 
 Shell decision, the measurements behind it, and the obligations it imposes:
 `docs/desktop-shell-spike.md` (branch `claude/desktop-shell-spike`), `## Decision`.
@@ -27,7 +42,10 @@ Protocol: `docs/runtime-protocol-v0.md`. Product shape: `docs/product-direction.
 | `src-tauri/src/main.rs` | window, commands, the panic hook, prefs wiring |
 | `src-tauri/src/sidecar.rs` | **all** protocol I/O — spawn, JSONL, request correlation, batching |
 | `src-tauri/src/jobkill.rs` | kill-on-close job object, ported from the spike |
-| `src-tauri/src/prefs.rs` | the three things the shell remembers between launches |
+| `src-tauri/src/prefs.rs` | the things the shell remembers between launches, now including where the window was |
+| `src-tauri/src/agenthost.rs` | spawning the Agent Host, tailing its event log live, composing its config |
+| `src-tauri/src/credstore.rs` | Windows Credential Manager. **The only place a secret rests** |
+| `src-tauri/src/taskpacks.rs` | 작업 팩: the module registry's own answer, via a child process |
 | `sidecar/rigorloomd.py` | frozen entry: serves the protocol, and stands in for the interpreter |
 | `sidecar/deps.py` | derives the frozen build's hidden imports from the engine's own sources |
 | `sidecar/build.ps1` | PyInstaller one-dir against a pinned CPython 3.12.10 |
@@ -36,23 +54,32 @@ Protocol: `docs/runtime-protocol-v0.md`. Product shape: `docs/product-direction.
 | `src/actions.ts` | every operation, as plain functions, so the smoke drives the real path |
 | `src/runtime.ts` | thin invoke wrappers and event subscriptions |
 | `src/views/` | `DocumentView`, `AgentView` — layouts, no state |
-| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash, **review queue, receipt panel** |
+| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash, review queue, receipt panel, **conversation, settings, editor toolbar, task packs** |
 | `src/assets/` | `logo.svg` (drawing of record) and the bundled Pretendard + `OFL.txt` |
 | `src/devMock.ts` + `src/fixtures/` | browser-mode replay of a recorded real session; `import.meta.env.DEV` only, absent from production bundles |
 | `src/smoke.ts` | the scripted checks, run inside the built app |
-| `scripts/` | build, smoke, screenshots, window capture, fixture recorder |
+| `scripts/` | build, smoke, screenshots, window capture, fixture recorder, **`agent_roundtrip.py`** |
 
 ### Keyboard
 
 `Ctrl+O` open · `Ctrl+1` / `Ctrl+2` views · `Ctrl+=` / `Ctrl+-` / `Ctrl+0` app
 zoom (50–200 %, persisted, announced as a toast) · `Ctrl+C` copies the selected
-cell or paragraph when there is no text selection to copy instead. Dropping a
-`.hwpx` on the window opens it; anything else is refused out loud.
+cell or paragraph when there is no text selection to copy instead · `F11`
+fullscreen · `Esc` closes the topmost overlay. Dropping a `.hwpx` on the window
+opens it; anything else is refused out loud.
 
-Inside a fill seat: `Enter` commits, `Esc` cancels. Every app-level shortcut
-returns early when the event target is a text field — a shortcut that reached
-past a field the user is typing in would eat a `Ctrl+C` and, worse, could throw
-away a composing syllable.
+Inside a fill seat: `Enter` commits, `Esc` cancels. In the composer:
+`Ctrl+Enter` sends, bare `Enter` is a newline. Every app-level shortcut returns
+early when the event target is a text field — a shortcut that reached past a
+field the user is typing in would eat a `Ctrl+C` and, worse, could throw away a
+composing syllable.
+
+`F11` and `Esc` are the two deliberate exceptions to that rule, because every
+editor's are. `Esc` still yields to a composing syllable (`isComposing`), where
+it belongs to the IME, and it is handled in exactly ONE place — `actions.ts`
+`closeTopmostOverlay`, innermost first: inline edit → receipt → settings → task
+pack → findings. Two components each deciding what `Esc` meant is how a second
+press closes something the user was not looking at.
 
 ## Running it
 
@@ -439,6 +466,197 @@ one either.
 
 ---
 
+## The composer, live
+
+**One process per turn, and the reason is not performance.**
+`agenthost/scripts/host.py` is a one-shot CLI: parse argv, open a door, run one
+`AgentHost.run(instruction)`, print one JSON document, exit. It has no stdin
+command loop and no resume — `resumableThread` is `no` everywhere and the host
+resends the whole history each turn *inside* one run. Keeping it alive between
+messages would mean inventing a shell↔host protocol that does not exist, in a
+tree this slice does not own. So: one process per turn, exactly as
+`run_mock_agent` already did. The cost is a cold Python start per message; the
+benefit is that a hung provider cannot wedge the shell, and that the agent's
+authority boundary is a *process* boundary, which is the property everything
+else rests on.
+
+**The event log is tailed, not waited for.** The run payload arrives only at
+exit, and a live provider turn can take tens of seconds. `--events FILE` mirrors
+the ordered log to JSONL as it happens — `EventLog.append` opens, writes and
+closes per line, so a reader never sees half a line — and a Rust thread polls
+that file, batches whole lines on a 120 ms timer, and emits arrays on
+`agenthost://events`. Same rule the sidecar's own channels follow, for the same
+measured reason. A trailing fragment is held until its newline arrives.
+
+**One queue, and it is the same object.** `adoptAgentPlan` re-reads the plan over
+THIS shell's host connection, validates it here, and writes the one `draft` a
+typed cell value writes — every op marked `origin: "agent"` with the plan's
+`proposer`. The mock button now calls the same function; two code paths claiming
+to end in the same queue would eventually stop.
+
+**The agent cannot approve, and the card quotes rather than claims.**
+`neverCompiled` comes from the host's own payload — the host-only methods its
+compile gate will never emit — and is printed verbatim. Underneath it, the
+Runtime agrees for its own reasons: `desktop/scripts/agent_roundtrip.py` calls
+`approval/resolve` and `plan/apply` on a real agent connection and requires
+`unknown_method` from both. The claim is measured on both sides of the door.
+
+### Streaming, and what is actually true
+
+`provider.stream.chunk` is a declared event kind, the mock adapter declares
+`streaming: yes`, the Anthropic adapter implements SSE — and **no assistant text
+streams into this UI**, because `AgentHost.run` only ever calls
+`provider.complete()`. No adapter's `stream()` is reachable through `host.py` at
+all. So:
+
+- the card streams the host's **progress** — its events arrive live, and the
+  newest one is the line under the spinner;
+- the assistant **text** appears in one piece when the turn ends;
+- the card and the settings pane both say so, in as many words, next to the
+  capability row that says `streaming: 예`.
+
+Drawing a typing animation over a batched response would have been the exact
+dishonesty the rest of this application is built to avoid. Recorded as agenthost
+gap 1 below.
+
+## Provider settings, and the one place a secret rests
+
+The Agent Host takes a credential **reference** — the name of an environment
+variable or an OS store key — and refuses a config carrying a value by member
+NAME, whatever the value looks like. That contract is only worth something if
+the desktop has somewhere real to put the secret, and until Phase 5 it did not:
+the honest options were "set an environment variable in a terminal", which is
+not a product, or "write it to a JSON file", which is the thing the contract
+exists to prevent.
+
+`src-tauri/src/credstore.rs` is Windows Credential Manager through four calls —
+`CredWriteW` / `CredReadW` / `CredDeleteW` / `CredFree` — on a dependency this
+crate already had. `windows-sys` gains one feature and no new crate. The
+`keyring` crate would have pulled a tree to wrap those four calls; this is the
+same reasoning that kept `sha2` out in Phase 4.
+
+**The handoff, and why it is an env reference and not a store reference.** The
+Agent Host declares an `os_store` credential source and *refuses* it —
+`credential_source_unsupported`, "not implemented in this slice". So the shell
+reads the secret from the store and sets it on **one child `Command`'s
+environment**, and the config names that variable
+(`RIGORLOOM_PROVIDER_CREDENTIAL`). The variable exists only inside that child.
+That is the same guarantee reached through the door that IS implemented, and it
+is recorded as agenthost gap 2 rather than worked around silently.
+
+What the rules add up to, stated as obligations rather than intentions:
+
+| Obligation | Where it is kept |
+| --- | --- |
+| A secret crosses IPC once, inbound only | `credential_set`; there is no read-back command |
+| The UI never redisplays it | no reveal control — a field that can display a key is a field that can be screenshotted |
+| `status` answers present/absent and a byte count | enough to tell a whole key from half of one, not enough to be a leak |
+| No secret-shaped member reaches a config | refused by NAME in `compose_config`, one layer earlier than the Agent Host's own refusal |
+| The config is inspectable | the settings pane prints the file it wrote, verbatim |
+| Nothing on disk carries it | `smoke.ps1` greps every byte the app wrote for a sentinel |
+
+**The header is part of the reference, not a default to leave off.** This is the
+defect `agent_roundtrip.py` caught: `CredentialRef` falls back to
+`Authorization: Bearer <value>`, which is right for an OpenAI-compatible router
+and **wrong** for the Messages API, which wants a bare `x-api-key`. A config
+omitting `header`/`scheme` looked correct and would have authenticated against
+nothing. `compose_config` now writes them per provider and a `cargo test` pins
+both.
+
+**연결 확인 is a local describe.** `--capabilities` needs no key, no document and
+no network; it works before anything is configured, which is why its answer
+about what the adapter does *not* know is trustworthy. The three states reach
+the screen unrounded — `unknown` renders as 모름 — because `supports()` treating
+an unverified maybe as permission to try is the bug the third state exists to
+prevent. A live provider call happens only when a key is stored AND the user
+sends a message.
+
+The credential vocabulary rendered in the pane is the adapter's own, not a
+translation: `not_required` / `configured` / `missing` / `unsupported`
+(`ah_anthropic.credential_state`). The pane shows it beside the OS store's
+own present/absent, because the two can disagree — a key saved under one name
+while the config points at another — and one line each is how a person sees
+that.
+
+## The editor band, the ruler, the status bar
+
+Until Phase 5 the centre had a two-button mode switch and a caveat line, and the
+window read as a web page with a document in it. A Hangul editor has a dense
+functional band between the chrome and the paper, and that band is most of why
+the genre feels like an editor. So there is one: sunken relative to the panel so
+the paper stays the raised thing, keyboard-first, no icon cloning, no Hancom
+anything, and the hanji palette and single teal accent unchanged. The point
+colour is spent nowhere in it.
+
+What it carries, all read-only this slice and all real: the selected seat's
+`charPr` id (marked 본문과 다름 when it differs from the document's own body
+shape — T30, surfaced where a person is looking rather than only in the queue),
+the body size from `summary.baselineCharPr`, the relocated 본문/페이지 switch,
+one document zoom, and the document's state (대기 n / 승인 대기 / 후보본 있음 /
+검사).
+
+**There is no 글꼴 name, and that is the honest answer.**
+`document/inspect` reports a seat's `charPr` as an ID and reports a height only
+for the two document-level shapes. No typeface name is on the wire anywhere. A
+font dropdown reading 맑은 고딕 because that is what toolbars usually say would
+be a fabrication in the one place this application must not fabricate.
+Runtime gap 16.
+
+**One zoom number, meaning the same thing in both modes.** The toolbar's zoom
+writes `zoom`, which 페이지 보기 already used; 본문 보기 now applies it as CSS
+`zoom` on the paper column, which scales layout so glyphs re-rasterise rather
+than being resampled. App zoom stays separate and is labelled 화면.
+
+**페이지 보기 gained a ruler and a footer.** The ruler is `summary.pageMetrics`
+at the same scale the page figure uses: real width, real margins as the shaded
+ends, 1 cm ticks with a longer mark every 5. Centimetres because the corpus form
+is A4 with 20 mm margins and the whole 기안문 tradition is metric. The footer is
+the Hangul shape — the action on the left, `n쪽 / 전체 n` with ◀ ▶ in the middle,
+zoom on the right.
+
+**The status bar learned three Hangul-editor conventions and refused a fourth.**
+쪽 is the renderer's own page number, and reads — in 본문 보기 because the
+runtime maps no text to any page. 위치 is the selection's address, spelled the
+way the runtime addresses it (`표0 (0,14)`, `문단 12`) — never a line and column,
+because this build has no character cursor and inventing one would be a lie
+about where the user is standing. And the insert/overwrite indicator every
+Hangul editor carries reads **삽입/수정 없음**, for the same reason: there is no
+caret to be in a mode.
+
+**The window remembers where it was.** Physical pixels plus the scale factor
+they were measured at, saved on move and resize behind a 700 ms throttle (a drag
+emits one event per frame) and once at startup, because a launch that is never
+resized must still leave something behind — "the window remembers" cannot be a
+property that only holds for a user who happened to drag it. A restored size
+below the editor minimum is clamped, and a position no attached monitor covers
+re-centres rather than putting the window somewhere it cannot be dragged back
+from.
+
+## 작업 팩, and what a seed is allowed to draw
+
+Six distribution modules are declared on disk, each contributing named checkers
+and CLI commands, and `report` really does depend on `style` and really is
+refused without it. So Agent view's left rail lists them — the module registry's
+own answer, obtained by running `pipeline/scripts/module_registry.py list` as a
+child through the same dual-role entry the Runtime's children use, rather than
+writing a second `module.yaml` reader in Rust that would be the wrong one the
+first time a manifest used a shape it did not anticipate.
+
+Clicking a pack opens a **준비 중** panel that says what the pack will do, what
+of it exists in this installation (enabled or not, its dependencies, its
+checkers and commands by name), and what does not: there is no way to run a
+module's checker against a session, because the Runtime protocol has no method
+that does. **There is no run button**, because drawing the control first is how
+a product acquires a surface it then has to keep honest.
+
+The Korean display names live in `taskpacks.rs` rather than in the manifests,
+because the manifests are the program's contract with its modules and carry no
+UI copy; adding a `displayName` to them would be editing a tree this slice does
+not own. A module with no entry shows its declared name verbatim and is flagged
+`named: false`, so the absence is visible rather than papered over.
+
+---
+
 ## Evidence
 
 ### Phase 3 (commit `2f27d3e`), reproduced from a clean build
@@ -522,6 +740,124 @@ Screenshots — `screenshots/`: the four from the design slice, plus
 real loop to that point, so the approval in `approval.png` is a record the
 Runtime issued and the hash on the bar in `candidate-verified.png` belongs to a
 candidate on disk.
+
+### Phase 5 — agent-native
+
+Reproducing this needs one thing Phase 4 did not: `desktop/scripts/smoke.ps1`
+points the RELEASE build at the repo's `agenthost/scripts/host.py` and
+`modules/` through `RIGORLOOM_AGENT_HOST` and `RIGORLOOM_MODULES_ROOT`, the same
+way it already pointed it at `mock_agent.py`. The bundled sidecar carries its
+own copy of both since this slice, so the overrides pin the run to the branch's
+source rather than to whatever was last frozen — which is the lesson from the
+Phase 4 defect where the shipped sidecar predated its own branch.
+
+```powershell
+npx tsc --noEmit
+cargo test --release                       # in desktop/src-tauri
+python desktop/scripts/agent_roundtrip.py  # the protocol layer, no app needed
+powershell -File desktop/sidecar/build.ps1
+cd desktop; npm run tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+python -m pytest tests/test_runtime_*.py tests/test_agenthost_*.py -q
+```
+
+| Step | Exit | Time |
+| --- | --- | --- |
+| `npx tsc --noEmit` | 0 | — |
+| `cargo test --release` | 0 | **10 passed** (FIPS vectors, a real credential-store round trip, four config-composition rules) |
+| `scripts/agent_roundtrip.py` | 0 | **38 checks, 0 failures** |
+| `sidecar/build.ps1` | 0 | 25.9 MiB payload, four role checks |
+| `npm run tauri build` (release) | 0 | 2m 33s |
+| `scripts/smoke.ps1` | 0 | **274 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 | 18 images |
+| `pytest tests/test_runtime_*.py` | 0 | 267 passed, 317 s |
+| `pytest tests/test_agenthost_*.py` | 0 | 164 passed, 88 s |
+
+Shell exe 8.48 MiB · NSIS installer 11.52 MiB · sidecar payload 25.9 MiB. The
+shell grew 8.31 → 8.48 MiB across the credential store, the host spawn and tail,
+the module registry reader and the window prefs; the sidecar grew 23.4 → 25.9
+MiB, which is the `agenthost/scripts` tree plus 2.0 MiB of module declarations.
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· **`composer` 31 · `settings` 28 · `chrome` 26 · `chrome-reattach` 5**, plus
+three checks the driver makes from outside the app: the orphan check, the
+export hash comparison, and two new ones —
+
+- **the credential sentinel appears in none of the 212 files the app wrote.**
+  `smoke.ts` puts `NOT-A-REAL-KEY-SENTINEL-…` into the real Windows Credential
+  Manager and drives the settings pane through it; `smoke.ps1` then reads every
+  byte under the harness's app-data and run directories, as UTF-8 *and* as
+  UTF-16, and requires the string in none of them. An in-app assertion can only
+  see what the app chose to hand it; this sees the disk.
+- **the window came back to 2880×1759 at (0,0) across a process boundary.**
+  Compared between two launches' own reports rather than by asking the second
+  launch about its own prefs — which would be self-fulfilling, because the
+  startup save writes whatever was restored, so a restore losing a frame's
+  pixels each launch would agree with itself forever.
+
+The `composer` phase is the whole of Objective A against the real corpus form:
+the composer is live and `composerBlocker` says why when it is not; a typed
+instruction spawns a real Agent Host process; its 25-event log arrives
+seq-ordered and gap-free from `run.started` to `run.finished`; its plan lands in
+the SAME `draft`, validated over the shell's own connection, every op
+`origin: "agent"`; the payload names `workspace/openPath, approval/resolve,
+plan/apply, document/renderPrepare` as methods it can never compile; the
+approval is `pending` and `requestedBy: "agenthost-mock"` when the run ends; no
+candidate exists until a human resolves it; and the receipt then records
+`requestedBy: agenthost-mock` / `approver: smoke-operator`. The conversation
+survives a view switch byte-identically.
+
+**`agent_roundtrip.py` is new, and it is not a duplicate of the smoke.** It
+drives the same three processes the application drives — the Runtime on a host
+connection, the Agent Host on an agent connection, the module registry — and
+asserts the same properties without a release build. It is what to run when the
+app cannot be built, and what to run FIRST when the smoke's composer phase
+fails, because it says whether the failure is in the shell or underneath it. It
+is also what caught the `Authorization: Bearer` defect above, by reading the
+credential reference back out of the adapter instead of trusting the write.
+
+Screenshots — `screenshots/`: the thirteen from Phase 4, plus `composer`,
+`provider-settings`, `toolbar-text`, `toolbar-page`, `task-packs`. None are
+staged. `composer.png` photographs a plan a real Agent Host process proposed
+seconds earlier; `provider-settings.png` photographs a real `--capabilities`
+answer with **no credential stored**, which is the state a new user meets, and
+its capability table shows 예 / 아니오 / 모름 as the adapter actually declared
+them.
+
+### Four defects the Phase 5 evidence found
+
+1. **The credential reference would have authenticated against nothing.**
+   `CredentialRef` defaults to `Authorization: Bearer <value>`; the Messages API
+   wants a bare `x-api-key`. The config `compose_config` wrote omitted `header`
+   and `scheme`, so it *looked* right and the desktop would have sent the wrong
+   header to the right endpoint — a failure that only shows up on a live call,
+   which is precisely the call this run could not make. Caught by
+   `agent_roundtrip.py` reading the reference back out of the adapter instead of
+   trusting the write, which is the whole reason that harness reads rather than
+   asserts on its own inputs. Fixed per provider and pinned by a `cargo test`.
+2. **The UI had guessed a credential vocabulary.** It looked for
+   `present`/`absent`; the adapter answers `not_required` / `configured` /
+   `missing` / `unsupported`. Same harness, same round. The settings pane now
+   renders the adapter's closed set verbatim, beside the OS store's own
+   present/absent, because the two can disagree.
+3. **`build.ps1` left its own probe running and hung anything waiting on it.**
+   The serve-role probe is `--noconsole` and this script does not job-confine it
+   (that is `jobkill.rs`'s job, inside the app). `Start-Process -Wait` returned,
+   the survivor kept the script's process tree open, and a background shell
+   waiting on the tree saw a build that printed `exit 0` and then sat for
+   fifteen minutes. Observed, not theorised. The probe is reaped explicitly now.
+4. **The ruler was measuring nothing.** Placed at the top of the scroller, it
+   sat above the refusal card explaining why there was no page — a ruler not
+   touching the page it measures is decoration. It renders directly above
+   whichever page-like thing is drawn now, raster or geometry figure.
+
+And three assertions were **inverted or repointed rather than deleted**, for the
+reason Phase 4 established: reality moved under them and deleting them would
+have quietly reduced coverage. `composer present and disabled` became `present
+and live, and it explains itself rather than sitting grey`; the two timeline
+checks switch to the 문서 기록 tab first, because the property is unchanged and
+only where a person stands to see it moved.
 
 ### Three defects the Phase 4 evidence found
 
@@ -614,6 +950,30 @@ throughout.
 
 ### What the evidence does not cover
 
+- **No live provider call was made.** This is the big one, and it is exactly
+  the gap this slice was supposed to make closable rather than close. The
+  Anthropic adapter is tested only against a local fake it starts and stops;
+  `--live-smoke` is implemented and its keyless refusal is tested; and the
+  credential UI the agenthost README named as the missing prerequisite now
+  exists. What did NOT happen is one real request to `api.anthropic.com`,
+  because that needs a key this run had no business having. Everything the
+  desktop asserts about the Anthropic provider is therefore about its
+  *description of itself* (`--capabilities`, which is a local describe) and
+  about a credential REFERENCE resolving — never about a completion coming
+  back. The composer's round trip is proven end to end with the MOCK provider
+  and with nothing else.
+- **The credential store is exercised with a sentinel, never a real key.**
+  `credstore.rs`'s test writes `not-a-real-key-…` to the real Windows
+  Credential Manager, reads it back, asserts the status payload does not
+  contain it, and deletes it. The smoke does the same through the UI with
+  `NOT-A-REAL-KEY-SENTINEL-…` and `smoke.ps1` then greps every byte the app
+  wrote for that string. What this proves is that a value put where a
+  credential goes does not leak; what it does not prove is anything about a
+  real key's lifetime in a real session.
+- **Streaming is unproven because it is unreachable.** No test asserts that a
+  streamed chunk reaches the UI, because `AgentHost.run` never calls
+  `provider.stream()` — see agenthost gap 1. The `provider.stream.chunk` branch
+  in `Conversation.tsx` is written and dead.
 - **Neither native dialog is exercised.** The smoke opens by path through
   `actions.openPath` and exports by path through `actions.exportApplied`, which
   are the same functions the open and save dialogs call with their results —
@@ -777,6 +1137,66 @@ CLOSED in Phase 3 and are consumed by this build; the rest stand.
     is recorded here because the fix — scoping the lock to the write — is the
     next thing anyone touching `sidecar.rs` should do.
 
+
+### New in Phase 5
+
+16. **No typeface name anywhere on the wire.** `document/inspect` reports a
+    seat's `charPr` as an ID, and reports a HEIGHT only for the two
+    document-level shapes (`summary.baselineCharPr`, `summary.blackCharPr`).
+    Nothing says what font a run is set in. The editor toolbar therefore shows
+    the id and the body size and says the name is not something this build
+    knows — which is right, and is also the reason the toolbar cannot become a
+    real 글꼴 control even read-only. *Suggested shape:* `baselineCharPr` and
+    each `regions[]` entry gain the `fontRef` / face name HWPX already stores in
+    `DocInfo`, which `form_inspect` walks past to reach the height.
+17. **No way to run a module's checker against a session.** The distribution
+    modules declare checkers (`modules/report` alone declares twelve) and the
+    Runtime knows nothing about them: there is no `check/run` and no way to name
+    a module contribution on the wire. The 작업 팩 panel is therefore a
+    declaration viewer with a 준비 중 label, which is the honest shape for it,
+    and the whole report-pipeline product sits behind this one method.
+    *Suggested shape:* `module/list` returning what `module_registry.py list`
+    prints, and `check/run {sessionId, checker, runId?}` returning the checker's
+    own `Finding` list — both host-only. The domain code exists; only the wire
+    is missing, which is the same shape as gap 3.
+
+## Agent Host gaps
+
+Recorded, not patched: `agenthost/**` belongs to another branch. All four were
+found by building against it, and all four are cheap to close on that side.
+
+1. **The turn loop never streams.** `AgentHost.run` calls `provider.complete()`
+   and nothing else. `provider.stream.chunk` is a declared event kind that
+   nothing emits, `ProviderAdapter.stream()` exists and is implemented by two
+   adapters, and neither is reachable through `host.py`. So a provider whose
+   profile truthfully says `streaming: yes` still delivers its text in one
+   piece, and this UI has to say so beside the capability row that says yes —
+   which is a strange thing to have to write. *Suggested shape:* `AgentHost.run`
+   takes `stream: bool`, and when `profile.supports("streaming")` it iterates
+   `provider.stream(request)`, appending `provider.stream.chunk` per delta and
+   assembling the same `ProviderResponse` at the end. The event kind and the
+   adapter method are both already there; only the loop chooses not to use them.
+2. **`os_store` is declared and refused.** `CredentialRef` accepts
+   `source: "os_store"` and `resolve()` raises `credential_source_unsupported`.
+   The desktop now HAS an OS credential store, so the honest handoff is an
+   environment reference set on the child process — which works, and is one
+   indirection more than the contract already describes. *Suggested shape:* let
+   the host resolve `os_store` on Windows through the same `CredRead` this
+   shell's `credstore.rs` uses, or drop the source from `CREDENTIAL_SOURCES`
+   so it stops advertising something no build can do.
+3. **`host.py` is one-shot, so a conversation is N processes.** There is no
+   stdin command loop and no resume; `resumableThread` is `no` everywhere and
+   history is resent inside a single run. That is correct and cheap at this
+   scale — a cold Python start per message — and it will stop being cheap on a
+   provider with a real context to rebuild. Recorded before it is urgent.
+   *Suggested shape:* an `--serve` mode framing the same run payloads over
+   stdio, which is the shape `runtime/scripts/serve.py` already establishes.
+4. **No live-provider test exists, and the desktop cannot supply one.** Every
+   agenthost test talks to a local fake; `--live-smoke` is implemented and its
+   keyless refusal is tested. This slice adds the credential UI the README named
+   as the missing piece, so a live leg is now RUNNABLE by a person with a key —
+   and was not run here. See below.
+
 ## Assumptions
 
 - Windows-first. `jobkill.rs` and the liveness probe are Windows-only by
@@ -804,3 +1224,13 @@ CLOSED in Phase 3 and are consumed by this build; the rest stand.
   do.
 - **Two sessions of the same file are indistinguishable in the list** except by
   timestamp. Opening the same form twice is legal and produces two rows.
+- **A provider turn is a cold Python start, per message.** Measured at roughly
+  two seconds here for the mock, which does no network at all; a real provider
+  adds its own latency on top. Acceptable at this scale and stated so it is not
+  discovered as a surprise — agenthost gap 3 is the fix, and it lives on the
+  other side of the boundary.
+- **The credential store is per-machine and per-user, and nothing says so on
+  screen yet.** `CRED_PERSIST_LOCAL_MACHINE` under the running user's profile.
+  A person who moves the app to another machine finds the key gone and the
+  composer explaining that it is missing, which is the right behaviour and not
+  the same as being told in advance.
