@@ -30,11 +30,17 @@ Scope, stated rather than implied:
   raise, so three tests here died on a file that is not part of this project and
   that no CI job or fresh worktree has (T122). A rule about the suite's own
   bounds has no business reading anything the suite does not run.
-* ``subprocess.run`` with a ``timeout=`` is the entire surface in the suite
-  today — ``check_output``, ``check_call``, ``communicate`` and ``Popen`` carry
-  no bound anywhere, and the six ``.wait(timeout=2)`` calls in
-  ``tests/test_studio.py`` are ``threading.Event`` handshakes inside one
-  interpreter, which have no process cold start to race.
+* The surface is ``subprocess.run(timeout=)`` PLUS ``run_child_capture`` /
+  ``_run_child_capture(timeout=)`` call sites (T134). The original claim that
+  ``subprocess.run`` was "the entire surface" went stale without failing
+  anything: the suite grew a second spelling of a spawn bound through
+  ``diagnostic_candidate_core.run_child_capture``, the scanner did not follow,
+  and a 0.8s bound on a cold-spawn chain flaked 3/4 under measured load while
+  the floor guard reported the tree clean. A guard's scope sentence is a claim
+  like any other. ``check_output``, ``check_call``, ``communicate`` and
+  ``Popen`` still carry no bound anywhere, and the six ``.wait(timeout=2)``
+  calls in ``tests/test_studio.py`` are ``threading.Event`` handshakes inside
+  one interpreter, which have no process cold start to race.
 * Product code is NOT scanned. A bound in a shipped script is a policy the
   product owes its caller, not a test-hygiene value, and it belongs to whoever
   set it.
@@ -120,13 +126,30 @@ def _is_subprocess_run(func: ast.expr) -> bool:
             and isinstance(func.value, ast.Name) and func.value.id == "subprocess")
 
 
+#: The other spelling of a spawn bound (T134): the diagnostic core's child
+#: adapter. Both the module function and the ``core.``/``diagnostic.``-qualified
+#: attribute forms count; the leading-underscore variant is the same function
+#: reached through a module-private alias.
+_CHILD_CAPTURE_NAMES = ("run_child_capture", "_run_child_capture")
+
+
+def _is_child_capture(func: ast.expr) -> bool:
+    if isinstance(func, ast.Name):
+        return func.id in _CHILD_CAPTURE_NAMES
+    if isinstance(func, ast.Attribute):
+        return func.attr in _CHILD_CAPTURE_NAMES
+    return False
+
+
 def spawn_bounds(source: str) -> list[tuple[int, float | None]]:
-    """[(lineno, seconds)] per ``subprocess.run`` timeout; None if unresolvable."""
+    """[(lineno, seconds)] per spawn-bound timeout; None if unresolvable."""
     tree = ast.parse(source)
     constants = _module_number_constants(tree)
     found: list[tuple[int, float | None]] = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _is_subprocess_run(node.func)):
+        if not (isinstance(node, ast.Call)
+                and (_is_subprocess_run(node.func)
+                     or _is_child_capture(node.func))):
             continue
         for keyword in node.keywords:
             if keyword.arg != "timeout":
@@ -257,6 +280,23 @@ def test_scanner_ignores_bounds_that_are_not_process_spawns():
         "    subprocess.run(['x'], capture_output=True, timeout=1)\n"
     )
     assert [value for _, value in spawn_bounds(source)] == [1.0]
+
+
+def test_scanner_sees_the_child_capture_spelling():
+    """T134: the suite grew a second spelling of a spawn bound and the scanner
+    did not follow — a 0.8s ``run_child_capture`` bound flaked 3/4 under load
+    while the floor guard reported the tree clean. Both the bare-name and the
+    module-qualified forms must be seen; ``helper(timeout=...)`` must not be."""
+    source = (
+        "import diagnostic_candidate_core as core\n"
+        "def helper(timeout=None): return timeout\n"
+        "def t():\n"
+        "    core.run_child_capture(['x'], timeout=0.8)\n"
+        "    diagnostic._run_child_capture(['x'], timeout=3)\n"
+        "    run_child_capture(['x'], timeout=7)\n"
+        "    helper(timeout=5.0)\n"
+    )
+    assert [value for _, value in spawn_bounds(source)] == [0.8, 3.0, 7.0]
 
 
 def test_scanner_resolves_a_named_bound():

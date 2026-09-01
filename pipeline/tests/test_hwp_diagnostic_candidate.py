@@ -18,6 +18,13 @@ from test_hwp_ingress import _cfb_hwp, _hwpx  # noqa: E402
 import hwp_diagnostic_candidate as diagnostic  # noqa: E402
 
 
+# T134: the kill bound must exceed the measured loaded cold spawn (median
+# 9.00s, p90 14.17s — tests/test_subprocess_bounds.py); 20s is the tree
+# floor. The grandchild sleeps LONGER than the bound so its marker can only
+# appear if the kill failed.
+KILL_TIMEOUT = 20.0
+GRANDCHILD_SLEEP = 25.0
+
 RUN_ID = "0123456789abcdef0123456789abcdef"
 
 
@@ -129,34 +136,52 @@ def test_child_failure_leaves_no_run_dir(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_real_child_timeout_kills_grandchild_before_return(tmp_path: Path):
-    """The timeout boundary owns descendants, not just the direct adapter."""
+    """The timeout boundary owns descendants, not just the direct adapter.
+
+    Timing redesigned in T134. The old shape bounded the chain at 0.8s and
+    required a COLD python parent to start, spawn a grandchild and write a pid
+    file inside that window — against a measured loaded median cold spawn of
+    9.00s (tests/test_subprocess_bounds.py), so under load the pid file never
+    appeared before the kill and the test failed 3 runs in 4. The property
+    needs the grandchild alive AT the kill, so the timeout must exceed the
+    loaded spawn time: 20s is the tree-wide floor (2.2x the loaded median,
+    above the 14.17s loaded p90). The grandchild sleeps LONGER than the
+    timeout so its marker can only ever appear if the kill failed, and the
+    post-return wait runs past the grandchild's whole sleep, measured from the
+    pid file's own mtime rather than a guessed offset.
+    """
     marker = tmp_path / "late-sidecar.txt"
     pid_file = tmp_path / "grandchild.pid"
+
     grandchild_code = (
-        "import pathlib,sys,time; time.sleep(1.5); "
+        "import pathlib,sys,time; time.sleep(%s); "
         "pathlib.Path(sys.argv[1]).write_text('late', encoding='ascii')"
+        % GRANDCHILD_SLEEP
     )
     parent_code = (
         "import pathlib,subprocess,sys,time; "
         "p=subprocess.Popen([sys.executable, '-c', sys.argv[3], sys.argv[1]]); "
         "pathlib.Path(sys.argv[2]).write_text(str(p.pid), encoding='ascii'); "
-        "time.sleep(8)"
+        "time.sleep(60)"
     )
     code, timed_out, overflow = diagnostic._run_child_capture(
         [sys.executable, "-c", parent_code, str(marker), str(pid_file),
          grandchild_code],
-        timeout=0.8, cwd=tmp_path,
+        timeout=KILL_TIMEOUT, cwd=tmp_path,
     )
     assert type(code) is int
     assert timed_out is True
     assert overflow is False
-    # The parent has a short startup window; once its PID record exists, wait
-    # past the grandchild's delayed write and prove the sidecar never appears.
-    deadline = time.monotonic() + 1.0
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert pid_file.exists()
-    time.sleep(1.9)
+    # The pid record must exist by return: the parent had the whole 20s window
+    # to reach it, which covers the measured loaded p90.
+    assert pid_file.exists(), "parent never recorded the grandchild pid"
+    # Wait until the grandchild's sleep has provably elapsed since ITS start
+    # (approximated by the pid file's mtime, written immediately after Popen),
+    # plus a 2s margin, then prove the marker never appeared.
+    grandchild_started = pid_file.stat().st_mtime
+    remaining = (grandchild_started + GRANDCHILD_SLEEP + 2.0) - time.time()
+    if remaining > 0:
+        time.sleep(remaining)
     assert not marker.exists()
 
 

@@ -435,6 +435,25 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T134:** the subprocess-bounds guard was blind to the suite's second
+  spelling of a spawn bound. Its scanner read `subprocess.run(timeout=)` only —
+  its own scope sentence claimed that was "the entire surface" — while five
+  `run_child_capture(timeout=)` call sites existed, one bounding a cold-spawn
+  chain at 0.8s against the measured loaded median of 9.00s. Surfaced as a
+  1-in-full-suite flake by an unrelated run; reproduced 3-of-4 under synthetic
+  saturation. Two mechanisms, both fixed and both proven under load (3/3 pass
+  saturated): the four hang-detector bounds raised to a named `HANG_TIMEOUT =
+  120.0` and the grandchild-kill test redesigned around the tree floor
+  (`KILL_TIMEOUT = 20.0`, grandchild sleeps longer than the bound so its marker
+  can only appear if the kill failed); and — found only because the first fix
+  round FAILED the load proof — two parents that blind-slept 0.3/0.4s before
+  exiting now handshake on the file their grandchild writes, because under load
+  cleanup killed the cold-starting grandchild before its pid record existed and
+  no post-return poll could ever see it. The scanner now reads both spellings
+  (`_is_child_capture`, bare and module-qualified), the stale scope sentence is
+  corrected and records its own staleness, and a unit test pins the new
+  spelling so a third one cannot go unseen the same way.
+
 - **T133:** the bundled `skill/SKILL.md` closed on "Module skill fragments ...
   are appended below by the installer", and for that file the sentence is false
   and always will be: it is the pre-install source, `scripts/sync_local.py` does
