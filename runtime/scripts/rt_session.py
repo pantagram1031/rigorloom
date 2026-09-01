@@ -20,12 +20,14 @@ offline op kind can address it — that is a stated gap, not a claim.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
 import shutil
 import stat
+import threading
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -34,6 +36,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_codes import (  # noqa: E402
+    MAX_EVENTS_PER_POLL as MAX_EVENTS_PER_POLL_DEFAULT,
     MAX_REGION_BYTES,
     MAX_SOURCE_BYTES,
     MAX_ZIP_COMPRESSION_RATIO,
@@ -161,7 +164,10 @@ class Session:
         self.profile_dir = self.dir / "profile"
         self.work_dir = self.dir / "work"
         self.candidates_dir = self.dir / "candidates"
+        self.renders_dir = self.dir / "renders"
+        self.derived_dir = self.dir / "derived"
         self.meta_path = self.dir / "meta.json"
+        self.events_path = self.dir / "events.jsonl"
         self.meta: dict = {}
 
     # -- creation -----------------------------------------------------------
@@ -176,7 +182,8 @@ class Session:
         facts = validate_source(source)
         session = cls(root, uuid.uuid4().hex)
         for directory in (session.source_dir, session.profile_dir,
-                          session.work_dir, session.candidates_dir):
+                          session.work_dir, session.candidates_dir,
+                          session.renders_dir):
             directory.mkdir(parents=True, exist_ok=False)
         name = safe_component(source.name)
         target = session.source_dir / name
@@ -216,6 +223,16 @@ class Session:
         session.meta = meta
         return session
 
+    def ensure_dirs(self) -> None:
+        """A session opened by another process may predate a directory."""
+        for directory in (self.profile_dir, self.work_dir,
+                          self.candidates_dir, self.renders_dir,
+                          self.derived_dir):
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+
     # -- accessors ----------------------------------------------------------
     @property
     def source(self) -> Path:
@@ -235,6 +252,191 @@ class Session:
                 "documentKind": self.meta["ingress"].get("documentKind", "opaque"),
             },
         }
+
+
+#: One closed set, so a UI can switch on it exhaustively rather than matching
+#: prose. These are RUNTIME session events; the report pipeline's own
+#: ``events.jsonl`` (modules/report/scripts/pipeline_ctl.py:857) is a different
+#: file about a different thing, and the two are deliberately not merged.
+EVENT_KINDS = (
+    "session.opened",
+    "plan.proposed",
+    "plan.validated",
+    "approval.requested",
+    "approval.resolved",
+    "plan.applied",
+    "candidate.published",
+    "pdf.prepared",
+)
+
+
+_APPEND_LOCKS: dict[str, "threading.Lock"] = {}
+_APPEND_LOCKS_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def _append_lock(path: Path):
+    """Serialise appends across threads AND processes.
+
+    MEASURED, not assumed. ``open(path, "ab")`` followed by one ``write`` is
+    NOT an atomic append on Windows: CPython's ``O_APPEND`` goes through the
+    CRT, which emulates it by seeking to the end and then writing, so two
+    concurrent writers seek to the same offset and one silently overwrites the
+    other. Four threads appending fifty lines each to one file produced 167 of
+    200 lines on this bench, with no error raised anywhere. POSIX ``O_APPEND``
+    is genuinely atomic, but a store that only holds together on Linux is not
+    a store.
+
+    So: a process-local mutex (cheap, and it keeps the OS lock uncontended)
+    plus a real byte-range lock on a sibling ``.lock`` file — ``flock`` on
+    POSIX, ``msvcrt.locking`` on Windows. If the OS lock cannot be taken the
+    append still proceeds under the local mutex rather than being dropped: a
+    slightly-racy note beats a lost one.
+    """
+    with _APPEND_LOCKS_GUARD:
+        local = _APPEND_LOCKS.setdefault(str(path), threading.Lock())
+    with local:
+        lock_path = path.with_name(path.name + ".lock")
+        fd = None
+        held = False
+        try:
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            held = _lock_fd(fd)
+        except OSError:
+            fd, held = fd, False
+        try:
+            yield
+        finally:
+            if fd is not None:
+                if held:
+                    _unlock_fd(fd)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+def _lock_fd(fd: int) -> bool:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        return True
+    except (OSError, ImportError, ValueError):
+        return False
+
+
+def _unlock_fd(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except (OSError, ImportError, ValueError):
+        pass
+
+
+def append_event(session: "Session", kind: str, **detail) -> None:
+    """Append one complete line. Seq is NOT stored — the reader assigns it.
+
+    Storing a sequence number would mean allocating one, and an allocator is a
+    second thing to keep consistent. A line's index in the file IS its
+    sequence: monotonic, gap-free and duplicate-free by construction, whoever
+    wrote it. Writers are serialised by ``_append_lock``, which is where the
+    real work of "whoever wrote it" happens.
+    """
+    if kind not in EVENT_KINDS:
+        raise ValueError(f"undeclared runtime event kind: {kind!r}")
+    record = {"at": now_utc(), "kind": kind, "sessionId": session.id}
+    if detail:
+        record["detail"] = detail
+    line = (json.dumps(record, ensure_ascii=False, sort_keys=True,
+                       allow_nan=False) + "\n").encode("utf-8")
+    try:
+        session.dir.mkdir(parents=True, exist_ok=True)
+        with _append_lock(session.events_path):
+            # Repair a torn boundary first. A crash mid-write leaves a line
+            # with no terminator, and appending onto it would GLUE the next
+            # event to the wreck — losing a good event, permanently, to a bad
+            # one.
+            prefix = b""
+            try:
+                size = session.events_path.stat().st_size
+            except OSError:
+                size = 0
+            if size:
+                with session.events_path.open("rb") as probe:
+                    probe.seek(size - 1)
+                    if probe.read(1) != b"\n":
+                        prefix = b"\n"
+            with session.events_path.open("ab") as handle:
+                handle.write(prefix + line)
+                handle.flush()
+    except OSError:
+        # An event is a projection of something that already happened. Losing
+        # the note must never undo the deed, so this cannot raise into a
+        # mutation path.
+        pass
+
+
+def read_events(session: "Session", after: int = -1,
+                limit: int | None = None) -> tuple[list[dict], int]:
+    """Events with ``seq > after``, plus the next sequence to ask for.
+
+    ``after=-1`` (the default) replays from the beginning. A truncated or
+    half-written trailing line is skipped rather than guessed at, and skipping
+    it does not shift anybody's sequence: the index is the line number.
+    """
+    path = session.events_path
+    if not path.is_file():
+        return [], max(after + 1, 0)
+    try:
+        raw = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return [], max(after + 1, 0)
+    out: list[dict] = []
+    index = -1
+    for line in raw.splitlines():
+        index += 1
+        if index <= after:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        out.append({"seq": index, **record})
+        if limit is not None and len(out) >= limit:
+            break
+    next_seq = (out[-1]["seq"] + 1) if out else max(after + 1, 0)
+    return out, next_seq
+
+
+def event_count(session: "Session") -> int:
+    """How many lines the log holds. Cheap enough to poll."""
+    path = session.events_path
+    if not path.is_file():
+        return 0
+    try:
+        with path.open("rb") as handle:
+            return sum(1 for line in handle if line.strip())
+    except OSError:
+        return 0
 
 
 class SessionStore:

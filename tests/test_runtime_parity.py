@@ -301,18 +301,34 @@ def test_the_receipts_agree_on_everything_but_identity(root, three_plans):
 # --- the surfaces themselves ------------------------------------------------
 
 def test_the_mcp_surface_equals_the_live_agent_registry(tmp_path):
-    """Derived from a running agent server, not from a roster in this file."""
+    """Derived from a running agent server, not from a roster in this file.
+
+    Two exclusions, both principled: ``initialize`` is MCP's own handshake, and
+    the protocol-only methods push notifications, which an MCP tool call has
+    nowhere to put. ``event/poll`` is the tool-shaped equivalent and IS exposed,
+    so an MCP client is not left without the events.
+    """
     agent = rt_server.RuntimeServer(entry="agent", root=tmp_path / "probe")
+    excluded = {"initialize", *rt_core.PROTOCOL_ONLY_METHODS}
     expected = {mcp_server.tool_name(name) for name in agent._methods
-                if name != "initialize"}
+                if name not in excluded}
     assert set(mcp_server.TOOL_TO_METHOD) == expected
+    assert "event_poll" in mcp_server.TOOL_TO_METHOD
+    for name in rt_core.PROTOCOL_ONLY_METHODS:
+        assert mcp_server.tool_name(name) not in mcp_server.TOOL_TO_METHOD
 
 
 def test_no_front_end_exposes_a_method_outside_the_roster(tmp_path):
     host = rt_server.RuntimeServer(entry="host", root=tmp_path / "h")
     assert set(host._methods) == set(rt_core.METHODS)
     agent = rt_server.RuntimeServer(entry="agent", root=tmp_path / "a")
-    assert set(agent._methods) == set(rt_core.AGENT_METHODS)
+    assert set(agent._methods) == (set(rt_core.AGENT_METHODS)
+                                   | set(rt_core.PROTOCOL_ONLY_METHODS))
+    # protocol-only methods are agent-SAFE: on both entries, adding no
+    # authority, which is why the host set is simply the union
+    assert set(rt_core.PROTOCOL_ONLY_METHODS) <= set(host._methods)
+    assert set(rt_core.PROTOCOL_ONLY_METHODS).isdisjoint(
+        rt_core.HOST_ONLY_METHODS)
 
 
 def test_the_cli_reaches_host_methods_that_mcp_cannot(tmp_path, source):

@@ -169,6 +169,96 @@ Both need absolute paths — the adapter has no ambient working directory and
 refuses to start without `--root`. Open documents with the host CLI first;
 `session_list` is how the agent finds them.
 
+## Page rendering
+
+```sh
+python runtime/scripts/cli.py --root $R render --session $SID [--page 0] [--dpi 96]
+python runtime/scripts/cli.py --root $R render --session $SID --require-render
+```
+
+`document/render` produces a PNG **when the session already has a PDF** — the
+opened document is one, or `--run` names a candidate that is one. An HWPX
+cannot become a PDF here: conversion is Hancom COM or LibreOffice and this
+build calls neither. In that case the answer is a structured unavailable state
+with a reason from a closed set (`needs_conversion`, `no_rasterizable_artifact`,
+`rasterizer_missing`, `artifact_missing`) — never an approximate page drawn
+from the form scan's margins.
+
+`available: false` is a **result**, not an error, so a UI can draw it. `render`
+therefore exits 0; `--require-render` turns "no page" into exit 3 for a caller
+that wants a picture or nothing.
+
+The raster always has a session-relative `path`; base64 is inlined only under
+512 KiB. A result carries `evidence.class = "structural_only"` and
+`proofGrade: "none"` — a page image is a view of bytes, not evidence about them.
+
+PyMuPDF is an **optional** dependency, imported lazily; without it the answer is
+`rasterizer_missing`. `capabilities.render.converter` is flatly `no` whatever
+the machine has installed. For the machine's actual inventory ask
+`capabilities/list {probeRenderers: true}` — opt-in, because it costs ~8s.
+
+### Making the PDF: `document/renderPrepare` (host only)
+
+```sh
+python runtime/scripts/cli.py --root $R render-prepare --session $SID
+python runtime/scripts/cli.py --root $R render --session $SID   # now a page
+```
+
+The step that lights up the Document view on a machine with Hancom: a bounded
+child runs `engine/scripts/com_backend.py convert` against the **session copy**
+— never the file the operator picked — and the PDF lands at
+`<session>/derived/source.pdf`, recorded against the source SHA-256 so it can
+never be served for a different document.
+
+**COM is serial and we never make room.** `tasklist` is checked for a live
+Hancom process and a hit is `com_busy` — not a queue, and never a kill. There
+is no kill path in `rt_convert` and a test asserts that by AST. An unreadable
+`tasklist` counts as busy, not free. This is `engine/scripts/guards.py:234-240`
+(T21) as a rule rather than a comment: two sessions each running
+`taskkill /F /IM Hwp.exe` produced four RPC crashes in a row.
+
+Refusals: `needs_hancom`, `com_busy`, `not_convertible`, `convert_failed`
+(including `timedOut`). Preparing twice is a no-op. Success appends a
+`pdf.prepared` event.
+
+**The live COM leg has no automated test** — the suite may not start Hancom.
+Everything around it is tested with the convert step substituted by a prebuilt
+PDF. One live smoke on an operator machine is owed.
+
+## Events
+
+Every session keeps `<session>/events.jsonl`, appended on each mutation:
+`session.opened`, `plan.proposed`, `plan.validated`, `approval.requested`,
+`approval.resolved`, `plan.applied`, `candidate.published`.
+
+```sh
+python runtime/scripts/cli.py --root $R events --session $SID [--after N]
+```
+
+On the wire there are two surfaces because there are two transports:
+
+- `event/subscribe {sessionId, after?, intervalMs?}` → notifications on the
+  same stdio stream, seq-ordered and gap-free, replayed from `after+1`. Plus
+  `event/unsubscribe`. **Protocol-only** — a push has nowhere to live in an MCP
+  tool call.
+- `event/poll {sessionId, after?, limit?}` — the same events, request/response,
+  and an MCP tool, so a pull-only client is not left out.
+
+The sequence is the **line index**, not a stored field: monotonic, gap-free and
+duplicate-free by construction, so a cursor survives a reconnect. Appends take
+a real file lock — `open("ab")` plus one `write` is *not* an atomic append on
+Windows (CPython emulates `O_APPEND` with seek-then-write; four threads × fifty
+lines produced 167 of 200 on this bench, silently).
+
+## Packaging: `RIGORLOOM_CHILD_PYTHON`
+
+Engine children spawn under this interpreter when it is set, and under
+`sys.executable` otherwise. A frozen host needs it: there `sys.executable` is
+the host, so every child re-launches the application. A set-but-broken value is
+refused at `initialize` with `child_python_invalid` rather than surfacing as a
+mystery twenty seconds into the first document call.
+`capabilities.childPython` reports the path and where it came from.
+
 ## Mock agent
 
 `runtime/scripts/mock_agent.py` is a deterministic driver of the agent surface,

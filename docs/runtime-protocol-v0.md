@@ -465,14 +465,17 @@ how the Runtime was launched — never a field a client sets in a request. A
 | `artifact/exportTo` (user-chosen path) | writes outside the workspace | `engine/scripts/document_evidence.py:558` (`_safe_relative_path`) refuses escapes for everything inside |
 | `provider/configure` | credentials and model endpoints | `pipeline/scripts/backend_precheck.py:9-12` keeps all backend specifics in an operator-private config, never in the repo |
 | `policy/set` | changes what the gates mean | `pipeline/scripts/personalization_ctl.py:1-6` — profile roots are local operator state |
+| `document/renderPrepare` | starts Hancom on the operator's machine | implemented; `rt_convert` — serial, refuses a busy machine, never terminates one |
 | `workspace/delete` | irreversible | GAP: no deletion entrypoint exists. Build note: implement as snapshot-then-remove via `ws_snapshot`, host-only, never exposed to an agent connection |
 
 ### Agent-safe methods
 
-`capabilities/list`, `workspace/list`, `document/summary`, `document/graph`,
-`document/regions`, `document/readRegion` (bounded, opt-in), `plan/propose`,
+`capabilities/list`, `session/list`, `document/inspect` (returning `summary`,
+`graph` and `regions`), `document/readRegion` (bounded, opt-in), `document/render`,
+`plan/propose`,
 `plan/validate`, `approval/request`, `candidate/read`, `verify/read`,
-`receipt/read`, `event/subscribe`.
+`receipt/read`, `event/poll`, and the protocol-only `event/subscribe` /
+`event/unsubscribe`.
 
 Note what is *not* on the agent list: `plan/apply`. In v0 an agent proposes and
 validates; the host applies. This is the conservative reading of "one
@@ -554,13 +557,15 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | --- | --- | --- | --- |
 | `initialize` | either | — | GAP: new. Build note: version string equality + capability snapshot from `engine/scripts/probe.py:1`. |
 | `capabilities/list` | agent | `engine/scripts/probe.py:1`; `pipeline/scripts/render_probe.py:20`; `pipeline/scripts/module_registry.py:509` | none for content; GAP for the `methods` list (computed by the Runtime) |
-| `workspace/list` | agent | `studio/main.py:100` (`safe_workspace`) + `WORKSPACE_ROOT` (`studio/main.py:91-96`) | GAP: enumeration lives in Studio's HTTP layer, not a library. Build note: lift slug resolution into a shared module both Studio and Runtime import. |
+| `workspace/list` | — | — | **WITHDRAWN**, not deferred. A Runtime workspace is not an object: `--root` is the store and a connection has exactly one. `session/list` is the enumeration. See §11 |
 | `workspace/openPath` | host | `pipeline/scripts/hwp_ingress.py:1` (bounded ingress) | GAP: no "open arbitrary path into a workspace" entrypoint. Build note: ingress-validate, then copy into the workspace; never operate in place. |
 | `workspace/importAttachment` | host | `pipeline/scripts/hwp_ingress.py:40-46`; `pipeline/scripts/privacy_scan.py:1` | GAP: no import command. Build note: bounds + privacy scan before the bytes land. |
-| `document/summary` | agent | `engine/scripts/form_inspect.py:1167`; COM variant `engine/scripts/com_backend.py:1715` | none |
-| `document/graph` | agent | `engine/scripts/form_inspect.py:802` (`_table_map`), `:1051` (`_resolve_at_para`) | none |
-| `document/regions` | agent | `engine/scripts/form_inspect.py:620` (`_fill_preflight`), `:913` (`_run_record`) | none |
-| `document/readRegion` | agent | `engine/scripts/form_inspect.py:943` (`--full-text`) | GAP: no response size bound. Build note: cap and refuse, do not truncate. |
+| `document/inspect` | agent | `engine/scripts/form_inspect.py:1167`; COM variant `engine/scripts/com_backend.py:1715` | none. **Not three methods.** One call returns `summary`, `graph` and `regions` together, selectable with `include`; the next three rows describe what it RETURNS, not methods you can call |
+| `document/inspect` → `graph` | agent | `engine/scripts/form_inspect.py:802` (`_table_map`), `:1051` (`_resolve_at_para`) | none. A RESULT SECTION, not a method — there is no `document/graph` on the wire |
+| `document/inspect` → `regions` | agent | `engine/scripts/form_inspect.py:620` (`_fill_preflight`), `:913` (`_run_record`) | none. A RESULT SECTION, not a method |
+| `document/readRegion` | agent | `engine/scripts/form_inspect.py:943` (`--full-text`) | implemented, bounded, refuses rather than truncates |
+| `document/render` | agent | `rt_render.render_page` over PyMuPDF (optional) | implemented; see §11 for when it can and cannot produce a page |
+| `document/renderPrepare` | **host** | `engine/scripts/com_backend.py convert` in a bounded child | implemented; serial, refuses `com_busy`, never kills — §11.1b |
 | `plan/propose` | agent | — | GAP: new object over existing op registries (`engine/scripts/preedit.py:2425`+, `engine/scripts/xml_backend.py:27`, `engine/scripts/com_backend.py:1598`). |
 | `plan/validate` | agent | `engine/scripts/com_backend.py:1670`; `engine/scripts/preedit.py:136`/`:180`/`:221` | GAP: validation is per-script today. Build note: one dispatcher that routes each op kind to its owning backend's validator without executing. |
 | `plan/apply` | host | `engine/scripts/preedit.py:2417`; `engine/scripts/xml_backend.py:1116`; `engine/scripts/com_backend.py:1723` | GAP: no cross-backend applier. Build note: one plan = one backend; a mixed plan is `invalid_params`, because `preedit` already refuses to mix its own two addressing modes in one call for the same reason (`engine/scripts/preedit.py:2552-2555`). |
@@ -578,7 +583,8 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | `workspace/snapshot` | host | `pipeline/scripts/ws_snapshot.py:1` | none |
 | `workspace/restore` | host | `pipeline/scripts/ws_snapshot.py:477` | none |
 | `workspace/delete` | host | — | GAP (see §4) |
-| `event/subscribe` | agent | `modules/report/scripts/pipeline_ctl.py:857` (`append_event`) | GAP: no watcher. Build note: poll-and-diff the tail, as Studio does at `studio/main.py:1005`. |
+| `event/subscribe`, `event/unsubscribe` | agent (protocol-only) | `rt_session.append_event` / `read_events` over the SESSION log | implemented; poll-and-diff, seq-ordered. Not an MCP tool — see §11 |
+| `event/poll` | agent | same source, request/response | implemented |
 | `$/cancel` | either | `pipeline/scripts/diagnostic_candidate_core.py:1128` | GAP: cooperative cancellation between steps only. |
 
 ---
@@ -669,7 +675,8 @@ The slice serves the offline `preedit` backend only (orchestrator decision D9);
 | `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan` |
 | `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
 | cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
-| `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `event/subscribe`, `verify/*` | GAP | — |
+| `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `verify/*` | GAP | — |
+| `document/render`, `document/renderPrepare`, `event/subscribe`, `event/unsubscribe`, `event/poll` | implemented in Phase 3 | §11 |
 
 Cancellation is spelled `{"kind":"cancel","id":...}` rather than a `$/cancel`
 method: a cancel is not a request, it takes no response, and the reader thread
@@ -805,6 +812,197 @@ CLI's `verify` composes it, and the wire does not grow a tool for it.
 ### Still GAP after Phase 2
 
 `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`,
-`workspace/restore`, `workspace/delete`, `event/subscribe`, `verify/*` as
-protocol methods, renderer capability reporting, and descendant containment for
-child processes.
+`workspace/restore`, `workspace/delete` and `verify/*` as protocol methods, and
+descendant containment for child processes. `document/render`, the event stream
+and renderer capability reporting closed in Phase 3 (§11).
+
+---
+
+## 11. Phase 3 — rendering, events, and the child interpreter
+
+Three gaps the Desktop foundation recorded (`desktop/README.md`, "Runtime gaps
+this phase hit"), closed in the order they block the product surface.
+
+### 11.1 `document/render` — and when there is no page
+
+```
+document/render {sessionId, page?=0, dpi?=96, runId?, inline?=true}
+```
+
+**What can produce a page image today, without COM.** Only a PDF. PyMuPDF can
+rasterise one and is importable in most installs, but it is an OPTIONAL
+dependency (`pyproject.toml` extras `studio`, `engine`), so it is imported
+lazily inside the call and its absence is a reported state rather than a
+startup error. An HWPX cannot become a PDF here: conversion is Hancom COM
+(`engine/scripts/com_backend.py convert`) or LibreOffice, and this build runs
+neither.
+
+So the method renders when the session already HAS a PDF — because the opened
+document is one, or because `runId` names a candidate that is one — and
+otherwise returns a structured unavailable state. **There is no fabricated
+layout.** A form scan knows a page's margins (`page_metrics`); it does not know
+what the page looks like, and drawing a box from the one and calling it the
+other would be a lie the Desktop would faithfully render.
+
+`available: false` is a RESULT, not an error, because "there is no page image
+for this document" is an answer the UI must draw. The reason comes from a
+closed set:
+
+| reason | means |
+| --- | --- |
+| `needs_conversion` | an HWPX; a converter would be required, and this build calls none |
+| `no_rasterizable_artifact` | nothing here is a PDF |
+| `rasterizer_missing` | a PDF is present but PyMuPDF is not importable |
+| `artifact_missing` | a `runId` was named and its bytes are gone |
+
+On success the response carries `pageCount`, `pageSize` in points, the dpi
+used, and an `image` that ALWAYS has a session-relative `path` and inlines
+base64 only when it fits under `MAX_INLINE_IMAGE_BYTES` (512 KiB, well under
+the 1 MiB frame cap because base64 costs a third on top). Above that it says
+`inline: false` with a reason rather than blowing the frame.
+
+Naming a `runId` reads the receipt first, so a raster is never taken from a
+candidate whose bytes drifted after publication.
+
+**A raster is not evidence.** Every result carries
+`evidence.class = "structural_only"` and `proofGrade: "none"`, using
+`engine/scripts/document_evidence.py`'s closed vocabularies (`:40`, `:780`).
+Rendering bytes tells you what they draw, not that they are the right bytes.
+
+**Capability reporting.** `capabilities.render` has two rows.
+`rasterizer` is a `find_spec` — cheap enough for the hot path.
+`converter` is flatly `no` with a reason, whatever the machine has installed,
+because a converter this build does not call is not a capability this build
+has. The machine's actual inventory is opt-in:
+`capabilities/list {probeRenderers: true}` runs
+`pipeline/scripts/render_probe.py` in a bounded child and caches it for the
+process. It is opt-in because it costs about eight seconds on the bench —
+fine for a button, ruinous for `initialize`.
+
+### 11.1b `document/renderPrepare` — making the PDF
+
+```
+document/renderPrepare {sessionId, timeoutSeconds?}      HOST ONLY
+```
+
+The step that turns an HWPX session into something `document/render` can
+raster, and the only place in the Runtime that can reach Hancom. A human
+clicks; a bounded child runs `engine/scripts/com_backend.py convert`; the PDF
+lands at `<session>/derived/source.pdf` and is recorded against the source's
+SHA-256 so it can never be served for a document it does not describe.
+
+Four rules, each with a scar behind it:
+
+1. **The user's original is never the input.** The conversion runs against the
+   session copy. Hancom opens and re-saves documents; pointing it at the file
+   the operator picked would put the one irreplaceable artifact under an
+   automated editor.
+2. **COM is serial and we never make room.** `tasklist` is checked for a live
+   Hancom image name and a hit is `com_busy` — not a queue, and never a kill.
+   `engine/scripts/guards.py:234-240` records what `--kill-stale` did the last
+   time two sessions shared a machine: each one's `taskkill /F /IM Hwp.exe`
+   killed the other's in-progress instance, four RPC crashes in a row.
+   `pipeline/scripts/visual_verify.py:57-63` states the same rule. There is no
+   kill path in `rt_convert`, and a test asserts that structurally (by AST, so
+   the docstring may still explain the danger).
+   An unreadable `tasklist` counts as busy, not as free.
+3. **The child is bounded like every other child.** Same `run_child`, same
+   environment allowlist, its own 30–900 s timeout. A hang is
+   `convert_failed {timedOut: true}`, never a hung request.
+4. **Absence is reported.** No Hancom is `needs_hancom` with the reason, and
+   `capabilities.render.prepare` says so before anyone clicks.
+
+Refusals: `needs_hancom`, `com_busy`, `not_convertible`, `convert_failed`.
+Preparing twice is a no-op that reports `prepared: false`. Success appends a
+`pdf.prepared` event.
+
+**The live COM leg is not tested.** The suite may not start Hancom, so the
+tests cover the ProgID probe, the tasklist parse, all four refusals, the
+source-binding rule, the authority split, and the whole prepare → render chain
+with `rt_convert.run_convert` substituted by a prebuilt PDF. One live smoke on
+an operator machine is owed.
+
+### 11.2 Events
+
+Sessions now keep their own log at `<session>/events.jsonl`, appended on every
+mutation: `session.opened`, `plan.proposed`, `plan.validated`,
+`approval.requested`, `approval.resolved`, `plan.applied`,
+`candidate.published`. This is a RUNTIME log; the report pipeline's own
+`events.jsonl` (`modules/report/scripts/pipeline_ctl.py:857`) is a different
+file about a different thing, and the two are deliberately not merged.
+
+**The sequence is the line index, not a stored field.** Storing a sequence
+number means allocating one, and an allocator is a second thing to keep
+consistent. A line's position in the file is monotonic, gap-free and
+duplicate-free by construction, so a cursor is safe across processes. A torn
+trailing line (a crash mid-write) keeps its index and is skipped — indexes are
+never reused, which is the property that makes `after: N` mean something.
+
+Two surfaces, because two transports:
+
+```
+event/subscribe {sessionId, after?=-1, intervalMs?=250}   protocol-only
+   -> {subscriptionId, ...} then notification "event" {subscriptionId,
+      sessionId, event:{seq, at, kind, sessionId, detail}}
+event/unsubscribe {subscriptionId}                        protocol-only
+event/poll {sessionId, after?=-1, limit?}                 agent-safe, MCP tool
+```
+
+`event/subscribe` pushes notifications, which an MCP tool call has nowhere to
+put — so `rt_core` gained a third roster, `PROTOCOL_ONLY_METHODS`: agent-safe
+by authority, registered on both JSONL entries, absent from the MCP tool
+surface. `event/poll` is the tool-shaped equivalent, so an MCP client is not
+left without the events.
+
+Delivery is poll-and-diff on a bounded interval (50–5000 ms), capped at 500
+events per tick and 32 subscriptions per connection. The replay and every later
+event are written AFTER the subscribe response, so a client always learns its
+subscription id before the first event on it.
+
+**A measured correction to §1 of this document.** The earlier claim that a
+single `write` of one line to a handle opened `ab` is atomic is FALSE on
+Windows: CPython's `O_APPEND` goes through the CRT, which emulates it by
+seeking to the end and then writing. Four threads appending fifty lines each
+produced 167 of 200 lines on this bench, silently, with no error raised. Event
+appends therefore take a process-local mutex plus a real byte-range lock on a
+sibling `.lock` file (`flock` on POSIX, `msvcrt.locking` on Windows). Anything
+else in this program that appends to a shared file has the same bug.
+
+### 11.3 `RIGORLOOM_CHILD_PYTHON`
+
+`rt_engine` spawns every engine child under `child_python()`, which is the
+environment variable when set and `sys.executable` otherwise. `sys.executable`
+is the wrong default for a packaged host: in a frozen executable it IS the
+host, so each child re-launches the application — the recursion the desktop
+sidecar worked around with an argv convention.
+
+A SET override that names no file is refused at `initialize` with
+`child_python_invalid`, because the operator should meet a misconfiguration
+there rather than twenty seconds into the first inspect. An unset or blank
+value is not an override. `capabilities.childPython` reports the path, the
+source (`override` or `sys.executable`) and the variable name.
+
+### 11.4 `workspace/list` — withdrawn, not deferred
+
+The desktop foundation asked whether a Workspace is a runtime object or a
+shell-side grouping. It is neither, and §3.1 of this document is where the
+confusion started: the "Workspace" described there is the REPORT PIPELINE's
+workspace — `PIPELINE.md`, `APPROVALS.md`, `bundle/`, `output/` — which the
+Runtime does not manage and has no method for.
+
+What the Runtime has is `--root`: a store, one per connection, holding
+sessions, plans, approvals and candidates. `session/list` enumerates it.
+A `workspace/list` returning a single row for the root the caller already
+passed would be surface without a concept, so it is withdrawn from the method
+table rather than left as a GAP implying someone should build it. If a Desktop
+Workspace turns out to be a grouping of sessions, that grouping is shell state
+and should live in the shell.
+
+### 11.5 Still GAP after Phase 3
+
+`verify/*` as protocol methods (the domain has `RuntimeCore.candidate_verify`
+and the CLI exposes it; the wire does not), `artifact/exportTo`,
+`provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`,
+`workspace/delete`, section and heading structure (desktop gap 6), descendant
+containment for child processes, and last-writer-wins on plan and approval
+records under one root — the event log is now locked, those records are not.
