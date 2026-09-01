@@ -993,7 +993,13 @@ async function phasePage(config: SmokeConfig) {
         .includes(render.unavailable?.reason ?? ""),
       render.unavailable?.reason ?? "none");
     check("the runtime's own detail is on screen, verbatim",
-      domText('[data-testid="render-reason"]').includes(render.unavailable?.detail ?? " "),
+      domText('[data-testid="render-reason"]').includes(
+        // An impossible sentinel, so a MISSING detail fails this check rather
+        // than passing it vacuously. It used to be a literal NUL byte in the
+        // source, which made git classify this whole harness as binary: no eol
+        // normalisation, and every diff of it unreviewable.
+        render.unavailable?.detail ?? "<no detail on the wire>",
+      ),
       render.unavailable?.detail ?? "");
     check("the geometry figure is still captioned as geometry, not as a page",
       domText('[data-testid="page-geometry"]').toLowerCase().includes("page geometry"),
@@ -1139,9 +1145,40 @@ async function phaseOverlay(config: SmokeConfig) {
   await selectSession(stagedId);
   await settled(300);
   setCenterMode("page");
-  await renderCurrentPage(1);
+
+  // FIND THE SEATS, do not assume which page carries them.
+  //
+  // `cell_borders` places seats where the page draws a closed grid AND the
+  // walk to reach them was confirmed by the render, so they land where the
+  // form has ruled tables — not on page 1 of every form. The harness asks the
+  // runtime page by page and settles on the page with the most seats, which
+  // keeps this phase honest if the derivation's numbers move: it exercises
+  // whatever the runtime actually placed rather than a page number written
+  // down when the numbers happened to be what they are today. Bounded, because
+  // each page is a real extraction.
+  const SEAT_SCAN_PAGES = 8;
+  let seatPage = 1;
+  let bestSeats = -1;
+  const scan: string[] = [];
+  for (let p = 1; p <= SEAT_SCAN_PAGES; p += 1) {
+    await loadGeometry(p);
+    await settled(80);
+    const probe = getState().geometry;
+    if (!probe?.available) break;
+    const found = (probe.seats ?? []).length;
+    scan.push(`${p}:${found}`);
+    if (found > bestSeats) {
+      bestSeats = found;
+      seatPage = p;
+    }
+    if ((probe.pageCount ?? 1) <= p) break;
+  }
+  check("the harness went to the page the runtime actually seats, not page 1",
+    bestSeats >= 0, `seats per page — ${scan.join(" ")} · chose ${seatPage}`);
+
+  await renderCurrentPage(seatPage);
   await settled(300);
-  await loadGeometry(1);
+  await loadGeometry(seatPage);
   await settled(300);
 
   const g = getState().geometry;
@@ -1292,23 +1329,92 @@ async function phaseOverlay(config: SmokeConfig) {
     check("no editable overlay was drawn where the runtime placed no seat",
       drawnEditable === 0, `${drawnEditable} editable overlays`);
   } else {
-    const target = document.querySelector<HTMLButtonElement>(
-      '[data-testid="overlay-seat"][data-editable="true"], ' +
-        '[data-testid="overlay-span"][data-editable="true"]',
-    );
+    // THE MARQUEE INTERACTION, on a real target for the first time.
+    //
+    // A `cell_borders` seat is preferred over any other kind, because it is the
+    // derivation that made this reachable at all (§12.4) and the one every seat
+    // on this corpus uses. The address is read off the SEAT the runtime placed,
+    // and every assertion below compares against that triple rather than
+    // against whatever the editor happened to open — an overlay that drew the
+    // right box and opened the wrong cell would pass a looser check.
+    const seatTarget =
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="overlay-seat"][data-editable="true"][data-derivation="cell_borders"]',
+      ) ??
+      document.querySelector<HTMLButtonElement>('[data-testid="overlay-seat"][data-editable="true"]');
+    const target =
+      seatTarget ??
+      document.querySelector<HTMLButtonElement>('[data-testid="overlay-span"][data-editable="true"]');
+    const wantedAddress = target?.getAttribute("data-address") ?? null;
+    const wantedDerivation = target?.getAttribute("data-derivation") ?? null;
+    check("the target clicked is a seat the RUNTIME placed, with its derivation on it",
+      !!seatTarget && wantedDerivation === "cell_borders",
+      `${wantedAddress} derived by ${wantedDerivation ?? "—"}`);
+
+    // A resting affordance, not a hover-only one. With 37 seats on a page an
+    // invisible invitation is an undiscoverable feature; the check reads the
+    // COMPUTED style rather than the class list, because a class that no rule
+    // matches would satisfy a class-name assertion and draw nothing.
+    if (seatTarget) {
+      const resting = window.getComputedStyle(seatTarget);
+      const painted =
+        resting.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+        resting.backgroundColor !== "transparent";
+      checkDom("an empty seat is visible before the pointer ever touches it",
+        painted, `background ${resting.backgroundColor}, border ${resting.borderColor}`);
+      checkDom("and it says it is a text seat, not a link",
+        resting.cursor === "text", resting.cursor);
+    }
+
     target?.click();
     await settled(240);
+    const edit = getState().inlineEdit;
     checkDom("clicking an editable target opened the SAME inline editor the tree uses",
-      !!document.querySelector('[data-testid="seat-input"]'),
-      String(getState().inlineEdit?.table));
+      !!document.querySelector('[data-testid="seat-input"]'), String(edit?.table));
+    // ON the page, not beside it. The first run of this branch found the
+    // opposite: `beginEdit` set the state and the only input element in the app
+    // was inside `TextView`, which 페이지 보기 does not mount — so a page click
+    // opened an edit nobody could type into. The field now lives in the
+    // rectangle the runtime placed, which is what "editing on the page" means.
+    const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+    checkDom("and the field is IN the rectangle the runtime placed, not beside the page",
+      !!field?.closest('[data-testid="page-overlay"]') &&
+        !!field?.closest('[data-testid="overlay-editing"]'),
+      field?.closest("[data-testid]")?.getAttribute("data-testid") ?? "nowhere");
+    check("the editor opened on the address the seat carries, not a neighbour",
+      !!edit && `${edit.table}-${edit.row}-${edit.col}` === wantedAddress,
+      `${edit ? `${edit.table}-${edit.row}-${edit.col}` : "none"} vs ${wantedAddress}`);
+    checkDom("the status bar says which address, and how the runtime found it",
+      domText('[data-testid="status-overlay-pick"]').includes("그려진 선으로 잡음") &&
+        document
+          .querySelector('[data-testid="status-overlay-pick"]')
+          ?.getAttribute("data-derivation") === "cell_borders",
+      domText('[data-testid="status-overlay-pick"]'));
+
     await commitEdit("지면에서 입력");
     await settled(400);
     const op = getState().draft.ops.find((o) => o.text === "지면에서 입력");
     check("the overlay edit landed in the same review queue as a tree edit",
       !!op && op.kind === "fill_cell" && op.origin === "user", JSON.stringify(op ?? null));
+    check("the queued op targets the seat that was clicked",
+      !!op && `${op.table}-${op.row}-${op.col}` === wantedAddress,
+      `${op ? `${op.table}-${op.row}-${op.col}` : "none"} vs ${wantedAddress}`);
+    const plan = getState().draft.plan;
     check("one plan path: the queue rebuilt a plan over the overlay's op",
-      !!getState().draft.plan?.planId,
-      getState().draft.plan?.planId ?? "no plan");
+      !!plan?.planId, plan?.planId ?? "no plan");
+    // The address survives all the way to the wire, not only to the store. A
+    // review queue row and a plan op that disagreed about the target would be
+    // an approval bound to a cell nobody chose.
+    const planned = (plan?.ops ?? []).map((o) => {
+      const p = o.params as Record<string, unknown>;
+      return `${p.table ?? 0}-${p.row}-${p.col}`;
+    });
+    check("and the plan the runtime returned names that same cell",
+      !!wantedAddress && planned.includes(wantedAddress),
+      `${planned.join(", ") || "no ops"} vs ${wantedAddress}`);
+    check("the overlay entry point produced ONE op, not a second path's duplicate",
+      getState().draft.ops.filter((o) => o.text === "지면에서 입력").length === 1,
+      `${getState().draft.ops.length} ops queued`);
   }
 
   setCenterMode("text");
@@ -1389,12 +1495,55 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   // substitution at all, which is a refusal, and photographing the refusal is
   // the point: a screenshot of a feature working on a machine where it does not
   // work is the exact thing this harness exists not to produce.
-  if (stop === "overlay" || stop === "overlay-live") {
+  if (stop === "overlay" || stop === "overlay-live" || stop === "overlay-seat") {
     const { loadGeometry, selectSession } = await import("./actions");
     const staged = (await rt.smokeConfig()).stagedSession;
-    if (stop === "overlay" && staged) {
+    if (stop !== "overlay-live" && staged) {
       await selectSession(staged);
       await settled(300);
+    }
+    // THE MARQUEE SHOT. A real seat on a real page, opened into the real inline
+    // editor with a value part-typed into it — the interaction the product is
+    // for, photographed on the page the runtime actually seated. The page is
+    // found by asking, not written down: the shot goes wherever the runtime put
+    // the most seats, so this capture cannot quietly become a picture of an
+    // empty page if the derivation's numbers move.
+    if (stop === "overlay-seat") {
+      setCenterMode("page");
+      let seatPage = 1;
+      let best = -1;
+      for (let p = 1; p <= 8; p += 1) {
+        await loadGeometry(p);
+        await settled(80);
+        const probe = getState().geometry;
+        if (!probe?.available) break;
+        const found = (probe.seats ?? []).length;
+        if (found > best) {
+          best = found;
+          seatPage = p;
+        }
+        if ((probe.pageCount ?? 1) <= p) break;
+      }
+      await renderCurrentPage(seatPage);
+      await settled(400);
+      await loadGeometry(seatPage);
+      await settled(500);
+      const target =
+        document.querySelector<HTMLButtonElement>(
+          '[data-testid="overlay-seat"][data-editable="true"][data-derivation="cell_borders"]',
+        ) ??
+        document.querySelector<HTMLButtonElement>('[data-testid="overlay-seat"][data-editable="true"]');
+      target?.click();
+      await settled(300);
+      const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+      if (field) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(field, "2026-09-02");
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await settled(300);
+      await ready(`shot-${stop}`);
+      return;
     }
     if (stop === "overlay-live" && config.corpus) {
       // Open the HWPX AGAIN, unconditionally. The preamble only opens when
@@ -1467,7 +1616,20 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   }
 
   if (stop === "toolbar-text" || stop === "toolbar-page") {
-    const seat = seats[0];
+    // Open the intended form UNCONDITIONALLY, same lesson as overlay-live: by
+    // this point `lastSessionId` is whatever the previous shot selected, and
+    // the toolbar is a picture OF a document's declared shapes. Photographing
+    // the wrong document's font name is a caption error nobody can see.
+    if (config.corpus) {
+      await openPath(config.corpus);
+      await settled(400);
+    }
+    const reopened = activeInspect(getState());
+    const shotSeats = (reopened ?? inspect).regions.regions.filter(
+      (r): r is EditableRegion & { table: number; row: number; col: number } =>
+        r.kind === "cell" && r.table !== undefined && r.row !== undefined && r.col !== undefined,
+    );
+    const seat = shotSeats[0];
     if (seat) setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
     setCenterMode(stop === "toolbar-page" ? "page" : "text");
     if (stop === "toolbar-page") {
@@ -1479,12 +1641,39 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     return;
   }
 
-  if (stop === "packs") {
-    const { loadTaskPacks } = await import("./actions");
+  if (stop === "packs" || stop === "packs-result") {
+    const { loadTaskPacks, openPack, runModuleCheck, runtimeEnabledModules } =
+      await import("./actions");
+    // Open the intended document UNCONDITIONALLY, for the reason the
+    // overlay-live capture found out the hard way: the preamble only opens when
+    // nothing is active, and by this point `lastSessionId` is whatever the
+    // previous shot selected. A check result photographed against the wrong
+    // document is a verdict attached to the wrong file.
+    if (stop === "packs-result" && config.corpus) {
+      await openPath(config.corpus);
+      await settled(400);
+    }
     await loadTaskPacks();
     setView("agent");
-    setState({ packOpen: "report" });
-    await settled(400);
+    // `packs` photographs the declaration panel. `packs-result` photographs a
+    // REAL `module/check` answer, and only when this machine has an enablement
+    // to run against — with none, it falls through to the honest disabled
+    // state, which is the state a fresh checkout genuinely has and is worth a
+    // picture of its own. Nothing here fabricates a verdict.
+    const enabled = runtimeEnabledModules() ?? [];
+    const wanted =
+      stop === "packs-result"
+        ? (enabled.find((n) => n === "grant") ?? enabled[0] ?? "report")
+        : "report";
+    openPack(wanted);
+    await settled(300);
+    if (stop === "packs-result" && enabled.includes(wanted)) {
+      await runModuleCheck(wanted);
+      for (let i = 0; i < 120 && getState().packRun?.phase === "running"; i += 1) {
+        await settled(500);
+      }
+    }
+    await settled(500);
     await ready(`shot-${stop}`);
     return;
   }
@@ -1597,6 +1786,279 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   await ready(`shot-${stop}`);
 }
 
+/**
+ * 작업 팩 실행 — `module/check` against the open session, and what it refuses.
+ *
+ * The phase exists because a run button is the easiest control in this product
+ * to make dishonest. Twelve of the declared checkers take a report WORKSPACE
+ * and a session holds a document, so on any document they come back `skipped`
+ * — and a panel that drew twelve green ticks there would be lying about twelve
+ * rules that never looked. Half of what is asserted here is that they are not
+ * drawn as passes.
+ *
+ * WHAT THIS MACHINE SUPPORTS. `modules/enabled.yaml` is gitignored and absent
+ * from a fresh checkout, so a run needs an enablement to exist. The harness
+ * writes one the way `tests/test_runtime_module_check.py` does — a real
+ * `enabled.yaml` outside the checkout, pointed at by `RIGORLOOM_MODULES_ENABLED`
+ * — and both readers of that file (the Runtime, and `taskpacks.rs` through
+ * `module_registry.py`) honour the same override. Nothing is written into the
+ * repository's own `modules/`. When the variable is absent the phase asserts the
+ * HONEST EMPTY state instead, and says which of the two it exercised.
+ */
+async function phasePacks(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+
+  const caps = getState().capabilities;
+  const modules = caps?.modules ?? null;
+  check("the packaged runtime advertises module/list and module/check",
+    (caps?.methods ?? []).includes("module/list") &&
+      (caps?.methods ?? []).includes("module/check"),
+    (caps?.methods ?? []).filter((m) => m.startsWith("module/")).join(", "));
+  check("capabilities carries the module registry's own state",
+    !!modules && typeof modules.state === "string",
+    `${modules?.state} — ${modules?.reason ?? "no reason"}`);
+  check("running a module is agent-safe by construction, and says its containment is not",
+    modules?.containment === "not_established", modules?.containment ?? "absent");
+
+  const sessionId = await openPath(config.corpus);
+  check("the packs phase opened a document to check", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(300);
+
+  const { loadTaskPacks, openPack, runModuleCheck } = await import("./actions");
+  await loadTaskPacks();
+  setView("agent");
+  await settled(300);
+
+  const packs = getState().taskPacks;
+  check("the task pack list came from the module registry", packs?.available === true,
+    packs?.reason ?? `${packs?.packs.length} packs`);
+  if (!packs?.available) return;
+
+  // TWO READERS, ONE FILE. `taskpacks.rs` shells out to module_registry.py and
+  // the Runtime reads the same enabled.yaml itself; the run button follows the
+  // Runtime. A split between them would put a 꺼짐 label above an enabled
+  // button, so it is asserted rather than assumed — and the files they read are
+  // compared too, because "we disagree" and "we read different files" are
+  // different defects.
+  const { packEnablementDisagrees } = await import("./actions");
+  const runtimeEnabled = modules?.enabled ?? [];
+  const registryEnabled = packs.packs.filter((p) => p.enabled).map((p) => p.name);
+  check("the registry child and the runtime read the same enablement file",
+    !!packs.enabledFile && !!modules?.enabledFile && packs.enabledFile === modules.enabledFile,
+    `${packs.enabledFile} vs ${modules?.enabledFile}`);
+  check("and they agree about which packs are on",
+    packEnablementDisagrees().length === 0,
+    `registry [${registryEnabled.join(",")}] vs runtime [${runtimeEnabled.join(",")}]`);
+
+  check("RECORDED: which enablement state this run exercised", true,
+    runtimeEnabled.length > 0
+      ? `${runtimeEnabled.length} of ${packs.packs.length} modules enabled via ` +
+        `${modules?.enabledFile} — the RUN path is under test`
+      : `0 of ${packs.packs.length} modules enabled (enabled.yaml is gitignored and ` +
+        `absent here) — the honest EMPTY path is under test`);
+
+  // --- the honest empty state, when this machine has no enablement ----------
+  if (runtimeEnabled.length === 0) {
+    const first = packs.packs[0];
+    openPack(first.name);
+    await settled(240);
+    checkDom("a pack nobody enabled offers a 실행 button that is disabled",
+      document.querySelector<HTMLButtonElement>('[data-testid="pack-run-button"]')?.disabled ===
+        true,
+      domText('[data-testid="pack-run"]').slice(0, 200));
+    checkDom("and says enabling is an install-time act, not something the app does",
+      domText('[data-testid="pack-run"]').includes("꺼져 있는 팩"),
+      domText('[data-testid="pack-run"]'));
+    check("no report was drawn for a pack that cannot run",
+      getState().packRun === null && !document.querySelector('[data-testid="module-check-report"]'),
+      JSON.stringify(getState().packRun));
+    checkAlive("the packs phase");
+    return;
+  }
+
+  // --- a module with a DOCUMENT checker: it runs, and its verdict is real ---
+  const documentPack =
+    packs.packs.find((p) => p.enabled && p.name === "grant") ??
+    packs.packs.find((p) => p.enabled);
+  openPack(documentPack!.name);
+  await settled(240);
+  checkDom("the 실행 button is enabled for a pack the runtime says is on",
+    document.querySelector<HTMLButtonElement>('[data-testid="pack-run-button"]')?.disabled ===
+      false,
+    domText('[data-testid="pack-run"]').slice(0, 160));
+
+  await runModuleCheck(documentPack!.name);
+  for (let i = 0; i < 120 && getState().packRun?.phase === "running"; i += 1) {
+    await settled(500);
+  }
+  await settled(300);
+  const run = getState().packRun;
+  check("module/check answered for the enabled pack", run?.phase === "done",
+    run?.phase === "failed" ? JSON.stringify(run.error) : (run?.phase ?? "no run"));
+  if (run?.phase !== "done" || !run.report) {
+    checkAlive("the packs phase");
+    return;
+  }
+  const report = run.report;
+
+  check("the report is bound to the session that was open",
+    report.sessionId === sessionId && report.module === documentPack!.name,
+    `${report.sessionId} / ${report.module}`);
+  check("the checkers were handed a scratch COPY, never the session's own bytes",
+    report.subject.kind === "session_source" && report.evidence.class === "structural_only",
+    `${report.subject.kind} · ${report.evidence.class}`);
+  check("running a check queued nothing and decided nothing",
+    getState().draft.ops.length === 0 && getState().draft.plan === null &&
+      getState().approval === null,
+    `${getState().draft.ops.length} ops, plan ${getState().draft.plan?.planId ?? "none"}`);
+
+  // Every row the runtime returned is on screen, and no others.
+  const drawnRows = document.querySelectorAll('[data-testid^="module-check-row-"]');
+  checkDom("every selected checker is drawn as a row, and no others",
+    drawnRows.length === report.checks.length,
+    `${drawnRows.length} rows / ${report.checks.length} checks`);
+  checkDom("the header prints the runtime's own counts",
+    domText('[data-testid="module-check-counts"]').includes(String(report.counts.selected)) &&
+      domText('[data-testid="module-check-counts"]').includes(String(report.counts.ran)),
+    domText('[data-testid="module-check-counts"]'));
+
+  const ranRows = report.checks.filter((r) => r.state === "ran");
+  check("at least one checker actually ran against the document",
+    ranRows.length > 0,
+    report.checks.map((r) => `${r.checker}:${r.state}:${r.reason ?? "-"}`).join(" "));
+
+  // §13.3. `ok: true` with an input it declares it needs unsupplied is NOT
+  // acceptance, and the panel has to show both facts without either hiding the
+  // other. On a session with no candidate there is no baseline to give, so
+  // every `wants: [baseline]` checker lands here — which is the normal case.
+  const partial = ranRows.filter((r) => r.partial);
+  if (partial.length > 0) {
+    check("a clean-but-partial verdict is not counted as acceptance",
+      report.acceptance === false && partial.every((r) => r.ok === true),
+      `${partial.length} partial, acceptance ${report.acceptance}, reason ${report.reason}`);
+    checkDom("and the row says out loud what it did not get",
+      domText('[data-testid="module-check-report"]').includes("입력 부족") &&
+        partial.every((r) =>
+          (r.wantsUnsatisfied ?? []).every((w) =>
+            domText('[data-testid="module-check-report"]').includes(w))),
+      partial.map((r) => `${r.checker}:${(r.wantsUnsatisfied ?? []).join("+")}`).join(" "));
+  }
+
+  // A rule the checker itself could not decide arrives as a finding with
+  // `severity: "skipped"`. It must be listed — a bare pass hiding it is the
+  // exact failure §13.4 keeps them for.
+  const allFindings = ranRows.flatMap((r) => r.findings ?? []);
+  const undecided = allFindings.filter((f) => f.severity === "skipped");
+  const drawnFindings = document.querySelectorAll('[data-testid^="module-check-finding-"]');
+  checkDom("every finding the runtime returned is drawn, and no others",
+    drawnFindings.length === allFindings.length,
+    `${drawnFindings.length} drawn / ${allFindings.length} returned`);
+  if (undecided.length > 0) {
+    checkDom("a rule the checker could not decide is shown as undecided, never as a pass",
+      document.querySelectorAll('[data-severity="skipped"]').length >= undecided.length &&
+        domText('[data-testid="module-check-report"]').includes("판정 안 함"),
+      `${undecided.length} undecided rules — ${undecided.slice(0, 3).map((f) => f.code).join(",")}`);
+  }
+
+  // An ADDRESSED finding goes to the cell it names. `address` is null wherever
+  // the runtime could not translate the checker's own location, and a null one
+  // must get no link at all: a half address selects the wrong cell.
+  const addressed = allFindings.filter((f) => f.address !== null);
+  check("MEASURED: how many findings carried a Runtime address",
+    true,
+    `${addressed.length} of ${allFindings.length} findings addressed · ` +
+      `${allFindings.length - addressed.length} left their location untranslated`);
+  const links = document.querySelectorAll('[data-testid^="module-check-address-"]');
+  checkDom("exactly the addressed findings offer a link, and the rest offer none",
+    links.length === addressed.length, `${links.length} links / ${addressed.length} addressed`);
+  if (addressed.length > 0) {
+    const want = addressed[0].address!;
+    const link = document.querySelector<HTMLButtonElement>(
+      '[data-testid^="module-check-address-"]',
+    );
+    link?.click();
+    await settled(300);
+    const selection = getState().selection;
+    check("clicking a finding's address selects that cell in the document",
+      selection?.kind === "cell" && selection.table === want.table &&
+        selection.row === want.row && selection.col === want.col,
+      `${selectionId(selection)} vs ${JSON.stringify(want)}`);
+    check("and it went to the view that can show it",
+      getState().view === "document" && getState().centerMode === "text",
+      `${getState().view} / ${getState().centerMode}`);
+    setView("agent");
+    await settled(200);
+  }
+
+  // --- a module whose checkers are ALL workspace-subject ---------------------
+  const workspacePack = packs.packs.find(
+    (p) => p.enabled && p.checkers.length > 0 && p.name === "report",
+  );
+  if (!workspacePack) {
+    check("a workspace-subject pack was enabled for this run", false,
+      `enabled: ${runtimeEnabled.join(",")}`);
+  } else {
+    openPack(workspacePack.name);
+    await settled(240);
+    await runModuleCheck(workspacePack.name);
+    for (let i = 0; i < 120 && getState().packRun?.phase === "running"; i += 1) {
+      await settled(400);
+    }
+    await settled(300);
+    const wsRun = getState().packRun;
+    check("module/check answered for the workspace-only pack too",
+      wsRun?.phase === "done" && !!wsRun.report,
+      wsRun?.phase === "failed" ? JSON.stringify(wsRun.error) : (wsRun?.phase ?? "none"));
+    const wsReport = wsRun?.report;
+    if (wsReport) {
+      const skipped = wsReport.checks.filter((r) => r.state === "skipped");
+      check("every workspace checker came back skipped, with the runtime's reason",
+        skipped.length === wsReport.checks.length &&
+          skipped.every((r) => r.reason === "needs_workspace"),
+        `${skipped.length} of ${wsReport.checks.length} skipped — ` +
+          `${[...new Set(wsReport.checks.map((r) => r.reason))].join(",")}`);
+      check("nothing ran, and acceptance is false rather than vacuously true",
+        wsReport.ranAll === false && wsReport.acceptance === false &&
+          wsReport.counts.ran === 0,
+        `ranAll ${wsReport.ranAll} acceptance ${wsReport.acceptance} reason ${wsReport.reason}`);
+      const drawn = domText('[data-testid="module-check-report"]');
+      checkDom("the panel draws them as 건너뜀, and never as a pass",
+        document.querySelectorAll('[data-state="skipped"]').length === skipped.length &&
+          drawn.includes("건너뜀") && !drawn.includes("pass"),
+        `${document.querySelectorAll('[data-state="skipped"]').length} skipped rows drawn`);
+      checkDom("each skipped row says WHY, in Korean, from the reason code",
+        domText('[data-testid="module-check-why-0"]').includes("보고서 작업 폴더"),
+        domText('[data-testid="module-check-why-0"]').slice(0, 160));
+      checkDom("and the runtime's own detail is printed beside it, not replaced",
+        domText('[data-testid="module-check-why-0"]').includes("workspace"),
+        domText('[data-testid="module-check-why-0"]').slice(0, 220));
+      // The one summary word a reader takes away. Twelve rules that never
+      // looked must not add up to 통과.
+      checkDom("the header says 통과 아님, not 통과",
+        drawn.startsWith("통과 아님"), drawn.slice(0, 80));
+    }
+  }
+
+  // A pack the operator did not enable stays unrunnable, whatever the UI does.
+  const off = packs.packs.find((p) => !p.enabled);
+  if (off) {
+    openPack(off.name);
+    await settled(240);
+    checkDom("a pack nobody enabled cannot be run from here either",
+      document.querySelector<HTMLButtonElement>('[data-testid="pack-run-button"]')?.disabled ===
+        true,
+      `${off.name}: ${domText('[data-testid="pack-run"]').slice(0, 120)}`);
+    check("opening another pack dropped the previous pack's verdict",
+      getState().packRun === null, JSON.stringify(getState().packRun?.module ?? null));
+  }
+
+  checkAlive("the packs phase");
+}
+
 /** The welcome state, with a recent already in it so the list is visible. */
 async function phaseWelcome() {
   setState({ activeSessionId: null, sheetOpen: false });
@@ -1650,6 +2112,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
     else if (config.phase === "overlay") await phaseOverlay(config);
+    else if (config.phase === "packs") await phasePacks(config);
     else if (config.phase === "composer") await phaseComposer(config);
     else if (config.phase === "settings") await phaseSettings();
     else if (config.phase === "chrome") await phaseChrome(config);
@@ -2049,15 +2512,73 @@ async function phaseChrome(config: SmokeConfig) {
         domText('[data-testid="tool-charpr"]').includes(String(seat.charPr)),
       `${domText('[data-testid="tool-charpr"]')} vs charPr ${seat.charPr}`);
     // T30: this corpus form's first seat differs from the body shape, and the
-    // toolbar must say so rather than showing a bare number.
+    // toolbar must say so rather than showing a bare number. The tag names the
+    // body FACE where §14 gave it one and falls back to 본문과 다름 where the
+    // document declared none, so either wording is the mark — an unmarked
+    // mismatch is the failure.
     if (seat.charPrSuggested !== undefined && seat.charPr !== seat.charPrSuggested) {
+      const tag = domText('[data-testid="tool-charpr"]');
       checkDom("a seat whose shape differs from the body is marked in the toolbar",
-        domText('[data-testid="tool-charpr"]').includes("본문과 다름"),
-        domText('[data-testid="tool-charpr"]'));
+        tag.includes("본문과 다름") || tag.includes("본문은 "), tag);
     }
     checkDom("the status bar shows the address, not a line and column",
       domText('[data-testid="status-where"]') === `표${seat.table} (${seat.row},${seat.col})`,
       domText('[data-testid="status-where"]'));
+
+    // --- 글꼴, the name the DOCUMENT declares (§14, runtime gap 16) ---------
+    //
+    // The anti-fabrication assertion, and the reason the field is allowed to
+    // exist at all: whatever name is on screen must be a name the runtime put
+    // on the wire for THIS charPr. A toolbar that printed 맑은 고딕 because
+    // that is what toolbars print would pass a "there is a font name" check and
+    // fail this one.
+    const face = seat.charPrFace ?? null;
+    const shown = document
+      .querySelector('[data-testid="typeface-name"]')
+      ?.getAttribute("data-face") ?? "";
+    const typefaces = inspect.summary.typefaces ?? null;
+    check("the runtime says whether faces could be read at all, apart from any one id",
+      typefaces?.state === "read" || typefaces?.state === "unavailable",
+      `${typefaces?.state} — ${typefaces?.reason ?? "no reason"}`);
+    if (face && face.hangul) {
+      checkDom("the toolbar shows the seat's typeface NAME, not just its charPr id",
+        shown === face.hangul && domText('[data-testid="tool-typeface"]').includes(face.hangul),
+        `“${shown}” vs declared ${JSON.stringify(face)}`);
+      checkDom("the name on screen is one the runtime declared for THIS charPr",
+        Object.values(face).includes(shown),
+        `${shown} in ${Object.values(face).join("/")}`);
+      // Per language, never merged: the strip shows 한글 and the tooltip
+      // carries every language the header resolved.
+      const title =
+        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("title") ?? "";
+      checkDom("every language the document declares is in the tooltip, unmerged",
+        Object.values(face).every((name) => title.includes(String(name))),
+        title.slice(0, 200));
+    } else {
+      checkDom("a charPr the document names no face for shows no invented name",
+        shown === "" && domText('[data-testid="tool-typeface"]').includes("—"),
+        `“${shown}” with charPrFace ${JSON.stringify(face)}`);
+      checkDom("and it distinguishes “the document did not say” from “nothing looked”",
+        domText('[data-testid="typeface-absent"]') ===
+          (typefaces?.state === "read" ? "문서가 이름을 안 밝힘" : "읽지 못함"),
+        `${domText('[data-testid="typeface-absent"]')} with typefaces.state ${typefaces?.state}`);
+    }
+
+    // T30, in names. The corpus form's first seat differs from the body shape,
+    // and the tag now names the body face instead of printing a second integer.
+    if (seat.charPrSuggested !== undefined && seat.charPr !== seat.charPrSuggested) {
+      const suggestedFace = seat.charPrSuggestedFace ?? null;
+      if (suggestedFace?.hangul && face?.hangul && suggestedFace.hangul !== face.hangul) {
+        checkDom("a shape mismatch reads as two font NAMES, not two integers",
+          domText('[data-testid="tool-charpr"]').includes(suggestedFace.hangul),
+          `${domText('[data-testid="tool-charpr"]')} — seat ${face.hangul} vs body ${suggestedFace.hangul}`);
+      } else {
+        check("RECORDED: the mismatch could not be named on this form", true,
+          `seat charPr ${seat.charPr} face ${JSON.stringify(face)} · suggested ` +
+            `${seat.charPrSuggested} face ${JSON.stringify(suggestedFace)} — ` +
+            `the tag falls back to 본문과 다름`);
+      }
+    }
   }
 
   const baseline = inspect.summary.baselineCharPr;
@@ -2150,10 +2671,21 @@ async function phaseChrome(config: SmokeConfig) {
       domText('[data-testid="task-packs"]').slice(0, 200));
     setState({ packOpen: "report" });
     await settled(240);
-    checkDom("a pack opens an honest 준비 중 panel",
-      domText('[data-testid="pack-detail"]').includes("준비 중") &&
-        domText('[data-testid="pack-detail"]').includes("아직 없는 것"),
+    // REPOINTED, because the panel stopped being 준비 중 when `module/check`
+    // arrived. The property that must hold is the same one the 준비 중 label
+    // stood for: the panel says what it can do and what it still cannot, and
+    // this checkout has nothing enabled — so the 실행 control has to be present
+    // AND refused, with the reason. A panel that hid the button on a disabled
+    // pack would be honest about the pack and silent about the product.
+    checkDom("a pack opens a panel that offers 검사 and says what it still cannot do",
+      domText('[data-testid="pack-detail"]').includes("아직 없는 것") &&
+        !!document.querySelector('[data-testid="pack-run-button"]'),
       domText('[data-testid="pack-detail"]').slice(0, 200));
+    checkDom("with nothing enabled in this checkout, 실행 is present and refused",
+      document.querySelector<HTMLButtonElement>('[data-testid="pack-run-button"]')?.disabled ===
+        (packs.packs.find((p) => p.name === "report")?.enabled !== true),
+      `report enabled=${packs.packs.find((p) => p.name === "report")?.enabled} · ` +
+        domText('[data-testid="pack-run"]').slice(0, 120));
     // Same repointing. The panel must print the registry's own contribution
     // COUNTS and every name it was given — which on an enabled registry means
     // the checker names appear, and on this one means it says 0 and 0 rather

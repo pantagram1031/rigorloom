@@ -30,6 +30,7 @@ Add-Type -AssemblyName System.Drawing
 # nothing like a line-ending problem.
 $source = @(
     'using System;',
+    'using System.Collections.Generic;',
     'using System.Runtime.InteropServices;',
     'public class W {',
     '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
@@ -38,7 +39,36 @@ $source = @(
     '  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);',
     '  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool repaint);',
     '  [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint a, uint b, ref R r, uint c);',
+    '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+    '  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);',
+    '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr p);',
+    '  public delegate bool EnumProc(IntPtr h, IntPtr p);',
     '  [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Rt, B; }',
+    # The biggest visible top-level window this process owns.
+    #
+    # MainWindowHandle is "the first top-level window Windows happened to
+    # associate with the process", and this process owns four: the editor, a
+    # 26x26 something, and two invisible zero-size ones. Picking by area is a
+    # cheap way not to depend on which one Windows named first.
+    #
+    # It is NOT a size test. Measured on this machine: the editor's window rect
+    # is 314x50 until `MoveWindow` below fits it to the work area, even while
+    # the WebView inside it already reports a 2880x1759 CSS viewport. Requiring
+    # a plausible size at SELECTION time therefore rejects the real window and
+    # the capture never happens — which is how the first version of this fix
+    # failed. The size test belongs after the move, and that is where it is.
+    '  public static IntPtr Largest(uint want) {',
+    '    IntPtr best = IntPtr.Zero; long bestArea = 0;',
+    '    EnumWindows(delegate(IntPtr h, IntPtr p) {',
+    '      uint pid; GetWindowThreadProcessId(h, out pid);',
+    '      if (pid != want || !IsWindowVisible(h)) return true;',
+    '      R r; GetWindowRect(h, out r);',
+    '      long area = (long)(r.Rt - r.L) * (r.B - r.T);',
+    '      if (area > bestArea) { bestArea = area; best = h; }',
+    '      return true;',
+    '    }, IntPtr.Zero);',
+    '    return best;',
+    '  }',
     '}'
 ) -join "`n"
 Add-Type -TypeDefinition $source
@@ -46,16 +76,29 @@ Add-Type -TypeDefinition $source
 # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 try { [void][W]::SetProcessDpiAwarenessContext([IntPtr](-4)) } catch {}
 
+# The editor's own minimum, enforced AFTER the window has been fitted to the
+# work area. See the size check further down for why it cannot be enforced
+# before.
+$MIN_W = 1000
+$MIN_H = 600
+
 $deadline = (Get-Date).AddSeconds(40)
-$p = $null
+$hwnd = [IntPtr]::Zero
 while ((Get-Date) -lt $deadline) {
-    $p = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
-         Where-Object { $_.MainWindowHandle -ne 0 } |
-         Select-Object -First 1
-    if ($p) { break }
+    $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -ne 0 } |
+            Select-Object -First 1
+    if ($proc) {
+        # Largest first, MainWindowHandle as the fallback: enumeration can
+        # legitimately come back empty for a heartbeat while windows are being
+        # created, and the handle the OS already named is better than nothing.
+        $hwnd = [W]::Largest([uint32]$proc.Id)
+        if ($hwnd -eq [IntPtr]::Zero) { $hwnd = $proc.MainWindowHandle }
+        if ($hwnd -ne [IntPtr]::Zero) { break }
+    }
     Start-Sleep -Milliseconds 400
 }
-if (-not $p) { throw "no window for process '$ProcessName'" }
+if ($hwnd -eq [IntPtr]::Zero) { throw "no window for process '$ProcessName'" }
 
 if ($FitToWorkArea) {
     # SPI_GETWORKAREA = 0x0030 - the desktop minus the taskbar, in device px
@@ -64,18 +107,38 @@ if ($FitToWorkArea) {
     [void][W]::SystemParametersInfo(0x0030, 0, [ref]$work, 0)
     $ww = $work.Rt - $work.L
     $wh = $work.B - $work.T
-    [void][W]::MoveWindow($p.MainWindowHandle, $work.L, $work.T, $ww, $wh, $true)
+    [void][W]::MoveWindow($hwnd, $work.L, $work.T, $ww, $wh, $true)
     Start-Sleep -Milliseconds 800
 }
 
-[void][W]::SetForegroundWindow($p.MainWindowHandle)
+[void][W]::SetForegroundWindow($hwnd)
 Start-Sleep -Milliseconds $SettleMs
 
+# THE SIZE CHECK, and it has to be here rather than at selection time.
+#
+# `$w -gt 0` was the whole check, and it let a 314x50 rect through: `MoveWindow`
+# above had not taken effect yet, so the harness photographed the window at the
+# size it has BEFORE being fitted to the work area and filed the title-bar
+# sliver under a panel's name. A fragment saved under the right name is worse
+# than a failed capture, because the failure is visible and the fragment is not.
+#
+# 314x50 is the editor's own pre-move rect on this machine, not a helper's —
+# which is why this poll cannot be moved up into the selection loop. It waits
+# for the move to land and refuses if it never does.
 $r = New-Object W+R
-[void][W]::GetWindowRect($p.MainWindowHandle, [ref]$r)
-$w = $r.Rt - $r.L
-$h = $r.B - $r.T
+$settleDeadline = (Get-Date).AddSeconds(15)
+do {
+    [void][W]::GetWindowRect($hwnd, [ref]$r)
+    $w = $r.Rt - $r.L
+    $h = $r.B - $r.T
+    if ($w -ge $MIN_W -and $h -ge $MIN_H) { break }
+    Start-Sleep -Milliseconds 400
+} while ((Get-Date) -lt $settleDeadline)
 if ($w -le 0 -or $h -le 0) { throw "bad window rect" }
+if ($w -lt $MIN_W -or $h -lt $MIN_H) {
+    throw ("window is ${w}x${h}, below the editor's own ${MIN_W}x${MIN_H} minimum; " +
+           "refusing to save a capture that would show a fragment of the app")
+}
 
 $bmp = New-Object System.Drawing.Bitmap($w, $h)
 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -90,7 +153,7 @@ $g = [System.Drawing.Graphics]::FromImage($bmp)
 # PW_RENDERFULLCONTENT (2) asks the window to draw itself into our DC, which
 # reaches the WebView2 content and is unaffected by occlusion.
 $hdc = $g.GetHdc()
-$ok = [W]::PrintWindow($p.MainWindowHandle, $hdc, 2)
+$ok = [W]::PrintWindow($hwnd, $hdc, 2)
 $g.ReleaseHdc($hdc)
 if (-not $ok) {
     $g.Dispose(); $bmp.Dispose()

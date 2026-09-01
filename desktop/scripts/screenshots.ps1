@@ -15,7 +15,17 @@
 #>
 param(
     [string]$Corpus = "",
-    [double[]]$Scales = @(1.0, 1.5)
+    # The form the runtime actually seats. `cell_borders` places 55 of the
+    # corpus's 73 seats here and 0 on $Corpus, so the seat-editing shot — the
+    # marquee one — has to be taken against this document or it photographs an
+    # empty page and calls it the feature.
+    [string]$SeatedCorpus = "",
+    [double[]]$Scales = @(1.0, 1.5),
+    # Re-take a subset by output name. The captures are independent — each is
+    # its own process against its own arranged state — and a window that came
+    # back from a restore mid-capture has produced a title-bar sliver more than
+    # once. Retaking one shot beats retaking twenty.
+    [string[]]$Only = @()
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -31,8 +41,12 @@ $Exe        = Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.
 if (-not $Corpus) {
     $Corpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx'
 }
+if (-not $SeatedCorpus) {
+    $SeatedCorpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx'
+}
 if (-not (Test-Path $Exe))    { Write-Error "not built: $Exe"; exit 2 }
 if (-not (Test-Path $Corpus)) { Write-Error "corpus form not found: $Corpus"; exit 2 }
+if (-not (Test-Path $SeatedCorpus)) { Write-Error "seated corpus form not found: $SeatedCorpus"; exit 2 }
 
 New-Item -ItemType Directory -Force -Path $OutDir, $RunDir | Out-Null
 Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue
@@ -57,11 +71,12 @@ try {
     # directory, because a screenshot set that only showed the working case
     # would be advertising a capability this machine does not have.
     $Stager = Join-Path $ScriptDir 'stage-rendered-session.py'
-    $RenderedPdf = Join-Path $RepoRoot 'tests\corpus\forms\render\gianmun-byeolji-1ho.pdf'
+    $RenderedPdf = Join-Path $RepoRoot ('tests\corpus\forms\render\' +
+        [IO.Path]::GetFileNameWithoutExtension($SeatedCorpus) + '.pdf')
     if (Test-Path $RenderedPdf) {
         $stageRoot = Join-Path $AppData 'runtime-root'
         New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
-        $staged = (& python $Stager --root $stageRoot --hwpx $Corpus --pdf $RenderedPdf 2>&1 |
+        $staged = (& python $Stager --root $stageRoot --hwpx $SeatedCorpus --pdf $RenderedPdf 2>&1 |
                    Select-Object -Last 1)
         if ($LASTEXITCODE -eq 0 -and $staged) {
             $env:RIGORLOOM_SMOKE_STAGED = $staged.ToString().Trim()
@@ -77,6 +92,14 @@ try {
     if (Test-Path $AgentHost) { $env:RIGORLOOM_AGENT_HOST = $AgentHost }
     $ModulesRoot = Join-Path $RepoRoot 'modules'
     if (Test-Path $ModulesRoot) { $env:RIGORLOOM_MODULES_ROOT = $ModulesRoot }
+    # An enablement, written outside the checkout and pointed at by the same
+    # variable both readers honour. Without it `packs-result` would photograph a
+    # disabled button, which is a true picture of a fresh checkout but not of
+    # the feature. The checkout's own modules/ is never written to.
+    $EnabledFile = Join-Path $RunDir 'shot-enabled.yaml'
+    [IO.File]::WriteAllText($EnabledFile,
+        "schema: rigorloom-enabled-modules/v1`nenabled: [grant, report, style]`n")
+    $env:RIGORLOOM_MODULES_ENABLED = $EnabledFile
     Remove-Item Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
 
     # Document view at 100% runs first on purpose: it opens the corpus form,
@@ -104,6 +127,11 @@ try {
         # is this machine with nothing substituted, which is a refusal.
         @{ phase = 'hold-shot-overlay';       name = 'page-overlay';         scale = 1.0 },
         @{ phase = 'hold-shot-overlay-live';  name = 'page-overlay-unavailable'; scale = 1.0 },
+        # THE MARQUEE SHOT: a real cell_borders seat on the page the runtime
+        # seated, open in the same inline editor a tree click opens, with a
+        # value part-typed. Nothing about it is arranged — the page is found by
+        # asking the runtime which one carries seats.
+        @{ phase = 'hold-shot-overlay-seat';  name = 'page-seat-edit';       scale = 1.0 },
         @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 },
         # Phase 5. Each one is reached by running the real thing: the composer
         # shot photographs a plan a real Agent Host process proposed, and the
@@ -113,7 +141,17 @@ try {
         @{ phase = 'hold-shot-settings';      name = 'provider-settings';    scale = 1.0 },
         @{ phase = 'hold-shot-toolbar-text';  name = 'toolbar-text';         scale = 1.0 },
         @{ phase = 'hold-shot-toolbar-page';  name = 'toolbar-page';         scale = 1.0 },
-        @{ phase = 'hold-shot-packs';         name = 'task-packs';           scale = 1.0 }
+        @{ phase = 'hold-shot-packs';         name = 'task-packs';           scale = 1.0 },
+        # A real module/check answer: per-checker verdicts, findings with their
+        # own severities, and the runtime's own counts. Falls back to the
+        # disabled state if this machine has no enablement, and the capture is
+        # named for the panel rather than for a result so it cannot be mistaken
+        # for a promise about what it shows.
+        # `corpus` overrides which document this shot opens. The seated form is
+        # the one whose grant checker returns a finding the Runtime could
+        # translate into an address, which is the row the capture is FOR.
+        @{ phase = 'hold-shot-packs-result';  name = 'task-pack-check';      scale = 1.0;
+           corpus = $SeatedCorpus }
     )
     foreach ($scale in $Scales) {
         if ([math]::Abs($scale - 1.0) -lt 0.001) { continue }
@@ -122,7 +160,21 @@ try {
         $shots += @{ phase = 'hold-agent'; name = "agent-view-${pct}pct";    scale = $scale }
     }
 
-    foreach ($shot in $shots) {
+    if ($Only.Count -gt 0) { $shots = $shots | Where-Object { $Only -contains $_.name } }
+
+    # ONE RETRY PER SHOT, and only because the failure it covers is a relaunch
+    # away from being fixed. `shot.ps1` now refuses a window smaller than the
+    # editor's own minimum instead of saving a title-bar sliver, and the window
+    # that provokes it is one that never finished coming back from a restore —
+    # a fresh process gets a fresh window. Nothing about the app's STATE is
+    # retried: each attempt arranges itself from scratch through the same
+    # `hold-*` phase, so a retry cannot accumulate anything a first run did.
+    $attempts = @{}
+    $queue = [System.Collections.Generic.Queue[object]]::new()
+    foreach ($s in $shots) { $queue.Enqueue($s) }
+
+    while ($queue.Count -gt 0) {
+        $shot = $queue.Dequeue()
         $name = $shot.name
         $out = Join-Path $OutDir ("{0}.png" -f $name)
         $marker = Join-Path $RunDir ("ready-{0}.json" -f $name)
@@ -130,6 +182,8 @@ try {
 
         $env:RIGORLOOM_SMOKE = $shot.phase
         $env:RIGORLOOM_SMOKE_REPORT = $marker
+        $env:RIGORLOOM_SMOKE_CORPUS =
+            $(if ($shot.ContainsKey('corpus')) { $shot.corpus } else { $Corpus })
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--force-device-scale-factor=$($shot.scale)"
 
         $proc = Start-Process -FilePath $Exe -PassThru
@@ -164,8 +218,15 @@ try {
             Write-Host ("captured {0}" -f $name)
         }
         catch {
-            Write-Warning ("failed {0}: {1}" -f $name, $_)
-            $failed++
+            $tries = 1 + [int]$attempts[$name]
+            $attempts[$name] = $tries
+            if ($tries -lt 2) {
+                Write-Warning ("retrying {0} after: {1}" -f $name, $_)
+                $queue.Enqueue($shot)
+            } else {
+                Write-Warning ("failed {0}: {1}" -f $name, $_)
+                $failed++
+            }
         }
         finally {
             try { $proc.Kill(); $proc.WaitForExit(5000) | Out-Null } catch {}
@@ -180,7 +241,7 @@ finally {
     else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT, `
         Env:RIGORLOOM_MOCK_AGENT, Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, `
-        Env:RIGORLOOM_SMOKE_STAGED, `
+        Env:RIGORLOOM_SMOKE_STAGED, Env:RIGORLOOM_MODULES_ENABLED, `
         Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue

@@ -47,11 +47,22 @@
                              geometry and the assertion is that the app draws
                              NOTHING and says why. Then a session the harness
                              staged before launch, carrying the corpus's own
-                             Hancom render of the same form, is where the
-                             overlay is actually exercised: overlay counts
+                             Hancom render of a form the runtime DOES seat, is
+                             where the overlay is exercised: overlay counts
                              against the runtime's own per-class counts, a zoom
-                             sweep that must not re-fetch, and an ambiguous
-                             click that must ask and must queue nothing.
+                             sweep that must not re-fetch, an ambiguous click
+                             that must ask and must queue nothing, and — new —
+                             a real cell_borders seat clicked, typed into
+                             through the same inline editor the tree uses, and
+                             followed all the way to a plan op naming that
+                             exact cell.
+    run 11 (phase "packs")   작업 팩 실행. module/check against an open
+                             document, with a real enablement the harness wrote
+                             outside the checkout. A document-subject checker
+                             runs and its findings are drawn with their own
+                             severities; a workspace-subject pack comes back
+                             twelve times skipped and must be drawn as skipped,
+                             never as passed.
     run 8 (phase "chrome")   the editor toolbar, the ruler, the page footer,
                              the status bar and 작업 팩, against real document
                              and real module-registry data. Leaves a window
@@ -75,6 +86,14 @@
 param(
     [string]$Corpus = "",
     [string]$Corpus2 = "",
+    # The form the overlay and packs phases use. NOT the same as $Corpus, and
+    # the difference is the point: `cell_borders` places 55 of the corpus's 73
+    # seats on this one form, and 0 on $Corpus — which is ruled with underlines
+    # rather than boxes, so nothing closes and nothing can be seated. A phase
+    # that proves "click a seat" has to run against a form that has one.
+    # The packs phase uses it too, because it is the form whose grant checker
+    # returns a finding the runtime could translate into an address.
+    [string]$SeatedCorpus = "",
     [int]$TimeoutSec = 300,
     [switch]$KeepRoot,
     # Run a subset. Handy while iterating; the evidence run passes nothing.
@@ -97,9 +116,13 @@ if (-not $Corpus2) {
     # if the two sessions really are bound to different bytes.
     $Corpus2 = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-2ho.hwpx'
 }
+if (-not $SeatedCorpus) {
+    $SeatedCorpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx'
+}
 if (-not (Test-Path $Exe))    { Write-Error "not built: $Exe`nRun desktop/scripts/build-clean.ps1 first."; exit 2 }
 if (-not (Test-Path $Corpus)) { Write-Error "corpus form not found: $Corpus"; exit 2 }
 if (-not (Test-Path $Corpus2)) { Write-Error "second corpus form not found: $Corpus2"; exit 2 }
+if (-not (Test-Path $SeatedCorpus)) { Write-Error "seated corpus form not found: $SeatedCorpus"; exit 2 }
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 $AppData = Join-Path $RunDir 'appdata'
@@ -144,16 +167,38 @@ $Sentinel = 'NOT-A-REAL-KEY-SENTINEL-4f3a9c7e21'
 # scripts/stage-rendered-session.py; the app is handed the session id so no
 # shell code has to know the substitution happened.
 $Stager = Join-Path $ScriptDir 'stage-rendered-session.py'
-$RenderedPdf = Join-Path $RepoRoot 'tests\corpus\forms\render\gianmun-byeolji-1ho.pdf'
+$RenderedPdf = Join-Path $RepoRoot ('tests\corpus\forms\render\' +
+    [IO.Path]::GetFileNameWithoutExtension($SeatedCorpus) + '.pdf')
 $StagedSession = ''
 
+# ENABLEMENT, the way tests/test_runtime_module_check.py does it.
+#
+# `modules/enabled.yaml` is gitignored and absent from a fresh checkout, so the
+# 작업 팩 phase has nothing to run until one exists. Writing into the repo's own
+# modules/ would leave an operator act behind in the working tree — the exact
+# undeclared dependency the P2 defect was about, in reverse. So the file is
+# written HERE, in the run directory, and both readers are pointed at it:
+# `RIGORLOOM_MODULES_ENABLED` is what the Runtime reads (rt_module) and what
+# taskpacks.rs now forwards to module_registry.py as --enabled-file. Only the
+# packs phase gets it; every other phase keeps meeting the honest empty state a
+# fresh checkout has, so both paths stay under test in the same run.
+#
+# `report` requires `style`, so enabling it alone is a loud refusal; `grant` is
+# the document-subject checker whose findings the runtime can address.
+$EnabledFile = Join-Path $RunDir 'enabled.yaml'
+[IO.File]::WriteAllText($EnabledFile,
+    "schema: rigorloom-enabled-modules/v1`nenabled: [grant, report, style]`n")
+
 function Invoke-Phase {
-    param([string]$Phase, [string]$ReportPath)
+    param([string]$Phase, [string]$ReportPath, [string]$PhaseCorpus = "",
+          [string]$EnabledOverride = "")
 
     Remove-Item -Force $ReportPath -ErrorAction SilentlyContinue
     $env:RIGORLOOM_SMOKE = $Phase
-    $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
+    $env:RIGORLOOM_SMOKE_CORPUS = $(if ($PhaseCorpus) { $PhaseCorpus } else { $Corpus })
     $env:RIGORLOOM_SMOKE_CORPUS2 = $Corpus2
+    if ($EnabledOverride) { $env:RIGORLOOM_MODULES_ENABLED = $EnabledOverride }
+    else { Remove-Item Env:RIGORLOOM_MODULES_ENABLED -ErrorAction SilentlyContinue }
     $env:RIGORLOOM_SMOKE_REPORT = $ReportPath
     $env:RIGORLOOM_SMOKE_EXPORT = Join-Path $ExportDir 'candidate.hwpx'
     if (Test-Path $MockAgent) { $env:RIGORLOOM_MOCK_AGENT = $MockAgent }
@@ -223,7 +268,7 @@ $ran = @()
 
 # Ordered, because run 2 depends on what run 1 left on disk. Everything after
 # that opens its own session and is order-independent.
-$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay',
+$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay', 'packs',
             'composer', 'settings', 'chrome', 'chrome-reattach')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 
@@ -244,20 +289,33 @@ try {
             } else {
                 $stageRoot = Join-Path $AppData 'runtime-root'
                 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
-                $staged = (& python $Stager --root $stageRoot --hwpx $Corpus --pdf $RenderedPdf 2>&1 |
+                $staged = (& python $Stager --root $stageRoot --hwpx $SeatedCorpus --pdf $RenderedPdf 2>&1 |
                            Select-Object -Last 1)
                 if ($LASTEXITCODE -ne 0 -or -not $staged) {
                     Write-Host "  [FAIL] could not stage a rendered session: $staged"
                     $allOk = $false
                 } else {
                     $StagedSession = $staged.ToString().Trim()
-                    Write-Host ("  staged a rendered session: {0}" -f $StagedSession)
+                    Write-Host ("  staged a rendered session: {0} ({1})" -f `
+                        $StagedSession, [IO.Path]::GetFileName($SeatedCorpus))
                     Write-Host  "  (the corpus's own Hancom render stands in for renderPrepare — see stage-rendered-session.py)"
                 }
             }
         }
 
-        $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json")
+        # The packs phase runs against the seated form too — it is the one whose
+        # grant checker returns a finding the Runtime could translate into an
+        # address — and it is the only phase handed an enablement.
+        $phaseCorpus = ''
+        $phaseEnabled = ''
+        if ($phase -eq 'packs') {
+            $phaseCorpus = $SeatedCorpus
+            $phaseEnabled = $EnabledFile
+            Write-Host ("  enablement for this phase only: {0}" -f $EnabledFile)
+        }
+
+        $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json") `
+            -PhaseCorpus $phaseCorpus -EnabledOverride $phaseEnabled
         $ok = Show-Report $result
         if (-not $ok) { $allOk = $false }
         if ($result.report) {
@@ -338,6 +396,21 @@ try {
         }
     }
 
+    # THE CHECKOUT IS UNTOUCHED. Enabling a module is an operator act on an
+    # installation, and a harness that performed one on the developer's own
+    # tree would leave the next run measuring a different machine — which is
+    # the P2 defect's shape exactly. Checked from out here because only out
+    # here can see the repository the app was pointed at.
+    if ($ran -contains 'packs') {
+        $repoEnabled = Join-Path $ModulesRoot 'enabled.yaml'
+        if (Test-Path $repoEnabled) {
+            Write-Host ("  [FAIL] the run left an enablement in the checkout at {0}" -f $repoEnabled)
+            $allOk = $false
+        } else {
+            Write-Host "  [PASS] the packs phase enabled modules without writing into the checkout"
+        }
+    }
+
     # The window came back where it was left. Compared across a real process
     # boundary, and from OUT HERE: run 8 reports the geometry it saved, run 9
     # reports the geometry it restored. Asking run 9 to check its own prefs
@@ -375,8 +448,11 @@ finally {
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_CORPUS2, `
         Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT, `
         Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL, `
-        Env:RIGORLOOM_SMOKE_STAGED `
+        Env:RIGORLOOM_SMOKE_STAGED, Env:RIGORLOOM_MODULES_ENABLED `
         -ErrorAction SilentlyContinue
+    # The enablement the packs phase used never belonged to the checkout, and
+    # it does not outlive the run either.
+    Remove-Item -Force $EnabledFile -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     if (-not $KeepRoot) { Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue }
 }
