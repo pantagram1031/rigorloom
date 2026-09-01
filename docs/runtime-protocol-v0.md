@@ -1082,7 +1082,7 @@ Desktop can style certainty instead of implying it:
 | `derivation` | how |
 | --- | --- |
 | `matched_text` | the seat already has text, and that text matched a span |
-| `cell_borders` | a rule actually drawn on the page encloses the seat |
+| `cell_borders` | the rules drawn on the page enclose a box alignment tied to this seat |
 | `interpolated` | inferred from a uniquely-matched label in the same table row |
 
 Interpolation places **only the seat immediately after a label**. With one
@@ -1095,6 +1095,96 @@ would put a caret where the text is not.
 A drawn rect is only believed when it is neither a hairline nor most of the
 page; the page frame is not a cell.
 
+#### `cell_borders`: the grid Hancom actually draws
+
+Text-based derivation placed **0 of 473** editable fill regions across the
+whole corpus — 10 forms, 51 pages. An empty cell has no text, so nothing can
+match it, and interpolation only ever reached a seat immediately right of a
+mapped label in the same table row, which real Hancom layouts do not provide.
+`cell_borders` is what makes on-page editing have a target at all.
+
+**Hancom never emits a cell as a rectangle.** Every ruling arrives as a
+stroked line segment, so each drawing's `rect` is a hairline and the sanity
+floor discarded all of them. The grid is rebuilt from the segments:
+
+1. **Segments → rules.** Axis-parallel segments are clustered on the cross
+   axis (a border drawn twice is one border) and joined along it. Length is
+   judged on the **joined** rule, never on the pieces: 12,045 of 13,972
+   horizontal segments in the corpus are under 3pt with collinear gaps at
+   0.4–0.8pt, because they are dashes. A dashed border encloses a cell.
+2. **Rules → cells.** A cell is a **minimal** rectangle whose four sides are
+   all actually drawn. Minimality is load-bearing: a page carries several
+   independent tables, and a plain product of the x and y rule positions lets
+   a lower table's vertical slice the upper table's columns into cells nobody
+   drew. Each candidate therefore grows to its *nearest* closing partners.
+3. **Cells → seats,** by alignment that has to be earned — below.
+
+**Alignment is anchored, walked, and checked at every step.**
+
+An **anchor** is a span that names exactly one table cell *and* whose drawn
+cell carries that cell's text. The first half is a weaker reading of the
+mapping than `span.address`, and it is deliberate: a form label is routinely
+registered twice in the target set, once as an `anchor_record` and once as the
+table cell it sits in, so `map_spans` correctly reports `ambiguous`. It is
+ambiguous about what to **call** the span, not about where it is. A candidate
+list naming one anchor and one cell names one place, so nothing is picked —
+**two distinct cells still refuse, T41 untouched.** Across the corpus this is
+the difference between 11 anchors and 336. It never writes to `span.address`
+or `span.confidence`; the wire contract is unchanged.
+
+From each anchor the drawn row band is **walked outward** in lockstep with the
+row's declared cells. Every step must be adjacent (this box's right edge is
+the next box's left edge) and must **agree with the text the page itself
+shows** in that box: a labelled cell must show its label, and an empty fill
+cell must be empty. The first step that fails ends the walk in that direction
+and nothing past it is placed. An empty seat is trusted only because the
+labelled cells walked to reach it were confirmed by the render.
+
+Gating the *anchor* on its own cell text is what made this trustworthy: it
+removed the last 31 wrong correspondences. An anchor that cannot verify itself
+vouches for nothing. Where two anchors reach the same declared cell and
+disagree about which box it is, that cell is refused rather than averaged.
+
+**Measured result: 73 of 473 seats, all `cell_borders`.** Per form:
+
+| form | pages | fill regions | seats |
+| --- | ---: | ---: | ---: |
+| admrul-gajokdolbom-hyuga-sinchengseo | 1 | 7 | 5 |
+| gianmun-byeolji-1ho | 1 | 9 | 0 |
+| gianmun-byeolji-2ho | 1 | 35 | 3 |
+| jeongbo-gonggae-cheongguseo | 1 | 13 | 0 |
+| jumin-deungchobon-sinchengseo | 3 | 5 | 1 |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | 22 | 125 | 55 |
+| moel-pyojun-geunrogyeyakseo-2013 | 7 | 3 | 0 |
+| moel-pyojun-geunrogyeyakseo-2025 | 7 | 0 | 0 |
+| nrf-gyeolgwa-bogoseo-yangsik | 2 | 5 | 1 |
+| saeopja-deungnok-sinchengseo | 6 | 271 | 8 |
+| **total** | **51** | **473** | **73** |
+
+Audited on those same renders: every placed seat **is** one of the
+reconstructed cells, every one of them is empty in the render, and no two
+overlap. The ground truth is real Hancom output — `com_backend.py` driving
+Hancom Office 13.0.0.2986, `docs/research/xc1-conversion-bench.md` §4. Where
+those renders are absent the corpus tests **skip with a named reason** rather
+than validating a border-finder against a fixture this repo drew itself.
+
+#### Why a seat is absent, per page
+
+`seatAbsences` counts a closed reason set, so the Desktop can say why a seat
+has no box instead of implying one:
+
+| reason | meaning |
+| --- | --- |
+| `no_drawn_grid` | the page draws no closed cell at all |
+| `no_anchor_on_page` | nothing of this table was identified here (it may be on another page) |
+| `no_anchor_in_row` | the table is anchored on this page, but the walk never reached this row |
+| `grid_gap` | no drawn cell adjacent where the next declared cell should be |
+| `cell_mismatch` | the drawn cell there carries text contradicting the declared cell |
+| `alignment_failed` | two anchors disagree, or an anchor failed its own text check |
+
+`drawnCells` reports how many closed cells the page yielded, which separates
+"this form is not ruled" from "this form is ruled and we could not align it".
+
 ### 12.5 Cache
 
 Keyed on `(pdf sha256, page)`, held per `RuntimeCore`, bounded at 64 entries
@@ -1103,14 +1193,44 @@ bytes are a new key, so a re-prepared document never serves stale positions.
 
 ### 12.6 Still GAP here
 
-- **Seats not adjacent to a label.** The honest fix is a per-cell border scan
-  that does not need a text anchor — find the drawn grid, not a neighbour.
-  Needs a real Hancom-rendered form to validate against; validating a
-  border-finder against a fixture I drew myself would prove nothing.
+`cell_borders` closed the "seats not adjacent to a label" gap and was
+validated against real Hancom renders. **400 of 473 fill regions still get no
+seat**, and the reasons are structural, not tuning:
+
+- **148 fill regions sit in tables with no anchor anywhere.** Every text-
+  bearing cell in them is either ambiguous across several distinct cells or
+  excluded as truncated, so there is nothing to align from. This is the
+  largest single block and it is where the next real gain is.
+- **Truncated previews cannot anchor.** A cell whose `text_preview` is a
+  30-character prefix is excluded from the target set — 34 or 35 such cells in
+  each of the larger forms. The prefix can still *refute* a correspondence
+  during the walk, and it does, but it cannot establish one. Prefix matching
+  would be exactly the guess §12.3 refuses.
+- **Unruled forms place nothing, correctly.** `gianmun-byeolji-1ho` is ruled
+  with underlines rather than boxes: 6 horizontal rules and 4 verticals on the
+  page, so almost nothing closes. Its 9 fill regions are absent and that is
+  the right answer. `jeongbo-gonggae-cheongguseo` has 25 horizontal rules and
+  9 verticals, and its label column has no left border on the body rows, so
+  its 13 regions are absent too. A form the renderer does not enclose cannot
+  be seated by reading enclosures.
+- **The walk does not cross a gap or a merged cell.** It stops at the first
+  box that is not adjacent or whose text disagrees, so a row with a rowspan
+  neighbour or an unruled middle stretch places only the run it verified.
+  Propagating a constant row offset down the table was tried and measured: it
+  added 4 seats and could not be checked as tightly, so it is not in.
+- **Alignment is per page.** A table continued onto another page is anchored
+  again there or not at all; `no_anchor_on_page` covers both that and a table
+  simply living elsewhere, and does not distinguish them.
 - **Sub-line addressing.** A span is a line; a click resolves to the line's
   address, not to a character offset within it.
 - **Multi-page seats.** Geometry is per page; a seat is looked up on the page
   it is asked for.
+
+**Not proven:** whether a *filled* document (rather than a blank form) still
+aligns — every corpus render is a blank form, and a filled cell changes what
+`cell_agrees` sees. Whether the tolerances hold for renderers other than
+Hancom Office 13.0.0.2986; there is one Hancom install on the measuring
+machine, so renderer-version sensitivity is untested.
 
 ---
 
