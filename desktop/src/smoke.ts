@@ -359,8 +359,18 @@ async function phaseOpen(config: SmokeConfig) {
     domText('[data-testid="view-agent"]').includes(beforeSelection), beforeSelection);
   check("agent view shows the same document",
     domText('[data-testid="view-agent"]').includes(inspect.documentHash.slice(0, 12)));
-  check("composer present and disabled",
-    (document.querySelector('[data-testid="composer-input"]') as HTMLTextAreaElement | null)?.disabled === true);
+  // INVERTED in Phase 5, not deleted. This asserted the composer was DISABLED,
+  // which was the honest state while there was nowhere to send. There is now,
+  // so the property worth pinning moved: the box is present and enabled, and it
+  // still refuses to send until every precondition is met — with the reason on
+  // screen rather than a grey button. `composerBlocker` is the store's own
+  // answer, so this cannot drift from what the UI draws.
+  check("the composer is present and live",
+    (document.querySelector('[data-testid="composer-input"]') as HTMLTextAreaElement | null)
+      ?.disabled === false);
+  checkDom("and it explains itself rather than sitting grey",
+    domText('[data-testid="composer-note"]').length > 20,
+    domText('[data-testid="composer-note"]').slice(0, 120));
   check("the entrance did not replay on the view switch",
     getState().entranceDone === true && !document.querySelector('[data-testid="splash"]'));
 
@@ -797,7 +807,13 @@ async function phaseEdit(config: SmokeConfig) {
     `${getState().events.length} events, ${new Set(getState().events.map((e) => e.seq)).size} distinct`);
 
   setView("agent");
-  await settled(260);
+  // The document's history moved behind Agent view's second tab in Phase 5 —
+  // the centre now holds the conversation by default. REPOINTED rather than
+  // deleted: the property (every event the runtime appended has a card, and
+  // protocol chatter stays behind its disclosure) is unchanged and still worth
+  // pinning; only where a person stands to see it moved.
+  setState({ agentTab: "history" });
+  await settled(300);
   // Scoped to the card list. An unscoped prefix selector also matched the
   // header's counter, which made this read 20 for 19 events — the same class
   // of mistake as the design slice's vacuous tree/centre check.
@@ -808,6 +824,8 @@ async function phaseEdit(config: SmokeConfig) {
   checkDom("protocol chatter is behind a disclosure, not in the history",
     !!document.querySelector('[data-testid="protocol-chatter"] summary'),
     document.querySelector('[data-testid="protocol-chatter"] summary')?.textContent ?? "");
+  setState({ agentTab: "conversation" });
+  await settled(200);
   setView("document");
   await settled(240);
   checkAlive("the editing loop");
@@ -1845,5 +1863,11 @@ async function phaseChromeReattach() {
     JSON.stringify(prefs.provider));
   check("the window is not fullscreen out of nowhere", geometry?.fullscreen === false,
     JSON.stringify(geometry));
+  // Handed out for the driver's cross-process comparison. Checking this
+  // launch's prefs against this launch's window would be self-fulfilling — the
+  // startup save writes the restored value, so a restore that shrank the
+  // window by a frame every launch would agree with itself forever. Only run
+  // 8's report can say whether this one came back to the same place.
+  await rt.smokeFinal({ window: saved, geometry });
   checkAlive("the chrome reattach");
 }
