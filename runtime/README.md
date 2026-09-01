@@ -273,22 +273,39 @@ so the grid is rebuilt from the segments — clustered into rules, then kept
 only as the smallest rectangles whose four sides are all actually drawn.
 
 Alignment is earned. An anchor is a span naming exactly one table cell whose
-drawn box also carries that cell's text; from it the row is walked outward in
-lockstep with the declared cells, and every step must be adjacent **and** must
-agree with the text the page shows there. The walk stops at the first
-disagreement and places nothing past it, so an empty seat is trusted only
-because the labelled cells walked to reach it were confirmed by the render.
-Two anchors that disagree about a cell refuse it rather than averaging.
+drawn box also carries that cell's text; from it the drawn grid is walked
+outward **in all four directions** in lockstep with the declared table, and
+every step must land on an unambiguous adjacent box **and** agree with the
+text the page shows there. A failing step is not taken and the walk does not
+continue through it, so an empty seat is trusted only because the labelled
+cells walked to reach it were confirmed by the render. Two anchors that
+disagree about a cell refuse it rather than averaging.
+
+The walk read one row band at first, which reached the seats *beside* a label
+and nothing else — 252 fill regions sat in tables that were anchored on the
+page and still got no box, because their own row held no label. Labels are as
+often a header above a column as a caption beside it. Sideways the neighbour
+must share the whole row band; vertically it shares only the left edge,
+because a declared column's `colspan` changes from row to row. The declared
+step down is `(row + rowspan, col)` — the scan's own statement about itself.
+
+Reaching further is paid for with a drift gate: two *empty* cells agree with
+each other trivially, so the whole table's correspondence must be an
+**order-preserving injection** (no box claimed twice; declared order left to
+right and top to bottom matching drawn order). A table failing it has every
+seat refused on that page as `lattice_inconsistent`.
 
 Measured on the 10 real Hancom renders (`tests/corpus/forms/render`, produced
-by `com_backend.py` on Hancom Office 13.0.0.2986): **73 of 473 seats, all
+by `com_backend.py` on Hancom Office 13.0.0.2986): **229 of 473 seats, all
 `cell_borders`**, every one of them a box the page really drew, empty in the
-render, none overlapping. The remaining 400 are honestly absent — 148 sit in
-tables with no anchor anywhere, and two forms are ruled with underlines rather
-than boxes, so nothing on them closes. `seatAbsences` counts the reason per
-page (`no_drawn_grid`, `no_anchor_on_page`, `no_anchor_in_row`, `grid_gap`,
-`cell_mismatch`, `alignment_failed`) and `drawnCells` says how many closed
-cells the page yielded, which separates "not ruled" from "not aligned".
+render, none overlapping. The remaining 244 are honestly absent — 148 sit in
+tables with no anchor anywhere (138 of those in two sheets that repeat one
+sub-block five times, so every label matches five distinct cells and refuses),
+and two forms are ruled with underlines rather than boxes, so nothing on them
+closes. `seatAbsences` counts the reason per page (`no_drawn_grid`,
+`no_anchor_on_page`, `no_anchor_in_row`, `grid_gap`, `cell_mismatch`,
+`alignment_failed`, `lattice_inconsistent`) and `drawnCells` says how many
+closed cells the page yielded, which separates "not ruled" from "not aligned".
 
 No PDF means no geometry, with the same closed reasons `render` uses. Geometry
 is cached on `(pdf sha256, page)`, bounded at 64 entries; the reconstructed

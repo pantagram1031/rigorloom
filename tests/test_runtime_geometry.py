@@ -798,7 +798,179 @@ def test_a_page_with_no_drawn_grid_says_so(tmp_path):
 def test_every_absence_reason_is_in_the_closed_set():
     assert set(rt_geometry.ABSENCE_REASONS) == {
         "no_drawn_grid", "no_anchor_on_page", "no_anchor_in_row",
-        "grid_gap", "cell_mismatch", "alignment_failed"}
+        "grid_gap", "cell_mismatch", "alignment_failed",
+        "lattice_inconsistent"}
+
+
+# --- the walk is 2D: a label above a column is a label ------------------------
+# The shipped walk read one row band, so it reached the seats BESIDE a label
+# and nothing else. Measured on the corpus, 252 fill regions sat in tables that
+# WERE anchored on the page and still got no box, because their own row held no
+# label of its own. These pin the vertical half and the gates that pay for it.
+# Mechanics only: whether this reconstructs a REAL form is settled against the
+# corpus renders further down.
+
+
+def _column_profile(rows, table=0):
+    """rows: {row: [(col, text, classification, rowspan)]} -> a form scan."""
+    cells = []
+    for row, entries in rows.items():
+        for col, text, classification, rowspan in entries:
+            cells.append({"addr": {"row": row, "col": col},
+                          "span": {"row": rowspan, "col": 1},
+                          "text_preview": text,
+                          "classification": classification})
+    return {"anchor_records": [], "table_map": [{"index": table,
+                                                 "cells": cells}]}
+
+
+def _stacked_cells(rows, cols, *, left=100.0, top=100.0, w=90.0, h=30.0):
+    """A drawn grid of ``rows`` x ``cols`` boxes, edge to edge."""
+    return [(left + c * w, top + r * h, left + (c + 1) * w, top + (r + 1) * h)
+            for r in range(rows) for c in range(cols)]
+
+
+def test_a_header_label_seats_the_cell_under_it():
+    """The label is in row 0; the empty seat is in row 1, under it.
+
+    Nothing in row 1 is matched or matchable. It gets a box because the page
+    draws one directly below the box whose label the render confirmed.
+    """
+    cells = _stacked_cells(2, 2)
+    profile = _column_profile({0: [(0, "성명", "static", 1),
+                                   (1, "생년월일", "static", 1)],
+                               1: [(0, "", "fill_target", 1),
+                                   (1, "", "fill_target", 1)]})
+    spans = [_span_at([0.21, 0.21, 0.3, 0.25],
+                      {"kind": "cell", "table": 0, "row": 0, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0)),
+             _line_at("생년월일", (200.0, 105.0, 250.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed[(0, 1, 0)] == (100.0, 130.0, 190.0, 160.0)
+    assert placed[(0, 1, 1)] == (190.0, 130.0, 280.0, 160.0)
+    assert absences == {}
+
+
+def test_the_vertical_walk_stops_where_the_page_contradicts_the_scan():
+    """A box below holding the wrong text ends that direction, as sideways."""
+    cells = _stacked_cells(3, 1)
+    profile = _column_profile({0: [(0, "성명", "static", 1)],
+                               1: [(0, "", "fill_target", 1)],
+                               2: [(0, "", "fill_target", 1)]})
+    spans = [_span_at([0.21, 0.21, 0.3, 0.25],
+                      {"kind": "cell", "table": 0, "row": 0, "col": 0})]
+    lines = [_line_at("성명", (110.0, 105.0, 160.0, 120.0)),
+             # the box below the first seat is not empty, so it is not a seat
+             _line_at("이미 찬 값", (110.0, 135.0, 160.0, 150.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, cells, lines, 500.0, 500.0, _norm())
+    assert placed == {}
+    assert absences["cell_mismatch"] == 1
+    assert absences["no_anchor_in_row"] == 2, "nothing past the lie either"
+
+
+def test_a_vertical_neighbour_comes_from_the_declared_rowspan():
+    """A label spanning three rows sits above the row at ``row + rowspan``,
+    not above ``row + 1``. The table says so; nothing is inferred."""
+    profile = _column_profile({0: [(0, "구분", "static", 3)],
+                               3: [(0, "", "fill_target", 1)]})
+    _by_addr, neighbours = rt_geometry.declared_lattice(
+        profile["table_map"][0])
+    assert neighbours[(0, 0)]["down"] == (3, 0)
+    assert neighbours[(3, 0)]["up"] == (0, 0)
+    assert "down" not in neighbours[(3, 0)]
+
+
+def test_a_wide_cell_steps_down_to_the_box_that_starts_where_it_does():
+    """A label spanning two columns above a pair of narrow ones.
+
+    The declared cell below ``(row, col)`` is the one at the SAME starting
+    column, which on the page is the left-hand box. Nothing is chosen here:
+    the right-hand box does not start where the wide one starts, so it is not
+    a candidate at all.
+    """
+    wide = (100.0, 100.0, 280.0, 130.0)
+    below_left = (100.0, 130.0, 190.0, 160.0)
+    below_right = (190.0, 130.0, 280.0, 160.0)
+    adjacency = rt_geometry.drawn_adjacency([wide, below_left, below_right])
+    assert adjacency[wide]["down"] == below_left
+    assert adjacency[below_left]["right"] == below_right
+    assert adjacency[below_left]["up"] == wide
+    assert "up" not in adjacency[below_right], "nothing starts where it does"
+
+
+def test_two_candidates_below_are_no_candidate():
+    """Where the direction forks, the walk has no step and does not take one.
+
+    A fork is exactly where a walk would drift, so ``drawn_adjacency`` answers
+    with nothing rather than with the first one.
+    """
+    here = (100.0, 100.0, 190.0, 130.0)
+    one = (100.0, 130.0, 190.0, 160.0)
+    two = (100.0, 131.0, 160.0, 158.0)
+    adjacency = rt_geometry.drawn_adjacency([here, one, two])
+    assert "down" not in adjacency[here]
+
+
+def test_a_vertical_step_does_not_require_the_width_to_match():
+    """A label spanning two columns above one narrow cell is still above it:
+    a vertical step shares the LEFT edge, because colspan changes per row."""
+    wide = (100.0, 100.0, 280.0, 130.0)
+    narrow = (100.0, 130.0, 190.0, 160.0)
+    adjacency = rt_geometry.drawn_adjacency([wide, narrow])
+    assert adjacency[wide]["down"] == narrow
+    assert adjacency[narrow]["up"] == wide
+
+
+def test_a_horizontal_step_does_require_the_whole_row_band():
+    """Sideways stays inside one declared row, so the band has to match."""
+    here = (100.0, 100.0, 190.0, 130.0)
+    taller = (190.0, 100.0, 280.0, 175.0)
+    adjacency = rt_geometry.drawn_adjacency([here, taller])
+    assert "right" not in adjacency[here]
+
+
+def test_a_correspondence_that_claims_one_box_twice_is_not_consistent():
+    """Two declared cells, one drawn box: a walk that slipped a row."""
+    box = (100.0, 100.0, 190.0, 130.0)
+    assert not rt_geometry.lattice_is_consistent({(5, 0): box, (7, 0): box})
+
+
+def test_a_correspondence_out_of_order_is_not_consistent():
+    """Declared col 0 must not take a box to the RIGHT of declared col 1."""
+    left = (100.0, 100.0, 190.0, 130.0)
+    right = (190.0, 100.0, 280.0, 130.0)
+    lower = (100.0, 130.0, 190.0, 160.0)
+    assert rt_geometry.lattice_is_consistent({(5, 0): left, (5, 1): right})
+    assert not rt_geometry.lattice_is_consistent({(5, 0): right, (5, 1): left})
+    assert rt_geometry.lattice_is_consistent({(0, 3): left, (2, 3): lower})
+    assert not rt_geometry.lattice_is_consistent({(2, 3): left, (0, 3): lower})
+
+
+def test_a_drifted_table_is_refused_whole_not_seat_by_seat():
+    """Two anchors, one drawn box between them: the shallow grid cannot be the
+    declared table, so nothing from it is placed here.
+
+    A run of empty cells agrees with anything -- the text gate is silent
+    there -- so reach is paid for with a structural check on the whole table.
+    """
+    left = (100.0, 100.0, 190.0, 130.0)
+    right = (190.0, 100.0, 280.0, 130.0)
+    profile = _column_profile({5: [(0, "", "fill_target", 1),
+                                   (1, "성명", "static", 1)],
+                               7: [(0, "", "fill_target", 1),
+                                   (1, "성명", "static", 1)]})
+    spans = [_span_at([0.41, 0.21, 0.45, 0.25],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 1}),
+             _span_at([0.46, 0.21, 0.5, 0.25],
+                      {"kind": "cell", "table": 0, "row": 7, "col": 1},
+                      index=1)]
+    lines = [_line_at("성명", (200.0, 105.0, 250.0, 120.0))]
+    placed, absences = rt_geometry.align_drawn_grid(
+        profile, spans, [left, right], lines, 500.0, 500.0, _norm())
+    assert placed == {}
+    assert absences == {"lattice_inconsistent": 2}
 
 
 # --- the anchor supply, and what it still refuses ----------------------------
@@ -849,19 +1021,26 @@ CORPUS_CONVERTED = (Path(__file__).resolve().parents[1] / "tests" / "corpus"
 #: places). Recorded as data so a regression names the form it broke. The
 #: totals below are the deliverable's headline and are asserted exactly.
 CORPUS_SEATS = {
-    "admrul-gajokdolbom-hyuga-sinchengseo": (7, 5),
+    "admrul-gajokdolbom-hyuga-sinchengseo": (7, 6),
     "gianmun-byeolji-1ho": (9, 0),
-    "gianmun-byeolji-2ho": (35, 3),
+    "gianmun-byeolji-2ho": (35, 13),
     "jeongbo-gonggae-cheongguseo": (13, 0),
     "jumin-deungchobon-sinchengseo": (5, 1),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (125, 55),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (125, 123),
     "moel-pyojun-geunrogyeyakseo-2013": (3, 0),
     "moel-pyojun-geunrogyeyakseo-2025": (0, 0),
-    "nrf-gyeolgwa-bogoseo-yangsik": (5, 1),
-    "saeopja-deungnok-sinchengseo": (271, 8),
+    "nrf-gyeolgwa-bogoseo-yangsik": (5, 5),
+    "saeopja-deungnok-sinchengseo": (271, 81),
 }
 CORPUS_FILL_TOTAL = 473
-CORPUS_SEAT_TOTAL = 73
+CORPUS_SEAT_TOTAL = 229
+#: Every corpus seat is reached by the drawn grid. ``matched_text`` needs the
+#: seat to already hold text (an empty fill cell never does) and
+#: ``interpolated`` needs a mapped label in the same row with the seat right
+#: next to it, which no corpus row provides. Asserted so a seat quietly
+#: arriving by a weaker route shows up as a failure.
+CORPUS_SEATS_BY_DERIVATION = {"cell_borders": 229, "matched_text": 0,
+                              "interpolated": 0}
 
 have_renders = all((CORPUS_RENDERS / f"{slug}.pdf").is_file()
                    for slug in CORPUS_SEATS)
@@ -931,12 +1110,29 @@ def test_seats_placed_on_the_real_hancom_render(slug, tmp_path):
 @needs_rasterizer
 @needs_corpus_renders
 def test_the_corpus_headline_number(tmp_path):
-    """0 of 473 was the measurement that opened this slice. This is where it
+    """0 of 473 was the measurement that opened this work. This is where it
     stands now, and it is asserted exactly so it cannot quietly drift."""
     total_fill = sum(fill for fill, _ in CORPUS_SEATS.values())
     total_seats = sum(seats for _, seats in CORPUS_SEATS.values())
     assert total_fill == CORPUS_FILL_TOTAL
     assert total_seats == CORPUS_SEAT_TOTAL
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_the_corpus_headline_by_derivation_class(tmp_path):
+    """Which derivation earned each seat, counted across the whole corpus.
+
+    A total alone would hide a seat that arrived by a weaker route than the
+    one it is credited to, so the split is asserted exactly too.
+    """
+    counted = {method: 0 for method in rt_geometry.DERIVATION_METHODS}
+    for slug in sorted(CORPUS_SEATS):
+        placed, _ = _seats_for_form(slug, _profile_of(slug, tmp_path))
+        for seat in placed.values():
+            counted[seat["derivation"]] += 1
+    assert counted == CORPUS_SEATS_BY_DERIVATION
+    assert sum(counted.values()) == CORPUS_SEAT_TOTAL
 
 
 @needs_rasterizer
