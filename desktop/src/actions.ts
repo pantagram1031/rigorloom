@@ -334,14 +334,18 @@ export function beginEdit(table: number, row: number, col: number): boolean {
 }
 
 export function cancelEdit(): void {
-  setState({ inlineEdit: null });
+  setState({ inlineEdit: null, sawComposition: false });
 }
 
 /** Enter. The value joins the queue and the plan is rebuilt around it. */
 export async function commitEdit(value: string): Promise<void> {
   const edit = getState().inlineEdit;
   if (!edit) return;
-  setState({ inlineEdit: null });
+  setState({
+    inlineEdit: null,
+    lastCommit: { value, composed: getState().sawComposition },
+    sawComposition: false,
+  });
   const trimmed = value;
   if (trimmed === edit.before) {
     // Nothing changed. Proposing a no-op plan would put a row in the queue

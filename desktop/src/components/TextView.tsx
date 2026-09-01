@@ -42,6 +42,7 @@ import {
   cellKey,
   selectionId,
   setSelection,
+  setState,
   useWorkspace,
   type QueuedOp,
   type Selection,
@@ -96,6 +97,10 @@ function SeatEditor({
       }}
       onCompositionEnd={(e) => {
         composing.current = false;
+        // Recorded so the IME harness can tell a composed string from
+        // characters injected straight into the field: both look the same in
+        // the value, and only one of them exercised the IME.
+        setState({ sawComposition: true });
         // The composed syllable arrives here on some IMEs without a further
         // input event, so read it off the element rather than trusting state.
         setText((e.target as HTMLInputElement).value);

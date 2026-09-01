@@ -429,6 +429,17 @@ fn smoke_config() -> Value {
         "phase": std::env::var("RIGORLOOM_SMOKE").ok().filter(|v| !v.is_empty()),
         "corpus": std::env::var("RIGORLOOM_SMOKE_CORPUS").ok().filter(|v| !v.is_empty()),
         "reportPath": std::env::var("RIGORLOOM_SMOKE_REPORT").ok().filter(|v| !v.is_empty()),
+        // A second, genuinely different form. The editing phase opens it while
+        // a queue is pending, which is how staleness is exercised without ever
+        // touching a session copy.
+        "corpus2": std::env::var("RIGORLOOM_SMOKE_CORPUS2").ok().filter(|v| !v.is_empty()),
+        // Where the export phase may write, inside the harness run directory.
+        // Passed in rather than chosen, because the native save dialog cannot
+        // be driven from here and a headless run must not open one.
+        "exportPath": std::env::var("RIGORLOOM_SMOKE_EXPORT").ok().filter(|v| !v.is_empty()),
+        // The IME harness types into a field that must start empty, so the
+        // screenshot phase's pre-filled value is suppressed for that run.
+        "imeEmpty": std::env::var("RIGORLOOM_IME_EMPTY").is_ok(),
     })
 }
 
@@ -447,6 +458,24 @@ fn smoke_ready(detail: Value) -> Result<(), String> {
     }
     let body = serde_json::to_string_pretty(&json!({ "ready": true, "detail": detail }))
         .unwrap_or_else(|_| "{\"ready\":true}".into());
+    std::fs::write(&path, body).map_err(|e| e.to_string())
+}
+
+/// A second report file, written without exiting.
+///
+/// The IME harness needs two moments from one process: "the field is open,
+/// start typing" and "here is what the field ended up with". `smoke_ready`
+/// covers the first; this covers the second, at `RIGORLOOM_SMOKE_FINAL`.
+#[tauri::command]
+fn smoke_final(detail: Value) -> Result<(), String> {
+    let Ok(path) = std::env::var("RIGORLOOM_SMOKE_FINAL") else {
+        return Ok(());
+    };
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let body = serde_json::to_string_pretty(&json!({ "final": true, "detail": detail }))
+        .unwrap_or_else(|_| "{\"final\":true}".into());
     std::fs::write(&path, body).map_err(|e| e.to_string())
 }
 
@@ -521,6 +550,7 @@ fn main() {
             run_mock_agent,
             smoke_config,
             smoke_ready,
+            smoke_final,
             smoke_finish,
         ])
         .setup(|app| {

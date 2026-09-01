@@ -45,17 +45,31 @@ $failed = 0
 try {
     $env:RIGORLOOM_APPDATA = $AppData
     $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
+    $MockAgent = Join-Path $RepoRoot 'runtime\scripts\mock_agent.py'
+    if (Test-Path $MockAgent) { $env:RIGORLOOM_MOCK_AGENT = $MockAgent }
     Remove-Item Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
 
     # Document view at 100% runs first on purpose: it opens the corpus form,
     # which is what puts an entry in 최근 문서 for the welcome shot and a
     # session on disk for the entrance shot to reattach to. Everything after it
     # is photographing a state the app genuinely reached.
+    # Phase 4 states are reached by RUNNING the loop, not by staging: the
+    # approval in `approval.png` is an approval record the Runtime issued, and
+    # the hash on the bar in `candidate.png` belongs to a candidate on disk.
+    # `page.png` is whatever this machine can honestly do — on this one, the
+    # Hancom COM server is broken, so it photographs the convert_failed state.
     $shots = @(
-        @{ phase = 'hold';          name = 'document-view-100pct'; scale = 1.0 },
-        @{ phase = 'hold-entrance'; name = 'entrance';             scale = 1.0 },
-        @{ phase = 'hold-welcome';  name = 'welcome';              scale = 1.0 },
-        @{ phase = 'hold-agent';    name = 'agent-view-100pct';    scale = 1.0 }
+        @{ phase = 'hold';                    name = 'document-view-100pct'; scale = 1.0 },
+        @{ phase = 'hold-entrance';           name = 'entrance';             scale = 1.0 },
+        @{ phase = 'hold-welcome';            name = 'welcome';              scale = 1.0 },
+        @{ phase = 'hold-agent';              name = 'agent-view-100pct';    scale = 1.0 },
+        @{ phase = 'hold-shot-inline-edit';   name = 'inline-edit';          scale = 1.0 },
+        @{ phase = 'hold-shot-queue';         name = 'review-queue';         scale = 1.0 },
+        @{ phase = 'hold-shot-approval';      name = 'approval';             scale = 1.0 },
+        @{ phase = 'hold-shot-verified';      name = 'candidate-verified';   scale = 1.0 },
+        @{ phase = 'hold-shot-receipt';       name = 'receipt';              scale = 1.0 },
+        @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
+        @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 }
     )
     foreach ($scale in $Scales) {
         if ([math]::Abs($scale - 1.0) -lt 0.001) { continue }
@@ -78,7 +92,10 @@ try {
         try {
             # Wait for the app to say it is arranged. A fixed sleep here
             # captured the loading screen instead of the app.
-            $deadline = (Get-Date).AddSeconds(150)
+            # The Phase 4 stops run a real apply (preedit children) and, for
+            # the page shot, a real Hancom attempt with its own 300 s bound.
+            $deadline = (Get-Date).AddSeconds(
+                $(if ($shot.phase -like 'hold-shot-*') { 420 } else { 150 }))
             while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) {
                 Start-Sleep -Milliseconds 500
             }
@@ -88,8 +105,14 @@ try {
                 $detail.devicePixelRatio, $detail.cssViewport, $detail.selection)
 
             # The entrance is mid-animation by design; do not let the capture
-            # settle for so long that it looks static.
-            $settle = if ($shot.phase -eq 'hold-entrance') { 400 } else { 1500 }
+            # settle for so long that it looks static. The approval gate
+            # breathes on a 2.4 s cycle, so its capture waits long enough to
+            # land somewhere legible rather than at the trough.
+            $settle = switch ($shot.phase) {
+                'hold-entrance'          { 400 }
+                'hold-shot-approval'     { 2200 }
+                default                  { 1500 }
+            }
             & powershell -ExecutionPolicy Bypass -NoProfile `
                 -File (Join-Path $ScriptDir 'shot.ps1') -Out $out -SettleMs $settle -FitToWorkArea
             if ($LASTEXITCODE -ne 0) { throw "shot.ps1 exit $LASTEXITCODE" }

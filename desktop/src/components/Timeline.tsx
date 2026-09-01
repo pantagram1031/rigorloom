@@ -124,7 +124,11 @@ export function Timeline() {
         ) : (
           <Tag tone="none">대기</Tag>
         )}
-        <span className="count" data-testid="event-count">
+        {/* NOT `event-count`: the cards are `event-<seq>`, and a harness
+            selecting `[data-testid^="event-"]` would count this element as a
+            twentieth card. The design slice already lost a cycle to a
+            prefix-selector picking up the wrong node. */}
+        <span className="count" data-testid="events-total">
           {events.length}
         </span>
       </div>
