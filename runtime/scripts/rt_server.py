@@ -27,7 +27,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_apply import Cancelled  # noqa: E402
-from rt_codes import PROTOCOL_VERSION, MAX_FRAME_BYTES, RpcError  # noqa: E402
+from rt_codes import (  # noqa: E402
+    IMPL_VERSION,
+    MAX_FRAME_BYTES,
+    PROTOCOL_VERSION,
+    RpcError,
+)
 from rt_core import AGENT_METHODS, HOST_ONLY_METHODS, RuntimeCore  # noqa: E402
 from rt_jsonl import (  # noqa: E402
     READ_EOF,
@@ -289,8 +294,7 @@ class RuntimeServer:
         self.initialized = True
         return {
             "protocolVersion": PROTOCOL_VERSION,
-            "implVersion": self.core.capabilities(
-                entry=self.entry, methods=list(self._methods))["implVersion"],
+            "implVersion": IMPL_VERSION,
             "entry": self.entry,
             "unknownFieldPolicy": policy,
             "capabilities": self.core.capability_snapshot(
