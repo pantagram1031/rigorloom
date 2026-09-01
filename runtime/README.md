@@ -268,6 +268,20 @@ that is probably wrong.
 No PDF means no geometry, with the same closed reasons `render` uses. Geometry
 is cached on `(pdf sha256, page)`, bounded at 64 entries.
 
+## The typeface name
+
+`document/inspect` carries the face the document declares, per language:
+`summary.baselineCharPr.face`, `summary.blackCharPr.face`,
+`regions[].charPrFace` and `regions[].charPrSuggestedFace`. It is the HWPX
+header's own join of `charPr/fontRef` onto the `fontface` tables — never
+inferred, never defaulted, and a test asserts every name on the wire appears in
+the document's own `header.xml`.
+
+`null` means *this document declares no resolvable face for that charPr*.
+`summary.typefaces.state` is the separate fact — `read`, or `unavailable` with
+a reason when the profile carries no mapping at all. One null cannot carry
+both. Design: `docs/runtime-protocol-v0.md` §14.
+
 ## Distribution-module checkers
 
 ```sh

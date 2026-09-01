@@ -1264,3 +1264,58 @@ to cross a wire an agent reads.
   (`personalization_ctl`) and there is no wire surface for it (`policy/set` is
   still GAP), so passing one would mean inventing that surface here.
 - **Containment.** As above: bounded, killed, not contained.
+
+---
+
+## 14. The typeface name (gap 16)
+
+`document/inspect` reported a seat's shape as a charPr **ID** and reported a
+height only for the two document-level shapes. No name for the face was on the
+wire anywhere, so the Desktop editor toolbar showed an integer where a 글꼴
+control belongs and could not become a real one even read-only: a dropdown
+reading 맑은 고딕 because that is what toolbars usually say would be a
+fabrication in the one place this application must not fabricate.
+
+The header already carried both halves. `charPr/fontRef` names a font id per
+language; the `fontface` tables name the face for that id. Nothing joined them
+except `form_inspect --baseline`, whose answer is a document-wide **set** of
+font names and therefore can never say what *this* run is set in.
+
+`form_inspect` now publishes the join as `charpr_faces` — `charPr id -> {lang:
+face}` — and three fields carry it:
+
+| field | on |
+| --- | --- |
+| `summary.baselineCharPr.face`, `summary.blackCharPr.face` | the document-level shapes |
+| `regions[].charPrFace` | the shape a fill seat inherits |
+| `regions[].charPrSuggestedFace` | the shape the T30 preflight suggests instead |
+
+**Per language, because the document is.** Hangul's own font dialog has
+separate 한글 and 영문 faces and a 기안문 declares different ones — the corpus
+form sets `hangul` to 한양중고딕 and `other` to 한양신명조. Collapsing them to
+one name would be a guess about which of two declared truths the reader meant.
+A language whose id resolves to no face is **absent** from the map: the header
+did not say.
+
+**Two absences, kept apart.** A `face` of `null` means *this document declares
+no resolvable face for that charPr id*. `summary.typefaces.state` is the other
+fact: `read` when the profile carries a mapping at all, `unavailable` with a
+reason when it does not — a profile written by an older scan, for instance.
+One null cannot carry both, and a UI that conflated them would tell a user
+their document names no fonts when the truth is that nothing looked.
+
+Nothing is inferred and nothing is defaulted; a test reads the corpus form's
+own `header.xml` and asserts every name that reaches the wire appears in it.
+
+The field is not decoration. On the corpus 기안문 a fill seat inherits charPr
+11 (돋움체) while the preflight suggests charPr 23 (한양중고딕) — before this
+the two were two integers, and no caller could see that filling the seat as-is
+would print in something other than the body face.
+
+### 14.1 Still GAP here
+
+- **Size and weight are still partial.** A height is reported for the two
+  document-level shapes only; a seat's charPr carries an id and now a name, but
+  no point size of its own.
+- **No writing.** This is a read. Setting a face means a charPr the document
+  does not have, which is a `preedit` question, not a protocol one.
