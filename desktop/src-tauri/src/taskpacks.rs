@@ -15,9 +15,18 @@
 //!
 //! WHAT IS AND IS NOT CLAIMED. This lists what is DECLARED — the module's name,
 //! whether it is enabled, what checkers and CLI commands it contributes, and
-//! what it depends on. It does not run any of them, and the Runtime protocol
-//! has no method that does: the pack detail panel says 준비 중 and names the
-//! real contributions rather than drawing a workflow that does not exist.
+//! what it depends on. It still runs none of them: running is `module/check`
+//! over the protocol (§13), on the Runtime connection, where the subject is a
+//! scratch copy and the answer is a VerificationReport. This is the catalogue.
+//!
+//! TWO READERS OF ONE FILE, and why that is not a mistake. Enablement lives in
+//! `enabled.yaml` and it is read here (through `module_registry.py`) and again
+//! by the Runtime (`rt_module::registry_facts`). The Runtime's reading is the
+//! one that governs `module/check`, so the panel's run button follows it. Both
+//! honour `RIGORLOOM_MODULES_ROOT` and `RIGORLOOM_MODULES_ENABLED`, both report
+//! which file they read, and the panel prints a warning when the two disagree
+//! rather than silently preferring one. Collapsing them into one reader would
+//! mean this list could no longer be produced without an open connection.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -28,6 +37,14 @@ struct RegistryLaunch {
     program: PathBuf,
     script: PathBuf,
     modules_root: PathBuf,
+    /// Where enablement is read from, when the environment overrides it.
+    ///
+    /// The Runtime honours `RIGORLOOM_MODULES_ENABLED` (`rt_module::registry_facts`)
+    /// and it is the reader `module/check` consults. This list is a SECOND
+    /// reader of the same file through a different child process, so it has to
+    /// honour the same override — otherwise the panel says a pack is off while
+    /// the run button, which follows the Runtime, says it is on.
+    enabled_file: Option<PathBuf>,
     pyproject: PathBuf,
     mode: &'static str,
 }
@@ -37,6 +54,7 @@ fn resolve(resource_dir: Option<&Path>, repo_root: &Path) -> Result<RegistryLaun
     // An explicit modules root wins wherever it is set, which is how the
     // scripted evidence points a PACKAGED build at the repo's declarations.
     let override_root = std::env::var_os("RIGORLOOM_MODULES_ROOT").map(PathBuf::from);
+    let override_enabled = std::env::var_os("RIGORLOOM_MODULES_ENABLED").map(PathBuf::from);
 
     if let Some(dir) = resource_dir {
         for base in [
@@ -53,6 +71,7 @@ fn resolve(resource_dir: Option<&Path>, repo_root: &Path) -> Result<RegistryLaun
                     modules_root: override_root
                         .clone()
                         .unwrap_or_else(|| repo.join("modules")),
+                    enabled_file: override_enabled.clone(),
                     pyproject: repo.join("pyproject.toml"),
                     mode: "packaged",
                 });
@@ -72,6 +91,7 @@ fn resolve(resource_dir: Option<&Path>, repo_root: &Path) -> Result<RegistryLaun
         program: PathBuf::from(python),
         script,
         modules_root: override_root.unwrap_or_else(|| repo_root.join("modules")),
+        enabled_file: override_enabled,
         pyproject: repo_root.join("pyproject.toml"),
         mode: "interpreter",
     })
@@ -169,6 +189,11 @@ fn shape(summary: &Value) -> Value {
         "schema": summary["schema"],
         "version": summary["version"],
         "modulesRoot": summary["modules_root"],
+        // Which file this reader read. The panel compares its own answer with
+        // the Runtime's `capabilities.modules.enabledFile`, and "we disagree"
+        // and "we read different files" are different bugs.
+        "enabledFile": summary["enabled_file"],
+        "enabledFilePresent": summary["enabled_file_present"],
         "packs": packs,
         "reason": Value::Null,
     })
@@ -199,7 +224,11 @@ pub fn list(resource_dir: Option<&Path>, repo_root: &Path) -> Value {
         .arg("--modules-root")
         .arg(&launch.modules_root)
         .arg("--pyproject")
-        .arg(&launch.pyproject)
+        .arg(&launch.pyproject);
+    if let Some(enabled) = &launch.enabled_file {
+        command.arg("--enabled-file").arg(enabled);
+    }
+    command
         .arg("list")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
@@ -254,6 +283,8 @@ mod tests {
             "schema": "rigorloom-module-registry/v1",
             "version": "0.17.0",
             "modules_root": "/x/modules",
+            "enabled_file": "/x/modules/enabled.yaml",
+            "enabled_file_present": true,
             "discovered": ["report", "style", "unheardof"],
             "enabled": ["report", "style"],
             "requires_modules": { "report": ["style"], "style": [], "unheardof": [] },
@@ -277,5 +308,32 @@ mod tests {
         assert_eq!(packs[2]["name"], "unheardof");
         assert_eq!(packs[2]["title"], "unheardof");
         assert_eq!(packs[2]["named"], false);
+        // Which enablement file this reader read, carried through so the panel
+        // can tell a disagreement with the Runtime from two different files.
+        assert_eq!(shaped["enabledFile"], "/x/modules/enabled.yaml");
+        assert_eq!(shaped["enabledFilePresent"], true);
+    }
+
+    /// The enablement override reaches the child, and only when it is set.
+    ///
+    /// Not a cosmetic argument: without it the Runtime and this list read
+    /// different files whenever `RIGORLOOM_MODULES_ENABLED` is set, and the
+    /// panel would label a pack 꺼짐 while its 실행 button — which follows the
+    /// Runtime — was enabled. Env vars are process-global and this test would
+    /// race a parallel one, so it exercises the launch struct rather than the
+    /// environment.
+    #[test]
+    fn the_enablement_override_is_passed_to_the_registry_child() {
+        let launch = RegistryLaunch {
+            program: PathBuf::from("python"),
+            script: PathBuf::from("/x/module_registry.py"),
+            modules_root: PathBuf::from("/x/modules"),
+            enabled_file: Some(PathBuf::from("/tmp/enabled.yaml")),
+            pyproject: PathBuf::from("/x/pyproject.toml"),
+            mode: "interpreter",
+        };
+        assert_eq!(launch.enabled_file.as_deref(), Some(Path::new("/tmp/enabled.yaml")));
+        let none = RegistryLaunch { enabled_file: None, ..launch };
+        assert!(none.enabled_file.is_none());
     }
 }

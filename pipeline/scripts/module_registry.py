@@ -779,6 +779,13 @@ class ModuleRegistry:
             "schema": "rigorloom-module-registry/v1",
             "version": self.version,
             "modules_root": str(self.modules_root),
+            # WHICH file the enablement was read from. Not decoration: the
+            # Runtime can be pointed at a different one through
+            # RIGORLOOM_MODULES_ENABLED, and a caller that shows both the
+            # registry's list and the Runtime's runnability needs to be able to
+            # tell "we disagree" from "we read different files".
+            "enabled_file": str(self.enabled_file),
+            "enabled_file_present": self.enabled_file.is_file(),
             "discovered": sorted(discovered),
             "enabled": [spec.name for spec in enabled],
             "requires_modules": {
@@ -845,6 +852,15 @@ def main(argv: list[str] | None = None) -> int:
                     "Not the v0.12 stage-contract catalog — that is compose.py.")
     parser.add_argument("--modules-root", default=str(DEFAULT_MODULES_ROOT))
     parser.add_argument("--pyproject", default=str(DEFAULT_PYPROJECT))
+    # Enablement can live outside the modules root, and the Runtime already
+    # supports that (RIGORLOOM_MODULES_ENABLED, rt_module.registry_facts). A
+    # caller that reads the registry through this CLI and runs checkers through
+    # the Runtime must be able to point BOTH at the same file, or the two
+    # answer different questions about the same installation. Defaults to
+    # <modules-root>/enabled.yaml, unchanged.
+    parser.add_argument(
+        "--enabled-file", default=None,
+        help="enablement file (default: <modules-root>/enabled.yaml)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="JSON summary of discovered/enabled modules")
     enable = sub.add_parser(
@@ -857,7 +873,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--names", nargs="+", metavar="NAME")
     args = parser.parse_args(argv)
 
-    registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject)
+    registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject,
+                              enabled_file=args.enabled_file)
     try:
         if args.command == "write-enabled":
             if args.all_modules:
@@ -866,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
                 names = []
             else:
                 names = args.names
+            # write-enabled always writes the modules root's own file: it is an
+            # install-time act on the installation, not on a caller's override.
             target = write_enabled(args.modules_root, names)
             registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject)
             payload = registry.summary()
