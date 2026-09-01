@@ -187,6 +187,16 @@ if (-not (Test-Path $geometryScript)) {
     exit 3
 }
 
+# The 작업 팩 run button's own payload, asserted by NAME for the same reason.
+# `module/check` runs a module's checker as a child of this exe; a bundle that
+# froze a runtime/scripts predating rt_module.py would answer method_not_found
+# to a button the shell draws as enabled. Same defect class, third outfit.
+$moduleScript = Join-Path $OutDir '_internal\repo\runtime\scripts\rt_module.py'
+if (-not (Test-Path $moduleScript)) {
+    Write-Error "bundled runtime is missing rt_module.py at $moduleScript — the 작업 팩 실행 button would call a method the shipped runtime does not have."
+    exit 3
+}
+
 # Role 2 first, because it is the one that is easy to get wrong: under
 # PyInstaller sys.executable IS this exe, and rt_engine spawns its children as
 # [sys.executable, "<...>/form_inspect.py", ...]. If this does not work,
@@ -294,4 +304,53 @@ if ($caps.geometry.state -ne 'yes') {
 }
 Write-Host ("serve role: rasterizer present (module {0}, geometry state {1})" -f `
     $caps.render.rasterizer.module, $caps.geometry.state)
+
+# The SEAT derivation, from the frozen runtime's own mouth. `document/pageGeometry`
+# existed before cell_borders did and answered without placing a single seat on
+# any corpus form — so "the method is advertised" is no longer enough to prove
+# the bundle can reach the marquee interaction. `derivationMethods` is
+# rt_geometry's own list; cell_borders in it means the border scan shipped.
+if ($caps.geometry.derivationMethods -notcontains 'cell_borders') {
+    Write-Error ("the frozen server does not list cell_borders among its seat " +
+        "derivations. This bundle predates the cell-border seat merge; the overlay " +
+        "would draw a page with nothing clickable on it. Derivations: " +
+        ($caps.geometry.derivationMethods -join ', '))
+    exit 3
+}
+Write-Host ("serve role: seat derivations {0}" -f ($caps.geometry.derivationMethods -join ', '))
+
+# module/check, the 작업 팩 run button's method. Advertised by NAME, because
+# the shell now draws an enabled 실행 control off the back of it.
+foreach ($method in @('module/list', 'module/check')) {
+    if ($caps.methods -notcontains $method) {
+        Write-Error ("the frozen server does not advertise $method. This bundle " +
+            "predates the module/check merge; the 작업 팩 panel would offer a button " +
+            "with nothing behind it. Methods: " + ($caps.methods -join ', '))
+        exit 3
+    }
+}
+Write-Host 'serve role: module/list and module/check advertised'
+
+# And the bundled DECLARATIONS are readable through the runtime's own registry,
+# not merely present on disk. `capabilities.modules` computes this without
+# running anything; `state` is `unavailable` when the registry could not be
+# loaded at all, which is what a bundle with modules/ but no readable manifest
+# looks like. Enablement is NOT asserted — a shipped bundle enables nothing
+# until an operator does, and that is the correct empty state.
+if ($caps.modules.state -ne 'ready') {
+    Write-Error ("the frozen server reports module capability '" + $caps.modules.state +
+        "' (" + $caps.modules.reason + "). The bundled module declarations are not " +
+        "readable through the runtime's own registry.")
+    exit 3
+}
+if (@($caps.modules.discovered).Count -lt 1) {
+    Write-Error ("the frozen server discovered no distribution module under " +
+        $caps.modules.modulesRoot + ". The 작업 팩 panel would be empty in every " +
+        "shipped install.")
+    exit 3
+}
+Write-Host ("serve role: {0} module declarations discovered, {1} enabled ({2})" -f `
+    @($caps.modules.discovered).Count, @($caps.modules.enabled).Count,
+    $(if (@($caps.modules.enabled).Count -eq 0) { 'none, which is the shipped default' }
+      else { ($caps.modules.enabled -join ', ') }))
 exit 0
