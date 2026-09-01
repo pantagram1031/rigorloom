@@ -144,6 +144,56 @@ export interface Capabilities {
   unavailable: Record<string, string>;
 }
 
+/**
+ * One text run inside a region, from `document/readRegion`.
+ *
+ * `color_value` is the payload that matters: it is the actual colour the
+ * document carries, and `color_anomaly` is the runtime's judgement that it
+ * differs from the body baseline. Blue body text shipping as "checked and
+ * clean" is T127; the document view renders the run in its real colour and
+ * marks it, rather than quietly normalising it away.
+ */
+export interface TextRun {
+  index: number;
+  text: string;
+  charpr?: string;
+  color_anomaly?: boolean;
+  color_value?: string;
+}
+
+/** A region's full text. Cells carry `table` + `addr`; paragraphs `at_para`. */
+export interface RegionText {
+  table?: number;
+  addr?: CellAddr;
+  at_para?: number;
+  para_idx?: number;
+  section?: string;
+  text: string;
+  truncated_preview?: boolean;
+  runs?: TextRun[];
+}
+
+/** One thing a check found, addressed so selecting it navigates the document. */
+export interface Finding {
+  code: string;
+  message: string;
+  severity: "hard" | "warn" | "info";
+  where: string;
+  selection:
+    | { kind: "cell"; table: number; row: number; col: number }
+    | { kind: "paragraph"; atPara: number }
+    | null;
+}
+
+/** A previously opened document, remembered across launches. */
+export interface Recent {
+  path: string;
+  name: string;
+  sha256: string;
+  bytes: number;
+  openedUtc: string;
+}
+
 export interface Candidate {
   runId?: string;
   sha256?: string;

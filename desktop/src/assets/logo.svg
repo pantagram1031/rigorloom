@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"
+     stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <title>Rigorloom</title>
+  <!--
+    A plain weave with one asymmetry that leans R.
+
+    Two warps (vertical) and two wefts (horizontal) cross four times. At each
+    crossing exactly one strand is broken, so the eye reads over-and-under
+    rather than a grid: warp A over weft A, weft A over warp B, weft B over
+    warp A. The fourth crossing is where warp B, weft B and the leg meet, and
+    that solid knot is the mark's focal point.
+
+    R-adjacency comes from the silhouette, not from drawing a letter: warp A is
+    a full-height stem, the two warps and two wefts enclose a bowl, and the leg
+    falls away from the bowl's bottom-right corner.
+
+    Geometry notes. The 32 grid keeps every terminal and crossing on a whole or
+    quarter unit. Terminals sit at 4 and 28 rather than 2 and 30 because round
+    caps add half the stroke width (1.5) at each end, so the drawn extent is
+    2.5-29.5 and the mark stays optically centred in its box. Crossing gaps are
+    5.5 wide - the 3-unit stroke plus 1.25 of clearance on each side - which is
+    the narrowest gap that still reads as an interlace at 16px.
+
+    pathLength="100" on every stroke lets the entrance animation drive
+    stroke-dashoffset from 100 to 0 without measuring each path.
+  -->
+
+  <!-- warp A - the stem. Continuous at (11,11); broken at (11,21). -->
+  <path class="rl-warp-a" pathLength="100" d="M11 4 V18.25" />
+  <path class="rl-warp-a" pathLength="100" d="M11 23.75 V28" />
+
+  <!-- warp B - broken at (21,11), runs into the knot at (21,21). -->
+  <path class="rl-warp-b" pathLength="100" d="M21 4 V8.25" />
+  <path class="rl-warp-b" pathLength="100" d="M21 13.75 V21" />
+
+  <!-- weft A - broken at (11,11), continuous over warp B at (21,11). -->
+  <path class="rl-weft-a" pathLength="100" d="M4 11 H8.25" />
+  <path class="rl-weft-a" pathLength="100" d="M13.75 11 H28" />
+
+  <!-- weft B - continuous over warp A at (11,21), ends in the knot. -->
+  <path class="rl-weft-b" pathLength="100" d="M4 21 H21" />
+
+  <!-- the leg, falling from the knot. -->
+  <path class="rl-leg" pathLength="100" d="M21 21 L28 28" />
+</svg>

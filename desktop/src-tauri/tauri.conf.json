@@ -12,13 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "리고룸",
+        "title": "Rigorloom",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
         "minHeight": 640,
         "resizable": true,
-        "center": true
+        "center": true,
+        "dragDropEnabled": true
       }
     ],
     "security": {
