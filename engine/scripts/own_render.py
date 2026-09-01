@@ -558,6 +558,14 @@ class OwnRenderer:
         self.skipped = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0}
+        # Every text line box this render drew, in device pixels, page-indexed.
+        # Emitted in the sidecar because it is the only channel on which this
+        # renderer can be compared to a Hancom reference *geometrically* (the
+        # raster channel drowns in font substitution) — see
+        # engine/scripts/render_scoreboard.py.  E1's caret work needs the same
+        # record.
+        self.line_boxes = []
+        self._page = 1
         # Standing caveats that apply to every render, not just this document.
         # They belong in the artefact, not only in the notes file, because the
         # sidecar is what travels with the PNG.
@@ -803,7 +811,10 @@ class OwnRenderer:
         total = sum(widths)
         x_px = self.pxf(x_hwp)
         cursor = x_px + self._align_offset(align, self.pxf(avail_hwp), total)
+        baseline_px = self.pxf(baseline_hwp)
         drew_text = False
+        text_x0 = text_x1 = None
+        ascent = descent = 0
         for (kind, payload), w in zip(items, widths):
             if kind == "obj":
                 name, el, _charpr, _floating = payload
@@ -818,10 +829,15 @@ class OwnRenderer:
             cp = self._charpr(seg.charpr)
             colour = cp.get("color") or (0, 0, 0)
             font = self._font_for(seg.charpr)
-            baseline_px = self.pxf(baseline_hwp)
             draw.text((cursor, baseline_px), seg.text, font=font,
                       fill=colour, anchor="ls")
             drew_text = True
+            seg_ascent, seg_descent = font.getmetrics()
+            ascent = max(ascent, seg_ascent)
+            descent = max(descent, seg_descent)
+            text_x0 = cursor if text_x0 is None else min(text_x0, cursor)
+            text_x1 = (cursor + w) if text_x1 is None else max(text_x1,
+                                                              cursor + w)
             underline = (cp.get("underline") or "NONE").upper()
             if underline not in ("NONE", ""):
                 # Ruled blanks in government forms are underline runs, and the
@@ -834,6 +850,16 @@ class OwnRenderer:
             cursor += w
         if drew_text:
             self.counts["text_lines"] += 1
+            # The box is the *text* extent, not the item extent: an inline
+            # placeholder sharing the line must not inflate a box that is
+            # about to be paired against a reference PDF's text lines.
+            self.line_boxes.append({
+                "page": self._page,
+                "x0": round(text_x0, 3),
+                "y0": round(baseline_px - ascent, 3),
+                "x1": round(text_x1, 3),
+                "y1": round(baseline_px + descent, 3),
+            })
 
     def _render_paragraphs(self, draw, paragraphs, origin_hwp, avail_w_hwp,
                            block_offset_hwp=0):
@@ -1132,7 +1158,8 @@ class OwnRenderer:
         page_w = self.px(geo["width"])
         page_h = self.px(geo["height"])
         images = []
-        for page_paras in pages:
+        for page_number, page_paras in enumerate(pages, start=1):
+            self._page = page_number
             img = self.Image.new("RGB", (page_w, page_h), (255, 255, 255))
             draw = self.ImageDraw.Draw(img)
             self._render_paragraphs(
@@ -1162,6 +1189,15 @@ class OwnRenderer:
                 "family; advance widths therefore differ from the authoring "
                 "engine's")),
             "elements_rendered": dict(self.counts),
+            "line_boxes": list(self.line_boxes),
+            "line_boxes_meaning": (
+                "every text line box drawn, in device pixels at this render's "
+                "dpi; y bounds are the font's ascent/descent about the cached "
+                "baseline, x bounds are the measured text extent (inline "
+                "objects excluded). The comparison channel "
+                "engine/scripts/render_scoreboard.py pairs these against a "
+                "reference PDF's text lines."
+            ),
             "elements_skipped": sorted(
                 self.skipped.values(),
                 key=lambda e: (e["element"], e["reason"])),

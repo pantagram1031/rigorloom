@@ -150,6 +150,39 @@ def test_equation_reaches_the_placeholder_path(tmp_path):
     assert image.convert("L").getextrema()[0] < 255  # the box was drawn
 
 
+def test_sidecar_records_every_text_line_box(gianmun_render):
+    """The geometry channel a Hancom comparison actually runs on.
+
+    The raster channel drowns in font substitution, so ``render_scoreboard``
+    pairs these boxes against the reference PDF's text lines instead.  A box
+    per counted text line, inside the page, is the contract.
+    """
+    report = gianmun_render["report"]
+    boxes = report["line_boxes"]
+    assert len(boxes) == report["elements_rendered"]["text_lines"]
+    width, height = report["page_size_px"]
+    for box in boxes:
+        assert box["page"] == 1
+        assert box["x1"] > box["x0"], box
+        assert box["y1"] > box["y0"], box
+        assert -1 <= box["x0"] and box["x1"] <= width + 1, box
+        assert -1 <= box["y0"] and box["y1"] <= height + 1, box
+
+
+def test_line_boxes_exclude_an_inline_placeholder(gianmun_render):
+    """A box is the *text* extent, not the item extent.
+
+    gianmun's 발신명의 line carries an inline 직인 rectangle beside the text.
+    If the placeholder inflated the line box, every such box would be paired
+    against a reference text line it does not describe.
+    """
+    report = gianmun_render["report"]
+    widths = [b["x1"] - b["x0"] for b in report["line_boxes"]]
+    # The page is 1191 px at 144 dpi; no text line on this form spans it.
+    assert max(widths) < report["page_size_px"][0]
+    assert min(widths) > 0
+
+
 # ---------------------------------------------------------------- determinism
 
 def test_two_renders_are_byte_identical(tmp_path):
