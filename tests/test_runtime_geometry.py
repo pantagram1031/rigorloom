@@ -1231,9 +1231,10 @@ def test_the_grid_is_zoom_independent(tmp_path):
 @needs_rasterizer
 @needs_corpus_renders
 def test_a_form_the_grid_cannot_reach_places_nothing_and_says_why(tmp_path):
-    """gianmun-byeolji-1ho is ruled with underlines, not boxes: 6 horizontal
-    rules and 4 verticals on the page, so almost nothing closes. Its 9 fill
-    regions are absent, and that is the correct answer, not a failure."""
+    """gianmun-byeolji-1ho draws almost no rules at all: 6 horizontal and 4
+    vertical on the whole page, and its fields (수신 / 참조 / 제목 / 기안자 …)
+    carry none. Its 9 fill regions are absent, and that is the correct answer,
+    not a failure."""
     slug = "gianmun-byeolji-1ho"
     profile = _profile_of(slug, tmp_path)
     placed, _ = _seats_for_form(slug, profile)
@@ -1242,3 +1243,195 @@ def test_a_form_the_grid_cannot_reach_places_nothing_and_says_why(tmp_path):
     extracted = rt_geometry.extract_page(
         module, CORPUS_RENDERS / f"{slug}.pdf", 0)
     assert len(extracted["drawnCells"]) < 5, "the page really is barely ruled"
+
+
+# --- two mechanisms measured and NOT shipped ---------------------------------
+# Both were specified before the corpus was asked about them. Both measured
+# zero. The measurements are pinned here because the reason they are not in
+# the code is a number, and a number rots if nothing re-checks it.
+
+
+def _free_horizontal_rules(module, pdf, page, extracted):
+    """Joined horizontal rules that are not an edge of any closed cell."""
+    document = module.open(str(pdf))
+    try:
+        drawings = list(document.load_page(page).get_drawings())
+    finally:
+        document.close()
+    horizontal, _vertical = rt_geometry.ruling_segments(drawings)
+    rules = [(y, low, high)
+             for y, intervals in rt_geometry.cluster_rules(horizontal)
+             for low, high in intervals]
+    tol = rt_geometry.SEAT_BAND_TOL
+    free = []
+    for y, low, high in rules:
+        if any((abs(y - cell[1]) <= tol or abs(y - cell[3]) <= tol)
+               and low <= cell[2] + tol and high >= cell[0] - tol
+               for cell in extracted["drawnCells"]):
+            continue
+        free.append((y, low, high))
+    return rules, free
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_no_free_rule_on_the_corpus_underlines_a_seat(tmp_path):
+    """`underline_rule` as a derivation class: measured at zero, so not built.
+
+    The shape it is defined for is ``라벨 ______`` — a rule with no enclosing
+    box, starting after a uniquely-anchorable label on that label's own line
+    band, so the seat is the rule's x-extent at the label's height.
+
+    Across all 10 renders there are 1,141 joined horizontal rules, 549 of them
+    not an edge of any closed cell, and exactly ONE of those has that shape.
+    Its label's next declared cell is `static`, not a fill target — so the
+    class would place no seat at all, and would exist only to fire on the
+    other 548, which are section separators and row borders running the full
+    text width. A box in the wrong place is worse than no box; not in.
+    """
+    module = rt_render.rasterizer_module()
+    normalize = rt_geometry.normalizer()
+    shaped = []
+    free_total = 0
+    for slug in sorted(CORPUS_SEATS):
+        profile = _profile_of(slug, tmp_path)
+        by_table = {table.get("index"): table
+                    for table in profile.get("table_map") or []}
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        document = module.open(str(pdf))
+        pages = document.page_count
+        document.close()
+        for page in range(pages):
+            extracted = rt_geometry.extract_page(module, pdf, page)
+            width, height = extracted["widthPt"], extracted["heightPt"]
+            _rules, free = _free_horizontal_rules(module, pdf, page, extracted)
+            free_total += len(free)
+            targets, _ = rt_geometry.build_targets(profile, normalize)
+            spans = rt_geometry.map_spans(extracted["lines"], targets,
+                                          normalize, width, height)
+            labels = []
+            for span in spans:
+                key = rt_geometry.sole_cell_address(span)
+                if key is None:
+                    continue
+                x0, y0, x1, y1 = span["rect"]
+                labels.append((key, x1 * width, y1 * height))
+            for y, low, _high in free:
+                for key, label_right, baseline in labels:
+                    # on the label's own line band, and starting after it
+                    if not (baseline - 3.0 <= y <= baseline + 12.0):
+                        continue
+                    if low < label_right - 3.0:
+                        continue
+                    table = by_table.get(key[0]) or {}
+                    following = next(
+                        (cell for cell in table.get("cells") or []
+                         if (cell.get("addr") or {}).get("row") == key[1]
+                         and (cell.get("addr") or {}).get("col") == key[2] + 1),
+                        None)
+                    shaped.append((slug, key,
+                                   following and following.get("classification")))
+    assert free_total == 549, "the corpus stopped being the corpus"
+    assert len(shaped) == 1, shaped
+    assert shaped[0][2] == "static", "and it is not even beside a seat"
+
+
+@needs_rasterizer
+@needs_corpus_renders
+def test_untruncated_previews_buy_no_seats(tmp_path):
+    """The 30-character preview is not what is blocking the absent seats.
+
+    `form_inspect --full-text` already returns a named cell's exact string, so
+    this asks it for every truncated cell in the corpus and splices the result
+    into the target set as if the preview had never been cut.
+
+    145 cells come back. 34 of them equal one rendered line; the rest average
+    135 characters and WRAP over several, and the span unit is a line, so no
+    length of preview could ever match them. The 34 add 8 anchors and lose
+    none — and place **zero** extra seats, because they land where the walk
+    already reaches. Carrying full cell text as a new profile field would
+    therefore buy nothing, at the cost of the structure-only contract
+    form_inspect keeps on purpose (engine/scripts/form_inspect.py `_full_text`).
+    """
+    import subprocess
+    import sys as _sys
+
+    module = rt_render.rasterizer_module()
+    normalize = rt_geometry.normalizer()
+    recovered = gained = lost = 0
+    seats_after = 0
+    for slug in sorted(CORPUS_SEATS):
+        profile = _profile_of(slug, tmp_path)
+        wanted = [(table["index"], cell["addr"]["row"], cell["addr"]["col"])
+                  for table in profile.get("table_map") or []
+                  for cell in table.get("cells") or []
+                  if cell.get("truncated") and (cell.get("addr") or {})
+                  .get("row") is not None]
+        extra: dict = {}
+        if wanted:
+            out = tmp_path / f"{slug}.fulltext.json"
+            argv = [_sys.executable,
+                    str(Path(__file__).resolve().parents[1] / "engine"
+                        / "scripts" / "form_inspect.py"),
+                    str(CORPUS_CONVERTED / f"{slug}.hwpx"), "--out", str(out)]
+            for table, row, col in wanted:
+                argv += ["--full-text", f"{table}:{row},{col}"]
+            result = subprocess.run(argv, capture_output=True)
+            assert result.returncode == 0, result.stderr[:2000]
+            payload = json.loads(out.read_text(encoding="utf-8"))
+            for entry in payload.get("full_text") or []:
+                if "addr" not in entry:
+                    continue
+                key = normalize(entry["text"])
+                if not key:
+                    continue
+                recovered += 1
+                extra.setdefault(key, []).append(
+                    {"kind": "cell", "table": entry["table"],
+                     "row": entry["addr"]["row"], "col": entry["addr"]["col"],
+                     "classification": "static", "text": entry["text"]})
+
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        document = module.open(str(pdf))
+        pages = document.page_count
+        document.close()
+        placed = {}
+        for page in range(pages):
+            extracted = rt_geometry.extract_page(module, pdf, page)
+            width, height = extracted["widthPt"], extracted["heightPt"]
+            narrow, _ = rt_geometry.build_targets(profile, normalize)
+            wide = {key: list(value) for key, value in narrow.items()}
+            for key, value in extra.items():
+                wide.setdefault(key, []).extend(value)
+
+            def anchored(targets):
+                found = set()
+                for span in rt_geometry.map_spans(extracted["lines"], targets,
+                                                  normalize, width, height):
+                    key = rt_geometry.sole_cell_address(span)
+                    if key is None:
+                        continue
+                    x0, y0, x1, y1 = span["rect"]
+                    if rt_geometry._smallest_cell_at(
+                            extracted["drawnCells"], (x0 + x1) / 2 * width,
+                            (y0 + y1) / 2 * height):
+                        found.add(key)
+                return found
+
+            before, after = anchored(narrow), anchored(wide)
+            gained += len(after - before)
+            lost += len(before - after)
+            seats, _ = rt_geometry.derive_seats(
+                profile,
+                rt_geometry.map_spans(extracted["lines"], wide, normalize,
+                                      width, height),
+                extracted["drawnRects"], width, height,
+                cells=extracted["drawnCells"], lines=extracted["lines"],
+                normalize=normalize)
+            for seat in seats:
+                placed[(seat["table"], seat["row"], seat["col"])] = seat
+        seats_after += len(placed)
+
+    assert recovered == 145
+    assert (gained, lost) == (8, 0)
+    assert seats_after == CORPUS_SEAT_TOTAL, "8 more anchors, 0 more seats"
