@@ -654,3 +654,182 @@ rather than reused.
    sync invisible; a split halves the page preview; separate windows need
    cross-window state. This affects M15 and the layout budget and should be
    settled before the shell is built.
+
+---
+
+## Decision — 2026-09-01
+
+**Take Tauri 2 + React/TS + a packaged Python sidecar. The PySide6/QML arm was
+not built: Tauri passed every gate in §3.4 (M10, M11-after-mitigation, M13,
+M15) and breached no hard budget in step 2.** Per the decision rule, step 3
+applies and the spike stops here.
+
+Executed by the Tauri arm of §3. Code: `spikes/shell-tauri/` (throwaway).
+Machine: the one measured in §2. Every number below came from a script in
+`spikes/shell-tauri/measure/`; none is estimated. Where a number missed its
+threshold, the row says so.
+
+### What was installed for the spike
+
+| Component | Version | Scope |
+|---|---|---|
+| `@tauri-apps/cli` | 2.11.4 | project-local devDependency |
+| `@tauri-apps/api` | 2.11.1 | project-local dependency |
+| `@tauri-apps/plugin-dialog` | 2.7.3 | project-local dependency |
+| `react` / `react-dom` | 18.3.1 | project-local |
+| `vite` | 5.4.21 | project-local |
+| `typescript` | 5.9.3 | project-local |
+| `@vitejs/plugin-react` | 4.7.0 | project-local |
+| PyInstaller | 6.22.2 | venv at `spikes/shell-tauri/sidecar/.venv` |
+| PyMuPDF | 1.28.2 | same venv |
+| NSIS | 3.11 | auto-downloaded by the Tauri CLI into its own cache |
+| `nsis_tauri_utils.dll` | 0.5.3 | same |
+| Rust crates | `windows-sys` 0.59 plus the Tauri 2 tree | cargo cache |
+
+Nothing was installed globally, nothing was uninstalled or upgraded, and no
+existing interpreter or toolchain was modified. The spike app itself was never
+installed — the NSIS installer was built and measured, not run.
+
+### Corrections to §2
+
+- **`C:\Python313` is not usable.** It is a partial install: no `Lib/`, no
+  `Scripts/`, and any invocation prints "Could not find platform independent
+  libraries". It cannot create a venv. §2 listed it as an eligible non-Store
+  interpreter; that was wrong.
+- The sidecar is therefore pinned to **CPython 3.12.10** at
+  `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`.
+- **Build Tools 2019 was not a problem.** The §2 risk did not materialise: the
+  whole Tauri 2 dependency tree — `tao`, `webview2-com`, `windows-sys`, `muda`,
+  `softbuffer` — compiled clean in both debug and release with no linker or SDK
+  error. No Build Tools upgrade is needed.
+
+### Measurement table
+
+Gates are marked **G**. Thresholds are the ones written in §3.2 before any
+measurement was taken.
+
+| # | Metric | Threshold | Measured | Verdict |
+|---|---|---|---|---|
+| M1a | Window handle exists | — | median **31 ms** (15–40, n=5) | — |
+| M1b | **First paint** (rust `main()` to first frame) | 1500 cold / 600 warm | one-dir median **1465 ms** (1331–2049, n=5); one-file median 1571 ms (1446–2152) | cold OK, **warm missed** |
+| M2 | Sidecar ready, end to end | 1200 ms | one-dir median **1757 ms** (1565–3477); one-file median **3018 ms** (2666–4210) | **missed, both** |
+| M2b | Frozen sidecar alone, spawn to ready | — | one-dir median **264 ms** (246–545); one-file median **1394 ms** (1028–2916) | diagnostic |
+| M3 | JSONL round-trip, n=1000 | median 3 ms, p99 20 ms | median **0.80 ms**, p99 **2.40 ms**, min 0.30, max 6.40 | PASS |
+| M4a | Throughput, one IPC event per line | 20 MiB/s | 10 000 lines / 1.10 MiB in **1010 ms = 1.1 MiB/s** | **missed** |
+| M4b | Same work, counted in Rust, one event | — | 10 000 lines / 1.11 MiB in **157 ms = 7.0 MiB/s** | **6.4x faster** |
+| M5 | Large payload | completes, no truncation or deadlock | **517 KiB PNG** (690 KiB base64), round-trip **282 ms**, of which PyMuPDF **252 ms** | PASS |
+| M6 | Installer size | 80 MB | NSIS **30 003 227 B = 28.6 MiB** | PASS |
+| M7 | Installed payload | none | shell 4.36 MiB + one-file sidecar 27.36 MiB = **31.7 MiB** (one-dir would be ~64 MiB) | recorded |
+| M8 | Memory at rest, whole tree | 250 MB private | 9 processes, working set **450.6 MiB**, **private 243.9 MiB** | PASS, barely |
+| M9 | Memory after load | no growth trend | cycle 1 private 347.5 MiB, cycle 2 **342.8 MiB** | PASS |
+| **M10 G** | Graceful close, no orphans | zero | sidecar gone under 1 s, WebView2 gone by 3–10 s, **CLEAN** | PASS |
+| **M11 G** | Hard kill of the shell, no orphans | zero | **CLEAN in 1 s** with the job object, even against a sidecar that deliberately ignores stdin EOF | PASS **after mitigation** |
+| **M12 G** | Sidecar crash | visible, recoverable | badge flips to red `sidecar down`, UI and document state survive, `restart sidecar` yields a new pid and a green badge | PASS |
+| **M13 G** | Korean IME | zero defects | `안녕하세요` composed from real 두벌식 scan codes: `U+C548 U+B155 U+D558 U+C138 U+C694`, length 5 | PASS |
+| **M14 G** | IME in a controlled list input | no composition loss | `탐구보고서` typed into a list row, then Backspace twice gives `탐구보고` (decompose-then-delete, correct Korean semantics); the other field kept its value | PASS |
+| **M15 G** | High-DPI 100/125/150/200 % | crisp, layout intact | all four re-laid out and re-rasterised — `devicePixelRatio` 1 / 1.25 / 1.5 / 2, css viewport 2560x1600 / 1707x1067 / 1280x800. No bitmap upscaling. Screenshots committed. | PASS |
+| M16 | Multi-monitor DPI | — | **not tested — one display on this machine** (`\\.\DISPLAY1`, 1440x900 logical at 200 %) | not measured |
+| M17 | Shell crash visibility | visible with a stack | **not empirically triggered.** From config: release builds use `panic = "abort"` with `windows_subsystem = "windows"`, so a Rust panic aborts with no console and no dialog | **needs work, not measured** |
+| M18 | Build reproducibility | builds elsewhere | **not tested — one machine.** The build is fully scripted (`sidecar/build.sh`, `npm install`, `npx tauri build`) with one manual prerequisite: the pinned interpreter path | not measured |
+
+### The four findings that matter more than the verdict
+
+**1. M11 was a real failure, and what saved the first run was an accident.**
+The naive result depends on how the sidecar is frozen:
+
+| Sidecar build | stdin-EOF handling | Job object | Result on hard kill |
+|---|---|---|---|
+| `--console` | exits on EOF | no | clean, ~1 s |
+| `--console` | **ignores EOF** | no | clean, ~1 s |
+| `--noconsole` | **ignores EOF** | no | **orphaned, still alive at 25 s** |
+| `--noconsole` | exits on EOF | no | **orphaned, still alive at 25 s** |
+| `--noconsole` | ignores EOF | **yes** | **clean, 1 s** |
+
+Row 2 proves the console build survives for a reason unrelated to the sidecar's
+own logic: the env var did reach the process (verified with a marker file
+recording `IGNORE_EOF='1'`) and it still died, so console-group teardown is
+doing the work. Rows 3 and 4 show that a `--noconsole` sidecar — the one a
+shipping app uses, because `--console` drags a `conhost.exe` into the process
+tree — orphans, and that **stdin-EOF handling inside the sidecar does not save
+it**. Only the kernel-enforced job object
+(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, implemented in
+`spikes/shell-tauri/src-tauri/src/jobkill.rs`) fixes it, and it fixes it even
+against a hostile sidecar. **The desktop must ship this. It is not optional and
+Tauri does not do it for you.**
+
+**2. Tauri's per-event IPC is the throughput ceiling, not the pipe.** Emitting
+one event per JSONL line gives 1.1 MiB/s (about 9 900 events/s); counting the
+same lines in Rust and emitting once gives 7.0 MiB/s. **The agent timeline must
+not tail JSONL by forwarding each line to the webview.** Batch in Rust — by
+count or by frame interval — and send arrays. The naive design would have made
+a busy run feel broken, and it would have been misread as "Tauri is slow".
+
+**3. PyInstaller packaging mode dominates sidecar startup by 5.3x.** One-dir
+reaches ready in 264 ms standalone; one-file takes 1394 ms because it
+self-extracts on every launch. End to end the gap is 1757 ms versus 3018 ms.
+One-file also runs **two** processes (bootloader plus extracted child); one-dir
+runs one. §3.3 predicted that choosing a shell on a number that is really about
+PyInstaller would be a bad decision — it would have been. **Ship one-dir via
+`bundle.resources`, not one-file via `externalBin`**, and pay roughly 32 MiB
+more on disk for it.
+
+**4. M1 and M2 miss their targets, and the targets were the naive part.** First
+paint is about 1.5 s and sidecar-ready about 1.8 s even in the better
+configuration. Neither is a gate, and both have obvious untried headroom: the
+sidecar is spawned inside `setup()` where it contends with WebView2
+initialisation, the frontend boots React before it needs to, and nothing is
+lazy. But the 600 ms warm first paint written into §3.2 is not reachable by
+tuning alone on this stack. Plan around **about 1.5 s to a usable window**,
+with a designed loading state rather than a blank one.
+
+### Honest limitations of this run
+
+- **M15 did not change the machine's display scaling.** The 200 % row is the
+  real OS scale factor; 100, 125 and 150 % were forced on the WebView through
+  `--force-device-scale-factor`. That exercises web-content re-layout and
+  re-rasterisation, which is where the risk lives, but not the native frame's
+  DPI handling and not a live scale change while running.
+- **"Cold" is approximate.** No reboot was performed. First-run-after-build
+  values (2049–2916 ms) are reported alongside the repeat values rather than
+  being labelled true cold starts.
+- **M13 and M14 were driven by synthetic scan codes**, not human typing. That
+  is strictly harder than the tooling default — which injects Unicode and
+  bypasses the IME entirely; the first attempt produced a literal
+  `dkssudgktpdy` and would have been a false pass — but it is still not a human
+  at a keyboard.
+- **The sidecar is an echo and render stub**, not `runtime/scripts/serve.py`
+  (which does not exist on this branch). It imports PyMuPDF eagerly so the
+  frozen size and import cost are realistic, but it runs no engine code.
+- **M8's first attempt under-counted.** Walking `ParentProcessId` missed the
+  WebView2 hosts in one run (3 processes instead of 9). The reported figure
+  comes from `memory.ps1`, which identifies processes by image name and by the
+  bundle identifier in the WebView2 command line.
+- No COM, no Hancom, and no network beyond the Tauri CLI's own NSIS download.
+
+### Visual evidence
+
+`spikes/shell-tauri/screenshots/`:
+
+| File | Shows |
+|---|---|
+| `dpi-100pct.png` | forced scale 1.0, `devicePixelRatio 1`, 2560x1600 css |
+| `dpi-125pct.png` | forced scale 1.25 |
+| `dpi-150pct.png` | forced scale 1.5, 1707x1067 css |
+| `dpi-200pct.png` | the machine's real 200 % scale, 1280x800 css |
+| `dpi-200-ime-composed.png` | M13 — `안녕하세요` and its code points |
+| `m12-sidecar-crash-and-restart.png` | M12 — recovered, new sidecar pid, state intact |
+| `measurements-m3-m4-m5.png` | M3, both M4 arms, and M5 in one frame |
+
+### What this obliges the implementation to do
+
+1. Job-object-confine every child process; treat the sidecar's own EOF handling
+   as defence in depth, never as the mechanism.
+2. Freeze the sidecar one-dir, ship it under `bundle.resources`, and pin a
+   non-Store interpreter in the build script.
+3. Batch sidecar output in Rust before it crosses the IPC boundary.
+4. Freeze the sidecar `--noconsole` and verify no `conhost.exe` appears in the
+   process tree.
+5. Give M17 an actual answer: install a panic hook that writes a crash log and
+   surfaces something, because `panic = "abort"` under `windows_subsystem =
+   "windows"` currently means a silent disappearance.
+6. Design for about 1.5 s to first usable paint.
