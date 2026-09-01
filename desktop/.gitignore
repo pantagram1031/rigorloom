@@ -1,0 +1,15 @@
+# Build outputs — never committed. Verify with `git status` before every commit.
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# Sidecar build products and the build venv.
+sidecar/.venv/
+sidecar/build/
+sidecar/dist/
+sidecar/*.spec
+src-tauri/resources/
+
+# Scripted-run scratch: smoke roots, logs, exit-code records.
+scripts/_run/

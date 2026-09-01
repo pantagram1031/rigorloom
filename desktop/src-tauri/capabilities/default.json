@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core APIs plus the native file dialog. No shell, no http, no fs: the Runtime is the only thing that touches documents.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}
