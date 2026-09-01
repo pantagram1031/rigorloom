@@ -78,7 +78,9 @@ def test_list_tools_names_what_is_not_exposed(tmp_path):
         capture_output=True, timeout=SPAWN_TIMEOUT)
     assert completed.returncode == 0
     payload = json.loads(completed.stdout.decode("utf-8"))
-    assert set(payload["notExposed"]) == set(rt_core.HOST_ONLY_METHODS) | {"initialize"}
+    assert set(payload["notExposed"]) == (set(rt_core.HOST_ONLY_METHODS)
+                                          | set(rt_core.PROTOCOL_ONLY_METHODS)
+                                          | {"initialize"})
 
 
 def test_root_is_required(tmp_path):

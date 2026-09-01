@@ -38,6 +38,11 @@ run" into exit 3 — the candidate is still published and still named in the
 payload, because refusing to report a thing that happened would be worse.
 ``verify`` is fail-closed by construction: it exits 3 when a required check
 could not run.
+
+``render`` follows the same rule from the other side: "there is no page image
+for this document" is an ANSWER, not a failure, so it exits 0 and the payload
+says ``available: false`` with a reason from a closed set. ``--require-render``
+turns that into exit 3 for a caller that wants a picture or nothing.
 """
 from __future__ import annotations
 
@@ -167,6 +172,31 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="T:R,C|R,C|para:N",
                    help="region address (repeatable)")
 
+    p = sub.add_parser("render", help="a page image, or why there cannot be one")
+    p.add_argument("--session", required=True)
+    p.add_argument("--page", type=int, default=0, help="0-based page index")
+    p.add_argument("--dpi", type=int, default=None)
+    p.add_argument("--run", default=None,
+                   help="render a published candidate instead of the source")
+    p.add_argument("--no-inline", action="store_true",
+                   help="never inline the PNG; report only its path")
+    p.add_argument("--require-render", action="store_true",
+                   help="exit 3 when no page image is possible (default: exit 0 "
+                        "and report the unavailable state, which is an answer)")
+
+    p = sub.add_parser("render-prepare",
+                       help="convert the session copy to a PDF so render can "
+                            "raster it (host action; needs Hancom)")
+    p.add_argument("--session", required=True)
+    p.add_argument("--timeout", type=float, default=None,
+                   help="seconds to allow the converter")
+
+    p = sub.add_parser("events", help="read the session event log")
+    p.add_argument("--session", required=True)
+    p.add_argument("--after", type=int, default=-1,
+                   help="return events with seq > after; -1 replays all")
+    p.add_argument("--limit", type=int, default=None)
+
     p = sub.add_parser("propose", help="build an OperationPlan")
     p.add_argument("--session", required=True)
     p.add_argument("--backend", default=SUPPORTED_BACKENDS[0])
@@ -237,6 +267,19 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
     if command == "read-region":
         regions = [_parse_region(spec) for spec in args.region]
         return core.document_read_region(args.session, regions), EXIT_OK
+    if command == "render":
+        result = core.document_render(args.session, page=args.page,
+                                      dpi=args.dpi, run_id=args.run,
+                                      inline=not args.no_inline)
+        if args.require_render and not result["available"]:
+            return result, EXIT_REFUSED
+        return result, EXIT_OK
+    if command == "render-prepare":
+        return core.document_render_prepare(args.session,
+                                            timeout=args.timeout), EXIT_OK
+    if command == "events":
+        return core.event_poll(args.session, after=args.after,
+                               limit=args.limit), EXIT_OK
     if command == "propose":
         return core.plan_propose(args.session, args.backend, _load_ops(args),
                                  args.proposer), EXIT_OK

@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_codes import (  # noqa: E402
+    CHILD_PYTHON_ENV,
     CHILD_TIMEOUT_SECONDS,
     MAX_CHILD_OUTPUT_BYTES,
     RpcError,
@@ -58,6 +59,61 @@ _ENV_KEYS_WINDOWS = ("SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT",
                      "SYSTEMDRIVE", "WINDIR", "USERPROFILE", "APPDATA",
                      "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
 _ENV_KEYS_POSIX = ("HOME",)
+
+
+def child_python(environ: dict | None = None) -> str:
+    """The interpreter engine children run under.
+
+    ``sys.executable`` is wrong for a packaged host: in a frozen executable it
+    IS the host, so every engine child re-launches the application. The desktop
+    sidecar worked around that with an argv convention; this override removes
+    the need for one. Set ``RIGORLOOM_CHILD_PYTHON`` to a real interpreter and
+    children use it, with no other change anywhere.
+    """
+    environ = os.environ if environ is None else environ
+    override = (environ.get(CHILD_PYTHON_ENV) or "").strip()
+    return override or sys.executable
+
+
+def child_python_facts(environ: dict | None = None) -> dict:
+    """What interpreter children will use, and where that came from."""
+    environ = os.environ if environ is None else environ
+    override = (environ.get(CHILD_PYTHON_ENV) or "").strip()
+    return {
+        "path": override or sys.executable,
+        "source": "override" if override else "sys.executable",
+        "env": CHILD_PYTHON_ENV,
+        "overrideSet": bool(override),
+    }
+
+
+def validate_child_python(environ: dict | None = None) -> dict:
+    """Refuse a broken override up front, not on the first document call.
+
+    An unset override is fine — that is the default path. A SET override that
+    does not resolve to a file is a misconfiguration the operator must see at
+    initialize, not as a mystifying ``capability_unavailable`` twenty seconds
+    into the first inspect.
+    """
+    facts = child_python_facts(environ)
+    if not facts["overrideSet"]:
+        return facts
+    candidate = Path(facts["path"]).expanduser()
+    try:
+        resolved = candidate if candidate.is_absolute() else candidate.resolve()
+        ok = resolved.is_file()
+    except OSError as exc:
+        raise RpcError("child_python_invalid",
+                       f"{CHILD_PYTHON_ENV} could not be checked: {exc}",
+                       env=CHILD_PYTHON_ENV, path=facts["path"]) from exc
+    if not ok:
+        raise RpcError(
+            "child_python_invalid",
+            f"{CHILD_PYTHON_ENV} is set but names no file; engine children "
+            "would fail on the first call",
+            env=CHILD_PYTHON_ENV, path=facts["path"])
+    facts["path"] = str(resolved)
+    return facts
 
 
 def child_env() -> dict[str, str]:
@@ -189,7 +245,7 @@ class EngineTools:
                 full_text: list[str] | None = None) -> dict:
         """Write a form profile to ``out_path``; return the child result meta."""
         self._require("form_inspect", self.form_inspect)
-        argv = [sys.executable, str(self.form_inspect), str(source),
+        argv = [child_python(), str(self.form_inspect), str(source),
                 "--out", str(out_path)]
         for spec in (full_text or ()):
             argv += ["--full-text", spec]
@@ -209,7 +265,7 @@ class EngineTools:
     def preedit_run(self, argv_tail: list[str]) -> tuple[int, dict | None, str]:
         """Run one preedit subcommand. Returns (exit, parsed JSON or None, raw)."""
         self._require("preedit", self.preedit)
-        result = run_child([sys.executable, str(self.preedit)] + argv_tail)
+        result = run_child([child_python(), str(self.preedit)] + argv_tail)
         raw = result.text
         parsed = None
         for line in reversed(raw.splitlines()):
@@ -226,6 +282,43 @@ class EngineTools:
                            tool="preedit", timedOut=True)
         return result.returncode, parsed, raw
 
+    # -- render_probe -------------------------------------------------------
+    def render_probe(self) -> dict:
+        """This MACHINE's renderer inventory. Opt-in: it costs seconds.
+
+        ``pipeline/scripts/render_probe.py`` shells out to ``soffice`` and, on
+        Windows, to ``wsl``; measured at ~8s on the bench. That is fine for a
+        button and ruinous for ``initialize``, so nothing calls this unless a
+        caller asks for it, and the answer is cached for the process.
+
+        What it reports is what the machine HAS, not what this build USES: the
+        Runtime calls no converter, and ``capabilities.render.converter`` says
+        so regardless of what turns up here.
+        """
+        probe = self.root / "pipeline" / "scripts" / "render_probe.py"
+        if not probe.is_file():
+            return {"state": "unavailable",
+                    "reason": "pipeline/scripts/render_probe.py not found",
+                    "capabilities": None, "renderers": []}
+        result = run_child([child_python(), str(probe), "--json"])
+        if result.timed_out or result.returncode != 0:
+            return {"state": "unavailable",
+                    "reason": (f"render_probe exited {result.returncode}"
+                               + (" after timing out" if result.timed_out else "")),
+                    "capabilities": None, "renderers": []}
+        try:
+            import json as _json
+            payload = _json.loads(result.text)
+        except ValueError:
+            return {"state": "unavailable",
+                    "reason": "render_probe produced no JSON object",
+                    "capabilities": None, "renderers": []}
+        return {"state": "probed", "reason": None,
+                "capabilities": payload.get("capabilities"),
+                "renderers": payload.get("renderers", []),
+                "note": ("machine inventory only; this build calls none of "
+                         "these, see capabilities.render.converter")}
+
     # -- check_residue ------------------------------------------------------
     def residue(self, profile: Path, artifact: Path) -> dict:
         """Run the residue gate. NEVER raises for a finding — a finding is data."""
@@ -234,7 +327,7 @@ class EngineTools:
                     "reason": "pipeline/scripts/check_residue.py not found under "
                               "the engine root",
                     "verdict": None, "ok": None}
-        result = run_child([sys.executable, str(self.check_residue),
+        result = run_child([child_python(), str(self.check_residue),
                             "--form-profile", str(profile),
                             "--artifact", str(artifact)])
         if result.timed_out:
