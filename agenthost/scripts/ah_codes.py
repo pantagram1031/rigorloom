@@ -43,6 +43,10 @@ CAPABILITY_NAMES = (
     "structuredOutput",
     "streaming",
     "resumableThread",
+    # Image input. Declared so a consumer can ASK; an adapter that has
+    # not wired document images says "unknown" rather than staying
+    # silent, because silence reads as "no" and this one is "not yet".
+    "vision",
 )
 
 #: Who holds the secret, and in what form. The host never holds a secret in

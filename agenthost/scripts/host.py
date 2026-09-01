@@ -35,6 +35,7 @@ from ah_codes import (  # noqa: E402
 from ah_events import EventLog  # noqa: E402
 from ah_host import DEFAULT_MAX_TURNS, HOST_NAME, AgentHost, redact_run  # noqa: E402
 from ah_mock import SCENARIOS, MockProvider  # noqa: E402
+from ah_anthropic import AnthropicAdapter  # noqa: E402
 from ah_router import RouterAdapter, load_router_config  # noqa: E402
 
 RUNTIME_SCRIPTS = Path(__file__).resolve().parents[2] / "runtime" / "scripts"
@@ -43,7 +44,7 @@ if str(RUNTIME_SCRIPTS) not in sys.path:
 
 from mock_agent import DOORS, open_door  # noqa: E402
 
-PROVIDERS = ("mock", "router")
+PROVIDERS = ("mock", "router", "anthropic")
 
 DEFAULT_INSTRUCTION = ("Fill the first editable seat in this form with the "
                        "agent-host marker, then ask a human to approve it.")
@@ -96,6 +97,12 @@ def build_provider(args):
     if args.provider == "mock":
         return MockProvider(scenario=args.scenario)
     config = load_router_config(args.config) if args.config else None
+    if args.provider == "anthropic":
+        # Config is OPTIONAL here: the defaults are the documented endpoint,
+        # the recommended model and the ANTHROPIC_API_KEY reference, so
+        # --capabilities works with nothing configured and reports the missing
+        # credential honestly rather than refusing to describe itself.
+        return AnthropicAdapter(config or {})
     if config is None:
         raise AgentHostError("config_invalid",
                              "--provider router needs --config naming a router "
@@ -127,6 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capabilities", action="store_true",
                         help="print the provider's CapabilityProfile and exit; "
                              "no document, no root needed")
+    parser.add_argument("--live-smoke", action="store_true",
+                        help="send ONE tiny real request to the provider and "
+                             "exit. Needs a configured credential; refuses "
+                             "cleanly without one. Never run by the test suite")
     parser.add_argument("--redact", action="store_true",
                         help="blank ids and timestamps for a golden document")
     parser.add_argument("--stderr-log", default=None,
@@ -147,6 +158,25 @@ def main(argv: list[str] | None = None) -> int:
         return emit({"ok": True, "host": HOST_NAME, "hostVersion": HOST_VERSION,
                      "provider": provider.capabilities().public()},
                     EXIT_OK, do_redact=args.redact)
+
+    if args.live_smoke:
+        smoke = getattr(provider, "live_smoke", None)
+        if smoke is None:
+            return emit({"ok": False, "host": HOST_NAME,
+                         "provider": provider.capabilities().public(),
+                         "error": {"code": "provider_capability_unavailable",
+                                   "message": f"{args.provider} has no live "
+                                              "smoke test"}},
+                        EXIT_REFUSED, do_redact=args.redact)
+        try:
+            result = smoke()
+        except AgentHostError as exc:
+            return emit({"ok": False, "host": HOST_NAME, "liveSmoke": "refused",
+                         "provider": provider.capabilities().public(),
+                         "error": exc.as_dict()},
+                        EXIT_REFUSED, do_redact=args.redact)
+        return emit({"ok": True, "host": HOST_NAME, "liveSmoke": "ran",
+                     "result": result}, EXIT_OK, do_redact=args.redact)
 
     if not args.root:
         return emit({"ok": False, "host": HOST_NAME,
