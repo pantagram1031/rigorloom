@@ -4,8 +4,9 @@ Everything the browser-mode mock replays comes from here, so the design can be
 iterated without a Rust build and without inventing data.
 """
 import json, os, subprocess, sys, tempfile, threading
+from pathlib import Path
 
-REPO = r"C:\Users\SAMSUNG\dev\rigorloom-trackC"
+REPO = str(Path(__file__).resolve().parents[2])
 serve = REPO + r"\runtime\scripts\serve.py"
 src = REPO + r"\tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx"
 out = REPO + r"\desktop\src\fixtures\corpus.json"
