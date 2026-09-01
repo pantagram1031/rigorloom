@@ -1575,9 +1575,24 @@ async function phaseSettings() {
   check("an unknown capability stays unknown rather than becoming a no",
     profile?.capabilities?.structuredOutput?.state === "unknown",
     JSON.stringify(profile?.capabilities?.structuredOutput));
-  check("the keyless probe reports the credential as missing",
-    (profile?.notes?.credential as { state?: string } | undefined)?.state === "missing",
-    JSON.stringify(profile?.notes?.credential));
+  // The adapter's own vocabulary: not_required | configured | missing |
+  // unsupported (`ah_anthropic.credential_state`). Asserted verbatim rather
+  // than mapped, so a change on that side fails here instead of quietly
+  // rendering as something else.
+  //
+  // With nothing stored, the config carries NO credential member and the
+  // adapter falls back to its documented default reference. That reference is
+  // what is asserted; the STATE is recorded rather than pinned, because a
+  // developer with ANTHROPIC_API_KEY already exported would legitimately see
+  // `configured` here and a harness that failed on it would be testing the
+  // machine rather than the app.
+  const keylessRef = profile?.notes?.credentialRef as { key?: string } | undefined;
+  const keylessState =
+    (profile?.notes?.credential as { state?: string } | undefined)?.state ?? "";
+  check("with nothing stored, the adapter falls back to its own default reference",
+    keylessRef?.key === "ANTHROPIC_API_KEY", JSON.stringify(keylessRef));
+  check("and reports that reference's state from the closed set",
+    ["missing", "configured"].includes(keylessState), keylessState);
 
   // --- with a fake credential ------------------------------------------------
   const stored = await storeCredential(FAKE_SECRET);
@@ -1608,9 +1623,12 @@ async function phaseSettings() {
   check("연결 확인 still answers once a credential is stored", withKey,
     JSON.stringify(getState().probeError));
   const keyed = getState().providerProfile;
-  check("and now reports the credential as present",
-    (keyed?.notes?.credential as { state?: string } | undefined)?.state === "present",
+  check("and now reports the credential as configured",
+    (keyed?.notes?.credential as { state?: string } | undefined)?.state === "configured",
     JSON.stringify(keyed?.notes?.credential));
+  check("the reference carries the header the Messages API wants, not a bearer",
+    (keyed?.notes?.credentialRef as { scheme?: string } | undefined)?.scheme === "raw",
+    JSON.stringify(keyed?.notes?.credentialRef));
   check("the capability payload does not contain the secret",
     !JSON.stringify(keyed).includes(FAKE_SECRET), "provider profile");
 
