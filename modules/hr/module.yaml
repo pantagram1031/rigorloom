@@ -64,7 +64,7 @@ requires: {rigorloom: ">=0.16"}
 # whatever it was filled from).
 provides:
   checkers:
-    - {name: check_hr, script: scripts/check_hr.py, wants: [baseline]}
+    - {name: check_hr, script: scripts/check_hr.py, subject: document, wants: [baseline]}
   skill:
     fragment: skill/FRAGMENT.md
     references:

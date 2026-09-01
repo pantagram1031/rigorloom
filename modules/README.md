@@ -137,7 +137,7 @@ enablement error, not a silent skip.
 
 | key | shape | semantics |
 |---|---|---|
-| `checkers` | list of `{name, script, wants?}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. `wants` is the optional declaration of extra inputs the checker needs — see below. |
+| `checkers` | list of `{name, script, wants?, subject?}` | Deterministic checkers joining the check registry. `name` is the checker id (unique across all enabled modules and core); `script` follows the core checker contract (`checker_base.py`: JSON verdict on stdout, exit 0/2/3). Core discovers them via `ModuleRegistry.enabled_checkers()`, never by filename convention. `wants` is the optional declaration of extra inputs the checker needs and `subject` the optional declaration of what its positional argument is — see below. |
 | `cli` | list of `{command, script}` | Subcommands surfaced under the main entry point. `command` is kebab-case and unique across enabled modules; core dispatches to `script` without knowing the module's name. |
 | `pack_types` | list of names | Personalization pack types the module defines. Seeds the pack-type registry that replaces the hardcoded `DATA_EXTENSION_PACK_TYPES` tuple (v0.13 extension-pack absorption). Names are unique across enabled modules and must not collide with core's general pack types. |
 | `run_modes` | list of `{name, state_policy, gates}` | First-class run-mode objects (plan §3.2): `state_policy` is one of `stage_machine` / `receipts` / `stateless` / `stateless_final_pointer` (the last = stateless, plus a mandatory canonical/FINAL pointer at delivery, validated by the registry-declared `check_canonical` checker — report-module payload since W3-S2b); `gates` is either an explicit list of checker/gate names the mode enforces, or a single gate-source string — the literal `declared` (per-workspace declared gates via `declared_gates.py`) or a stage-graph filename such as `stages.yaml` whose gate table defines the mode's gates. Modes are selected per workspace and shown by the capability probe. Run modes *select* stage-contract compositions; they never redefine the gate floor. |
@@ -179,6 +179,37 @@ declared-gate runner (`declared_gates.py`) is deliberately **not** wired yet —
 it only reaches checkers bound to a `gate_kind`, every input a delegated gate
 needs is already a declared value in the workspace's `gates.yaml`, and no
 module registers a gate kind whose checker wants a baseline.
+
+### `checkers[].subject` — what the positional argument is
+
+`wants` says what a checker needs *besides* its subject. `subject` says what the
+subject itself is:
+
+```yaml
+provides:
+  checkers:
+    - {name: check_gongmun, script: scripts/check_gongmun.py, subject: document, wants: [baseline]}
+    - {name: check_style,   script: scripts/check_style.py,   subject: workspace}
+```
+
+Closed vocabulary, exactly two values today. `document` = one artifact path
+(`python <script> <artifact.hwpx>`); `workspace` = a report workspace directory
+(`python <script> <workspace>`). Both are already true of every shipped
+checker; the key writes it down.
+
+It exists because a runner that holds only *one* of the two has no other honest
+way to tell them apart. The Runtime's `module/check` holds a document session:
+without the declaration its options are a per-module name list in core — which
+rule 1 forbids — or handing an `.hwpx` path to a checker that will read it as a
+directory and report the resulting emptiness as a finding about the user's
+document. So a checker with **no** `subject` is not run and not guessed at: it
+is reported `skipped` with reason `subject_undeclared`, exactly as an
+unsatisfiable `wants` is skipped-with-reason rather than passed.
+
+`enabled_checkers()` always returns a `subject` (`None` when omitted), so a
+consumer branches on the declaration without knowing which modules wrote one.
+The checker's CLI is unchanged, and a checker that declares nothing behaves
+exactly as before everywhere else.
 
 ### Modules may contribute visual-verify expectations
 

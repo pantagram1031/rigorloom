@@ -69,7 +69,7 @@ requires: {rigorloom: ">=0.16"}
 # packet_reference_dangling (the packet is being asked about itself).
 provides:
   checkers:
-    - {name: check_grant, script: scripts/check_grant.py, wants: [baseline]}
+    - {name: check_grant, script: scripts/check_grant.py, subject: document, wants: [baseline]}
   skill:
     fragment: skill/FRAGMENT.md
     references:

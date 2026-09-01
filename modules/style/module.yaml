@@ -11,7 +11,7 @@ name: style
 requires: {rigorloom: ">=0.16"}
 provides:
   checkers:
-    - {name: check_style, script: scripts/check_style.py}
+    - {name: check_style, script: scripts/check_style.py, subject: workspace}
   cli:
     - {command: humanize, script: scripts/humanization_ctl.py}
   skill:
