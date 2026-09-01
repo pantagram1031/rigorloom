@@ -62,17 +62,29 @@ function OpRow({
   locked: boolean;
 }) {
   const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
+  // A row names its target in the vocabulary of the address the OPERATION
+  // carries, never in one shape flattened onto both: a cell is 표 N RxCy, a
+  // paragraph run is 문단 N · 덩어리 R. A run drawn as a cell with blank
+  // coordinates would be a review queue that cannot be reviewed.
+  const slug =
+    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
   return (
-    <li className="queue-op" data-testid={`queue-op-${op.table}-${op.row}-${op.col}`}>
+    <li className="queue-op" data-testid={`queue-op-${slug}`} data-kind={op.kind}>
       <div className="queue-op-head">
         <button
           className="addr mono"
           title="문서에서 이 자리를 찾습니다"
           onClick={() =>
-            locateSelection({ kind: "cell", table: op.table, row: op.row, col: op.col })
+            locateSelection(
+              op.kind === "fill_cell"
+                ? { kind: "cell", table: op.table, row: op.row, col: op.col }
+                : { kind: "paragraph", atPara: op.atPara },
+            )
           }
         >
-          표 {op.table} R{op.row}C{op.col}
+          {op.kind === "fill_cell"
+            ? `표 ${op.table} R${op.row}C${op.col}`
+            : `문단 ${op.atPara} · 덩어리 ${op.run}`}
         </button>
         {op.origin === "agent" ? (
           <Tag tone="none" title={`제안: ${op.proposer ?? "에이전트"}`}>
@@ -88,7 +100,7 @@ function OpRow({
         ) : null}
         <button
           className="ghost dark-safe"
-          data-testid={`queue-remove-${op.table}-${op.row}-${op.col}`}
+          data-testid={`queue-remove-${slug}`}
           disabled={locked}
           title="이 작업을 대기열에서 뺍니다"
           onClick={() => void removeOp(op.opId)}

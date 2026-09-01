@@ -319,6 +319,28 @@ if ($caps.geometry.derivationMethods -notcontains 'cell_borders') {
 }
 Write-Host ("serve role: seat derivations {0}" -f ($caps.geometry.derivationMethods -join ', '))
 
+# SUB-LINE OFFSETS, from the frozen runtime's own mouth for the same reason.
+# The caret places itself from `spans[].charX`; a bundle that does not extract
+# per-character boxes answers every click by snapping to the front of the line,
+# and it would do that silently — the field would open, the caret would be at
+# offset 0, and nothing on screen would be wrong except the position. So the
+# build refuses to ship a bundle whose runtime does not advertise them, rather
+# than letting a user find out one line at a time.
+if ($caps.geometry.charOffsets.emitted -ne $true) {
+    Write-Error ("the frozen server does not emit sub-line character offsets " +
+        "(geometry.charOffsets.emitted = " + $caps.geometry.charOffsets.emitted + "). " +
+        "This bundle predates the caret merge; every click on a page line would " +
+        "snap to the start of the line without saying so.")
+    exit 3
+}
+if ($caps.geometry.charOffsets.field -ne 'spans[].charX') {
+    Write-Error ("the frozen server names its offset field '" +
+        $caps.geometry.charOffsets.field + "'; the shell reads spans[].charX.")
+    exit 3
+}
+Write-Host ("serve role: sub-line offsets on {0}, unit {1}" -f `
+    $caps.geometry.charOffsets.field, $caps.geometry.charOffsets.unit)
+
 # module/check, the 작업 팩 run button's method. Advertised by NAME, because
 # the shell now draws an enabled 실행 control off the back of it.
 foreach ($method in @('module/list', 'module/check')) {

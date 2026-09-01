@@ -81,6 +81,31 @@ function faceIndex(inspect: InspectResult | null): Map<string, TypefaceByLang> {
   return index;
 }
 
+/**
+ * The same map, plus the faces the RUN inventory carries (§14, fourth field).
+ *
+ * A caret stands in a paragraph run, and a run's charPr appears in neither
+ * publisher `faceIndex` reads — so until `runs[].charpr_face` reached the wire
+ * this strip could print nothing but the integer above a caret. Read out of
+ * `texts` rather than through a new call: `beginParagraphEdit` files the
+ * region it asked for there precisely so the toolbar does not ask the runtime
+ * a second time to name what it has already been told.
+ */
+function faceIndexWithRuns(
+  inspect: InspectResult | null,
+  texts: RegionText[],
+): Map<string, TypefaceByLang> {
+  const index = faceIndex(inspect);
+  for (const region of texts) {
+    for (const run of region.runs ?? []) {
+      if (run.charpr && run.charpr_face && !index.has(run.charpr)) {
+        index.set(run.charpr, run.charpr_face);
+      }
+    }
+  }
+  return index;
+}
+
 /** The 한글 face, which is the one a Korean form is set in. */
 function primaryFace(face: TypefaceByLang | undefined): string | null {
   return face?.hangul ?? null;
@@ -118,6 +143,7 @@ function seatCharPr(
   selection: Selection,
   inspect: InspectResult | null,
   texts: RegionText[],
+  caretRun: number | null,
 ): { id: string | null; suggested: string | null; where: string } {
   if (!inspect || !selection) return { id: null, suggested: null, where: "" };
   if (selection.kind === "cell") {
@@ -132,9 +158,11 @@ function seatCharPr(
     };
   }
   if (selection.kind === "paragraph") {
-    // Paragraph runs carry their own charPr, from document/readRegion.
+    // Paragraph runs carry their own charPr, from document/readRegion. With a
+    // caret open this is the run the caret is standing IN, which is the whole
+    // reason the strip can name a face here at all.
     const region = texts.find((row) => row.at_para === selection.atPara);
-    const run = region?.runs?.[0];
+    const run = caretRun !== null ? region?.runs?.find((r) => r.index === caretRun) : region?.runs?.[0];
     return { id: run?.charpr ?? null, suggested: null, where: `p:${selection.atPara}` };
   }
   return { id: null, suggested: null, where: `t:${selection.table}` };
@@ -147,7 +175,9 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const uiZoom = useWorkspace((s) => s.uiZoom);
   const selection = useWorkspace((s) => s.selection);
   const texts = useWorkspace(activeText);
-  const charPr = seatCharPr(selection, inspect, texts);
+  const inlineEdit = useWorkspace((s) => s.inlineEdit);
+  const caret = inlineEdit?.kind === "run" ? inlineEdit : null;
+  const charPr = seatCharPr(selection, inspect, texts, caret?.run ?? null);
   const queued = useWorkspace((s) => s.draft.ops.length);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
   const applied = useWorkspace((s) => s.applied);
@@ -158,7 +188,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const hard = findings.filter((f) => f.severity === "hard").length;
   const anomalous = charPr.suggested !== null && charPr.id !== charPr.suggested;
 
-  const faces = faceIndex(inspect);
+  const faces = faceIndexWithRuns(inspect, texts);
   const typefaces = inspect?.summary.typefaces ?? null;
   const face = charPr.id ? faces.get(charPr.id) : undefined;
   const suggestedFace = charPr.suggested ? faces.get(charPr.suggested) : undefined;
@@ -226,12 +256,31 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
 
       <div className="tool-sep" />
 
+      {/* 크기, AND WHOSE SIZE IT IS.
+          Two different facts share this control and they are never merged.
+          `baselineCharPr.height_pt` is what the document's HEADER declares for
+          the body shape. `span.sizePt` is what the RENDERER drew the caret's
+          line at, read out of the PDF. §14.1 is explicit that a run's charPr
+          carries no point size of its own, so with a caret open the honest
+          number is the render's — labelled 지면에서 잰 값, because a measured
+          size presented as a declared one would be the same class of
+          fabrication as a font name nobody declared. A line set in two sizes
+          at once carries no `sizePt` at all and falls back to the baseline. */}
       <div className="tool-group" data-testid="tool-size">
         <span className="tool-label">크기</span>
-        <span className="tool-value mono">
-          {baseline ? `${baseline.height_pt}pt` : "—"}
+        <span
+          className="tool-value mono"
+          data-testid="size-value"
+          data-source={caret?.sizePt ? "render" : "baseline"}
+          title={
+            caret?.sizePt
+              ? "커서가 선 줄을 렌더러가 그린 크기입니다. 문서가 선언한 값이 아니라 지면에서 잰 값입니다."
+              : "이 문서가 본문 글자 모양에 선언한 크기입니다."
+          }
+        >
+          {caret?.sizePt ? `${caret.sizePt}pt` : baseline ? `${baseline.height_pt}pt` : "—"}
         </span>
-        <span className="tool-note tiny">본문 기준</span>
+        <span className="tool-note tiny">{caret?.sizePt ? "지면에서 잰 값" : "본문 기준"}</span>
       </div>
 
       <div className="tool-sep" />

@@ -91,12 +91,8 @@ export type Phase = "idle" | "starting" | "ready" | "failed";
  * which: that difference is the whole product claim, and hiding it would make
  * the claim unverifiable by the person doing the approving.
  */
-export interface QueuedOp {
+interface QueuedOpBase {
   opId: string;
-  kind: "fill_cell";
-  table: number;
-  row: number;
-  col: number;
   text: string;
   /** Declared when the seat's preflight demands it (T30). */
   charPr?: string;
@@ -104,6 +100,41 @@ export interface QueuedOp {
   origin: "user" | "agent";
   /** Who proposed it, when that is an agent. */
   proposer?: string;
+}
+
+/** A value going into an empty cell. `fill-cells`, via `plan/propose`. */
+export interface QueuedFillOp extends QueuedOpBase {
+  kind: "fill_cell";
+  table: number;
+  row: number;
+  col: number;
+}
+
+/**
+ * A paragraph line rewritten. `set-runs`, via the SAME `plan/propose`.
+ *
+ * There is no `replace_paragraph_text` operation and this shell did not invent
+ * one: `set_run` replaces one run at `(atPara, run)` and preserves its
+ * `charPrIDRef` (engine/scripts/preedit.py:2464). What that costs is the check
+ * in `beginParagraphEdit` — a run is not a line, and the two coincide only
+ * where a paragraph holds exactly one run. Where they do not, no caret is
+ * placed at all.
+ *
+ * `run` is the index the run inventory returned, never a count this shell kept.
+ */
+export interface QueuedRunOp extends QueuedOpBase {
+  kind: "set_run";
+  atPara: number;
+  run: number;
+}
+
+export type QueuedOp = QueuedFillOp | QueuedRunOp;
+
+/** Where a queued op points, as one string. Cells and runs both have one. */
+export function opTargetId(op: QueuedOp): string {
+  return op.kind === "fill_cell"
+    ? cellKey(op.table, op.row, op.col)
+    : `p:${op.atPara}#${op.run}`;
 }
 
 /**
@@ -141,18 +172,45 @@ export interface LastCommit {
   composed: boolean;
 }
 
-/** The cell currently open for typing. A real `<input>` lives here. */
-export interface InlineEdit {
-  table: number;
-  row: number;
-  col: number;
-  /** The seat's text before this edit, for the queue's before → after. */
+interface InlineEditBase {
+  /** The target's text before this edit, for the queue's before → after. */
   before: string;
   /** Present when the seat's preflight says a charPr must be declared. */
   charPr?: string;
   /** Whether this is replacing an op already in the queue. */
   opId: string | null;
 }
+
+/** The cell currently open for typing. A real `<input>` lives here. */
+export interface InlineCellEdit extends InlineEditBase {
+  kind: "cell";
+  table: number;
+  row: number;
+  col: number;
+}
+
+/**
+ * The paragraph line currently open for typing, with a caret in it.
+ *
+ * `caret` is a character offset the runtime's own `charX` resolved from where
+ * the click landed. `null` means the line carried no per-character boxes and
+ * the click SNAPPED to the start — a state the status bar has to say out loud,
+ * which is the only reason this is a nullable number rather than a 0.
+ *
+ * `spanIndex` is carried so the overlay can mount the field in the rectangle
+ * the runtime placed for that exact line, and `sizePt` so the field can be set
+ * at the size the render drew it at rather than at the chrome's size.
+ */
+export interface InlineRunEdit extends InlineEditBase {
+  kind: "run";
+  atPara: number;
+  run: number;
+  caret: number | null;
+  spanIndex: number;
+  sizePt?: number;
+}
+
+export type InlineEdit = InlineCellEdit | InlineRunEdit;
 
 export type ApprovalPhase = "idle" | "requesting" | "pending" | "resolving" | "resolved";
 
@@ -875,9 +933,26 @@ export function queuedOpAt(
   table: number,
   row: number,
   col: number,
-): QueuedOp | null {
+): QueuedFillOp | null {
   return (
-    s.draft.ops.find((op) => op.table === table && op.row === row && op.col === col) ?? null
+    s.draft.ops.find(
+      (op): op is QueuedFillOp =>
+        op.kind === "fill_cell" && op.table === table && op.row === row && op.col === col,
+    ) ?? null
+  );
+}
+
+/** The queued op sitting on a given paragraph run, if any. */
+export function queuedRunOpAt(
+  s: WorkspaceState,
+  atPara: number,
+  run: number,
+): QueuedRunOp | null {
+  return (
+    s.draft.ops.find(
+      (op): op is QueuedRunOp =>
+        op.kind === "set_run" && op.atPara === atPara && op.run === run,
+    ) ?? null
   );
 }
 
@@ -909,11 +984,16 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // state product direction §4 names as shared, so they belong in the
     // signature the smoke asserts across a view switch. An edit in progress is
     // here too: a half-typed value must survive Ctrl+2 and come back.
-    draftOps: s.draft.ops.map((op) => `${cellKey(op.table, op.row, op.col)}=${op.text}`),
+    draftOps: s.draft.ops.map((op) => `${opTargetId(op)}=${op.text}`),
     draftPlan: s.draft.plan?.opsHash ?? null,
     draftVerdict: s.draft.validation?.verdict ?? null,
+    // A half-typed value survives Ctrl+2 and comes back — including the caret
+    // offset, because a caret that came back at the front of the line would be
+    // a different edit in all but name.
     inlineEdit: s.inlineEdit
-      ? cellKey(s.inlineEdit.table, s.inlineEdit.row, s.inlineEdit.col)
+      ? s.inlineEdit.kind === "cell"
+        ? cellKey(s.inlineEdit.table, s.inlineEdit.row, s.inlineEdit.col)
+        : `p:${s.inlineEdit.atPara}#${s.inlineEdit.run}@${s.inlineEdit.caret ?? "start"}`
       : null,
     approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
     applied: s.applied?.candidate.sha256 ?? null,
