@@ -172,6 +172,10 @@ def geometry_capability() -> dict:
                             "closed box AND the text in the boxes walked to "
                             "reach it matches the form scan; an unruled form "
                             "and an unanchored table both place nothing"),
+            "latticeWalk": ("the walk runs in all four directions from a "
+                            "verified anchor, and a table whose correspondence "
+                            "is not an order-preserving injection has every "
+                            "seat on that page refused"),
         },
         "unavailableReasons": list(UNAVAILABLE_REASONS),
     }
