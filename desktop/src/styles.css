@@ -2078,6 +2078,27 @@ body.dragging .drop {
 
 .warnish { color: var(--warn); }
 
+/* The legend under the page.
+   `.raster-note` is a one-line baseline row, and this is three items of very
+   different lengths — a badge, a fixed count string, and a sentence. Without
+   wrapping, flex squeezed the count into a four-character column and the
+   sentence into a five-character one, which is how the first capture of this
+   feature came out. The counts must never break; the sentence gets the rest. */
+.ov-legend {
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: var(--s1);
+}
+
+.ov-legend [data-testid="overlay-counts"] {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.ov-legend > span:last-child {
+  flex: 1 1 100%;
+}
+
 .raster-note {
   display: flex;
   align-items: baseline;
