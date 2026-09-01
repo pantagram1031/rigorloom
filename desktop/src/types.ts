@@ -474,3 +474,138 @@ export interface Activity {
   text: string | null;
   frame: unknown | null;
 }
+
+// --- the Agent Host (Phase 5) -------------------------------------------------
+// Transcribed from real `agenthost/scripts/host.py` output, not from the design
+// note: `--capabilities --provider anthropic` and a full `--provider mock` run
+// against the corpus form were both captured before any of this was written.
+
+/** One capability, with the state AND who said so. `unknown` is never a yes. */
+export interface ProviderCapability {
+  state: "yes" | "no" | "unknown" | string;
+  reason: string | null;
+  declaredBy: "adapter" | "config" | "probe" | string;
+}
+
+/**
+ * `CapabilityProfile.public()`.
+ *
+ * Every name in `agenthost/scripts/ah_codes.py CAPABILITY_NAMES` is present or
+ * the profile refuses to construct, so the UI can render a fixed table and a
+ * missing row is a bug rather than a shrug.
+ */
+export interface ProviderProfile {
+  providerId: string;
+  model: string | null;
+  authOwnership:
+    | "none"
+    | "env_reference"
+    | "os_store_reference"
+    | "provider_managed"
+    | string;
+  capabilities: Record<string, ProviderCapability>;
+  notes: Record<string, unknown>;
+}
+
+/** One line of the Agent Host's own event log. Clock-free; the UI stamps time. */
+export interface HostEvent {
+  seq: number;
+  kind: string;
+  detail?: Record<string, unknown>;
+}
+
+/** What `AgentHost.run` returns. `plan` is re-read authoritatively regardless. */
+export interface HostRunPayload {
+  ok: boolean;
+  host: string;
+  hostVersion: string;
+  provider: ProviderProfile;
+  instruction: string;
+  sessionId: string;
+  turns: number;
+  finishReason: string | null;
+  closingText: string | null;
+  plan: OperationPlan | null;
+  validation: PlanValidation | null;
+  approval: ApprovalRecord | null;
+  refusals: Array<{ stage: string; code: string; message: string; [key: string]: unknown }>;
+  providerFault: { code: string; message: string; [key: string]: unknown } | null;
+  turnBudgetExhausted: boolean;
+  /** The host-only methods the compile gate will never emit. */
+  neverCompiled: string[];
+  events: { schema: string; count: number; events: HostEvent[] };
+  error?: { code: string; message: string; [key: string]: unknown };
+}
+
+export type ProviderId = "mock" | "router" | "anthropic";
+
+/**
+ * What the settings pane holds, and what is written to the config file.
+ *
+ * There is no secret here and there cannot be: `storeKey` is the NAME of an
+ * entry in the OS credential store, and the Rust side refuses any other member
+ * by name before the file is written.
+ */
+export interface ProviderSettings {
+  provider: ProviderId;
+  /** Mock only. Which scripted scenario to run. */
+  scenario: string;
+  router: { baseUrl: string; model: string; storeKey: string };
+  anthropic: { model: string; storeKey: string };
+}
+
+export interface CredentialStatus {
+  key: string;
+  state: "present" | "absent" | "invalid" | string;
+  bytes?: number;
+  reason?: string | null;
+}
+
+/** Where the Agent Host is, if it is anywhere. */
+export interface AgentHostStatus {
+  available: boolean;
+  mode: "explicit" | "packaged" | "interpreter" | null;
+  script: string | null;
+  program: string | null;
+  reason: string | null;
+}
+
+/** One turn of the conversation, as the UI holds it. */
+export interface Turn {
+  id: string;
+  instruction: string;
+  at: string;
+  phase: "idle" | "starting" | "ready" | "failed";
+  provider: ProviderId;
+  /** Live, from the tailed JSONL, while the turn is still running. */
+  events: HostEvent[];
+  payload: HostRunPayload | null;
+  exitCode: number | null;
+  error: RuntimeError | null;
+  /** Set when this turn's plan was adopted into the review queue. */
+  planId: string | null;
+}
+
+// --- 작업 팩 --------------------------------------------------------------------
+
+export interface TaskPack {
+  name: string;
+  title: string;
+  blurb: string;
+  /** False when nobody wrote Korean copy for it, so the raw name is on screen. */
+  named: boolean;
+  enabled: boolean;
+  requiresModules: string[] | null;
+  checkers: Array<{ name: string; script: string }>;
+  cli: Array<{ name: string; script: string }>;
+}
+
+export interface TaskPackList {
+  available: boolean;
+  mode: string | null;
+  reason: string | null;
+  schema?: string;
+  version?: string;
+  modulesRoot?: string;
+  packs: TaskPack[];
+}

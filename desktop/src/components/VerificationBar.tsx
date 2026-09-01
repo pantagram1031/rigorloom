@@ -71,6 +71,21 @@ export function VerificationBar({
   const exportError = useWorkspace((s) => s.exportError);
   const reopened = useWorkspace((s) => s.reopened);
   const queued = useWorkspace((s) => s.draft.ops.length);
+  const mode = useWorkspace((s) => s.centerMode);
+  const page = useWorkspace((s) => s.page);
+  const pageCount = useWorkspace((s) => s.render?.pageCount ?? 1);
+  const selection = useWorkspace((s) => s.selection);
+
+  // The address, spelled the way the runtime addresses it. Never a line and
+  // column: this build has no caret and inventing one would be a lie about
+  // where the user is standing.
+  const where = !selection
+    ? "선택 없음"
+    : selection.kind === "cell"
+      ? `표${selection.table} (${selection.row},${selection.col})`
+      : selection.kind === "paragraph"
+        ? `문단 ${selection.atPara}`
+        : `표${selection.table}`;
 
   const hash = inspect?.documentHash ?? session?.source.sha256 ?? null;
   const hard = findings.filter((f) => f.severity === "hard").length;
@@ -81,6 +96,47 @@ export function VerificationBar({
 
   return (
     <footer className="verifybar" data-testid="verification-bar">
+      {/* Hangul-editor status conventions, and only where there is a real
+          answer. 쪽 is the renderer's own page number and reads — in 본문 보기,
+          where the runtime maps no text to any page; 위치 is the selection's
+          address, which is the only cursor this build has; and the insert /
+          overwrite indicator every Hangul editor carries says NEITHER, because
+          there is no caret to be in a mode — editing happens per seat. An
+          indicator that said 삽입 would be inventing a caret. */}
+      <Fact
+        k="쪽"
+        nonce={`${mode}-${page}-${pageCount}`}
+        title={
+          mode === "page"
+            ? "그려진 지면의 쪽 번호입니다."
+            : "본문 보기에는 쪽이 없습니다. 런타임은 글이 몇 쪽에 놓이는지 알려주지 않습니다."
+        }
+        v={
+          mode === "page" ? (
+            <span className="mono">
+              {page} / {pageCount}
+            </span>
+          ) : (
+            <span className="mono">—</span>
+          )
+        }
+      />
+      <Fact
+        k="위치"
+        nonce={where}
+        title="고른 곳의 주소입니다. 이 편집기의 커서는 칸 단위입니다."
+        v={
+          <span className="mono" data-testid="status-where">
+            {where}
+          </span>
+        }
+      />
+      <Fact
+        k="입력"
+        title="한글의 삽입/수정 표시에 해당하는 자리입니다. 이 빌드에는 글자 단위 커서가 없어 둘 중 어느 상태도 아닙니다."
+        v={<Tag tone="none">삽입/수정 없음</Tag>}
+      />
+      <div className="sep" />
       <Fact
         k="원본"
         v={hash ? <span title={hash}>{hash.slice(0, 12)}</span> : "—"}

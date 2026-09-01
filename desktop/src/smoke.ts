@@ -53,7 +53,7 @@ import {
   setView,
   sharedStateSignature,
 } from "./store";
-import type { EditableRegion } from "./types";
+import type { EditableRegion, HostEvent } from "./types";
 
 interface SmokeConfig {
   phase: string | null;
@@ -1095,6 +1095,65 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     return;
   }
 
+  // --- Phase 5 stops. Each one is REACHED, not staged. ----------------------
+
+  if (stop === "composer") {
+    const { loadProviderSettings, refreshAgentHost, saveProviderSettings, sendInstruction } =
+      await import("./actions");
+    await refreshAgentHost();
+    await loadProviderSettings();
+    await saveProviderSettings({
+      ...getState().provider,
+      provider: "mock",
+      scenario: "propose-one",
+    });
+    setView("agent");
+    await settled(300);
+    await sendInstruction("첫 채움 자리에 접수 번호를 넣고 승인을 요청하십시오.");
+    await settled(500);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  if (stop === "settings") {
+    // The Anthropic profile with NO credential: the honest empty state, which
+    // is the one a new user meets. Nothing is stored and nothing is sent.
+    const { loadProviderSettings, probeProvider, refreshAgentHost, saveProviderSettings } =
+      await import("./actions");
+    await refreshAgentHost();
+    await loadProviderSettings();
+    await saveProviderSettings({ ...getState().provider, provider: "anthropic" });
+    await probeProvider();
+    setView("agent");
+    setState({ settingsOpen: true });
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  if (stop === "toolbar-text" || stop === "toolbar-page") {
+    const seat = seats[0];
+    if (seat) setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
+    setCenterMode(stop === "toolbar-page" ? "page" : "text");
+    if (stop === "toolbar-page") {
+      await renderCurrentPage(1);
+      await settled(400);
+    }
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  if (stop === "packs") {
+    const { loadTaskPacks } = await import("./actions");
+    await loadTaskPacks();
+    setView("agent");
+    setState({ packOpen: "report" });
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
   if (clean.length === 0) {
     await ready(`shot-${stop}`);
     return;
@@ -1255,6 +1314,10 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "edit") await phaseEdit(config);
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
+    else if (config.phase === "composer") await phaseComposer(config);
+    else if (config.phase === "settings") await phaseSettings();
+    else if (config.phase === "chrome") await phaseChrome(config);
+    else if (config.phase === "chrome-reattach") await phaseChromeReattach();
     else if (config.phase === "hold" || config.phase === "hold-agent") {
       await phaseHold(config, config.phase === "hold-agent" ? "agent" : "document");
       finished = true;
@@ -1284,4 +1347,485 @@ export async function runSmoke(): Promise<void> {
     failed: failed.length,
     checks,
   });
+}
+
+// --- Phase 5 -------------------------------------------------------------------
+
+/**
+ * A value that is obviously not a credential, used where a credential goes.
+ *
+ * Written here in one place so the PowerShell driver can grep the whole app
+ * data tree for the same string afterwards. It is a sentinel, not a secret: the
+ * point of the check is that a value put into the credential store never
+ * reaches a config file, an event log, a prefs file or a report — and proving
+ * that needs a value distinctive enough to find.
+ */
+const FAKE_SECRET = "NOT-A-REAL-KEY-SENTINEL-4f3a9c7e21";
+const FAKE_STORE_KEY = "RIGORLOOM_SMOKE_FAKE";
+
+/**
+ * The composer round trip, headless, against the MOCK provider.
+ *
+ * The two claims this phase exists to measure, and neither is asserted from
+ * the UI's own words:
+ *
+ *   ONE QUEUE — the plan a typed instruction produced is the same `draft` a
+ *   typed cell value produces, holding the Runtime's own copy of the plan,
+ *   validated over the shell's connection.
+ *   CANNOT APPROVE — the host's payload names the methods its compile gate
+ *   will never emit, and the approval it opened is still pending when the run
+ *   is over. The human then resolves it, and the receipt records who did.
+ */
+async function phaseComposer(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const {
+    loadProviderSettings,
+    refreshAgentHost,
+    saveProviderSettings,
+    sendInstruction,
+  } = await import("./actions");
+
+  const sessionId = await openPath(config.corpus);
+  check("composer phase opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(160);
+
+  await refreshAgentHost();
+  const host = getState().agentHost;
+  check("the agent host is reachable from this build", host?.available === true,
+    `${host?.mode ?? "none"} · ${host?.script ?? host?.reason ?? ""}`);
+  if (!host?.available) return;
+
+  await loadProviderSettings();
+  await saveProviderSettings({
+    ...getState().provider,
+    provider: "mock",
+    scenario: "propose-one",
+  });
+  check("the provider is the built-in mock", getState().provider.provider === "mock",
+    getState().provider.scenario);
+
+  // The composer must be live now, and must say so rather than being grey.
+  setView("agent");
+  await settled(260);
+  const { composerBlocker } = await import("./store");
+  check("nothing blocks the composer", composerBlocker(getState()) === null,
+    String(composerBlocker(getState())));
+  checkDom("the composer is enabled",
+    document.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')?.disabled ===
+      false,
+    domText('[data-testid="composer-note"]').slice(0, 120));
+
+  const before = activeInspect(getState())?.documentHash ?? "";
+  const newest = () => {
+    const turns = getState().turns;
+    return turns.length > 0 ? turns[turns.length - 1] : null;
+  };
+  const ok = await sendInstruction("첫 채움 자리에 스모크 표시를 넣고 승인을 요청하십시오.");
+  check("the instruction ran to completion", ok, JSON.stringify(newest()?.error));
+
+  const turn = newest();
+  check("one turn was recorded", getState().turns.length === 1, getState().turns.length);
+  check("the turn finished", turn?.phase === "ready", turn?.phase ?? "none");
+  check("the agent host exited 0", turn?.exitCode === 0, String(turn?.exitCode));
+
+  // Live tail. The host writes its log as it goes and Rust batches whole lines;
+  // an empty list here would mean the channel never delivered, even though the
+  // final payload would still have filled the card in.
+  const events: HostEvent[] = turn?.events ?? [];
+  check("the host's event log arrived", events.length > 0, events.length);
+  check("the log is ordered and gap-free",
+    events.every((event: HostEvent, index: number) => event.seq === index),
+    events.map((e: HostEvent) => e.seq).join(","));
+  check("the log starts and ends where a run does",
+    events[0]?.kind === "run.started" &&
+      events[events.length - 1]?.kind === "run.finished",
+    `${events[0]?.kind} … ${events[events.length - 1]?.kind}`);
+
+  const payload = turn?.payload ?? null;
+  check("the provider profile came back with it", !!payload?.provider?.providerId,
+    payload?.provider?.providerId ?? "");
+  check("the host proposed a plan", !!payload?.plan?.planId, payload?.plan?.planId ?? "");
+  if (!payload?.plan) return;
+
+  // THE CLAIM: one queue.
+  const draft = getState().draft;
+  check("the composer's plan landed in the SAME review queue",
+    draft.ops.length > 0 && draft.plan?.planId === payload.plan.planId,
+    `${draft.ops.length} ops, plan ${draft.plan?.planId?.slice(0, 8)}`);
+  check("the queue holds the Runtime's own copy, validated here",
+    draft.validation?.ok === true && draft.boundSha256 === draft.plan?.boundSha256,
+    JSON.stringify(draft.validation?.verdict));
+  check("every queued op is marked as the agent's",
+    draft.ops.length > 0 && draft.ops.every((op) => op.origin === "agent"),
+    JSON.stringify(draft.ops.map((o) => o.origin)));
+
+  // THE OTHER CLAIM: it cannot approve, and the payload says which methods.
+  check("the host names the methods it can never compile",
+    payload.neverCompiled.includes("approval/resolve") &&
+      payload.neverCompiled.includes("plan/apply"),
+    payload.neverCompiled.join(", "));
+  check("the run left the approval pending, not resolved",
+    getState().approval?.state === "pending", JSON.stringify(getState().approval));
+  check("the approval was requested by the agent host, not by this shell",
+    getState().approval?.requestedBy === "agenthost-mock",
+    String(getState().approval?.requestedBy));
+  check("no candidate exists before a human acts", getState().applied === null,
+    JSON.stringify(getState().applied));
+
+  await settled(240);
+  checkDom("the conversation shows the instruction back",
+    domText('[data-testid="conversation"]').includes("스모크 표시"),
+    domText('[data-testid="conversation"]').slice(0, 160));
+  checkDom("the card says where the agent stopped",
+    domText('[data-testid="turn-gate"]').includes("승인"),
+    domText('[data-testid="turn-gate"]').slice(0, 160));
+  checkDom("the card names what the connection does not have",
+    domText('[data-testid="turn-never"]').includes("approval/resolve"),
+    domText('[data-testid="turn-never"]').slice(0, 160));
+
+  // The human resolves it, exactly as for a manual edit.
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+    await settled(500);
+  }
+  const applied = getState().applied;
+  check("the host approved the agent's plan and it applied",
+    getState().applyPhase === "ready" && !!applied,
+    applied?.runId ?? JSON.stringify(getState().applyError));
+  check("the candidate has its own sha256", (applied?.candidate.sha256.length ?? 0) === 64,
+    applied?.candidate.sha256 ?? "");
+  check("and the source sha256 did not move",
+    activeInspect(getState())?.documentHash === before, before);
+
+  if (applied) {
+    openReceipt(applied.runId);
+    await settled(320);
+    const receipt = getState().receipts[applied.runId];
+    check("the receipt records the agent host as the requester",
+      receipt?.approval.requestedBy === "agenthost-mock",
+      String(receipt?.approval.requestedBy));
+    check("and a human as the approver", receipt?.approval.approver === "smoke-operator",
+      String(receipt?.approval.approver));
+    openReceipt(null);
+  }
+
+  // The conversation is shared state, so a view switch must not lose it.
+  const signature = sharedStateSignature();
+  setView("document");
+  await settled(240);
+  setView("agent");
+  await settled(240);
+  check("the conversation survived a view switch byte-identically",
+    sharedStateSignature() === signature,
+    `${signature.length} chars`);
+
+  checkAlive("the composer round trip");
+}
+
+/**
+ * Provider settings, written and read back, with a FAKE credential.
+ *
+ * No real secret is involved anywhere. A sentinel goes into the OS credential
+ * store, and every reachable surface is then checked for it: the config file
+ * the Agent Host reads, the credential status the UI holds, and the
+ * `--capabilities` payload. `smoke.ps1` greps the whole app-data tree for the
+ * same sentinel afterwards, which is the check that matters — an in-app
+ * assertion can only see what the app chose to hand it.
+ */
+async function phaseSettings() {
+  const {
+    forgetCredential,
+    loadProviderSettings,
+    probeProvider,
+    refreshAgentHost,
+    saveProviderSettings,
+    storeCredential,
+  } = await import("./actions");
+  await refreshAgentHost();
+  await loadProviderSettings();
+
+  const host = getState().agentHost;
+  check("the agent host is reachable from this build", host?.available === true,
+    `${host?.mode ?? "none"} · ${host?.reason ?? ""}`);
+
+  // --- keyless honesty, first ------------------------------------------------
+  await saveProviderSettings({
+    ...getState().provider,
+    provider: "anthropic",
+    anthropic: { model: "", storeKey: FAKE_STORE_KEY },
+  });
+  await forgetCredential();
+  check("the store starts empty for this key", getState().credential?.state === "absent",
+    JSON.stringify(getState().credential));
+
+  const keyless = await probeProvider();
+  check("연결 확인 answers with no credential at all", keyless,
+    JSON.stringify(getState().probeError));
+  const profile = getState().providerProfile;
+  check("the profile names every capability",
+    !!profile &&
+      ["text", "structuredToolUse", "streaming", "structuredOutput", "modelDiscovery",
+       "resumableThread", "vision"].every((name) => name in (profile.capabilities ?? {})),
+    Object.keys(profile?.capabilities ?? {}).join(","));
+  // The three states, unrounded. `unknown` must survive to the UI as unknown.
+  check("an unknown capability stays unknown rather than becoming a no",
+    profile?.capabilities?.structuredOutput?.state === "unknown",
+    JSON.stringify(profile?.capabilities?.structuredOutput));
+  check("the keyless probe reports the credential as missing",
+    (profile?.notes?.credential as { state?: string } | undefined)?.state === "missing",
+    JSON.stringify(profile?.notes?.credential));
+
+  // --- with a fake credential ------------------------------------------------
+  const stored = await storeCredential(FAKE_SECRET);
+  check("the fake credential went into the OS store", stored,
+    JSON.stringify(getState().probeError));
+  check("the store reports it present, by length and not by value",
+    getState().credential?.state === "present" &&
+      getState().credential?.bytes === FAKE_SECRET.length,
+    JSON.stringify(getState().credential));
+  check("nothing the UI holds contains the value",
+    !JSON.stringify(getState().credential).includes(FAKE_SECRET),
+    "credential status");
+
+  const config = await rt.agentHostReadConfig("anthropic");
+  check("a config file was written", config.exists, config.path);
+  check("the config carries a REFERENCE, not a value",
+    (config.config as Record<string, Record<string, string>> | null)?.credential?.source ===
+      "env",
+    JSON.stringify(config.config));
+  check("and the reference is an environment variable NAME",
+    (config.config as Record<string, Record<string, string>> | null)?.credential?.key ===
+      "RIGORLOOM_PROVIDER_CREDENTIAL",
+    JSON.stringify(config.config));
+  check("the config file does not contain the secret",
+    !JSON.stringify(config.config).includes(FAKE_SECRET), config.path);
+
+  const withKey = await probeProvider();
+  check("연결 확인 still answers once a credential is stored", withKey,
+    JSON.stringify(getState().probeError));
+  const keyed = getState().providerProfile;
+  check("and now reports the credential as present",
+    (keyed?.notes?.credential as { state?: string } | undefined)?.state === "present",
+    JSON.stringify(keyed?.notes?.credential));
+  check("the capability payload does not contain the secret",
+    !JSON.stringify(keyed).includes(FAKE_SECRET), "provider profile");
+
+  // Prefs are the other place a settings pane could leak into.
+  const prefs = await rt.loadPrefs();
+  check("the prefs file does not contain the secret",
+    !JSON.stringify(prefs).includes(FAKE_SECRET), "prefs");
+  check("the prefs remember the store key NAME",
+    JSON.stringify(prefs).includes(FAKE_STORE_KEY), "prefs");
+
+  // --- the settings pane, drawn ---------------------------------------------
+  setState({ settingsOpen: true });
+  await settled(300);
+  checkDom("the settings pane is on screen", !!document.querySelector('[data-testid="settings"]'),
+    domState());
+  checkDom("all three providers are offered",
+    !!document.querySelector('[data-testid="provider-mock"]') &&
+      !!document.querySelector('[data-testid="provider-router"]') &&
+      !!document.querySelector('[data-testid="provider-anthropic"]'),
+    "provider picker");
+  checkDom("the capability table is drawn with three states",
+    domText('[data-testid="capability-table"]').includes("모름") &&
+      domText('[data-testid="capability-table"]').includes("예"),
+    domText('[data-testid="capability-table"]').slice(0, 200));
+  checkDom("the config the host will read is shown verbatim",
+    domText('[data-testid="settings-config"]').includes("RIGORLOOM_PROVIDER_CREDENTIAL"),
+    domText('[data-testid="settings-config"]').slice(0, 200));
+  checkDom("no rendered text anywhere contains the secret",
+    !(document.body.textContent ?? "").includes(FAKE_SECRET), "document body");
+
+  // Esc closes it, in the one place Esc is handled.
+  const { closeTopmostOverlay } = await import("./actions");
+  check("Esc closes the settings pane", closeTopmostOverlay() && !getState().settingsOpen,
+    String(getState().settingsOpen));
+
+  // Leave the machine as it was found. A sentinel in a developer's credential
+  // manager is litter, and a smoke that litters gets ignored.
+  await forgetCredential();
+  check("the fake credential was removed again", getState().credential?.state === "absent",
+    JSON.stringify(getState().credential));
+
+  checkAlive("the settings phase");
+}
+
+/**
+ * The editor chrome, against real document data.
+ *
+ * Two launches. The first records what the window is and what it left in
+ * prefs; the second must come back to the same geometry, which is the only way
+ * to tell a restore from a default.
+ */
+async function phaseChrome(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const sessionId = await openPath(config.corpus);
+  check("chrome phase opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(240);
+
+  const inspect = activeInspect(getState());
+  if (!inspect) {
+    check("inspect returned", false, "");
+    return;
+  }
+
+  // --- the toolbar -----------------------------------------------------------
+  checkDom("the editor toolbar is above the document",
+    !!document.querySelector('[data-testid="editor-toolbar"]'), domState());
+  checkDom("the mode switch lives in the toolbar now",
+    !!document.querySelector('[data-testid="editor-toolbar"] [data-testid="mode-text"]'),
+    domText('[data-testid="editor-toolbar"]').slice(0, 160));
+
+  const seat = inspect.regions.regions.find((r: EditableRegion) => r.kind === "cell");
+  check("a fill seat to stand in", !!seat, JSON.stringify(seat ?? null));
+  if (seat && seat.table !== undefined && seat.row !== undefined && seat.col !== undefined) {
+    setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
+    await settled(200);
+    checkDom("the toolbar shows the seat's own charPr id",
+      seat.charPr !== undefined &&
+        domText('[data-testid="tool-charpr"]').includes(String(seat.charPr)),
+      `${domText('[data-testid="tool-charpr"]')} vs charPr ${seat.charPr}`);
+    // T30: this corpus form's first seat differs from the body shape, and the
+    // toolbar must say so rather than showing a bare number.
+    if (seat.charPrSuggested !== undefined && seat.charPr !== seat.charPrSuggested) {
+      checkDom("a seat whose shape differs from the body is marked in the toolbar",
+        domText('[data-testid="tool-charpr"]').includes("본문과 다름"),
+        domText('[data-testid="tool-charpr"]'));
+    }
+    checkDom("the status bar shows the address, not a line and column",
+      domText('[data-testid="status-where"]') === `표${seat.table} (${seat.row},${seat.col})`,
+      domText('[data-testid="status-where"]'));
+  }
+
+  const baseline = inspect.summary.baselineCharPr;
+  checkDom("the toolbar shows the body size from the document's own baseline",
+    !baseline || domText('[data-testid="tool-size"]').includes(String(baseline.height_pt)),
+    `${domText('[data-testid="tool-size"]')} vs ${JSON.stringify(baseline)}`);
+
+  checkDom("the status bar carries the Hangul insert indicator, saying neither",
+    domText('[data-testid="verification-bar"]').includes("삽입/수정 없음"),
+    domText('[data-testid="verification-bar"]').slice(0, 200));
+
+  // Document zoom, one number for both modes.
+  const { setZoom } = await import("./store");
+  setZoom(1.2);
+  await settled(160);
+  checkDom("the toolbar reports the document zoom", domText('[data-testid="zoom-value"]') === "120%",
+    domText('[data-testid="zoom-value"]'));
+  setZoom(1);
+  await settled(120);
+
+  // --- 페이지 보기, where this machine can go -------------------------------
+  const { canRenderPages, setCenterMode } = await import("./store");
+  if (canRenderPages(getState())) {
+    setCenterMode("page");
+    await settled(600);
+    checkDom("페이지 보기 draws a ruler from the page's own geometry",
+      !!document.querySelector('[data-testid="page-ruler"]'), domState());
+    checkDom("and a page navigation footer",
+      domText('[data-testid="page-indicator"]').includes("쪽"),
+      domText('[data-testid="page-footer"]').slice(0, 160));
+    checkDom("the status bar shows a page number in 페이지 보기",
+      /쪽/.test(domText('[data-testid="verification-bar"]')),
+      domText('[data-testid="verification-bar"]').slice(0, 120));
+    setCenterMode("text");
+    await settled(200);
+  } else {
+    check("페이지 보기 is offered only when the runtime advertises it", true,
+      "capabilities.methods carries no document/render on this build");
+  }
+
+  // --- 작업 팩 ---------------------------------------------------------------
+  const { loadTaskPacks } = await import("./actions");
+  await loadTaskPacks();
+  setView("agent");
+  await settled(300);
+  const packs = getState().taskPacks;
+  check("the task pack list came from the module registry", packs?.available === true,
+    packs?.reason ?? `${packs?.packs.length} packs`);
+  if (packs?.available) {
+    check("every declared module is listed", packs.packs.length >= 6,
+      packs.packs.map((p) => p.name).join(","));
+    check("report declares its dependency on style",
+      packs.packs.find((p) => p.name === "report")?.requiresModules?.includes("style") === true,
+      JSON.stringify(packs.packs.find((p) => p.name === "report")?.requiresModules));
+    check("the packs carry the checkers their manifests declare",
+      (packs.packs.find((p) => p.name === "style")?.checkers ?? []).some(
+        (c) => c.name === "check_style"),
+      JSON.stringify(packs.packs.find((p) => p.name === "style")?.checkers));
+    checkDom("the left rail lists them", !!document.querySelector('[data-testid="pack-report"]'),
+      domText('[data-testid="task-packs"]').slice(0, 200));
+    setState({ packOpen: "report" });
+    await settled(240);
+    checkDom("a pack opens an honest 준비 중 panel",
+      domText('[data-testid="pack-detail"]').includes("준비 중") &&
+        domText('[data-testid="pack-detail"]').includes("아직 없는 것"),
+      domText('[data-testid="pack-detail"]').slice(0, 200));
+    checkDom("and the panel names the pack's real contributions",
+      domText('[data-testid="pack-detail"]').includes("check_refs"),
+      domText('[data-testid="pack-detail"]').slice(0, 400));
+    setState({ packOpen: null });
+  }
+
+  // --- the two tabs ----------------------------------------------------------
+  await settled(160);
+  checkDom("the centre offers 대화 and 문서 기록",
+    !!document.querySelector('[data-testid="tab-conversation"]') &&
+      !!document.querySelector('[data-testid="tab-history"]'),
+    domState());
+  setState({ agentTab: "history" });
+  await settled(200);
+  checkDom("문서 기록 shows the session's own events",
+    !!document.querySelector('[data-testid="timeline"]'), domState());
+  setState({ agentTab: "conversation" });
+  await settled(160);
+
+  // --- the window ------------------------------------------------------------
+  const geometry = await rt.windowGeometry();
+  const prefs = await rt.loadPrefs();
+  const saved = (prefs.window ?? null) as Record<string, number | boolean> | null;
+  check("the window's geometry was written to prefs", !!saved, JSON.stringify(saved));
+  check("and it is the geometry the window actually has",
+    !!saved && !!geometry &&
+      (saved.maximized === true ||
+        (saved.width === geometry.width && saved.height === geometry.height)),
+    `${JSON.stringify(saved)} vs ${JSON.stringify(geometry)}`);
+  check("the remembered size is not below the editor minimum",
+    !!saved && (saved.maximized === true ||
+      ((saved.width as number) >= 1024 && (saved.height as number) >= 640)),
+    JSON.stringify(saved));
+  // Handed to the driver, which compares it against what the SECOND launch
+  // restores. A restore that lands on the default by chance is not a restore.
+  await rt.smokeFinal({ window: saved, geometry });
+
+  checkAlive("the chrome phase");
+}
+
+/** The second launch: the window must come back where it was left. */
+async function phaseChromeReattach() {
+  const geometry = await rt.windowGeometry();
+  const prefs = await rt.loadPrefs();
+  const saved = (prefs.window ?? null) as Record<string, number | boolean> | null;
+  check("the previous launch left a window geometry", !!saved, JSON.stringify(saved));
+  check("this launch came back to it",
+    !!saved && !!geometry &&
+      (saved.maximized === true ||
+        (Math.abs((saved.width as number) - (geometry.width ?? 0)) <= 2 &&
+          Math.abs((saved.height as number) - (geometry.height ?? 0)) <= 2)),
+    `${JSON.stringify(saved)} vs ${JSON.stringify(geometry)}`);
+  check("and the provider settings came back with it",
+    typeof (prefs.provider as { provider?: string } | undefined)?.provider === "string",
+    JSON.stringify(prefs.provider));
+  check("the window is not fullscreen out of nowhere", geometry?.fullscreen === false,
+    JSON.stringify(geometry));
+  checkAlive("the chrome reattach");
 }

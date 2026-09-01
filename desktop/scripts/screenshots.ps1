@@ -47,6 +47,10 @@ try {
     $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
     $MockAgent = Join-Path $RepoRoot 'runtime\scripts\mock_agent.py'
     if (Test-Path $MockAgent) { $env:RIGORLOOM_MOCK_AGENT = $MockAgent }
+    $AgentHost = Join-Path $RepoRoot 'agenthost\scripts\host.py'
+    if (Test-Path $AgentHost) { $env:RIGORLOOM_AGENT_HOST = $AgentHost }
+    $ModulesRoot = Join-Path $RepoRoot 'modules'
+    if (Test-Path $ModulesRoot) { $env:RIGORLOOM_MODULES_ROOT = $ModulesRoot }
     Remove-Item Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
 
     # Document view at 100% runs first on purpose: it opens the corpus form,
@@ -69,7 +73,16 @@ try {
         @{ phase = 'hold-shot-verified';      name = 'candidate-verified';   scale = 1.0 },
         @{ phase = 'hold-shot-receipt';       name = 'receipt';              scale = 1.0 },
         @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
-        @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 }
+        @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 },
+        # Phase 5. Each one is reached by running the real thing: the composer
+        # shot photographs a plan a real Agent Host process proposed, and the
+        # settings shot photographs a real --capabilities answer with NO
+        # credential stored, which is the state a new user meets.
+        @{ phase = 'hold-shot-composer';      name = 'composer';             scale = 1.0 },
+        @{ phase = 'hold-shot-settings';      name = 'provider-settings';    scale = 1.0 },
+        @{ phase = 'hold-shot-toolbar-text';  name = 'toolbar-text';         scale = 1.0 },
+        @{ phase = 'hold-shot-toolbar-page';  name = 'toolbar-page';         scale = 1.0 },
+        @{ phase = 'hold-shot-packs';         name = 'task-packs';           scale = 1.0 }
     )
     foreach ($scale in $Scales) {
         if ([math]::Abs($scale - 1.0) -lt 0.001) { continue }
@@ -135,6 +148,7 @@ finally {
     if ($origAppData) { $env:RIGORLOOM_APPDATA = $origAppData }
     else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT, `
+        Env:RIGORLOOM_MOCK_AGENT, Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, `
         Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue

@@ -9,6 +9,7 @@
  * nothing here to lose.
  */
 import { ContextPanel } from "../components/ContextPanel";
+import { EditorToolbar } from "../components/EditorToolbar";
 import { Findings } from "../components/Findings";
 import { PagePreview } from "../components/PagePreview";
 import { ReceiptPanel } from "../components/ReceiptPanel";
@@ -20,38 +21,22 @@ import {
   activeCandidates,
   activeInspect,
   activeSession,
-  canRenderPages,
-  setCenterMode,
   useWorkspace,
 } from "../store";
 
-function CenterHead() {
+/**
+ * The one line under the toolbar that says what this mode is and is not.
+ *
+ * The mode switch itself moved up into `EditorToolbar` in Phase 5 — a Hangul
+ * editor puts it in the band, not over the paper — and what stays here is the
+ * caveat, which is the part that must never move: it is the sentence that keeps
+ * 본문 보기 from being mistaken for a page and 페이지 보기 from being mistaken
+ * for evidence.
+ */
+function CenterCaveat() {
   const mode = useWorkspace((s) => s.centerMode);
-  const canRender = useWorkspace(canRenderPages);
   return (
     <div className="center-head">
-      <div className="modeswitch" role="group" aria-label="가운데 화면 모드">
-        <button
-          aria-pressed={mode === "text"}
-          data-testid="mode-text"
-          onClick={() => setCenterMode("text")}
-        >
-          본문 보기
-        </button>
-        <button
-          aria-pressed={mode === "page"}
-          data-testid="mode-page"
-          disabled={!canRender}
-          title={
-            canRender
-              ? "실제 페이지 그림"
-              : "이 런타임에는 문서를 그림으로 그리는 방법이 아직 없습니다"
-          }
-          onClick={() => setCenterMode("page")}
-        >
-          페이지 보기
-        </button>
-      </div>
       <span className="caveat" data-testid="center-caveat">
         {mode === "text"
           ? "본문 보기 — 채움 자리를 눌러 값을 넣습니다. 승인 전에는 문서가 바뀌지 않습니다"
@@ -69,6 +54,7 @@ export function DocumentView() {
   const inspectPhase = useWorkspace((s) => s.inspectPhase);
   const inspectError = useWorkspace((s) => s.inspectError);
   const mode = useWorkspace((s) => s.centerMode);
+  const zoom = useWorkspace((s) => s.zoom);
   const candidates = useWorkspace(activeCandidates);
 
   return (
@@ -104,8 +90,18 @@ export function DocumentView() {
             <Welcome />
           ) : (
             <>
-              <CenterHead />
-              {mode === "text" ? <TextView inspect={inspect} /> : <PagePreview inspect={inspect} />}
+              <EditorToolbar inspect={inspect} />
+              <CenterCaveat />
+              {mode === "text" ? (
+                // One zoom number, meaning the same thing in both modes: how
+                // big the document is drawn. `zoom` on the container scales
+                // layout rather than resampling, so glyphs re-rasterise.
+                <div className="doc-zoom" style={{ zoom }}>
+                  <TextView inspect={inspect} />
+                </div>
+              ) : (
+                <PagePreview inspect={inspect} />
+              )}
             </>
           )}
         </main>

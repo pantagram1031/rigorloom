@@ -21,14 +21,19 @@ import { useSyncExternalStore } from "react";
 
 import type {
   Activity,
+  AgentHostStatus,
   AppliedCandidate,
   ApprovalRecord,
   Candidate,
   Capabilities,
+  CredentialStatus,
   Finding,
+  HostEvent,
   InspectResult,
   OperationPlan,
   PlanValidation,
+  ProviderProfile,
+  ProviderSettings,
   Receipt,
   Recent,
   RegionText,
@@ -37,6 +42,8 @@ import type {
   RuntimeEvent,
   Session,
   SidecarStatus,
+  TaskPackList,
+  Turn,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -301,8 +308,83 @@ export interface WorkspaceState {
     exitCode: number;
   } | null;
 
+  // --- the Agent Host (Phase 5) --------------------------------------------
+  /** Where `host.py` is, if it is anywhere. Absent = the composer says so. */
+  agentHost: AgentHostStatus | null;
+  /** What the settings pane holds. References only, never a secret. */
+  provider: ProviderSettings;
+  /** The last 연결 확인, verbatim. `unknown` stays `unknown` on screen. */
+  providerProfile: ProviderProfile | null;
+  probePhase: Phase;
+  probeError: RuntimeError | null;
+  /** Present / absent / how many bytes. Never the value. */
+  credential: CredentialStatus | null;
+  /** The conversation, newest last. One process per turn. */
+  turns: Turn[];
+  /** The turn in flight, if any. One at a time, enforced in Rust too. */
+  activeTurn: string | null;
+  settingsOpen: boolean;
+  /**
+   * Which of Agent view's two centre panes is showing.
+   *
+   * Navigation, so it lives in the store with `view`, `selection` and
+   * `centerMode` rather than in the component — a view switch must not lose it,
+   * and the property is structural rather than a discipline.
+   */
+  agentTab: "conversation" | "history";
+
+  // --- 작업 팩 ---------------------------------------------------------------
+  taskPacks: TaskPackList | null;
+  /** Which pack's 준비 중 detail is open. */
+  packOpen: string | null;
+
+  /** Mirrored from the window so the toolbar can label the control. */
+  fullscreen: boolean;
+
   /** Set when the app was launched by the scripted smoke. */
   smokePhase: string | null;
+}
+
+/**
+ * The settings a fresh install starts with.
+ *
+ * `anthropic.model` is left EMPTY rather than pre-filled with the adapter's
+ * default. The adapter's default is `claude-opus-5` and it is the adapter's to
+ * choose; copying it here would make the UI a second place that decides, and
+ * the two would drift the first time the adapter moved. Empty means "whatever
+ * the adapter says", and the settings pane shows what the adapter actually
+ * answered under 연결 확인.
+ */
+export const DEFAULT_PROVIDER: ProviderSettings = {
+  provider: "mock",
+  scenario: "propose-one",
+  router: { baseUrl: "", model: "", storeKey: "RIGORLOOM_ROUTER" },
+  anthropic: { model: "", storeKey: "RIGORLOOM_ANTHROPIC" },
+};
+
+/** The store key the active provider uses, or null when it needs none. */
+export function activeStoreKey(settings: ProviderSettings): string | null {
+  if (settings.provider === "mock") return null;
+  const key =
+    settings.provider === "router" ? settings.router.storeKey : settings.anthropic.storeKey;
+  return key.trim() === "" ? null : key.trim();
+}
+
+/** The config members the active provider contributes. Nothing secret-shaped. */
+export function providerConfigFields(
+  settings: ProviderSettings,
+): Record<string, unknown> {
+  if (settings.provider === "router") {
+    return {
+      providerId: "router",
+      baseUrl: settings.router.baseUrl.trim(),
+      model: settings.router.model.trim(),
+    };
+  }
+  if (settings.provider === "anthropic") {
+    return { model: settings.anthropic.model.trim() };
+  }
+  return {};
 }
 
 const ACTIVITY_CAP = 500;
@@ -396,6 +478,22 @@ const initial: WorkspaceState = {
   agentPhase: "idle",
   agentError: null,
   agentRun: null,
+
+  agentHost: null,
+  provider: DEFAULT_PROVIDER,
+  providerProfile: null,
+  probePhase: "idle",
+  probeError: null,
+  credential: null,
+  turns: [],
+  activeTurn: null,
+  settingsOpen: false,
+  agentTab: "conversation",
+
+  taskPacks: null,
+  packOpen: null,
+
+  fullscreen: false,
 
   smokePhase: null,
 };
@@ -503,6 +601,72 @@ export function pushEvents(batch: RuntimeEvent[]) {
   if (!changed) return;
   const next = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
   setState({ events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next });
+}
+
+// --- the conversation ---------------------------------------------------------
+
+/**
+ * Fold a batch of live Agent Host events into the turn they belong to.
+ *
+ * De-duplicated on `seq` for the same reason `pushEvents` is: the tail thread
+ * reads a file by offset, and a re-read after a partial line would otherwise
+ * make one provider request look like two. `seq` is the log's own index, so it
+ * is authoritative here exactly as it is for the Runtime's.
+ */
+export function pushHostEvents(batch: Array<{ turnId: string; event: HostEvent }>) {
+  if (batch.length === 0) return;
+  const byTurn = new Map<string, HostEvent[]>();
+  for (const row of batch) {
+    const bucket = byTurn.get(row.turnId) ?? [];
+    bucket.push(row.event);
+    byTurn.set(row.turnId, bucket);
+  }
+  let changed = false;
+  const turns = state.turns.map((turn) => {
+    const incoming = byTurn.get(turn.id);
+    if (!incoming) return turn;
+    const bySeq = new Map<number, HostEvent>();
+    for (const event of turn.events) bySeq.set(event.seq, event);
+    let touched = false;
+    for (const event of incoming) {
+      if (bySeq.has(event.seq)) continue;
+      bySeq.set(event.seq, event);
+      touched = true;
+    }
+    if (!touched) return turn;
+    changed = true;
+    return { ...turn, events: [...bySeq.values()].sort((a, b) => a.seq - b.seq) };
+  });
+  if (!changed) return;
+  setState({ turns });
+}
+
+export function patchTurn(id: string, patch: Partial<Turn>) {
+  setState({
+    turns: state.turns.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)),
+  });
+}
+
+/**
+ * Whether the composer may send.
+ *
+ * Four things must be true, and each one has its own sentence in the UI when it
+ * is not: there is a document, the Agent Host is reachable, nothing is already
+ * running, and the chosen provider has what it needs to make a call. The last
+ * is the honest one — a provider that takes a credential and has none is not a
+ * dead button, it is a button that says which key is missing.
+ */
+export function composerBlocker(s: WorkspaceState): string | null {
+  if (!s.activeSessionId) return "no_document";
+  if (!s.agentHost?.available) return "no_host";
+  if (s.activeTurn) return "busy";
+  if (s.provider.provider === "mock") return null;
+  if (!activeStoreKey(s.provider)) return "no_credential_name";
+  if (s.credential?.state !== "present") return "no_credential";
+  if (s.provider.provider === "router" && s.provider.router.baseUrl.trim() === "") {
+    return "no_base_url";
+  }
+  return null;
 }
 
 /** The inspect for the active session, or null. Both views read through this. */
@@ -699,5 +863,15 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     verdict: s.candidateVerdict?.report.acceptance ?? null,
     receiptOpen: s.receiptOpen,
     events: s.events.length,
+    // Phase 5. Product direction §4 names "one conversation state" in the same
+    // breath as one selection and one plan queue, so the conversation belongs
+    // in the signature the smoke asserts across a view switch — including
+    // which turn is in flight, because a turn that lost its live events on
+    // Ctrl+1 would be a second conversation in all but name.
+    turns: s.turns.map((turn) => `${turn.id}:${turn.phase}:${turn.events.length}`),
+    activeTurn: s.activeTurn,
+    provider: s.provider.provider,
+    agentTab: s.agentTab,
+    packOpen: s.packOpen,
   });
 }
