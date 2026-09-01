@@ -79,6 +79,7 @@ from rt_session import (  # noqa: E402
     editable_regions,
     full_text_spec,
     load_profile,
+    region_runs_with_faces,
 )
 
 #: Every method an agent connection may reach, ``initialize`` included.
@@ -248,7 +249,11 @@ class RuntimeCore:
         return bound_region_result({
             "sessionId": session.id,
             "documentHash": profile.get("form_hash"),
-            "regions": profile.get("full_text", []),
+            # Each run carries the face its charPr resolves to (§14), joined
+            # from the header the profile already read. A caret standing in a
+            # run can then be told what it is set in instead of being handed
+            # an integer.
+            "regions": region_runs_with_faces(profile),
         })
 
     # -- plans --------------------------------------------------------------

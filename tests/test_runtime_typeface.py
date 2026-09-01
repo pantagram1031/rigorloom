@@ -179,3 +179,78 @@ def test_the_cli_reports_the_same_faces(root, source, inspected):
             == inspected["summary"]["baselineCharPr"]["face"])
     assert (from_cli["regions"]["regions"][0]["charPrFace"]
             == inspected["regions"]["regions"][0]["charPrFace"])
+
+
+# --- the run a caret stands in -------------------------------------------------
+#
+# §14 put the face on a fill seat's shape and on the two document-level ones,
+# which is every shape the Desktop could name while its only editable target
+# was a cell. A caret on a paragraph line stands in a RUN, and a run reached
+# the wire as an integer -- so the toolbar above a caret could say no more than
+# `charPr 14`, which is the state gap 16 closed for seats and left here.
+#
+# The join is the same one, applied to the run inventory `document/readRegion`
+# already answers with. Nothing new is read out of the document.
+
+def _paragraph_runs(root, source):
+    core = rt_core.RuntimeCore(root)
+    session_id = core.open_path(str(source))["sessionId"]
+    graph = core.document_inspect(session_id)["graph"]
+    at_paras = [p["at_para"] for p in graph["paragraphs"]
+                if p.get("at_para") is not None][:6]
+    assert at_paras, "the corpus form has addressable paragraphs"
+    answer = core.document_read_region(
+        session_id, [{"atPara": at_para} for at_para in at_paras])
+    return answer["regions"]
+
+
+def test_every_run_a_region_returns_carries_the_face_its_charpr_resolves_to(
+        root, source):
+    regions = _paragraph_runs(root, source)
+    runs = [run for region in regions for run in (region.get("runs") or [])]
+    assert runs, "the corpus form's paragraphs carry runs"
+    for run in runs:
+        assert "charpr_face" in run, run
+    assert any(run["charpr_face"] for run in runs), \
+        "this document declares a face for at least one paragraph run"
+
+
+def test_no_run_face_on_the_wire_is_a_name_the_document_does_not_contain(
+        root, source):
+    """The same anti-fabrication assertion §14 makes for a seat, for a run."""
+    names = declared_faces()
+    seen = set()
+    for region in _paragraph_runs(root, source):
+        for run in region.get("runs") or []:
+            seen.update((run["charpr_face"] or {}).values())
+    assert seen
+    assert seen <= names, sorted(seen - names)
+
+
+def test_a_run_whose_charpr_the_header_does_not_resolve_is_null_not_invented():
+    """The absence stays an absence. A toolbar over such a caret must print
+    nothing rather than what a toolbar usually prints."""
+    profile = {
+        "charpr_faces": {"11": {"hangul": "돋움체"}},
+        "full_text": [{"at_para": 4, "runs": [{"index": 0, "charpr": "11"},
+                                              {"index": 1, "charpr": "999"}]}],
+    }
+    runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
+    assert runs[0]["charpr_face"] == {"hangul": "돋움체"}
+    assert runs[1]["charpr_face"] is None
+
+
+def test_the_join_does_not_mutate_the_profile_it_read():
+    """The profile is the engine's answer; a reader that edited it in place
+    would hand the next reader a document that grew a field nobody wrote."""
+    profile = {"charpr_faces": {"11": {"hangul": "돋움체"}},
+               "full_text": [{"at_para": 1, "runs": [{"index": 0, "charpr": "11"}]}]}
+    rt_session.region_runs_with_faces(profile)
+    assert profile["full_text"][0]["runs"][0] == {"index": 0, "charpr": "11"}
+
+
+def test_a_profile_with_no_face_mapping_gives_runs_a_null_rather_than_nothing():
+    profile = {"full_text": [{"at_para": 1,
+                              "runs": [{"index": 0, "charpr": "11"}]}]}
+    runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
+    assert runs[0]["charpr_face"] is None

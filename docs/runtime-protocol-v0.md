@@ -1049,6 +1049,31 @@ done. `pageSize` carries the points if anyone wants them back.
 in two weights would arrive as two fragments and match neither. Lines are what
 a label occupies and what mapping matches on; `spanUnit: "line"` says so.
 
+**And a line now says where each of its characters begins.** `spans[].charX` is
+one normalized x per character of the line's own text, plus the last right edge
+— so a click at a point resolves to an offset *within* the line rather than to
+its front. It is the same coordinate system the rect is in, so a client
+multiplies both by one pixel width. The page is read as `rawdict` rather than
+`dict` to get it; the line inventory the two traversals produce was measured
+identical across all ten corpus renders, 51 pages and 2,591 lines, before the
+change was made, and a test asserts that rather than this paragraph arguing it.
+
+The field is **absent** on any line whose boxes the render did not resolve
+one-per-character and left to right — a ligature, a surrogate pair, a renderer
+emitting boxes the text does not account for. A caret placed from a guess is a
+cursor standing where the glyph is not, which is the same fabrication as a
+synthesized rect, so a client snaps such a click to the line start and must be
+able to *say* that it did. `charOffsets` on the answer reports `state`
+(`read` / `page_too_dense`), how many lines carry offsets out of how many, and
+the page's character count. `page_too_dense` is a bound on the FRAME, not on
+the feature: past 20,000 characters on one page the offsets are dropped and the
+reason is named, while every position stays exactly as it was — the corpus's
+densest page is 2,982 characters, so this bounds the pathological case only.
+
+On the corpus, 2,591 of 2,591 lines resolve. 2,508 also carry a single
+`sizePt`; the 83 that do not are set in two sizes at once, and reporting one of
+them would be a pick.
+
 ### 12.3 Address mapping, and what it refuses to do
 
 Span text is matched against the session's form scan — anchor records and table
@@ -1221,8 +1246,14 @@ seat**, and the reasons are structural, not tuning:
 - **Alignment is per page.** A table continued onto another page is anchored
   again there or not at all; `no_anchor_on_page` covers both that and a table
   simply living elsewhere, and does not distinguish them.
-- **Sub-line addressing.** A span is a line; a click resolves to the line's
-  address, not to a character offset within it.
+- **Sub-line addressing** — *closed for the caret, still open for the edit.*
+  `charX` (§12.2) resolves a click to a character offset within the line, on
+  all 2,591 corpus lines. What no offset reaches is a *sub-run* edit: the
+  operation that writes a paragraph line is `set_run`, which replaces a whole
+  run, so an offset positions the caret and the text around it is rewritten
+  entire. A run is not a line either — the two coincide only where a paragraph
+  holds exactly one run, which is the condition a client has to check for
+  itself against `document/readRegion` (see §12.7).
 - **Multi-page seats.** Geometry is per page; a seat is looked up on the page
   it is asked for.
 
@@ -1231,6 +1262,39 @@ aligns — every corpus render is a blank form, and a filled cell changes what
 `cell_agrees` sees. Whether the tolerances hold for renderers other than
 Hancom Office 13.0.0.2986; there is one Hancom install on the measuring
 machine, so renderer-version sensitivity is untested.
+
+### 12.7 Typing into a paragraph line, with the operations that exist
+
+A seat is a cell and `fill_cell` writes it. A **paragraph** line is the other
+half of "editing on the page", and there is no `replace_paragraph_text`
+operation — there is `set_run` (§3.6, `engine/scripts/preedit.py:2464`), which
+replaces one run at `(atPara, run)` and preserves its `charPrIDRef`. Nothing
+new was added to the registry for this: a client reaches a paragraph edit
+through the operation that is already there, or it does not reach it.
+
+What that costs is a check the client must make itself, because the geometry
+answer alone cannot make it:
+
+1. The span must be `confidence: "unique"` with an `address.kind == "anchor"`
+   carrying an `atPara`. Ambiguous stays ambiguous; §12.3 is untouched.
+2. `document/readRegion {atPara}` must return **exactly one run**, and that
+   run's text must equal the span's after the same normalization the mapping
+   used. A paragraph of several runs has no single run the line names, and
+   `set_run` addresses runs — so the honest answer there is a refusal, not the
+   first run.
+
+**Measured on the corpus**, ten forms and 51 real Hancom-rendered pages: 376
+spans map uniquely; 365 of them are paragraph addresses and 11 are cells. Of
+the 365, **314 resolve to exactly one run whose text is the line** and are
+therefore addressable; 51 are multi-run paragraphs and are refused. No
+paragraph failed to return an inventory and no run's text disagreed with its
+line. Against 73 empty seats, that is the difference between 73 places on a
+page a person can type and 387.
+
+`charX` positions the caret inside such a line, but the write is still
+run-wide: `set_run` carries the whole new text. An offset therefore says where
+the cursor goes and what the user is editing around — it does not make the
+operation a splice, and a client must not describe it as one.
 
 ---
 
@@ -1402,13 +1466,21 @@ except `form_inspect --baseline`, whose answer is a document-wide **set** of
 font names and therefore can never say what *this* run is set in.
 
 `form_inspect` now publishes the join as `charpr_faces` — `charPr id -> {lang:
-face}` — and three fields carry it:
+face}` — and four fields carry it:
 
 | field | on |
 | --- | --- |
 | `summary.baselineCharPr.face`, `summary.blackCharPr.face` | the document-level shapes |
 | `regions[].charPrFace` | the shape a fill seat inherits |
 | `regions[].charPrSuggestedFace` | the shape the T30 preflight suggests instead |
+| `document/readRegion` → `regions[].runs[].charpr_face` | the shape a paragraph RUN carries |
+
+The last one arrived with the caret (§12.7). Every shape the wire could name
+was one a cell inherits, because a cell was the only thing the editor could
+open; a caret standing in a paragraph run had no name to print but the integer.
+The join is the same one — spelled `charpr_face` because every other key on a
+run object (`charpr`, `color_anomaly`) is the engine's own spelling, and one
+mixed vocabulary across two objects costs less than two inside one.
 
 **Per language, because the document is.** Hangul's own font dialog has
 separate 한글 and 영문 faces and a 기안문 declares different ones — the corpus
@@ -1435,7 +1507,12 @@ would print in something other than the body face.
 ### 14.1 Still GAP here
 
 - **Size and weight are still partial.** A height is reported for the two
-  document-level shapes only; a seat's charPr carries an id and now a name, but
-  no point size of its own.
+  document-level shapes only; a seat's charPr — or a run's — carries an id and
+  now a name, but no point size of its own. `spans[].sizePt` (§12.2) is a
+  *different* fact and must not be presented as this one: it is the size the
+  RENDERER drew that line at, read out of the PDF, not the size the header
+  declares for the shape. A client that shows both must label which is which.
 - **No writing.** This is a read. Setting a face means a charPr the document
-  does not have, which is a `preedit` question, not a protocol one.
+  does not have, which is a `preedit` question, not a protocol one. So the
+  toolbar over a caret is read-only in exactly the way it was over a seat, and
+  E1.3's formatting *changes* wait on that question being answered.
