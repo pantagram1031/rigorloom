@@ -39,6 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PATTERNS: tuple[str, ...] = (
     "engine/scripts/*.py",
     "pipeline/scripts/*.py",
+    "runtime/scripts/*.py",
     "scripts/*.py",
     "studio/main.py",
     "modules/*/scripts/*.py",
