@@ -231,10 +231,16 @@ def test_both_doors_reach_the_same_intent(opened):
     assert over_protocol["plan"]["opsHash"] == over_mcp["plan"]["opsHash"]
     assert over_protocol["target"] == over_mcp["target"]
     assert over_mcp["door"] == "mcp"
-    # the MCP surface is the agent surface minus the protocol handshake
+    # The MCP surface is the agent surface minus two principled exclusions:
+    # ``initialize`` is MCP's own handshake, and the protocol-only methods push
+    # notifications, which a tool call has nowhere to put. Derived from
+    # rt_core rather than listed, so the next roster change breaks the
+    # derivation loudly instead of drifting.
+    excluded = {"initialize", *rt_core.PROTOCOL_ONLY_METHODS}
     assert set(over_mcp["surface"]) == {
         name.replace("/", "_")
-        for name in over_protocol["surface"] if name != "initialize"}
+        for name in over_protocol["surface"] if name not in excluded}
+    assert set(rt_core.PROTOCOL_ONLY_METHODS) <= set(over_protocol["surface"])
 
 
 # --- acceptance task C ------------------------------------------------------

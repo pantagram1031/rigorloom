@@ -164,6 +164,67 @@ def test_unavailable_is_a_result_not_an_error_over_the_wire(tmp_path):
     assert result["capability"]["converter"]["state"] == "no"
 
 
+def test_every_unavailable_result_names_a_reason_from_the_closed_set(core,
+                                                                     tmp_path,
+                                                                     monkeypatch):
+    """No branch may answer "no page" without saying which no.
+
+    Prompted by a real misread: an integrator looked for the reason at
+    ``result.reason`` and got ``None``, because it lives at
+    ``result.unavailable.reason``. The field was set — but a rule that only
+    holds because of an internal assert is a rule nobody can check from
+    outside, so this walks every branch through the public API instead.
+    """
+    cases = {}
+
+    session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
+    cases["needs_conversion"] = core.document_render(session)
+
+    notes = tmp_path / "notes.txt"
+    notes.write_text("hello", encoding="utf-8")
+    opaque = core.open_path(str(notes))["sessionId"]
+    cases["no_rasterizable_artifact"] = core.document_render(opaque)
+
+    pdf = tmp_path / "doc.pdf"
+    if HAVE_RASTERIZER:
+        _pdf(tmp_path, name="doc.pdf")
+    else:
+        pdf.write_bytes(b"%PDF-1.4\n%stub\n")
+    pdf_session = core.open_path(str(pdf))["sessionId"]
+    monkeypatch.setattr(rt_render, "rasterizer_module", lambda: None)
+    cases["rasterizer_missing"] = core.document_render(pdf_session)
+    monkeypatch.undo()
+
+    for expected, result in cases.items():
+        assert result["available"] is False, expected
+        unavailable = result["unavailable"]
+        assert unavailable["reason"] == expected
+        assert unavailable["reason"] in rt_render.UNAVAILABLE_REASONS
+        assert unavailable["detail"].strip(), f"{expected} gave no detail"
+        # the closed set travels with the answer, so a client can switch on it
+        assert (result["capability"]["unavailableReasons"]
+                == list(rt_render.UNAVAILABLE_REASONS))
+        # and the reason is NOT at the top level, which is where it was looked
+        # for; if that ever changes, this is the test that should be updated
+        assert "reason" not in result
+
+    assert set(cases) < set(rt_render.UNAVAILABLE_REASONS)
+
+
+def test_the_artifact_missing_branch_also_names_its_reason(core, tmp_path):
+    """The fourth reason, reached by deleting a published candidate's bytes."""
+    session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
+    handle = core.store.get(session)
+    handle.ensure_dirs()
+    run_dir = handle.candidates_dir / ("a" * 32)
+    run_dir.mkdir(parents=True)
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        core.document_render(session, run_id="a" * 32)
+    # no receipt at all is an artifact_missing REFUSAL from the receipt reader,
+    # which is a different and louder thing than an unavailable render
+    assert excinfo.value.code == "artifact_missing"
+
+
 def test_no_fabricated_image_is_ever_returned(core, tmp_path):
     """Whatever the reason, an unavailable render carries no pixels."""
     session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
