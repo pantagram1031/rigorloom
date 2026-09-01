@@ -1257,6 +1257,24 @@ structural, not tuning:
   is an assumption about ordering that no text on the page can confirm, so it
   is not made. This is the largest single block and it is where the next real
   gain would have to come from.
+
+  **Anchoring such a table from a neighbouring one was measured too, at 1 of
+  473.** Borrowing an adjacent table's grid needs an anchored table on the
+  same page, and there are four anchorless tables holding fills:
+
+  | form | table | fills | renders on | anchored tables there |
+  | --- | ---: | ---: | ---: | --- |
+  | admrul-gajokdolbom-hyuga-sinchengseo | 0 | 1 | page 0 | table 1 |
+  | gianmun-byeolji-1ho | 0 | 9 | page 0 | none |
+  | saeopja-deungnok-sinchengseo | 5 | 64 | pages 4–5 | none |
+  | saeopja-deungnok-sinchengseo | 6 | 74 | pages 4–5 | none |
+
+  147 of the 148 have nothing on their page to borrow from, so no cross-table
+  method reaches them; the 148th is one seat, which does not pay for a
+  cross-table geometry mechanism and the verification gate it would need. A
+  table is located here by its declared cell texts appearing as rendered
+  lines — ambiguous texts still locate a *page*, because that does not require
+  deciding *which* cell. Pinned by a test.
 - **Truncated previews cannot anchor, and untruncating them buys nothing.** A
   cell whose `text_preview` is a 30-character prefix is excluded from the
   target set; the prefix can still *refute* a correspondence during the walk,

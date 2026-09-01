@@ -1338,6 +1338,95 @@ def test_no_free_rule_on_the_corpus_underlines_a_seat(tmp_path):
 
 @needs_rasterizer
 @needs_corpus_renders
+def test_cross_table_anchoring_could_reach_one_seat_of_473(tmp_path):
+    """Anchoring a table from a neighbouring one: measured at 1, so not built.
+
+    The idea is that a table with no anchor of its own could borrow the drawn
+    grid of an adjacent table that has one. It needs an anchored table on the
+    same page. There are four anchorless tables holding fills in the corpus:
+
+    | form | table | fills | renders on | anchored tables there |
+    | --- | ---: | ---: | ---: | --- |
+    | admrul-gajokdolbom-hyuga-sinchengseo | 0 | 1 | page 0 | table 1 |
+    | gianmun-byeolji-1ho | 0 | 9 | page 0 | none |
+    | saeopja-deungnok-sinchengseo | 5 | 64 | pages 4-5 | none |
+    | saeopja-deungnok-sinchengseo | 6 | 74 | pages 4-5 | none |
+
+    147 of the 148 are therefore out of reach of ANY cross-table method: there
+    is nothing on their page to borrow from. The remaining one is a single
+    seat, which does not pay for a cross-table geometry mechanism and its
+    verification gate.
+
+    A table is located by its own declared cell texts appearing as rendered
+    lines. That works even though every one of them is ambiguous, because
+    locating a *page* does not require deciding *which* cell -- which is the
+    same distinction `sole_cell_address` turns on.
+    """
+    module = rt_render.rasterizer_module()
+    normalize = rt_geometry.normalizer()
+    census = {}
+    homes = {}
+    for slug in sorted(CORPUS_SEATS):
+        profile = _profile_of(slug, tmp_path)
+        pdf = CORPUS_RENDERS / f"{slug}.pdf"
+        document = module.open(str(pdf))
+        pages = document.page_count
+        document.close()
+        anchored = {}
+        rendered = {}
+        for page in range(pages):
+            extracted = rt_geometry.extract_page(module, pdf, page)
+            width, height = extracted["widthPt"], extracted["heightPt"]
+            rendered[page] = {normalize(line["text"])
+                              for line in extracted["lines"]
+                              if normalize(line["text"])}
+            targets, _ = rt_geometry.build_targets(profile, normalize)
+            here = set()
+            for span in rt_geometry.map_spans(extracted["lines"], targets,
+                                              normalize, width, height):
+                key = rt_geometry.sole_cell_address(span)
+                if key is None:
+                    continue
+                x0, y0, x1, y1 = span["rect"]
+                if rt_geometry._smallest_cell_at(
+                        extracted["drawnCells"], (x0 + x1) / 2 * width,
+                        (y0 + y1) / 2 * height):
+                    here.add(key[0])
+            anchored[page] = here
+        anywhere = set().union(*anchored.values()) if anchored else set()
+        for table in profile.get("table_map") or []:
+            index = table.get("index")
+            fills = sum(1 for cell in table.get("cells") or []
+                        if cell.get("classification") == "fill_target")
+            if not fills or index in anywhere:
+                continue
+            census[(slug, index)] = fills
+            texts = {normalize(cell.get("text_preview") or "")
+                     for cell in table.get("cells") or []
+                     if not cell.get("truncated")
+                     and (cell.get("text_preview") or "").strip()}
+            home = max(range(pages), key=lambda p: len(texts & rendered[p]))
+            homes[(slug, index)] = (home, sorted(anchored[home]))
+
+    assert census == {
+        ("admrul-gajokdolbom-hyuga-sinchengseo", 0): 1,
+        ("gianmun-byeolji-1ho", 0): 9,
+        ("saeopja-deungnok-sinchengseo", 5): 64,
+        ("saeopja-deungnok-sinchengseo", 6): 74,
+    }
+    assert sum(census.values()) == 148
+    assert homes == {
+        ("admrul-gajokdolbom-hyuga-sinchengseo", 0): (0, [1]),
+        ("gianmun-byeolji-1ho", 0): (0, []),
+        ("saeopja-deungnok-sinchengseo", 5): (4, []),
+        ("saeopja-deungnok-sinchengseo", 6): (4, []),
+    }
+    reachable = sum(count for key, count in census.items() if homes[key][1])
+    assert reachable == 1, "147 of the 148 have nothing on their page to borrow"
+
+
+@needs_rasterizer
+@needs_corpus_renders
 def test_untruncated_previews_buy_no_seats(tmp_path):
     """The 30-character preview is not what is blocking the absent seats.
 

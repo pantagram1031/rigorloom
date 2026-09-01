@@ -303,10 +303,12 @@ tables with no anchor anywhere (138 of those in two sheets that repeat one
 sub-block five times, so every label matches five distinct cells and refuses),
 and two forms are not enclosed by the renderer at all — one draws 6 horizontal
 rules on the whole page, the other draws its body cells with only three sides.
-Two mechanisms were specified for the rest and both measured zero, so neither
-is in: an `underline_rule` derivation (1 rule of that shape in 1,141, and it
-is not beside a seat) and untruncating the 30-character previews (145 cells
-recovered, 8 anchors gained, 0 seats).
+Three mechanisms were specified for the rest and all three measured at or near
+zero, so none is in: an `underline_rule` derivation (1 rule of that shape in
+1,141, and it is not beside a seat), untruncating the 30-character previews
+(145 cells recovered, 8 anchors gained, 0 seats), and cross-table anchoring
+(147 of the 148 anchorless fills have no anchored table on their page at all,
+so it could reach 1).
 
 `seatAbsences` counts the reason per page (`no_drawn_grid`,
 `no_anchor_on_page`, `no_anchor_in_row`, `grid_gap`, `cell_mismatch`,
