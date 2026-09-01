@@ -75,6 +75,25 @@ const STATE_LABEL: Record<string, { text: string; tone: "ok" | "bad" | "none" }>
   unknown: { text: "모름", tone: "none" },
 };
 
+/**
+ * The adapter's own credential vocabulary, rendered without translation of
+ * meaning: `ah_anthropic.credential_state` answers exactly these four, and
+ * `unsupported` is the one that matters — it is what the OS-store source
+ * returns today, and the reason this app hands the key over as an environment
+ * reference on the child process instead.
+ */
+const CREDENTIAL_STATE: Record<string, { text: string; tone: "ok" | "bad" | "warn" | "none" }> = {
+  configured: { text: "설정됨", tone: "ok" },
+  missing: { text: "없음", tone: "none" },
+  not_required: { text: "필요 없음", tone: "none" },
+  unsupported: { text: "이 방식은 아직 안 됩니다", tone: "warn" },
+};
+
+function credentialVerdict(profile: { notes: Record<string, unknown> }): string {
+  const row = profile.notes?.credential as { state?: string } | undefined;
+  return row?.state ?? "missing";
+}
+
 const OWNERSHIP: Record<string, string> = {
   none: "열쇠가 필요 없습니다",
   env_reference: "환경 변수 이름으로 참조합니다",
@@ -373,6 +392,22 @@ export function Settings() {
                 <span className="mono">{profile.providerId}</span>
                 {profile.model ? <span className="mono"> · {profile.model}</span> : null} ·{" "}
                 {OWNERSHIP[profile.authOwnership] ?? profile.authOwnership}
+              </p>
+              {/* What the ADAPTER says about the reference, separately from
+                  what the OS store says about the key. They can disagree —
+                  a key saved under one name while the config points at
+                  another — and one line each is how a person sees that. */}
+              <p className="prose tiny" data-testid="credential-verdict">
+                자격 증명 참조:{" "}
+                <Tag tone={CREDENTIAL_STATE[credentialVerdict(profile)]?.tone ?? "none"}>
+                  {CREDENTIAL_STATE[credentialVerdict(profile)]?.text ??
+                    credentialVerdict(profile)}
+                </Tag>{" "}
+                <span className="mono">
+                  {String(
+                    (profile.notes?.credentialRef as { key?: string } | undefined)?.key ?? "—",
+                  )}
+                </span>
               </p>
               <table className="caps">
                 <tbody>

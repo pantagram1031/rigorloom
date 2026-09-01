@@ -249,9 +249,26 @@ fn compose_config(provider: &str, settings: &Value, has_credential: bool) -> Res
         config.insert(name.clone(), value.clone());
     }
     if has_credential {
+        // The header and scheme are NOT defaults to be left off.
+        // `CredentialRef` falls back to `Authorization: Bearer <value>`, which
+        // is right for an OpenAI-compatible router and WRONG for Anthropic —
+        // the Messages API wants a bare `x-api-key`. Omitting them produced a
+        // config that looked correct and would have authenticated against
+        // nothing; `agent_roundtrip.py` is what caught it, by reading the
+        // reference back out of the adapter instead of trusting the write.
+        let (header, scheme) = if provider == "anthropic" {
+            ("x-api-key", "raw")
+        } else {
+            ("Authorization", "bearer")
+        };
         config.insert(
             "credential".into(),
-            json!({ "source": "env", "key": CHILD_CREDENTIAL_ENV }),
+            json!({
+                "source": "env",
+                "key": CHILD_CREDENTIAL_ENV,
+                "header": header,
+                "scheme": scheme,
+            }),
         );
     } else if provider == "anthropic" {
         // The adapter's default is `ANTHROPIC_API_KEY`. Leaving it there when
@@ -654,6 +671,16 @@ mod tests {
         let text = document.to_string();
         assert!(!text.contains("sk-"));
         assert!(!text.to_lowercase().contains("apikey"));
+    }
+
+    #[test]
+    fn each_provider_gets_the_header_its_api_actually_wants() {
+        let anthropic = compose_config("anthropic", &json!({}), true).unwrap();
+        assert_eq!(anthropic["credential"]["header"], "x-api-key");
+        assert_eq!(anthropic["credential"]["scheme"], "raw");
+        let router = compose_config("router", &json!({}), true).unwrap();
+        assert_eq!(router["credential"]["header"], "Authorization");
+        assert_eq!(router["credential"]["scheme"], "bearer");
     }
 
     #[test]

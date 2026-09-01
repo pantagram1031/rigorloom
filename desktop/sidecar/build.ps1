@@ -207,6 +207,14 @@ $proc = Start-Process -FilePath $exe `
     -NoNewWindow -PassThru -Wait
 $reply = if (Test-Path $outPath) { Get-Content $outPath -First 1 } else { $null }
 $serveExit = $proc.ExitCode
+# The probe is `--noconsole`, and this script does not job-confine it — that is
+# jobkill.rs's job inside the app, and it does not apply here. Start-Process
+# -Wait can return while the process is still winding down, and the survivor
+# then keeps the build script's process tree open: a caller that waits on the
+# tree (a CI runner, or a background shell) sees a build that printed "exit 0"
+# and then hung for a quarter of an hour. Reap it explicitly.
+Get-Process -Id $proc.Id -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $probeRoot -ErrorAction SilentlyContinue
 if ($serveExit -ne 0) {
     Write-Error "the frozen server exited $serveExit on a clean EOF shutdown"
