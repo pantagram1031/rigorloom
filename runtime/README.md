@@ -259,14 +259,40 @@ Matching normalizes with `pipeline/scripts/check_residue.normalize_text`,
 **imported**, so page matching and the residue gate cannot disagree about what
 "the same string" is.
 
-**Empty seats** carry the derivation used: `matched_text`, `cell_borders` (a
-rule actually drawn on the page) or `interpolated` (from a uniquely matched
-label immediately to its left). A seat that cannot be placed is **absent** —
-the Desktop falls back to tree editing for it, rather than being handed a box
-that is probably wrong.
+**Empty seats** carry the derivation used: `matched_text`, `cell_borders` (the
+rules drawn on the page enclose a box alignment tied to this seat) or
+`interpolated` (from a uniquely matched label immediately to its left). A seat
+that cannot be placed is **absent** — the Desktop falls back to tree editing
+for it, rather than being handed a box that is probably wrong.
+
+`cell_borders` is the one that reaches an empty cell nowhere near a label, and
+it is why on-page editing has a target: text-based derivation placed **0 of
+473** fill regions across the corpus, because an empty cell has nothing to
+match. Hancom strokes every ruling as a line segment rather than a rectangle,
+so the grid is rebuilt from the segments — clustered into rules, then kept
+only as the smallest rectangles whose four sides are all actually drawn.
+
+Alignment is earned. An anchor is a span naming exactly one table cell whose
+drawn box also carries that cell's text; from it the row is walked outward in
+lockstep with the declared cells, and every step must be adjacent **and** must
+agree with the text the page shows there. The walk stops at the first
+disagreement and places nothing past it, so an empty seat is trusted only
+because the labelled cells walked to reach it were confirmed by the render.
+Two anchors that disagree about a cell refuse it rather than averaging.
+
+Measured on the 10 real Hancom renders (`tests/corpus/forms/render`, produced
+by `com_backend.py` on Hancom Office 13.0.0.2986): **73 of 473 seats, all
+`cell_borders`**, every one of them a box the page really drew, empty in the
+render, none overlapping. The remaining 400 are honestly absent — 148 sit in
+tables with no anchor anywhere, and two forms are ruled with underlines rather
+than boxes, so nothing on them closes. `seatAbsences` counts the reason per
+page (`no_drawn_grid`, `no_anchor_on_page`, `no_anchor_in_row`, `grid_gap`,
+`cell_mismatch`, `alignment_failed`) and `drawnCells` says how many closed
+cells the page yielded, which separates "not ruled" from "not aligned".
 
 No PDF means no geometry, with the same closed reasons `render` uses. Geometry
-is cached on `(pdf sha256, page)`, bounded at 64 entries.
+is cached on `(pdf sha256, page)`, bounded at 64 entries; the reconstructed
+grid joins that cached extraction, so borders are not re-derived per call.
 
 ## The typeface name
 
