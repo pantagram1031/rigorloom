@@ -32,7 +32,7 @@
  * slot's contents with an input and drafts an OperationPlan; nothing else about
  * this component has to change.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   activeText,
@@ -171,6 +171,18 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
     [inspect],
   );
 
+  /**
+   * The node currently flashing, as state rather than a class poked onto the
+   * DOM.
+   *
+   * The imperative version lost the flash at random: `className` on these
+   * cells is a React-controlled prop, so the very next render — a selection
+   * change, a text arriving, anything — overwrote the attribute and took
+   * `locate-flash` with it. Owning it in state means React writes the class
+   * itself and no re-render can drop it.
+   */
+  const [flashId, setFlashId] = useState<string | null>(null);
+
   // Tree -> centre. Only when something asked (locateNonce), so clicking in
   // the document does not scroll the document out from under the pointer.
   useEffect(() => {
@@ -180,10 +192,19 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
     );
     if (!target) return;
     target.scrollIntoView({ block: "center", behavior: "smooth" });
-    target.classList.remove("locate-flash");
-    // Force a reflow so the animation restarts on a repeated locate.
-    void target.offsetWidth;
-    target.classList.add("locate-flash");
+
+    // Set synchronously, with no requestAnimationFrame in the way. WebView2
+    // withholds rAF from a window that is not in the foreground, so a callback
+    // scheduled that way may simply never run — which would make the flash a
+    // coin-flip on any machine where the window lost focus, and made it fail
+    // every time under the harness.
+    //
+    // The cost of not clearing first is that a second locate on the same node
+    // inside 900 ms does not restart the animation. After 900 ms the timer has
+    // cleared the class and it restarts normally.
+    setFlashId(currentId);
+    const clear = window.setTimeout(() => setFlashId(null), 900);
+    return () => window.clearTimeout(clear);
   }, [locateNonce, currentId]);
 
   const select = (selection: Selection) => setSelection(selection);
@@ -210,15 +231,18 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                         colSpan={colSpan}
                         data-node-id={id}
                         data-testid={`doc-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
-                        className={
+                        className={[
                           cell.classification === "fill_target"
                             ? "seat"
                             : cell.classification === "guide"
                               ? "guide"
                               : cell.classification === "spacer"
                                 ? "spacer"
-                                : ""
-                        }
+                                : "",
+                          flashId === id ? "locate-flash" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
                         aria-selected={currentId === id}
                         title={`R${cell.addr.row}C${cell.addr.col} · ${cell.classification}`}
                         onClick={() =>
@@ -252,7 +276,7 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
               return (
                 <p
                   key={id}
-                  className="doc-para"
+                  className={flashId === id ? "doc-para locate-flash" : "doc-para"}
                   data-node-id={id}
                   data-testid={`doc-para-${para.at_para}`}
                   aria-selected={currentId === id}

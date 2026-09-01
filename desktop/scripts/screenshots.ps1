@@ -38,12 +38,12 @@ New-Item -ItemType Directory -Force -Path $OutDir, $RunDir | Out-Null
 Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $AppData | Out-Null
 
-$origLocalAppData = $env:LOCALAPPDATA
+$origAppData = $env:RIGORLOOM_APPDATA
 $captured = @()
 $failed = 0
 
 try {
-    $env:LOCALAPPDATA = $AppData
+    $env:RIGORLOOM_APPDATA = $AppData
     $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
     Remove-Item Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
 
@@ -109,7 +109,8 @@ try {
     }
 }
 finally {
-    $env:LOCALAPPDATA = $origLocalAppData
+    if ($origAppData) { $env:RIGORLOOM_APPDATA = $origAppData }
+    else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT, `
         Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue |

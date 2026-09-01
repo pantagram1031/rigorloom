@@ -97,9 +97,20 @@ async function phaseOpen(config: SmokeConfig) {
   check("the packaged sidecar is the one running", status?.mode === "packaged", status?.mode ?? "none");
 
   // --- the welcome state, before any document ------------------------------
+  // `boot()` resolving only means the state is ready; React has not painted
+  // the shell yet, and the entrance is still over the top of it. Everything
+  // above this line reads the store, so it did not care — these read the DOM,
+  // so they have to wait for one.
+  await settled(160);
+  // A bare boolean here told me nothing when it failed, so both of these say
+  // what they actually saw.
+  const centre = document.querySelector(".panel.center");
+  const centreState = centre
+    ? `centre=${centre.firstElementChild?.className || "(empty)"}`
+    : `no centre panel; phase=${getState().phase}, splash=${!getState().entranceDone}`;
   check("welcome screen shown before a document is open",
-    !!document.querySelector('[data-testid="welcome"]'));
-  check("welcome offers a drop target", !!document.querySelector(".drop"));
+    !!document.querySelector('[data-testid="welcome"]'), centreState);
+  check("welcome offers a drop target", !!document.querySelector(".drop"), centreState);
   check("brand mark rendered", !!document.querySelector('[data-testid="logo"]'));
 
   if (!config.corpus) {
@@ -183,10 +194,20 @@ async function phaseOpen(config: SmokeConfig) {
   const seatId = selectionId(seatSel);
   locateSelection(seatSel);
   await settled(160);
-  const centreNode = document.querySelector(`[data-node-id="${CSS.escape(seatId)}"]`);
+  // Scoped to the centre, and that scoping is the whole point of the check.
+  // The tree and the centre both label their nodes with `data-node-id`, and
+  // the tree comes first in the document, so an unscoped querySelector returns
+  // the tree row — which made "the centre agrees with the tree" pass by
+  // inspecting the tree and agreeing with itself.
+  const centreNode = document.querySelector(
+    `[data-testid="text-view"] [data-node-id="${CSS.escape(seatId)}"]`,
+  );
   check("selecting in the tree marks the same node in the centre",
-    centreNode?.getAttribute("aria-selected") === "true", seatId);
-  check("the located node flashes", centreNode?.classList.contains("locate-flash") === true);
+    centreNode?.getAttribute("aria-selected") === "true",
+    centreNode ? seatId : "node not in the centre");
+  check("the located node flashes",
+    centreNode?.classList.contains("locate-flash") === true,
+    centreNode ? `class="${centreNode.className}"` : "node not in the centre");
 
   // --- centre -> tree sync ---------------------------------------------------
   const otherCell = inspect.graph.tables[0].cells.find(
