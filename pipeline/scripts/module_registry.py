@@ -57,6 +57,13 @@ _STATE_POLICIES = (
 # runner can supply them instead of every caller having to know (v0.17 G3).
 # ``baseline`` = the blank/unfilled form the artifact was produced from.
 _CHECKER_WANTS = ("baseline",)
+# Closed vocabulary of what a checker's POSITIONAL argument is. Without it a
+# runner holding a document cannot tell a checker it may invoke from one it may
+# not, and the only alternatives are a per-module name list in core (rule 1) or
+# running the checker wrong and reading the wreckage as a finding. Omitted =
+# undeclared, and a runner must then skip the checker with a reason rather than
+# guess (runtime `module/check`; docs/runtime-protocol-v0.md §13).
+_CHECKER_SUBJECTS = ("document", "workspace")
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes", "gate_kinds",
     "studio_panels", "skill", "playbooks", "preflight",
@@ -430,7 +437,7 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
         out["checkers"] = _require_entry_list(
             module, provides["checkers"], "checkers",
             {"name": _CHECKER_NAME_RE, "script": None},
-            optional={"wants": "wants"})
+            optional={"wants": "wants", "subject": _CHECKER_SUBJECTS})
     if "cli" in provides:
         out["cli"] = _require_entry_list(
             module, provides["cli"], "cli",
@@ -692,15 +699,19 @@ class ModuleRegistry:
         return rows
 
     def enabled_checkers(self) -> list[dict[str, Any]]:
-        """[{name, script(abs path), wants, module}] across all enabled modules.
+        """[{name, script(abs path), wants, subject, module}] across enabled modules.
 
-        ``wants`` is always present (``[]`` when the declaration omits it), so a
-        runner can branch on the declared needs without knowing which modules
-        bothered to declare any. See ``modules/README.md`` (checkers row).
+        ``wants`` is always present (``[]`` when the declaration omits it) and
+        so is ``subject`` (``None`` when omitted), so a runner can branch on the
+        declaration without knowing which modules bothered to write one — and
+        an undeclared subject reads as undeclared rather than as a default that
+        would send a document to a workspace checker. See ``modules/README.md``
+        (checkers row).
         """
         rows = self._entries("checkers", ("script",))
         for row in rows:
             row.setdefault("wants", [])
+            row.setdefault("subject", None)
         return rows
 
     def enabled_cli(self) -> list[dict[str, Any]]:

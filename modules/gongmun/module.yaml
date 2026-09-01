@@ -26,7 +26,7 @@ requires: {rigorloom: ">=0.16"}
 # instead of every caller having to know (modules/README.md, checkers[].wants).
 provides:
   checkers:
-    - {name: check_gongmun, script: scripts/check_gongmun.py, wants: [baseline]}
+    - {name: check_gongmun, script: scripts/check_gongmun.py, subject: document, wants: [baseline]}
   pack_types: [gongmun_org]
   skill:
     fragment: skill/FRAGMENT.md

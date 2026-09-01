@@ -50,6 +50,10 @@
                 "minItems": 1,
                 "uniqueItems": true,
                 "description": "Extra inputs this checker DECLARES it needs so a runner can supply them, instead of every caller having to know. Closed vocabulary. 'baseline' = the blank/unfilled form the artifact was produced from; the checker accepts it as `--baseline <path>` and its baseline-only rules report skipped:no_baseline without it. A runner that honours wants supplies the declared baseline; where none is declared the check is skipped-with-reason, never a silent pass. Consumer: the evals harness (evals/README.md)."
+              },
+              "subject": {
+                "enum": ["document", "workspace"],
+                "description": "What this checker's POSITIONAL argument is: 'document' = one artifact path (an .hwpx/.hwp file), 'workspace' = a report workspace directory. Optional; omitted means UNDECLARED, and a runner that holds only one of the two must then skip the checker with a reason rather than guess. Exists because the alternative for a document-holding runner is a per-module name list in core, which rule 1 forbids. Consumer: the Runtime's module/check (docs/runtime-protocol-v0.md §13)."
               }
             }
           }
