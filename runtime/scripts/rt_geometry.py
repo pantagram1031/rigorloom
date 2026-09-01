@@ -102,7 +102,13 @@ ABSENCE_REASONS = (
 
 #: A segment counts as axis-parallel within this many points.
 RULE_AXIS_TOL = 0.8
-#: Shorter than this is a tick, a dash or a glyph stroke, not a rule.
+#: Below this a segment is a rounding artefact, not a mark. Length is judged
+#: on the JOINED rule, not on the pieces: measured on the corpus renders,
+#: 12,045 of 13,972 horizontal segments are under 3pt and their collinear gaps
+#: cluster at 0.4-0.8pt — those are dashes, and a dashed border is a border.
+#: Discarding the pieces first would throw the rule away before it existed.
+RULE_MIN_SEGMENT_PT = 0.2
+#: A joined rule shorter than this is a tick or a glyph stroke, not a rule.
 RULE_MIN_LENGTH_PT = 3.0
 #: Segments this close on the cross axis are one rule drawn more than once.
 RULE_CLUSTER_TOL = 2.0
@@ -222,10 +228,10 @@ def ruling_segments(drawings: list) -> tuple[list, list]:
             for ax, ay, bx, by in edges:
                 ax, ay, bx, by = float(ax), float(ay), float(bx), float(by)
                 if abs(ay - by) <= RULE_AXIS_TOL and \
-                        abs(ax - bx) >= RULE_MIN_LENGTH_PT:
+                        abs(ax - bx) >= RULE_MIN_SEGMENT_PT:
                     horizontal.append([(ay + by) / 2.0, min(ax, bx), max(ax, bx)])
                 elif abs(ax - bx) <= RULE_AXIS_TOL and \
-                        abs(ay - by) >= RULE_MIN_LENGTH_PT:
+                        abs(ay - by) >= RULE_MIN_SEGMENT_PT:
                     vertical.append([(ax + bx) / 2.0, min(ay, by), max(ay, by)])
     return horizontal, vertical
 
@@ -253,7 +259,10 @@ def cluster_rules(rules: list) -> list:
                 merged[-1][1] = max(merged[-1][1], high)
             else:
                 merged.append([low, high])
-        out.append((position, merged))
+        kept = [span for span in merged
+                if span[1] - span[0] >= RULE_MIN_LENGTH_PT]
+        if kept:
+            out.append((position, kept))
     return out
 
 
