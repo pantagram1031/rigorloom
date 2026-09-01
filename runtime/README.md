@@ -40,6 +40,7 @@ candidate with a hash-bound receipt and an offline verification report.
 | `scripts/rt_session.py` | ingress, the session/plan/approval store, document views |
 | `scripts/rt_plan.py` | OperationPlan, validation, approvals |
 | `scripts/rt_apply.py` | execution, candidate publication, receipts |
+| `scripts/rt_module.py` | distribution-module checkers, run against a session |
 | `scripts/rt_core.py` | **the domain layer** — every operation, once |
 | `scripts/rt_server.py` | JSONL transport and the two method registries |
 | `scripts/cli.py` | argument parsing and exit codes |
@@ -116,10 +117,11 @@ embedded newlines. (`Content-Length` header framing is the Language Server
 Protocol's, not MCP's.) `initialize`, `notifications/initialized`, `ping`,
 `tools/list` and `tools/call` are implemented; nothing else is claimed.
 
-Eleven tools, derived from the agent registry: `capabilities_list`,
+Sixteen tools, derived from the agent registry: `capabilities_list`,
 `session_list`, `document_inspect`, `document_readRegion`, `plan_propose`,
 `plan_validate`, `plan_get`, `approval_request`, `approval_get`,
-`candidate_list`, `receipt_read`.
+`candidate_list`, `receipt_read`, `document_render`, `document_pageGeometry`,
+`event_poll`, `module_list`, `module_check`.
 
 There is no `workspace_openPath`, no `approval_resolve` and no `plan_apply`,
 and there cannot be: the tool list is computed from `rt_core.AGENT_METHODS`,
@@ -266,11 +268,55 @@ that is probably wrong.
 No PDF means no geometry, with the same closed reasons `render` uses. Geometry
 is cached on `(pdf sha256, page)`, bounded at 64 entries.
 
+## Distribution-module checkers
+
+```sh
+python runtime/scripts/cli.py --root $R modules
+python runtime/scripts/cli.py --root $R module-check --session $SID --module gongmun
+python runtime/scripts/cli.py --root $R module-check --session $SID --module gongmun \
+    --checker check_gongmun --run $RUN --require-checks
+```
+
+`module/check` runs a distribution module's declared checkers against the
+document a session holds and returns their findings — severity, code, message,
+and the finding's address translated into the Runtime's own addressing where
+the checker gives one. Design and the full argument: `docs/runtime-protocol-v0.md`
+§13.
+
+**Agent-safe.** The checker contract is a verdict producer (JSON on stdout,
+exit 0/2/3), and it is not trusted to be: the document is copied into
+`<session>/checks/<callId>/`, the child runs with that as its cwd, and the
+directory is deleted afterwards, so the session copy, the candidate and the
+operator's original are unreachable by construction. A module is reachable at
+all only if the operator enabled it in `enabled.yaml` — an install-time act no
+wire call can perform.
+
+**A checker that did not run is never a pass.** Rows are `ran` / `skipped` /
+`unavailable`, each with a reason from a closed set: `subject_undeclared`,
+`needs_workspace`, `spawn_failed`, `timed_out`, `missing_dependency`,
+`usage_error`, `no_verdict`. `acceptance` is true only when every selected
+checker ran, was clean, and had every input its declaration says it needs; a
+checker that ran without one is `partial`, not clean.
+
+**Which checkers are runnable** comes from `provides.checkers[].subject`
+(`modules/README.md`): `document` runs, `workspace` is skipped
+(`needs_workspace` — a session is one document, not a report workspace),
+absent is skipped (`subject_undeclared`). Core never learns a module's name.
+
+Each checker is bounded by `timeoutSeconds` (default 120s, clamped to
+[1, 600]); a hung one is killed and the rest of the pack still runs. The kill
+reaches the direct child only — descendants are not contained, same as
+everywhere else here.
+
+`RIGORLOOM_MODULES_ROOT` and `RIGORLOOM_MODULES_ENABLED` override where modules
+and enablement are read from; both default to this checkout, and
+`capabilities.modules` reports which was used.
+
 ## Events
 
 Every session keeps `<session>/events.jsonl`, appended on each mutation:
 `session.opened`, `plan.proposed`, `plan.validated`, `approval.requested`,
-`approval.resolved`, `plan.applied`, `candidate.published`.
+`approval.resolved`, `plan.applied`, `candidate.published`, `module.checked`.
 
 ```sh
 python runtime/scripts/cli.py --root $R events --session $SID [--after N]
