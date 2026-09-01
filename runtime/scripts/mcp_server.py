@@ -217,6 +217,25 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["sessionId"],
         },
     },
+    "document/pageGeometry": {
+        "description": "Text positions on a rendered page, mapped to editable "
+                       "addresses. Rects are fractions of the page, origin "
+                       "top-left. A span maps to one address, to several "
+                       "candidates when the text is genuinely ambiguous, or to "
+                       "none. Empty fill seats carry a rect and the method it "
+                       "was derived by.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "page": {"type": "integer", "minimum": 0},
+                "runId": {"type": "string",
+                          "description": "read a published candidate instead "
+                                         "of the session source"},
+            },
+            "required": ["sessionId"],
+        },
+    },
     "event/poll": {
         "description": "Read the session's event log from a sequence number. "
                        "Request/response, for a client that cannot be pushed "
@@ -330,6 +349,10 @@ class McpAdapter:
                                         dpi=arguments.get("dpi"),
                                         run_id=arguments.get("runId"),
                                         inline=inline)
+        if method == "document/pageGeometry":
+            return core.document_page_geometry(arguments.get("sessionId"),
+                                               page=arguments.get("page", 0),
+                                               run_id=arguments.get("runId"))
         if method == "event/poll":
             return core.event_poll(arguments.get("sessionId"),
                                    after=arguments.get("after", -1),
