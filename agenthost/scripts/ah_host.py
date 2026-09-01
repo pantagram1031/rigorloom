@@ -95,6 +95,9 @@ class AgentHost:
         context = {"sessionId": session_id, "surface": self.door.surface()}
         tools = tool_definitions()
 
+        # Each entry carries the provider's own callId and arguments, not just
+        # the tool name: a continuation that has to invent an id discards the
+        # model's reference and only looks right because both halves are ours.
         history: list[dict] = []
         refusals: list[dict] = []
         provider_fault: dict | None = None
@@ -137,7 +140,8 @@ class AgentHost:
                     refusals.append({"stage": "compile", **exc.as_dict()})
                     self.events.append("tool.refused", turn=turns,
                                        stage="compile", **exc.as_dict())
-                    history.append({"tool": call.name, "ok": False,
+                    history.append({"tool": call.name, "callId": call.call_id,
+                                    "arguments": call.arguments, "ok": False,
                                     "error": exc.as_dict()})
                     continue
                 self.events.append("tool.compiled", turn=turns,
@@ -149,13 +153,16 @@ class AgentHost:
                                      **exc.as_dict()})
                     self.events.append("runtime.refused", turn=turns,
                                        tool=compiled.tool, **exc.as_dict())
-                    history.append({"tool": call.name, "ok": False,
+                    history.append({"tool": call.name, "callId": call.call_id,
+                                    "arguments": call.arguments, "ok": False,
                                     "error": exc.as_dict()})
                     continue
                 self.events.append("runtime.result", turn=turns,
                                    tool=compiled.tool,
                                    summary=summarize(compiled.tool, result))
-                history.append({"tool": call.name, "ok": True, "result": result})
+                history.append({"tool": call.name, "callId": call.call_id,
+                                "arguments": call.arguments, "ok": True,
+                                "result": result})
 
         plan = self._latest(history, "plan_propose", "plan")
         validation = self._latest(history, "plan_validate", "validation")

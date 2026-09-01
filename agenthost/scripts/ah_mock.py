@@ -100,6 +100,7 @@ class MockProvider(ProviderAdapter):
                 "streaming": cap("yes", "chunks a fixed string; no network"),
                 "resumableThread": cap(
                     "no", "each run is independent; nothing is persisted"),
+                "vision": cap("no", "scripted text only; it looks at no images"),
             },
             notes={"deterministic": True, "network": "none",
                    "scenario": self.scenario},
