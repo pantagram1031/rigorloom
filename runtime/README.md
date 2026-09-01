@@ -169,6 +169,53 @@ Both need absolute paths — the adapter has no ambient working directory and
 refuses to start without `--root`. Open documents with the host CLI first;
 `session_list` is how the agent finds them.
 
+## Mock agent
+
+`runtime/scripts/mock_agent.py` is a deterministic driver of the agent surface,
+for repeatable Desktop, state and approval tests.
+
+```sh
+# a host opens the document first — the agent surface cannot
+python runtime/scripts/cli.py --root $R open --path /abs/form.hwpx
+
+python runtime/scripts/mock_agent.py --root $R                      # propose-one
+python runtime/scripts/mock_agent.py --root $R --scenario propose-invalid
+python runtime/scripts/mock_agent.py --root $R --scenario propose-then-wait
+python runtime/scripts/mock_agent.py --root $R --redact              # golden output
+python runtime/scripts/mock_agent.py --root $R --probe-authority     # show the boundary
+python runtime/scripts/mock_agent.py --root $R --door mcp            # same run, via MCP
+```
+
+It inspects the document, picks one target, proposes a typed plan carrying a
+fixed marker, validates, requests approval, and reads plan/approval/candidate
+status back. It stops there: it does not approve and it does not apply, because
+those methods are absent from an agent connection. `--probe-authority` attempts
+them anyway and records the `unknown_method` refusals so a test can show the
+boundary instead of trusting it.
+
+**Which door.** The default is `protocol` — the mock spawns
+`serve.py --entry agent` and speaks JSONL over its stdio, because that is the
+transport `docs/desktop-architecture.md` §1 puts a Desktop Agent Host on.
+`--door mcp` runs the same scenarios through the MCP adapter; a test asserts
+both doors reach the same `opsHash`.
+
+**Determinism.** No randomness and no clock in the decision path. The target is
+the first editable region in document order whose charPr preflight needs no
+declaration — a seat carrying a `scriptAnomaly` or `colorAnomaly` is skipped,
+never filled with a guessed charPr, because those are exactly the seats that
+print smaller or in the guide colour. If no clean seat exists the mock refuses
+with `no_clean_seat`. The value written is `--marker`, a fixed string.
+
+`--redact` blanks only identity and timestamps (`planId`, `approvalId`,
+`createdUtc`, …) and deliberately keeps the content hashes, so the output is a
+golden document you can diff and `opsHash` is still in it. Two runs against
+byte-identical sources produce identical redacted output.
+
+Exit codes follow the CLI's: `0` the scenario held, `2` usage, `3` the
+scenario's own expectation failed or the surface refused, `4` internal.
+`propose-invalid` exits **0** — it succeeded at provoking the refusal it exists
+to provoke, and `expectationMet` says so.
+
 ## Known gaps
 
 - Children are bounded (time, output, environment allowlist) but not
