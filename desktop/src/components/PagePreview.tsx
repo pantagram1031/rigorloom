@@ -207,9 +207,15 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   const image = render?.available ? render.image : undefined;
   const pageCount = render?.pageCount ?? 1;
 
+  // ONE ruler, rendered directly above whichever page-like thing is drawn —
+  // the raster when there is one, the geometry figure when there is not. Its
+  // first placement was at the top of the scroller, which put it above the
+  // refusal card explaining why there was no page, i.e. measuring nothing. A
+  // ruler that is not touching the page it measures is decoration.
+  const ruler = <Ruler inspect={inspect} zoom={zoom} />;
+
   return (
     <div className="center-scroll paged" data-testid="page-preview">
-      <Ruler inspect={inspect} zoom={zoom} />
       {renderPhase === "starting" ? (
         <p className="empty">페이지를 그리는 중입니다.</p>
       ) : renderError ? (
@@ -223,6 +229,7 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
         </div>
       ) : image?.data ? (
         <>
+          {ruler}
           <img
             className="page-raster"
             data-testid="page-raster"
@@ -257,7 +264,12 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
         </p>
       ) : null}
 
-      {!image ? <Geometry inspect={inspect} zoom={zoom} page={page} /> : null}
+      {!image ? (
+        <>
+          {ruler}
+          <Geometry inspect={inspect} zoom={zoom} page={page} />
+        </>
+      ) : null}
 
       {/* The page footer. Hangul-editor shape: the page counter in the middle
           with arrows either side, the zoom at the right, and the one action
