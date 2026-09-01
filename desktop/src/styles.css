@@ -1655,21 +1655,33 @@ body.dragging .drop {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+/* The message must get the width, not the code chip.
+   `margin-left: auto` on a nowrap chip in a 320 px rail squeezed a two-line
+   refusal into a nine-character column — legible, but the panel that carries
+   the most important sentence in the application should not read worst. The
+   chip now wraps onto its own line instead of stealing the message's. */
 .queue-finding {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px 6px;
   margin: 0;
   font-size: var(--text-sm);
   line-height: var(--leading-body);
   color: var(--fg-muted);
 }
 
+.queue-finding > span {
+  flex: 1 1 14ch;
+  min-width: 0;
+}
+
 .queue-finding code {
+  flex: 0 0 auto;
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--fg-faint);
-  margin-left: auto;
   white-space: nowrap;
 }
 
