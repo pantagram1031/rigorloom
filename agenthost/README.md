@@ -115,6 +115,69 @@ Tested only against a local fake server the test starts and stops
 (`tests/_agenthost_support.py`). **No live-provider test exists and none is
 claimed.**
 
+**`anthropic`** — the official Messages API, over the same contract.
+
+```sh
+python agenthost/scripts/host.py --capabilities --provider anthropic   # keyless
+python agenthost/scripts/host.py --provider anthropic --live-smoke     # needs a key
+python agenthost/scripts/host.py --root $R --provider anthropic
+```
+
+Config is **optional**: the defaults are the documented endpoint, the
+recommended model (`claude-opus-5`) and a reference to `ANTHROPIC_API_KEY`, so
+`--capabilities` works with nothing set and reports the missing credential
+rather than refusing to describe itself. Override any of it the same way the
+router does; a secret-shaped config member is refused by name, as there.
+
+Declared capabilities: `streaming` **yes** (SSE), `structuredToolUse` **yes**,
+`text` **yes**, `modelDiscovery` **yes** (`GET /v1/models`), `resumableThread`
+**no** (the Messages API is stateless — the host resends the whole history each
+turn, as with the router), `structuredOutput` **unknown** (the API offers
+`output_config.format`; this adapter does not send it, so nothing is promised),
+and `vision` **unknown** — the API accepts image blocks, this adapter sends
+none, and document images are a later slice. That is *not yet*, not *no*, which
+is exactly why `unknown` exists.
+
+Retry policy, minimal and principled: `429` honours `retry-after` when it is
+short enough to be a wait rather than a hang (longer than 30 s is honoured by
+**refusing**, with the advertised delay reported); `5xx` — including `529
+overloaded_error` — and timeouts get **one** fixed backoff; **no other 4xx is
+ever retried**, because sending a bad request again just sends it again. A
+fault still ends the run cleanly as a provider failure. There is no fallback
+provider.
+
+#### Wire shapes: verified vs assumed
+
+Read offline from the bundled `claude-api` skill — `curl/examples.md`,
+`shared/error-codes.md`, `shared/tool-use-concepts.md`, `shared/models.md`,
+`typescript/claude-api/streaming.md`. **Verified (v):** `POST /v1/messages`;
+`x-api-key` + `anthropic-version: 2023-06-01`; required `max_tokens`; `system`
+as content blocks; `tools[].input_schema`; response `content[]` / `stop_reason`
+/ `usage`; the `tool_use` block shape; `tool_result` continuation in a **user**
+message with every result for one assistant turn in **one** message;
+`tool_choice` auto/any/tool/none; SSE `message_start` … `message_stop` with
+`text_delta` and `input_json_delta`; the error envelope and the status→type
+map; `retry-after` on 429; `GET /v1/models/{id}` fields.
+
+**Assumed (a), because those files did not pin them** — marked in
+`ah_anthropic.py` at each use rather than guessed silently:
+
+| Assumption | Why it is a guess |
+| --- | --- |
+| `GET /v1/models` list envelope is `{"data": [...]}` | the docs show *retrieve*, not *list*; the adapter also tolerates a bare array |
+| streamed tool input arrives as `delta.partial_json` | only the delta *type name* `input_json_delta` was pinned, not its field |
+| `content_block_start` for a tool block is `{"type":"tool_use","id","name","input":{}}` | the doc's SSE sample only shows a text block |
+| SSE `ping` and `error` event names | not in the bundled sample |
+
+Deliberately **not sent**: `temperature`, `top_p`, `top_k` (removed on current
+models — a 400) and assistant prefill (removed). The adapter cannot inherit
+that class of failure because it never emits them.
+
+**The live leg is not run.** Every test talks to a local fake. `--live-smoke`
+is implemented and its keyless refusal is tested; one real request against the
+API is owed, and the capability payload says so under `notes.liveSmoke` until
+somebody reports a green one.
+
 ## The event log
 
 Ordered, closed-kind, and clock-free: events carry a monotonic `seq` and
