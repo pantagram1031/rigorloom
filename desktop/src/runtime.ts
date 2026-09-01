@@ -275,14 +275,22 @@ export const defaultRoot = () => invoke<string>("default_runtime_root");
 // webview cannot see env vars. Absent in every normal run.
 
 export const smokeConfig = () =>
-  invoke<{ phase: string | null; corpus: string | null; reportPath: string | null }>(
-    "smoke_config",
-  );
+  invoke<{
+    phase: string | null;
+    corpus: string | null;
+    reportPath: string | null;
+    corpus2: string | null;
+    exportPath: string | null;
+    imeEmpty: boolean;
+  }>("smoke_config");
 
 export const smokeFinish = (report: unknown) => invoke<void>("smoke_finish", { report });
 
 /** A `hold` phase saying "the UI is arranged"; the window stays open. */
 export const smokeReady = (detail: unknown) => invoke<void>("smoke_ready", { detail });
+
+/** A second report, also without exiting. The IME harness reads this one. */
+export const smokeFinal = (detail: unknown) => invoke<void>("smoke_final", { detail });
 
 // --- subscriptions -----------------------------------------------------------
 

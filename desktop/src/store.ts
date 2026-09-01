@@ -117,6 +117,20 @@ export interface Draft {
   rewrittenFromAgent: boolean;
 }
 
+/**
+ * What the last committed edit received, for the IME harness.
+ *
+ * `composed` is the load-bearing field and the reason this exists. A test that
+ * only compares the final string cannot tell composed Hangul from Unicode
+ * characters injected straight into the field — both produce 안녕하세요. If no
+ * `compositionend` fired, the IME was bypassed and the run proved nothing, so
+ * the harness fails on it rather than reporting a pass it did not earn.
+ */
+export interface LastCommit {
+  value: string;
+  composed: boolean;
+}
+
 /** The cell currently open for typing. A real `<input>` lives here. */
 export interface InlineEdit {
   table: number;
@@ -203,6 +217,10 @@ export interface WorkspaceState {
   // --- editing (Phase 4) ----------------------------------------------------
   /** The cell open for typing, or null. */
   inlineEdit: InlineEdit | null;
+  /** Evidence support only: what the last commit received, and how. */
+  lastCommit: LastCommit | null;
+  /** Set by the editor when a real `compositionend` fires. */
+  sawComposition: boolean;
   draft: Draft;
   approval: ApprovalRecord | null;
   approvalPhase: ApprovalPhase;
@@ -331,6 +349,8 @@ const initial: WorkspaceState = {
   textError: null,
 
   inlineEdit: null,
+  lastCommit: null,
+  sawComposition: false,
   draft: EMPTY_DRAFT,
   approval: null,
   approvalPhase: "idle",
@@ -554,7 +574,44 @@ export type Staleness = null | {
   currentSha256: string | null;
 };
 
+/**
+ * The last computed staleness, returned by reference when nothing changed.
+ *
+ * THIS CACHE IS NOT AN OPTIMISATION. `useSyncExternalStore` compares snapshots
+ * with `Object.is`, so a selector that builds a fresh object on every call
+ * never compares equal, React concludes the store is changing forever, and its
+ * infinite-loop detector takes the whole root down — which unmounts `App`,
+ * runs its effect cleanup, and silently drops the event listeners with it.
+ *
+ * That is not a hypothetical. It is the exact failure `NO_CANDIDATES` above
+ * was introduced for, and this selector walked straight back into it: the
+ * smoke reported every store assertion passing, every DOM assertion failing,
+ * and zero events delivered, all from React error #185 inside the review
+ * queue. Returning a stable reference is what makes an object-valued selector
+ * legal here at all.
+ */
+let stalenessCache: Staleness = null;
+
 export function draftStaleness(s: WorkspaceState): Staleness {
+  const next = computeStaleness(s);
+  if (next === null) {
+    stalenessCache = null;
+    return null;
+  }
+  const cached = stalenessCache;
+  if (
+    cached !== null &&
+    cached.kind === next.kind &&
+    cached.boundSha256 === next.boundSha256 &&
+    cached.currentSha256 === next.currentSha256
+  ) {
+    return cached;
+  }
+  stalenessCache = next;
+  return next;
+}
+
+function computeStaleness(s: WorkspaceState): Staleness {
   const draft = s.draft;
   if (draft.ops.length === 0 || !draft.boundSha256) return null;
   if (draft.sessionId && s.activeSessionId && draft.sessionId !== s.activeSessionId) {
