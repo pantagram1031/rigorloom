@@ -83,10 +83,26 @@ foreach ($module in $engineDeps) {
 Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
     (Get-ChildItem -Path $runtimeScripts -Filter '*.py').Count, $engineDeps.Count)
 
+# Phase 5 adds three payloads, all of them run through the same interpreter
+# role as the engine scripts:
+#
+#   agenthost\scripts  the Agent Host CLI. host.py resolves runtime/scripts as
+#                      parents[2]/runtime/scripts, which is exactly this layout,
+#                      so a packaged install can talk to a provider with no
+#                      Python on the machine.
+#   modules            the distribution-module DECLARATIONS the 작업 팩 list
+#                      reads through pipeline\scripts\module_registry.py. 2.0
+#                      MiB against a 23 MiB payload, and without it a shipped
+#                      build can only say it has no packs.
+#   pyproject.toml     module_registry gates each manifest's `requires.rigorloom`
+#                      against the project version, which it reads from here.
 $addData = @(
     "$RepoRoot\engine\scripts;repo\engine\scripts",
     "$RepoRoot\pipeline\scripts;repo\pipeline\scripts",
-    "$RepoRoot\runtime\scripts;repo\runtime\scripts"
+    "$RepoRoot\runtime\scripts;repo\runtime\scripts",
+    "$RepoRoot\agenthost\scripts;repo\agenthost\scripts",
+    "$RepoRoot\modules;repo\modules",
+    "$RepoRoot\pyproject.toml;repo"
 )
 $dataArgs = @()
 foreach ($entry in $addData) { $dataArgs += '--add-data'; $dataArgs += $entry }
@@ -146,6 +162,32 @@ if ($LASTEXITCODE -ne 0) {
     exit 3
 }
 Write-Host 'interpreter role: form_inspect.py --help ok'
+
+# The two Phase 5 payloads, exercised rather than assumed present. Both run
+# through the interpreter role, and both were silently absent before this
+# slice — which is exactly the class of failure the Phase 4 evidence caught
+# when the packaged sidecar turned out to predate the branch it was shipping.
+$hostScript = Join-Path $OutDir '_internal\repo\agenthost\scripts\host.py'
+if (-not (Test-Path $hostScript)) {
+    Write-Error "bundled agent host missing at $hostScript"
+    exit 3
+}
+& $exe $hostScript '--capabilities' '--provider' 'mock' > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "the frozen binary cannot run the agent host (exit $LASTEXITCODE). The composer would have nowhere to send."
+    exit 3
+}
+Write-Host 'interpreter role: agent host --capabilities ok'
+
+$registry = Join-Path $OutDir '_internal\repo\pipeline\scripts\module_registry.py'
+$bundledModules = Join-Path $OutDir '_internal\repo\modules'
+& $exe $registry '--modules-root' $bundledModules `
+    '--pyproject' (Join-Path $OutDir '_internal\repo\pyproject.toml') 'list' > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "the frozen binary cannot list the bundled task packs (exit $LASTEXITCODE)."
+    exit 3
+}
+Write-Host 'interpreter role: module registry list ok'
 
 # Role 1: a real initialize handshake over stdio against the frozen server.
 $probeRoot = Join-Path $env:TEMP ('rigorloomd-probe-' + [guid]::NewGuid().ToString('N'))

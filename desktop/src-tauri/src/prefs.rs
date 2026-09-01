@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const FILE: &str = "desktop-prefs.json";
 

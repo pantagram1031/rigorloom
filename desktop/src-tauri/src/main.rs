@@ -5,10 +5,13 @@
 // (`src/store.ts`); document truth lives in the Runtime.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agenthost;
+mod credstore;
 mod digest;
 mod jobkill;
 mod prefs;
 mod sidecar;
+mod taskpacks;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -24,6 +27,15 @@ use sidecar::{resolve_launch, CancelHandle, Sidecar, SidecarStatus, EVENT_STATUS
 const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 struct Runtime(Mutex<Sidecar>);
+
+/// The Agent Host run in flight, if any. One at a time, by construction: a
+/// second instruction while the first is still running would produce two plans
+/// racing for the same queue.
+struct AgentRun(agenthost::RunSlot);
+
+/// Throttle for the window-geometry writes. A drag emits a `Moved` per frame
+/// and a prefs file is not a place to write sixty times a second.
+struct GeometryClock(Mutex<std::time::Instant>);
 
 /// The cancel handles, managed separately from `Runtime` on purpose — see
 /// `sidecar::CancelHandle`. Taking the manager lock to cancel a call the
@@ -418,6 +430,260 @@ fn run_mock_agent(
     }))
 }
 
+// --- the Agent Host ------------------------------------------------------------
+//
+// Phase 5. The composer sends here, and what comes back lands in the SAME
+// review queue as a manual edit and the mock button. The authority split is not
+// enforced by this file: `host.py` opens an AGENT-authority door, where
+// `approval/resolve` and `plan/apply` are absent from the registry (protocol
+// §4). The shell could not grant them if it wanted to.
+
+fn resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().resource_dir().ok()
+}
+
+#[tauri::command]
+fn agent_host_status(app: AppHandle) -> Value {
+    agenthost::status(resource_dir(&app).as_deref(), &repo_root())
+}
+
+/// `--capabilities`: the three-state profile, keyless-honest.
+///
+/// No document and no network. When a credential IS stored it is attached, so
+/// the payload's `notes.credential.state` can say `present` — which is the one
+/// thing a 연결 확인 button exists to answer.
+#[tauri::command]
+fn agent_host_capabilities(
+    app: AppHandle,
+    provider: String,
+    store_key: Option<String>,
+) -> Result<Value, Value> {
+    let launch = agenthost::resolve_host(resource_dir(&app).as_deref(), &repo_root())
+        .map_err(|m| refuse("agent_host_missing", m, Value::Null))?;
+    agenthost::capabilities(
+        &launch,
+        &app_data_dir(&app),
+        &provider,
+        store_key.as_deref(),
+    )
+    .map_err(|m| refuse("agent_host_failed", m, Value::Null))
+}
+
+/// Write a provider config. References only — a secret-shaped member is refused
+/// here by NAME, before the file exists, and the Agent Host refuses it again at
+/// load. Returns what landed, so the caller (and the smoke) can read it back.
+#[tauri::command]
+fn agent_host_save_config(
+    app: AppHandle,
+    provider: String,
+    settings: Value,
+    has_credential: bool,
+) -> Result<Value, Value> {
+    let (path, document) =
+        agenthost::write_config(&app_data_dir(&app), &provider, &settings, has_credential)
+            .map_err(|m| refuse("config_invalid", m, json!({ "provider": provider })))?;
+    Ok(json!({ "path": path.to_string_lossy(), "config": document }))
+}
+
+/// Read a provider config back off disk, verbatim.
+#[tauri::command]
+fn agent_host_read_config(app: AppHandle, provider: String) -> Value {
+    let path = app_data_dir(&app)
+        .join("agenthost")
+        .join(format!("{provider}.json"));
+    let config = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    json!({
+        "path": path.to_string_lossy(),
+        "exists": path.is_file(),
+        "config": config,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn agent_host_run(
+    app: AppHandle,
+    state: State<'_, Runtime>,
+    run: State<'_, AgentRun>,
+    session_id: String,
+    instruction: String,
+    provider: String,
+    store_key: Option<String>,
+    scenario: Option<String>,
+    turn_id: String,
+) -> Result<Value, Value> {
+    let launch = agenthost::resolve_host(resource_dir(&app).as_deref(), &repo_root())
+        .map_err(|m| refuse("agent_host_missing", m, Value::Null))?;
+    let root = state.0.lock().unwrap().status().root.ok_or_else(|| {
+        refuse(
+            "sidecar_down",
+            "런타임 작업 폴더를 알 수 없습니다.".into(),
+            Value::Null,
+        )
+    })?;
+    agenthost::run_turn(
+        &app,
+        &run.0,
+        &launch,
+        &app_data_dir(&app),
+        Path::new(&root),
+        &session_id,
+        &provider,
+        &instruction,
+        store_key.as_deref(),
+        scenario.as_deref(),
+        &turn_id,
+    )
+}
+
+#[tauri::command]
+fn agent_host_stop(run: State<'_, AgentRun>) -> bool {
+    agenthost::stop(&run.0)
+}
+
+// --- the credential store --------------------------------------------------------
+//
+// One direction only. A secret goes in from the webview and never comes back
+// out to it: `credential_status` answers present/absent and a byte count, and
+// the value is read exactly once per run, inside `agenthost::run_turn`, into
+// one child process's environment.
+
+#[tauri::command]
+fn credential_set(key: String, secret: String) -> Result<Value, Value> {
+    let bytes = credstore::set(&key, &secret)
+        .map_err(|m| refuse("credential_store_failed", m, json!({ "key": key })))?;
+    Ok(json!({ "key": key, "state": "present", "bytes": bytes }))
+}
+
+#[tauri::command]
+fn credential_status(key: String) -> Value {
+    credstore::status(&key)
+}
+
+#[tauri::command]
+fn credential_delete(key: String) -> Result<Value, Value> {
+    let removed = credstore::delete(&key)
+        .map_err(|m| refuse("credential_store_failed", m, json!({ "key": key })))?;
+    Ok(json!({ "key": key, "removed": removed, "state": "absent" }))
+}
+
+// --- 작업 팩 ---------------------------------------------------------------------
+
+#[tauri::command]
+fn task_packs(app: AppHandle) -> Value {
+    taskpacks::list(resource_dir(&app).as_deref(), &repo_root())
+}
+
+// --- the window ------------------------------------------------------------------
+
+/// Remember where the window was, so reopening lands where the user left it.
+///
+/// Physical pixels, plus the scale factor they were measured at, because a
+/// position restored on a differently-scaled monitor without that number lands
+/// somewhere else. `visible_on_any_monitor` is checked on restore rather than
+/// trusted: a saved position on a monitor that is no longer attached would put
+/// the window off-screen with no way to drag it back.
+fn save_geometry(window: &tauri::Window, clock: &GeometryClock) {
+    {
+        let mut last = clock.0.lock().unwrap();
+        if last.elapsed() < std::time::Duration::from_millis(700) {
+            return;
+        }
+        *last = std::time::Instant::now();
+    }
+    let (Ok(size), Ok(position)) = (window.inner_size(), window.outer_position()) else {
+        return;
+    };
+    let maximized = window.is_maximized().unwrap_or(false);
+    // A maximized window's size is the screen's, and restoring THAT as a
+    // non-maximized size is how an app comes back subtly wrong. Remember the
+    // flag and leave the last restored size alone.
+    let patch = if maximized {
+        json!({ "window": { "maximized": true } })
+    } else {
+        json!({ "window": {
+            "width": size.width, "height": size.height,
+            "x": position.x, "y": position.y,
+            "scale": window.scale_factor().unwrap_or(1.0),
+            "maximized": false,
+        }})
+    };
+    let app = window.app_handle();
+    let current = prefs::load(app);
+    let mut merged = current
+        .get("window")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(fields) = patch["window"].as_object() {
+        for (key, value) in fields {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    let _ = prefs::merge(app, json!({ "window": merged }));
+}
+
+fn restore_geometry(window: &tauri::WebviewWindow) {
+    let saved = prefs::load(&window.app_handle().clone());
+    let Some(geometry) = saved.get("window").and_then(Value::as_object) else {
+        return;
+    };
+    if let (Some(width), Some(height)) = (
+        geometry.get("width").and_then(Value::as_u64),
+        geometry.get("height").and_then(Value::as_u64),
+    ) {
+        // Never smaller than the editor minimum: a prefs file written by an
+        // older build, or edited by hand, must not be able to produce a window
+        // too small to use.
+        let _ = window.set_size(tauri::PhysicalSize::new(
+            width.max(1024) as u32,
+            height.max(640) as u32,
+        ));
+    }
+    if let (Some(x), Some(y)) = (
+        geometry.get("x").and_then(Value::as_i64),
+        geometry.get("y").and_then(Value::as_i64),
+    ) {
+        let position = tauri::PhysicalPosition::new(x as i32, y as i32);
+        let _ = window.set_position(position);
+        // Off every monitor: centre instead, rather than leaving a window the
+        // user cannot reach.
+        if !on_a_monitor(window, x as i32, y as i32) {
+            let _ = window.center();
+        }
+    }
+    if geometry.get("maximized").and_then(Value::as_bool) == Some(true) {
+        let _ = window.maximize();
+    }
+}
+
+fn on_a_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    let Ok(monitors) = window.available_monitors() else {
+        return true;
+    };
+    monitors.iter().any(|monitor| {
+        let position = monitor.position();
+        let size = monitor.size();
+        x >= position.x
+            && y >= position.y
+            && x < position.x + size.width as i32
+            && y < position.y + size.height as i32
+    })
+}
+
+/// F11. Reported back so the UI can label the control rather than guess.
+#[tauri::command]
+fn toggle_fullscreen(app: AppHandle) -> Result<bool, String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Err("창을 찾지 못했습니다".into());
+    };
+    let next = !window.is_fullscreen().map_err(|e| e.to_string())?;
+    window.set_fullscreen(next).map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
 // --- scripted evidence -------------------------------------------------------
 
 /// What the launcher asked for. A webview cannot read environment variables, so
@@ -536,6 +802,10 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Runtime(Mutex::new(Sidecar::default())))
         .manage(Cancels(Mutex::new(None)))
+        .manage(AgentRun(agenthost::RunSlot::default()))
+        .manage(GeometryClock(Mutex::new(
+            std::time::Instant::now() - std::time::Duration::from_secs(5),
+        )))
         .invoke_handler(tauri::generate_handler![
             runtime_start,
             runtime_call,
@@ -548,6 +818,17 @@ fn main() {
             export_candidate,
             agent_tool_status,
             run_mock_agent,
+            agent_host_status,
+            agent_host_capabilities,
+            agent_host_save_config,
+            agent_host_read_config,
+            agent_host_run,
+            agent_host_stop,
+            credential_set,
+            credential_status,
+            credential_delete,
+            task_packs,
+            toggle_fullscreen,
             smoke_config,
             smoke_ready,
             smoke_final,
@@ -555,13 +836,41 @@ fn main() {
         ])
         .setup(|app| {
             install_panic_hook(app.handle().clone());
+            if let Some(window) = app.get_webview_window("main") {
+                restore_geometry(&window);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(state) = window.app_handle().try_state::<Runtime>() {
-                    state.0.lock().unwrap().shutdown();
+            match event {
+                // Where the window is, remembered as it moves. Throttled in
+                // `save_geometry`: a drag emits one of these per frame.
+                tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
+                    if let Some(clock) = window.app_handle().try_state::<GeometryClock>() {
+                        save_geometry(window, &clock);
+                    }
                 }
+                // The throttle would otherwise swallow the last nudge before a
+                // close. Reset the clock so this one write always lands.
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    if let Some(clock) = window.app_handle().try_state::<GeometryClock>() {
+                        *clock.0.lock().unwrap() =
+                            std::time::Instant::now() - std::time::Duration::from_secs(5);
+                        save_geometry(window, &clock);
+                    }
+                }
+                tauri::WindowEvent::Destroyed => {
+                    // Stop the Agent Host before the sidecar: it holds its own
+                    // door onto the same root, and an orphaned turn loop would
+                    // keep writing events after the window is gone.
+                    if let Some(run) = window.app_handle().try_state::<AgentRun>() {
+                        agenthost::stop(&run.0);
+                    }
+                    if let Some(state) = window.app_handle().try_state::<Runtime>() {
+                        state.0.lock().unwrap().shutdown();
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
