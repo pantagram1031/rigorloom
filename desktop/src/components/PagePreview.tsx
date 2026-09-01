@@ -39,6 +39,47 @@ import { Tag } from "./Tag";
 
 /** HWPUNIT is 1/7200 inch. */
 const HWPUNIT_PER_INCH = 7200;
+const HWPUNIT_PER_CM = HWPUNIT_PER_INCH / 2.54;
+
+/**
+ * A ruler over the page, from the page's own geometry.
+ *
+ * Every number here is `summary.pageMetrics` — real width, real margins, in
+ * HWPUNIT straight from the document. The ruler is a Hangul-editor convention
+ * and it is also the honest way to show margins: a person who wants to know
+ * where the text block starts can read it off the shaded ends rather than
+ * opening a dialog.
+ *
+ * Centimetres, not inches: the corpus form is A4 with 20 mm margins and the
+ * whole 기안문 tradition is metric. The tick interval is 1 cm with a longer
+ * mark every 5.
+ */
+function Ruler({ inspect, zoom }: { inspect: InspectResult; zoom: number }) {
+  const metrics = inspect.summary.pageMetrics;
+  const scale = (96 / HWPUNIT_PER_INCH) * 0.62 * zoom;
+  const width = metrics.width * scale;
+  const left = (metrics.margin.left ?? 0) * scale;
+  const right = (metrics.margin.right ?? 0) * scale;
+  const step = HWPUNIT_PER_CM * scale;
+  const ticks = Math.max(0, Math.floor(metrics.width / HWPUNIT_PER_CM));
+
+  return (
+    <div className="ruler" style={{ width: `${width}px` }} data-testid="page-ruler">
+      <div className="ruler-margin left" style={{ width: `${left}px` }} />
+      <div className="ruler-margin right" style={{ width: `${right}px` }} />
+      {Array.from({ length: ticks + 1 }, (_, index) => (
+        <i
+          key={index}
+          className={index % 5 === 0 ? "tick major" : "tick"}
+          style={{ left: `${index * step}px` }}
+        >
+          {index % 5 === 0 ? <span>{index}</span> : null}
+        </i>
+      ))}
+      <span className="ruler-unit latin-caps">cm</span>
+    </div>
+  );
+}
 
 /** The page-geometry figure. Real numbers, captioned so it cannot be mistaken. */
 function Geometry({ inspect, zoom, page }: { inspect: InspectResult; zoom: number; page: number }) {
@@ -167,7 +208,8 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   const pageCount = render?.pageCount ?? 1;
 
   return (
-    <div className="center-scroll" data-testid="page-preview">
+    <div className="center-scroll paged" data-testid="page-preview">
+      <Ruler inspect={inspect} zoom={zoom} />
       {renderPhase === "starting" ? (
         <p className="empty">페이지를 그리는 중입니다.</p>
       ) : renderError ? (
@@ -217,7 +259,12 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
 
       {!image ? <Geometry inspect={inspect} zoom={zoom} page={page} /> : null}
 
-      <div className="page-controls">
+      {/* The page footer. Hangul-editor shape: the page counter in the middle
+          with arrows either side, the zoom at the right, and the one action
+          this mode has on the left. Nothing here is a guess — `pageCount` is
+          the renderer's own, and it is 1 when there is no raster because that
+          is what the runtime returned. */}
+      <div className="page-footer" data-testid="page-footer">
         {canPrepare ? (
           <button
             className="action primary"
@@ -229,36 +276,51 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
             {preparePhase === "starting" ? "한컴을 부르는 중…" : "페이지 그림 만들기"}
           </button>
         ) : null}
-        <div className="sep" />
-        <button
-          className="action"
-          data-testid="page-prev"
-          disabled={page <= 1}
-          onClick={() => void renderCurrentPage(page - 1)}
-        >
-          이전 쪽
-        </button>
-        <span className="count mono" data-testid="page-indicator">
-          {page} / {pageCount}
-        </span>
-        <button
-          className="action"
-          data-testid="page-next"
-          disabled={page >= pageCount}
-          onClick={() => void renderCurrentPage(page + 1)}
-        >
-          다음 쪽
-        </button>
-        <div className="sep" />
-        <button className="action" onClick={() => setZoom(zoom - 0.25)} disabled={zoom <= 0.5}>
-          축소
-        </button>
-        <button className="action" onClick={() => setZoom(1)} disabled={zoom === 1}>
-          100%
-        </button>
-        <button className="action" onClick={() => setZoom(zoom + 0.25)} disabled={zoom >= 4}>
-          확대
-        </button>
+
+        <span className="spacer" />
+
+        <div className="pager">
+          <button
+            className="ghost"
+            data-testid="page-prev"
+            aria-label="이전 쪽"
+            disabled={page <= 1}
+            onClick={() => void renderCurrentPage(page - 1)}
+          >
+            ◀
+          </button>
+          <span className="mono" data-testid="page-indicator">
+            {page}쪽 / 전체 {pageCount}
+          </span>
+          <button
+            className="ghost"
+            data-testid="page-next"
+            aria-label="다음 쪽"
+            disabled={page >= pageCount}
+            onClick={() => void renderCurrentPage(page + 1)}
+          >
+            ▶
+          </button>
+        </div>
+
+        <span className="spacer" />
+
+        <div className="pager">
+          <button className="ghost" aria-label="축소" onClick={() => setZoom(zoom - 0.1)} disabled={zoom <= 0.5}>
+            −
+          </button>
+          <button
+            className="mono"
+            data-testid="page-zoom"
+            title="100% 로 되돌립니다"
+            onClick={() => setZoom(1)}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button className="ghost" aria-label="확대" onClick={() => setZoom(zoom + 0.1)} disabled={zoom >= 4}>
+            +
+          </button>
+        </div>
       </div>
     </div>
   );

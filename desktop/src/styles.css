@@ -1978,3 +1978,519 @@ body.dragging .drop {
   .queue-op,
   .approval-gate { animation: none; }
 }
+
+/* ══ Phase 5: the editor band, the ruler, the conversation ═══════════════
+   Nothing new in the palette. The strip and the ruler are built from the
+   hanji surfaces and the hairlines that were already here; the one accent
+   stays the working accent and the point colour is not spent anywhere in
+   this file. Density is the only thing turned up. */
+
+/* ── the editor toolbar ─────────────────────────────────────────────────
+   A dense functional band between the chrome and the paper. Slightly
+   sunken relative to the panel so the paper below reads as the raised
+   thing, which is the whole point of a band. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--s3);
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar::-webkit-scrollbar { display: none; }
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  white-space: nowrap;
+}
+
+.tool-label {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.tool-value {
+  color: var(--fg);
+  font-weight: var(--weight-emph);
+  font-variant-numeric: tabular-nums;
+  padding: 1px var(--s1);
+  border-radius: 3px;
+}
+
+button.tool-value {
+  transition: background var(--t-micro) var(--ease);
+}
+
+button.tool-value:hover:not(:disabled) { background: var(--bg-hover); }
+button.tool-value:disabled { opacity: 0.55; cursor: default; }
+
+.tool-note { color: var(--fg-faint); }
+
+.tool-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: var(--s1) var(--s1);
+  background: var(--line-strong);
+  flex: none;
+}
+
+.toolbar .zoomer button.ghost {
+  width: 20px;
+  padding: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar .modeswitch { background: var(--bg-panel); }
+
+/* The document's own zoom. `zoom` scales layout, so glyphs re-rasterise
+   rather than being resampled — the same reasoning as the app zoom. */
+.doc-zoom {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── the page ruler ─────────────────────────────────────────────────────
+   Every number is summary.pageMetrics, in HWPUNIT, at the same scale the
+   page figure uses. The shaded ends ARE the margins. */
+.center-scroll.paged { padding-top: var(--s4); }
+
+.ruler {
+  position: relative;
+  height: 17px;
+  margin: 0 auto var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  flex: none;
+}
+
+.ruler-margin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--bg-sunken);
+}
+
+.ruler-margin.left { left: 0; }
+.ruler-margin.right { right: 0; }
+
+.ruler .tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 4px;
+  background: var(--line-strong);
+}
+
+.ruler .tick.major {
+  height: 8px;
+  background: var(--fg-faint);
+}
+
+.ruler .tick span {
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ruler-unit {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  font-size: 9px;
+  color: var(--fg-faint);
+}
+
+/* ── the page footer ────────────────────────────────────────────────────
+   Replaces the loose control row. Sticks to the bottom of the scroller so
+   the page number is where a person's eye already goes for it. */
+.page-footer {
+  position: sticky;
+  bottom: calc(var(--s16) * -1);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: var(--s6) calc(var(--s6) * -1) calc(var(--s16) * -1);
+  padding: var(--s2) var(--s4);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  font-variant-numeric: tabular-nums;
+}
+
+.pager button {
+  padding: 1px var(--s2);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+}
+
+.pager button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.pager button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── centre tabs ────────────────────────────────────────────────────────
+   A lower-pane tab bar, the way a Hangul editor stacks its panes: flush,
+   hairline-separated, with the selected one continuous with the pane. */
+.tabs {
+  display: flex;
+  gap: 0;
+  flex: none;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  padding: var(--s2) var(--s4);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  border-right: 1px solid var(--line);
+  border-bottom: 2px solid transparent;
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+}
+
+.tabs button:hover { color: var(--fg); }
+
+.tabs button[aria-selected="true"] {
+  background: var(--bg-app);
+  color: var(--fg);
+  font-weight: var(--weight-emph);
+  border-bottom-color: var(--accent);
+}
+
+.tabs .count {
+  margin-left: var(--s1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── the conversation ───────────────────────────────────────────────────*/
+.conversation {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: var(--s4) var(--s4) var(--s6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  background: var(--bg-app);
+}
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  animation: rise-in 200ms var(--ease);
+}
+
+.turn .asked {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  padding: var(--s2) var(--s3);
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+  border-left: 2px solid var(--line-strong);
+}
+
+.turn .asked .who {
+  flex: none;
+  font-size: 9px;
+  color: var(--fg-faint);
+}
+
+.turn .asked p {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.turn .answered {
+  padding: var(--s3);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.turn .answered .head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.turn .answered .head .when {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn .said,
+.turn .gate,
+.turn .progress {
+  margin: var(--s2) 0 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  user-select: text;
+}
+
+.turn .gate { color: var(--fg-muted); }
+
+.turn .progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--fg-muted);
+}
+
+/* Waiting, not alarming. Same 2.4 s breath as the approval gate's dot, and
+   deliberately the working accent rather than the point colour: a running
+   turn is work in progress, not something demanding a response. */
+.turn .pulse {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: breathe 2.4s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.turn .tiny { color: var(--fg-faint); margin: var(--s2) 0 0; }
+
+.turn details { margin-top: var(--s2); }
+
+.turn summary {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.turn summary:hover { color: var(--fg-muted); }
+
+.turn pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s2);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-sunken);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  user-select: text;
+}
+
+/* ── the composer, now that it can send ─────────────────────────────────*/
+.composer textarea:not(:disabled) { color: var(--fg); }
+
+.composer textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.composer-actions .tiny { color: var(--fg-faint); }
+
+/* ── settings ───────────────────────────────────────────────────────────*/
+.shell { position: relative; }
+
+.sheet.settings {
+  max-height: 82%;
+  width: min(720px, 100%);
+  left: auto;
+  right: 0;
+  border-left: 1px solid var(--line-strong);
+}
+
+.sheet .sheet-head h2 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-head);
+}
+
+.sheet .sheet-body h4 {
+  margin: var(--s3) 0 var(--s1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-emph);
+  color: var(--fg-muted);
+}
+
+.radios { display: flex; flex-direction: column; gap: 2px; }
+
+.radio {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--s2) var(--s3);
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  transition: background var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
+}
+
+.radio:hover { background: var(--bg-hover); }
+
+.radio[aria-checked="true"] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.radio .primary { font-size: var(--text-base); font-weight: var(--weight-emph); }
+.radio .secondary { font-size: var(--text-sm); color: var(--fg-muted); }
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+.field > span {
+  flex: none;
+  width: 110px;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  font: inherit;
+  font-size: var(--text-base);
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.field input:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  flex-wrap: wrap;
+}
+
+.row-actions .tiny { color: var(--fg-faint); }
+
+/* The capability table. Four columns, and the third is the adapter's own
+   reason — the part that makes a `모름` informative rather than a shrug. */
+.caps {
+  width: 100%;
+  margin-top: var(--s2);
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.caps th {
+  text-align: left;
+  font-weight: var(--weight-body);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  width: 96px;
+}
+
+.caps th,
+.caps td {
+  padding: var(--s1) var(--s2) var(--s1) 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: baseline;
+}
+
+.caps td.tiny { color: var(--fg-faint); line-height: var(--leading-body); }
+
+.sheet .sheet-body pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s2);
+  background: var(--bg-sunken);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  line-height: 1.55;
+  overflow-x: auto;
+  user-select: text;
+}
+
+/* ── 작업 팩 ────────────────────────────────────────────────────────────*/
+.pack-detail {
+  margin-top: var(--s2);
+  padding: var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  animation: rise-in 200ms var(--ease);
+}
+
+.pack-detail .head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.pack-detail h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-head);
+  color: var(--fg);
+}
+
+.pack-detail ul {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  color: var(--fg-muted);
+  line-height: var(--leading-body);
+}
+
+.pack-detail li { margin-bottom: 2px; }
+
+.pack-detail .action { margin-top: var(--s3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .turn,
+  .pack-detail { animation: none; }
+  .turn .pulse { animation: none; opacity: 0.8; }
+}

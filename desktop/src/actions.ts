@@ -10,9 +10,14 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import * as rt from "./runtime";
 import {
+  DEFAULT_PROVIDER,
   EMPTY_DRAFT,
+  activeStoreKey,
   canRequestApproval,
+  composerBlocker,
   getState,
+  patchTurn,
+  providerConfigFields,
   setState,
   setSelection,
   showToast,
@@ -23,8 +28,13 @@ import type {
   EditableRegion,
   Finding,
   InspectResult,
+  OperationPlan,
+  PlanValidation,
+  ProviderSettings,
   Recent,
   RegionText,
+  RuntimeError,
+  Turn,
   VerificationReport,
 } from "./types";
 
@@ -888,50 +898,19 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
     // Read the plan back over OUR connection rather than trusting the agent's
     // copy of it. The queue must show what the Runtime holds, because that is
     // what an approval will bind to.
-    const authoritative = await rt.getPlan(plan.planId);
-    const validation = await rt.validatePlan(plan.planId);
-
-    const inspect = getState().inspects[sessionId] ?? null;
-    const texts = getState().texts[sessionId] ?? [];
-    const ops: QueuedOp[] = authoritative.ops.map((op) => {
-      const params = op.params as Record<string, number | string>;
-      const table = Number(params.table ?? 0);
-      const row = Number(params.row);
-      const col = Number(params.col);
-      return {
-        opId: op.opId,
-        kind: "fill_cell",
-        table,
-        row,
-        col,
-        text: String(params.text ?? ""),
-        charPr: params.charPr === undefined ? undefined : String(params.charPr),
-        before: seatText(inspect, texts, table, row, col),
-        origin: "agent",
-        proposer: authoritative.proposer,
-      };
-    });
-
-    const draft: Draft = {
-      ops,
-      plan: authoritative,
-      validation,
+    //
+    // Shared with the composer since Phase 5 (`adoptAgentPlan`): the mock
+    // button and a typed instruction MUST end in the same queue in the same
+    // shape, and two code paths claiming to do that would eventually stop.
+    // The agent already requested approval on its own connection; that request
+    // is a real record under this root, so it is adopted rather than
+    // re-created, and its `requestedBy` keeps saying who asked.
+    const { plan: authoritative } = await adoptAgentPlan(
       sessionId,
-      boundSha256: authoritative.boundSha256,
-      phase: "ready",
-      error: null,
-      rewrittenFromAgent: false,
-    };
+      plan.planId,
+      approval?.approvalId ?? null,
+    );
     setState({
-      draft,
-      // The agent already requested approval on its own connection. That
-      // request is a real record under this root, so it is adopted rather than
-      // re-created — and its `requestedBy` keeps saying who asked.
-      approval: approval
-        ? await rt.getApproval(approval.approvalId).catch(() => null)
-        : null,
-      approvalPhase: approval ? "pending" : "idle",
-      approvalError: null,
       agentPhase: "ready",
       agentRun: {
         ok: parsed.ok === true,
@@ -1285,6 +1264,13 @@ export async function boot(): Promise<void> {
     // Whether the dev-mode agent door is reachable from this build. Cheap:
     // it is a file existence check, not a spawn.
     await refreshAgentTool();
+    // Phase 5, and all three are cheap for the same reason: a path test, a
+    // prefs read, and one short-lived child. None of them touches a provider
+    // and none of them needs a credential, so a cold boot with nothing
+    // configured still ends with a composer that can explain itself.
+    await refreshAgentHost();
+    await loadProviderSettings();
+    await loadTaskPacks();
     setState({ phaseNote: "열린 문서를 찾는 중" });
     await refreshSessions();
 
@@ -1327,3 +1313,365 @@ export async function restartRuntime(): Promise<void> {
 }
 
 export { setSelection };
+
+// --- the Agent Host: the composer's other end (Phase 5) -----------------------
+//
+// The whole point of this section is the ONE queue. An instruction typed in the
+// composer, a value typed into a fill seat, and the mock button all end in the
+// same `draft`, behind the same approval gate, and the queue says which is
+// which per op. Nothing here can approve: `host.py` speaks
+// `serve.py --entry agent`, where `approval/resolve` and `plan/apply` are not
+// in the registry at all (protocol §4). The shell does not enforce that — it
+// could not grant them if it tried — and the payload's `neverCompiled` is put
+// on screen so a reviewer can read the claim rather than take it.
+
+export async function refreshAgentHost(): Promise<void> {
+  try {
+    setState({ agentHost: await rt.agentHostStatus() });
+  } catch (e) {
+    setState({
+      agentHost: {
+        available: false,
+        mode: null,
+        script: null,
+        program: null,
+        reason: String(e),
+      },
+    });
+  }
+}
+
+/** Load the saved provider settings, and ask the store whether the key is there. */
+export async function loadProviderSettings(): Promise<void> {
+  const prefs = await rt.loadPrefs().catch(() => ({}) as Record<string, unknown>);
+  const saved = prefs.provider as Partial<ProviderSettings> | undefined;
+  const provider: ProviderSettings = {
+    ...DEFAULT_PROVIDER,
+    ...(saved ?? {}),
+    router: { ...DEFAULT_PROVIDER.router, ...(saved?.router ?? {}) },
+    anthropic: { ...DEFAULT_PROVIDER.anthropic, ...(saved?.anthropic ?? {}) },
+  };
+  setState({ provider });
+  await refreshCredential();
+}
+
+/** Present / absent / how many bytes. The value is never asked for. */
+export async function refreshCredential(): Promise<void> {
+  const key = activeStoreKey(getState().provider);
+  if (!key) {
+    setState({ credential: null });
+    return;
+  }
+  try {
+    setState({ credential: await rt.credentialStatus(key) });
+  } catch (e) {
+    setState({ credential: { key, state: "absent", bytes: 0, reason: String(e) } });
+  }
+}
+
+/**
+ * Save the settings, and write the provider's config file.
+ *
+ * Two stores, deliberately different: the shell's own prefs hold what the UI
+ * needs to draw itself again (which provider, which base URL, which STORE KEY
+ * NAME), and the config file holds what the Agent Host reads. Neither holds a
+ * secret, and the Rust side refuses a secret-shaped member by name before the
+ * file is written.
+ */
+export async function saveProviderSettings(next: ProviderSettings): Promise<boolean> {
+  setState({ provider: next, providerProfile: null, probeError: null, probePhase: "idle" });
+  await rt.savePrefs({ provider: next as unknown as Record<string, unknown> });
+  await refreshCredential();
+  if (next.provider === "mock") return true;
+  try {
+    await rt.agentHostSaveConfig(
+      next.provider,
+      providerConfigFields(next),
+      getState().credential?.state === "present",
+    );
+    return true;
+  } catch (e) {
+    setState({ probeError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+/**
+ * Put a secret in the OS credential store.
+ *
+ * The value crosses IPC exactly once, in this direction, and is not written to
+ * the store's state, to prefs, or to any log. The caller clears its input
+ * immediately afterwards; there is no read-back and no "show" control, because
+ * a field that can display a key is a field that can be screenshotted.
+ */
+export async function storeCredential(secret: string): Promise<boolean> {
+  const key = activeStoreKey(getState().provider);
+  if (!key) {
+    setState({
+      probeError: {
+        code: "credential_name_missing",
+        message: "먼저 자격 증명 이름을 정해야 합니다.",
+      },
+    });
+    return false;
+  }
+  try {
+    await rt.credentialSet(key, secret);
+    await refreshCredential();
+    // The config's credential member appears only once a key really exists.
+    await saveProviderSettings(getState().provider);
+    showToast("자격 증명을 이 기계의 저장소에 넣었습니다");
+    return true;
+  } catch (e) {
+    setState({ probeError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+export async function forgetCredential(): Promise<boolean> {
+  const key = activeStoreKey(getState().provider);
+  if (!key) return false;
+  try {
+    await rt.credentialDelete(key);
+    await refreshCredential();
+    await saveProviderSettings(getState().provider);
+    return true;
+  } catch (e) {
+    setState({ probeError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+/**
+ * 연결 확인 — `--capabilities`, and nothing more.
+ *
+ * No network call and no document: this asks the adapter to DESCRIBE itself,
+ * which is why it works with no key and why its answer is trustworthy about
+ * what it does not know. Three states reach the screen unchanged; an `unknown`
+ * is never rounded to a yes or a no, because that is the entire reason the
+ * third state exists.
+ */
+export async function probeProvider(): Promise<boolean> {
+  const state = getState();
+  setState({ probePhase: "starting", probeError: null });
+  try {
+    const outcome = await rt.agentHostCapabilities(
+      state.provider.provider,
+      activeStoreKey(state.provider),
+    );
+    if (!outcome.payload.ok || !outcome.payload.provider) {
+      setState({
+        probePhase: "failed",
+        providerProfile: null,
+        probeError:
+          (outcome.payload.error as RuntimeError | undefined) ?? {
+            code: "capabilities_failed",
+            message: `에이전트 호스트가 exit ${outcome.exitCode} 로 끝났습니다.`,
+            detail: outcome.stderr,
+          },
+      });
+      return false;
+    }
+    setState({ probePhase: "ready", providerProfile: outcome.payload.provider });
+    await refreshCredential();
+    return true;
+  } catch (e) {
+    setState({ probePhase: "failed", providerProfile: null, probeError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+/**
+ * Adopt a plan an agent proposed into this shell's review queue.
+ *
+ * Shared by the mock button and the composer, because the two must be
+ * indistinguishable downstream: whatever proposed it, the queue holds the
+ * Runtime's own copy of the plan, validated over THIS connection, with every op
+ * marked as the agent's.
+ */
+async function adoptAgentPlan(
+  sessionId: string,
+  planId: string,
+  approvalId: string | null,
+): Promise<{ plan: OperationPlan; validation: PlanValidation }> {
+  const authoritative = await rt.getPlan(planId);
+  const validation = await rt.validatePlan(planId);
+  const inspect = getState().inspects[sessionId] ?? null;
+  const texts = getState().texts[sessionId] ?? [];
+  const ops: QueuedOp[] = authoritative.ops.map((op) => {
+    const params = op.params as Record<string, number | string>;
+    const table = Number(params.table ?? 0);
+    const row = Number(params.row);
+    const col = Number(params.col);
+    return {
+      opId: op.opId,
+      kind: "fill_cell",
+      table,
+      row,
+      col,
+      text: String(params.text ?? ""),
+      charPr: params.charPr === undefined ? undefined : String(params.charPr),
+      before: seatText(inspect, texts, table, row, col),
+      origin: "agent",
+      proposer: authoritative.proposer,
+    };
+  });
+  const draft: Draft = {
+    ops,
+    plan: authoritative,
+    validation,
+    sessionId,
+    boundSha256: authoritative.boundSha256,
+    phase: "ready",
+    error: null,
+    rewrittenFromAgent: false,
+  };
+  setState({
+    draft,
+    approval: approvalId ? await rt.getApproval(approvalId).catch(() => null) : null,
+    approvalPhase: approvalId ? "pending" : "idle",
+    approvalError: null,
+  });
+  return { plan: authoritative, validation };
+}
+
+/** Ids are the shell's, not the host's: the tail thread keys events on them. */
+function newTurnId(): string {
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Send one instruction. One process, one turn, one plan.
+ *
+ * The turn card appears before the process does, so a slow provider looks like
+ * work in progress rather than a dropped message, and the host's own events
+ * stream into it live while it runs (`agenthost://events`, tailed and batched
+ * in Rust). When the run ends, the plan — if there is one — is re-read over
+ * this shell's connection and adopted into the review queue.
+ *
+ * A provider fault is NEVER reported as a document verdict. `ah_host` keeps
+ * that separation on its side and this keeps it here: `providerFault` gets its
+ * own state on the card, the queue is untouched, and no reply is invented.
+ */
+export async function sendInstruction(instruction: string): Promise<boolean> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  const text = instruction.trim();
+  if (!sessionId || text === "" || composerBlocker(state) !== null) return false;
+
+  const id = newTurnId();
+  const turn: Turn = {
+    id,
+    instruction: text,
+    at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    phase: "starting",
+    provider: state.provider.provider,
+    events: [],
+    payload: null,
+    exitCode: null,
+    error: null,
+    planId: null,
+  };
+  setState({ turns: [...state.turns, turn], activeTurn: id });
+
+  try {
+    const outcome = await rt.agentHostRun({
+      sessionId,
+      instruction: text,
+      provider: state.provider.provider,
+      storeKey: activeStoreKey(state.provider),
+      scenario: state.provider.provider === "mock" ? state.provider.scenario : null,
+      turnId: id,
+    });
+    const payload = outcome.payload;
+    patchTurn(id, {
+      phase: payload.ok ? "ready" : "failed",
+      payload,
+      exitCode: outcome.exitCode,
+      // The host's own log is authoritative and complete at exit. The tailed
+      // events are the same lines arriving early; taking the final copy means
+      // a turn whose tail thread missed a flush still shows everything.
+      events: payload.events?.events ?? getState().turns.find((t) => t.id === id)?.events ?? [],
+    });
+
+    const planId = payload.plan?.planId ?? null;
+    if (planId) {
+      await adoptAgentPlan(sessionId, planId, payload.approval?.approvalId ?? null);
+      patchTurn(id, { planId });
+    }
+    setState({ activeTurn: null });
+    return payload.ok;
+  } catch (e) {
+    patchTurn(id, { phase: "failed", error: rt.asRuntimeError(e) });
+    setState({ activeTurn: null });
+    return false;
+  }
+}
+
+/** Stop the run in flight. It holds no document lock; nothing can be torn. */
+export async function stopInstruction(): Promise<boolean> {
+  const id = getState().activeTurn;
+  const stopped = await rt.agentHostStop().catch(() => false);
+  if (id) {
+    patchTurn(id, {
+      phase: "failed",
+      error: { code: "cancelled", message: "사람이 중간에 멈췄습니다." },
+    });
+  }
+  setState({ activeTurn: null });
+  return stopped;
+}
+
+// --- 작업 팩 --------------------------------------------------------------------
+
+export async function loadTaskPacks(): Promise<void> {
+  try {
+    setState({ taskPacks: await rt.taskPacks() });
+  } catch (e) {
+    setState({
+      taskPacks: { available: false, mode: null, reason: String(e), packs: [] },
+    });
+  }
+}
+
+// --- the window ------------------------------------------------------------------
+
+export async function toggleFullscreen(): Promise<void> {
+  try {
+    setState({ fullscreen: await rt.toggleFullscreen() });
+  } catch {
+    // A window control is an affordance, not a dependency.
+  }
+}
+
+/**
+ * Esc, once, in one place.
+ *
+ * Three overlays can be open and they close in a fixed order — the innermost
+ * first — so a person pressing Esc twice does not find the second press
+ * closing something they were not looking at.
+ */
+export function closeTopmostOverlay(): boolean {
+  const state = getState();
+  if (state.inlineEdit) {
+    cancelEdit();
+    return true;
+  }
+  if (state.receiptOpen) {
+    openReceipt(null);
+    return true;
+  }
+  if (state.settingsOpen) {
+    setState({ settingsOpen: false });
+    return true;
+  }
+  if (state.packOpen) {
+    setState({ packOpen: null });
+    return true;
+  }
+  if (state.sheetOpen) {
+    setState({ sheetOpen: false });
+    return true;
+  }
+  return false;
+}

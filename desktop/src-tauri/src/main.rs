@@ -673,6 +673,27 @@ fn on_a_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
     })
 }
 
+/// What the window is right now. Read-only; the harness compares it against
+/// what the previous launch left in prefs, which is the only way to prove a
+/// restore actually restored rather than landing on the default by chance.
+#[tauri::command]
+fn window_geometry(app: AppHandle) -> Value {
+    let Some(window) = app.get_webview_window("main") else {
+        return Value::Null;
+    };
+    let size = window.inner_size().ok();
+    let position = window.outer_position().ok();
+    json!({
+        "width": size.map(|s| s.width),
+        "height": size.map(|s| s.height),
+        "x": position.map(|p| p.x),
+        "y": position.map(|p| p.y),
+        "maximized": window.is_maximized().unwrap_or(false),
+        "fullscreen": window.is_fullscreen().unwrap_or(false),
+        "scale": window.scale_factor().unwrap_or(1.0),
+    })
+}
+
 /// F11. Reported back so the UI can label the control rather than guess.
 #[tauri::command]
 fn toggle_fullscreen(app: AppHandle) -> Result<bool, String> {
@@ -829,6 +850,7 @@ fn main() {
             credential_delete,
             task_packs,
             toggle_fullscreen,
+            window_geometry,
             smoke_config,
             smoke_ready,
             smoke_final,
@@ -838,6 +860,15 @@ fn main() {
             install_panic_hook(app.handle().clone());
             if let Some(window) = app.get_webview_window("main") {
                 restore_geometry(&window);
+                // Persist once at startup, past the throttle. Without this a
+                // launch that is never resized leaves nothing behind, and
+                // "the window remembers" would only be true for a user who
+                // happened to drag it — which is not a property, it is luck.
+                if let Some(clock) = app.try_state::<GeometryClock>() {
+                    *clock.0.lock().unwrap() =
+                        std::time::Instant::now() - std::time::Duration::from_secs(5);
+                    save_geometry(&window.as_ref().window(), &clock);
+                }
             }
             Ok(())
         })

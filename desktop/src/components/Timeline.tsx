@@ -25,7 +25,6 @@
  * disclosure at the bottom, which is where diagnostics belong once there is
  * something real to show above them.
  */
-import { runAgentProposal } from "../actions";
 import { useWorkspace } from "../store";
 import type { Activity, RuntimeEvent } from "../types";
 import { Tag } from "./Tag";
@@ -103,11 +102,6 @@ export function Timeline() {
   const eventError = useWorkspace((s) => s.eventError);
   const subscription = useWorkspace((s) => s.eventSubscription);
   const activity = useWorkspace((s) => s.activity);
-  const agentTool = useWorkspace((s) => s.agentTool);
-  const agentPhase = useWorkspace((s) => s.agentPhase);
-  const agentError = useWorkspace((s) => s.agentError);
-  const agentRun = useWorkspace((s) => s.agentRun);
-  const sessionId = useWorkspace((s) => s.activeSessionId);
 
   const newestFirst = [...events].reverse();
 
@@ -133,52 +127,11 @@ export function Timeline() {
         </span>
       </div>
 
-      {/* The dev-mode agent door. Present only where its script is reachable;
-          a shipped installation without a checkout simply does not show it,
-          rather than showing a button that cannot work. */}
-      {agentTool?.available && sessionId ? (
-        <div className="agent-door" data-testid="agent-door">
-          <button
-            className="action"
-            data-testid="run-agent"
-            disabled={agentPhase === "starting"}
-            title={agentTool.script ?? undefined}
-            onClick={() => void runAgentProposal()}
-          >
-            {agentPhase === "starting" ? "에이전트가 문서를 보는 중…" : "에이전트 제안 받기"}
-          </button>
-          <span className="tiny">
-            에이전트 권한 연결로 계획만 냅니다. 승인과 적용은 그 연결에 아예 없는 기능입니다.
-          </span>
-        </div>
-      ) : null}
-
-      {agentRun ? (
-        <div className="agent-result" data-testid="agent-result">
-          <div className="head">
-            <Tag tone="ok">제안 도착</Tag>
-            <span className="mono tiny">{agentRun.door} · exit {agentRun.exitCode}</span>
-          </div>
-          <p className="said">
-            <strong>{agentRun.proposer}</strong>이(가) 계획{" "}
-            <span className="mono">{agentRun.planId.slice(0, 12)}</span> 을(를) 냈고, 승인은{" "}
-            <strong>{agentRun.approvalState === "pending" ? "받지 못한 채" : agentRun.approvalState}</strong>{" "}
-            멈췄습니다. 오른쪽 검토 대기열에서 사람이 직접 승인해야 합니다.
-          </p>
-          <p className="tiny">
-            이 연결에 없는 기능:{" "}
-            <span className="mono">{agentRun.neverCalled.join(", ")}</span>
-          </p>
-        </div>
-      ) : null}
-
-      {agentError ? (
-        <div className="refusal" data-testid="agent-error">
-          <Tag tone="bad">에이전트를 돌리지 못했습니다</Tag>
-          <p className="prose">{agentError.message}</p>
-          <p className="mono tiny">{agentError.code}</p>
-        </div>
-      ) : null}
+      {/* The mock agent's door and its result moved to `Conversation` in
+          Phase 5. They belong beside the composer: they are things an agent
+          did, and this pane is what happened TO THE DOCUMENT. Keeping them
+          here would have made the document's own history a place where a
+          button lives. */}
 
       <div className="cards">
         {eventError ? (
