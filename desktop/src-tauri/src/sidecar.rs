@@ -37,6 +37,15 @@ const EMIT_INTERVAL: Duration = Duration::from_millis(100);
 /// Tauri event names. One channel for batched activity, one for status changes.
 pub const EVENT_ACTIVITY: &str = "runtime://activity";
 pub const EVENT_STATUS: &str = "runtime://status";
+/// The session's own `events.jsonl`, split out from general protocol chatter.
+///
+/// Two channels, not one filtered in the webview, and the reason is finding 2
+/// again: the split happens where the lines are already being counted, so both
+/// channels stay batched at the 100 ms window instead of one of them becoming
+/// per-line work in JavaScript. It also keeps the document's history clean —
+/// the timeline shows what happened to the document, not what this shell said
+/// down a pipe.
+pub const EVENT_EVENTS: &str = "runtime://events";
 
 /// A single request may not outlive this. `tests/_runtime_client.py` uses 180 s
 /// for the same reason: the Runtime spawns `form_inspect` children of its own,
@@ -105,6 +114,50 @@ struct Pending {
     tx: Sender<Value>,
 }
 
+/// The two handles a cancel needs, held apart from the `Sidecar` manager.
+///
+/// This exists because of a deadlock, not for tidiness. `runtime_call` holds
+/// the manager's mutex for the whole round trip, so a `runtime_cancel` that
+/// also took that mutex could never run while the call it means to cancel was
+/// still in flight — it would block until the apply it was trying to stop had
+/// already finished. The stdin handle and the tag map are behind their own
+/// short-lived locks, so a clone of them can reach the pipe from another
+/// command thread. That is the whole trick, and it is the reason cancellation
+/// works at all.
+#[derive(Clone)]
+pub struct CancelHandle {
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    tags: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl CancelHandle {
+    /// Write the protocol's cancel FRAME for whatever call carries `tag`.
+    ///
+    /// A cancel is not a request: it takes no response, and the reader thread
+    /// must act on it while the request it names is still running (§9). So
+    /// this writes one line and returns; the cancelled call comes back through
+    /// its own channel with a `cancelled` error, or completes normally if it
+    /// had already passed its last checkpoint. Cancellation is cooperative
+    /// between ops, never a kill.
+    ///
+    /// Returns false when no call is currently carrying that tag.
+    pub fn cancel(&self, tag: &str) -> bool {
+        let Some(id) = self.tags.lock().unwrap().get(tag).cloned() else {
+            return false;
+        };
+        let frame = json!({ "kind": "cancel", "id": id });
+        let Ok(line) = serde_json::to_string(&frame) else {
+            return false;
+        };
+        let mut guard = self.stdin.lock().unwrap();
+        let Some(w) = guard.as_mut() else { return false };
+        w.write_all(line.as_bytes())
+            .and_then(|_| w.write_all(b"\n"))
+            .and_then(|_| w.flush())
+            .is_ok()
+    }
+}
+
 pub struct Sidecar {
     child: Option<Child>,
     /// Behind its own mutex so `call` can take `&self` and still serialise
@@ -112,10 +165,15 @@ pub struct Sidecar {
     /// half-written frames would corrupt the stream.
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<String, Pending>>>,
+    /// Caller-chosen tag -> the request id currently carrying it. The webview
+    /// never sees a protocol id, so this is how it names a call to cancel.
+    tags: Arc<Mutex<HashMap<String, String>>>,
     next_id: AtomicU64,
     status: Arc<Mutex<SidecarStatus>>,
     stop_flag: Arc<AtomicBool>,
     out_buf: Arc<Mutex<Vec<Activity>>>,
+    /// `event` notifications only, on their own timer-drained buffer.
+    events_buf: Arc<Mutex<Vec<Value>>>,
     seq: Arc<AtomicU64>,
     started: Instant,
 }
@@ -126,10 +184,12 @@ impl Default for Sidecar {
             child: None,
             stdin: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(HashMap::new())),
+            tags: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(0),
             status: Arc::new(Mutex::new(SidecarStatus::default())),
             stop_flag: Arc::new(AtomicBool::new(false)),
             out_buf: Arc::new(Mutex::new(Vec::new())),
+            events_buf: Arc::new(Mutex::new(Vec::new())),
             seq: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
         }
@@ -265,6 +325,7 @@ impl Sidecar {
         {
             let pending = Arc::clone(&self.pending);
             let out_buf = Arc::clone(&self.out_buf);
+            let events_buf = Arc::clone(&self.events_buf);
             let seq = Arc::clone(&self.seq);
             let started = self.started;
             std::thread::spawn(move || {
@@ -294,6 +355,18 @@ impl Sidecar {
                         let waiter = pending.lock().unwrap().remove(&id);
                         if let Some(p) = waiter {
                             let _ = p.tx.send(frame);
+                            continue;
+                        }
+                    }
+                    // The session's own events go to their own channel, in
+                    // arrival order, which is the order `read_events` produced
+                    // them in — the seq is the line index, so the webview can
+                    // de-duplicate a replay without needing this to be exact.
+                    if kind == "notification"
+                        && frame.get("method").and_then(Value::as_str) == Some("event")
+                    {
+                        if let Some(params) = frame.get("params") {
+                            events_buf.lock().unwrap().push(params.clone());
                             continue;
                         }
                     }
@@ -336,23 +409,30 @@ impl Sidecar {
         }
 
         // --- emitter: the only place activity crosses IPC ----------------
+        // One thread drains both buffers on the same window. Two timers would
+        // be two chances to interleave the document's history with protocol
+        // chatter at different rates for no gain.
         {
             let app = app.clone();
             let out_buf = Arc::clone(&self.out_buf);
+            let events_buf = Arc::clone(&self.events_buf);
             let stop = Arc::clone(&self.stop_flag);
             std::thread::spawn(move || loop {
                 std::thread::sleep(EMIT_INTERVAL);
-                let batch: Vec<Activity> = {
+                let activity: Vec<Activity> = {
                     let mut guard = out_buf.lock().unwrap();
-                    if guard.is_empty() {
-                        if stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        continue;
-                    }
                     std::mem::take(&mut *guard)
                 };
-                let _ = app.emit(EVENT_ACTIVITY, batch);
+                let events: Vec<Value> = {
+                    let mut guard = events_buf.lock().unwrap();
+                    std::mem::take(&mut *guard)
+                };
+                if !activity.is_empty() {
+                    let _ = app.emit(EVENT_ACTIVITY, activity);
+                }
+                if !events.is_empty() {
+                    let _ = app.emit(EVENT_EVENTS, events);
+                }
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
@@ -426,6 +506,16 @@ impl Sidecar {
     /// what makes the refusal fixable, and flattening it to a message is the
     /// documented mistake.
     pub fn call(&self, method: &str, params: Option<Value>) -> Result<Value, Value> {
+        self.call_tagged(method, params, None)
+    }
+
+    /// `call`, plus a caller-chosen tag that `cancel` can name.
+    pub fn call_tagged(
+        &self,
+        method: &str,
+        params: Option<Value>,
+        tag: Option<String>,
+    ) -> Result<Value, Value> {
         {
             let status = self.status.lock().unwrap();
             if !status.running {
@@ -444,14 +534,36 @@ impl Sidecar {
         }
         let (tx, rx): (Sender<Value>, Receiver<Value>) = channel();
         self.pending.lock().unwrap().insert(id.clone(), Pending { tx });
+        if let Some(name) = tag.clone() {
+            self.tags.lock().unwrap().insert(name, id.clone());
+        }
 
-        let line = serde_json::to_string(&frame).map_err(|e| {
-            json!({ "code": "frame_malformed", "message": format!("요청을 직렬화하지 못했습니다: {e}") })
-        })?;
+        let clear_tag = |tags: &Arc<Mutex<HashMap<String, String>>>| {
+            if let Some(name) = tag.as_ref() {
+                let mut guard = tags.lock().unwrap();
+                if guard.get(name) == Some(&id) {
+                    guard.remove(name);
+                }
+            }
+        };
+
+        let line = match serde_json::to_string(&frame) {
+            Ok(line) => line,
+            Err(e) => {
+                self.pending.lock().unwrap().remove(&id);
+                clear_tag(&self.tags);
+                return Err(json!({
+                    "code": "frame_malformed",
+                    "message": format!("요청을 직렬화하지 못했습니다: {e}"),
+                }));
+            }
+        };
         {
             let mut guard = self.stdin.lock().unwrap();
             let Some(w) = guard.as_mut() else {
+                drop(guard);
                 self.pending.lock().unwrap().remove(&id);
+                clear_tag(&self.tags);
                 return Err(json!({ "code": "sidecar_down", "message": "사이드카 stdin이 없습니다." }));
             };
             let res = w
@@ -461,6 +573,7 @@ impl Sidecar {
             if let Err(e) = res {
                 drop(guard);
                 self.pending.lock().unwrap().remove(&id);
+                clear_tag(&self.tags);
                 return Err(json!({
                     "code": "sidecar_down",
                     "message": format!("사이드카에 쓰지 못했습니다: {e}"),
@@ -468,7 +581,7 @@ impl Sidecar {
             }
         }
 
-        match rx.recv_timeout(CALL_TIMEOUT) {
+        let outcome = match rx.recv_timeout(CALL_TIMEOUT) {
             Ok(frame) => {
                 if frame.get("kind").and_then(Value::as_str) == Some("response") {
                     Ok(frame.get("result").cloned().unwrap_or(Value::Null))
@@ -490,6 +603,16 @@ impl Sidecar {
                     },
                 }))
             }
+        };
+        clear_tag(&self.tags);
+        outcome
+    }
+
+    /// A clone of the handles a cancel needs, usable without the manager lock.
+    pub fn cancel_handle(&self) -> CancelHandle {
+        CancelHandle {
+            stdin: Arc::clone(&self.stdin),
+            tags: Arc::clone(&self.tags),
         }
     }
 
@@ -515,6 +638,7 @@ impl Sidecar {
             }
         }
         self.pending.lock().unwrap().clear();
+        self.tags.lock().unwrap().clear();
         let mut status = self.status.lock().unwrap();
         status.running = false;
         status.initialized = false;

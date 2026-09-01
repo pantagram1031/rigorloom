@@ -1499,3 +1499,470 @@ body.dragging .drop {
   .center-scroll { scroll-behavior: auto; }
   .mark-draw path { stroke-dashoffset: 0; }
 }
+
+/* ══ Phase 4: editing, review, approval, receipts ════════════════════════
+   Everything below obeys the same two rules as everything above it. The
+   working accent (teal) carries every interactive state; 단청 vermilion is
+   spent in exactly one place — `.approval-gate` and the `.action.point`
+   inside it — because a pending approval is the one moment in this
+   application that demands a person's response. Adding it anywhere else
+   would end its meaning, so it is not in a chip, not in an error, not in a
+   diff. Errors are `--bad`: a different colour with a different job. */
+
+/* ── the inline editor ────────────────────────────────────────────────── */
+
+.paper .doc-table td.seat {
+  cursor: text;
+}
+
+.paper .doc-table td.editing {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  padding: 0;
+}
+
+.seat-input {
+  width: 100%;
+  min-width: 6ch;
+  padding: 5px 7px;
+  border: none;
+  outline: none;
+  background: var(--bg-paper);
+  color: var(--fg);
+  font: inherit;
+  line-height: var(--leading-doc);
+  /* Hangul is never letter-spaced, and an input inherits nothing by default. */
+  letter-spacing: normal;
+}
+
+.paper .doc-table td.has-edit {
+  background: var(--accent-soft);
+}
+
+.queued {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queued .was,
+.queue-diff .was {
+  color: var(--fg-faint);
+  text-decoration-color: var(--fg-faint);
+}
+
+.queued .arrow,
+.queue-diff .arrow {
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+.queued .will {
+  color: var(--accent);
+  font-weight: var(--weight-emph);
+}
+
+/* ── the review queue ─────────────────────────────────────────────────── */
+
+.section.queue h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.queue-ops {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.queue-op {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--s2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: rise-in 200ms var(--ease);
+}
+
+.queue-op-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queue-op-head .addr {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: background var(--t-micro) var(--ease);
+}
+
+.queue-op-head .addr:hover {
+  background: var(--accent-soft);
+}
+
+.queue-op-head .ghost.dark-safe,
+.gate-actions .ghost.dark-safe {
+  color: var(--fg-muted);
+  margin-left: auto;
+  padding: 2px var(--s2);
+}
+
+.queue-op-head .ghost.dark-safe:hover,
+.gate-actions .ghost.dark-safe:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.queue-diff {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.queue-diff .was {
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-value {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bg-paper);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.queue-value:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.queue-finding {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+}
+
+.queue-finding code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.queue-verdict {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queue-verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-rewrite {
+  padding: var(--s2);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.disclosure summary {
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.disclosure summary:hover { color: var(--fg-muted); }
+
+.disclosure pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s2);
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 260px;
+  color: var(--fg-muted);
+}
+
+.deferred {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.deferred li {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  color: var(--fg-faint);
+}
+
+.tiny { font-size: var(--text-xs); }
+
+.refusal {
+  margin-top: var(--s2);
+  padding: var(--s2);
+  border: 1px solid var(--bad);
+  border-left-width: 2px;
+  border-radius: var(--radius);
+  background: var(--bad-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.refusal .prose { color: var(--fg); }
+
+/* ── the approval gate: the one vermilion moment ──────────────────────── */
+
+.approval-gate {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--point);
+  border-radius: var(--radius);
+  background: var(--point-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  animation: rise-in 220ms var(--ease);
+}
+
+.approval-gate .gate-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--point);
+  font-size: var(--text-md);
+}
+
+/* A slow breath, not a blink. The gate is waiting, not alarming. */
+.gate-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--point);
+  animation: gate-breathe 2400ms var(--ease) infinite;
+}
+
+@keyframes gate-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+.gate-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  flex-wrap: wrap;
+}
+
+.action.point {
+  background: var(--point);
+  color: #fefdfb;
+  border-color: transparent;
+  font-weight: var(--weight-emph);
+}
+
+.action.point:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--point) 88%, var(--ink));
+}
+
+/* ── the receipt ──────────────────────────────────────────────────────── */
+
+.sheet.receipt { max-height: 72%; }
+
+.receipt-block {
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.receipt-block:last-of-type { border-bottom: none; }
+
+.receipt-block h4 {
+  margin: 0 0 var(--s2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-head);
+  color: var(--fg-muted);
+}
+
+.receipt-verdict {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--s2);
+}
+
+.receipt-checks,
+.receipt-steps {
+  margin: 0;
+  padding: 0 0 0 var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+
+.receipt-checks { list-style: none; padding-left: 0; }
+
+.receipt-checks li,
+.receipt-steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.receipt-checks .dim,
+.receipt-steps .dim { color: var(--fg-faint); }
+
+.hash { cursor: help; }
+
+.linkish {
+  font-size: inherit;
+  color: var(--accent);
+  padding: 0;
+  border-bottom: 1px solid var(--accent-line);
+  transition: border-color var(--t-micro) var(--ease);
+}
+
+.linkish:hover { border-color: var(--accent); }
+
+/* ── page view ────────────────────────────────────────────────────────── */
+
+.page-raster {
+  display: block;
+  max-width: 100%;
+  background: var(--bg-paper);
+  box-shadow: var(--shadow-paper);
+  border: 1px solid var(--line);
+}
+
+.raster-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: var(--s3) 0 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  line-height: var(--leading-body);
+}
+
+.page-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s6);
+  flex-wrap: wrap;
+}
+
+.page-controls .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+
+.unavailable-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.unavailable-head code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+/* ── the agent door ───────────────────────────────────────────────────── */
+
+.agent-door {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.agent-door .tiny {
+  color: var(--fg-faint);
+  line-height: var(--leading-body);
+}
+
+.agent-result {
+  margin: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-result .head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.agent-result .said { margin: 0; line-height: var(--leading-body); }
+.agent-result .tiny { color: var(--fg-muted); }
+
+.chatter {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fg-faint);
+  max-height: 240px;
+  overflow: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-dot,
+  .queue-op,
+  .approval-gate { animation: none; }
+}

@@ -11,6 +11,7 @@
 import { ContextPanel } from "../components/ContextPanel";
 import { Findings } from "../components/Findings";
 import { PagePreview } from "../components/PagePreview";
+import { ReceiptPanel } from "../components/ReceiptPanel";
 import { StructureTree } from "../components/StructureTree";
 import { TextView } from "../components/TextView";
 import { VerificationBar } from "../components/VerificationBar";
@@ -53,8 +54,8 @@ function CenterHead() {
       </div>
       <span className="caveat" data-testid="center-caveat">
         {mode === "text"
-          ? "본문 보기 — 실제 페이지 배치는 렌더 증명 후 표시됩니다"
-          : "페이지 보기 — 렌더된 실제 지면"}
+          ? "본문 보기 — 채움 자리를 눌러 값을 넣습니다. 승인 전에는 문서가 바뀌지 않습니다"
+          : "페이지 보기 — 실제로 그려진 지면입니다. 그림은 증거가 아닙니다"}
       </span>
     </div>
   );
@@ -114,6 +115,7 @@ export function DocumentView() {
 
       <VerificationBar session={session} inspect={inspect} candidates={candidates} />
       <Findings />
+      <ReceiptPanel />
     </div>
   );
 }

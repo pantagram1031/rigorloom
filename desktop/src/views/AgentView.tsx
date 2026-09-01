@@ -11,6 +11,7 @@
 import { Composer } from "../components/Composer";
 import { DocumentContext } from "../components/DocumentContext";
 import { Findings } from "../components/Findings";
+import { ReceiptPanel } from "../components/ReceiptPanel";
 import { SessionList } from "../components/SessionList";
 import { Timeline } from "../components/Timeline";
 import { VerificationBar } from "../components/VerificationBar";
@@ -41,8 +42,10 @@ export function AgentView({
       </div>
 
       <VerificationBar session={session} inspect={inspect} candidates={candidates} />
-      {/* The same sheet. A check run from either view is readable in both. */}
+      {/* The same sheets. A check or a receipt opened in either view is
+          readable in both, because there is one Workspace and one of each. */}
       <Findings />
+      <ReceiptPanel />
     </div>
   );
 }

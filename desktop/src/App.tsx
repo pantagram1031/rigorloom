@@ -18,6 +18,7 @@ import * as rt from "./runtime";
 import {
   getState,
   pushActivity,
+  pushEvents,
   setState,
   setView,
   useWorkspace,
@@ -104,6 +105,12 @@ export default function App() {
 
     (async () => {
       unlisteners.push(await rt.onActivity(pushActivity));
+      // The document's own history. Arrives as batched `event` notifications,
+      // already split from protocol chatter in Rust; the store de-duplicates
+      // on `seq`, so a replay after a reconnect is idempotent.
+      unlisteners.push(
+        await rt.onEvents((batch) => pushEvents(batch.map((row) => row.event))),
+      );
       unlisteners.push(await rt.onStatus((s) => setState({ status: s })));
       // A Rust panic must be visible, not a silent disappearance.
       unlisteners.push(await rt.onPanic((p) => setState({ panic: p })));
@@ -143,6 +150,13 @@ export default function App() {
   // Ctrl+C copies the selected cell's text.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A shortcut must never reach past a text field the user is typing in.
+      // Ctrl+C inside the inline editor is a copy, not a "copy the selected
+      // cell", and Ctrl+O while composing Hangul would throw the edit away.
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+      if (typing) return;
       if (!e.ctrlKey || e.altKey) return;
       switch (e.key) {
         case "o":
