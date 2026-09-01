@@ -1,4 +1,4 @@
-<#
+﻿<#
   M13/M14 against the SHIPPED inline editor: does Hangul actually compose in
   the field a person types a form value into?
 
