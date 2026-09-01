@@ -40,6 +40,18 @@
                              sentinel is then grepped for across the whole app
                              data tree from OUT HERE, which is the check an
                              in-app assertion cannot make.
+    run 10 (phase "overlay") 한글 오버레이. Two documents in one launch. The
+                             corpus HWPX shows what this machine really does
+                             with no substitution — renderPrepare refuses
+                             com_busy because a Hancom is open, so there is no
+                             geometry and the assertion is that the app draws
+                             NOTHING and says why. Then a session the harness
+                             staged before launch, carrying the corpus's own
+                             Hancom render of the same form, is where the
+                             overlay is actually exercised: overlay counts
+                             against the runtime's own per-class counts, a zoom
+                             sweep that must not re-fetch, and an ambiguous
+                             click that must ask and must queue nothing.
     run 8 (phase "chrome")   the editor toolbar, the ruler, the page footer,
                              the status bar and 작업 팩, against real document
                              and real module-registry data. Leaves a window
@@ -122,6 +134,19 @@ $ModulesRoot = Join-Path $RepoRoot 'modules'
 # can only show what it chose to hand the harness.
 $Sentinel = 'NOT-A-REAL-KEY-SENTINEL-4f3a9c7e21'
 
+# The overlay phase needs a page with real geometry on it, and this machine
+# cannot make one on demand: `document/renderPrepare` refuses `com_busy`
+# whenever a Hancom instance is open, and the Runtime does not terminate
+# somebody else's session to get one. The substitution is the corpus's OWN
+# Hancom render of the same form — `com_backend.py convert` output, recorded in
+# docs/research/xc1-conversion-bench.md §4 — staged into the runtime root the
+# way renderPrepare would have staged it. Provenance and limits are in
+# scripts/stage-rendered-session.py; the app is handed the session id so no
+# shell code has to know the substitution happened.
+$Stager = Join-Path $ScriptDir 'stage-rendered-session.py'
+$RenderedPdf = Join-Path $RepoRoot 'tests\corpus\forms\render\gianmun-byeolji-1ho.pdf'
+$StagedSession = ''
+
 function Invoke-Phase {
     param([string]$Phase, [string]$ReportPath)
 
@@ -136,6 +161,8 @@ function Invoke-Phase {
     if (Test-Path $ModulesRoot) { $env:RIGORLOOM_MODULES_ROOT = $ModulesRoot }
     # The chrome phases write a second report; only they read it.
     $env:RIGORLOOM_SMOKE_FINAL = Join-Path $RunDir "final-$Phase.json"
+    if ($StagedSession) { $env:RIGORLOOM_SMOKE_STAGED = $StagedSession }
+    else { Remove-Item Env:RIGORLOOM_SMOKE_STAGED -ErrorAction SilentlyContinue }
     # Redirect the app's own data dir so a developer's real prefs and sessions
     # are never read or written by the smoke.
     #
@@ -196,12 +223,40 @@ $ran = @()
 
 # Ordered, because run 2 depends on what run 1 left on disk. Everything after
 # that opens its own session and is order-independent.
-$phases = @('open', 'reattach', 'edit', 'agent', 'page',
+$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay',
             'composer', 'settings', 'chrome', 'chrome-reattach')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 
 try {
     foreach ($phase in $phases) {
+        # Staged immediately before the phase that needs it, not at the top:
+        # every other phase is written to meet a clean user, and a session
+        # sitting under --root from the first launch would quietly change what
+        # "clean" means for all nine of them.
+        #
+        # The app then finds it the way it finds any session left on disk. Its
+        # id is passed in only so the phase does not have to guess which of
+        # several sessions is the staged one.
+        if ($phase -eq 'overlay') {
+            if (-not (Test-Path $RenderedPdf)) {
+                Write-Host "  [FAIL] no corpus render at $RenderedPdf; the overlay phase has no page to draw on"
+                $allOk = $false
+            } else {
+                $stageRoot = Join-Path $AppData 'runtime-root'
+                New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+                $staged = (& python $Stager --root $stageRoot --hwpx $Corpus --pdf $RenderedPdf 2>&1 |
+                           Select-Object -Last 1)
+                if ($LASTEXITCODE -ne 0 -or -not $staged) {
+                    Write-Host "  [FAIL] could not stage a rendered session: $staged"
+                    $allOk = $false
+                } else {
+                    $StagedSession = $staged.ToString().Trim()
+                    Write-Host ("  staged a rendered session: {0}" -f $StagedSession)
+                    Write-Host  "  (the corpus's own Hancom render stands in for renderPrepare — see stage-rendered-session.py)"
+                }
+            }
+        }
+
         $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json")
         $ok = Show-Report $result
         if (-not $ok) { $allOk = $false }
@@ -319,7 +374,8 @@ finally {
     else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_CORPUS2, `
         Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT, `
-        Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL `
+        Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL, `
+        Env:RIGORLOOM_SMOKE_STAGED `
         -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     if (-not $KeepRoot) { Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue }

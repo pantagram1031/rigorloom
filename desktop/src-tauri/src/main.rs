@@ -727,6 +727,15 @@ fn smoke_config() -> Value {
         // The IME harness types into a field that must start empty, so the
         // screenshot phase's pre-filled value is suppressed for that run.
         "imeEmpty": std::env::var("RIGORLOOM_IME_EMPTY").is_ok(),
+        // A session the harness put under --root BEFORE the app started, already
+        // carrying the corpus's own Hancom render of its form. The overlay phase
+        // needs a page with real geometry on it, and `document/renderPrepare`
+        // cannot produce one on a machine that already has Hancom open — it
+        // refuses `com_busy` and will not terminate somebody else's session. The
+        // app is told the id rather than discovering it, so nothing in the shell
+        // has to know about the substitution to find its way to the document.
+        // See desktop/scripts/stage-rendered-session.py for the provenance.
+        "stagedSession": std::env::var("RIGORLOOM_SMOKE_STAGED").ok().filter(|v| !v.is_empty()),
     })
 }
 

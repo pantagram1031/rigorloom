@@ -821,6 +821,18 @@ export function geometryKey(sessionId: string, page: number): string {
 }
 
 /**
+ * Keys with a call already in the air.
+ *
+ * Module-level rather than store state because it is not state anybody
+ * renders: it exists so that the mount effect and a caller that asks for the
+ * same page in the same tick produce ONE request instead of two. Without it a
+ * remount doubles the work, `geometryFetches` counts a call nobody asked for,
+ * and the harness's "zoom did not re-fetch" reading gets noisier the faster the
+ * machine is.
+ */
+const geometryInFlight = new Map<string, Promise<void>>();
+
+/**
  * Fetch the geometry for a page, or serve the one already held.
  *
  * Cached per (document, page) and NEVER re-fetched on a zoom change: the rects
@@ -840,27 +852,36 @@ export async function loadGeometry(page?: number): Promise<void> {
     setState({ geometry: held, geometryPhase: "ready", geometryError: null });
     return;
   }
+  const pending = geometryInFlight.get(key);
+  if (pending) return pending;
+
   setState({ geometryPhase: "starting", geometryError: null });
-  try {
-    const geometry = await rt.pageGeometry(sessionId, wanted);
-    setState({
-      geometry,
-      geometryPhase: "ready",
-      geometryCache: { ...getState().geometryCache, [key]: geometry },
-      geometryFetches: getState().geometryFetches + 1,
-    });
-  } catch (e) {
-    // A THROWN error is not the same as `available: false`. The latter is an
-    // answer with a reason from a closed set; this is the method failing, and
-    // conflating them would let a transport fault masquerade as "this document
-    // has no page".
-    setState({
-      geometryPhase: "failed",
-      geometry: null,
-      geometryError: rt.asRuntimeError(e),
-      geometryFetches: getState().geometryFetches + 1,
-    });
-  }
+  const call = (async () => {
+    try {
+      const geometry = await rt.pageGeometry(sessionId, wanted);
+      setState({
+        geometry,
+        geometryPhase: "ready",
+        geometryCache: { ...getState().geometryCache, [key]: geometry },
+        geometryFetches: getState().geometryFetches + 1,
+      });
+    } catch (e) {
+      // A THROWN error is not the same as `available: false`. The latter is an
+      // answer with a reason from a closed set; this is the method failing, and
+      // conflating them would let a transport fault masquerade as "this
+      // document has no page".
+      setState({
+        geometryPhase: "failed",
+        geometry: null,
+        geometryError: rt.asRuntimeError(e),
+        geometryFetches: getState().geometryFetches + 1,
+      });
+    } finally {
+      geometryInFlight.delete(key);
+    }
+  })();
+  geometryInFlight.set(key, call);
+  return call;
 }
 
 /** Is this address a seat the editor will actually open? Runtime's answer. */

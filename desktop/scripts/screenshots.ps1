@@ -45,6 +45,32 @@ $failed = 0
 try {
     $env:RIGORLOOM_APPDATA = $AppData
     $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
+
+    # The overlay shot needs a page with real geometry on it. This machine
+    # cannot make one on demand — a Hancom instance is open and
+    # `document/renderPrepare` refuses `com_busy` rather than terminating it —
+    # so the corpus's OWN Hancom render of this same form is staged into the
+    # runtime root the way renderPrepare would have staged it. Provenance and
+    # the exact limits of that substitution: scripts/stage-rendered-session.py.
+    #
+    # `overlay-live` is captured too, and it is a REFUSAL. Both go in the
+    # directory, because a screenshot set that only showed the working case
+    # would be advertising a capability this machine does not have.
+    $Stager = Join-Path $ScriptDir 'stage-rendered-session.py'
+    $RenderedPdf = Join-Path $RepoRoot 'tests\corpus\forms\render\gianmun-byeolji-1ho.pdf'
+    if (Test-Path $RenderedPdf) {
+        $stageRoot = Join-Path $AppData 'runtime-root'
+        New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+        $staged = (& python $Stager --root $stageRoot --hwpx $Corpus --pdf $RenderedPdf 2>&1 |
+                   Select-Object -Last 1)
+        if ($LASTEXITCODE -eq 0 -and $staged) {
+            $env:RIGORLOOM_SMOKE_STAGED = $staged.ToString().Trim()
+            Write-Host ("staged a rendered session for the overlay shot: {0}" -f $env:RIGORLOOM_SMOKE_STAGED)
+        } else {
+            Write-Warning "could not stage a rendered session; the overlay shot will photograph the unavailable state: $staged"
+        }
+    }
+
     $MockAgent = Join-Path $RepoRoot 'runtime\scripts\mock_agent.py'
     if (Test-Path $MockAgent) { $env:RIGORLOOM_MOCK_AGENT = $MockAgent }
     $AgentHost = Join-Path $RepoRoot 'agenthost\scripts\host.py'
@@ -73,6 +99,11 @@ try {
         @{ phase = 'hold-shot-verified';      name = 'candidate-verified';   scale = 1.0 },
         @{ phase = 'hold-shot-receipt';       name = 'receipt';              scale = 1.0 },
         @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
+        # 한글 오버레이. The first is a real raster with the runtime's own rects
+        # on it and the candidate chooser open over a real ambiguity; the second
+        # is this machine with nothing substituted, which is a refusal.
+        @{ phase = 'hold-shot-overlay';       name = 'page-overlay';         scale = 1.0 },
+        @{ phase = 'hold-shot-overlay-live';  name = 'page-overlay-unavailable'; scale = 1.0 },
         @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 },
         # Phase 5. Each one is reached by running the real thing: the composer
         # shot photographs a plan a real Agent Host process proposed, and the
@@ -149,6 +180,7 @@ finally {
     else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT, `
         Env:RIGORLOOM_MOCK_AGENT, Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, `
+        Env:RIGORLOOM_SMOKE_STAGED, `
         Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
