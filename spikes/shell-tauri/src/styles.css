@@ -1,0 +1,91 @@
+/* Throwaway spike styling. The one deliberate choice is the font stack: the
+   Korean-first stack from docs/desktop-shell-spike.md §5 minus the bundled
+   Pretendard, so the DPI screenshots show what Noto Sans KR / Malgun Gothic
+   actually look like at each scale factor. */
+:root {
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --ink: #16202a;
+  --muted: #6b7787;
+  --line: #dfe4ea;
+  --accent: #0d6e63;
+  --ok: #0b7a55;
+  --warn: #9a5b00;
+  --bad: #b02a2a;
+  font-family: "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1219;
+    --panel: #121c26;
+    --ink: #e8f0f5;
+    --muted: #8ea0b2;
+    --line: #24333f;
+    --accent: #4ecdb8;
+    --ok: #4fd396;
+    --warn: #f0bd6a;
+    --bad: #ff8a90;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+main { padding: 20px 24px; max-width: 1100px; }
+h1 { font-size: 20px; line-height: 1.35; font-weight: 600; margin: 0 0 4px; }
+h2 {
+  font-size: 12px; line-height: 1.35; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; margin: 0 0 8px;
+}
+p.sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+section {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; margin-bottom: 12px;
+}
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button {
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #04120f; border-color: transparent; font-weight: 600; }
+button.danger { color: var(--bad); }
+input[type="text"] {
+  font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  width: 100%;
+}
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.kv { display: grid; grid-template-columns: 200px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+code, .mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Noto Sans KR", monospace;
+  font-size: 12px;
+}
+pre.log {
+  margin: 8px 0 0; padding: 10px; background: var(--bg); border-radius: 7px;
+  border: 1px solid var(--line); max-height: 180px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); font-size: 11px; font-family: ui-monospace, monospace;
+}
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+ul.list { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow: auto; }
+ul.list li {
+  display: grid; grid-template-columns: 90px 1fr; gap: 10px; align-items: center;
+  padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+ul.list li:last-child { border-bottom: 0; }
+ul.list input { font-size: 14px; padding: 4px 8px; }
+img.page { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+.dpi { font-variant-numeric: tabular-nums; }
