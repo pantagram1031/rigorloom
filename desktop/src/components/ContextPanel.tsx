@@ -5,8 +5,10 @@
  * precursor — the selection's own facts, and a statement of what the agent
  * surface will be and is not yet. It does not mock a conversation.
  */
+import { beginEdit } from "../actions";
 import { selectionId, useWorkspace, type Selection } from "../store";
 import type { InspectResult, SidecarStatus } from "../types";
+import { ReviewQueue } from "./ReviewQueue";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
@@ -99,6 +101,16 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
             글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다.
           </p>
         ) : null}
+        {seat ? (
+          <button
+            className="action primary"
+            data-testid="edit-seat"
+            style={{ marginTop: "var(--s3)" }}
+            onClick={() => beginEdit(sel.table, sel.row, sel.col)}
+          >
+            이 자리에 값 넣기
+          </button>
+        ) : null}
       </div>
     </>
   );
@@ -170,13 +182,14 @@ export function ContextPanel({
           </div>
         )}
 
+        {/* The queue is the reason this column exists in Phase 4. It sits
+            below the selection's facts because the order of work is: look at
+            the seat, decide, then review what you decided. */}
+        <ReviewQueue />
+
         <div className="section">
-          <h3>에이전트</h3>
-          <p className="prose">
-            이 자리에 대해 에이전트가 제안한 작업과 그 근거가 올라올 자리입니다. 아직
-            에이전트를 붙이지 않았습니다.
-          </p>
-          <dl className="kv" style={{ marginTop: "var(--s3)" }}>
+          <h3>연결</h3>
+          <dl className="kv">
             <Fact
               k="세션"
               v={
@@ -189,9 +202,12 @@ export function ContextPanel({
                 )
               }
             />
-            <Fact k="대화" v={<Tag tone="none">없음</Tag>} />
-            <Fact k="제안된 작업" v={<Tag tone="none">0</Tag>} />
+            <Fact k="권한" v={<Tag tone="ok">호스트</Tag>} />
           </dl>
+          <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
+            이 창은 호스트 권한으로 붙어 있습니다. 승인은 여기에서만 할 수 있고, 에이전트
+            연결에는 그 기능 자체가 없습니다.
+          </p>
         </div>
       </div>
     </aside>

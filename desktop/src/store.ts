@@ -21,13 +21,20 @@ import { useSyncExternalStore } from "react";
 
 import type {
   Activity,
+  AppliedCandidate,
+  ApprovalRecord,
   Candidate,
   Capabilities,
   Finding,
   InspectResult,
+  OperationPlan,
+  PlanValidation,
+  Receipt,
   Recent,
   RegionText,
+  RenderResult,
   RuntimeError,
+  RuntimeEvent,
   Session,
   SidecarStatus,
 } from "./types";
@@ -59,6 +66,90 @@ export function selectionId(s: Selection): string {
 }
 
 export type Phase = "idle" | "starting" | "ready" | "failed";
+
+// --- the editing loop --------------------------------------------------------
+
+/**
+ * One queued edit, before it is a plan.
+ *
+ * `before` is captured at the moment the seat is opened for editing, from the
+ * text the runtime returned — so the queue can show `before → after` without
+ * asking the document again, and so a changed `before` is detectable.
+ *
+ * `origin` is not decoration. An op an agent proposed and an op the user typed
+ * are approved by exactly the same gate, but the queue must say which is
+ * which: that difference is the whole product claim, and hiding it would make
+ * the claim unverifiable by the person doing the approving.
+ */
+export interface QueuedOp {
+  opId: string;
+  kind: "fill_cell";
+  table: number;
+  row: number;
+  col: number;
+  text: string;
+  /** Declared when the seat's preflight demands it (T30). */
+  charPr?: string;
+  before: string;
+  origin: "user" | "agent";
+  /** Who proposed it, when that is an agent. */
+  proposer?: string;
+}
+
+/**
+ * The single pending plan. One draft, rebuilt from the queue on every change.
+ *
+ * Rebuilding rather than patching is deliberate: a plan binds the exact bytes
+ * it was computed against (`boundSha256`) and hashes the whole op list, so
+ * "add an op to the existing plan" is not a thing the protocol has. Proposing
+ * is cheap; a stale plan is not.
+ */
+export interface Draft {
+  ops: QueuedOp[];
+  plan: OperationPlan | null;
+  validation: PlanValidation | null;
+  /** Which document's bytes the queue was built against. */
+  sessionId: string | null;
+  boundSha256: string | null;
+  phase: Phase;
+  error: RuntimeError | null;
+  /** Set when the user edited or removed an agent's op: the plan is now ours. */
+  rewrittenFromAgent: boolean;
+}
+
+/** The cell currently open for typing. A real `<input>` lives here. */
+export interface InlineEdit {
+  table: number;
+  row: number;
+  col: number;
+  /** The seat's text before this edit, for the queue's before → after. */
+  before: string;
+  /** Present when the seat's preflight says a charPr must be declared. */
+  charPr?: string;
+  /** Whether this is replacing an op already in the queue. */
+  opId: string | null;
+}
+
+export type ApprovalPhase = "idle" | "requesting" | "pending" | "resolving" | "resolved";
+
+/**
+ * What to do after the sidecar died mid-mutation.
+ *
+ * `plan/apply` is the one call whose interruption is ambiguous from outside:
+ * `rt_apply` removes the run directory on any failure, so a torn apply leaves
+ * no candidate — but the shell cannot know whether the tear happened before or
+ * after the receipt landed. So it records what was in flight and offers to look,
+ * rather than guessing either way.
+ */
+export interface Recovery {
+  planId: string;
+  approvalId: string;
+  atUtc: string;
+  reason: string;
+  /** Set once the shell has re-listed candidates and knows the answer. */
+  outcome: "unknown" | "applied" | "not_applied";
+  runId: string | null;
+}
 
 export interface WorkspaceState {
   // --- shell ---------------------------------------------------------------
@@ -109,11 +200,51 @@ export interface WorkspaceState {
   textPhase: Phase;
   textError: RuntimeError | null;
 
+  // --- editing (Phase 4) ----------------------------------------------------
+  /** The cell open for typing, or null. */
+  inlineEdit: InlineEdit | null;
+  draft: Draft;
+  approval: ApprovalRecord | null;
+  approvalPhase: ApprovalPhase;
+  approvalError: RuntimeError | null;
+  applyPhase: Phase;
+  applyError: RuntimeError | null;
+  /** The candidate the last apply produced, and the one 검사 실행 reads. */
+  applied: AppliedCandidate | null;
+  recovery: Recovery | null;
+  /** Receipts read back, keyed on runId. */
+  receipts: Record<string, Receipt>;
+  receiptOpen: string | null;
+  receiptError: RuntimeError | null;
+  exportPhase: Phase;
+  exportResult: { path: string; sha256: string; bytes: number; receiptPath: string } | null;
+  exportError: RuntimeError | null;
+  /** A reopened export, proving the file that left the app still loads. */
+  reopened: { path: string; sessionId: string; sha256: string } | null;
+
   // --- checking ------------------------------------------------------------
   checkPhase: Phase;
   findings: Finding[];
   checkedAt: string | null;
   sheetOpen: boolean;
+  /**
+   * The canonical verdict for a candidate, read from its receipt.
+   *
+   * NOT re-derived here: `receipt/read` re-hashes the artifact against its
+   * binding before it returns, and the `checks` it carries are the offline
+   * checkers' own output from the apply that produced it. `verify/*` is still
+   * GAP, so a *re-run* is not available — and the UI says which of the two
+   * it is showing rather than blurring them.
+   */
+  candidateVerdict: { runId: string; report: Receipt["checks"] } | null;
+
+  // --- page rendering -------------------------------------------------------
+  renderPhase: Phase;
+  render: RenderResult | null;
+  renderError: RuntimeError | null;
+  preparePhase: Phase;
+  prepareError: RuntimeError | null;
+  prepareNote: string | null;
 
   // --- chrome --------------------------------------------------------------
   /** Webview zoom factor, 0.5-2.0, persisted. */
@@ -126,18 +257,49 @@ export interface WorkspaceState {
   holdEntrance: boolean;
   dragOver: boolean;
 
-  // --- agent lane (read-only in this phase) --------------------------------
+  // --- agent lane -----------------------------------------------------------
+  /** This shell's own protocol traffic. Diagnostics, behind a disclosure. */
   activity: Activity[];
-  /** Empty by construction: `plan/*` is never called in a read-only phase. */
-  planQueue: never[];
-  approvals: never[];
-  verifications: never[];
+  /** The session's own `events.jsonl`, live over `event/subscribe`. */
+  events: RuntimeEvent[];
+  eventSubscription: string | null;
+  eventPhase: Phase;
+  eventError: RuntimeError | null;
+  /** The dev-mode mock agent: is its script reachable from this build? */
+  agentTool: { available: boolean; script: string | null; reason: string } | null;
+  agentPhase: Phase;
+  agentError: RuntimeError | null;
+  /** What the last mock-agent run reported, verbatim. */
+  agentRun: {
+    ok: boolean;
+    door: string;
+    scenario: string;
+    marker: string;
+    planId: string;
+    approvalId: string | null;
+    approvalState: string;
+    proposer: string;
+    neverCalled: string[];
+    exitCode: number;
+  } | null;
 
   /** Set when the app was launched by the scripted smoke. */
   smokePhase: string | null;
 }
 
 const ACTIVITY_CAP = 500;
+const EVENT_CAP = 1000;
+
+export const EMPTY_DRAFT: Draft = {
+  ops: [],
+  plan: null,
+  validation: null,
+  sessionId: null,
+  boundSha256: null,
+  phase: "idle",
+  error: null,
+  rewrittenFromAgent: false,
+};
 
 const initial: WorkspaceState = {
   view: "document",
@@ -168,10 +330,35 @@ const initial: WorkspaceState = {
   textPhase: "idle",
   textError: null,
 
+  inlineEdit: null,
+  draft: EMPTY_DRAFT,
+  approval: null,
+  approvalPhase: "idle",
+  approvalError: null,
+  applyPhase: "idle",
+  applyError: null,
+  applied: null,
+  recovery: null,
+  receipts: {},
+  receiptOpen: null,
+  receiptError: null,
+  exportPhase: "idle",
+  exportResult: null,
+  exportError: null,
+  reopened: null,
+
   checkPhase: "idle",
   findings: [],
   checkedAt: null,
   sheetOpen: false,
+  candidateVerdict: null,
+
+  renderPhase: "idle",
+  render: null,
+  renderError: null,
+  preparePhase: "idle",
+  prepareError: null,
+  prepareNote: null,
 
   uiZoom: 1,
   toast: null,
@@ -181,9 +368,14 @@ const initial: WorkspaceState = {
   dragOver: false,
 
   activity: [],
-  planQueue: [],
-  approvals: [],
-  verifications: [],
+  events: [],
+  eventSubscription: null,
+  eventPhase: "idle",
+  eventError: null,
+  agentTool: null,
+  agentPhase: "idle",
+  agentError: null,
+  agentRun: null,
 
   smokePhase: null,
 };
@@ -269,6 +461,30 @@ export function pushActivity(batch: Activity[]) {
   });
 }
 
+/**
+ * Merge a batch of runtime events, keeping the log ordered and duplicate-free.
+ *
+ * `seq` is the line index in `events.jsonl`, so it is authoritative: a replay
+ * after a reconnect re-delivers events this shell already has, and inserting
+ * them twice would make the timeline lie about how many times something
+ * happened. De-duplicating on `seq` is not defensive coding — it is the
+ * property the protocol offers, used.
+ */
+export function pushEvents(batch: RuntimeEvent[]) {
+  if (batch.length === 0) return;
+  const bySeq = new Map<number, RuntimeEvent>();
+  for (const event of state.events) bySeq.set(event.seq, event);
+  let changed = false;
+  for (const event of batch) {
+    if (bySeq.has(event.seq)) continue;
+    bySeq.set(event.seq, event);
+    changed = true;
+  }
+  if (!changed) return;
+  const next = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  setState({ events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next });
+}
+
 /** The inspect for the active session, or null. Both views read through this. */
 export function activeInspect(s: WorkspaceState): InspectResult | null {
   if (!s.activeSessionId) return null;
@@ -309,6 +525,84 @@ export function canRenderPages(s: WorkspaceState): boolean {
   return methods.some((m) => m.startsWith("document/render"));
 }
 
+/** Whether the host-only prepare step is on the wire at all. */
+export function canPreparePages(s: WorkspaceState): boolean {
+  return (s.capabilities?.methods ?? []).includes("document/renderPrepare");
+}
+
+// --- the editing loop, read side ---------------------------------------------
+
+/**
+ * Is the pending queue still bound to the document on screen?
+ *
+ * Two ways it can come loose, and the UI must distinguish them:
+ *
+ *  - the queue was built against ANOTHER SESSION (the user switched documents
+ *    with edits pending) — shell-side, and the only one reachable today;
+ *  - the source bytes under this session changed after the plan was proposed —
+ *    the runtime's own `plan_stale`, reported by `plan/validate`.
+ *
+ * The second is structurally unreachable on this Runtime: `openPath` copies the
+ * bytes into the session and nothing writes to that copy again, so
+ * `current_source_sha256()` cannot move under a live plan. It is still handled,
+ * because "cannot happen today" is a property of this build, not of the
+ * protocol, and the refusal has a designed state either way.
+ */
+export type Staleness = null | {
+  kind: "other_session" | "source_changed";
+  boundSha256: string;
+  currentSha256: string | null;
+};
+
+export function draftStaleness(s: WorkspaceState): Staleness {
+  const draft = s.draft;
+  if (draft.ops.length === 0 || !draft.boundSha256) return null;
+  if (draft.sessionId && s.activeSessionId && draft.sessionId !== s.activeSessionId) {
+    return {
+      kind: "other_session",
+      boundSha256: draft.boundSha256,
+      currentSha256: activeInspect(s)?.documentHash ?? null,
+    };
+  }
+  if (draft.validation?.stale) {
+    return {
+      kind: "source_changed",
+      boundSha256: draft.validation.boundSha256,
+      currentSha256: draft.validation.currentSha256,
+    };
+  }
+  return null;
+}
+
+/** The queue is approvable only when it validates and nothing has moved. */
+export function canRequestApproval(s: WorkspaceState): boolean {
+  return (
+    s.draft.ops.length > 0 &&
+    s.draft.plan !== null &&
+    s.draft.validation?.ok === true &&
+    draftStaleness(s) === null &&
+    s.approvalPhase === "idle" &&
+    s.applyPhase !== "starting"
+  );
+}
+
+/** A stable key for a cell, shared by the queue, the tree and the centre. */
+export function cellKey(table: number, row: number, col: number): string {
+  return `c:${table}:${row}:${col}`;
+}
+
+/** The queued op sitting on a given cell, if any. */
+export function queuedOpAt(
+  s: WorkspaceState,
+  table: number,
+  row: number,
+  col: number,
+): QueuedOp | null {
+  return (
+    s.draft.ops.find((op) => op.table === table && op.row === row && op.col === col) ?? null
+  );
+}
+
 /**
  * A compact signature of everything a view switch must preserve.
  *
@@ -333,5 +627,20 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     uiZoom: s.uiZoom,
     recents: s.recents.map((r) => r.sha256),
     entranceDone: s.entranceDone,
+    // Phase 4. The plan queue, the approval and the candidate are exactly the
+    // state product direction §4 names as shared, so they belong in the
+    // signature the smoke asserts across a view switch. An edit in progress is
+    // here too: a half-typed value must survive Ctrl+2 and come back.
+    draftOps: s.draft.ops.map((op) => `${cellKey(op.table, op.row, op.col)}=${op.text}`),
+    draftPlan: s.draft.plan?.opsHash ?? null,
+    draftVerdict: s.draft.validation?.verdict ?? null,
+    inlineEdit: s.inlineEdit
+      ? cellKey(s.inlineEdit.table, s.inlineEdit.row, s.inlineEdit.col)
+      : null,
+    approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
+    applied: s.applied?.candidate.sha256 ?? null,
+    verdict: s.candidateVerdict?.report.acceptance ?? null,
+    receiptOpen: s.receiptOpen,
+    events: s.events.length,
   });
 }

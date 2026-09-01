@@ -27,21 +27,113 @@
  * `row,col#run` as two addressings with no mapping between them. Recorded in
  * README.
  *
- * **Phase 4 note.** Every fill seat is already a discrete, addressed,
- * focusable element carrying its `data-node-id`. Inline editing replaces the
- * slot's contents with an input and drafts an OperationPlan; nothing else about
- * this component has to change.
+ * **Phase 4.** Every fill seat was already a discrete, addressed element with
+ * its own empty slot, so inline editing replaced the slot's contents with a
+ * real `<input>` and nothing else about this component changed. A queued edit
+ * renders in place as `before → after` so the document on screen shows what
+ * the document would become — and shows it as a proposal, not as a fact,
+ * because nothing has been written.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { beginEdit, cancelEdit, commitEdit } from "../actions";
 import {
   activeText,
+  cellKey,
   selectionId,
   setSelection,
   useWorkspace,
+  type QueuedOp,
   type Selection,
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
+
+/**
+ * The inline editor. A real `<input>`, mounted in the cell.
+ *
+ * That it is a real input element is the whole design, not an implementation
+ * detail: Hangul composition belongs to the IME, and only a real text field
+ * gets it. A 두벌식 sequence composes in place, the preedit syllable is
+ * visible while it is being built, and Backspace decomposes rather than
+ * deletes. A keydown-driven buffer would receive the jamo separately and
+ * reassemble them wrongly; a contenteditable would fight the composition
+ * events. The spike proved this with real scan codes (M13/M14) and
+ * `scripts/ime.ps1` re-proves it against this field.
+ *
+ * `onKeyDown` deliberately ignores Enter while `isComposing` is true. Pressing
+ * Enter to CONFIRM a composing syllable is a normal part of typing Korean, and
+ * a handler that committed the edit there would end the edit halfway through
+ * the user's word.
+ */
+function SeatEditor({
+  value,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(value);
+  const field = useRef<HTMLInputElement>(null);
+  const composing = useRef(false);
+
+  useEffect(() => {
+    field.current?.focus();
+    field.current?.select();
+  }, []);
+
+  return (
+    <input
+      ref={field}
+      className="seat-input"
+      data-testid="seat-input"
+      value={text}
+      aria-label="이 자리에 넣을 값"
+      onChange={(e) => setText(e.target.value)}
+      onCompositionStart={() => {
+        composing.current = true;
+      }}
+      onCompositionEnd={(e) => {
+        composing.current = false;
+        // The composed syllable arrives here on some IMEs without a further
+        // input event, so read it off the element rather than trusting state.
+        setText((e.target as HTMLInputElement).value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          if (composing.current || e.nativeEvent.isComposing) return;
+          e.preventDefault();
+          onCommit(field.current?.value ?? text);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+        // Every other key, modifiers included, belongs to the field.
+        e.stopPropagation();
+      }}
+      onBlur={() => onCommit(field.current?.value ?? text)}
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+/** A queued edit, drawn in the document as a proposal. */
+function QueuedValue({ op }: { op: QueuedOp }) {
+  return (
+    <span className="queued" data-testid={`queued-${op.table}-${op.row}-${op.col}`}>
+      {op.before.trim().length > 0 ? (
+        <>
+          <s className="was">{op.before}</s>
+          <span className="arrow" aria-hidden="true">
+            →
+          </span>
+        </>
+      ) : null}
+      <span className="will">{op.text}</span>
+    </span>
+  );
+}
 
 /** Runs render in their real colour when the runtime says the colour is off. */
 function Run({ run }: { run: TextRun }) {
@@ -57,7 +149,19 @@ function Run({ run }: { run: TextRun }) {
   );
 }
 
-function CellBody({ cell, region }: { cell: GraphCell; region?: RegionText }) {
+function CellBody({
+  cell,
+  region,
+  queued,
+}: {
+  cell: GraphCell;
+  region?: RegionText;
+  queued?: QueuedOp | null;
+}) {
+  // A queued edit replaces whatever the cell holds today. Showing both — the
+  // document's current text AND the proposed value — is what lets a reviewer
+  // check the edit against the form rather than against their memory of it.
+  if (queued) return <QueuedValue op={queued} />;
   const runs = region?.runs ?? [];
   if (runs.length > 0) {
     return (
@@ -90,7 +194,19 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
   const texts = useWorkspace(activeText);
   const currentId = useWorkspace((s) => selectionId(s.selection));
   const locateNonce = useWorkspace((s) => s.locateNonce);
+  const inlineEdit = useWorkspace((s) => s.inlineEdit);
+  const queuedOps = useWorkspace((s) => s.draft.ops);
   const scroller = useRef<HTMLDivElement>(null);
+
+  const queuedByCell = useMemo(() => {
+    const map = new Map<string, QueuedOp>();
+    for (const op of queuedOps) map.set(cellKey(op.table, op.row, op.col), op);
+    return map;
+  }, [queuedOps]);
+
+  const editingId = inlineEdit
+    ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
+    : null;
 
   /** Address -> its full text, so a cell can find its own runs in O(1). */
   const byAddr = useMemo(() => {
@@ -225,6 +341,9 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                     const region = byAddr.get(
                       `${table.index}:${cell.addr.row}:${cell.addr.col}`,
                     );
+                    const seat = cell.classification === "fill_target";
+                    const queued = queuedByCell.get(id) ?? null;
+                    const editing = editingId === id;
                     return (
                       <td
                         key={id}
@@ -232,29 +351,52 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                         data-node-id={id}
                         data-testid={`doc-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
                         className={[
-                          cell.classification === "fill_target"
+                          seat
                             ? "seat"
                             : cell.classification === "guide"
                               ? "guide"
                               : cell.classification === "spacer"
                                 ? "spacer"
                                 : "",
+                          queued ? "has-edit" : "",
+                          editing ? "editing" : "",
                           flashId === id ? "locate-flash" : "",
                         ]
                           .filter(Boolean)
                           .join(" ")}
                         aria-selected={currentId === id}
-                        title={`R${cell.addr.row}C${cell.addr.col} · ${cell.classification}`}
-                        onClick={() =>
-                          select({
-                            kind: "cell",
+                        title={
+                          seat
+                            ? `R${cell.addr.row}C${cell.addr.col} · 채움 자리 — 눌러서 값을 넣습니다`
+                            : `R${cell.addr.row}C${cell.addr.col} · ${cell.classification}`
+                        }
+                        onClick={() => {
+                          const selection = {
+                            kind: "cell" as const,
                             table: table.index,
                             row: cell.addr.row,
                             col: cell.addr.col,
-                          })
-                        }
+                          };
+                          // A 채움 자리 opens for typing on the first click.
+                          // Anything else is a selection, as before: a form's
+                          // static text is not editable and offering an input
+                          // over it would be a promise the runtime refuses.
+                          if (seat && !editing) {
+                            beginEdit(table.index, cell.addr.row, cell.addr.col);
+                          } else {
+                            select(selection);
+                          }
+                        }}
                       >
-                        <CellBody cell={cell} region={region} />
+                        {editing && inlineEdit ? (
+                          <SeatEditor
+                            value={queued?.text ?? inlineEdit.before}
+                            onCommit={(next) => void commitEdit(next)}
+                            onCancel={cancelEdit}
+                          />
+                        ) : (
+                          <CellBody cell={cell} region={region} queued={queued} />
+                        )}
                       </td>
                     );
                   })}
