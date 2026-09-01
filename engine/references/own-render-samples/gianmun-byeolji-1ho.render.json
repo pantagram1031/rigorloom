@@ -1,0 +1,63 @@
+{
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 13,
+    "cells": 34,
+    "paragraphs": 67,
+    "placeholders": 0,
+    "runs": 74,
+    "tables": 3,
+    "text_lines": 31
+  },
+  "elements_skipped": [
+    {
+      "count": 1,
+      "element": "hp:tbl@pos",
+      "reason": "anchored object (treatAsChar=0, horzRelTo=COLUMN, vertRelTo=PARA) placed at its declared offset; text wrap around it is not computed"
+    }
+  ],
+  "fonts": {
+    "bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "note": "every HWP face in the document is rasterised with this one family; advance widths therefore differ from the authoring engine's",
+    "regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "source": "system"
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "rendered by Rigorloom's own OWPML renderer; NOT certified against a Hancom reference render. Certification is per document class via pipeline/scripts/render_cert.py.",
+  "hwpunit_per_inch": 7200,
+  "notes": [
+    "line boxes come from the document's own cached hp:lineseg layout; line breaking matches the authoring engine, intra-line text extents do not (see fonts)",
+    "character-level typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) is not applied",
+    "headers, footers, footnotes, endnotes and master pages are not drawn",
+    "full limits and the certification path: engine/references/own-render-notes.md"
+  ],
+  "page_geometry_hwpunit": {
+    "body_left": 5669,
+    "body_top": 5669,
+    "height": 84188,
+    "landscape": "WIDELY",
+    "margin": {
+      "bottom": 2835,
+      "footer": 0,
+      "gutter": 0,
+      "header": 0,
+      "left": 5669,
+      "right": 5669,
+      "top": 5669
+    },
+    "usable_height": 75684,
+    "usable_width": 48190,
+    "width": 59528
+  },
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": 1,
+  "png_pages": [
+    "gianmun-byeolji-1ho-p1.png"
+  ],
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "source": "gianmun-byeolji-1ho.hwpx"
+}
