@@ -225,6 +225,47 @@ Refusals: `needs_hancom`, `com_busy`, `not_convertible`, `convert_failed`
 Everything around it is tested with the convert step substituted by a prebuilt
 PDF. One live smoke on an operator machine is owed.
 
+## Page geometry
+
+```sh
+python runtime/scripts/cli.py --root $R geometry --session $SID [--page 0]
+```
+
+`document/pageGeometry` returns where the text **is** on the rendered page, and
+which editable address each line corresponds to — the two things an editor that
+works *on* the page needs. Positions come from PyMuPDF reading the PDF Hancom
+laid out, so the layout is the renderer's, never ours.
+
+Its own method rather than a field on `render`, because a raster is per-zoom
+and normalized rects are not, because the render frame already caps an inline
+image at 512 KiB, and because geometry is cached on the PDF hash while a raster
+is not.
+
+**Rects are normalized** — `[x0, y0, x1, y1]` as fractions of the page, origin
+top-left, y down. Multiply by the raster's pixel size and draw. `pageSize`
+gives the points back if you want them.
+
+Each span is a **line** (PyMuPDF splits at font runs, which would fragment
+every label) and carries one of three outcomes:
+
+- `unique` — one address, set;
+- `ambiguous` — `address: null` plus every candidate. **Never a pick.** T41 is
+  what happens when one unscoped key matches five sheets and the gate passes;
+- `unmapped` — `address: null`, and the line still renders as non-editable.
+
+Matching normalizes with `pipeline/scripts/check_residue.normalize_text`,
+**imported**, so page matching and the residue gate cannot disagree about what
+"the same string" is.
+
+**Empty seats** carry the derivation used: `matched_text`, `cell_borders` (a
+rule actually drawn on the page) or `interpolated` (from a uniquely matched
+label immediately to its left). A seat that cannot be placed is **absent** —
+the Desktop falls back to tree editing for it, rather than being handed a box
+that is probably wrong.
+
+No PDF means no geometry, with the same closed reasons `render` uses. Geometry
+is cached on `(pdf sha256, page)`, bounded at 64 entries.
+
 ## Events
 
 Every session keeps `<session>/events.jsonl`, appended on each mutation:
