@@ -116,7 +116,13 @@ function Geometry({ inspect, zoom, page }: { inspect: InspectResult; zoom: numbe
 function prepareGuidance(code: string): string {
   switch (code) {
     case "needs_hancom":
-      return "이 기계에는 변환에 쓸 한컴오피스가 없습니다. 한컴이 설치된 기계에서 열거나, 이미 PDF인 문서를 여십시오.";
+      // NOT "한컴이 없습니다". This branch fires whenever the runtime cannot
+      // reach the converter, and on this machine the reason is that the frozen
+      // sidecar carries no pyhwpx while Hancom itself is installed and running
+      // — so the old copy asserted something about the machine that the runtime
+      // never said, directly under the runtime's own words saying otherwise.
+      // The reason line above is the fact; this is what to do about it.
+      return "런타임이 변환기에 닿지 못했습니다. 위에 적힌 이유가 실제 원인입니다. 한컴이 설치되고 변환기를 쓸 수 있는 기계에서 열거나, 이미 PDF인 문서를 여십시오.";
     case "com_busy":
       return "한컴이 이미 떠 있습니다. 그 창을 닫고 다시 누르십시오. 런타임은 남의 한컴을 대신 종료하지 않습니다 — 그렇게 했다가 서로의 작업을 죽인 적이 있습니다.";
     case "not_convertible":
