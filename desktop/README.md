@@ -29,9 +29,18 @@ Protocol: `docs/runtime-protocol-v0.md`. Product shape: `docs/product-direction.
 | `src/actions.ts` | every operation, as plain functions, so the smoke drives the real path |
 | `src/runtime.ts` | thin invoke wrappers and event subscriptions |
 | `src/views/` | `DocumentView`, `AgentView` — layouts, no state |
-| `src/components/` | tree, preview, panels, verification bar, timeline, composer |
+| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash |
+| `src/assets/` | `logo.svg` (drawing of record) and the bundled Pretendard + `OFL.txt` |
+| `src/devMock.ts` + `src/fixtures/` | browser-mode replay of a recorded real session; `import.meta.env.DEV` only, absent from production bundles |
 | `src/smoke.ts` | the scripted checks, run inside the built app |
-| `scripts/` | build, smoke, screenshots, window capture |
+| `scripts/` | build, smoke, screenshots, window capture, fixture recorder |
+
+### Keyboard
+
+`Ctrl+O` open · `Ctrl+1` / `Ctrl+2` views · `Ctrl+=` / `Ctrl+-` / `Ctrl+0` app
+zoom (50–200 %, persisted, announced as a toast) · `Ctrl+C` copies the selected
+cell or paragraph when there is no text selection to copy instead. Dropping a
+`.hwpx` on the window opens it; anything else is refused out loud.
 
 ## Running it
 
@@ -169,49 +178,140 @@ has no such structures.
 
 ## Design language
 
-Tokens live at the top of `src/styles.css`.
+Tokens live at the top of `src/styles.css`. The identity is **paper, not web**.
 
-**Typography.** `Pretendard, "Pretendard Variable", "Noto Sans KR", "Malgun
-Gothic", system-ui, sans-serif`. Never `system-ui` alone: on Korean Windows it
-resolves to 맑은 고딕, which ships Semilight/Regular/Bold and cannot express a
-hierarchy — the reason Studio reads flat. Body 13–14 px at `line-height: 1.7`,
-because Hangul glyphs fill their em box and Latin-tuned 1.4–1.5 crowds them;
-headings 1.35. Weight carries hierarchy (400/500/600), never 700+ for Korean UI
-text. **Hangul is never letter-spaced**; the one tracked class, `.latin-caps`, is
-Latin-only by construction. Evidence — hashes, addresses, exit codes — is
-monospace with tabular figures.
+**Brand.** The mark is a plain weave: two warps and two wefts crossing four
+times, one strand broken at each crossing so the eye reads over-and-under rather
+than a grid, with a leg falling from the bottom-right knot to lean it toward R.
+R-adjacency is in the silhouette, not in drawing a letter. `src/assets/logo.svg`
+is the drawing of record and carries the geometry rationale — why terminals sit
+at 4 and 28 on a 32 grid (round caps add half the stroke), why the crossing gaps
+are 5.5 (the narrowest that still reads as an interlace at 16 px).
+`src/components/Logo.tsx` mirrors it inline so it can inherit `currentColor` and
+be animated. The Tauri icon set is generated from it. The wordmark is **Latin
+"Rigorloom"**, and the window title matches; there is no 리고룸 in the chrome.
+
+**Typography — Pretendard Variable, bundled.** `src/assets/fonts/`, with
+`OFL.txt` beside it. This closes the spike's open question 8: Pretendard is SIL
+OFL 1.1, which permits redistribution provided the licence travels with the
+font, and it does — into the repository and into the installer. Bundling is what
+makes the product look the same on every machine. The fallbacks below it only
+matter if it fails to load, and the first of them, 맑은 고딕, ships
+Semilight/Regular/Bold and cannot express a hierarchy — the reason a
+`system-ui` Korean app reads flat.
+
+Body 13–14 px at `line-height: 1.6`, document body 1.75, headings 1.3, because
+Hangul glyphs fill their em box and Latin-tuned 1.4–1.5 crowds them. Weight
+carries hierarchy (400 / 500 / 600), never 700+ for Korean UI text. **Hangul is
+never letter-spaced**; the one tracked class, `.latin-caps`, is Latin-only by
+construction. Evidence — hashes, addresses, exit codes — is `Consolas` with
+tabular figures. No second webfont for numbers.
+
+**Colour — warm hanji neutrals.** Surfaces `#F1EEE8` app / `#FAF8F4` panel /
+`#FEFDFB` paper; ink `#1C1E21`; hairlines `#E4E0D8`. **No pure `#FFF`
+anywhere.** A dark ink strip across the top carries the mark and the wordmark,
+and that one element does most of the work of making this stop looking like a
+page.
+
+Two signal colours, and the discipline is the point:
+
+- **`#0F766E` deep teal** is the *working* accent — interactive affordance,
+  selection, focus, fill seats. Nothing decorative.
+- **`#C2410C` 단청 vermilion** is the *reserved* point colour, spent only on
+  attention that demands a response: a downed runtime, a recorded shell crash,
+  and — when Phase 4 brings it — approval-pending. Scarcity is the whole
+  mechanism. It appears nowhere else, and adding it to a chip would end its
+  meaning.
+
+Evidence tones (positive / warning / negative / muted) stay separate from both
+and always ship with their word: colour is never the only signal, because the
+target user reviews documents for hours and may be colour-vision-deficient.
 
 **Space.** 4 px base: 4 / 8 / 12 / 16 / 24 / 32 / 48. `--row-h` is shared by the
 structure tree, the session list and the timeline, so rows in different panels
 line up and the eye keeps trusting that they refer to the same thing.
 
-**Colour.** One accent (`#3a6082` light, `#7eacd6` dark), low chroma, interactive
-affordance only. Semantic tones are reserved for evidence: positive, warning,
-negative, muted — retuned per theme rather than reused. No gradient, no glow, no
-animated accent. Motion only where it explains a relationship: 120–140 ms.
+**Motion.** One curve, `cubic-bezier(0.2, 0, 0, 1)`, and nothing overshoots — a
+document tool that bounces reads as a toy.
 
-**Surfaces.** No card grid. Lists and one primary surface. The centre is the
-brightest thing on screen, panels sit a step back, borders are 1 px at low
-contrast rather than shadows. Density is a feature — this is a tool for long
-sessions.
+| Moment | Behaviour |
+| --- | --- |
+| Entrance | 700 ms once per launch: the mark weaves itself (warps, then wefts, then the leg — the order a loom is dressed), then the three panes rise in a 60 ms stagger. Click to skip. Never replays. |
+| View switch | Shared-axis slide + fade, 200 ms. Document sits left of Agent on one axis, so the direction means something and the two views read as two rooms of one place. |
+| Selection | 120 ms. A located node gets a 900 ms teal flash — long enough to find, short enough not to nag. |
+| Timeline cards | 8 px rise on enter. |
+| Status badges | Cross-fade rather than snap, keyed on the value. |
+
+`prefers-reduced-motion` disables all of it, and nothing but the motion changes:
+every animation is decoration over a layout that is already correct.
+
+**Surfaces.** No card grid. Lists, and one primary surface. The paper column is
+the brightest thing on screen and the only element with a shadow; everything
+else is separated by 1 px hairlines. Density is a feature.
 
 **Copy** is written as Korean product language, not translated developer
 strings: `채움 자리`, `쓰기 전 확인`, `이 빌드가 보지 못하는 것`,
 `사이드카가 종료되었습니다. 문서 상태는 남아 있습니다.`
 
-**Pretendard is not bundled.** The stack names it first and it is absent on the
-build machine, so the app currently renders in Noto Sans KR. Bundling is the
-spike's recommendation and its open question 8 — SIL OFL redistribution inside a
-Windows installer needs a decision from whoever ships this, and the Hangul subset
-has a size cost. Named here rather than done quietly.
+### Where I departed from the direction
+
+- **Dark mode was kept.** The direction specifies the light paper palette
+  exactly and says nothing about dark. Deleting the existing dark theme would
+  have been a regression, so it survives as a *derived* theme: same roles, warm
+  ink rather than a blue night mode, both signal colours re-tuned rather than
+  reused. Light is the designed one and the one the screenshots show.
+- **`검사 실행` cannot run `verify`, and does not claim to.** The direction asks
+  for a button that "runs the runtime's verify". `verify/*` is not on the wire
+  and `RuntimeCore.candidate_verify` needs an applied candidate, which a
+  read-only phase never produces. Wiring the button to nothing, or relabelling
+  a different check as verification, would be precisely the dishonesty the
+  verification bar exists to prevent. So it re-reads the document and reports
+  the engine's own preflight facts — `color_anomaly` (T127), `scriptAnomaly`
+  (T30), per-run colour drift — each carrying an address, and the two proof
+  badges keep saying 증명 없음 / 실행 안 함 throughout. Gap 3 below is the
+  method that would let it do more.
+- **App zoom uses the webview's own zoom**, not root font-size scaling, so
+  vector chrome and the paper column scale with the text and glyphs are
+  re-rasterised rather than resampled.
+
+### 본문 보기, and the gap under it
+
+The centre renders the document's own text and table structure in reading
+order. It is not a page render and the header strip says so.
+
+The form's table *is* the document — for the corpus 기안문 별지, table 0's 32
+cells hold everything and the 26 paragraphs are the runs inside those cells — so
+the tables render as the body and only paragraphs whose text appears in no cell
+run are shown separately. On the corpus form that second list is correctly
+empty.
+
+Two reconstructions were needed, both derived from data the runtime already
+gives rather than guessed:
+
+1. **Column spans.** The runtime reports `row,col` and says nothing about
+   merges. Laid out naively that is nonsense on a real form: one row of fifteen
+   cells and several rows of one cell, and an HTML table aligns columns across
+   rows, so the single-cell rows collapse into the first column and the document
+   crams into a strip a third of the page wide. The union of every distinct
+   `col` in the table is the column axis, and a cell spans from its own `col` to
+   the next occupied one in its row. That is a colspan *implied by the
+   addressing*, not a guess at geometry.
+2. **Paragraph/cell coverage** is exact string matching, which is sound because
+   `form_inspect` derives both from the same runs.
+
+The second is a workaround for gap 9: the Runtime exposes `at_para` and
+`row,col#run` as two addressings of the same content with no mapping between
+them.
+
+Fill seats are already discrete, addressed, `data-node-id`-carrying elements
+with their own empty slot. Phase 4's inline editing replaces a slot's contents
+with an input and drafts an OperationPlan; nothing else here has to change.
 
 ---
 
 ## Evidence
 
-Reproduce with the two scripts above. Recorded from the run on this branch:
-
-**Build** (`scripts/_run/build-exit-codes.txt`)
+### Phase 3 (commit `2f27d3e`), reproduced from a clean build
 
 | Step | Exit | Seconds |
 | --- | --- | --- |
@@ -221,21 +321,55 @@ Reproduce with the two scripts above. Recorded from the run on this branch:
 | `npx tauri build` | 0 | 401 |
 
 Shell exe 6.08 MiB · NSIS installer 8.89 MiB · sidecar payload 23.2 MiB.
+Smoke: 36 checks, 0 failures, exit 0, across two processes with an orphan check
+between them. `pytest tests/test_runtime_*.py` 162 passed.
 
-**Smoke** — 36 checks, 0 failures, exit 0. Phase `open` (29) opens the corpus
-form, verifies the tree against the runtime's own counts (26 of 26 paragraphs,
-32 of 32 cells, 9 fill seats), confirms the honest preview state, and asserts the
-shared-state signature is identical across `document → agent → document`. Phase
-`reattach` (7) is a second process that finds the session the first left on disk
-and re-reads it to the same source hash. Between them, an orphan check: the
-sidecar is gone after the shell exits.
+### The design slice: NOT built, NOT smoked, screenshots NOT regenerated
 
-**Screenshots** — `screenshots/{document,agent}-view-{100,150}pct.png`, real
-Korean document loaded, `devicePixelRatio` 1 (2880×1759 css) and 1.5 (1920×1173
-css).
+Stated plainly because the alternative is a README that implies evidence which
+does not exist.
 
-**Runtime tests** — `PYTHONIOENCODING=utf-8 python -m pytest tests/test_runtime_*.py -q`
-passes unchanged; nothing outside `desktop/` was modified.
+**The build machine ran out of disk part-way through this slice** — `C:` reached
+0 bytes free of 463 GB. `cargo clean --profile dev` reclaimed 1 GB of my own
+unused debug artifacts; the release link then failed again at 0.05 GB free. The
+remaining large reclaimable item in this worktree is ~4.4 GB of untracked,
+gitignored build residue under `spikes/` left behind by an earlier branch
+checkout, which is not mine to delete unasked.
+
+Before that, thin LTO replaced fat LTO for an unrelated and independently
+correct reason: fat LTO with `codegen-units = 1` died with
+`rustc-LLVM ERROR: out of memory` on a 16 GB machine with a browser open. A
+build that only completes on an idle machine is not a build.
+
+What **is** verified on this slice:
+
+| | |
+| --- | --- |
+| `npx tsc --noEmit` | exit 0 |
+| `npm run build` (tsc + vite) | exit 0 — `dist/` produced, Pretendard bundled into it |
+| Runtime fixture | recorded from a real Runtime v0 session (`scripts/record-fixture.py`) |
+| Rendered and inspected in a browser against that fixture | see below |
+
+The browser check ran the real components against the real recorded runtime
+output and confirmed, programmatically: `Pretendard Variable` loaded
+(`document.fonts.check` true); app `rgb(241,238,232)`, paper `rgb(254,253,251)`,
+titlebar `rgb(28,30,33)`; paper column 720 px; 34 document cells and 9 fill
+seats rendered, 8 with empty slots; **2 colour-anomaly runs rendered in the
+document's actual `rgb(0,0,255)`** with the anomaly marking — the T127 failure
+made visible rather than normalised away; every table row's colspans summing to
+the table's 15-column axis; 페이지 보기 present and disabled; the centre caveat
+reading 본문 보기 — 실제 페이지 배치는 렌더 증명 후 표시됩니다.
+
+What that check cannot cover: the packaged sidecar, the job object, the
+entrance and view-switch motion in a real window, DPI behaviour, drag-and-drop,
+the native dialog, zoom persistence across a process boundary, and every smoke
+assertion that needs two launches. `scripts/smoke.ps1` and
+`scripts/screenshots.ps1` were extended for all of it and are unrun; the four
+screenshots in `screenshots/` are **from Phase 3 and are stale** — they predate
+the entire visual identity.
+
+Everything above is one `powershell -File desktop/scripts/build-clean.ps1`
+away once there is disk.
 
 ### What the evidence does not cover
 
@@ -299,6 +433,26 @@ Recorded, not patched: `runtime/**` belongs to another branch.
    an explicit `RIGORLOOM_CHILD_PYTHON` override in `rt_engine.EngineTools` would
    let a packaged host point children at a real interpreter without an argv
    convention, and would remove the closure-computation step in `deps.py`.
+9. **No mapping between the two addressings.** `at_para` (paragraphs) and
+   `row,col#run` (cells) name the same underlying runs, and the Runtime exposes
+   both without saying which paragraph lives in which cell. The centre column
+   needs that to render a document once rather than twice, so it matches run
+   text against paragraph text — sound here, because `form_inspect` derives both
+   from the same runs, but a mapping is not something a client should have to
+   reconstruct. *Suggested shape:* `graph.paragraphs[]` gains an optional
+   `cell: {table, row, col, run}` when the paragraph sits inside one, populated
+   from the enumeration `_run_record` already walks.
+10. **No merge geometry.** `table_map` reports each cell's `addr` but no
+    `colSpan`/`rowSpan`, so a form's real ruling cannot be reproduced. The
+    centre reconstructs horizontal spans from the gaps between occupied `col`
+    values, which is right often enough to read but is inference, not data.
+    *Suggested shape:* carry the `colSpan`/`rowSpan` HWPX already stores on
+    each cell straight through into `table_map`.
+11. **No page render, and now a UI waiting for one.** Unchanged from gap 2, but
+    the cost is concrete: 페이지 보기 exists, is wired, and is disabled. The
+    shell polls `capabilities.methods` for anything under `document/render` and
+    will enable the mode the moment one appears, so the runtime side can land
+    without a desktop change.
 
 ## Assumptions
 

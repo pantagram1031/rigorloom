@@ -23,13 +23,26 @@ import type {
   Activity,
   Candidate,
   Capabilities,
+  Finding,
   InspectResult,
+  Recent,
+  RegionText,
   RuntimeError,
   Session,
   SidecarStatus,
 } from "./types";
 
 export type View = "document" | "agent";
+
+/**
+ * What the centre of Document view shows.
+ *
+ * `text` is the default and the only one reachable today: the document's own
+ * text and table structure in reading order. `page` is wired for the render
+ * method the runtime does not have yet and stays disabled until
+ * `capabilities` advertises it.
+ */
+export type CenterMode = "text" | "page";
 
 export type Selection =
   | { kind: "paragraph"; atPara: number }
@@ -64,6 +77,16 @@ export interface WorkspaceState {
   capabilities: Capabilities | null;
   sessions: Session[];
   activeSessionId: string | null;
+  /**
+   * The on-disk path each session was opened from.
+   *
+   * The Runtime deliberately does not keep it: `workspace/openPath` copies the
+   * bytes into the session and records only name, size and SHA-256, so the
+   * source can never be touched again. Reopening from 최근 문서 needs the
+   * original path, so the shell remembers it — and it is shell state, not a
+   * runtime fact.
+   */
+  openedPaths: Record<string, string>;
   /** Cached per session, so switching sessions does not re-run form_inspect. */
   inspects: Record<string, InspectResult>;
   inspectPhase: Phase;
@@ -74,7 +97,34 @@ export interface WorkspaceState {
   selection: Selection;
   expanded: string[];
   page: number;
+  /** Page-preview zoom. Independent of `uiZoom`, which scales the whole app. */
   zoom: number;
+  centerMode: CenterMode;
+  /** Bumped whenever something asks the centre to reveal the selection. */
+  locateNonce: number;
+
+  // --- document text (the centre's content) --------------------------------
+  /** Full text and per-run colour facts, per session. From document/readRegion. */
+  texts: Record<string, RegionText[]>;
+  textPhase: Phase;
+  textError: RuntimeError | null;
+
+  // --- checking ------------------------------------------------------------
+  checkPhase: Phase;
+  findings: Finding[];
+  checkedAt: string | null;
+  sheetOpen: boolean;
+
+  // --- chrome --------------------------------------------------------------
+  /** Webview zoom factor, 0.5-2.0, persisted. */
+  uiZoom: number;
+  toast: { text: string; at: number } | null;
+  recents: Recent[];
+  /** The entrance has played. A view switch must never reset this. */
+  entranceDone: boolean;
+  /** Screenshot support only: pin the entrance open so it can be captured. */
+  holdEntrance: boolean;
+  dragOver: boolean;
 
   // --- agent lane (read-only in this phase) --------------------------------
   activity: Activity[];
@@ -101,6 +151,7 @@ const initial: WorkspaceState = {
   capabilities: null,
   sessions: [],
   activeSessionId: null,
+  openedPaths: {},
   inspects: {},
   inspectPhase: "idle",
   inspectError: null,
@@ -110,6 +161,24 @@ const initial: WorkspaceState = {
   expanded: [],
   page: 1,
   zoom: 1,
+  centerMode: "text",
+  locateNonce: 0,
+
+  texts: {},
+  textPhase: "idle",
+  textError: null,
+
+  checkPhase: "idle",
+  findings: [],
+  checkedAt: null,
+  sheetOpen: false,
+
+  uiZoom: 1,
+  toast: null,
+  recents: [],
+  entranceDone: false,
+  holdEntrance: false,
+  dragOver: false,
 
   activity: [],
   planQueue: [],
@@ -155,7 +224,28 @@ export function useWorkspace<T>(select: (s: WorkspaceState) => T): T {
 
 export const setView = (view: View) => setState({ view });
 
+export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
+
 export const setSelection = (selection: Selection) => setState({ selection });
+
+/**
+ * Select a node AND ask the centre to reveal it.
+ *
+ * Two calls rather than one flag on `setSelection`, because clicking *in* the
+ * centre must not make the centre scroll itself out from under the pointer.
+ * The tree calls this; the document calls `setSelection`.
+ */
+export function locateSelection(selection: Selection) {
+  setState({ selection, locateNonce: state.locateNonce + 1 });
+}
+
+let toastTimer: number | undefined;
+
+export function showToast(text: string, ms = 1100) {
+  setState({ toast: { text, at: Date.now() } });
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => setState({ toast: null }), ms);
+}
 
 export function toggleExpanded(id: string) {
   const open = state.expanded.includes(id);
@@ -201,10 +291,22 @@ export function activeSession(s: WorkspaceState): Session | null {
  * every DOM assertion failed.
  */
 const NO_CANDIDATES: Candidate[] = [];
+const NO_TEXT: RegionText[] = [];
 
 export function activeCandidates(s: WorkspaceState): Candidate[] {
   if (!s.activeSessionId) return NO_CANDIDATES;
   return s.candidates[s.activeSessionId] ?? NO_CANDIDATES;
+}
+
+export function activeText(s: WorkspaceState): RegionText[] {
+  if (!s.activeSessionId) return NO_TEXT;
+  return s.texts[s.activeSessionId] ?? NO_TEXT;
+}
+
+/** Whether the runtime advertises a way to produce a page raster. */
+export function canRenderPages(s: WorkspaceState): boolean {
+  const methods = s.capabilities?.methods ?? [];
+  return methods.some((m) => m.startsWith("document/render"));
 }
 
 /**
@@ -221,9 +323,15 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     expanded: [...s.expanded].sort(),
     page: s.page,
     zoom: s.zoom,
+    centerMode: s.centerMode,
     sessions: s.sessions.map((x) => x.sessionId),
     documentHash: activeInspect(s)?.documentHash ?? null,
     activity: s.activity.length,
     candidates: Object.keys(s.candidates).length,
+    texts: Object.keys(s.texts).length,
+    findings: s.findings.length,
+    uiZoom: s.uiZoom,
+    recents: s.recents.map((r) => r.sha256),
+    entranceDone: s.entranceDone,
   });
 }
