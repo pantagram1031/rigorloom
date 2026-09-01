@@ -48,29 +48,63 @@ not the identity of the project.
 
 ## 2. Current status
 
+Updated 2026-09-01 (second update; the tables below reflect landed draft PRs,
+each verified by the orchestrator against commits and re-run tests — see the PR
+bodies for exact evidence).
+
 | Field | Value |
 |---|---|
-| Current phase | **Phase 0 — Product truth and direction** |
-| Phase 0 state | In progress |
-| Phases 1–6 | Not started |
-| Baseline commit (`main`) | `a635289` |
-| Direction branch | `docs/product-direction-desktop` (PR #150, draft, docs-only, not merged) |
-| Blocking user decisions | 2 open — see §6 (D2, D3) |
+| Current phase | **Phase 5 — agent-native operation (in flight)**; Phases 1–4 implemented as draft PRs |
+| Baseline commit (`main`) | `a635289` (nothing merged yet — all work is stacked draft PRs per Git policy) |
+| Direction branch | `docs/product-direction-desktop` (PR #150, draft, docs-only) |
+| Blocking user decisions | D2, D3 (§6) still open; merges of the implementation stack await user authorization |
+
+### Implementation stack (all draft, none merged)
+
+| PR | Slice | Evidence headline |
+|---|---|---|
+| #152 | Runtime Protocol v0 + desktop architecture drafts | 163 file:line citations, 31 explicit GAP rows |
+| #153 | Threat model + acceptance tasks | independently verified twice + re-confirmed |
+| #154 | Phase 1 headless vertical slice (`runtime/`) | 103 tests; authority split mutation-proven; two-caller identity |
+| #155 | Phase 2 CLI + MCP parity | 60 tests; three-door parity on `opsHash`/verdicts/candidate bytes |
+| #157 | Deterministic mock agent | 18 tests; T30/T127 anomaly seats skipped by design |
+| #158 | Agent Host (mock provider + custom router) | 108 tests; compile gate derived, host methods unreachable |
+| #159 / #161 | Desktop foundation + visual identity | smoke 64/0; real 기안문 visible in 본문 보기; Pretendard bundled |
+| #162 | document/render + renderPrepare + events + child interpreter | gate 4272/0; COM no-kill proven by AST test |
+| #163 | Official Anthropic Messages adapter | 54 tests; live leg `not run`, stated |
+| #164 | **Phase 4 verified editing in Desktop** | smoke 184/0; edit → review queue → approve → candidate → receipt |
+| #160 | Suite flake fix (spawn-bound guard second spelling) | load-proven 3/3 under saturation |
+
+### In flight
+
+| Track | Slice |
+|---|---|
+| Runtime | page text-geometry from Hancom-rendered PDFs (overlay-editing enabler) |
+| Desktop | Phase 5: composer → Agent Host live, provider settings with OS credential store, Hangul-editor chrome |
+| Renderer (new) | own OWPML renderer MVP (fixed-form subset → deterministic PNG, `own-uncertified` grade, render_cert path) |
+
+### Renderer strategy (decision D11)
+
+Three tiers, honestly graded: (1) Hancom COM where installed — ground truth;
+(2) LibreOffice/H2Orestart — the repo's existing `advisory` path, to be wired as
+a renderPrepare fallback; (3) Rigorloom's own renderer, implemented from the
+public OWPML standard (KS X 6101) — never from Hancom binaries — and promoted
+only through `render_cert` certification against reference renders.
 
 ### Phase 0 deliverable checklist
 
 | Deliverable | State |
 |---|---|
-| Repository and release truth audit | Done — recorded in §5 |
+| Repository and release truth audit | Done — §5 |
 | Agent-native identity in `docs/product-direction.md` | Done |
 | Dual-view UX stated as product definition | Done — `product-direction.md` §4 |
 | Surface separation and authority model | Done — `product-direction.md` §5 |
 | Living program document | Done — this file |
-| Corrected docs index | Done — `docs/README.md` |
-| `docs/desktop-architecture.md` | Not started |
-| `docs/threat-model.md` | Not started |
-| `docs/desktop-acceptance.md` | Not started |
-| `docs/runtime-protocol-v0.md` | Not started (Phase 1 input; may be drafted in Phase 0) |
+| Corrected docs index | Done for the direction docs; the four design docs land with their PRs |
+| `docs/desktop-architecture.md` | Drafted — PR #152 |
+| `docs/threat-model.md` | Drafted — PR #153, twice-verified |
+| `docs/desktop-acceptance.md` | Drafted — PR #153 |
+| `docs/runtime-protocol-v0.md` | Drafted — PR #152; extended by #154/#155/#162 |
 
 ### Phase 0 exit gate
 
@@ -79,9 +113,9 @@ not the identity of the project.
 > developer-preview flow, and the current limitations — **without** reading
 > report-pipeline history first.
 
-Not met yet: the threat model, desktop architecture, and acceptance documents
-are outstanding. The exit is judged by a fresh-context reviewer who did not
-write these documents, not by their authors.
+All Phase 0 documents now exist as drafts. The exit is judged by a
+fresh-context reviewer who did not write them — scheduled for when the doc PRs
+co-locate at merge time, not self-certified.
 
 ---
 
