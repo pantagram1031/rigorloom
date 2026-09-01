@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import zipfile
@@ -101,6 +102,58 @@ OBJECT_SLOT = "\ufffc"
 
 SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 HEX_COLOR_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
+
+# --------------------------------------------------------------------------
+# Character typography (hh:charPr children), per language slot
+# --------------------------------------------------------------------------
+# OWPML declares character metrics once per *language slot*, not once per
+# charPr: <hh:ratio hangul="97" latin="100" .../> and the same shape for
+# hh:spacing, hh:relSz and hh:offset.  The slot names below are the ones the
+# format uses, in the order it lists them.
+LANG_SLOTS = ("hangul", "latin", "hanja", "japanese", "other", "symbol",
+              "user")
+
+# The neutral value of each metric, i.e. what "no typography" means.
+#   ratio   — horizontal glyph scale, percent
+#   spacing — letter spacing, percent of the character size
+#   relSz   — relative character size, percent
+#   offset  — baseline shift, percent of the character size (positive = up)
+TYPOGRAPHY_DEFAULTS = {"ratio": 100, "spacing": 0, "relSz": 100, "offset": 0}
+NEUTRAL_TYPOGRAPHY = (100, 0, 100, 0)
+
+# Codepoint -> language slot.  THIS TABLE IS THIS RENDERER'S CHOICE, not the
+# standard's: KS X 6101 names the slots and says a character is metered by the
+# slot its script belongs to, but it does not publish the codepoint partition
+# (that is an implementing engine's detail).  The ranges below are the plain
+# Unicode block reading of each slot name, and they are declared as an
+# approximation in the sidecar rather than presented as the spec.
+#
+# ``user`` is never selected by any codepoint: it is the slot HWP assigns from
+# a user-defined character range table that the document does not carry, so a
+# renderer reading only the file cannot honour it.  Named, not silently merged.
+_SLOT_RANGES = (
+    ("hangul", ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F),
+                (0xAC00, 0xD7FB), (0xFFA0, 0xFFDC))),
+    ("japanese", ((0x3040, 0x30FF), (0x31F0, 0x31FF), (0xFF66, 0xFF9D))),
+    ("hanja", ((0x2E80, 0x2FDF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
+               (0xF900, 0xFAFF), (0x20000, 0x2FA1F))),
+    ("latin", ((0x0030, 0x0039), (0x0041, 0x005A), (0x0061, 0x007A),
+               (0x00C0, 0x024F), (0x1E00, 0x1EFF))),
+    ("symbol", ((0x0020, 0x002F), (0x003A, 0x0040), (0x005B, 0x0060),
+                (0x007B, 0x007E), (0x00A1, 0x00BF), (0x2000, 0x206F),
+                (0x2100, 0x2BFF), (0x3000, 0x303F), (0xFF01, 0xFF65),
+                (0xFFE0, 0xFFEE))),
+)
+
+
+def script_slot(ch):
+    """Which ``hh:charPr`` language slot meters ``ch``.  See ``_SLOT_RANGES``."""
+    code = ord(ch)
+    for slot, ranges in _SLOT_RANGES:
+        for low, high in ranges:
+            if low <= code <= high:
+                return slot
+    return "other"
 
 # Inline objects this tier draws as a named placeholder box instead of art.
 # The label is what a human sees on the page; the sidecar carries the element.
@@ -234,7 +287,19 @@ def parse_header(header_xml: bytes) -> dict:
         height = cp.get("height")
         underline = _kid(cp, "underline")
         font_ref = _kid(cp, "fontRef")
+        typography = {}
+        for metric, default in TYPOGRAPHY_DEFAULTS.items():
+            el = _kid(cp, metric)
+            slots = {}
+            for slot in LANG_SLOTS:
+                raw = el.get(slot) if el is not None else None
+                try:
+                    slots[slot] = int(raw) if raw is not None else default
+                except (TypeError, ValueError):
+                    slots[slot] = default
+            typography[metric] = slots
         char_pr[cid] = {
+            "typography": typography,
             "height_pt": (int(height) / HWPUNIT_PER_PT) if height else None,
             "color": _colour(cp.get("textColor")),
             "shade_color": _colour(cp.get("shadeColor")),
@@ -566,6 +631,13 @@ class OwnRenderer:
         # record.
         self.line_boxes = []
         self._page = 1
+        self._image = None
+        self._typo_cache = {}
+        # Which character metrics this document actually exercised, counted in
+        # characters.  The honesty rule cuts both ways: the sidecar has to say
+        # what was *applied*, not only what was skipped, or "we apply hh:ratio"
+        # would be unfalsifiable on a document that never declares one.
+        self.applied = {}
         # Standing caveats that apply to every render, not just this document.
         # They belong in the artefact, not only in the notes file, because the
         # sidecar is what travels with the PNG.
@@ -573,8 +645,15 @@ class OwnRenderer:
             "line boxes come from the document's own cached hp:lineseg layout; "
             "line breaking matches the authoring engine, intra-line text "
             "extents do not (see fonts)",
-            "character-level typography (hh:ratio, hh:spacing, hh:relSz, "
-            "hh:offset) is not applied",
+            "character typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) "
+            "IS applied, per language slot; see typography for what this "
+            "document exercised and typography_slot_model for how a character "
+            "is assigned to a slot",
+            "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no "
+            "trailing gap), measured against the Hancom reference render",
+            "hh:align JUSTIFY stretches every line of a paragraph except its "
+            "last; DISTRIBUTE stretches every line; neither ever shrinks a "
+            "line that already overruns its box",
             "headers, footers, footnotes, endnotes and master pages are not "
             "drawn",
             "full limits and the certification path: "
@@ -706,15 +785,127 @@ class OwnRenderer:
     def _charpr(self, cid):
         return self.defs["char_pr"].get(cid or "", {})
 
-    def _font_for(self, cid):
+    def _font_for(self, cid, rel_sz=100):
         cp = self._charpr(cid)
-        pt = cp.get("height_pt") or 10.0
+        pt = (cp.get("height_pt") or 10.0) * rel_sz / 100.0
         return self.fontbook.get(self.pt_to_px(pt), bool(cp.get("bold")))
 
-    def _measure(self, draw, text, cid):
+    def _typography(self, cid, ch):
+        """``(ratio, spacing, relSz, offset)`` for ``ch`` under ``cid``.
+
+        Cached per ``(charPr, slot)``: a body paragraph asks this once per
+        character and the answer only varies with the character's script.
+        """
+        slot = script_slot(ch)
+        key = (cid, slot)
+        hit = self._typo_cache.get(key)
+        if hit is not None:
+            return hit
+        typo = self._charpr(cid).get("typography")
+        if typo is None:
+            value = NEUTRAL_TYPOGRAPHY
+        else:
+            value = (typo["ratio"].get(slot, 100),
+                     typo["spacing"].get(slot, 0),
+                     typo["relSz"].get(slot, 100),
+                     typo["offset"].get(slot, 0))
+        self._typo_cache[key] = value
+        return value
+
+    def _note_typography(self, ratio, spacing, rel_sz, offset):
+        """Record which character metrics this document actually exercises."""
+        if ratio != 100:
+            self.applied["hh:ratio"] = self.applied.get("hh:ratio", 0) + 1
+        if spacing:
+            self.applied["hh:spacing"] = self.applied.get("hh:spacing", 0) + 1
+        if rel_sz != 100:
+            self.applied["hh:relSz"] = self.applied.get("hh:relSz", 0) + 1
+        if offset:
+            self.applied["hh:offset"] = self.applied.get("hh:offset", 0) + 1
+
+    def _text_pieces(self, draw, cid, text):
+        """Drawable pieces for one same-``charPr`` text run.
+
+        A maximal stretch of characters whose typography is neutral stays ONE
+        piece, measured and drawn by a single Pillow call, so a document that
+        declares no character metrics renders exactly as it did before this
+        existed (kerning included — Pillow's BASIC layout applies the kern
+        table, so splitting a Latin word into characters would change its
+        width).  A character carrying any non-neutral metric becomes its own
+        piece, because ``hh:spacing`` has to open a gap after it and
+        ``hh:ratio`` has to scale its glyph alone.
+
+        Returns ``[{"kind": "glyph"|"gap", "advance": px, ...}]``.  A ``gap``
+        is a letter-spacing gap and is the slot justification widens.
+        """
+        pieces = []
         if not text:
-            return 0.0
-        return float(draw.textlength(text, font=self._font_for(cid)))
+            return pieces
+        run = []          # characters accumulating into a neutral piece
+        run_metrics = None
+
+        def flush():
+            if not run:
+                return
+            ratio, spacing, rel_sz, offset = run_metrics
+            font = self._font_for(cid, rel_sz)
+            chunk = "".join(run)
+            width = float(draw.textlength(chunk, font=font)) * ratio / 100.0
+            size_px = font.size
+            pieces.append({
+                "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
+                "font": font, "ratio": ratio, "size_px": size_px,
+                "offset_px": size_px * offset / 100.0,
+            })
+            run.clear()
+
+        for ch in text:
+            metrics = self._typography(cid, ch)
+            self._note_typography(*metrics)
+            ratio, spacing, rel_sz, offset = metrics
+            neutral = metrics == NEUTRAL_TYPOGRAPHY
+            if neutral and run_metrics == NEUTRAL_TYPOGRAPHY:
+                run.append(ch)
+                continue
+            flush()
+            run_metrics = metrics
+            if neutral:
+                run.append(ch)
+                continue
+            run.append(ch)
+            flush()
+            if spacing:
+                pieces.append({
+                    "kind": "gap",
+                    "advance": self._spacing_px(cid, rel_sz, spacing),
+                })
+        flush()
+        return pieces
+
+    def _measure(self, draw, text, cid):
+        """Advance of ``text`` under ``cid``, character typography included.
+
+        The trailing letter-spacing gap is excluded: 자간 opens space
+        *between* characters.  Measured against the Hancom reference —
+        gianmun's four-character 발신명의 run at 15 pt with ``spacing="50"``
+        is 5.5 em wide there (4 advances + 3 gaps), not 6.0.
+        """
+        pieces = self._text_pieces(draw, cid, text)
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        return sum(p["advance"] for p in pieces)
+
+    def _spacing_px(self, cid, rel_sz, spacing):
+        """``hh:spacing`` in pixels: a percent of the *character size*.
+
+        Not of the ratio-scaled advance — ``hh:ratio`` scales the glyph, 자간
+        is declared against the character height.  Measured against the Hancom
+        reference: gianmun's four-character 발신명의 run, 15 pt with
+        ``spacing="50"``, is drawn 5.5 em wide (4 advances + 3 gaps of 0.5 em),
+        and the reference PDF reports 5.496 em.
+        """
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        return pt * self.dpi / 72.0 * spacing / 100.0
 
     def _line_items(self, para, chars, base_index):
         """Ordered ``("text", Segment)`` / ``("obj", record)`` items for a line.
@@ -739,14 +930,45 @@ class OwnRenderer:
         return out
 
     def _align_offset(self, align, avail_px, used_px):
+        """Where the line's content starts inside its box.
+
+        The cached ``lineseg`` carries the box, never the alignment offset —
+        ``horzpos`` stays 0 and ``horzsize`` stays the full column even for a
+        centred line — so this is computed from the measured content width.
+        ``JUSTIFY`` and ``DISTRIBUTE`` start at the left and take their slack
+        through ``_justify_extra`` instead.
+        """
         slack = avail_px - used_px
         if slack <= 0:
             return 0.0
-        if align in ("CENTER", "DISTRIBUTE"):
+        if align == "CENTER":
             return slack / 2.0
         if align == "RIGHT":
             return slack
         return 0.0
+
+    def _justify_extra(self, align, avail_px, used_px, slots, last_line):
+        """Extra width per elastic slot for JUSTIFY / DISTRIBUTE.
+
+        Per the format's alignment semantics:
+          - ``JUSTIFY`` (양쪽) stretches every line of a paragraph *except its
+            last* to the full box; the last line is left-aligned.  A one-line
+            paragraph is therefore entirely "last line" and is untouched —
+            which is most cell content on this corpus.
+          - ``DISTRIBUTE`` (배분) stretches every line including the last.
+
+        Which slots are elastic is decided in ``_elastic_slots``.  Nothing is
+        ever *shrunk*: a line already wider than its box keeps its width, so a
+        font substitution that overruns cannot be hidden by pulling text back.
+        """
+        if align not in ("JUSTIFY", "DISTRIBUTE"):
+            return 0.0
+        if align == "JUSTIFY" and last_line:
+            return 0.0
+        slack = avail_px - used_px
+        if slack <= 0 or slots <= 0:
+            return 0.0
+        return slack / slots
 
     def _greedy_wrap(self, draw, chars, avail_px):
         """CJK-aware greedy wrap, used only when the cached layout is unusable.
@@ -792,32 +1014,132 @@ class OwnRenderer:
         return (_iattr(sz, "width") if sz is not None else 0,
                 _iattr(sz, "height") if sz is not None else 0)
 
+    def _line_pieces(self, draw, items, split_for_justification):
+        """Flatten a line's items into positioned-in-order drawable pieces.
+
+        ``split_for_justification`` breaks otherwise-neutral text into single
+        characters and inserts a zero-width elastic gap after each, so a
+        justified or distributed line has somewhere to put its slack.  It is
+        off for every other line, which keeps the common path on Pillow's
+        whole-string measurement (and its kerning).
+        """
+        pieces = []
+        for kind, payload in items:
+            if kind == "obj":
+                pieces.append({
+                    "kind": "obj",
+                    "advance": self.pxf(self._object_extent(payload[1])[0]),
+                    "payload": payload,
+                })
+                continue
+            seg = payload
+            if not split_for_justification:
+                pieces.extend(self._text_pieces(draw, seg.charpr, seg.text))
+                continue
+            for ch in seg.text:
+                pieces.extend(self._text_pieces(draw, seg.charpr, ch))
+                if pieces and pieces[-1]["kind"] != "gap":
+                    pieces.append({"kind": "gap", "advance": 0.0})
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        return pieces
+
+    @staticmethod
+    def _elastic_slots(pieces):
+        """Indices of the gaps justification may widen.
+
+        Latin text is stretched at its spaces, as the format's word-breaking
+        attributes imply; text with no space in the line (Hangul/CJK, the
+        normal case here) is stretched at every inter-character gap.
+        """
+        space_slots = [
+            i for i, p in enumerate(pieces)
+            if p["kind"] == "gap" and i and pieces[i - 1]["kind"] == "glyph"
+            and pieces[i - 1]["text"].endswith((" ", "　"))
+        ]
+        if space_slots:
+            return space_slots
+        return [i for i, p in enumerate(pieces) if p["kind"] == "gap"]
+
+    def _draw_glyph_piece(self, draw, piece, x, baseline_px):
+        """Draw one text piece, applying ``hh:ratio`` and ``hh:offset``.
+
+        ``hh:ratio`` is a *horizontal glyph* scale, which Pillow cannot ask
+        FreeType for directly, so a scaled piece is rasterised into its own
+        8-bit mask at natural width, resampled horizontally, and composited in
+        the run's colour.  ``LANCZOS`` is pinned for the same reason
+        ``Layout.BASIC`` is: the resample filter has to be part of the
+        renderer, not of the build.
+        """
+        y = baseline_px - piece["offset_px"]
+        if piece["ratio"] == 100 or self._image is None:
+            if piece["ratio"] != 100:
+                self._skip("hh:ratio", "horizontal glyph scaling could not be "
+                                       "composited; drawn unscaled")
+            draw.text((x, y), piece["text"], font=piece["font"],
+                      fill=piece["colour"], anchor="ls")
+            return
+        font = piece["font"]
+        ascent, descent = font.getmetrics()
+        natural = max(1, int(math.ceil(
+            float(draw.textlength(piece["text"], font=font)) + 2)))
+        height = max(1, ascent + descent)
+        mask = self.Image.new("L", (natural, height), 0)
+        self.ImageDraw.Draw(mask).text((0, ascent), piece["text"], font=font,
+                                       fill=255, anchor="ls")
+        scaled = max(1, int(round(natural * piece["ratio"] / 100.0)))
+        if scaled != natural:
+            mask = mask.resize((scaled, height),
+                               self.Image.Resampling.LANCZOS)
+        self._image.paste(piece["colour"], (int(round(x)),
+                                            int(round(y - ascent))), mask)
+
     def _draw_line(self, draw, items, x_hwp, line_top_hwp, baseline_hwp,
-                   align, avail_hwp):
-        """Draw one line box: text segments and inline objects, in order.
+                   align, avail_hwp, last_line=True):
+        """Draw one line box: text pieces and inline objects, in order.
 
         The cached ``lineseg`` gives the box (``horzpos``/``horzsize``) but not
         the alignment offset inside it — ``horzpos`` stays 0 even for a centred
-        line — so the offset is computed here from the measured content width.
+        line — so the offset is computed here from the measured content width,
+        which now includes character typography.
         """
         if not items:
             return
-        widths = []
-        for kind, payload in items:
-            if kind == "text":
-                widths.append(self._measure(draw, payload.text, payload.charpr))
-            else:
-                widths.append(self.pxf(self._object_extent(payload[1])[0]))
-        total = sum(widths)
+        align = (align or "LEFT").upper()
+        stretch = (align == "DISTRIBUTE"
+                   or (align == "JUSTIFY" and not last_line))
+        pieces = self._line_pieces(draw, items, stretch)
+        if not pieces:
+            return
+        for piece in pieces:
+            if piece["kind"] == "glyph":
+                cp = self._charpr(piece["cid"])
+                piece["colour"] = cp.get("color") or (0, 0, 0)
+                piece["underline"] = (cp.get("underline") or "NONE").upper()
+                piece["underline_colour"] = cp.get("underline_color")
+        total = sum(p["advance"] for p in pieces)
+        avail_px = self.pxf(avail_hwp)
+        slots = self._elastic_slots(pieces) if stretch else []
+        extra = self._justify_extra(align, avail_px, total, len(slots),
+                                    last_line)
+        if extra:
+            self.applied[f"hh:align@{align}"] = (
+                self.applied.get(f"hh:align@{align}", 0) + 1)
+            for index in slots:
+                pieces[index]["advance"] += extra
         x_px = self.pxf(x_hwp)
-        cursor = x_px + self._align_offset(align, self.pxf(avail_hwp), total)
+        cursor = x_px + self._align_offset(align, avail_px, total)
         baseline_px = self.pxf(baseline_hwp)
         drew_text = False
         text_x0 = text_x1 = None
         ascent = descent = 0
-        for (kind, payload), w in zip(items, widths):
-            if kind == "obj":
-                name, el, _charpr, _floating = payload
+        for piece in pieces:
+            w = piece["advance"]
+            if piece["kind"] == "gap":
+                cursor += w
+                continue
+            if piece["kind"] == "obj":
+                name, el, _charpr, _floating = piece["payload"]
                 origin = (self.hwp_from_px(cursor), line_top_hwp)
                 if name == "tbl":
                     self._render_table(draw, el, origin)
@@ -825,27 +1147,23 @@ class OwnRenderer:
                     self._render_placeholder(draw, el, name, origin)
                 cursor += w
                 continue
-            seg = payload
-            cp = self._charpr(seg.charpr)
-            colour = cp.get("color") or (0, 0, 0)
-            font = self._font_for(seg.charpr)
-            draw.text((cursor, baseline_px), seg.text, font=font,
-                      fill=colour, anchor="ls")
+            font = piece["font"]
+            self._draw_glyph_piece(draw, piece, cursor, baseline_px)
             drew_text = True
             seg_ascent, seg_descent = font.getmetrics()
-            ascent = max(ascent, seg_ascent)
-            descent = max(descent, seg_descent)
+            shift = piece["offset_px"]
+            ascent = max(ascent, seg_ascent + shift)
+            descent = max(descent, seg_descent - shift)
             text_x0 = cursor if text_x0 is None else min(text_x0, cursor)
             text_x1 = (cursor + w) if text_x1 is None else max(text_x1,
                                                               cursor + w)
-            underline = (cp.get("underline") or "NONE").upper()
-            if underline not in ("NONE", ""):
+            if piece["underline"] not in ("NONE", ""):
                 # Ruled blanks in government forms are underline runs, and the
                 # repo already treats them as load-bearing (form_inspect._is_ruled,
                 # T112) — dropping them would erase the field the form provides.
                 uy = baseline_px + max(1, self.pt_to_px(1.2))
                 draw.line([(cursor, uy), (cursor + w, uy)],
-                          fill=cp.get("underline_color") or colour,
+                          fill=piece["underline_colour"] or piece["colour"],
                           width=max(1, self.dpi // 144))
             cursor += w
         if drew_text:
@@ -913,6 +1231,7 @@ class OwnRenderer:
                 oy + vertpos + baseline,
                 para.align,
                 horzsize,
+                last_line=(i == len(para.linesegs) - 1),
             )
 
     def _render_wrapped(self, draw, para, origin_hwp, avail_w_hwp):
@@ -926,9 +1245,11 @@ class OwnRenderer:
         if para.linesegs:
             y = oy + _iattr(para.linesegs[0], "vertpos")
         consumed = 0
-        for line in self._greedy_wrap(draw, para.chars, avail_px):
+        wrapped = self._greedy_wrap(draw, para.chars, avail_px)
+        for index, line in enumerate(wrapped):
             self._draw_line(draw, self._line_items(para, line, consumed),
-                            ox, y, y + baseline, para.align, avail_w_hwp)
+                            ox, y, y + baseline, para.align, avail_w_hwp,
+                            last_line=(index == len(wrapped) - 1))
             consumed += len(line)
             y += line_h
 
@@ -1161,6 +1482,7 @@ class OwnRenderer:
         for page_number, page_paras in enumerate(pages, start=1):
             self._page = page_number
             img = self.Image.new("RGB", (page_w, page_h), (255, 255, 255))
+            self._image = img
             draw = self.ImageDraw.Draw(img)
             self._render_paragraphs(
                 draw, page_paras,
@@ -1189,6 +1511,31 @@ class OwnRenderer:
                 "family; advance widths therefore differ from the authoring "
                 "engine's")),
             "elements_rendered": dict(self.counts),
+            "typography": {
+                "applied_characters": dict(sorted(self.applied.items())),
+                "meaning": (
+                    "how many characters (and, for hh:align, how many lines) "
+                    "this render actually applied each metric to. A metric "
+                    "absent here is one the document never declares away from "
+                    "its neutral value, not one this renderer ignores."
+                ),
+            },
+            "typography_slot_model": {
+                "slots": list(LANG_SLOTS),
+                "assignment": (
+                    "OWPML declares hh:ratio/spacing/relSz/offset once per "
+                    "language slot. The standard names the slots but does not "
+                    "publish the codepoint partition, so the mapping used here "
+                    "is this renderer's plain Unicode-block reading of the "
+                    "slot names — an approximation, declared, not the spec."
+                ),
+                "user_slot": (
+                    "never selected: HWP fills the user slot from a "
+                    "user-defined character range table the document does not "
+                    "carry, so a renderer reading only the file cannot honour "
+                    "it"
+                ),
+            },
             "line_boxes": list(self.line_boxes),
             "line_boxes_meaning": (
                 "every text line box drawn, in device pixels at this render's "

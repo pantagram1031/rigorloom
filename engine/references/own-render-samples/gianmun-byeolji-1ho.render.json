@@ -29,42 +29,42 @@
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 773.2,
+      "x1": 725.2,
       "y0": 111.5,
       "y1": 136.5
     },
     {
       "page": 1,
-      "x0": 461.8,
-      "x1": 665.8,
+      "x0": 473.82,
+      "x1": 653.78,
       "y0": 183.84,
       "y1": 226.84
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 164.2,
+      "x1": 161.08,
       "y0": 260.48,
       "y1": 293.48
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 178.2,
+      "x1": 171.3,
       "y0": 291.68,
       "y1": 324.68
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 172.2,
+      "x1": 167.16,
       "y0": 326.28,
       "y1": 359.28
     },
     {
       "page": 1,
-      "x0": 559.8,
-      "x1": 567.8,
+      "x0": 559.92,
+      "x1": 567.68,
       "y0": 827.56,
       "y1": 860.56
     },
@@ -77,64 +77,64 @@
     },
     {
       "page": 1,
-      "x0": 503.77,
-      "x1": 623.77,
+      "x0": 481.27,
+      "x1": 646.27,
       "y0": 908.6,
       "y1": 949.6
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 306.14,
+      "x1": 289.76,
       "y0": 1091.76,
       "y1": 1116.76
     },
     {
       "page": 1,
       "x0": 414.82,
-      "x1": 610.82,
+      "x1": 593.18,
       "y0": 1091.76,
       "y1": 1116.76
     },
     {
       "page": 1,
       "x0": 696.28,
-      "x1": 910.28,
+      "x1": 891.38,
       "y0": 1091.76,
       "y1": 1116.76
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 170.14,
+      "x1": 167.62,
       "y0": 1140.04,
       "y1": 1165.04
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 152.14,
+      "x1": 150.88,
       "y0": 1188.32,
       "y1": 1213.32
     },
     {
       "page": 1,
       "x0": 234.14,
-      "x1": 515.14,
+      "x1": 492.46,
       "y0": 1188.32,
       "y1": 1213.32
     },
     {
       "page": 1,
       "x0": 558.22,
-      "x1": 594.22,
+      "x1": 592.96,
       "y0": 1188.32,
       "y1": 1213.32
     },
     {
       "page": 1,
       "x0": 664.72,
-      "x1": 963.72,
+      "x1": 937.26,
       "y0": 1188.32,
       "y1": 1213.32
     },
@@ -148,7 +148,7 @@
     {
       "page": 1,
       "x0": 234.14,
-      "x1": 324.14,
+      "x1": 319.1,
       "y0": 1233.76,
       "y1": 1258.76
     },
@@ -162,21 +162,21 @@
     {
       "page": 1,
       "x0": 631.46,
-      "x1": 745.46,
+      "x1": 737.9,
       "y0": 1233.76,
       "y1": 1258.76
     },
     {
       "page": 1,
       "x0": 116.14,
-      "x1": 216.14,
+      "x1": 206.06,
       "y0": 1277.9,
       "y1": 1302.9
     },
     {
       "page": 1,
       "x0": 346.1,
-      "x1": 446.1,
+      "x1": 436.02,
       "y0": 1277.9,
       "y1": 1302.9
     },
@@ -190,7 +190,7 @@
     {
       "page": 1,
       "x0": 631.46,
-      "x1": 817.46,
+      "x1": 804.86,
       "y0": 1277.9,
       "y1": 1302.9
     },
@@ -204,7 +204,7 @@
     {
       "page": 1,
       "x0": 869.48,
-      "x1": 947.48,
+      "x1": 942.44,
       "y0": 1277.9,
       "y1": 1302.9
     },
@@ -218,28 +218,28 @@
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 476.2,
+      "x1": 472.0,
       "y0": 1374.6,
       "y1": 1401.6
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 968.2,
+      "x1": 1011.4,
       "y0": 1404.6,
       "y1": 1431.6
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 965.2,
+      "x1": 1011.4,
       "y0": 1434.6,
       "y1": 1461.6
     },
     {
       "page": 1,
       "x0": 116.2,
-      "x1": 637.2,
+      "x1": 624.8,
       "y0": 1464.6,
       "y1": 1491.6
     }
@@ -247,7 +247,9 @@
   "line_boxes_meaning": "every text line box drawn, in device pixels at this render's dpi; y bounds are the font's ascent/descent about the cached baseline, x bounds are the measured text extent (inline objects excluded). The comparison channel engine/scripts/render_scoreboard.py pairs these against a reference PDF's text lines.",
   "notes": [
     "line boxes come from the document's own cached hp:lineseg layout; line breaking matches the authoring engine, intra-line text extents do not (see fonts)",
-    "character-level typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) is not applied",
+    "character typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) IS applied, per language slot; see typography for what this document exercised and typography_slot_model for how a character is assigned to a slot",
+    "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no trailing gap), measured against the Hancom reference render",
+    "hh:align JUSTIFY stretches every line of a paragraph except its last; DISTRIBUTE stretches every line; neither ever shrinks a line that already overruns its box",
     "headers, footers, footnotes, endnotes and master pages are not drawn",
     "full limits and the certification path: engine/references/own-render-notes.md"
   ],
@@ -279,5 +281,26 @@
   ],
   "renderer": "rigorloom-own/0.1",
   "renderer_version": "0.1.0",
-  "source": "gianmun-byeolji-1ho.hwpx"
+  "source": "gianmun-byeolji-1ho.hwpx",
+  "typography": {
+    "applied_characters": {
+      "hh:align@JUSTIFY": 2,
+      "hh:ratio": 19,
+      "hh:spacing": 371
+    },
+    "meaning": "how many characters (and, for hh:align, how many lines) this render actually applied each metric to. A metric absent here is one the document never declares away from its neutral value, not one this renderer ignores."
+  },
+  "typography_slot_model": {
+    "assignment": "OWPML declares hh:ratio/spacing/relSz/offset once per language slot. The standard names the slots but does not publish the codepoint partition, so the mapping used here is this renderer's plain Unicode-block reading of the slot names — an approximation, declared, not the spec.",
+    "slots": [
+      "hangul",
+      "latin",
+      "hanja",
+      "japanese",
+      "other",
+      "symbol",
+      "user"
+    ],
+    "user_slot": "never selected: HWP fills the user slot from a user-defined character range table the document does not carry, so a renderer reading only the file cannot honour it"
+  }
 }
