@@ -1257,18 +1257,47 @@ structural, not tuning:
   is an assumption about ordering that no text on the page can confirm, so it
   is not made. This is the largest single block and it is where the next real
   gain would have to come from.
-- **Truncated previews cannot anchor.** A cell whose `text_preview` is a
-  30-character prefix is excluded from the target set — 34 or 35 such cells in
-  each of the larger forms. The prefix can still *refute* a correspondence
-  during the walk, and it does, but it cannot establish one. Prefix matching
-  would be exactly the guess §12.3 refuses.
-- **Unruled forms place nothing, correctly.** `gianmun-byeolji-1ho` is ruled
-  with underlines rather than boxes: 6 horizontal rules and 4 verticals on the
-  page, so almost nothing closes. Its 9 fill regions are absent and that is
-  the right answer. `jeongbo-gonggae-cheongguseo` has 25 horizontal rules and
-  9 verticals, and its label column has no left border on the body rows, so
-  its 13 regions are absent too. A form the renderer does not enclose cannot
-  be seated by reading enclosures.
+- **Truncated previews cannot anchor, and untruncating them buys nothing.** A
+  cell whose `text_preview` is a 30-character prefix is excluded from the
+  target set; the prefix can still *refute* a correspondence during the walk,
+  and it does, but it cannot establish one. Whether the truncation was the
+  blocker is now measured rather than supposed. `form_inspect --full-text`
+  already returns a named cell's exact string, so all **145** truncated cells
+  in the corpus were fetched in full and spliced into the target set:
+
+  | | |
+  | --- | ---: |
+  | truncated cells recovered in full | 145 |
+  | equal to exactly one rendered line | 34 |
+  | wrapping over several rendered lines (mean 135 chars) | 111 |
+  | anchors gained / lost | 8 / 0 |
+  | **extra seats placed** | **0** |
+
+  The span unit is a **line**, so a cell that wraps can never match one at any
+  preview length, and the 34 that do match land where the walk already
+  reaches. Carrying full cell text as a new profile field would therefore buy
+  zero seats at the cost of the structure-only contract `form_inspect` keeps
+  on purpose (`_full_text`'s own docstring: the profile does not carry body
+  text, and the escape hatch is opt-in and cell-scoped). Not done.
+- **Forms the renderer does not enclose place nothing, correctly** — and the
+  two of them fail in different ways, which the earlier reading of this list
+  ran together. `gianmun-byeolji-1ho` is barely ruled *at all*: 6 horizontal
+  rules and 4 verticals on the whole page, and its fields (수신 / 참조 / 제목 /
+  기안자 …) carry none, so there is nothing under them either.
+  `jeongbo-gonggae-cheongguseo` is genuinely ruled — 26 horizontal rules and 9
+  verticals — but the outer frame is stroked only across the header and footer
+  bands, so its body cells are **three-sided**: top, bottom and left drawn,
+  right absent. Three sides is not an enclosure and does not become one.
+- **`underline_rule` as a separate derivation class: measured at zero, not
+  built.** The shape it was to be defined for is `라벨 ______` — a rule with
+  no enclosing box, on a uniquely-anchorable label's own line band, starting
+  after it. Across the 10 renders there are 1,141 joined horizontal rules,
+  **549** of them not an edge of any closed cell, and **exactly one** has that
+  shape; that one's label is followed by a `static` cell, not a fill target.
+  The class would place **0 seats** and would exist only to fire on the other
+  548, which are section separators and row borders running the full text
+  width — precisely the boxes-in-the-wrong-place this section refuses. The
+  census is pinned by a test so the number cannot rot.
 - **The walk does not cross a gap or a fork.** A direction with no
   unambiguous adjacent box is not stepped, so an unruled middle stretch or a
   place where the drawn grid branches bounds the region the walk verifies.
