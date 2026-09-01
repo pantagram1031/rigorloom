@@ -267,6 +267,7 @@ EVENT_KINDS = (
     "plan.applied",
     "candidate.published",
     "pdf.prepared",
+    "module.checked",
 )
 
 
@@ -539,8 +540,50 @@ def load_profile(tools, session: Session, *, tag: str = "base",
                        tool="form_inspect", detail=str(exc)) from exc
 
 
+def charpr_faces(profile: dict) -> dict:
+    """charPr id -> {lang: face}, as the HWPX header declares it. Never guessed.
+
+    ``form_inspect`` joins ``charPr/fontRef`` to the ``fontface`` tables and
+    publishes the result; this only reads it. An id with no entry gets ``null``
+    on the wire, which means the document does not say — a UI must keep saying
+    so rather than filling in what a toolbar usually shows (desktop gap 16).
+    """
+    faces = profile.get("charpr_faces")
+    return faces if isinstance(faces, dict) else {}
+
+
+def _with_face(shape, faces: dict):
+    """A charPr shape plus the face the document declares for it."""
+    if not isinstance(shape, dict):
+        return shape
+    out = dict(shape)
+    out["face"] = faces.get(str(shape.get("id")))
+    return out
+
+
+def typeface_state(profile: dict) -> dict:
+    """Whether faces could be read at all, apart from what any one id declares.
+
+    "This document names no face for charPr 23" and "this build cannot look a
+    face up" are different facts and a null in one field cannot carry both.
+    """
+    if not isinstance(profile.get("charpr_faces"), dict):
+        return {"state": "unavailable",
+                "reason": ("this profile carries no charPr to face-name "
+                           "mapping; the form scan that produced it predates "
+                           "one"),
+                "charPrsWithFace": 0}
+    faces = profile["charpr_faces"]
+    return {"state": "read",
+            "reason": None,
+            "source": "the HWPX header's fontface tables, joined on "
+                      "charPr/fontRef",
+            "charPrsWithFace": len(faces)}
+
+
 def document_summary(profile: dict, session: Session) -> dict:
     """DocumentSummary per docs/runtime-protocol-v0.md §3.3, from the profile."""
+    faces = charpr_faces(profile)
     return {
         "sessionId": session.id,
         "documentHash": profile.get("form_hash"),
@@ -548,8 +591,9 @@ def document_summary(profile: dict, session: Session) -> dict:
         "pageMetrics": profile.get("page_metrics"),
         "constraints": profile.get("constraints"),
         "formatHints": profile.get("format_hints"),
-        "baselineCharPr": profile.get("body_baseline_charpr"),
-        "blackCharPr": profile.get("body_black_charpr"),
+        "baselineCharPr": _with_face(profile.get("body_baseline_charpr"), faces),
+        "blackCharPr": _with_face(profile.get("body_black_charpr"), faces),
+        "typefaces": typeface_state(profile),
         "fillTargetCount": profile.get("fill_target_count"),
         "spacerCells": profile.get("spacer_cells", []),
         "scriptAnomalyTargets": profile.get("script_anomaly_targets", []),
@@ -589,6 +633,7 @@ def document_graph(profile: dict, session: Session) -> dict:
 
 def editable_regions(profile: dict, session: Session) -> dict:
     """EditableRegion list (§3.5): fill_target cells with their preflight."""
+    faces = charpr_faces(profile)
     regions = []
     for table in profile.get("table_map", []):
         for cell in table.get("cells", []):
@@ -601,7 +646,9 @@ def editable_regions(profile: dict, session: Session) -> dict:
                 "row": addr.get("row"),
                 "col": addr.get("col"),
                 "charPr": cell.get("charpr"),
+                "charPrFace": faces.get(str(cell.get("charpr"))),
                 "charPrSuggested": cell.get("charpr_suggested"),
+                "charPrSuggestedFace": faces.get(str(cell.get("charpr_suggested"))),
                 "scriptAnomaly": cell.get("script_anomaly"),
             }
             if "color_anomaly" in cell:

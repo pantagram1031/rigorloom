@@ -46,7 +46,7 @@ requires: {rigorloom: ">=0.16"}
 # caller might forget.
 provides:
   checkers:
-    - {name: check_minwon, script: scripts/check_minwon.py, wants: [baseline]}
+    - {name: check_minwon, script: scripts/check_minwon.py, subject: document, wants: [baseline]}
   skill:
     fragment: skill/FRAGMENT.md
     references:

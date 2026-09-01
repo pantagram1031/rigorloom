@@ -206,6 +206,27 @@ def build_parser() -> argparse.ArgumentParser:
                    help="return events with seq > after; -1 replays all")
     p.add_argument("--limit", type=int, default=None)
 
+    sub.add_parser("modules",
+                   help="distribution modules on disk and what they contribute")
+
+    p = sub.add_parser("module-check",
+                       help="run a distribution module's checkers against a "
+                            "session's document")
+    p.add_argument("--session", required=True)
+    p.add_argument("--module", required=True,
+                   help="distribution module name (see the modules command)")
+    p.add_argument("--checker", action="append", default=None, metavar="NAME",
+                   help="run only this checker (repeatable; default: all the "
+                        "module declares)")
+    p.add_argument("--run", default=None,
+                   help="check a published candidate instead of the session "
+                        "source; the source is then supplied as its baseline")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="seconds to allow EACH checker")
+    p.add_argument("--require-checks", action="store_true",
+                   help="exit 3 unless every selected checker ran, was clean "
+                        "and had every input it declares it needs")
+
     p = sub.add_parser("propose", help="build an OperationPlan")
     p.add_argument("--session", required=True)
     p.add_argument("--backend", default=SUPPORTED_BACKENDS[0])
@@ -295,6 +316,18 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
     if command == "events":
         return core.event_poll(args.session, after=args.after,
                                limit=args.limit), EXIT_OK
+    if command == "modules":
+        return core.module_list(), EXIT_OK
+    if command == "module-check":
+        result = core.module_check(args.session, args.module,
+                                   checkers=args.checker, run_id=args.run,
+                                   timeout=args.timeout)
+        # A findings report is an ANSWER, so it exits 0 by default: the caller
+        # asked what the checkers say, and they said it. --require-checks is
+        # for the caller who wants the acceptance to be the exit code.
+        if args.require_checks and not result["acceptance"]:
+            return result, EXIT_REFUSED
+        return result, EXIT_OK
     if command == "propose":
         return core.plan_propose(args.session, args.backend, _load_ops(args),
                                  args.proposer), EXIT_OK

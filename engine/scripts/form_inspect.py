@@ -266,6 +266,34 @@ def _paraprops(header_xml):
     return out
 
 
+def charpr_faces(defs, fontref_map):
+    """charPr id -> {lang: face name}, for every lang the header resolves.
+
+    The header already carries both halves — ``charPr/fontRef`` names a font id
+    per language and ``fontface`` names the face for that id — and nothing
+    joined them except ``--baseline``, which produced a document-wide SET of
+    font names and so could never answer "what is THIS run set in". A caller
+    that reports a charPr id (a fill seat's inherited shape, the body baseline)
+    could therefore report a number and nothing else, which is why the Desktop
+    editor toolbar has an id where a 글꼴 name belongs (desktop gap 16).
+
+    PER LANGUAGE, not one name. Hangul's own font dialog has separate 한글 and
+    영문 faces and a 기안문 declares both; collapsing them to one would be a
+    guess about which of two declared truths the reader meant. A lang whose id
+    resolves to no face is ABSENT rather than null — the header did not say.
+    """
+    out = {}
+    for cid, spec in defs.items():
+        faces = {}
+        for lang, font_id in (spec.get("fontRef") or {}).items():
+            face = (fontref_map.get(lang.upper()) or {}).get(font_id)
+            if face:
+                faces[lang] = face
+        if faces:
+            out[cid] = faces
+    return out
+
+
 def font_face(defs, fontref_map, cid, lang="hangul"):
     fr = defs.get(cid, {}).get("fontRef", {})
     fid = fr.get(lang)
@@ -1435,6 +1463,12 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
         "page_metrics": page_metrics,
         "body_baseline_charpr": body_baseline_charpr,
         "body_black_charpr": body_black_charpr,
+        # charPr id -> {lang: face}. One join of two things the header already
+        # says, so any consumer reporting a charPr id can also report the name
+        # the document itself declares for it (desktop gap 16). Always present,
+        # possibly empty: an empty map means the header declared no resolvable
+        # face, which is different from a consumer that cannot look one up.
+        "charpr_faces": charpr_faces(defs, fontref_map),
         "table_map": table_map,
         "script_anomaly_targets": [
             {"table": t["index"], "addr": c["addr"], "charpr": c["charpr"],

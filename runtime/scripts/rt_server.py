@@ -133,6 +133,8 @@ class RuntimeServer:
             "document/render": self._m_document_render,
             "document/pageGeometry": self._m_document_page_geometry,
             "event/poll": self._m_event_poll,
+            "module/list": self._m_module_list,
+            "module/check": self._m_module_check,
         }
         # One roster (rt_core.AGENT_METHODS). Adding a handler without listing
         # it there — or the reverse — must be loud, because the MCP adapter
@@ -495,6 +497,25 @@ class RuntimeServer:
         return self.core.event_poll(params["sessionId"],
                                     after=params.get("after", -1),
                                     limit=params.get("limit"))
+
+    def _m_module_list(self, params: dict, _id) -> dict:
+        _object(params, set(), where="module/list.params",
+                policy=self.unknown_field_policy)
+        return self.core.module_list()
+
+    def _m_module_check(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "module", "checkers", "runId",
+                                  "timeoutSeconds"},
+                         required=("sessionId", "module"),
+                         where="module/check.params",
+                         policy=self.unknown_field_policy)
+        checkers = params.get("checkers")
+        if checkers is not None and not isinstance(checkers, list):
+            raise RpcError("invalid_params", "checkers must be an array")
+        return self.core.module_check(
+            params["sessionId"], _text(params["module"], "module"),
+            checkers=checkers, run_id=params.get("runId"),
+            timeout=params.get("timeoutSeconds"))
 
     # -- subscriptions --------------------------------------------------------
     def _m_event_subscribe(self, params: dict, _id) -> dict:

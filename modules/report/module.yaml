@@ -15,18 +15,18 @@ requires: {rigorloom: ">=0.16"}
 requires_modules: [style]
 provides:
   checkers:
-    - {name: check_scorecard, script: scripts/check_scorecard.py}
-    - {name: check_understanding, script: scripts/check_understanding.py}
-    - {name: check_corpus, script: scripts/check_corpus.py}
-    - {name: check_refs, script: scripts/check_refs.py}
-    - {name: check_tone_rules, script: scripts/check_tone_rules.py}
-    - {name: content_audit, script: scripts/content_audit.py}
-    - {name: verify_content, script: scripts/verify_content.py}
-    - {name: check_canonical, script: scripts/check_canonical.py}
-    - {name: check_claims, script: scripts/check_claims.py}
-    - {name: check_numbers, script: scripts/check_numbers.py}
-    - {name: check_sources, script: scripts/check_sources.py}
-    - {name: check_saeteuk, script: scripts/check_saeteuk.py}
+    - {name: check_scorecard, script: scripts/check_scorecard.py, subject: workspace}
+    - {name: check_understanding, script: scripts/check_understanding.py, subject: workspace}
+    - {name: check_corpus, script: scripts/check_corpus.py, subject: workspace}
+    - {name: check_refs, script: scripts/check_refs.py, subject: workspace}
+    - {name: check_tone_rules, script: scripts/check_tone_rules.py, subject: workspace}
+    - {name: content_audit, script: scripts/content_audit.py, subject: workspace}
+    - {name: verify_content, script: scripts/verify_content.py, subject: workspace}
+    - {name: check_canonical, script: scripts/check_canonical.py, subject: workspace}
+    - {name: check_claims, script: scripts/check_claims.py, subject: workspace}
+    - {name: check_numbers, script: scripts/check_numbers.py, subject: workspace}
+    - {name: check_sources, script: scripts/check_sources.py, subject: workspace}
+    - {name: check_saeteuk, script: scripts/check_saeteuk.py, subject: workspace}
   cli:
     - {command: source-fetch, script: scripts/source_fetch.py}
     - {command: organize-workspace, script: scripts/workspace_organizer.py}
