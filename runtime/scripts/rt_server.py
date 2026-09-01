@@ -22,18 +22,31 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 import traceback
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_apply import Cancelled  # noqa: E402
 from rt_codes import (  # noqa: E402
+    DEFAULT_EVENT_POLL_MS,
     IMPL_VERSION,
+    MAX_EVENTS_PER_POLL,
+    MAX_EVENT_POLL_MS,
     MAX_FRAME_BYTES,
+    MAX_SUBSCRIPTIONS,
+    MIN_EVENT_POLL_MS,
     PROTOCOL_VERSION,
     RpcError,
 )
-from rt_core import AGENT_METHODS, HOST_ONLY_METHODS, RuntimeCore  # noqa: E402
+from rt_core import (  # noqa: E402
+    AGENT_METHODS,
+    HOST_ONLY_METHODS,
+    PROTOCOL_ONLY_METHODS,
+    RuntimeCore,
+)
+from rt_engine import validate_child_python  # noqa: E402
 from rt_jsonl import (  # noqa: E402
     READ_EOF,
     READ_LINE,
@@ -95,6 +108,11 @@ class RuntimeServer:
         self._seen_ids: set = set()
         self._cancelled: set = set()
         self._state_lock = threading.Lock()
+        self._post_send: list = []
+        self._subscriptions: dict = {}
+        self._subscription_lock = threading.Lock()
+        self._poller: threading.Thread | None = None
+        self._stop = threading.Event()
         self._methods = self._build_registry()
 
     # -- registries ---------------------------------------------------------
@@ -112,6 +130,8 @@ class RuntimeServer:
             "approval/get": self._m_approval_get,
             "candidate/list": self._m_candidate_list,
             "receipt/read": self._m_receipt_read,
+            "document/render": self._m_document_render,
+            "event/poll": self._m_event_poll,
         }
         # One roster (rt_core.AGENT_METHODS). Adding a handler without listing
         # it there — or the reverse — must be loud, because the MCP adapter
@@ -121,11 +141,23 @@ class RuntimeServer:
             f"{sorted(set(methods) ^ set(AGENT_METHODS))}")
         return methods
 
+    def _protocol_only_methods(self) -> dict:
+        """Agent-safe, but push-shaped: registered on both JSONL entries."""
+        methods = {
+            "event/subscribe": self._m_event_subscribe,
+            "event/unsubscribe": self._m_event_unsubscribe,
+        }
+        assert set(methods) == set(PROTOCOL_ONLY_METHODS), (
+            "protocol-only handler map and rt_core.PROTOCOL_ONLY_METHODS "
+            f"disagree: {sorted(set(methods) ^ set(PROTOCOL_ONLY_METHODS))}")
+        return methods
+
     def _host_only_methods(self) -> dict:
         methods = {
             "workspace/openPath": self._m_open_path,
             "approval/resolve": self._m_approval_resolve,
             "plan/apply": self._m_plan_apply,
+            "document/renderPrepare": self._m_document_render_prepare,
         }
         assert set(methods) == set(HOST_ONLY_METHODS), (
             "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
@@ -134,6 +166,7 @@ class RuntimeServer:
 
     def _build_registry(self) -> dict:
         methods = self._agent_methods()
+        methods.update(self._protocol_only_methods())
         if self.entry == "host":
             methods.update(self._host_only_methods())
         return methods
@@ -186,15 +219,25 @@ class RuntimeServer:
         inbox: "queue.Queue" = queue.Queue()
         reader = threading.Thread(target=self._read_loop, args=(inbox,), daemon=True)
         reader.start()
-        while True:
-            item = inbox.get()
-            if item[0] == "eof":
-                break
-            if item[0] == "bad":
-                self.out.fail(item[1], item[2])
-                continue
-            self._handle(item[1])
+        try:
+            while True:
+                item = inbox.get()
+                if item[0] == "eof":
+                    break
+                if item[0] == "bad":
+                    self.out.fail(item[1], item[2])
+                    continue
+                self._handle(item[1])
+        finally:
+            self.shutdown()
         return 0
+
+    def shutdown(self) -> None:
+        """Stop the poller. A subscription outlives nothing."""
+        self._stop.set()
+        poller = self._poller
+        if poller is not None and poller.is_alive():
+            poller.join(timeout=5)
 
     # -- one request --------------------------------------------------------
     def _handle(self, frame: dict) -> None:
@@ -229,6 +272,7 @@ class RuntimeServer:
             self._seen_ids.add(frame_id)
             already_cancelled = frame_id in self._cancelled
 
+        self._post_send = []
         try:
             if already_cancelled:
                 raise Cancelled()
@@ -260,6 +304,15 @@ class RuntimeServer:
                                              "request; see stderr"))
         else:
             self.out.respond(frame_id, result)
+            # Anything that must reach the client AFTER its response — a
+            # subscription's replay, for one. Starting a poller inside the
+            # handler would race the response out of order.
+            hooks, self._post_send = self._post_send, []
+            for hook in hooks:
+                try:
+                    hook()
+                except Exception:  # noqa: BLE001
+                    log("post-send hook failed:\n" + traceback.format_exc())
 
     def _checkpoint(self, request_id):
         def tick():
@@ -289,6 +342,9 @@ class RuntimeServer:
                            f"{list(UNKNOWN_FIELD_POLICIES)}", offered=policy)
         client = _object(params.get("client"), {"name", "version"},
                          where="initialize.params.client", policy="reject")
+        # A broken RIGORLOOM_CHILD_PYTHON is a misconfiguration the operator
+        # must meet here, not twenty seconds into the first inspect.
+        validate_child_python()
         self.unknown_field_policy = policy
         self.client = client
         self.initialized = True
@@ -306,9 +362,15 @@ class RuntimeServer:
         return self.core.capability_snapshot(methods=list(self._methods))
 
     def _m_capabilities(self, params: dict, _id) -> dict:
-        _object(params, set(), where="capabilities/list.params",
-                policy=self.unknown_field_policy)
-        return self.core.capabilities(entry=self.entry, methods=list(self._methods))
+        params = _object(params, {"probeRenderers"},
+                         where="capabilities/list.params",
+                         policy=self.unknown_field_policy)
+        probe = params.get("probeRenderers", False)
+        if not isinstance(probe, bool):
+            raise RpcError("invalid_params", "probeRenderers must be a boolean")
+        return self.core.capabilities(entry=self.entry,
+                                      methods=list(self._methods),
+                                      probe_renderers=probe)
 
     def _m_open_path(self, params: dict, _id) -> dict:
         params = _object(params, {"path"}, required=("path",),
@@ -411,3 +473,139 @@ class RuntimeServer:
                          where="receipt/read.params",
                          policy=self.unknown_field_policy)
         return self.core.receipt_read(params["sessionId"], params["runId"])
+
+    def _m_document_render(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "page", "dpi", "runId", "inline"},
+                         required=("sessionId",),
+                         where="document/render.params",
+                         policy=self.unknown_field_policy)
+        inline = params.get("inline", True)
+        if not isinstance(inline, bool):
+            raise RpcError("invalid_params", "inline must be a boolean")
+        return self.core.document_render(
+            params["sessionId"], page=params.get("page", 0),
+            dpi=params.get("dpi"), run_id=params.get("runId"), inline=inline)
+
+    def _m_event_poll(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "after", "limit"},
+                         required=("sessionId",),
+                         where="event/poll.params",
+                         policy=self.unknown_field_policy)
+        return self.core.event_poll(params["sessionId"],
+                                    after=params.get("after", -1),
+                                    limit=params.get("limit"))
+
+    # -- subscriptions --------------------------------------------------------
+    def _m_event_subscribe(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "after", "intervalMs"},
+                         required=("sessionId",),
+                         where="event/subscribe.params",
+                         policy=self.unknown_field_policy)
+        session = self.core.store.get(params["sessionId"])
+        after = params.get("after", -1)
+        if not isinstance(after, int) or isinstance(after, bool):
+            raise RpcError("invalid_params", "after must be an integer",
+                           after=after)
+        interval = params.get("intervalMs", DEFAULT_EVENT_POLL_MS)
+        if (not isinstance(interval, int) or isinstance(interval, bool)
+                or not MIN_EVENT_POLL_MS <= interval <= MAX_EVENT_POLL_MS):
+            raise RpcError("invalid_params",
+                           f"intervalMs must be between {MIN_EVENT_POLL_MS} and "
+                           f"{MAX_EVENT_POLL_MS}", intervalMs=interval,
+                           min=MIN_EVENT_POLL_MS, max=MAX_EVENT_POLL_MS)
+        with self._subscription_lock:
+            if len(self._subscriptions) >= MAX_SUBSCRIPTIONS:
+                raise RpcError("subscription_limit",
+                               f"a connection may hold {MAX_SUBSCRIPTIONS} "
+                               "subscriptions", limit=MAX_SUBSCRIPTIONS)
+            subscription_id = uuid.uuid4().hex
+            self._subscriptions[subscription_id] = {
+                "subscriptionId": subscription_id,
+                "sessionId": session.id,
+                "nextSeq": max(after + 1, 0),
+                "intervalMs": interval,
+            }
+        # Replay and every later event go out AFTER this response, so a client
+        # always learns its subscription id before the first event on it.
+        self._post_send.append(self._start_poller)
+        return {"subscriptionId": subscription_id, "sessionId": session.id,
+                "after": after, "intervalMs": interval,
+                "delivery": "notification method 'event', seq-ordered, "
+                            "gap-free, replayed from after+1"}
+
+    def _m_event_unsubscribe(self, params: dict, _id) -> dict:
+        params = _object(params, {"subscriptionId"}, required=("subscriptionId",),
+                         where="event/unsubscribe.params",
+                         policy=self.unknown_field_policy)
+        subscription_id = params["subscriptionId"]
+        with self._subscription_lock:
+            removed = self._subscriptions.pop(subscription_id, None)
+        if removed is None:
+            raise RpcError("unknown_subscription",
+                           "no such subscription on this connection",
+                           subscriptionId=subscription_id)
+        return {"subscriptionId": subscription_id, "stopped": True,
+                "deliveredThrough": removed["nextSeq"] - 1}
+
+    def _start_poller(self) -> None:
+        if self._poller is not None and self._poller.is_alive():
+            self._drain_subscriptions()
+            return
+        self._poller = threading.Thread(target=self._poll_loop, daemon=True)
+        self._poller.start()
+
+    def _poll_loop(self) -> None:
+        """Poll and diff. Bounded interval, bounded burst, no busy loop."""
+        while not self._stop.is_set():
+            try:
+                interval = self._drain_subscriptions()
+            except Exception:  # noqa: BLE001 - a poller must not kill the run
+                log("event poller failed:\n" + traceback.format_exc())
+                interval = DEFAULT_EVENT_POLL_MS
+            if interval is None:
+                interval = DEFAULT_EVENT_POLL_MS
+            if self._stop.wait(interval / 1000.0):
+                return
+            with self._subscription_lock:
+                if not self._subscriptions:
+                    return
+
+    def _drain_subscriptions(self):
+        """Emit everything appended since each subscription's cursor."""
+        from rt_session import read_events
+
+        with self._subscription_lock:
+            snapshot = list(self._subscriptions.values())
+        interval = None
+        for subscription in snapshot:
+            interval = (subscription["intervalMs"] if interval is None
+                        else min(interval, subscription["intervalMs"]))
+            try:
+                session = self.core.store.get(subscription["sessionId"])
+            except RpcError:
+                continue
+            events, next_seq = read_events(session,
+                                           after=subscription["nextSeq"] - 1,
+                                           limit=MAX_EVENTS_PER_POLL)
+            if not events:
+                continue
+            with self._subscription_lock:
+                live = self._subscriptions.get(subscription["subscriptionId"])
+                if live is None or live["nextSeq"] != subscription["nextSeq"]:
+                    continue
+                live["nextSeq"] = next_seq
+            for event in events:
+                self.out.notify("event", {
+                    "subscriptionId": subscription["subscriptionId"],
+                    "sessionId": subscription["sessionId"],
+                    "event": event,
+                })
+        return interval
+
+    def _m_document_render_prepare(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "timeoutSeconds"},
+                         required=("sessionId",),
+                         where="document/renderPrepare.params",
+                         policy=self.unknown_field_policy)
+        return self.core.document_render_prepare(
+            params["sessionId"], timeout=params.get("timeoutSeconds"))

@@ -45,7 +45,7 @@ from rt_codes import (  # noqa: E402
     SUPPORTED_BACKENDS,
     RpcError,
 )
-from rt_engine import EngineTools  # noqa: E402
+from rt_engine import EngineTools, child_python_facts  # noqa: E402
 from rt_plan import (  # noqa: E402
     COM_OP_KINDS,
     DEFERRED_REFUSALS,
@@ -61,8 +61,12 @@ from rt_plan import (  # noqa: E402
     validate_plan,
     wanted_full_text,
 )
+from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
+    MAX_EVENTS_PER_POLL_DEFAULT,
     SessionStore,
+    append_event,
+    read_events,
     bound_region_result,
     document_graph,
     document_summary,
@@ -85,6 +89,18 @@ AGENT_METHODS: tuple[str, ...] = (
     "approval/get",
     "candidate/list",
     "receipt/read",
+    "document/render",
+    "event/poll",
+)
+
+#: Agent-safe by authority, but transport-shaped: they push notifications, and
+#: an MCP tool call has nowhere to put one. Registered on both JSONL entries and
+#: deliberately absent from the MCP tool surface, which offers ``event/poll``
+#: instead — the same events, request/response, for a client that cannot be
+#: pushed to.
+PROTOCOL_ONLY_METHODS: tuple[str, ...] = (
+    "event/subscribe",
+    "event/unsubscribe",
 )
 
 #: Host authority. The agent registry does not BUILD these (decision D8).
@@ -92,9 +108,11 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
     "workspace/openPath",
     "approval/resolve",
     "plan/apply",
+    "document/renderPrepare",
 )
 
-METHODS: tuple[str, ...] = AGENT_METHODS + HOST_ONLY_METHODS
+METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
+                            + HOST_ONLY_METHODS)
 
 INCLUDE_SECTIONS = ("summary", "graph", "regions")
 
@@ -105,6 +123,7 @@ class RuntimeCore:
     def __init__(self, root: Path | str, engine_root: Path | str | None = None):
         self.store = SessionStore(Path(root))
         self.tools = EngineTools(engine_root)
+        self._render_probe: dict | None = None
 
     # -- capabilities -------------------------------------------------------
     def capability_snapshot(self, *, methods: list[str]) -> dict:
@@ -134,21 +153,41 @@ class RuntimeCore:
                 "maxRegionBytes": MAX_REGION_BYTES,
                 "maxSourceBytes": MAX_SOURCE_BYTES,
             },
+            "render": render_capability(),
+            "childPython": child_python_facts(),
             "deferredRefusals": list(DEFERRED_REFUSALS),
             "unavailable": {
-                "renderProbe": "not wired in this slice; no renderer capability "
-                               "is reported and none is claimed",
+                "renderProbe": ("not run unless capabilities/list is called "
+                                "with probeRenderers:true; it costs seconds"),
                 "descendantContainment": "not_established",
             },
         }
 
-    def capabilities(self, *, entry: str, methods: list[str]) -> dict:
+    def capability_snapshot_probed(self, *, methods: list[str]) -> dict:
+        """The snapshot plus this machine's renderer inventory. Cached, slow."""
+        snapshot = self.capability_snapshot(methods=methods)
+        if self._render_probe is None:
+            self._render_probe = self.tools.render_probe()
+        snapshot["render"] = dict(snapshot["render"])
+        snapshot["render"]["machineProbe"] = self._render_probe
+        return snapshot
+
+    def capabilities(self, *, entry: str, methods: list[str],
+                     probe_renderers: bool = False) -> dict:
+        snapshot = (self.capability_snapshot_probed(methods=methods)
+                    if probe_renderers
+                    else self.capability_snapshot(methods=methods))
         return {"protocolVersion": PROTOCOL_VERSION, "implVersion": IMPL_VERSION,
-                "entry": entry, **self.capability_snapshot(methods=methods)}
+                "entry": entry, **snapshot}
 
     # -- sessions -----------------------------------------------------------
     def open_path(self, path) -> dict:
-        return self.store.open_path(path).summary()
+        session = self.store.open_path(path)
+        append_event(session, "session.opened",
+                     sourceName=session.meta["sourceName"],
+                     sourceSha256=session.meta["sourceSha256"],
+                     documentKind=session.meta["ingress"].get("documentKind"))
+        return session.summary()
 
     def session_list(self) -> dict:
         return {"sessions": self.store.list()}
@@ -207,6 +246,9 @@ class RuntimeCore:
                           proposer=proposer,
                           bound_sha256=session.current_source_sha256())
         self.save_plan(plan)
+        append_event(session, "plan.proposed", planId=plan.id,
+                     opsHash=plan.payload["opsHash"], backend=backend,
+                     proposer=proposer, ops=len(plan.payload["ops"]))
         return {"plan": plan.public()}
 
     def plan(self, plan_id) -> OperationPlan:
@@ -241,6 +283,9 @@ class RuntimeCore:
         report = self.validated(plan)
         plan.state = "validated" if report["ok"] else "invalid"
         self.save_plan(plan)
+        append_event(self.store.get(plan.payload["sessionId"]), "plan.validated",
+                     planId=plan.id, verdict=report["verdict"], ok=report["ok"],
+                     hard=[row["code"] for row in report["hard"]])
         return {"validation": report}
 
     def plan_get(self, plan_id) -> dict:
@@ -261,6 +306,9 @@ class RuntimeCore:
         plan = self.plan(plan_id)
         record = request_approval(plan, requested_by)
         self.save_approval(record)
+        append_event(self.store.get(plan.payload["sessionId"]),
+                     "approval.requested", planId=plan.id,
+                     approvalId=record.id, requestedBy=requested_by)
         return {"approval": record.public()}
 
     def approval_get(self, approval_id) -> dict:
@@ -282,6 +330,10 @@ class RuntimeCore:
         plan.state = "approved" if record.state == "approved" else "rejected"
         self.save_approval(record)
         self.save_plan(plan)
+        append_event(self.store.get(plan.payload["sessionId"]),
+                     "approval.resolved", planId=plan.id,
+                     approvalId=record.id, state=record.state,
+                     approver=approver)
         return {"approval": record.public()}
 
     # -- apply --------------------------------------------------------------
@@ -314,7 +366,57 @@ class RuntimeCore:
         result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint)
         plan.state = "applied"
         self.save_plan(plan)
+        append_event(session, "plan.applied", planId=plan.id,
+                     runId=result["runId"])
+        append_event(session, "candidate.published", runId=result["runId"],
+                     sha256=result["candidate"]["sha256"],
+                     acceptance=result["checks"]["acceptance"],
+                     ranAll=result["checks"]["ranAll"])
         return {"candidate": result}
+
+    # -- rendering ----------------------------------------------------------
+    def document_render(self, session_id, *, page: int = 0,
+                        dpi: int | None = None, run_id=None,
+                        inline: bool = True) -> dict:
+        session = self.store.get(session_id)
+        session.ensure_dirs()
+        from rt_codes import DEFAULT_RENDER_DPI
+        return render_page(session, page=page,
+                           dpi=DEFAULT_RENDER_DPI if dpi is None else dpi,
+                           run_id=run_id, inline=inline)
+
+    def document_render_prepare(self, session_id, *,
+                                timeout: float | None = None) -> dict:
+        """HOST ONLY. Convert the session copy to a PDF so render can raster it."""
+        from rt_convert import prepare_pdf
+
+        session = self.store.get(session_id)
+        session.ensure_dirs()
+        result = prepare_pdf(session, self.tools, timeout=timeout)
+        if result.get("prepared"):
+            append_event(session, "pdf.prepared",
+                         sha256=result["pdf"]["sha256"],
+                         bytes=result["pdf"]["bytes"],
+                         producedBy=result["pdf"]["producedBy"])
+        return result
+
+    # -- events ---------------------------------------------------------------
+    def event_poll(self, session_id, after: int = -1,
+                   limit: int | None = None) -> dict:
+        session = self.store.get(session_id)
+        if not isinstance(after, int) or isinstance(after, bool):
+            raise RpcError("invalid_params", "after must be an integer",
+                           after=after)
+        if limit is None:
+            limit = MAX_EVENTS_PER_POLL_DEFAULT
+        if (not isinstance(limit, int) or isinstance(limit, bool)
+                or not 1 <= limit <= MAX_EVENTS_PER_POLL_DEFAULT):
+            raise RpcError("invalid_params",
+                           f"limit must be between 1 and "
+                           f"{MAX_EVENTS_PER_POLL_DEFAULT}", limit=limit)
+        events, next_seq = read_events(session, after=after, limit=limit)
+        return {"sessionId": session.id, "after": after, "events": events,
+                "nextSeq": next_seq, "more": len(events) == limit}
 
     # -- candidates ---------------------------------------------------------
     def candidate_list(self, session_id) -> dict:

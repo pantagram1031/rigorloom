@@ -55,6 +55,33 @@ MAX_CHILD_OUTPUT_BYTES = 8 * 1024 * 1024
 #: tests/test_subprocess_bounds.py (median 9.00s, worst observed 36.46s).
 CHILD_TIMEOUT_SECONDS = 120.0
 
+#: An operator or a packaged host may point engine children at a real
+#: interpreter. Without it children run under ``sys.executable``, which in a
+#: frozen host is the host itself.
+CHILD_PYTHON_ENV = "RIGORLOOM_CHILD_PYTHON"
+
+# --- rendering --------------------------------------------------------------
+#: A page raster is always written to the session and referenced by path. It is
+#: ALSO inlined as base64 when it fits comfortably inside one frame; above this
+#: the response carries the path and says why it did not inline. Well under
+#: MAX_FRAME_BYTES because base64 costs a third on top.
+MAX_INLINE_IMAGE_BYTES = 512 * 1024
+DEFAULT_RENDER_DPI = 96
+MIN_RENDER_DPI = 24
+MAX_RENDER_DPI = 400
+
+# --- events -----------------------------------------------------------------
+#: Poll interval for an event subscription. Bounded at both ends: a busy loop
+#: is not a subscription, and a five-second tail is not live.
+DEFAULT_EVENT_POLL_MS = 250
+MIN_EVENT_POLL_MS = 50
+MAX_EVENT_POLL_MS = 5000
+#: Events delivered per poll tick and per event/poll call. The tail continues
+#: on the next tick rather than emitting an unbounded burst.
+MAX_EVENTS_PER_POLL = 500
+#: Subscriptions one connection may hold.
+MAX_SUBSCRIPTIONS = 32
+
 # --- error codes ------------------------------------------------------------
 #: Transport and lifecycle.
 TRANSPORT_CODES = frozenset({
@@ -95,6 +122,15 @@ DOMAIN_CODES = frozenset({
     "capability_unavailable",
     "publication_failed",
     "backend_refused",
+    "child_python_invalid",
+    "render_failed",
+    "page_out_of_range",
+    "unknown_subscription",
+    "subscription_limit",
+    "com_busy",
+    "needs_hancom",
+    "convert_failed",
+    "not_convertible",
 })
 
 ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES

@@ -17,7 +17,10 @@ runtime_scripts_on_path()
 
 import rt_server  # noqa: E402
 
-HOST_ONLY = ("workspace/openPath", "approval/resolve", "plan/apply")
+import rt_core  # noqa: E402
+
+#: Derived, so a new host method is covered the day it lands.
+HOST_ONLY = rt_core.HOST_ONLY_METHODS
 
 
 @pytest.fixture()

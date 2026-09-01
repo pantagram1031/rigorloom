@@ -194,6 +194,45 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "inputSchema": {"type": "object", "properties": dict(_SESSION),
                         "required": ["sessionId"]},
     },
+    "document/render": {
+        "description": "A page image of the document, when one is possible. "
+                       "Returns a PNG (inline base64 when small, always a "
+                       "session-relative path) plus page count and page size; "
+                       "when no page image is possible it returns a structured "
+                       "unavailable state naming exactly what is missing, never "
+                       "an approximation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "page": {"type": "integer", "minimum": 0,
+                         "description": "0-based page index"},
+                "dpi": {"type": "integer", "minimum": 24, "maximum": 400},
+                "runId": {"type": "string",
+                          "description": "render a published candidate instead "
+                                         "of the session source"},
+                "inline": {"type": "boolean",
+                           "description": "inline the PNG as base64 when it fits"},
+            },
+            "required": ["sessionId"],
+        },
+    },
+    "event/poll": {
+        "description": "Read the session's event log from a sequence number. "
+                       "Request/response, for a client that cannot be pushed "
+                       "to; the JSONL protocol offers event/subscribe instead.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "after": {"type": "integer",
+                          "description": "return events with seq > after; -1 "
+                                         "replays from the beginning"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            },
+            "required": ["sessionId"],
+        },
+    },
     "receipt/read": {
         "description": "Read a candidate's receipt. Refuses if the candidate "
                        "bytes or the receipt body no longer match their hashes.",
@@ -282,6 +321,19 @@ class McpAdapter:
         if method == "receipt/read":
             return core.receipt_read(arguments.get("sessionId"),
                                      arguments.get("runId"))
+        if method == "document/render":
+            inline = arguments.get("inline", True)
+            if not isinstance(inline, bool):
+                raise RpcError("invalid_params", "inline must be a boolean")
+            return core.document_render(arguments.get("sessionId"),
+                                        page=arguments.get("page", 0),
+                                        dpi=arguments.get("dpi"),
+                                        run_id=arguments.get("runId"),
+                                        inline=inline)
+        if method == "event/poll":
+            return core.event_poll(arguments.get("sessionId"),
+                                   after=arguments.get("after", -1),
+                                   limit=arguments.get("limit"))
         raise RpcError("unknown_method", f"unrouted tool {name!r}", tool=name)
 
     # -- JSON-RPC -----------------------------------------------------------

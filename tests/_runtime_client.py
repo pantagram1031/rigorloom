@@ -17,6 +17,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,7 @@ class RuntimeClient:
             stderr=self._stderr, env=env)
         self._lines: "queue.Queue[bytes | None]" = queue.Queue()
         self._raw: list[bytes] = []
+        self.notifications: list[dict] = []
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
         self._next_id = 0
@@ -77,12 +79,34 @@ class RuntimeClient:
         self.write_raw((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
 
     def recv(self, timeout: float = CLIENT_TIMEOUT) -> dict:
+        """The next frame of ANY kind, including a notification."""
         line = self._lines.get(timeout=timeout)
         if line is None:
             raise AssertionError(
                 "the server closed stdout before answering; stderr:\n"
                 + self.stderr_text())
         return json.loads(line.decode("utf-8"))
+
+    def recv_answer(self, request_id, timeout: float = CLIENT_TIMEOUT) -> dict:
+        """The response or error for ``request_id``, demultiplexing the stream.
+
+        Since ``event/subscribe`` the server also pushes notifications, so a
+        client that assumes the next frame is its answer is a client that
+        breaks the first time a subscription is live. Notifications seen while
+        waiting are kept in ``self.notifications`` rather than dropped.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(
+                    f"no answer for {request_id!r} within {timeout}s; "
+                    f"stderr:\n{self.stderr_text()}")
+            frame = self.recv(timeout=remaining)
+            if frame.get("kind") == "notification":
+                self.notifications.append(frame)
+                continue
+            return frame
 
     def stdout_lines(self) -> list[bytes]:
         return list(self._raw)
@@ -106,7 +130,7 @@ class RuntimeClient:
         if params is not None:
             frame["params"] = params
         self.send_frame(frame)
-        return self.recv(timeout=timeout)
+        return self.recv_answer(frame_id, timeout=timeout)
 
     def initialize(self, *, version: str = "0", policy: str = "reject") -> dict:
         return self.call("initialize", {
