@@ -317,8 +317,8 @@ def _mapped_label_span():
 
 
 def test_an_empty_seat_next_to_a_label_is_interpolated():
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(), [], 600.0, 800.0)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(), [], 600.0, 800.0)
     placed = {(s["row"], s["col"]): s for s in seats}
     seat = placed[(5, 1)]
     assert seat["derivation"] == "interpolated"
@@ -332,8 +332,9 @@ def test_a_drawn_rule_snaps_the_seat_and_upgrades_the_derivation():
     # page, so its midpoint in points is (360, 176). A drawn box has to
     # enclose THAT to be believed.
     drawn = [[300.0, 160.0, 450.0, 195.0]]
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(), drawn, 600.0, 800.0)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(), drawn,
+                                        600.0, 800.0)
     seat = {(s["row"], s["col"]): s for s in seats}[(5, 1)]
     assert seat["derivation"] == "cell_borders"
     assert seat["rect"] == [0.5, 0.2, 0.75, 0.24375]
@@ -341,16 +342,16 @@ def test_a_drawn_rule_snaps_the_seat_and_upgrades_the_derivation():
 
 
 def test_a_seat_with_no_label_in_its_row_is_absent_not_boxed():
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(), [], 600.0, 800.0)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(), [], 600.0, 800.0)
     placed = {(s["row"], s["col"]) for s in seats}
     assert (9, 3) not in placed, "a seat with no anchor must not be invented"
 
 
 def test_a_far_seat_does_not_inherit_the_first_labels_box():
     """One label and two seats: we know where the first is, not the second."""
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(), [], 600.0, 800.0)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(), [], 600.0, 800.0)
     placed = {(s["row"], s["col"]) for s in seats}
     assert (5, 1) in placed
     assert (5, 8) not in placed
@@ -363,24 +364,26 @@ def test_a_seat_that_already_has_text_uses_its_own_span():
     spans = [{"index": 0, "text": "값", "rect": [0.3, 0.4, 0.5, 0.44],
               "address": {"kind": "cell", "table": 0, "row": 2, "col": 3},
               "confidence": "unique"}]
-    seats = rt_geometry.derive_seats(_profile(cells=cells), spans, [], 600, 800)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=cells), spans, [],
+                                        600, 800)
     assert seats[0]["derivation"] == "matched_text"
     assert seats[0]["rect"] == [0.3, 0.4, 0.5, 0.44]
 
 
 def test_the_page_frame_is_not_mistaken_for_a_cell():
     whole_page = [[0.0, 0.0, 600.0, 800.0]]
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(), whole_page,
-                                     600.0, 800.0)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(), whole_page,
+                                        600.0, 800.0)
     seat = {(s["row"], s["col"]): s for s in seats}[(5, 1)]
     assert seat["derivation"] == "interpolated", "the page frame is not a cell"
 
 
 def test_every_derivation_reported_is_in_the_closed_set():
-    seats = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
-                                     _mapped_label_span(),
-                                     [[150.0, 155.0, 300.0, 195.0]], 600, 800)
+    seats, _ = rt_geometry.derive_seats(_profile(cells=_seat_cells()),
+                                        _mapped_label_span(),
+                                        [[150.0, 155.0, 300.0, 195.0]],
+                                        600, 800)
     for seat in seats:
         assert seat["derivation"] in rt_geometry.DERIVATION_METHODS
 
