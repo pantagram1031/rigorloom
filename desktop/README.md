@@ -2,6 +2,17 @@
 
 Tauri 2 + React/TS shell over the real Runtime as a packaged Python sidecar.
 
+**The page is an editor now, and that is measured rather than claimed.** The
+overlay slice shipped a component that could click a seat and had no seat to
+click: `document/pageGeometry` placed zero on all ten corpus forms. The runtime
+stack this build merged rebuilds the drawn grid out of Hancom's own stroked
+segments and places 73, and this shell finds all 37 on the exercised page
+editable — click one, type into the same `<input>` the tree view mounts, and the
+op lands in the same review queue at the same address, all the way to the plan.
+The same merge gave 작업 팩 a 실행 button with `module/check` behind it, and the
+toolbar a 글꼴 that reads 돋움체 instead of `charPr 11`. What that button mostly
+reports is that twelve of eighteen checkers were skipped, and it says skipped.
+
 **A person can now tell the agent what to do, and the agent still cannot do
 it.** Type an instruction; the shell spawns an Agent Host process on an
 AGENT-authority connection to the same workspace; it inspects, proposes and
@@ -54,7 +65,7 @@ Protocol: `docs/runtime-protocol-v0.md`. Product shape: `docs/product-direction.
 | `src/actions.ts` | every operation, as plain functions, so the smoke drives the real path |
 | `src/runtime.ts` | thin invoke wrappers and event subscriptions |
 | `src/views/` | `DocumentView`, `AgentView` — layouts, no state |
-| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash, review queue, receipt panel, **conversation, settings, editor toolbar, task packs** |
+| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash, review queue, receipt panel, conversation, settings, editor toolbar, task packs, page overlay, **`SeatEditor` — the one inline `<input>`, mounted by BOTH the tree and the page** |
 | `src/assets/` | `logo.svg` (drawing of record) and the bundled Pretendard + `OFL.txt` |
 | `src/devMock.ts` + `src/fixtures/` | browser-mode replay of a recorded real session; `import.meta.env.DEV` only, absent from production bundles |
 | `src/smoke.ts` | the scripted checks, run inside the built app |
@@ -588,19 +599,20 @@ the paper stays the raised thing, keyboard-first, no icon cloning, no Hancom
 anything, and the hanji palette and single teal accent unchanged. The point
 colour is spent nowhere in it.
 
-What it carries, all read-only this slice and all real: the selected seat's
-`charPr` id (marked 본문과 다름 when it differs from the document's own body
-shape — T30, surfaced where a person is looking rather than only in the queue),
-the body size from `summary.baselineCharPr`, the relocated 본문/페이지 switch,
-one document zoom, and the document's state (대기 n / 승인 대기 / 후보본 있음 /
-검사).
+What it carries, all read-only and all real: the selected seat's 글꼴 (the face
+the document declares for its charPr — see 글꼴, in the toolbar below), its
+`charPr` id (marked when it differs from the document's own body shape — T30,
+surfaced where a person is looking rather than only in the queue), the body size
+from `summary.baselineCharPr`, the relocated 본문/페이지 switch, one document
+zoom, and the document's state (대기 n / 승인 대기 / 후보본 있음 / 검사).
 
-**There is no 글꼴 name, and that is the honest answer.**
-`document/inspect` reports a seat's `charPr` as an ID and reports a height only
-for the two document-level shapes. No typeface name is on the wire anywhere. A
-font dropdown reading 맑은 고딕 because that is what toolbars usually say would
-be a fabrication in the one place this application must not fabricate.
-Runtime gap 16.
+**The 글꼴 name arrived, and it is still not a dropdown.** Until §14 there was
+no typeface name on the wire anywhere and the strip showed `charPr 11`, because
+a font control reading 맑은 고딕 because that is what toolbars usually say would
+be a fabrication in the one place this application must not fabricate. Gap 16 is
+closed and the name is real now — but it is still a READ. Setting a face means
+creating a charPr the document does not have, which is a `preedit` question, not
+a protocol one, so there is nothing to open a dropdown onto.
 
 **One zoom number, meaning the same thing in both modes.** The toolbar's zoom
 writes `zoom`, which 페이지 보기 already used; 본문 보기 now applies it as CSS
@@ -647,12 +659,19 @@ the runtime returns no geometry the overlay component is not mounted. That is
 not caution for its own sake: a rectangle in the wrong place puts a text cursor
 where the text is not, and does it with the authority of a measurement.
 
-**One mutation path.** An editable target's click calls `beginEdit(table, row,
-col)` — the same function `TextView`'s cell click calls. Same inline editor,
-same IME behaviour, same `fill_cell` op, same review queue, same plan hash, same
-approval, same receipt. A value typed on the page and a value typed in the tree
-are indistinguishable by the time they reach `plan/propose`, which is what makes
-a second editing surface a new *surface* rather than a new *risk*.
+**One mutation path, and one editor element.** An editable target's click calls
+`beginEdit(table, row, col)` — the same function `TextView`'s cell click calls —
+and mounts `SeatEditor`, the same COMPONENT `TextView` mounts, inside the
+rectangle the runtime placed. Same `<input>`, same IME behaviour, same
+`fill_cell` op, same review queue, same plan hash, same approval, same receipt.
+A value typed on the page and a value typed in the tree are indistinguishable by
+the time they reach `plan/propose`, which is what makes a second editing surface
+a new *surface* rather than a new *risk*.
+
+That is now proven end to end rather than asserted, and proving it cost a
+defect: `SeatEditor` used to live inside `TextView`, so the first click on a
+real seat opened an edit state with **no field on screen** — 페이지 보기 does
+not mount `TextView`. See "the seat slice" below.
 
 **Ambiguity is drawn, never resolved.** A line whose normalized text matches
 several addresses arrives with `address: null` and every candidate listed. It is
@@ -673,19 +692,41 @@ rather than take it on faith.
 
 ### What it looks like on real forms today
 
-Nothing editable, and a great deal of ambiguity. Runtime gaps 18 and 19 below
-have the measurement: on all ten corpus forms the runtime places no seat and
-maps no span to a fill target, so the editable half of the feature draws nothing
-and the ambiguous half draws most of the page. The legend under the raster
-prints the runtime's own counts (확정 / 후보 / 대응 없음 / 자리) and, when there
-is nothing to click, says so and points at 본문 보기 — because the alternative
-to an empty page here is a *guessed* box, which is the one thing this feature
-may never produce.
+**Clickable, at last, and lumpy.** `cell_borders` (§12.4) rebuilt the drawn grid
+from Hancom's own stroked segments and placed **73 seats across the corpus** —
+55 of them on `kstartup-jiwon-sincheongseo-saeopgyehoekseo`, 0 on the two forms
+ruled with underlines rather than boxes. On the page the smoke exercises, the
+runtime places 37 seats and this build finds **all 37 editable**: every one is
+an address `document/inspect` offers as a fill seat, so every one opens the
+editor. Ambiguity is still the bulk of the page — 71 ambiguous spans against 10
+unique on that same page — and gap 19 stands.
 
-The component is written for both halves anyway. The seat rule is a named
-runtime GAP with a named fix, not a design decision, and a component built only
-for the empty case would need rewriting the day the runtime places its first
-seat.
+Still true, and still the interesting number: **0 unique SPANS map to an
+editable cell.** Matching is by text and an empty seat has no text, so the text
+half of the mapping reaches labels and only labels. Every clickable target on
+the page today came from the border scan. 400 of 473 corpus fill regions still
+get no seat and §12.6 lists the causes one by one.
+
+The legend under the raster prints the runtime's own counts (확정 / 후보 / 대응
+없음 / 자리) and, where there is nothing to click, still says so and points at
+본문 보기 — because the alternative to an empty page here is a *guessed* box,
+which is the one thing this feature may never produce.
+
+### The seat, at rest
+
+An empty seat is drawn before the pointer touches it: a faint fill tint in the
+accent vocabulary the tree view already uses for a value slot, a baseline rule
+under it, and `cursor: text`. It used to appear only on hover, and that was the
+right call when the runtime placed zero seats and the alternative was a page
+speckled with boxes over nothing. With 37 real seats on a page it is the wrong
+call: an invisible invitation makes the product's marquee interaction
+undiscoverable unless you already know it is there. The smoke reads the
+**computed** style rather than the class list, because a class no rule matches
+would satisfy a class-name assertion and draw nothing.
+
+Ambiguity keeps its own vocabulary — the warning palette, permanently visible,
+because it is a question and not an invitation — and mapped-but-inert text still
+gets no affordance at all.
 
 ### 지면 선택, in the status bar
 
@@ -695,28 +736,117 @@ resolved to, or `후보 N개 — 직접 선택` when it resolved to a question i
 an answer. A target the runtime mapped but the editor will not open says so
 rather than opening an editor that would refuse.
 
-## 작업 팩, and what a seed is allowed to draw
+A seat pick also carries **how the rectangle was found** — `표10 (2,1) · 그려진
+선으로 잡음` — because §12.4's three derivations are not equally trustworthy and
+a seat is the one overlay class a person types into. Leaving that in a tooltip
+means it is never read. `data-derivation` on the same element carries the raw
+`cell_borders` / `matched_text` / `interpolated` for the harness.
+
+## 작업 팩 — the panel that stopped being 준비 중
 
 Six distribution modules are declared on disk, each contributing named checkers
 and CLI commands, and `report` really does depend on `style` and really is
-refused without it. So Agent view's left rail lists them — the module registry's
+refused without it. Agent view's left rail lists them — the module registry's
 own answer, obtained by running `pipeline/scripts/module_registry.py list` as a
 child through the same dual-role entry the Runtime's children use, rather than
 writing a second `module.yaml` reader in Rust that would be the wrong one the
 first time a manifest used a shape it did not anticipate.
 
-Clicking a pack opens a **준비 중** panel that says what the pack will do, what
-of it exists in this installation (enabled or not, its dependencies, its
-checkers and commands by name), and what does not: there is no way to run a
-module's checker against a session, because the Runtime protocol has no method
-that does. **There is no run button**, because drawing the control first is how
-a product acquires a surface it then has to keep honest.
+**There is a 실행 button now**, and there was not before, because before there
+was no method behind one. `module/check` (§13) is that method: it materialises
+the document into `<session>/checks/<callId>/subject/`, runs the module's
+checkers with that directory as cwd, deletes it in a `finally`, and returns a
+VerificationReport-shaped answer. The session copy, the published candidate and
+the operator's original are unreachable **by construction**, which is what makes
+"read-only" a property rather than a hope. Nothing is decided: no candidate, no
+plan, no approval, and the smoke asserts the review queue is untouched by a run.
+
+### The four rules the report is drawn to
+
+**1. `skipped` is never a pass.** Twelve of the declared checkers take a report
+*workspace* directory and a session holds a document, so on any document session
+they come back `skipped: needs_workspace` — and that is the normal case, not an
+edge one. They are drawn as 건너뜀 in the neutral vocabulary with a Korean line
+keyed on the reason CODE, and the runtime's own `detail` is printed beside it
+rather than replaced. Twelve green ticks there would be the single most
+misleading thing this panel could print.
+
+**2. A rule the checker could not decide is a finding, not a silence.** §13.4
+keeps `severity: "skipped"` findings precisely because "this rule did not
+decide" is the fact a reader needs most and the one a bare pass hides. They are
+listed with their code at the same weight as a warning, labelled 판정 안 함.
+
+**3. `ok: true` is not acceptance.** Every document checker in the corpus
+declares `wants: [baseline]`, and a session with no candidate has no baseline to
+give — so the checker runs, reports clean, and the report's `acceptance` is
+still false. Both facts are on screen: the row shows its own `pass` verdict AND
+입력 부족 with the unmet input named, and the header shows 통과 아님 with the
+runtime's own reason. Neither is allowed to hide the other.
+
+**4. A finding's address is a place, and only when the runtime made one.**
+`address` is the checker's location translated into `{table,row,col}` /
+`{atPara}` where a translation exists and `null` where it does not — never a
+half address. An addressed finding gets a link that selects the cell in
+본문 보기; an unaddressed one gets the checker's own location as plain text and
+no link at all. On this machine's evidence run: **1 of 11 findings carried an
+address** (`grant`'s `budget_total_mismatch`, 표11 (5,5)).
+
+### Enablement has two readers, and the panel prints both
+
+Whether a pack can be run is enablement, an install-time operator act recorded
+in `enabled.yaml` that no wire call can change. Two things read that file: this
+list (through `module_registry.py`) and the Runtime (`rt_module`), and the
+Runtime's reading is the one `module/check` obeys — so the 실행 button follows
+the Runtime, and the panel says so out loud when the two disagree rather than
+picking one. Both now honour `RIGORLOOM_MODULES_ROOT` and
+`RIGORLOOM_MODULES_ENABLED` (a new `--enabled-file` flag on the registry CLI,
+forwarded by `taskpacks.rs`), and both report which file they read — because
+"we disagree" and "we read different files" are different defects.
+
+A fresh checkout has no `enabled.yaml` at all: it is gitignored, correctly, and
+a shipped bundle enables nothing until an operator does. That is the panel's
+honest empty state and the smoke asserts it in the `chrome` phase — the 실행
+control is present and disabled, with the reason — while the `packs` phase
+writes an enablement outside the checkout and asserts the run path. Both are
+under test in the same run, and the driver checks afterwards that the run left
+nothing in the repository's own `modules/`.
 
 The Korean display names live in `taskpacks.rs` rather than in the manifests,
 because the manifests are the program's contract with its modules and carry no
 UI copy; adding a `displayName` to them would be editing a tree this slice does
 not own. A module with no entry shows its declared name verbatim and is flagged
 `named: false`, so the absence is visible rather than papered over.
+
+## 글꼴, in the toolbar
+
+The strip showed `charPr 11` where a 글꼴 control belongs, because no typeface
+name was on the wire anywhere (gap 16). §14 puts the declared face there —
+joined out of the header's own `fontface` tables by `form_inspect`, never
+inferred — so the toolbar now reads **돋움체**, and the T30 mismatch beside it
+reads **본문은 한양중고딕** instead of a second integer.
+
+Three rules, because a font control is the easiest place in this application to
+fabricate:
+
+- **Nothing is defaulted.** A dropdown reading 맑은 고딕 because that is what a
+  toolbar usually says would be a fabrication. Where the document declares no
+  resolvable face the id stands alone and the strip says which absence it is.
+- **Two absences stay apart.** `face: null` means THIS document names no face
+  for that charPr; `summary.typefaces.state === "unavailable"` means nothing
+  looked. The strip prints 문서가 이름을 안 밝힘 for the first and 읽지 못함 for
+  the second, and the smoke asserts the right one for the state the runtime
+  reported.
+- **한글 first, every language in the tooltip.** §14 carries a face per language
+  because Hangul's own font dialog does. The strip has room for one and shows
+  the 한글 face; the tooltip carries every language the header resolved,
+  unmerged. Collapsing them would be a guess about which of two declared truths
+  the reader meant.
+
+The shell builds its charPr→face index from what `document/inspect` already
+publishes — the two document-level shapes plus every region's `charPrFace` and
+`charPrSuggestedFace` — so every pair on screen is one the runtime stated. A
+graph cell whose charPr appears in neither publisher gets no name, which is
+correct: nothing on the wire said what it is.
 
 ---
 
@@ -888,6 +1018,185 @@ answer with **no credential stored**, which is the state a new user meets, and
 its capability table shows 예 / 아니오 / 모름 as the adapter actually declared
 them.
 
+### The seat slice — a clicked seat, a run button, and a font name
+
+Three features the runtime stack unblocked in one merge: `cell_borders` seats,
+`module/check`, and the declared typeface name.
+
+```powershell
+npx tsc --noEmit
+cargo test --release                       # in desktop/src-tauri
+powershell -File desktop/sidecar/build.ps1 # MUST precede the app build
+cd desktop; npm run tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+```
+
+| Step | Exit | Result |
+| --- | --- | --- |
+| `npx tsc --noEmit` | 0 | — |
+| `cargo test --release` | 0 | 11 passed |
+| `sidecar/build.ps1` | 0 | 63.5 MiB payload, **ten** role checks |
+| `npm run tauri build` (release) | 0 | 2m 29s warm |
+| `scripts/smoke.ps1` | 0 | **360 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 | 22 images |
+| `pytest tests/test_runtime_{geometry,module_check,typeface}.py pipeline/tests/test_module_registry.py` | 0 | 191 passed, 101s |
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· **`overlay` 44** · **`packs` 34** · `composer` 31 · `settings` 28 ·
+`chrome` 33 · `chrome-reattach` 5, plus four the driver makes from outside.
+
+**The sidecar's role checks went from six to ten**, and the four new ones are
+the pre-merge-sidecar defect class applied to this merge rather than the last
+one: `rt_module.py` present by name, `module/list` and `module/check`
+advertised, `cell_borders` in the frozen runtime's own `derivationMethods`, and
+the bundled module declarations readable through the runtime's registry with a
+non-empty `discovered`. The third is the one that matters most:
+`document/pageGeometry` was advertised by the *previous* bundle too and placed
+zero seats on every form, so "the method exists" stopped being proof that the
+marquee interaction can reach anything.
+
+#### The `overlay` phase's seat numbers
+
+Staged-real against `kstartup-jiwon-sincheongseo-saeopgyehoekseo`, whose own
+Hancom render the corpus carries. The harness does **not** hardcode a page: it
+asks the runtime page by page and settles on the one with the most seats, so
+the phase exercises whatever the derivation actually placed. It found
+`1:2 2:0 3:0 4:0 5:0 6:37 7:7 8:0` and chose page 6.
+
+- **37 seats returned, 37 drawn, 37 editable, 37 clickable** — against 125
+  editable fill regions in the form, 10 unique spans and 71 ambiguous.
+- A `cell_borders` seat clicked → the inline editor opened **on the address the
+  seat carries** (10-2-1, not a neighbour) → 지면 선택 read
+  `표10 (2,1) · 그려진 선으로 잡음` with `data-derivation="cell_borders"` →
+  the value committed → **one** `fill_cell` op at 10-2-1 in the review queue →
+  the plan the runtime returned names that same cell. The approve/apply depth
+  is `phaseEdit`'s and is not duplicated here; this proves the entry point
+  reaches the same queue.
+- The seat's resting background is `color(srgb … / 0.07)` with a border, read
+  off `getComputedStyle` before any hover, and its cursor is `text`.
+- **9 → 9 geometry fetches across the four-level zoom sweep.** The number is
+  larger than the overlay slice's 2 because the page scan asked for eight pages
+  before settling; the property is the same one and it still holds — zoom
+  multiplies fractions the client already has and asks the runtime nothing.
+
+#### The `packs` phase's numbers
+
+`grant` and `report` against the same form, with an enablement written to the
+run directory and pointed at by `RIGORLOOM_MODULES_ENABLED`.
+
+- Both readers agree: registry `[grant,report,style]`, runtime
+  `[grant,report,style]`, same `enabledFile` path.
+- `grant` → **1 selected, 1 ran, 11 findings, all `severity: skipped`,
+  `ok: true`, `partial: true`, `wantsUnsatisfied: [baseline]`, acceptance
+  false.** The panel shows `pass` and 입력 부족 together and the header shows
+  통과 아님, with the runtime's reason ("a checker ran without an input it
+  declares it needs").
+- **1 of 11 findings carried a Runtime address**; exactly 1 link was drawn, and
+  clicking it selected 표11 (5,5) in 본문 보기.
+- `report` → **12 selected, 0 ran, 12 skipped, every one `needs_workspace`**,
+  `ranAll: false`, `acceptance: false`. Twelve 건너뜀 rows, each with the
+  Korean reason line and the runtime's own English detail beside it. No row
+  reads `pass`.
+- The disabled `gongmun` pack's 실행 is disabled, and opening another pack
+  drops the previous pack's verdict rather than leaving it under a new heading.
+- From outside: the run left no `enabled.yaml` in the checkout.
+
+#### The typeface, in the `chrome` phase
+
+On `gianmun-byeolji-1ho`, `summary.typefaces.state` is `read`, the first fill
+seat's charPr 11 resolves to **돋움체** in all seven languages, and the toolbar
+shows that name — asserted to be a name the runtime declared for THAT charPr,
+not merely a name. The T30 mismatch renders **본문은 한양중고딕** (charPr 23),
+which is the §14 example verbatim.
+
+#### Screenshots
+
+Two new, both real: `page-seat-edit` (page 6 of the staged-real session, a
+`cell_borders` seat open in the inline editor with a value part-typed, the
+surrounding empty seats showing their resting tint, 지면 선택 reading
+`표10 (2,1) · 그려진 선으로 잡음`) and `task-pack-check` (a genuine `grant`
+report: 통과 아님, the runtime's counts, `check_grant pass 입력 부족`, and the
+판정 안 함 findings with their codes). `toolbar-text` and `toolbar-page` are
+re-taken because they were photographing whichever session the previous shot
+had left selected — the same defect the `page-overlay-unavailable` capture had —
+and now open their intended document unconditionally, which is why the toolbar
+in them reads 돋움체 / 본문은 한양중고딕.
+
+#### Five defects this slice's evidence found
+
+1. **A seat click opened an edit with nowhere to type.** The overlay's editable
+   branch had never fired — zero seats on every form — and the first click on a
+   real one set `inlineEdit`, put `표10 (2,1)` in the status bar, and mounted no
+   input: `SeatEditor` lived inside `TextView`, which 페이지 보기 does not
+   mount. Fixed by extracting `SeatEditor` into its own module and mounting the
+   SAME component in the seat's rect. Copying it would have been the defect;
+   the whole claim of this feature is that there is one editor.
+2. **`data-testid="pack-report"` named two different things.** The report
+   container and the list row for the pack *called* `report`. Three assertions
+   about the report's contents were silently reading the list row's blurb —
+   they failed, which is the good outcome, but a looser assertion would have
+   passed against the wrong element forever. The report's testids are now
+   `module-check-*`.
+3. **A capture saved a 314x50 title-bar sliver and reported success.**
+   `shot.ps1` only checked `width > 0`, and the app's window rect is 314x50
+   until `MoveWindow` fits it to the work area — even while the WebView inside
+   already reports a 2880x1759 CSS viewport. A move that had not landed yet
+   therefore produced a 1 KiB PNG filed under `task-packs.png`. A fragment filed
+   as evidence of a panel is worse than a failed capture, because the failure is
+   visible and the fragment is not. It now polls after the move and refuses
+   anything below the editor's own 1024x640 minimum.
+
+   The first attempt at that fix is worth recording because it was wrong in an
+   instructive way: it enforced the minimum at SELECTION time, which rejects the
+   real window — 314x50 before the move is the editor, not a helper — and
+   captured nothing at all. Two runs and a window enumeration established that.
+   Window selection separately stopped depending on `MainWindowHandle`: the
+   process owns four top-level windows and the largest visible one now wins,
+   with `MainWindowHandle` as the fallback. `screenshots.ps1` retries a failed
+   shot once and gained `-Only` for re-taking one.
+4. **`smoke.ts` contained a literal NUL byte**, in
+   `.includes(detail ?? "\0")` as an impossible sentinel. git therefore
+   classified the entire harness as BINARY: no eol normalisation despite
+   `* text=auto eol=lf`, the file committed with CRLF while every sibling is
+   LF, and every diff of it unreviewable — `grep` reports it as
+   "Binary file … matches" to this day. Replaced with a visible sentinel
+   string, which is also more honest about what the assertion means. The test
+   commit carries the one-time normalisation the gitattributes always intended,
+   which is why that file's diff is whole-file.
+5. **The 준비 중 assertion outlived what it stood for.** The `chrome` phase
+   asserted the pack panel says 준비 중; it no longer does, because it no
+   longer is. Repointed rather than deleted, to the property the label stood
+   for: the panel says what it can do and what it still cannot, and on a
+   checkout with nothing enabled the 실행 control is present AND refused with
+   its reason.
+
+#### What this slice did NOT prove on this machine
+
+- **No live conversion.** Every rect on every page in this evidence came from a
+  PDF the corpus carries, staged the way `renderPrepare` would have staged it.
+  The packaged sidecar has no `pyhwpx` (packaging gap P1) and a Hancom instance
+  is open, so a live prepare answers `needs_hancom` or `com_busy` — which the
+  overlay phase's LIVE leg photographs and asserts, rather than skipping.
+- **The finding-to-cell navigation rests on one finding.** 1 of 11 was
+  addressable. The link is drawn for exactly the addressed ones and not drawn
+  for the other ten, which is the property that matters, but "exactly one" is a
+  thin sample and gap 21 is why.
+- **`module/check` was never given a `runId`.** The shell always calls it
+  against the session source, so every document checker in this evidence ran
+  `partial` with `wantsUnsatisfied: [baseline]`. A candidate would supply the
+  baseline by construction (§13.3) and produce a complete verdict; the shell has
+  no control that asks for one yet.
+- **No workspace checker ran, anywhere.** Twelve of eighteen cannot, by
+  construction. What is proven is that they are drawn as skipped.
+- **IME composition on the page surface is not separately measured.**
+  `scripts/ime.ps1` types real scan codes into the tree's field. The page mounts
+  the same `SeatEditor` component, so the behaviour is shared by construction
+  rather than by test — the harness has no page-surface leg.
+- **One renderer, one machine.** Hancom Office 13.0.0.2986, a single
+  200 %-scaled display. Seat placement tolerances against other Hancom versions
+  are untested, and §12.6 already records that.
+
 ### 한글 오버레이 — the overlay slice
 
 ```powershell
@@ -958,6 +1267,12 @@ chooser open over a genuine two-way ambiguity) and
 is a refusal). Both are in the directory on purpose. A screenshot set that
 showed only the working case would advertise a capability this machine does not
 have.
+
+*Superseded in part by the seat slice:* the staged session is now the form the
+runtime actually seats, so `page-overlay` and `page-overlay-unavailable` are two
+different documents rather than one — the first is the seated form's page 1, the
+second is still this machine refusing `com_busy` on the form the harness opens
+live. Both claims each capture makes are unchanged; only the pairing is.
 
 ### Three defects the overlay evidence found
 
@@ -1170,7 +1485,9 @@ throughout.
 ## Runtime gaps
 
 Recorded, not patched: `runtime/**` belongs to another branch. Gaps 1, 2 and 11
-CLOSED in Phase 3 and are consumed by this build; the rest stand.
+CLOSED in Phase 3; gaps 16 and 17 CLOSED by the runtime stack this build merged,
+and 18 is now a number rather than a zero. All of them are consumed here; the
+rest stand.
 
 ### Closed since Phase 3
 
@@ -1299,53 +1616,63 @@ CLOSED in Phase 3 and are consumed by this build; the rest stand.
 
 ### New in Phase 5
 
-16. **No typeface name anywhere on the wire.** `document/inspect` reports a
-    seat's `charPr` as an ID, and reports a HEIGHT only for the two
-    document-level shapes (`summary.baselineCharPr`, `summary.blackCharPr`).
-    Nothing says what font a run is set in. The editor toolbar therefore shows
-    the id and the body size and says the name is not something this build
-    knows — which is right, and is also the reason the toolbar cannot become a
-    real 글꼴 control even read-only. *Suggested shape:* `baselineCharPr` and
-    each `regions[]` entry gain the `fontRef` / face name HWPX already stores in
-    `DocInfo`, which `form_inspect` walks past to reach the height.
-17. **No way to run a module's checker against a session.** The distribution
-    modules declare checkers (`modules/report` alone declares twelve) and the
-    Runtime knows nothing about them: there is no `check/run` and no way to name
-    a module contribution on the wire. The 작업 팩 panel is therefore a
-    declaration viewer with a 준비 중 label, which is the honest shape for it,
-    and the whole report-pipeline product sits behind this one method.
-    *Suggested shape:* `module/list` returning what `module_registry.py list`
-    prints, and `check/run {sessionId, checker, runId?}` returning the checker's
-    own `Finding` list — both host-only. The domain code exists; only the wire
-    is missing, which is the same shape as gap 3.
+16. ~~**No typeface name anywhere on the wire.**~~ **CLOSED** by §14. The
+    suggested shape was adopted almost exactly and improved on: `form_inspect`
+    publishes `charpr_faces` (charPr id → {lang: face}) and `rt_session` reads
+    it into `summary.baselineCharPr.face`, `summary.blackCharPr.face`,
+    `regions[].charPrFace` and `regions[].charPrSuggestedFace`. Two things the
+    suggestion did not anticipate and the wire got right: the face is **per
+    language**, because Hangul's font dialog is and the corpus 기안문 declares
+    different 한글 and 영문 faces; and `summary.typefaces.state` is a separate
+    field, so "this document names no face for this charPr" and "nothing looked"
+    cannot be confused. The toolbar consumes both. What is still absent is a
+    seat's own point size (§14.1) and any way to *set* a face, which is a
+    `preedit` question rather than a protocol one.
+
+17. ~~**No way to run a module's checker against a session.**~~ **CLOSED** by
+    §13, `module/list` + `module/check`. The suggested shape was right about
+    the wire and wrong about one thing worth recording: both methods are
+    **agent-safe**, not host-only. The argument that changed it is in §13.1 —
+    the checker contract is a verdict producer, the subject is a scratch copy
+    by construction, it decides nothing, and the authority to run a module at
+    all is enablement, an install-time operator act no wire call can reach.
+    Host-only would have put the only quality signal an agent could use on the
+    far side of the gate it exists to inform. The 작업 팩 panel has a 실행
+    button now; what it still cannot do is run the twelve workspace checkers,
+    which is gap 20 below rather than a leftover of this one.
 
 ### New with the overlay
 
-18. **`document/pageGeometry` reaches nothing editable, on any real form.**
-    This is the overlay slice's central finding and it was measured before a
-    line of the component was written, against the runtime's own answers for
-    every corpus pairing: **10 forms, 51 pages, 473 editable fill regions, and
-    the method places 0 seats and returns 0 unique spans whose address is an
-    editable cell.** Not "few". None.
+18. **`document/pageGeometry` seats 73 of 473 fill regions, and the rest are
+    structural.** Recorded here as measured twice, because the two measurements
+    are the interesting part.
 
-    The cause is structural rather than a tuning miss. Matching is by text, and
-    an empty fill seat *has no text*, so the only cells that ever match are the
-    static labels around it. §12.4's interpolation then places only the seat
-    **immediately after** a uniquely mapped label in the same table row — and on
-    real Hancom layout the uniquely mapped labels and the fill targets never
-    land in the same `row` at adjacent `col`. On the 정보공개 청구서 the mapped
-    labels sit in rows 13, 15, 17 and 34 while every fill target is in rows 0,
-    11, 22, 23 and 24: disjoint, so the rule cannot fire even once.
+    *Before `cell_borders`:* **10 forms, 51 pages, 473 editable fill regions, 0
+    seats, 0 unique spans whose address is an editable cell.** Not "few". None.
+    Matching is by text and an empty fill seat has no text, so the only cells
+    that ever matched were the static labels around it, and interpolation only
+    reached a seat immediately after a uniquely mapped label in the same row —
+    which real Hancom layout does not provide.
 
-    §12.6 already names this ("seats not adjacent to a label") and calls for a
-    per-cell border scan that does not need a text anchor. What the measurement
-    adds is that it is not an edge case to be closed later — it is the whole of
-    reality on this corpus, and it is the single thing standing between the
-    overlay and the product's marquee interaction. *Suggested shape:* find the
-    drawn grid, not a neighbour. `extract_page` already collects `drawnRects`
-    and `_containing_drawn_rect` already knows what a plausible cell looks
-    like; what is missing is walking the table's cells against that rect set
-    directly instead of only using it to snap an interpolated guess.
+    *After:* **73 seats, all `cell_borders`**, from rebuilding the drawn grid
+    out of Hancom's own stroked segments rather than looking for a text
+    neighbour. The suggested fix ("find the drawn grid, not a neighbour") is
+    what landed. The distribution is lumpy and honestly so: 55 on
+    `kstartup-jiwon-sincheongseo-saeopgyehoekseo`, 0 on the two forms ruled with
+    underlines rather than boxes. On the page this build's smoke exercises, all
+    37 seats are addresses the editor opens — the marquee interaction is real
+    and proven end to end.
+
+    **What remains open is the other 400**, and §12.6 attributes them: 148 sit
+    in tables with no anchor anywhere, truncated 30-character previews cannot
+    establish a correspondence (only refute one), unruled forms correctly place
+    nothing, the walk stops at a gap or a merged cell, and alignment is per
+    page. Also still true: **0 unique SPANS map to an editable cell**, so every
+    clickable target on a page today came from the border scan and none from
+    text matching. *Suggested shape for the largest block:* an anchor does not
+    have to come from a span. A table whose declared cell text is unique within
+    the page could anchor on its own geometry — same `cell_agrees` check, no
+    span required — which is where the 148 live.
 
 19. **Ambiguity is the normal case, not the exception.** Across the same
     corpus, `ambiguous` outnumbers `unique` roughly six to one (saeopja: 586
@@ -1358,6 +1685,40 @@ CLOSED in Phase 3 and are consumed by this build; the rest stand.
     state rather than a warning. *Suggested shape:* nothing on the wire yet —
     but if a span carried its page-order position relative to its candidates,
     a chooser could at least order them by proximity without picking one.
+
+### New with the seat slice
+
+20. **Twelve of the eighteen checkers have no session to run against.** The
+    Runtime has no *workspace* concept at all, so every `subject: workspace`
+    checker — all twelve of `modules/report`, plus `style`'s one — answers
+    `skipped: needs_workspace` on any document session, by construction and
+    correctly. Measured on this machine rather than read off the manifests:
+    running `module/check` on `report` selects 12, runs 0, skips 12, and
+    reports `acceptance: false`. That is the honest answer and the panel draws
+    it as such, but it also means the report-pipeline half of 작업 팩 is a
+    panel that can only explain why it did nothing. §13.7 names the fix and
+    this build agrees with it: *a workspace session kind*, not a directory
+    guessed from a document — guessing would hand an `.hwpx` path to a
+    workspace checker and produce a verdict about an empty directory that reads
+    exactly like a finding about the user's file.
+
+21. **A checker's location is usually not an address.** `module/check`
+    translates a finding's place into the Runtime's own addressing where a
+    translation exists and returns `null` where it does not, which is right.
+    On this machine's run that is **1 of 11 findings** — the other ten carried
+    no `at` the translator could read, so the panel shows the checker's own
+    location as text and offers no link. The gap is not in the translator; it
+    is that most checker rules report a *rule* outcome rather than a place.
+    *Suggested shape:* nothing on the wire — this is a `checker_base` contract
+    question about what a `Finding` is obliged to carry, and it belongs to the
+    modules, not to the protocol.
+
+22. **`--pack`, `--vocabulary` and `--mode` are unreachable.** Every checker
+    runs on its own defaults because a pack instance is operator state
+    (`personalization_ctl`) and `policy/set` is still GAP, so `module/check`
+    passes none of them. The panel says so in 아직 없는 것. Recorded as §13.7
+    already does; repeated here because it is the second thing a person asks
+    after pressing 실행 once.
 
 ## Packaging gaps
 
