@@ -1,43 +1,51 @@
 /*
- * Design tokens. The rationale for each group is in desktop/README.md §Design
- * language; the short version is in the comments here.
+ * Rigorloom design tokens.
  *
- * Three rules this file exists to enforce:
- *  - Korean-first typography. Never `system-ui` alone: on Korean Windows it
- *    resolves to 맑은 고딕, which ships Semilight/Regular/Bold and cannot
- *    express a hierarchy. That is why Studio reads flat.
- *  - Semantic colour belongs to evidence, never to decoration, and never
- *    carries meaning alone — every state also has a text label.
- *  - Density is a feature. This is a tool used for hours, not a landing page.
+ * The identity is paper, not web. Warm hanji neutrals instead of the blue-grey
+ * default every framework ships; a dark ink strip across the top so the window
+ * reads as an application rather than a page; one working accent and one
+ * reserved point colour whose whole value is that it is almost never used.
+ *
+ * Rationale for each group sits with it. The longer version is in README.
  */
 
+/* ── Pretendard Variable, bundled ────────────────────────────────────────
+   SIL OFL 1.1; the licence travels with the file at src/assets/fonts/OFL.txt
+   and ships inside the installer. Bundling is what makes the product look the
+   same on every machine: the fallbacks below only resolve to 맑은 고딕, which
+   has three weights and cannot express a hierarchy. */
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("./assets/fonts/PretendardVariable.woff2") format("woff2-variations");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
-  /* Type. Pretendard first because it is designed for mixed Korean-Latin runs
-     (fill_target, proof_grade, HWPX) and its x-height sits near the Hangul
-     optical height. It is NOT bundled yet — see README, open question. The
-     fallbacks are what this machine actually has. */
-  --font-ui: Pretendard, "Pretendard Variable", "Noto Sans KR", "Malgun Gothic",
-    system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, "D2Coding", "Noto Sans KR",
-    "Malgun Gothic", monospace;
+  --font-ui: "Pretendard Variable", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  /* Deliberately a system mono stack: no second webfont for numbers, and
+     Consolas has the tabular figures and unambiguous 0/O that hashes need. */
+  --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
 
   --text-xs: 11px;
   --text-sm: 12px;
   --text-base: 13px;
   --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 19px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
 
-  /* Hangul glyphs fill their em box; Latin-tuned 1.4-1.5 leading crowds them. */
-  --leading-body: 1.7;
-  --leading-tight: 1.35;
+  /* Hangul glyphs fill their em box; Latin-tuned 1.4-1.5 crowds them. */
+  --leading-body: 1.6;
+  --leading-doc: 1.75;
+  --leading-tight: 1.3;
   --leading-ui: 1.45;
 
   --weight-body: 400;
   --weight-emph: 500;
   --weight-head: 600;
 
-  /* Space. 4px base; 4 / 8 / 12 / 16 / 24 / 32 / 48. */
   --s1: 4px;
   --s2: 8px;
   --s3: 12px;
@@ -45,77 +53,110 @@
   --s6: 24px;
   --s8: 32px;
   --s12: 48px;
+  --s16: 64px;
 
-  /* Row height is shared across the structure tree, the timeline and the
-     region list. If they differ the eye stops trusting that they refer to the
-     same thing. */
-  --row-h: 26px;
-  --radius: 4px;
-  --border-w: 1px;
+  --row-h: 27px;
+  --radius: 5px;
+  --radius-lg: 10px;
+
+  /* ── motion ───────────────────────────────────────────────────────────
+     One easing curve for everything that moves between states. Nothing
+     overshoots: a document tool that bounces reads as a toy. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-micro: 120ms;
+  --t-view: 200ms;
 }
 
-/* Light — the default. Surfaces recede; the document is the brightest thing. */
+/* ── light: hanji paper ─────────────────────────────────────────────────
+   No pure #FFF anywhere. The document column is the brightest surface on
+   screen and everything else steps back from it. */
 :root {
-  --bg-app: #f4f4f2;
-  --bg-panel: #fbfbfa;
-  --bg-raised: #ffffff;
-  --bg-sunken: #eeeeec;
-  --bg-hover: rgba(20, 20, 18, 0.045);
-  --bg-selected: rgba(58, 96, 130, 0.12);
+  --bg-app: #f1eee8;
+  --bg-panel: #faf8f4;
+  --bg-raised: #fdfbf7;
+  --bg-sunken: #eae6de;
+  --bg-paper: #fefdfb;
+  --bg-hover: rgba(28, 30, 33, 0.045);
+  --bg-active: rgba(28, 30, 33, 0.075);
 
-  --fg: #1c1c1a;
-  --fg-muted: #62625d;
-  --fg-faint: #8d8d86;
-  --fg-invert: #fbfbfa;
+  --fg: #1c1e21;
+  --fg-muted: #5f6165;
+  --fg-faint: #8b8d90;
+  --fg-on-ink: #f1eee8;
 
-  --line: #dcdcd7;
-  --line-strong: #c3c3bc;
+  --line: #e4e0d8;
+  --line-strong: #cfcabf;
 
-  /* One accent, low chroma, interactive affordance only. */
-  --accent: #3a6082;
-  --accent-fg: #ffffff;
-  --accent-soft: rgba(58, 96, 130, 0.14);
+  /* the working accent - interactive, selection, focus, and nothing else */
+  --accent: #0f766e;
+  --accent-fg: #fefdfb;
+  --accent-soft: rgba(15, 118, 110, 0.11);
+  --accent-line: rgba(15, 118, 110, 0.4);
 
-  /* Evidence tones. Retuned per theme, never reused across themes. */
+  /* the reserved point colour. Approval-pending and attention ONLY.
+     Scarcity is the whole mechanism; spend it on a chip and it stops
+     meaning anything. */
+  --point: #c2410c;
+  --point-soft: rgba(194, 65, 12, 0.1);
+
+  --ink: #1c1e21;
+
   --ok: #2f6b46;
-  --ok-soft: rgba(47, 107, 70, 0.12);
+  --ok-soft: rgba(47, 107, 70, 0.11);
   --warn: #8a5a12;
-  --warn-soft: rgba(138, 90, 18, 0.13);
-  --bad: #97341f;
-  --bad-soft: rgba(151, 52, 31, 0.12);
-  --none: #6e6e68;
-  --none-soft: rgba(110, 110, 104, 0.12);
+  --warn-soft: rgba(138, 90, 18, 0.12);
+  --bad: #a03a1f;
+  --bad-soft: rgba(160, 58, 31, 0.11);
+  --none: #6f7175;
+  --none-soft: rgba(111, 113, 117, 0.1);
+
+  --shadow-paper: 0 1px 2px rgba(28, 30, 33, 0.05), 0 8px 24px rgba(28, 30, 33, 0.07);
+  --shadow-pop: 0 2px 6px rgba(28, 30, 33, 0.08), 0 12px 32px rgba(28, 30, 33, 0.14);
 }
 
+/* Dark keeps the roles, not the values: warm ink rather than a blue night
+   mode, and the two signal colours are re-tuned rather than reused. It is
+   derived from the light theme, which is the designed one. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg-app: #17181a;
-    --bg-panel: #1d1e21;
+    --bg-app: #16171a;
+    --bg-panel: #1c1e21;
     --bg-raised: #24262a;
-    --bg-sunken: #131416;
-    --bg-hover: rgba(255, 255, 255, 0.055);
-    --bg-selected: rgba(126, 172, 214, 0.16);
+    --bg-sunken: #131417;
+    --bg-paper: #23252a;
+    --bg-hover: rgba(250, 248, 244, 0.05);
+    --bg-active: rgba(250, 248, 244, 0.085);
 
-    --fg: #e6e6e2;
-    --fg-muted: #a0a19c;
-    --fg-faint: #75766f;
-    --fg-invert: #17181a;
+    --fg: #e8e5df;
+    --fg-muted: #a2a09b;
+    --fg-faint: #76747017;
+    --fg-faint: #787671;
+    --fg-on-ink: #e8e5df;
 
     --line: #32343a;
-    --line-strong: #454850;
+    --line-strong: #474a52;
 
-    --accent: #7eacd6;
+    --accent: #4db6a8;
     --accent-fg: #14161a;
-    --accent-soft: rgba(126, 172, 214, 0.18);
+    --accent-soft: rgba(77, 182, 168, 0.15);
+    --accent-line: rgba(77, 182, 168, 0.45);
+
+    --point: #f0743d;
+    --point-soft: rgba(240, 116, 61, 0.14);
+
+    --ink: #101114;
 
     --ok: #79c295;
-    --ok-soft: rgba(121, 194, 149, 0.15);
+    --ok-soft: rgba(121, 194, 149, 0.14);
     --warn: #d8a75a;
-    --warn-soft: rgba(216, 167, 90, 0.15);
+    --warn-soft: rgba(216, 167, 90, 0.14);
     --bad: #e08b74;
-    --bad-soft: rgba(224, 139, 116, 0.15);
+    --bad-soft: rgba(224, 139, 116, 0.14);
     --none: #8b8c86;
-    --none-soft: rgba(139, 140, 134, 0.15);
+    --none-soft: rgba(139, 140, 134, 0.14);
+
+    --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
+    --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -137,10 +178,11 @@ body {
   font-weight: var(--weight-body);
   color: var(--fg);
   background: var(--bg-app);
-  /* Never letter-space Hangul: tracking that flatters uppercase Latin destroys
-     syllable-block rhythm. */
+  /* Never letter-space Hangul: tracking that flatters uppercase Latin
+     destroys syllable-block rhythm. */
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow: hidden;
   cursor: default;
   user-select: none;
@@ -155,11 +197,18 @@ button {
   cursor: pointer;
 }
 
-/* Only tracking allowed, and only on Latin-only labels. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* Tracking is allowed on exactly one class, and it is Latin-only by
+   construction. */
 .latin-caps {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--fg-faint);
 }
@@ -170,7 +219,7 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── shell ─────────────────────────────────────────────────────────────── */
+/* ══ shell ═══════════════════════════════════════════════════════════════ */
 
 .shell {
   display: grid;
@@ -178,44 +227,58 @@ button {
   height: 100%;
 }
 
+/* The ink strip. This one element does most of the work of making the app
+   stop looking like a web page. */
 .titlebar {
   display: flex;
   align-items: center;
   gap: var(--s4);
-  height: 44px;
-  padding: 0 var(--s4);
-  background: var(--bg-panel);
-  border-bottom: var(--border-w) solid var(--line);
+  height: 42px;
+  padding: 0 var(--s3) 0 var(--s4);
+  background: var(--ink);
+  color: var(--fg-on-ink);
+  flex: none;
 }
 
-.wordmark {
-  font-size: var(--text-md);
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+}
+
+.brand .wordmark {
+  font-size: var(--text-lg);
   font-weight: var(--weight-head);
-  letter-spacing: 0;
+  letter-spacing: -0.012em;
+  color: var(--fg-on-ink);
 }
 
 .viewswitch {
   display: flex;
   gap: 2px;
   padding: 2px;
-  background: var(--bg-sunken);
+  background: rgba(250, 248, 244, 0.08);
   border-radius: var(--radius);
 }
 
 .viewswitch button {
-  padding: var(--s1) var(--s3);
+  padding: 3px var(--s3);
   border-radius: 3px;
   font-size: var(--text-base);
-  color: var(--fg-muted);
-  /* Motion only where it explains a relationship. */
-  transition: background 140ms ease, color 140ms ease;
+  white-space: nowrap;
+  color: rgba(241, 238, 232, 0.62);
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+}
+
+.viewswitch button:hover {
+  color: var(--fg-on-ink);
 }
 
 .viewswitch button[aria-pressed="true"] {
-  background: var(--bg-raised);
-  color: var(--fg);
+  background: rgba(250, 248, 244, 0.14);
+  color: var(--fg-on-ink);
   font-weight: var(--weight-emph);
-  box-shadow: 0 0 0 1px var(--line);
 }
 
 .titlebar .spacer {
@@ -227,6 +290,7 @@ button {
   align-items: baseline;
   gap: var(--s2);
   min-width: 0;
+  color: rgba(241, 238, 232, 0.82);
 }
 
 .docchip .name {
@@ -234,24 +298,46 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40ch;
+  max-width: 42ch;
+}
+
+.docchip .latin-caps {
+  color: rgba(241, 238, 232, 0.42);
+}
+
+.ghost {
+  padding: 4px var(--s3);
+  border-radius: var(--radius);
+  font-size: var(--text-base);
+  color: rgba(241, 238, 232, 0.78);
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+}
+
+.ghost:hover {
+  background: rgba(250, 248, 244, 0.12);
+  color: var(--fg-on-ink);
 }
 
 .action {
-  padding: var(--s1) var(--s3);
-  border: var(--border-w) solid var(--line-strong);
+  padding: 4px var(--s3);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--bg-raised);
   font-size: var(--text-base);
-  transition: background 140ms ease;
+  transition: background var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
 }
 
 .action:hover:not(:disabled) {
   background: var(--bg-hover);
+  border-color: var(--accent-line);
+}
+
+.action:active:not(:disabled) {
+  background: var(--bg-active);
 }
 
 .action:disabled {
-  opacity: 0.45;
+  opacity: 0.42;
   cursor: not-allowed;
 }
 
@@ -259,14 +345,34 @@ button {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: transparent;
+  font-weight: var(--weight-emph);
 }
 
-/* ── layout: three columns over a bar ──────────────────────────────────── */
+.action.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+}
+
+.action.big {
+  padding: var(--s2) var(--s6);
+  font-size: var(--text-md);
+  border-radius: var(--radius);
+}
+
+/* ══ layout ══════════════════════════════════════════════════════════════ */
+
+.viewport {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
 
 .view {
   display: grid;
   grid-template-rows: 1fr auto;
   min-height: 0;
+  height: 100%;
+  /* the findings sheet anchors to this */
+  position: relative;
 }
 
 .columns {
@@ -275,11 +381,11 @@ button {
 }
 
 .view-document .columns {
-  grid-template-columns: 300px minmax(0, 1fr) 320px;
+  grid-template-columns: 296px minmax(0, 1fr) 320px;
 }
 
 .view-agent .columns {
-  grid-template-columns: 260px minmax(0, 1fr) 340px;
+  grid-template-columns: 262px minmax(0, 1fr) 336px;
 }
 
 .panel {
@@ -288,16 +394,16 @@ button {
   min-height: 0;
   min-width: 0;
   background: var(--bg-panel);
-  border-right: var(--border-w) solid var(--line);
+  border-right: 1px solid var(--line);
 }
 
 .panel:last-child {
   border-right: none;
-  border-left: var(--border-w) solid var(--line);
+  border-left: 1px solid var(--line);
 }
 
 .panel.center {
-  background: var(--bg-sunken);
+  background: var(--bg-app);
   border-right: none;
 }
 
@@ -306,8 +412,9 @@ button {
   align-items: center;
   gap: var(--s2);
   padding: var(--s2) var(--s3);
-  border-bottom: var(--border-w) solid var(--line);
+  border-bottom: 1px solid var(--line);
   flex: none;
+  min-height: 34px;
 }
 
 .panel-title {
@@ -322,10 +429,6 @@ button {
   min-height: 0;
 }
 
-.panel-body.pad {
-  padding: var(--s3);
-}
-
 .count {
   margin-left: auto;
   font-family: var(--font-mono);
@@ -334,10 +437,117 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── structure tree ────────────────────────────────────────────────────── */
+/* ══ entrance ════════════════════════════════════════════════════════════
+   700 ms, once per launch. The logo weaves itself, then the panes rise. It
+   earns its place by being the thing that says "an application started",
+   which a blank 1.5 s of nothing does not. Click to skip. */
+
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s4);
+  background: var(--bg-app);
+  cursor: pointer;
+}
+
+.splash.leaving {
+  animation: splash-out 260ms var(--ease) forwards;
+  pointer-events: none;
+}
+
+@keyframes splash-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.splash .mark {
+  color: var(--accent);
+}
+
+.splash .wordmark {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-head);
+  letter-spacing: -0.015em;
+  opacity: 0;
+  animation: rise-in 320ms var(--ease) 380ms forwards;
+}
+
+.splash .note {
+  font-size: var(--text-base);
+  color: var(--fg-faint);
+  opacity: 0;
+  animation: rise-in 320ms var(--ease) 480ms forwards;
+  min-height: 1.4em;
+}
+
+/* The weave draws itself: warps first, then wefts, then the leg - the order
+   a loom is actually dressed in. */
+.mark-draw path {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: weave-in 300ms var(--ease) forwards;
+}
+
+.mark-draw .rl-warp-a { animation-delay: 0ms; }
+.mark-draw .rl-warp-b { animation-delay: 60ms; }
+.mark-draw .rl-weft-a { animation-delay: 140ms; }
+.mark-draw .rl-weft-b { animation-delay: 200ms; }
+.mark-draw .rl-leg    { animation-delay: 280ms; }
+
+@keyframes weave-in {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Panes rise in a 60 ms stagger after the mark finishes. */
+.stagger > * {
+  opacity: 0;
+  animation: rise-in 260ms var(--ease) forwards;
+}
+
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 60ms; }
+.stagger > *:nth-child(3) { animation-delay: 120ms; }
+
+/* ── view switch: shared axis ──────────────────────────────────────────
+   The two views are two rooms of one place. Document sits to the left of
+   Agent on a shared horizontal axis, so moving between them is travel, not
+   navigation. */
+.view-enter-from-right { animation: axis-in-right var(--t-view) var(--ease); }
+.view-enter-from-left  { animation: axis-in-left  var(--t-view) var(--ease); }
+
+@keyframes axis-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes axis-in-left {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ══ structure tree ══════════════════════════════════════════════════════ */
 
 .tree {
-  padding: var(--s1) 0;
+  padding: var(--s1) 0 var(--s6);
 }
 
 .node {
@@ -350,7 +560,8 @@ button {
   text-align: left;
   font-size: var(--text-base);
   line-height: var(--leading-ui);
-  transition: background 120ms ease;
+  position: relative;
+  transition: background var(--t-micro) var(--ease);
 }
 
 .node:hover {
@@ -358,8 +569,20 @@ button {
 }
 
 .node[aria-selected="true"] {
-  background: var(--bg-selected);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: var(--weight-emph);
+}
+
+.node[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
 }
 
 .node .twisty {
@@ -368,6 +591,7 @@ button {
   text-align: center;
   color: var(--fg-faint);
   font-size: 9px;
+  transition: transform var(--t-micro) var(--ease);
 }
 
 .node .label {
@@ -379,13 +603,13 @@ button {
 
 .node .label .dim {
   color: var(--fg-faint);
+  font-weight: var(--weight-body);
 }
 
 .node .tag {
   flex: none;
 }
 
-/* Depth via padding on the row, so the whole row stays clickable. */
 .depth-0 { padding-left: var(--s2); }
 .depth-1 { padding-left: var(--s4); }
 .depth-2 { padding-left: var(--s8); }
@@ -394,11 +618,13 @@ button {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s3) var(--s3) var(--s1);
+  padding: var(--s4) var(--s3) var(--s1);
   color: var(--fg-faint);
 }
 
-/* ── tags: every semantic colour also carries a word ───────────────────── */
+/* ══ tags ════════════════════════════════════════════════════════════════
+   Every semantic colour ships with its word. The target user reviews
+   documents for hours and may be colour-vision-deficient. */
 
 .tag {
   display: inline-flex;
@@ -409,39 +635,264 @@ button {
   font-size: var(--text-xs);
   font-weight: var(--weight-emph);
   white-space: nowrap;
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
 }
 
-.tag.fill { background: var(--accent-soft); color: var(--accent); }
-.tag.guide { background: var(--none-soft); color: var(--none); }
-.tag.static { background: transparent; color: var(--fg-faint); }
-.tag.spacer { background: transparent; color: var(--fg-faint); opacity: 0.75; }
-.tag.ok { background: var(--ok-soft); color: var(--ok); }
-.tag.warn { background: var(--warn-soft); color: var(--warn); }
-.tag.bad { background: var(--bad-soft); color: var(--bad); }
-.tag.none { background: var(--none-soft); color: var(--none); }
+.tag.fill    { background: var(--accent-soft); color: var(--accent); }
+.tag.guide   { background: var(--none-soft); color: var(--none); }
+.tag.static  { background: transparent; color: var(--fg-faint); }
+.tag.spacer  { background: transparent; color: var(--fg-faint); opacity: 0.7; }
+.tag.ok      { background: var(--ok-soft); color: var(--ok); }
+.tag.warn    { background: var(--warn-soft); color: var(--warn); }
+.tag.bad     { background: var(--bad-soft); color: var(--bad); }
+.tag.none    { background: var(--none-soft); color: var(--none); }
+/* the reserved one */
+.tag.point   { background: var(--point-soft); color: var(--point); }
 
-/* ── center surfaces ───────────────────────────────────────────────────── */
+/* ══ centre: the document ════════════════════════════════════════════════ */
+
+.center-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+  flex: none;
+  min-height: 34px;
+}
+
+.modeswitch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+}
+
+.modeswitch button {
+  padding: 2px var(--s2);
+  border-radius: 3px;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+}
+
+.modeswitch button:hover:not(:disabled) { color: var(--fg); }
+
+.modeswitch button[aria-pressed="true"] {
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-weight: var(--weight-emph);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.modeswitch button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.center-head .caveat {
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .center-scroll {
   flex: 1;
   overflow: auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--s6);
+  padding: var(--s8) var(--s6) var(--s16);
+  scroll-behavior: smooth;
 }
 
-/* The honest preview-unavailable state. Not a spinner, not a placeholder
-   image: a statement of what is missing and why, with the runtime's own
-   reason string quoted. Never fabricate layout. */
+/* The paper column. The brightest surface in the app, and the only one that
+   gets a shadow - everything else is separated by hairlines. */
+.paper {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--bg-paper);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: var(--shadow-paper);
+  padding: var(--s16) var(--s12);
+  font-size: var(--text-md);
+  line-height: var(--leading-doc);
+  user-select: text;
+}
+
+.paper .doc-para {
+  margin: 0 0 var(--s3);
+  padding: 2px var(--s2);
+  margin-left: calc(-1 * var(--s2));
+  margin-right: calc(-1 * var(--s2));
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background var(--t-micro) var(--ease);
+  min-height: 1.75em;
+}
+
+.paper .doc-para:hover {
+  background: var(--bg-hover);
+}
+
+.paper .doc-para[aria-selected="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.paper .doc-para.empty-para {
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}
+
+/* Real tables, real borders. This is the document's own structure, not a
+   guess at its layout.
+
+   `auto`, not `fixed`: a Korean form's table is ragged — the corpus 기안문 has
+   a row of 15 narrow cells and rows of one wide cell — and fixed layout sizes
+   every column from the first row, which turns that into a mess. Auto lets
+   each cell take the width its content needs, which is closer to what the form
+   actually looks like without claiming to be a render. */
+.paper .doc-table {
+  border-collapse: collapse;
+  margin: var(--s6) 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  table-layout: auto;
+  /* `width`, not `min-width`: a table shrink-wraps its content, and a form
+     that occupies half its own page reads as broken. With auto layout the
+     spare width is distributed across columns in proportion to their content,
+     which is close to how the form is actually ruled. */
+  width: 100%;
+}
+
+/* A wide row scrolls inside the paper rather than forcing the whole column
+   wider or clipping the document. */
+.paper .table-scroll {
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--s4));
+  padding: 0 var(--s4);
+}
+
+.paper .doc-table caption {
+  caption-side: top;
+  text-align: left;
+  padding-bottom: var(--s2);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.paper .doc-table td {
+  border: 1px solid var(--line-strong);
+  padding: var(--s2);
+  vertical-align: top;
+  cursor: pointer;
+  transition: background var(--t-micro) var(--ease);
+  overflow-wrap: anywhere;
+  /* Wide enough to be clickable and read, narrow enough that a 15-cell row
+     still fits the paper column at 100%. */
+  min-width: 2.5em;
+  max-width: 26em;
+}
+
+.paper .doc-table td:hover {
+  background: var(--bg-hover);
+}
+
+.paper .doc-table td[aria-selected="true"] {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* A fill seat: an empty slot waiting for a value. Discrete and addressable
+   because Phase 4 turns exactly these into inline inputs. */
+.paper .doc-table td.seat {
+  background: var(--accent-soft);
+}
+
+.paper .doc-table td.seat:hover {
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--bg-hover));
+}
+
+.paper .doc-table td.seat .slot {
+  display: block;
+  min-height: 1.4em;
+  border-bottom: 1px dashed var(--accent-line);
+  opacity: 0.75;
+}
+
+/* A column the row does not reach. Present so the grid stays aligned; it is
+   not a cell the document has, so it carries no border and no affordance. */
+.paper .doc-table td.pad {
+  border: none;
+  cursor: default;
+  min-width: 0;
+}
+
+.paper .doc-table td.guide {
+  color: var(--fg-faint);
+  background: var(--bg-sunken);
+}
+
+.paper .doc-table td.spacer {
+  background: var(--bg-sunken);
+  opacity: 0.55;
+}
+
+/* A cell holds one block per run, because a run is the unit the engine
+   addresses (`--at-cell ROW,COL#RUN`) and Phase 4 will edit. */
+.paper .cell-run + .cell-run {
+  margin-top: 3px;
+}
+
+.paper .doc-divider {
+  margin: var(--s12) 0 var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+  color: var(--fg-faint);
+}
+
+.paper .dim {
+  color: var(--fg-faint);
+}
+
+/* Blue body text is the failure that once shipped as "checked and clean"
+   (T127). When the runtime reports a colour anomaly on a run, the document
+   view shows the run in the colour the document actually carries, marked. */
+.paper .run-anomaly {
+  text-decoration: underline wavy var(--bad);
+  text-underline-offset: 3px;
+}
+
+/* The teal flash when the tree drives the centre. Long enough to find, short
+   enough not to nag. */
+@keyframes locate-flash {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 6px var(--accent-soft); }
+  100% { box-shadow: inset 0 0 0 2px transparent, 0 0 0 0 transparent; }
+}
+
+.locate-flash {
+  animation: locate-flash 900ms var(--ease);
+}
+
+/* ── the honest unavailable state ──────────────────────────────────────── */
+
 .unavailable {
-  width: min(720px, 100%);
-  background: var(--bg-raised);
-  border: var(--border-w) dashed var(--line-strong);
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--bg-panel);
+  border: 1px dashed var(--line-strong);
   border-radius: var(--radius);
   padding: var(--s8);
-  text-align: left;
 }
 
 .unavailable h2 {
@@ -473,13 +924,12 @@ button {
   user-select: text;
 }
 
-/* The page geometry the runtime does report, drawn to scale. This is metrics,
-   not content — labelled as such so it is never mistaken for a render. */
 .pagefigure {
   position: relative;
-  background: var(--bg-raised);
-  border: var(--border-w) solid var(--line-strong);
-  margin: var(--s4) auto 0;
+  background: var(--bg-paper);
+  border: 1px solid var(--line-strong);
+  margin: var(--s6) auto 0;
+  box-shadow: var(--shadow-paper);
 }
 
 .pagefigure .margins {
@@ -492,11 +942,141 @@ button {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -22px;
+  bottom: -24px;
   text-align: center;
 }
 
-/* ── verification bar ──────────────────────────────────────────────────── */
+/* ══ welcome ═════════════════════════════════════════════════════════════ */
+
+.welcome {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s6);
+  padding: var(--s12) var(--s6);
+  text-align: center;
+}
+
+.welcome .mark {
+  color: var(--accent);
+}
+
+.welcome h1 {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-head);
+  letter-spacing: -0.02em;
+  line-height: var(--leading-tight);
+}
+
+.welcome .lede {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+}
+
+.drop {
+  width: min(520px, 100%);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--s12) var(--s6);
+  background: var(--bg-panel);
+  transition: border-color var(--t-view) var(--ease), background var(--t-view) var(--ease);
+}
+
+.drop .hint {
+  margin: var(--s3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+}
+
+.drop.over,
+body.dragging .drop {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* A full-window drop veil, so a drag anywhere over the app is answered. */
+.dropveil {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-app) 82%, transparent);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  animation: rise-in 160ms var(--ease);
+}
+
+.dropveil .box {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  padding: var(--s8) var(--s12);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-emph);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ── recents ───────────────────────────────────────────────────────────── */
+
+.recents {
+  width: min(520px, 100%);
+  text-align: left;
+}
+
+.recents h2 {
+  margin: 0 0 var(--s2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-emph);
+  color: var(--fg-muted);
+}
+
+.recent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius);
+  text-align: left;
+  transition: background var(--t-micro) var(--ease);
+}
+
+.recent:hover {
+  background: var(--bg-hover);
+}
+
+.recent .name {
+  font-weight: var(--weight-emph);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent .meta {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent.missing .name {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+
+/* ══ verification bar ════════════════════════════════════════════════════ */
 
 .verifybar {
   display: flex;
@@ -505,7 +1085,7 @@ button {
   flex-wrap: wrap;
   padding: var(--s2) var(--s4);
   background: var(--bg-panel);
-  border-top: var(--border-w) solid var(--line);
+  border-top: 1px solid var(--line);
   flex: none;
   min-height: 38px;
 }
@@ -539,11 +1119,93 @@ button {
   background: var(--line);
 }
 
-/* ── detail lists (right panels) ───────────────────────────────────────── */
+.verifybar .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* Badge value changes cross-fade rather than snap. */
+.xfade {
+  animation: xfade var(--t-view) var(--ease);
+}
+
+@keyframes xfade {
+  from { opacity: 0.25; }
+  to   { opacity: 1; }
+}
+
+/* ── findings sheet ────────────────────────────────────────────────────── */
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 58%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  z-index: 40;
+  animation: sheet-up 220ms var(--ease);
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+.sheet .sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.sheet .sheet-head h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-head);
+}
+
+.sheet .sheet-body {
+  overflow: auto;
+  padding: var(--s2) var(--s4) var(--s6);
+}
+
+.finding {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s2) var(--s2);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  transition: background var(--t-micro) var(--ease);
+}
+
+.finding:hover { background: var(--bg-hover); }
+
+.finding .where {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  flex: none;
+  min-width: 13ch;
+}
+
+.finding .what { flex: 1; font-size: var(--text-base); }
+
+/* ══ detail lists ════════════════════════════════════════════════════════ */
 
 .kv {
   display: grid;
-  grid-template-columns: minmax(88px, auto) 1fr;
+  grid-template-columns: minmax(84px, auto) 1fr;
   gap: var(--s1) var(--s3);
   align-items: baseline;
   font-size: var(--text-base);
@@ -565,12 +1227,10 @@ button {
 
 .section {
   padding: var(--s3);
-  border-bottom: var(--border-w) solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
-.section:last-child {
-  border-bottom: none;
-}
+.section:last-child { border-bottom: none; }
 
 .section h3 {
   margin: 0 0 var(--s2);
@@ -592,34 +1252,34 @@ button {
   font-size: var(--text-base);
   line-height: var(--leading-body);
   color: var(--fg-faint);
-  text-align: left;
   max-width: 48ch;
 }
 
-/* ── agent timeline ────────────────────────────────────────────────────── */
+/* ══ agent timeline ══════════════════════════════════════════════════════ */
 
 .timeline {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  background: var(--bg-app);
 }
 
 .cards {
   flex: 1;
   overflow: auto;
-  padding: var(--s3) var(--s4);
+  padding: var(--s3) var(--s4) var(--s6);
   display: flex;
   flex-direction: column;
   gap: var(--s2);
 }
 
-/* Calm cards: a single quiet surface, 1px border, no shadow, no gradient. */
 .card {
   background: var(--bg-panel);
-  border: var(--border-w) solid var(--line);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: var(--s2) var(--s3);
+  animation: rise-in 200ms var(--ease);
 }
 
 .card .head {
@@ -643,15 +1303,15 @@ button {
   user-select: text;
 }
 
-.card details {
-  margin-top: var(--s2);
-}
+.card details { margin-top: var(--s2); }
 
 .card summary {
   font-size: var(--text-xs);
   color: var(--fg-faint);
   cursor: pointer;
 }
+
+.card summary:hover { color: var(--fg-muted); }
 
 .card pre {
   margin: var(--s2) 0 0;
@@ -665,31 +1325,29 @@ button {
   user-select: text;
 }
 
-/* ── composer ──────────────────────────────────────────────────────────── */
+/* ══ composer ════════════════════════════════════════════════════════════ */
 
 .composer {
   flex: none;
-  border-top: var(--border-w) solid var(--line);
+  border-top: 1px solid var(--line);
   padding: var(--s3) var(--s4);
   background: var(--bg-panel);
 }
 
 .composer textarea {
   width: 100%;
-  min-height: 56px;
+  min-height: 54px;
   resize: none;
   padding: var(--s2) var(--s3);
   font: inherit;
   line-height: var(--leading-body);
   color: var(--fg-faint);
   background: var(--bg-sunken);
-  border: var(--border-w) solid var(--line);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
-.composer textarea:disabled {
-  cursor: not-allowed;
-}
+.composer textarea:disabled { cursor: not-allowed; }
 
 .composer .note {
   margin: var(--s2) 0 0;
@@ -698,12 +1356,9 @@ button {
   line-height: var(--leading-body);
 }
 
-/* ── list rows (sessions) — a list, never a card grid ──────────────────── */
+/* ══ lists ═══════════════════════════════════════════════════════════════ */
 
-.rows {
-  display: flex;
-  flex-direction: column;
-}
+.rows { display: flex; flex-direction: column; }
 
 .row {
   display: flex;
@@ -711,17 +1366,23 @@ button {
   gap: 1px;
   padding: var(--s2) var(--s3);
   text-align: left;
-  border-bottom: var(--border-w) solid var(--line);
-  transition: background 120ms ease;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  transition: background var(--t-micro) var(--ease);
 }
 
-.row:hover {
-  background: var(--bg-hover);
-}
+.row:hover { background: var(--bg-hover); }
 
-.row[aria-selected="true"] {
-  background: var(--bg-selected);
-  box-shadow: inset 2px 0 0 var(--accent);
+.row[aria-selected="true"] { background: var(--accent-soft); }
+
+.row[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
 }
 
 .row .primary {
@@ -739,7 +1400,7 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── boot / fatal ──────────────────────────────────────────────────────── */
+/* ══ boot / fatal / toast ════════════════════════════════════════════════ */
 
 .boot {
   display: flex;
@@ -752,11 +1413,7 @@ button {
   padding: var(--s8);
 }
 
-.boot .mark {
-  font-size: var(--text-xl);
-  font-weight: var(--weight-head);
-  letter-spacing: 0;
-}
+.boot .mark { color: var(--accent); }
 
 .boot .note {
   font-size: var(--text-md);
@@ -766,11 +1423,8 @@ button {
   max-width: 46ch;
 }
 
-/* A determinate-looking, calm progress hint. ~1.5 s to first usable paint is
-   measured, not hoped for, so the loading state is designed rather than blank
-   (spike finding 4). No spinner, no shimmer. */
 .boot .bar {
-  width: 220px;
+  width: 200px;
   height: 2px;
   background: var(--bg-sunken);
   overflow: hidden;
@@ -780,31 +1434,20 @@ button {
 .boot .bar i {
   display: block;
   height: 100%;
-  width: 40%;
+  width: 38%;
   background: var(--accent);
-  animation: slide 1400ms ease-in-out infinite;
+  animation: slide 1400ms var(--ease) infinite;
 }
 
 @keyframes slide {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(250%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .boot .bar i {
-    animation: none;
-    width: 100%;
-    opacity: 0.4;
-  }
-  * {
-    transition-duration: 1ms !important;
-  }
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(263%); }
 }
 
 .fatal {
   width: min(640px, 100%);
   background: var(--bg-raised);
-  border: var(--border-w) solid var(--bad);
+  border: 1px solid var(--bad);
   border-radius: var(--radius);
   padding: var(--s6);
 }
@@ -815,4 +1458,44 @@ button {
   font-weight: var(--weight-head);
   color: var(--bad);
   line-height: var(--leading-tight);
+}
+
+.toast {
+  position: fixed;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  padding: var(--s2) var(--s4);
+  background: var(--ink);
+  color: var(--fg-on-ink);
+  border-radius: 999px;
+  font-size: var(--text-base);
+  font-weight: var(--weight-emph);
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  animation: toast-in 160ms var(--ease);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ══ reduced motion ══════════════════════════════════════════════════════
+   Everything above is decoration on top of a layout that is already correct.
+   Turning it off must change nothing but the motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+
+  .boot .bar i { animation: none; width: 100%; opacity: 0.4; }
+  .center-scroll { scroll-behavior: auto; }
+  .mark-draw path { stroke-dashoffset: 0; }
 }

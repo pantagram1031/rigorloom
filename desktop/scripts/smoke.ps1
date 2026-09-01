@@ -41,12 +41,16 @@ if (-not (Test-Path $Exe))    { Write-Error "not built: $Exe`nRun desktop/script
 if (-not (Test-Path $Corpus)) { Write-Error "corpus form not found: $Corpus"; exit 2 }
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
-$SmokeRoot = Join-Path $RunDir 'smoke-root'
-$AppData   = Join-Path $RunDir 'appdata'
+$AppData = Join-Path $RunDir 'appdata'
 # A clean user: the shell has never run, remembers nothing, and the runtime
 # root is empty. Objective: "a clean user can open a supported document".
-Remove-Item -Recurse -Force $SmokeRoot, $AppData -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $SmokeRoot, $AppData | Out-Null
+#
+# One directory, not two. There used to be a separate $SmokeRoot here that was
+# created and deleted but never handed to the app, which made the isolation
+# look more thorough than it was. The runtime root lives under $AppData, so
+# wiping that wipes both prefs and sessions.
+Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $AppData | Out-Null
 
 function Invoke-Phase {
     param([string]$Phase, [string]$ReportPath)
@@ -57,7 +61,14 @@ function Invoke-Phase {
     $env:RIGORLOOM_SMOKE_REPORT = $ReportPath
     # Redirect the app's own data dir so a developer's real prefs and sessions
     # are never read or written by the smoke.
-    $env:LOCALAPPDATA = $AppData
+    #
+    # This MUST be RIGORLOOM_APPDATA and not $env:LOCALAPPDATA. Tauri resolves
+    # app_local_data_dir() through SHGetKnownFolderPath, which reads the user
+    # profile from the OS and ignores the environment variable, so the old
+    # redirect silently did nothing: the smoke ran against the developer's real
+    # prefs, inherited lastSessionId from the previous run, and booted straight
+    # into a document — which is why the welcome-screen checks failed.
+    $env:RIGORLOOM_APPDATA = $AppData
 
     # Not minimised: WebView2 throttles a minimised window's timers and
     # withholds rAF entirely, which is a good way to make a harness hang.
@@ -101,7 +112,7 @@ function Show-Report {
     return ($Result.report.failed -eq 0)
 }
 
-$origLocalAppData = $env:LOCALAPPDATA
+$origAppData = $env:RIGORLOOM_APPDATA
 try {
     $openResult = Invoke-Phase -Phase 'open' -ReportPath (Join-Path $RunDir 'report-open.json')
     $openOk = Show-Report $openResult
@@ -122,10 +133,11 @@ try {
     $reattachOk = Show-Report $reattachResult
 }
 finally {
-    $env:LOCALAPPDATA = $origLocalAppData
+    if ($origAppData) { $env:RIGORLOOM_APPDATA = $origAppData }
+    else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    if (-not $KeepRoot) { Remove-Item -Recurse -Force $SmokeRoot -ErrorAction SilentlyContinue }
+    if (-not $KeepRoot) { Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue }
 }
 
 Write-Host ""

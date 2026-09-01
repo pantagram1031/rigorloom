@@ -11,5 +11,11 @@ sidecar/dist/
 sidecar/*.spec
 src-tauri/resources/
 
-# Scripted-run scratch: smoke roots, logs, exit-code records.
+# Scripted-run scratch: smoke roots, logs, exit-code records, the icon source
+# `tauri icon` is fed from.
 scripts/_run/
+
+# Mobile icon sets that `tauri icon` regenerates. This is a Windows desktop
+# app and neither is built or referenced by tauri.conf.json.
+src-tauri/icons/android/
+src-tauri/icons/ios/

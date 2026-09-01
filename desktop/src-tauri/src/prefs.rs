@@ -17,10 +17,7 @@ use tauri::{AppHandle, Manager};
 const FILE: &str = "desktop-prefs.json";
 
 fn path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_local_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("rigorloom"))
-        .join(FILE)
+    crate::app_data_dir(app).join(FILE)
 }
 
 pub fn load(app: &AppHandle) -> Value {

@@ -38,63 +38,79 @@ New-Item -ItemType Directory -Force -Path $OutDir, $RunDir | Out-Null
 Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $AppData | Out-Null
 
-$origLocalAppData = $env:LOCALAPPDATA
+$origAppData = $env:RIGORLOOM_APPDATA
 $captured = @()
 $failed = 0
 
 try {
-    $env:LOCALAPPDATA = $AppData
+    $env:RIGORLOOM_APPDATA = $AppData
     $env:RIGORLOOM_SMOKE_CORPUS = $Corpus
     Remove-Item Env:RIGORLOOM_SMOKE_REPORT -ErrorAction SilentlyContinue
 
+    # Document view at 100% runs first on purpose: it opens the corpus form,
+    # which is what puts an entry in 최근 문서 for the welcome shot and a
+    # session on disk for the entrance shot to reattach to. Everything after it
+    # is photographing a state the app genuinely reached.
+    $shots = @(
+        @{ phase = 'hold';          name = 'document-view-100pct'; scale = 1.0 },
+        @{ phase = 'hold-entrance'; name = 'entrance';             scale = 1.0 },
+        @{ phase = 'hold-welcome';  name = 'welcome';              scale = 1.0 },
+        @{ phase = 'hold-agent';    name = 'agent-view-100pct';    scale = 1.0 }
+    )
     foreach ($scale in $Scales) {
+        if ([math]::Abs($scale - 1.0) -lt 0.001) { continue }
         $pct = [int]($scale * 100)
-        foreach ($pair in @(@('hold', 'document'), @('hold-agent', 'agent'))) {
-            $phase = $pair[0]
-            $view = $pair[1]
-            $out = Join-Path $OutDir ("{0}-view-{1}pct.png" -f $view, $pct)
+        $shots += @{ phase = 'hold';       name = "document-view-${pct}pct"; scale = $scale }
+        $shots += @{ phase = 'hold-agent'; name = "agent-view-${pct}pct";    scale = $scale }
+    }
 
-            $marker = Join-Path $RunDir ("ready-{0}-{1}.json" -f $view, $pct)
-            Remove-Item -Force $marker -ErrorAction SilentlyContinue
+    foreach ($shot in $shots) {
+        $name = $shot.name
+        $out = Join-Path $OutDir ("{0}.png" -f $name)
+        $marker = Join-Path $RunDir ("ready-{0}.json" -f $name)
+        Remove-Item -Force $marker -ErrorAction SilentlyContinue
 
-            $env:RIGORLOOM_SMOKE = $phase
-            $env:RIGORLOOM_SMOKE_REPORT = $marker
-            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--force-device-scale-factor=$scale"
+        $env:RIGORLOOM_SMOKE = $shot.phase
+        $env:RIGORLOOM_SMOKE_REPORT = $marker
+        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--force-device-scale-factor=$($shot.scale)"
 
-            $proc = Start-Process -FilePath $Exe -PassThru
-            try {
-                # Wait for the app to say it is arranged. A fixed sleep here
-                # captured the loading screen instead of the app.
-                $deadline = (Get-Date).AddSeconds(120)
-                while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) {
-                    Start-Sleep -Milliseconds 500
-                }
-                if (-not (Test-Path $marker)) { throw "app never reported ready" }
-                $detail = (Get-Content $marker -Raw -Encoding UTF8 | ConvertFrom-Json).detail
-                Write-Host ("  dpr={0} css={1} selection={2}" -f `
-                    $detail.devicePixelRatio, $detail.cssViewport, $detail.selection)
-
-                & powershell -ExecutionPolicy Bypass -NoProfile `
-                    -File (Join-Path $ScriptDir 'shot.ps1') -Out $out -SettleMs 1500 -FitToWorkArea
-                if ($LASTEXITCODE -ne 0) { throw "shot.ps1 exit $LASTEXITCODE" }
-                $captured += $out
-                Write-Host ("captured {0} view at {1}%" -f $view, $pct)
+        $proc = Start-Process -FilePath $Exe -PassThru
+        try {
+            # Wait for the app to say it is arranged. A fixed sleep here
+            # captured the loading screen instead of the app.
+            $deadline = (Get-Date).AddSeconds(150)
+            while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 500
             }
-            catch {
-                Write-Warning ("failed {0} view at {1}%: {2}" -f $view, $pct, $_)
-                $failed++
-            }
-            finally {
-                try { $proc.Kill(); $proc.WaitForExit(5000) | Out-Null } catch {}
-                Get-Process rigorloomd -ErrorAction SilentlyContinue |
-                    Stop-Process -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Milliseconds 700
-            }
+            if (-not (Test-Path $marker)) { throw "app never reported ready" }
+            $detail = (Get-Content $marker -Raw -Encoding UTF8 | ConvertFrom-Json).detail
+            Write-Host ("  dpr={0} css={1} selection={2}" -f `
+                $detail.devicePixelRatio, $detail.cssViewport, $detail.selection)
+
+            # The entrance is mid-animation by design; do not let the capture
+            # settle for so long that it looks static.
+            $settle = if ($shot.phase -eq 'hold-entrance') { 400 } else { 1500 }
+            & powershell -ExecutionPolicy Bypass -NoProfile `
+                -File (Join-Path $ScriptDir 'shot.ps1') -Out $out -SettleMs $settle -FitToWorkArea
+            if ($LASTEXITCODE -ne 0) { throw "shot.ps1 exit $LASTEXITCODE" }
+            $captured += $out
+            Write-Host ("captured {0}" -f $name)
+        }
+        catch {
+            Write-Warning ("failed {0}: {1}" -f $name, $_)
+            $failed++
+        }
+        finally {
+            try { $proc.Kill(); $proc.WaitForExit(5000) | Out-Null } catch {}
+            Get-Process rigorloomd -ErrorAction SilentlyContinue |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 700
         }
     }
 }
 finally {
-    $env:LOCALAPPDATA = $origLocalAppData
+    if ($origAppData) { $env:RIGORLOOM_APPDATA = $origAppData }
+    else { Remove-Item Env:RIGORLOOM_APPDATA -ErrorAction SilentlyContinue }
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_REPORT, `
         Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
     Get-Process rigorloomd -ErrorAction SilentlyContinue |

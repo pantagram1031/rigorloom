@@ -20,7 +20,7 @@
 import { useMemo } from "react";
 
 import {
-  setSelection,
+  locateSelection,
   selectionId,
   toggleExpanded,
   useWorkspace,
@@ -62,7 +62,10 @@ function Row({
       data-testid={testId}
       onClick={() => {
         if (expandable) toggleExpanded(id);
-        if (selection !== undefined) setSelection(selection);
+        // locate, not just select: picking a node in the tree scrolls the
+        // document to it and flashes it. Clicking in the document uses
+        // setSelection so the page does not move under the pointer.
+        if (selection !== undefined) locateSelection(selection);
       }}
     >
       <span className="twisty">{expandable ? (expanded ? "▼" : "▶") : ""}</span>

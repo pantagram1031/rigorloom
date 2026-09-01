@@ -13,6 +13,7 @@ import type {
   Candidate,
   Capabilities,
   InspectResult,
+  RegionText,
   RuntimeError,
   Session,
   SidecarStatus,
@@ -70,6 +71,21 @@ export const openPath = (path: string) =>
 
 export const inspect = (sessionId: string) =>
   call<InspectResult>("document/inspect", { sessionId });
+
+/**
+ * Full text for a set of addresses, with per-run charPr and colour facts.
+ *
+ * Bounded at 256 KiB server-side, and the runtime **refuses rather than
+ * truncates** (`region_too_large`) — callers chunk.
+ */
+export const readRegion = (
+  sessionId: string,
+  regions: Array<{ table?: number; row?: number; col?: number; atPara?: number }>,
+) =>
+  call<{ sessionId: string; documentHash: string; regions: RegionText[] }>(
+    "document/readRegion",
+    { sessionId, regions },
+  );
 
 export const candidates = (sessionId: string) =>
   call<{ sessionId: string; candidates: Candidate[] }>("candidate/list", {

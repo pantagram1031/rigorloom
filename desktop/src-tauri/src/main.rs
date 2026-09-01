@@ -33,11 +33,29 @@ fn repo_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(MANIFEST_DIR))
 }
 
-fn default_root(app: &AppHandle) -> PathBuf {
+/// Where this build keeps prefs and the runtime root.
+///
+/// `RIGORLOOM_APPDATA` overrides it, and the harness depends on that: Tauri
+/// resolves `app_local_data_dir()` through `SHGetKnownFolderPath`, which reads
+/// the user profile from the OS and ignores the `LOCALAPPDATA` environment
+/// variable entirely. `smoke.ps1` had been setting that variable and believing
+/// it, so every "clean user" run was in fact reading and writing the
+/// developer's real prefs — which is how the smoke came to boot with a session
+/// left over from the previous run and never show the welcome screen at all.
+///
+/// An explicit variable the code honours is the only redirection that is
+/// actually true.
+pub fn app_data_dir(app: &AppHandle) -> PathBuf {
+    if let Some(dir) = std::env::var_os("RIGORLOOM_APPDATA") {
+        return PathBuf::from(dir);
+    }
     app.path()
         .app_local_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("rigorloom"))
-        .join("runtime-root")
+}
+
+fn default_root(app: &AppHandle) -> PathBuf {
+    app_data_dir(app).join("runtime-root")
 }
 
 // --- commands ---------------------------------------------------------------
@@ -188,10 +206,7 @@ fn smoke_finish(app: AppHandle, state: State<'_, Runtime>, report: Value) {
 /// the process goes away.
 fn install_panic_hook(app: AppHandle) {
     let previous = std::panic::take_hook();
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("rigorloom"));
+    let dir = app_data_dir(&app);
     std::panic::set_hook(Box::new(move |info| {
         let location = info
             .location()
