@@ -1,0 +1,13 @@
+# Windows PowerShell 5.1 is the interpreter these scripts run under, and it has
+# two encoding behaviours that bite silently:
+#
+#   * a .ps1 without a UTF-8 BOM is decoded as the system ANSI codepage — cp949
+#     on a Korean Windows — so any non-ASCII character (an em dash in a comment,
+#     a Korean string literal) turns into mojibake that can break the parse in
+#     ways that look like a C# or a syntax error, nowhere near the real cause;
+#   * a here-string (`@"` ... `"@`) only terminates when the file has CRLF
+#     endings.
+#
+# The scripts carry a BOM and avoid here-strings. Pin the endings so a checkout
+# on another machine cannot reintroduce the second problem.
+*.ps1 text eol=crlf
