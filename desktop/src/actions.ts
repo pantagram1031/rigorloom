@@ -16,10 +16,13 @@ import {
   canRequestApproval,
   composerBlocker,
   getState,
+  locateSelection,
   patchTurn,
   providerConfigFields,
+  setCenterMode,
   setState,
   setSelection,
+  setView,
   showToast,
   type Draft,
   type QueuedOp,
@@ -166,6 +169,10 @@ export async function selectSession(sessionId: string) {
           candidateVerdict: null,
           applied: null,
           receiptOpen: null,
+          // A module report names the document it checked. Carrying one across
+          // a document switch would put another file's verdict under this
+          // file's heading, which is the same class of lie as a stale geometry.
+          packRun: null,
         }
       : {}),
   });
@@ -937,15 +944,39 @@ export function clickOverlaySeat(seat: GeometrySeat): void {
         kind: "not_editable",
         targetId: id,
         address,
+        derivation: seat.derivation,
         label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
       },
     });
     return;
   }
   setState({
-    overlayPick: { kind: "seat", targetId: id, address, label: addressLabel(address) },
+    overlayPick: {
+      kind: "seat",
+      targetId: id,
+      address,
+      // Carried so the status bar can say HOW this rectangle was found. §12.4's
+      // three derivations are not equally trustworthy and this is the one class
+      // a person types into; leaving that in a tooltip means it is never read.
+      derivation: seat.derivation,
+      label: `${addressLabel(address)} · ${derivationLabel(seat.derivation)}`,
+    },
   });
   openAddress(address);
+}
+
+/** How the runtime found this rectangle, in four words. Status-bar length. */
+export function derivationLabel(derivation: string): string {
+  switch (derivation) {
+    case "cell_borders":
+      return "그려진 선으로 잡음";
+    case "matched_text":
+      return "칸의 글자로 잡음";
+    case "interpolated":
+      return "이름표에서 미루어 잡음";
+    default:
+      return derivation;
+  }
 }
 
 /** A click on a mapped line of text. */
@@ -1863,6 +1894,108 @@ export async function loadTaskPacks(): Promise<void> {
       taskPacks: { available: false, mode: null, reason: String(e), packs: [] },
     });
   }
+}
+
+/**
+ * Which modules the RUNTIME will let `module/check` run, in its own words.
+ *
+ * Enablement is an operator act recorded in `enabled.yaml` and no wire call can
+ * change it (§13.1), so this is a read of a fact rather than a negotiation. It
+ * comes from `capabilities.modules`, which the shell already holds — no second
+ * call — and it is the authority for the 실행 button, because it is the same
+ * reader `module/check` itself consults. `taskPacks` reads the same file
+ * through a different child process, and `packEnablementDisagrees` below is
+ * what makes a split between the two visible instead of silently resolved.
+ */
+export function runtimeEnabledModules(): string[] | null {
+  const modules = getState().capabilities?.modules;
+  if (!modules || !Array.isArray(modules.enabled)) return null;
+  return modules.enabled;
+}
+
+/** Packs where the registry child and the runtime disagree about enablement. */
+export function packEnablementDisagrees(): string[] {
+  const runtimeEnabled = runtimeEnabledModules();
+  if (runtimeEnabled === null) return [];
+  const packs = getState().taskPacks?.packs ?? [];
+  return packs
+    .filter((pack) => pack.enabled !== runtimeEnabled.includes(pack.name))
+    .map((pack) => pack.name);
+}
+
+/**
+ * 실행 — a distribution module's checkers, against the open session (§13).
+ *
+ * The one place in this shell that runs anything a module ships. Three things
+ * it deliberately does NOT do:
+ *
+ * - **It does not decide.** No candidate, no plan, no approval; the report is
+ *   a read, and the review queue is untouched by it. A checker's verdict is an
+ *   input to a human's decision, never a substitute for one.
+ * - **It does not translate a verdict.** Every row, reason and finding on
+ *   screen is the runtime's own; where a checker was skipped, the reason
+ *   printed is `rt_module`'s, not a friendlier one this shell preferred.
+ * - **It does not retry.** A `capability_unavailable` because nobody enabled
+ *   the module is an answer, not a transient fault, and the panel says which.
+ */
+export async function runModuleCheck(module: string): Promise<void> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) {
+    showToast("문서를 먼저 열어야 검사를 돌립니다", 1600);
+    return;
+  }
+  setState({ packRun: { module, sessionId, phase: "running", report: null, error: null } });
+  try {
+    const report = await rt.moduleCheck(sessionId, module);
+    setState({ packRun: { module, sessionId, phase: "done", report, error: null } });
+  } catch (e) {
+    setState({
+      packRun: { module, sessionId, phase: "failed", report: null, error: rt.asRuntimeError(e) },
+    });
+  }
+}
+
+/**
+ * Open a pack, and drop any report that belonged to the previous one.
+ *
+ * A verdict left under a different pack's heading is the worst kind of stale:
+ * it reads as this pack's answer and it is another pack's.
+ */
+export function openPack(module: string | null): void {
+  const current = getState().packRun;
+  // Closing the panel (`null`) KEEPS the report: reopening the same pack should
+  // show what it found rather than making the user run it again. Only moving to
+  // a different pack drops it.
+  const keep = module === null || current?.module === module;
+  setState({ packOpen: module, packRun: keep ? current : null });
+}
+
+/**
+ * Go to the cell a module finding names, in the tree view.
+ *
+ * `locateSelection` rather than `setSelection`: the finding was clicked in the
+ * left rail, so the centre SHOULD scroll itself to the address — the rule that
+ * keeps the centre still is about clicks made inside the centre.
+ */
+export function locateFindingAddress(address: {
+  table?: number;
+  row?: number;
+  col?: number;
+  atPara?: number;
+}): boolean {
+  if (address.table != null && address.row != null && address.col != null) {
+    setView("document");
+    setCenterMode("text");
+    locateSelection({ kind: "cell", table: address.table, row: address.row, col: address.col });
+    return true;
+  }
+  if (address.atPara != null) {
+    setView("document");
+    setCenterMode("text");
+    locateSelection({ kind: "paragraph", atPara: address.atPara });
+    return true;
+  }
+  return false;
 }
 
 // --- the window ------------------------------------------------------------------

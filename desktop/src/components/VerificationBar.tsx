@@ -149,13 +149,19 @@ export function VerificationBar({
           title={
             overlayPick.kind === "ambiguous"
               ? "같은 글자를 가진 주소가 여럿입니다. 런타임도 이 앱도 그 중 하나를 고르지 않습니다."
-              : "지면에서 누른 곳이 가리키는 주소입니다."
+              : overlayPick.derivation
+                ? // The derivation belongs where the address is, not only in a
+                  // hover: a seat is the one overlay class a person types into,
+                  // and how its rectangle was found is how much to trust it.
+                  `지면에서 누른 곳이 가리키는 주소입니다. 이 자리의 위치는 ${overlayPick.derivation} 로 잡혔습니다.`
+                : "지면에서 누른 곳이 가리키는 주소입니다."
           }
           v={
             <span
               className={overlayPick.kind === "ambiguous" ? "mono warnish" : "mono"}
               data-testid="status-overlay-pick"
               data-pick-kind={overlayPick.kind}
+              data-derivation={overlayPick.derivation ?? ""}
             >
               {overlayPick.label}
             </span>

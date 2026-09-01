@@ -21,6 +21,8 @@ import type {
   HostEvent,
   HostRunPayload,
   InspectResult,
+  ModuleCheckReport,
+  ModuleList,
   OperationPlan,
   PlanValidation,
   PrepareResult,
@@ -377,6 +379,40 @@ export const credentialDelete = (key: string) =>
 // --- 작업 팩 --------------------------------------------------------------------
 
 export const taskPacks = () => invoke<TaskPackList>("task_packs");
+
+/**
+ * Every declared module, and what of it is runnable HERE (§13).
+ *
+ * The runtime's own reading of `enabled.yaml`, which is the reading that
+ * governs `module/check`. `task_packs` above is a second reader of the same
+ * file through a different child process; the panel prints both rather than
+ * choosing, because a disagreement between them is a defect worth seeing.
+ */
+export const moduleList = () => call<ModuleList>("module/list");
+
+/**
+ * Run an enabled module's checkers against the open session (§13).
+ *
+ * Agent-safe on the wire, and read-only by construction: every checker is
+ * handed a scratch COPY of the document in a directory that is deleted in a
+ * `finally`, so the session copy, the published candidate and the operator's
+ * original are unreachable. It decides nothing — no candidate, no plan state,
+ * no approval; it appends one `module.checked` event and returns a report.
+ *
+ * Not cancellable by tag, deliberately: the bound is per checker and published
+ * as `bounds.worstCaseSeconds`, and a half-killed pack would leave the panel
+ * showing rows for checkers whose children are still running.
+ */
+export const moduleCheck = (
+  sessionId: string,
+  module: string,
+  checkers?: string[] | null,
+) =>
+  call<ModuleCheckReport>("module/check", {
+    sessionId,
+    module,
+    ...(checkers && checkers.length > 0 ? { checkers } : {}),
+  });
 
 // --- the window ----------------------------------------------------------------
 
