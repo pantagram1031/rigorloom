@@ -1,0 +1,88 @@
+{
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 136,
+    "cells": 70,
+    "paragraphs": 77,
+    "placeholders": 1,
+    "runs": 104,
+    "tables": 2,
+    "text_lines": 62
+  },
+  "elements_skipped": [
+    {
+      "count": 3,
+      "element": "hh:bottomBorder@type=DASH",
+      "reason": "non-solid border stroked as solid"
+    },
+    {
+      "count": 3,
+      "element": "hh:topBorder@type=DASH",
+      "reason": "non-solid border stroked as solid"
+    },
+    {
+      "count": 1,
+      "element": "hp:header",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:imgDim",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:orgSz",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:pic",
+      "reason": "object drawn as a placeholder box at its declared hp:sz extent; its content is not rendered"
+    }
+  ],
+  "fonts": {
+    "bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "note": "every HWP face in the document is rasterised with this one family; advance widths therefore differ from the authoring engine's",
+    "regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "source": "system"
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "rendered by Rigorloom's own OWPML renderer; NOT certified against a Hancom reference render. Certification is per document class via pipeline/scripts/render_cert.py.",
+  "hwpunit_per_inch": 7200,
+  "notes": [
+    "line boxes come from the document's own cached hp:lineseg layout; line breaking matches the authoring engine, intra-line text extents do not (see fonts)",
+    "character-level typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) is not applied",
+    "headers, footers, footnotes, endnotes and master pages are not drawn",
+    "full limits and the certification path: engine/references/own-render-notes.md"
+  ],
+  "page_geometry_hwpunit": {
+    "body_left": 5668,
+    "body_top": 5668,
+    "height": 84188,
+    "landscape": "WIDELY",
+    "margin": {
+      "bottom": 2834,
+      "footer": 0,
+      "gutter": 0,
+      "header": 0,
+      "left": 5668,
+      "right": 5668,
+      "top": 5668
+    },
+    "usable_height": 75686,
+    "usable_width": 48192,
+    "width": 59528
+  },
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": 1,
+  "png_pages": [
+    "jeongbo-gonggae-cheongguseo-p1.png"
+  ],
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "source": "jeongbo-gonggae-cheongguseo.hwpx"
+}
