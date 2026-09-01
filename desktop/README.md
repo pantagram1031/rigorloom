@@ -324,52 +324,75 @@ Shell exe 6.08 MiB · NSIS installer 8.89 MiB · sidecar payload 23.2 MiB.
 Smoke: 36 checks, 0 failures, exit 0, across two processes with an orphan check
 between them. `pytest tests/test_runtime_*.py` 162 passed.
 
-### The design slice: NOT built, NOT smoked, screenshots NOT regenerated
+### The design slice
 
-Stated plainly because the alternative is a README that implies evidence which
-does not exist.
+| Step | Exit | Time |
+| --- | --- | --- |
+| `npx tsc --noEmit` | 0 | — |
+| `npm run tauri build` (release) | 0 | 4m 30s |
+| `scripts/smoke.ps1` | 0 | **64 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 | 6 images |
+| `pytest tests/test_runtime_*.py` | 0 | 162 passed, 517s |
 
-**The build machine ran out of disk part-way through this slice** — `C:` reached
-0 bytes free of 463 GB. `cargo clean --profile dev` reclaimed 1 GB of my own
-unused debug artifacts; the release link then failed again at 0.05 GB free. The
-remaining large reclaimable item in this worktree is ~4.4 GB of untracked,
-gitignored build residue under `spikes/` left behind by an earlier branch
-checkout, which is not mine to delete unasked.
+Shell exe 8.22 MiB · NSIS installer 10.90 MiB · sidecar payload 23.26 MiB. The
+shell grew 6.08 → 8.22 MiB and the installer 8.89 → 10.90 MiB, which is almost
+exactly the 1.96 MiB of bundled Pretendard.
 
-Before that, thin LTO replaced fat LTO for an unrelated and independently
-correct reason: fat LTO with `codegen-units = 1` died with
-`rustc-LLVM ERROR: out of memory` on a 16 GB machine with a browser open. A
-build that only completes on an idle machine is not a build.
+Smoke: phase `open` 54, phase `reattach` 10, plus the orphan check between them.
+Beyond Phase 3's coverage it now asserts that 본문 보기 is the default centre,
+that **every** text run the runtime reported is present in the rendered paper
+column, that cells render as real table cells with the runtime's own cell count,
+that 페이지 보기 is offered and disabled, that selection syncs tree→centre and
+centre→tree, that the located node flashes, that 검사 실행 produces addressed
+findings while the bar still refuses to claim a render proof, and that app zoom
+and 최근 문서 survive a real process boundary.
 
-What **is** verified on this slice:
+Screenshots — `screenshots/`: `entrance`, `welcome`, and
+`{document,agent}-view-{100,150}pct`, all with the real corpus 기안문 loaded.
 
-| | |
-| --- | --- |
-| `npx tsc --noEmit` | exit 0 |
-| `npm run build` (tsc + vite) | exit 0 — `dist/` produced, Pretendard bundled into it |
-| Runtime fixture | recorded from a real Runtime v0 session (`scripts/record-fixture.py`) |
-| Rendered and inspected in a browser against that fixture | see below |
+`lto = "thin"` replaced `lto = true` for an independent reason: fat LTO with
+`codegen-units = 1` died with `rustc-LLVM ERROR: out of memory` on a 16 GB
+machine with a browser open. A build that only completes on an idle machine is
+not a build.
 
-The browser check ran the real components against the real recorded runtime
-output and confirmed, programmatically: `Pretendard Variable` loaded
-(`document.fonts.check` true); app `rgb(241,238,232)`, paper `rgb(254,253,251)`,
-titlebar `rgb(28,30,33)`; paper column 720 px; 34 document cells and 9 fill
-seats rendered, 8 with empty slots; **2 colour-anomaly runs rendered in the
-document's actual `rgb(0,0,255)`** with the anomaly marking — the T127 failure
-made visible rather than normalised away; every table row's colspans summing to
-the table's 15-column axis; 페이지 보기 present and disabled; the centre caveat
-reading 본문 보기 — 실제 페이지 배치는 렌더 증명 후 표시됩니다.
+### Four defects the evidence run found
 
-What that check cannot cover: the packaged sidecar, the job object, the
-entrance and view-switch motion in a real window, DPI behaviour, drag-and-drop,
-the native dialog, zoom persistence across a process boundary, and every smoke
-assertion that needs two launches. `scripts/smoke.ps1` and
-`scripts/screenshots.ps1` were extended for all of it and are unrun; the four
-screenshots in `screenshots/` are **from Phase 3 and are stale** — they predate
-the entire visual identity.
+Getting to green took four fixes, none of them cosmetic, and all four were in
+code or harness that had previously been reported as working.
 
-Everything above is one `powershell -File desktop/scripts/build-clean.ps1`
-away once there is disk.
+1. **The smoke never had the isolated profile it claimed.** `smoke.ps1` set
+   `$env:LOCALAPPDATA` to redirect the app's data directory, but Tauri resolves
+   `app_local_data_dir()` through `SHGetKnownFolderPath`, which reads the user
+   profile from the OS and ignores that variable. Every "clean user" run had in
+   fact been reading and writing the developer's real prefs — proven by the
+   mtime on `%LOCALAPPDATA%\dev.rigorloom.desktop\desktop-prefs.json` moving
+   during a run. So `boot()` found the previous run's `lastSessionId`, opened a
+   document, and the welcome screen never mounted. `app_data_dir()` now honours
+   an explicit `RIGORLOOM_APPDATA`, and both scripts set it. A dead `$SmokeRoot`
+   that was created and deleted but never handed to the app is gone.
+2. **`locate-flash` was applied imperatively and silently wiped.** `className`
+   on those cells is React-controlled, so the next render dropped the class.
+   User-visible, not just a test artefact. It is React state now. The first
+   attempt at that fix scheduled it behind `requestAnimationFrame`, which
+   WebView2 withholds from windows that are not in the foreground — a flash that
+   worked only when the window had focus. It is set synchronously.
+3. **A passing check was passing vacuously.** The tree and the centre both mark
+   nodes with `data-node-id`, and the tree comes first in the document, so the
+   unscoped `document.querySelector` in "selecting in the tree marks the same
+   node in the centre" was reading the tree and agreeing with itself. Both sync
+   checks are scoped to `[data-testid="text-view"]`. The failing flash check is
+   what exposed it; had it passed, the vacuous one would still be there.
+4. **The screenshots captured other applications.** `shot.ps1` used
+   `CopyFromScreen`, which copies whatever pixels sit inside the window's
+   rectangle, and `SetForegroundWindow` cannot be relied on to clear them
+   because Windows refuses focus changes from a process that is not already in
+   the foreground. One run produced "screenshots" of the app with an unrelated
+   chat window composited over the middle, private content included. Capture is
+   `PrintWindow` with `PW_RENDERFULLCONTENT` now, and it throws rather than
+   falling back to a screen grab.
+
+The runtime was not implicated in any of them; `reattach` passed 10/10
+throughout.
 
 ### What the evidence does not cover
 

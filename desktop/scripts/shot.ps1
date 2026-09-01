@@ -33,6 +33,7 @@ $source = @(
     'using System.Runtime.InteropServices;',
     'public class W {',
     '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+    '  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);',
     '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);',
     '  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);',
     '  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool repaint);',
@@ -78,7 +79,24 @@ if ($w -le 0 -or $h -le 0) { throw "bad window rect" }
 
 $bmp = New-Object System.Drawing.Bitmap($w, $h)
 $g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen($r.L, $r.T, 0, 0, (New-Object System.Drawing.Size($w, $h)))
+
+# PrintWindow, not CopyFromScreen. CopyFromScreen copies whatever pixels are on
+# the screen inside the window's rectangle, so any window sitting on top is
+# captured too — and SetForegroundWindow above cannot be relied on to prevent
+# that, because Windows refuses focus changes requested by a process that is
+# not itself in the foreground. A run on a busy desktop produced "screenshots"
+# of the app with somebody's chat window composited over the middle of it.
+#
+# PW_RENDERFULLCONTENT (2) asks the window to draw itself into our DC, which
+# reaches the WebView2 content and is unaffected by occlusion.
+$hdc = $g.GetHdc()
+$ok = [W]::PrintWindow($p.MainWindowHandle, $hdc, 2)
+$g.ReleaseHdc($hdc)
+if (-not $ok) {
+    $g.Dispose(); $bmp.Dispose()
+    throw "PrintWindow failed for '$ProcessName'; refusing to fall back to a screen grab that may capture other windows"
+}
+
 $dir = Split-Path -Parent $Out
 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
