@@ -311,6 +311,12 @@ function CandidateChooser() {
       <ul className="ov-candidates">
         {candidates.map((candidate, index) => {
           const editable = addressIsEditable(candidate);
+          // §12.4: a label is routinely registered twice, once as an anchor
+          // and once as the cell it sits in, so this list very often holds one
+          // of each. Both are now somewhere a person can type, and the row
+          // says WHICH kind of typing rather than marking the paragraph half
+          // 값 자리 아님 — which was right until the caret existed.
+          const caretRow = !editable && addressIsCaretTarget(candidate);
           return (
             <li key={`${addressLabel(candidate)}-${index}`}>
               <button
@@ -318,13 +324,20 @@ function CandidateChooser() {
                 className="ov-candidate"
                 data-testid="overlay-candidate"
                 data-editable={editable ? "true" : "false"}
-                onClick={() => chooseCandidate(candidate)}
+                data-caret-target={caretRow ? "true" : "false"}
+                onClick={() => void chooseCandidate(candidate)}
               >
                 <span className="mono">{addressLabel(candidate)}</span>
                 {candidate.classification ? (
                   <span className="dim tiny">{candidate.classification}</span>
                 ) : null}
-                {editable ? null : <Tag tone="none">값 자리 아님</Tag>}
+                {editable ? null : caretRow ? (
+                  <Tag tone="none" title="이 문단 줄에 커서를 놓습니다. 줄 앞에서 시작합니다.">
+                    문단 줄
+                  </Tag>
+                ) : (
+                  <Tag tone="none">값 자리 아님</Tag>
+                )}
               </button>
             </li>
           );
