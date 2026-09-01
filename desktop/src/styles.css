@@ -1879,13 +1879,204 @@ body.dragging .drop {
 
 /* ── page view ────────────────────────────────────────────────────────── */
 
-.page-raster {
+/* The raster and its overlay, in one box.
+   The width is set once, on the stage, from the render's own pixel size and
+   the zoom. The image fills it and every overlay is positioned in percentages
+   of it, so there is exactly one scale factor in the whole feature and the two
+   layers cannot drift apart. */
+.page-stage {
+  position: relative;
   display: block;
   max-width: 100%;
+  line-height: 0;
+}
+
+.page-raster {
+  display: block;
+  width: 100%;
   background: var(--bg-paper);
   box-shadow: var(--shadow-paper);
   border: 1px solid var(--line);
 }
+
+/* ── 한글 오버레이 ─────────────────────────────────────────────────────── */
+/* Quiet by default. The page is the document; the overlay is a way to reach
+   into it, not a diagram drawn on top of it. Only ambiguity is permanently
+   visible, because only ambiguity is something a person has to act on. */
+
+.ov-layer {
+  position: absolute;
+  inset: 1px; /* inside the raster's own border */
+  pointer-events: none;
+}
+
+.ov {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: default;
+  transition:
+    background-color var(--t-micro) var(--ease),
+    border-color var(--t-micro) var(--ease);
+}
+
+.ov:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* An editable target: nothing until the pointer is over it, then a seat-shaped
+   tint in the fill colour the tree view already uses for a value slot. */
+.ov-editable {
+  cursor: text;
+}
+
+.ov-editable:hover,
+.ov-editable:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.ov-seat.ov-editable::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--accent-line);
+  opacity: 0;
+  transition: opacity var(--t-micro) var(--ease);
+}
+
+.ov-seat.ov-editable:hover::after { opacity: 1; }
+
+/* An interpolated seat is a guess about WHERE, made from a neighbour. It is
+   allowed to be clicked and it is not allowed to look as certain as one snapped
+   to a rule the page actually draws. */
+.ov-interpolated.ov-editable:hover {
+  border-style: dashed;
+}
+
+/* Mapped, but not a seat the editor will open. No affordance at all — it takes
+   a click to find out what it is, and it says so rather than opening nothing. */
+.ov-inert { cursor: default; }
+.ov-inert:hover { background: var(--bg-hover); }
+
+/* Ambiguous. Always visible, because a person has to resolve it, and drawn in
+   the warning vocabulary rather than the accent one: this is not an invitation
+   to type, it is a question. */
+.ov-ambiguous {
+  cursor: help;
+  border-color: transparent;
+  border-bottom: 1px dashed var(--warn);
+  background: var(--warn-soft);
+}
+
+.ov-ambiguous:hover,
+.ov-ambiguous:focus-visible {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  border-color: var(--warn);
+}
+
+.ov-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--warn);
+  color: var(--bg-paper);
+  font: var(--weight-head) 9px/14px var(--font-mono);
+  text-align: center;
+  line-height: 14px;
+}
+
+.ov-picked {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.ov-ambiguous.ov-picked {
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+  border-color: var(--warn);
+}
+
+/* The chooser. Centred over the page rather than anchored to the span: the
+   spans it belongs to are one text-line tall, and a popover hanging off a 10 px
+   box either covers the thing being decided about or falls off the page. */
+.ov-chooser {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  width: min(360px, 88%);
+  padding: var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  pointer-events: auto;
+  line-height: var(--leading-ui);
+  text-align: left;
+}
+
+.ov-chooser:focus { outline: none; }
+
+.ov-chooser-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  margin-bottom: var(--s2);
+}
+
+.ov-chooser p {
+  margin: 0 0 var(--s2);
+  color: var(--fg-muted);
+}
+
+.ov-candidates {
+  list-style: none;
+  margin: 0 0 var(--s2);
+  padding: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.ov-candidate {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ov-candidate:hover {
+  background: var(--bg-hover);
+  border-color: var(--line);
+}
+
+.ov-candidate[data-editable="false"] {
+  color: var(--fg-muted);
+}
+
+.warnish { color: var(--warn); }
 
 .raster-note {
   display: flex;

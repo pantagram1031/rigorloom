@@ -27,6 +27,9 @@ import {
 import type {
   EditableRegion,
   Finding,
+  GeometryAddress,
+  GeometrySeat,
+  GeometrySpan,
   InspectResult,
   OperationPlan,
   PlanValidation,
@@ -153,6 +156,13 @@ export async function selectSession(sessionId: string) {
           renderError: null,
           prepareError: null,
           prepareNote: null,
+          // The geometry CACHE is keyed on the session and survives a switch
+          // back; the answer on screen and the click that resolved against it
+          // do not, because they belong to the document being left.
+          geometry: null,
+          geometryPhase: "idle" as const,
+          geometryError: null,
+          overlayPick: null,
           candidateVerdict: null,
           applied: null,
           receiptOpen: null,
@@ -793,6 +803,206 @@ export async function renderCurrentPage(page?: number): Promise<void> {
   } catch (e) {
     setState({ renderPhase: "failed", renderError: rt.asRuntimeError(e) });
   }
+}
+
+// --- page geometry, and the overlay on the raster (protocol §12) -------------
+//
+// The rule this whole section is written around: **the overlay is the
+// renderer's layout, never ours.** Every rectangle drawn on the page came out
+// of `document/pageGeometry`, which read it out of a PDF Hancom laid out. When
+// the runtime has no geometry the overlay draws nothing at all — there is no
+// fallback that approximates a box from `summary.pageMetrics`, because a box in
+// the wrong place is worse than no box: it puts a text cursor where the text
+// is not, and it does it with the confidence of a real answer.
+
+/** `${sessionId}:${zeroBasedPage}` — the cache key, and the smoke reads it. */
+export function geometryKey(sessionId: string, page: number): string {
+  return `${sessionId}:${page}`;
+}
+
+/**
+ * Fetch the geometry for a page, or serve the one already held.
+ *
+ * Cached per (document, page) and NEVER re-fetched on a zoom change: the rects
+ * are fractions of the page, so zooming multiplies them by a different pixel
+ * size and asks the runtime nothing (§12.1). `geometryFetches` counts the real
+ * calls so a harness can prove that rather than take it on faith.
+ */
+export async function loadGeometry(page?: number): Promise<void> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return;
+  const wanted = Math.max(0, (page ?? state.page) - 1);
+  const key = geometryKey(sessionId, wanted);
+
+  const held = state.geometryCache[key];
+  if (held) {
+    setState({ geometry: held, geometryPhase: "ready", geometryError: null });
+    return;
+  }
+  setState({ geometryPhase: "starting", geometryError: null });
+  try {
+    const geometry = await rt.pageGeometry(sessionId, wanted);
+    setState({
+      geometry,
+      geometryPhase: "ready",
+      geometryCache: { ...getState().geometryCache, [key]: geometry },
+      geometryFetches: getState().geometryFetches + 1,
+    });
+  } catch (e) {
+    // A THROWN error is not the same as `available: false`. The latter is an
+    // answer with a reason from a closed set; this is the method failing, and
+    // conflating them would let a transport fault masquerade as "this document
+    // has no page".
+    setState({
+      geometryPhase: "failed",
+      geometry: null,
+      geometryError: rt.asRuntimeError(e),
+      geometryFetches: getState().geometryFetches + 1,
+    });
+  }
+}
+
+/** Is this address a seat the editor will actually open? Runtime's answer. */
+export function addressIsEditable(address: GeometryAddress | null | undefined): boolean {
+  if (!address || address.kind !== "cell") return false;
+  if (address.table == null || address.row == null || address.col == null) return false;
+  const state = getState();
+  const inspect = state.activeSessionId
+    ? (state.inspects[state.activeSessionId] ?? null)
+    : null;
+  return seatAt(inspect, address.table, address.row, address.col) !== null;
+}
+
+/** How the status bar spells an address. Same vocabulary as 위치. */
+export function addressLabel(address: GeometryAddress): string {
+  if (address.kind === "cell") {
+    return `표${address.table} (${address.row},${address.col})`;
+  }
+  if (address.atPara !== undefined && address.atPara !== null) {
+    return `문단 ${address.atPara}`;
+  }
+  return address.text ? `앵커 “${trimRun(address.text, 12)}”` : "주소 없음";
+}
+
+/** Open the seat at an address in the SAME editor a tree click opens. */
+function openAddress(address: GeometryAddress): boolean {
+  if (address.table == null || address.row == null || address.col == null) return false;
+  return beginEdit(address.table, address.row, address.col);
+}
+
+/**
+ * A click on the page. One of four honest outcomes, and never a fifth.
+ *
+ * The mutation path is untouched: an editable target calls `beginEdit`, which
+ * is the same function `TextView` calls and the same one the IME harness types
+ * into. There is no overlay-shaped edit route, no second plan builder and no
+ * second validator — a value typed on the page and a value typed in the tree
+ * become the same `fill_cell` op in the same queue.
+ */
+export function clickOverlaySeat(seat: GeometrySeat): void {
+  const address: GeometryAddress = {
+    kind: "cell",
+    table: seat.table ?? null,
+    row: seat.row ?? null,
+    col: seat.col ?? null,
+  };
+  const id = `seat-${seat.table}-${seat.row}-${seat.col}`;
+  if (!addressIsEditable(address)) {
+    // The runtime placed a rect for a cell the T30/T127 preflight does not
+    // offer as a seat. Say so; do not open an editor that would refuse anyway.
+    setState({
+      overlayPick: {
+        kind: "not_editable",
+        targetId: id,
+        address,
+        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+      },
+    });
+    return;
+  }
+  setState({
+    overlayPick: { kind: "seat", targetId: id, address, label: addressLabel(address) },
+  });
+  openAddress(address);
+}
+
+/** A click on a mapped line of text. */
+export function clickOverlaySpan(span: GeometrySpan): void {
+  const id = `span-${span.index}`;
+  if (span.confidence === "ambiguous") {
+    // T41, surfaced. `engine/scripts/preedit.py:221`: one unscoped key
+    // overwrote five sibling contracts in a six-contract pack and every
+    // offline gate passed, because the label survived as a prefix. So the
+    // click ASKS. It does not pick the first candidate, it does not pick the
+    // nearest, and it does not queue anything.
+    const candidates = span.candidates ?? [];
+    setState({
+      overlayPick: {
+        kind: "ambiguous",
+        targetId: id,
+        candidates,
+        label: `후보 ${candidates.length}개 — 직접 선택`,
+      },
+    });
+    return;
+  }
+  const address = span.address;
+  if (!address) return; // unmapped: not clickable, and nothing to say
+  if (!addressIsEditable(address)) {
+    setState({
+      overlayPick: {
+        kind: "not_editable",
+        targetId: id,
+        address,
+        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+      },
+    });
+    if (address.kind === "cell" && address.table != null && address.row != null &&
+        address.col != null) {
+      setSelection({ kind: "cell", table: address.table, row: address.row, col: address.col });
+    }
+    return;
+  }
+  setState({
+    overlayPick: { kind: "unique", targetId: id, address, label: addressLabel(address) },
+  });
+  openAddress(address);
+}
+
+/**
+ * The person picked one of the candidates. THEIR choice, recorded as theirs.
+ *
+ * Nothing is queued by this call either — it opens the editor on the chosen
+ * seat, exactly as a direct click on an unambiguous one would, and the value
+ * still has to be typed and still has to be approved.
+ */
+export function chooseCandidate(address: GeometryAddress): void {
+  const pick = getState().overlayPick;
+  if (!addressIsEditable(address)) {
+    setState({
+      overlayPick: {
+        kind: "not_editable",
+        targetId: pick?.targetId ?? "candidate",
+        address,
+        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+      },
+    });
+    return;
+  }
+  setState({
+    overlayPick: {
+      kind: "unique",
+      targetId: pick?.targetId ?? "candidate",
+      address,
+      label: `${addressLabel(address)} — 사용자가 고름`,
+    },
+  });
+  openAddress(address);
+}
+
+export function dismissOverlayPick(): void {
+  setState({ overlayPick: null });
 }
 
 /**

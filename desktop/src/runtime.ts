@@ -17,6 +17,7 @@ import type {
   Capabilities,
   CredentialStatus,
   EventDelivery,
+  GeometryResult,
   HostEvent,
   HostRunPayload,
   InspectResult,
@@ -239,6 +240,21 @@ export const renderPage = (
 export const renderPrepare = (sessionId: string) =>
   call<PrepareResult>("document/renderPrepare", { sessionId });
 
+/**
+ * Where the text is on the page, and what each line is addressable as (§12).
+ *
+ * Zero-based `page`, like `document/render`. Agent-safe, and deliberately NOT
+ * folded into the render result: the rects are normalized fractions and are the
+ * same at every dpi, so re-asking on a zoom change would re-extract every glyph
+ * position for an answer that did not change. The store caches accordingly.
+ */
+export const pageGeometry = (sessionId: string, page: number, runId?: string | null) =>
+  call<GeometryResult>("document/pageGeometry", {
+    sessionId,
+    page,
+    ...(runId ? { runId } : {}),
+  });
+
 // --- events ------------------------------------------------------------------
 
 export const subscribeEvents = (sessionId: string, after = -1, intervalMs = 250) =>
@@ -397,6 +413,8 @@ export const smokeConfig = () =>
     corpus2: string | null;
     exportPath: string | null;
     imeEmpty: boolean;
+    /** A session already on disk with its rendered PDF; see the overlay phase. */
+    stagedSession: string | null;
   }>("smoke_config");
 
 export const smokeFinish = (report: unknown) => invoke<void>("smoke_finish", { report });
