@@ -565,6 +565,7 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | `document/inspect` → `regions` | agent | `engine/scripts/form_inspect.py:620` (`_fill_preflight`), `:913` (`_run_record`) | none. A RESULT SECTION, not a method |
 | `document/readRegion` | agent | `engine/scripts/form_inspect.py:943` (`--full-text`) | implemented, bounded, refuses rather than truncates |
 | `document/render` | agent | `rt_render.render_page` over PyMuPDF (optional) | implemented; see §11 for when it can and cannot produce a page |
+| `document/pageGeometry` | agent | `rt_geometry.page_geometry` over the same PDF | implemented; real positions + address mapping — §12 |
 | `document/renderPrepare` | **host** | `engine/scripts/com_backend.py convert` in a bounded child | implemented; serial, refuses `com_busy`, never kills — §11.1b |
 | `plan/propose` | agent | — | GAP: new object over existing op registries (`engine/scripts/preedit.py:2425`+, `engine/scripts/xml_backend.py:27`, `engine/scripts/com_backend.py:1598`). |
 | `plan/validate` | agent | `engine/scripts/com_backend.py:1670`; `engine/scripts/preedit.py:136`/`:180`/`:221` | GAP: validation is per-script today. Build note: one dispatcher that routes each op kind to its owning backend's validator without executing. |
@@ -1006,3 +1007,106 @@ and the CLI exposes it; the wire does not), `artifact/exportTo`,
 `workspace/delete`, section and heading structure (desktop gap 6), descendant
 containment for child processes, and last-writer-wins on plan and approval
 records under one root — the event log is now locked, those records are not.
+
+---
+
+## 12. Page geometry — editing ON the page
+
+The product has to become an editor that works on the rendered page, not beside
+it. That needs two things the Runtime did not have: where the text IS, and
+which editable address each piece of it corresponds to.
+
+### 12.1 Why a separate method
+
+`document/pageGeometry {sessionId, page?=0, runId?}`, agent-safe, not a field
+on `document/render`. Three reasons, recorded because the alternative was
+tempting:
+
+- **render is per-zoom, geometry is not.** A raster is bytes at one dpi;
+  normalized rects are the same at every dpi. Bundling them would re-extract
+  every glyph position each time the user zooms.
+- **The frame budget.** `document/render` already caps an inline image at
+  512 KiB against a 1 MiB frame. A page of spans on top of that would not fit.
+- **They cache differently.** Geometry is cached on the PDF's sha256; a raster
+  is not cached at all.
+
+### 12.2 It is the renderer's layout, never ours
+
+Every rect comes from PyMuPDF reading a PDF that Hancom laid out. Nothing is
+synthesized from `page_metrics`, and there is no approximate page box. Where
+there is no PDF there is no geometry, reported through the SAME closed reason
+set `document/render` uses (`needs_conversion`, `no_rasterizable_artifact`,
+`rasterizer_missing`, `artifact_missing`) — so the Desktop's existing
+unavailable state renders it with no new branch.
+
+**Coordinates: normalized.** Every rect is `[x0, y0, x1, y1]` as fractions of
+the page, origin **top-left**, y increasing downward — PyMuPDF's convention and
+the one a raster is drawn in, so the client multiplies by its pixel size and is
+done. `pageSize` carries the points if anyone wants them back.
+
+**The unit is a line.** PyMuPDF splits a line at every font run, so a label set
+in two weights would arrive as two fragments and match neither. Lines are what
+a label occupies and what mapping matches on; `spanUnit: "line"` says so.
+
+### 12.3 Address mapping, and what it refuses to do
+
+Span text is matched against the session's form scan — anchor records and table
+cells — after normalization by
+**`pipeline/scripts/check_residue.normalize_text`**, imported rather than
+re-derived. That function is the residue gate's own; a second whitespace rule
+here would be a second vocabulary, and the two would drift the first time
+either was tuned. A test asserts identity, not equivalence.
+
+| outcome | meaning |
+| --- | --- |
+| `confidence: "unique"` | exactly one address matched; `address` is set |
+| `confidence: "ambiguous"` | several matched; `address` is **null** and `candidates` lists them all |
+| `confidence: "unmapped"` | nothing matched; `address` is null and the span still renders as non-editable text |
+
+**Ambiguity is never resolved by picking one.** That is T41 exactly
+(`engine/scripts/preedit.py:221`): one unscoped key overwrote five sibling
+contracts in a six-contract pack, and every offline gate passed because the
+label survived as a prefix. A click on an ambiguous label must ask, not guess.
+
+A cell whose `text_preview` is truncated is **excluded** from the target set and
+counted in `mapping.excluded.truncatedCells` — a 30-character prefix is a guess,
+not a match.
+
+### 12.4 Empty seats, which are the point
+
+An empty fill seat has no text to match, and it is exactly the thing a user
+wants to click. Each seat carries the method its rect was derived by, so the
+Desktop can style certainty instead of implying it:
+
+| `derivation` | how |
+| --- | --- |
+| `matched_text` | the seat already has text, and that text matched a span |
+| `cell_borders` | a rule actually drawn on the page encloses the seat |
+| `interpolated` | inferred from a uniquely-matched label in the same table row |
+
+Interpolation places **only the seat immediately after a label**. With one
+label and seven seats in a row we know where the first one starts and nothing
+about the rest, and giving all seven the same rectangle would be six wrong
+answers wearing a right one's clothes. The rest are **absent** from `seats`,
+and the Desktop edits them in the tree — which is honest, where a guessed box
+would put a caret where the text is not.
+
+A drawn rect is only believed when it is neither a hairline nor most of the
+page; the page frame is not a cell.
+
+### 12.5 Cache
+
+Keyed on `(pdf sha256, page)`, held per `RuntimeCore`, bounded at 64 entries
+with FIFO eviction. The answer reports `cache.hit` and `cache.key`. New PDF
+bytes are a new key, so a re-prepared document never serves stale positions.
+
+### 12.6 Still GAP here
+
+- **Seats not adjacent to a label.** The honest fix is a per-cell border scan
+  that does not need a text anchor — find the drawn grid, not a neighbour.
+  Needs a real Hancom-rendered form to validate against; validating a
+  border-finder against a fixture I drew myself would prove nothing.
+- **Sub-line addressing.** A span is a line; a click resolves to the line's
+  address, not to a character offset within it.
+- **Multi-page seats.** Geometry is per page; a seat is looked up on the page
+  it is asked for.

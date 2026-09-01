@@ -184,6 +184,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exit 3 when no page image is possible (default: exit 0 "
                         "and report the unavailable state, which is an answer)")
 
+    p = sub.add_parser("geometry",
+                       help="text positions on a page, mapped to addresses")
+    p.add_argument("--session", required=True)
+    p.add_argument("--page", type=int, default=0)
+    p.add_argument("--run", default=None)
+    p.add_argument("--require-geometry", action="store_true",
+                   help="exit 3 when no geometry is possible (default: exit 0 "
+                        "and report the unavailable state, which is an answer)")
+
     p = sub.add_parser("render-prepare",
                        help="convert the session copy to a PDF so render can "
                             "raster it (host action; needs Hancom)")
@@ -272,6 +281,12 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
                                       dpi=args.dpi, run_id=args.run,
                                       inline=not args.no_inline)
         if args.require_render and not result["available"]:
+            return result, EXIT_REFUSED
+        return result, EXIT_OK
+    if command == "geometry":
+        result = core.document_page_geometry(args.session, page=args.page,
+                                             run_id=args.run)
+        if args.require_geometry and not result["available"]:
             return result, EXIT_REFUSED
         return result, EXIT_OK
     if command == "render-prepare":

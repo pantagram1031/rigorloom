@@ -61,6 +61,7 @@ from rt_plan import (  # noqa: E402
     validate_plan,
     wanted_full_text,
 )
+from rt_geometry import geometry_capability, page_geometry  # noqa: E402
 from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
@@ -90,6 +91,7 @@ AGENT_METHODS: tuple[str, ...] = (
     "candidate/list",
     "receipt/read",
     "document/render",
+    "document/pageGeometry",
     "event/poll",
 )
 
@@ -124,6 +126,9 @@ class RuntimeCore:
         self.store = SessionStore(Path(root))
         self.tools = EngineTools(engine_root)
         self._render_probe: dict | None = None
+        # Extractions keyed on the PDF hash and page, so re-opening a
+        # page does not re-read every glyph position.
+        self._geometry_cache: dict = {}
 
     # -- capabilities -------------------------------------------------------
     def capability_snapshot(self, *, methods: list[str]) -> dict:
@@ -154,6 +159,7 @@ class RuntimeCore:
                 "maxSourceBytes": MAX_SOURCE_BYTES,
             },
             "render": render_capability(),
+            "geometry": geometry_capability(),
             "childPython": child_python_facts(),
             "deferredRefusals": list(DEFERRED_REFUSALS),
             "unavailable": {
@@ -399,6 +405,22 @@ class RuntimeCore:
                          bytes=result["pdf"]["bytes"],
                          producedBy=result["pdf"]["producedBy"])
         return result
+
+    def document_page_geometry(self, session_id, *, page: int = 0,
+                               run_id=None) -> dict:
+        """Real text positions from the rendered PDF, mapped to addresses."""
+        session = self.store.get(session_id)
+        session.ensure_dirs()
+        try:
+            profile = load_profile(self.tools, session, tag="base")
+        except RpcError:
+            # The positions are real whether or not the SOURCE is a form
+            # the scanner can read. A PDF opened directly has no form scan
+            # and so nothing to map spans onto; that costs the mapping,
+            # not the geometry, and page_geometry says which.
+            profile = None
+        return page_geometry(session, page=page, run_id=run_id,
+                             profile=profile, cache=self._geometry_cache)
 
     # -- events ---------------------------------------------------------------
     def event_poll(self, session_id, after: int = -1,
