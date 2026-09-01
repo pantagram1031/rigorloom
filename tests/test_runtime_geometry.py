@@ -490,3 +490,137 @@ def test_the_cli_reports_unavailable_as_a_success_unless_asked_otherwise(tmp_pat
                      "--require-geometry")
     assert strict.code == 3
     assert strict.payload["result"]["unavailable"]["reason"] == "needs_conversion"
+
+
+# --- the drawn grid: rules, not rectangles -----------------------------------
+# Hancom strokes every ruling as a line segment. These pin the reconstruction's
+# mechanics on PDFs built here; whether it reconstructs a REAL form is settled
+# further down against the corpus renders, which is the only evidence that
+# counts for that claim.
+
+def _ruled_pdf(path, rows, cols, *, x0=100.0, y0=100.0, w=90.0, h=30.0,
+               dashed=False, omit=()):
+    """A grid of ``rows`` x ``cols`` boxes drawn as separate line segments."""
+    module = rt_render.rasterizer_module()
+    assert module is not None
+    document = module.open()
+    try:
+        page = document.new_page()
+
+        def line(ax, ay, bx, by):
+            if not dashed:
+                page.draw_line(module.Point(ax, ay), module.Point(bx, by))
+                return
+            # A dashed rule really is many short collinear pieces. The dash and
+            # gap here are the ones Hancom actually emits: measured across the
+            # corpus renders, 12,045 of 13,972 horizontal segments are under
+            # 3pt and their collinear gaps cluster at 0.4-0.8pt.
+            dash, gap = 2.0, 0.7
+            length = max(abs(bx - ax), abs(by - ay))
+            ux = (bx - ax) / length if length else 0.0
+            uy = (by - ay) / length if length else 0.0
+            at = 0.0
+            while at < length:
+                end = min(at + dash, length)
+                page.draw_line(module.Point(ax + ux * at, ay + uy * at),
+                               module.Point(ax + ux * end, ay + uy * end))
+                at = end + gap
+
+        for row in range(rows + 1):
+            y = y0 + row * h
+            line(x0, y, x0 + cols * w, y)
+        for col in range(cols + 1):
+            if col in omit:
+                continue
+            x = x0 + col * w
+            line(x, y0, x, y0 + rows * h)
+        document.save(str(path))
+    finally:
+        document.close()
+    return path
+
+
+@needs_rasterizer
+def test_a_grid_of_stroked_rules_becomes_cells(tmp_path):
+    """The defect in one line: Hancom draws lines, and lines have no area."""
+    module = rt_render.rasterizer_module()
+    pdf = _ruled_pdf(tmp_path / "grid.pdf", 3, 4)
+    extracted = rt_geometry.extract_page(module, pdf, 0)
+    # the old reading saw only hairlines and found nothing cell-shaped
+    believable = [rect for rect in extracted["drawnRects"]
+                  if (rect[2] - rect[0]) * (rect[3] - rect[1])
+                  >= rt_geometry.MIN_SEAT_AREA_PT]
+    assert believable == [], "a stroked rule is not a rectangle with area"
+    assert len(extracted["drawnCells"]) == 12
+
+
+@needs_rasterizer
+def test_a_dashed_rule_is_one_rule_not_many(tmp_path):
+    module = rt_render.rasterizer_module()
+    pdf = _ruled_pdf(tmp_path / "dashed.pdf", 2, 2, dashed=True)
+    cells = rt_geometry.extract_page(module, pdf, 0)["drawnCells"]
+    assert len(cells) == 4
+
+
+@needs_rasterizer
+def test_a_cell_missing_a_side_is_not_a_cell(tmp_path):
+    """Three sides drawn is not an enclosure, and never becomes one."""
+    # drop the last vertical: the rightmost column no longer closes
+    pdf = _ruled_pdf(tmp_path / "open.pdf", 2, 3, omit=(3,))
+    module = rt_render.rasterizer_module()
+    cells = rt_geometry.extract_page(module, pdf, 0)["drawnCells"]
+    assert len(cells) == 4, "2 rows x 2 closed columns; the open one is absent"
+
+
+def test_a_rule_positions_product_is_not_the_grid():
+    """Two stacked tables must not slice each other into cells nobody drew.
+
+    A plain product of the x and y rule positions would invent them, which is
+    why the reconstruction grows each cell to its NEAREST closing partners.
+    """
+    horizontal = [[0.0, 0.0, 100.0], [40.0, 0.0, 100.0],      # upper table
+                  [200.0, 0.0, 100.0], [240.0, 0.0, 100.0]]   # lower table
+    vertical = [[0.0, 0.0, 40.0], [100.0, 0.0, 40.0],         # upper: 1 column
+                [0.0, 200.0, 240.0], [50.0, 200.0, 240.0],    # lower: 2 columns
+                [100.0, 200.0, 240.0]]
+    cells = rt_geometry.drawn_cells(horizontal, vertical, 600.0, 800.0)
+    assert sorted(cells) == [(0.0, 0.0, 100.0, 40.0),
+                             (0.0, 200.0, 50.0, 240.0),
+                             (50.0, 200.0, 100.0, 240.0)]
+
+
+def test_the_page_frame_is_still_not_a_cell():
+    horizontal = [[0.0, 0.0, 600.0], [800.0, 0.0, 600.0]]
+    vertical = [[0.0, 0.0, 800.0], [600.0, 0.0, 800.0]]
+    assert rt_geometry.drawn_cells(horizontal, vertical, 600.0, 800.0) == []
+
+
+def test_a_hairline_gap_between_double_rules_is_not_a_cell():
+    """A border drawn twice is one border, not a cell a point tall."""
+    horizontal = [[100.0, 0.0, 90.0], [101.2, 0.0, 90.0],
+                  [140.0, 0.0, 90.0], [141.2, 0.0, 90.0]]
+    vertical = [[0.0, 100.0, 141.2], [90.0, 100.0, 141.2]]
+    cells = rt_geometry.drawn_cells(horizontal, vertical, 600.0, 800.0)
+    assert len(cells) == 1
+    assert cells[0][3] - cells[0][1] > rt_geometry.MIN_CELL_HEIGHT_PT
+
+
+def test_a_diagonal_is_not_a_cell_border():
+    horizontal, vertical = rt_geometry.ruling_segments(
+        [{"items": [("l", (0.0, 0.0), (100.0, 100.0))]}])
+    assert horizontal == [] and vertical == []
+
+
+def test_a_rule_drawn_as_a_thin_filled_box_still_counts():
+    """Some rules are strokes, some are slivers. Both are rules.
+
+    A 100x0.6pt box contributes two long horizontal edges and two 0.6pt stubs;
+    the stubs are dropped when the rule's own length is judged, so the sliver
+    ends up as the single horizontal rule a reader sees.
+    """
+    horizontal, vertical = rt_geometry.ruling_segments(
+        [{"items": [("re", (10.0, 20.0, 110.0, 20.6))]}])
+    assert len(horizontal) == 2
+    assert rt_geometry.cluster_rules(vertical) == [], "0.6pt is not a rule"
+    rules = rt_geometry.cluster_rules(horizontal)
+    assert len(rules) == 1 and rules[0][1] == [[10.0, 110.0]]
