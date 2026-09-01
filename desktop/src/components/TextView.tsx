@@ -37,91 +37,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { beginEdit, cancelEdit, commitEdit } from "../actions";
+import { SeatEditor } from "./SeatEditor";
 import {
   activeText,
   cellKey,
   selectionId,
   setSelection,
-  setState,
   useWorkspace,
   type QueuedOp,
   type Selection,
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
-
-/**
- * The inline editor. A real `<input>`, mounted in the cell.
- *
- * That it is a real input element is the whole design, not an implementation
- * detail: Hangul composition belongs to the IME, and only a real text field
- * gets it. A 두벌식 sequence composes in place, the preedit syllable is
- * visible while it is being built, and Backspace decomposes rather than
- * deletes. A keydown-driven buffer would receive the jamo separately and
- * reassemble them wrongly; a contenteditable would fight the composition
- * events. The spike proved this with real scan codes (M13/M14) and
- * `scripts/ime.ps1` re-proves it against this field.
- *
- * `onKeyDown` deliberately ignores Enter while `isComposing` is true. Pressing
- * Enter to CONFIRM a composing syllable is a normal part of typing Korean, and
- * a handler that committed the edit there would end the edit halfway through
- * the user's word.
- */
-function SeatEditor({
-  value,
-  onCommit,
-  onCancel,
-}: {
-  value: string;
-  onCommit: (next: string) => void;
-  onCancel: () => void;
-}) {
-  const [text, setText] = useState(value);
-  const field = useRef<HTMLInputElement>(null);
-  const composing = useRef(false);
-
-  useEffect(() => {
-    field.current?.focus();
-    field.current?.select();
-  }, []);
-
-  return (
-    <input
-      ref={field}
-      className="seat-input"
-      data-testid="seat-input"
-      value={text}
-      aria-label="이 자리에 넣을 값"
-      onChange={(e) => setText(e.target.value)}
-      onCompositionStart={() => {
-        composing.current = true;
-      }}
-      onCompositionEnd={(e) => {
-        composing.current = false;
-        // Recorded so the IME harness can tell a composed string from
-        // characters injected straight into the field: both look the same in
-        // the value, and only one of them exercised the IME.
-        setState({ sawComposition: true });
-        // The composed syllable arrives here on some IMEs without a further
-        // input event, so read it off the element rather than trusting state.
-        setText((e.target as HTMLInputElement).value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          if (composing.current || e.nativeEvent.isComposing) return;
-          e.preventDefault();
-          onCommit(field.current?.value ?? text);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-        // Every other key, modifiers included, belongs to the field.
-        e.stopPropagation();
-      }}
-      onBlur={() => onCommit(field.current?.value ?? text)}
-      onClick={(e) => e.stopPropagation()}
-    />
-  );
-}
 
 /** A queued edit, drawn in the document as a proposal. */
 function QueuedValue({ op }: { op: QueuedOp }) {

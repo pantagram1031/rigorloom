@@ -31,6 +31,7 @@ import type {
   GeometryResult,
   HostEvent,
   InspectResult,
+  ModuleCheckReport,
   OperationPlan,
   OverlayPick,
   PlanValidation,
@@ -368,8 +369,23 @@ export interface WorkspaceState {
 
   // --- 작업 팩 ---------------------------------------------------------------
   taskPacks: TaskPackList | null;
-  /** Which pack's 준비 중 detail is open. */
+  /** Which pack's detail panel is open. */
   packOpen: string | null;
+  /**
+   * The last `module/check` this shell ran, and for which pack.
+   *
+   * One at a time, keyed by module name, because the panel shows one pack at a
+   * time and a report from a pack the user has since navigated away from would
+   * be a verdict attached to the wrong heading. Cleared when the module or the
+   * session changes rather than left to go stale.
+   */
+  packRun: {
+    module: string;
+    sessionId: string;
+    phase: "running" | "done" | "failed";
+    report: ModuleCheckReport | null;
+    error: RuntimeError | null;
+  } | null;
 
   /** Mirrored from the window so the toolbar can label the control. */
   fullscreen: boolean;
@@ -532,6 +548,7 @@ const initial: WorkspaceState = {
 
   taskPacks: null,
   packOpen: null,
+  packRun: null,
 
   fullscreen: false,
 
@@ -913,5 +930,10 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     provider: s.provider.provider,
     agentTab: s.agentTab,
     packOpen: s.packOpen,
+    // A pack's verdict is workspace state like any other: it survives Ctrl+1
+    // and Ctrl+2, or it was never one Workspace to begin with.
+    packRun: s.packRun
+      ? `${s.packRun.module}:${s.packRun.phase}:${s.packRun.report?.counts.selected ?? 0}`
+      : null,
   });
 }

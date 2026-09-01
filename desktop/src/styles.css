@@ -1941,6 +1941,21 @@ body.dragging .drop {
   border-color: var(--accent-line);
 }
 
+/* An empty seat AT REST. The marquee interaction has to be visible without a
+   pointer on it: the runtime now places real seats (§12.4 cell_borders, 55 on
+   one corpus form), and an affordance that only exists on hover is one nobody
+   finds. Faint enough that a page of 37 of them still reads as a page. */
+.ov-seat.ov-editable {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--accent-line) 55%, transparent);
+}
+
+.ov-seat.ov-editable:hover,
+.ov-seat.ov-editable:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
 .ov-seat.ov-editable::after {
   content: "";
   position: absolute;
@@ -1949,11 +1964,35 @@ body.dragging .drop {
   bottom: 0;
   height: 1px;
   background: var(--accent-line);
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity var(--t-micro) var(--ease);
 }
 
 .ov-seat.ov-editable:hover::after { opacity: 1; }
+
+/* A seat being typed into. The field fills the rectangle the runtime placed —
+   the caret lands where the text will land, which is the whole claim of
+   editing ON the page. */
+.ov-editing {
+  pointer-events: auto;
+  background: var(--bg-paper);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ov-seat-input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: clamp(9px, 0.85em, 15px);
+  color: var(--fg);
+}
+
+.ov-seat-input:focus { outline: none; }
 
 /* An interpolated seat is a guess about WHERE, made from a neighbour. It is
    allowed to be clicked and it is not allowed to look as certain as one snapped
@@ -2704,6 +2743,103 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .pack-detail li { margin-bottom: 2px; }
 
 .pack-detail .action { margin-top: var(--s3); }
+
+.pack-detail h4 {
+  margin: var(--s3) 0 var(--s1);
+  font-size: var(--text-tiny);
+  font-weight: var(--weight-head);
+  color: var(--fg-muted);
+}
+
+/* 실행, and the one line saying what it will and will not do. */
+.pack-run {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.pack-run .action { margin-top: 0; }
+
+.pack-refusal {
+  margin-top: var(--s2);
+  padding: var(--s2);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  background: var(--bad-soft);
+}
+
+.pack-refusal .head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.pack-report {
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+}
+
+.pack-report .head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.pack-checks,
+.pack-findings {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+}
+
+.pack-check {
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.pack-check:first-child { border-top: none; }
+
+.pack-check-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex-wrap: wrap;
+}
+
+/* A checker that did not run says why, in the runtime's terms, at reading
+   weight — not tucked into a tooltip. "Skipped" hidden behind a hover is
+   indistinguishable from "passed" at a glance, which is the failure mode this
+   whole panel is written against. */
+.pack-check-reason {
+  margin: 4px 0 0;
+  color: var(--fg-muted);
+  line-height: var(--leading-body);
+}
+
+.pack-findings {
+  margin-top: var(--s1);
+  padding-left: var(--s2);
+  border-left: 2px solid var(--line);
+}
+
+.pack-finding {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+  flex-wrap: wrap;
+  padding: 2px 0;
+  font-size: var(--text-tiny);
+  color: var(--fg-muted);
+}
+
+.pack-finding .what {
+  flex: 1 1 12ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .turn,
