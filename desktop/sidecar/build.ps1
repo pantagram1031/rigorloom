@@ -54,6 +54,24 @@ $VenvPy = Join-Path $Venv 'Scripts\python.exe'
 & $VenvPy -m pip install --disable-pip-version-check --quiet 'pyinstaller==6.22.2'
 if ($LASTEXITCODE -ne 0) { exit 3 }
 
+# The rasterizer, and why it is no longer left out.
+#
+# `rt_render` and `rt_geometry` treat PyMuPDF as an OPTIONAL dependency and both
+# report `rasterizer_missing` honestly when it is absent — which is correct for a
+# bare interpreter and was wrong for the shipped bundle. The frozen sidecar had
+# no PyMuPDF, so a packaged install answered `rasterizer_missing` for every PDF
+# it was ever handed: 페이지 보기 could not draw a page, and `document/pageGeometry`
+# could not return a single rect, on any machine, ever. Shipping a page mode
+# inside a bundle that structurally cannot produce a page is the same class of
+# defect as Phase 4's pre-merge sidecar — the app says a thing is possible and
+# the payload makes it impossible.
+#
+# Pinned to the version the dev interpreter carries, so a packaged run and a
+# `--dev` run cannot disagree about what the renderer read off a page. Costs
+# roughly 20 MiB against a 23 MiB payload; the role checks below prove it landed.
+& $VenvPy -m pip install --disable-pip-version-check --quiet 'pymupdf==1.27.2.3'
+if ($LASTEXITCODE -ne 0) { exit 3 }
+
 # --- freeze ------------------------------------------------------------------
 # The Runtime is stdlib-only and resolves its siblings through sys.path the way
 # every repo script does, so the runtime modules go in as hidden imports and the
@@ -80,6 +98,14 @@ if ($LASTEXITCODE -ne 0) {
 foreach ($module in $engineDeps) {
     if ($module) { $hidden += '--hidden-import'; $hidden += $module }
 }
+
+# Both spellings. `rt_render.RASTERIZER_MODULES` imports by name at CALL time
+# ("pymupdf" first, "fitz" second), so PyInstaller's static analysis never sees
+# either one and would leave the wheel out of a bundle that pip had installed
+# into the build venv. Naming them here is what pulls in the hook that collects
+# the native libraries alongside.
+$hidden += '--hidden-import'; $hidden += 'pymupdf'
+$hidden += '--hidden-import'; $hidden += 'fitz'
 Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
     (Get-ChildItem -Path $runtimeScripts -Filter '*.py').Count, $engineDeps.Count)
 
@@ -152,6 +178,15 @@ if (-not (Test-Path $formInspect)) {
     exit 3
 }
 
+# The overlay slice's own payload. Asserted by NAME rather than trusted to the
+# runtime-scripts glob above, because "the packaged sidecar was the pre-merge
+# runtime" is a defect this project has already shipped once.
+$geometryScript = Join-Path $OutDir '_internal\repo\runtime\scripts\rt_geometry.py'
+if (-not (Test-Path $geometryScript)) {
+    Write-Error "bundled runtime is missing rt_geometry.py at $geometryScript — the overlay would have no method to call."
+    exit 3
+}
+
 # Role 2 first, because it is the one that is easy to get wrong: under
 # PyInstaller sys.executable IS this exe, and rt_engine spawns its children as
 # [sys.executable, "<...>/form_inspect.py", ...]. If this does not work,
@@ -192,10 +227,17 @@ Write-Host 'interpreter role: module registry list ok'
 # Role 1: a real initialize handshake over stdio against the frozen server.
 $probeRoot = Join-Path $env:TEMP ('rigorloomd-probe-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $probeRoot | Out-Null
-$frame = '{"kind":"request","id":"1","method":"initialize","params":{"protocolVersion":"0","client":{"name":"build.ps1","version":"0"},"unknownFieldPolicy":"reject"}}'
+# Two frames, not one. `initialize` proves the server answers; `capabilities/list`
+# proves WHAT it answers — which is the only way to catch a bundle that froze an
+# older runtime/scripts than the branch being shipped, and the only way to catch
+# a rasterizer that pip installed and PyInstaller then left behind.
+$frames = @(
+    '{"kind":"request","id":"1","method":"initialize","params":{"protocolVersion":"0","client":{"name":"build.ps1","version":"0"},"unknownFieldPolicy":"reject"}}'
+    '{"kind":"request","id":"2","method":"capabilities/list"}'
+)
 $framePath = Join-Path $probeRoot 'in.jsonl'
 $outPath = Join-Path $probeRoot 'out.jsonl'
-[IO.File]::WriteAllText($framePath, $frame + "`n")
+[IO.File]::WriteAllText($framePath, ($frames -join "`n") + "`n")
 # The sidecar logs its readiness line to stderr, and PowerShell turns native
 # stderr into a terminating NativeCommandError under $ErrorActionPreference =
 # 'Stop'. Start-Process keeps the two streams apart without that.
@@ -205,7 +247,9 @@ $proc = Start-Process -FilePath $exe `
     -RedirectStandardOutput $outPath `
     -RedirectStandardError (Join-Path $probeRoot 'err.log') `
     -NoNewWindow -PassThru -Wait
-$reply = if (Test-Path $outPath) { Get-Content $outPath -First 1 } else { $null }
+$replies = if (Test-Path $outPath) { @(Get-Content $outPath) } else { @() }
+$reply = if ($replies.Count -gt 0) { $replies[0] } else { $null }
+$capsLine = if ($replies.Count -gt 1) { $replies[1] } else { $null }
 $serveExit = $proc.ExitCode
 # The probe is `--noconsole`, and this script does not job-confine it — that is
 # jobkill.rs's job inside the app, and it does not apply here. Start-Process
@@ -225,4 +269,29 @@ if (-not $reply -or $reply -notmatch '"kind"\s*:\s*"response"') {
     exit 3
 }
 Write-Host 'serve role: initialize answered'
+
+if (-not $capsLine) {
+    Write-Error 'the frozen server answered initialize but not capabilities/list'
+    exit 3
+}
+$caps = ($capsLine | ConvertFrom-Json).result
+if ($caps.methods -notcontains 'document/pageGeometry') {
+    Write-Error ("the frozen server does not advertise document/pageGeometry. " +
+        "This bundle predates the page-geometry merge; the overlay would call a method " +
+        "the shipped runtime does not have. Methods: " + ($caps.methods -join ', '))
+    exit 3
+}
+Write-Host 'serve role: document/pageGeometry advertised'
+
+# The rasterizer, from the frozen interpreter's own mouth. `state: yes` means it
+# imported PyMuPDF; anything else means this bundle would answer
+# `rasterizer_missing` to every page request a user ever makes.
+if ($caps.geometry.state -ne 'yes') {
+    Write-Error ("the frozen server reports geometry state '" + $caps.geometry.state +
+        "' (" + $caps.geometry.reason + "). PyMuPDF did not make it into the bundle, " +
+        "so no packaged install could draw a page or place a single overlay.")
+    exit 3
+}
+Write-Host ("serve role: rasterizer present (module {0}, geometry state {1})" -f `
+    $caps.render.rasterizer.module, $caps.geometry.state)
 exit 0

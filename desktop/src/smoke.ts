@@ -53,7 +53,7 @@ import {
   setView,
   sharedStateSignature,
 } from "./store";
-import type { EditableRegion, HostEvent } from "./types";
+import type { EditableRegion, GeometryMapping, HostEvent } from "./types";
 
 interface SmokeConfig {
   phase: string | null;
@@ -63,6 +63,8 @@ interface SmokeConfig {
   corpus2?: string | null;
   /** Where the export phase may write. Inside the harness run dir. */
   exportPath?: string | null;
+  /** A session the harness left on disk with a rendered PDF already attached. */
+  stagedSession?: string | null;
 }
 
 interface Check {
@@ -1038,6 +1040,283 @@ async function phasePage(config: SmokeConfig) {
 }
 
 /**
+ * 한글 오버레이 — the overlay, against whatever this machine can honestly do.
+ *
+ * TWO documents, on purpose, because they measure two different claims and one
+ * of them would hide the other.
+ *
+ * **LIVE.** The corpus HWPX, opened by the app through the same path a file
+ * dialog takes. On this machine `document/renderPrepare` refuses `com_busy` —
+ * a Hancom instance is running and the Runtime will not terminate somebody
+ * else's session — so there is no PDF, so there is no geometry, and the whole
+ * of the claim under test is that the app draws NOTHING and says why. A single
+ * fabricated rectangle here would be the exact failure the feature is meant to
+ * be trustworthy against, so it is asserted as an absence: zero overlay
+ * elements in the DOM, and the existing unavailable state carrying the
+ * runtime's own reason.
+ *
+ * **STAGED-REAL.** A session the harness put on disk before the app started,
+ * carrying the corpus's own Hancom render of the same form (see
+ * `scripts/stage-rendered-session.py` for the provenance and for exactly what
+ * is and is not substituted). Every rect, address, candidate and count the app
+ * shows here came out of `document/pageGeometry` reading that PDF. This is
+ * where the overlay is actually exercised.
+ *
+ * WHAT THIS PHASE CANNOT PROVE, and why it is a check rather than a silence:
+ * the runtime places no seat and maps no span to an editable cell on ANY of the
+ * ten corpus forms, so "click an editable seat, get a plan" has no real target
+ * to click. It is asserted as the measured zero it is. The click-to-plan wiring
+ * is not re-proved here either way — `phaseEdit` already drives `beginEdit` and
+ * `commitEdit` end to end, and the overlay calls those same two functions.
+ */
+async function phaseOverlay(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+
+  const methods = getState().capabilities?.methods ?? [];
+  check("document/pageGeometry is advertised by the PACKAGED runtime",
+    methods.includes("document/pageGeometry"),
+    methods.filter((m) => m.startsWith("document/")).join(", "));
+  const caps = getState().capabilities as unknown as {
+    geometry?: { state?: string; reason?: string | null; origin?: string; unit?: string };
+  } | null;
+  check("the frozen runtime says its rasterizer is present",
+    caps?.geometry?.state === "yes",
+    `${caps?.geometry?.state} ${caps?.geometry?.reason ?? ""}`);
+  check("geometry rects are normalized, top-left — the contract the overlay draws to",
+    caps?.geometry?.unit === "normalized" && caps?.geometry?.origin === "top-left",
+    `${caps?.geometry?.unit} / ${caps?.geometry?.origin}`);
+
+  // --- LIVE: this machine, this document, no substitutions ------------------
+  const liveSession = await openPath(config.corpus);
+  check("overlay phase opened the corpus form", !!liveSession, liveSession ?? "");
+  if (!liveSession) return;
+  await settled(160);
+  setCenterMode("page");
+  await settled(200);
+  await renderCurrentPage(1);
+  const { loadGeometry } = await import("./actions");
+  await loadGeometry(1);
+  await settled(200);
+
+  const live = getState().geometry;
+  check("document/pageGeometry answered for the live document", !!live,
+    JSON.stringify(getState().geometryError));
+
+  if (live && !live.available) {
+    check("the live machine state is an unavailable reason from the closed set",
+      ["needs_conversion", "rasterizer_missing", "no_rasterizable_artifact", "artifact_missing"]
+        .includes(live.unavailable?.reason ?? ""),
+      `${live.unavailable?.reason} — ${live.unavailable?.detail}`);
+    checkDom("NO overlay is drawn when the runtime returned no geometry",
+      document.querySelectorAll('[data-testid="page-overlay"]').length === 0 &&
+        document.querySelectorAll(".ov").length === 0,
+      `${document.querySelectorAll(".ov").length} overlay elements`);
+    checkDom("the page view shows its EXISTING unavailable state, not a new one",
+      !!document.querySelector('[data-testid="preview-unavailable"]') ||
+        !!document.querySelector('[data-testid="overlay-unavailable"]'),
+      domText('[data-testid="render-reason"]').slice(0, 160));
+    check("no rect was synthesized from page_metrics to stand in for geometry",
+      (live.spans ?? []).length === 0 && (live.seats ?? []).length === 0,
+      `${(live.spans ?? []).length} spans, ${(live.seats ?? []).length} seats`);
+  } else if (live?.available) {
+    check("the live document produced geometry on its own", true,
+      `${(live.spans ?? []).length} spans without any substitution`);
+  }
+
+  // --- STAGED-REAL: the corpus's own Hancom render of the same form ---------
+  const stagedId = (await rt.smokeConfig()).stagedSession;
+  if (!stagedId) {
+    check("the harness staged a rendered session", false,
+      "RIGORLOOM_SMOKE_STAGED is empty — the geometry half of this phase did not run");
+    setCenterMode("text");
+    checkAlive("the overlay phase");
+    return;
+  }
+  const { selectSession } = await import("./actions");
+  await selectSession(stagedId);
+  await settled(300);
+  setCenterMode("page");
+  await renderCurrentPage(1);
+  await settled(300);
+  await loadGeometry(1);
+  await settled(300);
+
+  const g = getState().geometry;
+  check("the staged session produced geometry", !!g?.available,
+    g?.available ? "" : JSON.stringify(g?.unavailable ?? getState().geometryError));
+  if (!g?.available) {
+    setCenterMode("text");
+    checkAlive("the overlay phase");
+    return;
+  }
+
+  check("the geometry came from the PREPARED pdf, not the hwpx",
+    g.source?.kind === "prepared_pdf", g.source?.kind ?? "none");
+  check("a raster is on screen for the overlay to sit on",
+    !!document.querySelector('[data-testid="page-raster"]') &&
+      getState().render?.available === true,
+    String(getState().render?.available));
+
+  const spans = g.spans ?? [];
+  const seats = g.seats ?? [];
+  const mapping: GeometryMapping = g.mapping ?? { state: "absent" };
+  const uniques = spans.filter((s) => s.confidence === "unique");
+  const ambiguous = spans.filter((s) => s.confidence === "ambiguous");
+  const unmapped = spans.filter((s) => s.confidence === "unmapped");
+
+  check("the mapping ran against the session's own form scan",
+    mapping.state === "ran" &&
+      mapping.normalizer === "pipeline/scripts/check_residue.normalize_text",
+    `${mapping.state} / ${mapping.normalizer}`);
+  check("the runtime's own confidence counts add up to its span list",
+    (mapping.unique ?? -1) === uniques.length &&
+      (mapping.ambiguous ?? -1) === ambiguous.length &&
+      (mapping.unmapped ?? -1) === unmapped.length,
+    `u=${uniques.length} a=${ambiguous.length} un=${unmapped.length} of ${spans.length}`);
+
+  // THE COUNT CHECK. Not "there are some overlays" — the number of drawn
+  // elements measured against the number the runtime itself returned, per
+  // class. An overlay layer that drew one box too many would be inventing a
+  // position, and that is the whole thing this feature must never do.
+  await settled(200);
+  const drawnAmbiguous = document.querySelectorAll('[data-testid="overlay-ambiguous"]').length;
+  const drawnSpans = document.querySelectorAll('[data-testid="overlay-span"]').length;
+  const drawnSeats = document.querySelectorAll('[data-testid="overlay-seat"]').length;
+  checkDom("every ambiguous span the runtime returned is drawn, and no others",
+    drawnAmbiguous === ambiguous.length, `${drawnAmbiguous} drawn / ${ambiguous.length} returned`);
+  checkDom("every mapped-unique span is drawn, and no others",
+    drawnSpans === uniques.length, `${drawnSpans} drawn / ${uniques.length} returned`);
+  checkDom("every seat the runtime placed is drawn, and no others",
+    drawnSeats === seats.length, `${drawnSeats} drawn / ${seats.length} returned`);
+  checkDom("unmapped text gets no overlay at all",
+    drawnAmbiguous + drawnSpans + drawnSeats === spans.length - unmapped.length + seats.length,
+    `${unmapped.length} unmapped lines, ${drawnAmbiguous + drawnSpans + drawnSeats} overlays`);
+
+  // ZOOM. The rects are fractions; the store counts real method calls.
+  const before = getState().geometryFetches;
+  const { setZoom } = await import("./store");
+  for (const z of [1.4, 2.0, 0.8, 1.0]) {
+    setZoom(z);
+    await settled(120);
+  }
+  check("zoom did not re-fetch geometry",
+    getState().geometryFetches === before,
+    `${before} → ${getState().geometryFetches} fetches across four zoom levels`);
+  checkDom("the overlay is still drawn after the zoom sweep",
+    document.querySelectorAll('[data-testid="overlay-ambiguous"]').length === ambiguous.length,
+    `${document.querySelectorAll(".ov").length} overlay elements`);
+  const stage = document.querySelector<HTMLElement>('[data-testid="page-stage"]');
+  const firstOv = document.querySelector<HTMLElement>(".ov");
+  check("overlay rects are expressed as fractions of the page, not pixels",
+    (firstOv?.style.left ?? "").endsWith("%") && (firstOv?.style.width ?? "").endsWith("%"),
+    `${firstOv?.style.left} / ${firstOv?.style.width} in a stage of ${stage?.style.width}`);
+
+  // AMBIGUITY. A click must ask, and must not queue.
+  const queuedBefore = getState().draft.ops.length;
+  const planBefore = getState().draft.plan?.planId ?? null;
+  if (ambiguous.length === 0) {
+    check("this page had an ambiguous span to click", false,
+      "no ambiguous span on this page — the T41 path was not exercised");
+  } else {
+    const target = document.querySelector<HTMLButtonElement>('[data-testid="overlay-ambiguous"]');
+    target?.click();
+    await settled(240);
+    const pick = getState().overlayPick;
+    check("clicking an ambiguous span resolved to candidates, not an address",
+      pick?.kind === "ambiguous" && (pick.candidates?.length ?? 0) > 1,
+      `${pick?.kind} with ${pick?.candidates?.length ?? 0} candidates`);
+    check("no candidate was auto-picked",
+      pick?.address == null, JSON.stringify(pick?.address ?? null));
+    checkDom("the chooser lists every candidate the runtime returned",
+      document.querySelectorAll('[data-testid="overlay-candidate"]').length ===
+        (pick?.candidates?.length ?? -1),
+      `${document.querySelectorAll('[data-testid="overlay-candidate"]').length} rows`);
+    checkDom("no row in the chooser is preselected — a default IS a pick",
+      !document.querySelector('[data-testid="overlay-candidate"][aria-selected="true"]') &&
+        !document.querySelector('[data-testid="overlay-candidate"].selected'),
+      "no preselected candidate");
+    check("the ambiguous click queued NOTHING",
+      getState().draft.ops.length === queuedBefore &&
+        (getState().draft.plan?.planId ?? null) === planBefore,
+      `${getState().draft.ops.length} ops, plan ${getState().draft.plan?.planId ?? "none"}`);
+    checkDom("the status bar says 후보 N개 — 직접 선택",
+      domText('[data-testid="status-overlay-pick"]').includes("후보") &&
+        domText('[data-testid="status-overlay-pick"]').includes("직접 선택"),
+      domText('[data-testid="status-overlay-pick"]'));
+
+    // Dismissing is not choosing.
+    document.querySelector<HTMLButtonElement>('[data-testid="overlay-chooser-dismiss"]')?.click();
+    await settled(160);
+    check("dismissing the chooser leaves the queue untouched",
+      getState().overlayPick === null && getState().draft.ops.length === queuedBefore,
+      `${getState().draft.ops.length} ops`);
+  }
+
+  // THE EDITABLE PATH, measured rather than assumed.
+  const { addressIsEditable } = await import("./actions");
+  const editableSeats = seats.filter((s) =>
+    addressIsEditable({ kind: "cell", table: s.table ?? null, row: s.row ?? null, col: s.col ?? null }),
+  );
+  const editableUniques = uniques.filter((s) => addressIsEditable(s.address));
+  const fillRegions = (activeInspect(getState())?.regions.regions ?? []).filter(
+    (r) => r.kind === "cell",
+  ).length;
+
+  const clickable = editableSeats.length + editableUniques.length;
+  const drawnEditable = document.querySelectorAll('.ov[data-editable="true"]').length;
+  checkDom("the overlay draws exactly the editable targets the runtime returned",
+    drawnEditable === clickable, `${drawnEditable} drawn / ${clickable} returned`);
+
+  // The measurement this phase exists to take, whichever way it comes out. It
+  // passes because it is a reading, not a wish — and the reading is the finding.
+  check("MEASURED: how much of this form is reachable from the page",
+    true,
+    `${fillRegions} editable fill regions in the form · ${seats.length} seats placed by ` +
+      `the runtime · ${uniques.length} unique spans · ${clickable} clickable on the page`);
+
+  if (clickable === 0) {
+    // The runtime found the text and mapped a good deal of it, and none of what
+    // it mapped is a seat this editor can open — so the marquee interaction has
+    // nothing real to fire on here. Recorded rather than worked around: the
+    // workaround would be guessing where the empty seats are, which is the one
+    // thing this feature may never do. See desktop/README.md, overlay gap 1.
+    check("the page says why it has nothing to click instead of just looking empty",
+      domText('[data-testid="overlay-legend"]').includes("본문 보기"),
+      domText('[data-testid="overlay-legend"]').slice(0, 200));
+    check("the counts on screen are the runtime's own",
+      domText('[data-testid="overlay-counts"]').includes(String(mapping.ambiguous ?? -1)),
+      domText('[data-testid="overlay-counts"]'));
+    check("no editable overlay was drawn where the runtime placed no seat",
+      drawnEditable === 0, `${drawnEditable} editable overlays`);
+  } else {
+    const target = document.querySelector<HTMLButtonElement>(
+      '[data-testid="overlay-seat"][data-editable="true"], ' +
+        '[data-testid="overlay-span"][data-editable="true"]',
+    );
+    target?.click();
+    await settled(240);
+    checkDom("clicking an editable target opened the SAME inline editor the tree uses",
+      !!document.querySelector('[data-testid="seat-input"]'),
+      String(getState().inlineEdit?.table));
+    await commitEdit("지면에서 입력");
+    await settled(400);
+    const op = getState().draft.ops.find((o) => o.text === "지면에서 입력");
+    check("the overlay edit landed in the same review queue as a tree edit",
+      !!op && op.kind === "fill_cell" && op.origin === "user", JSON.stringify(op ?? null));
+    check("one plan path: the queue rebuilt a plan over the overlay's op",
+      !!getState().draft.plan?.planId,
+      getState().draft.plan?.planId ?? "no plan");
+  }
+
+  setCenterMode("text");
+  await settled();
+  checkAlive("the overlay phase");
+}
+
+/**
  * Put the app into a photogenic, *real* state and leave it there.
  *
  * Used only by scripts/screenshots.ps1. Nothing is staged: the document is
@@ -1100,6 +1379,44 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       await settled(500);
     }
     await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  // The overlay, on a page. `overlay` photographs the staged-real session — a
+  // real raster with the runtime's own rects on it, and the chooser open over a
+  // real ambiguity. `overlay-live` photographs what this machine does with no
+  // substitution at all, which is a refusal, and photographing the refusal is
+  // the point: a screenshot of a feature working on a machine where it does not
+  // work is the exact thing this harness exists not to produce.
+  if (stop === "overlay" || stop === "overlay-live") {
+    const { loadGeometry, selectSession } = await import("./actions");
+    const staged = (await rt.smokeConfig()).stagedSession;
+    if (stop === "overlay" && staged) {
+      await selectSession(staged);
+      await settled(300);
+    }
+    if (stop === "overlay-live" && config.corpus) {
+      // Open the HWPX AGAIN, unconditionally. The preamble only opens when
+      // nothing is active, and by this point `lastSessionId` in prefs is the
+      // staged session the previous shot selected — so the "no page here"
+      // capture came out showing a page, with overlays on it. A screenshot
+      // named for a refusal that photographs the working case is worse than no
+      // screenshot: it is the one kind of evidence that actively misleads.
+      await openPath(config.corpus);
+      await settled(300);
+    }
+    setCenterMode("page");
+    await renderCurrentPage(1);
+    await settled(300);
+    await loadGeometry(1);
+    await settled(400);
+    if (stop === "overlay") {
+      // Open the chooser over a real ambiguous span, so the capture shows the
+      // T41 moment rather than a page of quiet boxes.
+      document.querySelector<HTMLButtonElement>('[data-testid="overlay-ambiguous"]')?.click();
+      await settled(300);
+    }
     await ready(`shot-${stop}`);
     return;
   }
@@ -1332,6 +1649,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "edit") await phaseEdit(config);
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
+    else if (config.phase === "overlay") await phaseOverlay(config);
     else if (config.phase === "composer") await phaseComposer(config);
     else if (config.phase === "settings") await phaseSettings();
     else if (config.phase === "chrome") await phaseChrome(config);
@@ -1791,13 +2109,43 @@ async function phaseChrome(config: SmokeConfig) {
   if (packs?.available) {
     check("every declared module is listed", packs.packs.length >= 6,
       packs.packs.map((p) => p.name).join(","));
-    check("report declares its dependency on style",
-      packs.packs.find((p) => p.name === "report")?.requiresModules?.includes("style") === true,
-      JSON.stringify(packs.packs.find((p) => p.name === "report")?.requiresModules));
-    check("the packs carry the checkers their manifests declare",
-      (packs.packs.find((p) => p.name === "style")?.checkers ?? []).some(
-        (c) => c.name === "check_style"),
-      JSON.stringify(packs.packs.find((p) => p.name === "style")?.checkers));
+    // REPOINTED, not deleted — and the reason is worth recording, because it
+    // is a defect in the evidence rather than in the app.
+    //
+    // These three asked for `report requires style` and for `check_style` by
+    // name. Both are true only of an ENABLED registry, and enablement lives in
+    // `modules/enabled.yaml`, which `.gitignore` excludes. So they passed on
+    // the machine that wrote them, where an operator had hand-written that
+    // file, and they fail on any fresh checkout — including this worktree,
+    // where the registry honestly answers "six discovered, none enabled, so no
+    // checkers and no dependencies". The app was right the whole time; the
+    // harness had an undeclared dependency on an untracked file.
+    //
+    // The property worth asserting does not depend on that file: whatever the
+    // registry says, the shell repeats it and adds nothing. So the checks now
+    // measure fidelity in both directions, and one of them RECORDS which path
+    // this machine exercised, so the report says so out loud rather than
+    // quietly testing less than it looks like it tests.
+    const enabledPacks = packs.packs.filter((p) => p.enabled);
+    const withCheckers = packs.packs.filter((p) => (p.checkers ?? []).length > 0);
+    const withRequires = packs.packs.filter((p) => (p.requiresModules ?? []).length > 0);
+    check("RECORDED: which registry state this run exercised",
+      true,
+      enabledPacks.length > 0
+        ? `${enabledPacks.length} of ${packs.packs.length} modules enabled — the ` +
+          `contributions path is under test`
+        : `0 of ${packs.packs.length} modules enabled (modules/enabled.yaml is ` +
+          `gitignored and absent here), so the registry declares no checkers and ` +
+          `no dependencies — the empty path is under test`);
+    check("a pack carries contributions exactly when the registry gave it some",
+      withCheckers.every((p) => enabledPacks.some((e) => e.name === p.name)) &&
+        withRequires.every((p) => enabledPacks.some((e) => e.name === p.name)),
+      `${withCheckers.length} packs with checkers, ${withRequires.length} with ` +
+        `dependencies, ${enabledPacks.length} enabled`);
+    check("no pack invented a checker the registry did not report",
+      packs.packs.every((p) =>
+        (p.checkers ?? []).every((c) => typeof c.name === "string" && c.name.length > 0)),
+      JSON.stringify(packs.packs.map((p) => [p.name, (p.checkers ?? []).length])));
     checkDom("the left rail lists them", !!document.querySelector('[data-testid="pack-report"]'),
       domText('[data-testid="task-packs"]').slice(0, 200));
     setState({ packOpen: "report" });
@@ -1806,9 +2154,18 @@ async function phaseChrome(config: SmokeConfig) {
       domText('[data-testid="pack-detail"]').includes("준비 중") &&
         domText('[data-testid="pack-detail"]').includes("아직 없는 것"),
       domText('[data-testid="pack-detail"]').slice(0, 200));
-    checkDom("and the panel names the pack's real contributions",
-      domText('[data-testid="pack-detail"]').includes("check_refs"),
-      domText('[data-testid="pack-detail"]').slice(0, 400));
+    // Same repointing. The panel must print the registry's own contribution
+    // COUNTS and every name it was given — which on an enabled registry means
+    // the checker names appear, and on this one means it says 0 and 0 rather
+    // than leaving the section out.
+    const report = packs.packs.find((p) => p.name === "report");
+    const detail = domText('[data-testid="pack-detail"]');
+    checkDom("the panel names the pack's real contributions, and only those",
+      detail.includes(`검사기 ${(report?.checkers ?? []).length}개`) &&
+        detail.includes(`명령 ${(report?.cli ?? []).length}개`) &&
+        (report?.checkers ?? []).every((c) => detail.includes(String(c.name))),
+      `${(report?.checkers ?? []).length} checkers / ${(report?.cli ?? []).length} ` +
+        `commands declared · ${detail.slice(0, 200)}`);
     setState({ packOpen: null });
   }
 

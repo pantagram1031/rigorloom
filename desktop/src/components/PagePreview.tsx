@@ -32,9 +32,10 @@
  */
 import { useEffect } from "react";
 
-import { preparePages, renderCurrentPage } from "../actions";
+import { loadGeometry, preparePages, renderCurrentPage } from "../actions";
 import { canPreparePages, setZoom, useWorkspace } from "../store";
-import type { InspectResult, RenderResult, RuntimeError } from "../types";
+import type { GeometryResult, InspectResult, RenderResult, RuntimeError } from "../types";
+import { GeometryLegend, PageOverlay } from "./PageOverlay";
 import { Tag } from "./Tag";
 
 /** HWPUNIT is 1/7200 inch. */
@@ -115,7 +116,13 @@ function Geometry({ inspect, zoom, page }: { inspect: InspectResult; zoom: numbe
 function prepareGuidance(code: string): string {
   switch (code) {
     case "needs_hancom":
-      return "이 기계에는 변환에 쓸 한컴오피스가 없습니다. 한컴이 설치된 기계에서 열거나, 이미 PDF인 문서를 여십시오.";
+      // NOT "한컴이 없습니다". This branch fires whenever the runtime cannot
+      // reach the converter, and on this machine the reason is that the frozen
+      // sidecar carries no pyhwpx while Hancom itself is installed and running
+      // — so the old copy asserted something about the machine that the runtime
+      // never said, directly under the runtime's own words saying otherwise.
+      // The reason line above is the fact; this is what to do about it.
+      return "런타임이 변환기에 닿지 못했습니다. 위에 적힌 이유가 실제 원인입니다. 한컴이 설치되고 변환기를 쓸 수 있는 기계에서 열거나, 이미 PDF인 문서를 여십시오.";
     case "com_busy":
       return "한컴이 이미 떠 있습니다. 그 창을 닫고 다시 누르십시오. 런타임은 남의 한컴을 대신 종료하지 않습니다 — 그렇게 했다가 서로의 작업을 죽인 적이 있습니다.";
     case "not_convertible":
@@ -153,6 +160,29 @@ function PrepareRefusal({ error }: { error: RuntimeError }) {
         원본은 이 과정에 들어가지 않습니다. 변환은 세션이 가진 사본에만 일어납니다.
       </p>
     </div>
+  );
+}
+
+/**
+ * Geometry that did not arrive, said in the runtime's own words.
+ *
+ * Deliberately NOT a second unavailable screen. `document/render` and
+ * `document/pageGeometry` share one closed reason set (§12.2), so when there is
+ * no raster there is no geometry either and `Unavailable` above has already
+ * explained why — printing it twice would be noise. This line only appears in
+ * the case the shared reason set does not cover: a page that DID draw while its
+ * geometry did not, which on a machine without PyMuPDF cannot happen and on a
+ * machine with it means something more interesting went wrong.
+ */
+function GeometryUnavailable({ geometry }: { geometry: GeometryResult }) {
+  return (
+    <p className="raster-note" data-testid="overlay-unavailable">
+      <Tag tone="none">겹판 없음</Tag>
+      <span data-testid="overlay-reason">
+        document/pageGeometry unavailable.{geometry.unavailable?.reason ?? "unknown"} —{" "}
+        {geometry.unavailable?.detail ?? ""}
+      </span>
+    </p>
   );
 }
 
@@ -197,12 +227,23 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   const prepareNote = useWorkspace((s) => s.prepareNote);
   const canPrepare = useWorkspace(canPreparePages);
   const sessionId = useWorkspace((s) => s.activeSessionId);
+  const geometry = useWorkspace((s) => s.geometry);
 
   // Ask once when the mode is entered. A render is a real call with a real
   // cost; it is not re-run on every zoom nudge.
   useEffect(() => {
     if (sessionId && renderPhase === "idle") void renderCurrentPage();
   }, [sessionId, renderPhase]);
+
+  // Geometry follows the PAGE, never the zoom. `page` is in the dependency
+  // list and `zoom` is deliberately not: the rects are fractions of the page,
+  // so a zoom change re-lays out the overlay from numbers already in hand and
+  // asks the runtime nothing (§12.1). `loadGeometry` serves its own per-page
+  // cache on the way back to a page that was already read, so paging back and
+  // forth is one call per page for the life of the session.
+  useEffect(() => {
+    if (sessionId) void loadGeometry(page);
+  }, [sessionId, page]);
 
   const image = render?.available ? render.image : undefined;
   const pageCount = render?.pageCount ?? 1;
@@ -230,13 +271,28 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
       ) : image?.data ? (
         <>
           {ruler}
-          <img
-            className="page-raster"
-            data-testid="page-raster"
-            src={`data:${image.mediaType};base64,${image.data}`}
-            alt={`${page}쪽`}
+          {/* The raster and the overlay share ONE box, sized once. The overlay
+              positions its children in percentages of it, so the two cannot
+              drift apart at any zoom — there is no second scale factor to keep
+              in step, which is the bug this shape exists to make impossible. */}
+          <div
+            className="page-stage"
+            data-testid="page-stage"
             style={{ width: `${(image.widthPx / (render?.dpi ?? 96)) * 96 * zoom}px` }}
-          />
+          >
+            <img
+              className="page-raster"
+              data-testid="page-raster"
+              src={`data:${image.mediaType};base64,${image.data}`}
+              alt={`${page}쪽`}
+            />
+            {geometry?.available ? <PageOverlay geometry={geometry} /> : null}
+          </div>
+          {geometry?.available ? (
+            <GeometryLegend geometry={geometry} />
+          ) : geometry ? (
+            <GeometryUnavailable geometry={geometry} />
+          ) : null}
           <p className="raster-note" data-testid="raster-evidence">
             <Tag tone="none">{render?.evidence?.proofGrade ?? "none"}</Tag>
             {render?.evidence?.note ??

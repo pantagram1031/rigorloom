@@ -632,6 +632,69 @@ below the editor minimum is clamped, and a position no attached monitor covers
 re-centres rather than putting the window somewhere it cannot be dragged back
 from.
 
+## 한글 오버레이 — editing on the page
+
+The product's stated wedge is an editor that works *on* the rendered page rather
+than beside it. `document/pageGeometry` (§12) is what makes that possible: per
+page, every line of text as a normalized rect, mapped to an editable address, a
+list of candidates, or nothing — plus rects for empty fill seats, each tagged
+with how it was derived.
+
+**The overlay is the renderer's layout, never ours.** Every rectangle drawn on
+the page is a `[x0,y0,x1,y1]` fraction the runtime read out of a PDF Hancom laid
+out. Nothing is derived from `summary.pageMetrics`, nothing is nudged, and when
+the runtime returns no geometry the overlay component is not mounted. That is
+not caution for its own sake: a rectangle in the wrong place puts a text cursor
+where the text is not, and does it with the authority of a measurement.
+
+**One mutation path.** An editable target's click calls `beginEdit(table, row,
+col)` — the same function `TextView`'s cell click calls. Same inline editor,
+same IME behaviour, same `fill_cell` op, same review queue, same plan hash, same
+approval, same receipt. A value typed on the page and a value typed in the tree
+are indistinguishable by the time they reach `plan/propose`, which is what makes
+a second editing surface a new *surface* rather than a new *risk*.
+
+**Ambiguity is drawn, never resolved.** A line whose normalized text matches
+several addresses arrives with `address: null` and every candidate listed. It is
+the only overlay class that is permanently visible, in the warning vocabulary
+with its candidate count, and clicking it opens a chooser with no default row,
+no preselection and no "most likely" affordance — because a default *is* a pick.
+The chooser also says out loud that nothing has been queued, so dismissing it
+cannot be mistaken for cancelling an edit that was never made. T41
+(`engine/scripts/preedit.py:221`) is the reason: one unscoped key overwrote five
+sibling contracts in a six-contract pack and every offline gate passed, because
+the label survived as a prefix.
+
+**Zoom costs nothing.** The rects are fractions, so the raster and the overlay
+share one sized box and every child re-lays out from numbers already held. The
+runtime is asked nothing. Geometry is cached per `(session, page)`; the store
+counts real method calls in `geometryFetches` so the harness can assert that
+rather than take it on faith.
+
+### What it looks like on real forms today
+
+Nothing editable, and a great deal of ambiguity. Runtime gaps 18 and 19 below
+have the measurement: on all ten corpus forms the runtime places no seat and
+maps no span to a fill target, so the editable half of the feature draws nothing
+and the ambiguous half draws most of the page. The legend under the raster
+prints the runtime's own counts (확정 / 후보 / 대응 없음 / 자리) and, when there
+is nothing to click, says so and points at 본문 보기 — because the alternative
+to an empty page here is a *guessed* box, which is the one thing this feature
+may never produce.
+
+The component is written for both halves anyway. The seat rule is a named
+runtime GAP with a named fix, not a design decision, and a component built only
+for the empty case would need rewriting the day the runtime places its first
+seat.
+
+### 지면 선택, in the status bar
+
+The bar gains one fact, and only in 페이지 보기, because that is the only mode
+where a click has a rectangle to have landed in: the address a page click
+resolved to, or `후보 N개 — 직접 선택` when it resolved to a question instead of
+an answer. A target the runtime mapped but the editor will not open says so
+rather than opening an editor that would refuse.
+
 ## 작업 팩, and what a seed is allowed to draw
 
 Six distribution modules are declared on disk, each contributing named checkers
@@ -824,6 +887,102 @@ seconds earlier; `provider-settings.png` photographs a real `--capabilities`
 answer with **no credential stored**, which is the state a new user meets, and
 its capability table shows 예 / 아니오 / 모름 as the adapter actually declared
 them.
+
+### 한글 오버레이 — the overlay slice
+
+```powershell
+npx tsc --noEmit
+cargo test --release                       # in desktop/src-tauri
+powershell -File desktop/sidecar/build.ps1 # MUST precede the app build
+cd desktop; npm run tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+```
+
+The sidecar rebuild is not optional for this slice and the build script now
+enforces why: it refuses unless the frozen runtime carries `rt_geometry.py`,
+advertises `document/pageGeometry`, and reports its rasterizer present. Those
+three are the Phase 4 defect ("the packaged sidecar was the pre-merge runtime")
+turned into build failures.
+
+The smoke's `overlay` phase needs one thing the others do not: a session on disk
+that already has a rendered PDF. `scripts/stage-rendered-session.py` puts one
+there, and the header of that file is the argument for why it is evidence
+rather than staging — short version, the PDF is `com_backend.py convert` output
+against the very HWPX the session is opened from, under Hancom 13.0.0.2986,
+recorded in `docs/research/xc1-conversion-bench.md` §4. What is substituted is
+*when* Hancom ran, not what it produced, and every rect, address and count the
+app then shows is read by the Runtime out of that file.
+
+| Step | Exit | Result |
+| --- | --- | --- |
+| `npx tsc --noEmit` | 0 | — |
+| `cargo test --release` | 0 | 10 passed |
+| `sidecar/build.ps1` | 0 | 63.2 MiB payload, **six** role checks |
+| `npm run tauri build` (release) | 0 | 5m 52s cold, 2m 38s warm |
+| `scripts/smoke.ps1` | 0 | **310 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 | 20 images |
+
+Shell exe 8.49 MiB · NSIS installer 25.26 MiB · sidecar payload 63.2 MiB. The
+sidecar grew 25.9 → 63.2 MiB and the installer 11.52 → 25.26 MiB, all of it
+PyMuPDF. That is a large price for one wheel and it buys the only thing that
+makes 페이지 보기 a feature rather than a claim; it is recorded here rather than
+buried so that a future slice can argue with it.
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· **`overlay` 34** · `composer` 31 · `settings` 28 · `chrome` 27 ·
+`chrome-reattach` 5, plus the three the driver makes from outside the app.
+
+The `overlay` phase's own numbers, which are the interesting part:
+
+- LIVE — geometry `available: false`, reason `needs_conversion`, **0 overlay
+  elements in the DOM, 0 spans, 0 seats**, and the existing unavailable state
+  carrying the runtime's own detail. Nothing was drawn where nothing was known.
+- STAGED-REAL — source `prepared_pdf`, mapping `ran` through
+  `check_residue.normalize_text`, **3 unique · 13 ambiguous · 10 unmapped of 26
+  lines · 0 seats**. Drawn: 3 unique overlays, 13 ambiguous overlays, 0 seats —
+  each count equal to the runtime's own, and 10 unmapped lines drawn as nothing.
+- **2 → 2 geometry fetches across a four-level zoom sweep** (1.4 / 2.0 / 0.8 /
+  1.0), overlay still drawn, rects still expressed as percentages
+  (`7.0953%` wide in a stage of `794.182px`).
+- An ambiguous click resolved to 2 candidates with a **null address**, listed
+  both with no preselected row, left the queue at 0 ops and the plan at none,
+  and put `후보 2개 — 직접 선택` in the status bar. Dismissing changed nothing.
+- **9 editable fill regions in the form · 0 seats placed · 0 clickable on the
+  page.** Runtime gap 18.
+
+Screenshots — `screenshots/`: the eighteen from Phase 5, plus `page-overlay`
+(the staged-real page with the runtime's own rects on it and the candidate
+chooser open over a genuine two-way ambiguity) and
+`page-overlay-unavailable` (the same document with nothing substituted, which
+is a refusal). Both are in the directory on purpose. A screenshot set that
+showed only the working case would advertise a capability this machine does not
+have.
+
+### Three defects the overlay evidence found
+
+1. **The frozen sidecar could not have drawn a page at all.** No PyMuPDF in the
+   bundle, so every packaged install answered `rasterizer_missing` to every PDF.
+   Fixed in the build; three new build-time role checks make the class of
+   failure unrepeatable. See the commit for why this is the same defect as
+   Phase 4's pre-merge sidecar wearing different clothes.
+2. **`needs_hancom` guidance asserted something the runtime never said.** It
+   read "이 기계에는 변환에 쓸 한컴오피스가 없습니다" — printed directly beneath
+   the runtime's own words saying the real problem was a missing `pyhwpx`, on a
+   machine with Hancom 2024 installed and running. The reason line is the fact;
+   the guidance now says what to do about it and claims nothing about the
+   machine.
+3. **The first `page-overlay-unavailable` capture photographed a working page.**
+   The shot phase only opened the corpus when nothing was already active, and by
+   then `lastSessionId` was the staged session the previous shot had selected.
+   A capture named for a refusal that shows the success case is the one kind of
+   evidence that actively misleads, so the live shot now opens the HWPX
+   unconditionally.
+
+Plus a layout defect the first capture exposed rather than a logic one: the
+legend under the page inherited `.raster-note`'s single-line flex row and
+squeezed its counts into a four-character column. It wraps now, and the counts
+never break.
 
 ### Four defects the Phase 5 evidence found
 
@@ -1159,6 +1318,83 @@ CLOSED in Phase 3 and are consumed by this build; the rest stand.
     prints, and `check/run {sessionId, checker, runId?}` returning the checker's
     own `Finding` list — both host-only. The domain code exists; only the wire
     is missing, which is the same shape as gap 3.
+
+### New with the overlay
+
+18. **`document/pageGeometry` reaches nothing editable, on any real form.**
+    This is the overlay slice's central finding and it was measured before a
+    line of the component was written, against the runtime's own answers for
+    every corpus pairing: **10 forms, 51 pages, 473 editable fill regions, and
+    the method places 0 seats and returns 0 unique spans whose address is an
+    editable cell.** Not "few". None.
+
+    The cause is structural rather than a tuning miss. Matching is by text, and
+    an empty fill seat *has no text*, so the only cells that ever match are the
+    static labels around it. §12.4's interpolation then places only the seat
+    **immediately after** a uniquely mapped label in the same table row — and on
+    real Hancom layout the uniquely mapped labels and the fill targets never
+    land in the same `row` at adjacent `col`. On the 정보공개 청구서 the mapped
+    labels sit in rows 13, 15, 17 and 34 while every fill target is in rows 0,
+    11, 22, 23 and 24: disjoint, so the rule cannot fire even once.
+
+    §12.6 already names this ("seats not adjacent to a label") and calls for a
+    per-cell border scan that does not need a text anchor. What the measurement
+    adds is that it is not an edge case to be closed later — it is the whole of
+    reality on this corpus, and it is the single thing standing between the
+    overlay and the product's marquee interaction. *Suggested shape:* find the
+    drawn grid, not a neighbour. `extract_page` already collects `drawnRects`
+    and `_containing_drawn_rect` already knows what a plausible cell looks
+    like; what is missing is walking the table's cells against that rect set
+    directly instead of only using it to snap an interpolated guess.
+
+19. **Ambiguity is the normal case, not the exception.** Across the same
+    corpus, `ambiguous` outnumbers `unique` roughly six to one (saeopja: 586
+    ambiguous against 34 unique; moel-2025: 162 against 2). A form is full of
+    repeated boilerplate — `서명`, `직위(직급)`, `(   )` — and matching by
+    normalized text alone cannot separate them. This is not a defect in the
+    T41 discipline; refusing to pick is right. It does mean that a UI which
+    treats ambiguity as a rare interruption would be wrong about this domain,
+    which is why the overlay draws it as a first-class permanently-visible
+    state rather than a warning. *Suggested shape:* nothing on the wire yet —
+    but if a span carried its page-order position relative to its candidates,
+    a chooser could at least order them by proximity without picking one.
+
+## Packaging gaps
+
+Not runtime gaps and not agent-host gaps: things true of the **artifact this
+build produces**, which is a category the earlier phases did not need.
+
+P1. **The frozen sidecar has no `pyhwpx`, so a packaged install can never
+    convert.** Found by the overlay evidence, and it is the same shape as the
+    rasterizer defect this slice fixed. `document/renderPrepare` in the
+    PACKAGED runtime answers `needs_hancom` with "pyhwpx is not importable; the
+    COM backend needs it" — on a machine where Hancom Office 2024 is installed,
+    registered as `HWPFrame.HwpObject`, and running. Three runtimes, three
+    different answers for the same click: the packaged one says
+    `needs_hancom`/no-pyhwpx, a dev interpreter on this machine says `com_busy`
+    (an instance is open and the Runtime will not terminate it), and the README
+    recorded `convert_failed` from an earlier machine state. All three are
+    honest; only the first is a property of what we ship. Until pyhwpx is in
+    the bundle, 페이지 그림 만들기 in a shipped install is a button that can
+    only refuse — which also means the overlay can only ever see a page for a
+    document that was *already* a PDF.
+
+    Not fixed here. PyMuPDF is a pure read-side wheel and bundling it was a
+    contained decision; pyhwpx drags in COM automation against an installed
+    Hancom, and whether that belongs in the shipped payload is a product call,
+    not a build-script one.
+
+P2. **The smoke had an undeclared dependency on an untracked file.** Three
+    `chrome` checks asserted `report requires style` and the `check_style`
+    checker by name. Both are only true of an *enabled* registry, and
+    enablement lives in `modules/enabled.yaml`, which `.gitignore` excludes — so
+    they passed on the machine that wrote them and fail on every fresh
+    checkout, including this worktree, where the registry honestly reports six
+    modules discovered and none enabled. The app was correct throughout; the
+    evidence was not reproducible. Repointed rather than deleted, per the
+    standing rule: they now assert that the shell repeats the registry's answer
+    exactly and adds nothing, in both directions, and one of them records which
+    of the two registry states the run exercised so the report says so out loud.
 
 ## Agent Host gaps
 

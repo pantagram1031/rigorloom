@@ -346,6 +346,121 @@ export interface RenderResult {
   evidence?: { class: string; proofGrade: string; note: string };
 }
 
+// --- page geometry (protocol §12) ---------------------------------------------
+//
+// Where the text IS on the rendered page, and which editable address each piece
+// of it corresponds to. Its own method rather than a field on `document/render`,
+// because a raster is per-zoom and these rects are not (§12.1) — which is why
+// the store caches a geometry answer per (session, page) and multiplies by the
+// raster's pixel size instead of re-asking when the zoom changes.
+
+/** Normalized `[x0, y0, x1, y1]`, fractions of the page, origin top-left. */
+export type NormRect = [number, number, number, number];
+
+/**
+ * An editable address the runtime matched a span to.
+ *
+ * `kind: "cell"` carries table/row/col — the same triple `beginEdit` takes, so
+ * an overlay click and a tree click reach the identical function. `kind:
+ * "anchor"` carries `atPara` and is NOT an editable seat; the shell must check
+ * against `inspect.regions` rather than assume a mapped address is a fill seat.
+ */
+export interface GeometryAddress {
+  kind: "anchor" | "cell" | string;
+  text?: string;
+  atPara?: number | null;
+  table?: number | null;
+  row?: number | null;
+  col?: number | null;
+  classification?: string | null;
+}
+
+/**
+ * One line of text on the page. A LINE, not a span run: PyMuPDF splits at every
+ * font change, and a label set in two weights would match neither half.
+ *
+ * `ambiguous` carries every candidate and `address: null`. The runtime refuses
+ * to pick one (T41) and so does this shell — surfacing the choice IS the point.
+ */
+export interface GeometrySpan {
+  index: number;
+  text: string;
+  rect: NormRect;
+  address: GeometryAddress | null;
+  confidence: "unique" | "ambiguous" | "unmapped" | string;
+  candidates?: GeometryAddress[];
+}
+
+/**
+ * An empty fill seat that the runtime could place a rectangle for.
+ *
+ * `derivation` says how sure it is, so the UI can style certainty rather than
+ * imply it. A seat that could not be placed is ABSENT — never a guessed box.
+ */
+export interface GeometrySeat {
+  table?: number | null;
+  row?: number | null;
+  col?: number | null;
+  rect: NormRect;
+  derivation: "matched_text" | "cell_borders" | "interpolated" | string;
+  basis?: Record<string, unknown>;
+}
+
+export interface GeometryMapping {
+  state: "ran" | "unavailable" | string;
+  reason?: string;
+  normalizer?: string;
+  targets?: number;
+  excluded?: { truncatedCells?: number };
+  unique?: number;
+  ambiguous?: number;
+  unmapped?: number;
+}
+
+export interface GeometryResult {
+  sessionId: string;
+  available: boolean;
+  source?: { kind: string; sha256?: string; bytes?: number; runId?: string };
+  page?: number;
+  pageCount?: number;
+  pageSize?: { widthPt: number; heightPt: number };
+  unit?: string;
+  origin?: string;
+  spanUnit?: string;
+  spans?: GeometrySpan[];
+  seats?: GeometrySeat[];
+  seatDerivations?: Record<string, number>;
+  mapping?: GeometryMapping;
+  cache?: { hit: boolean; key: string };
+  /** Present when NOT available — the SAME closed reason set `render` uses. */
+  unavailable?: {
+    reason:
+      | "rasterizer_missing"
+      | "no_rasterizable_artifact"
+      | "needs_conversion"
+      | "artifact_missing"
+      | string;
+    detail: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * What a click on the page resolved to. Shell state, for the status bar.
+ *
+ * `ambiguous` is a state the user has to leave deliberately: the candidates are
+ * listed and nothing is chosen until a person chooses it.
+ */
+export interface OverlayPick {
+  kind: "seat" | "unique" | "ambiguous" | "not_editable";
+  /** What the status bar prints. Already Korean, already final. */
+  label: string;
+  /** The span or seat this came from, so the drawn overlay can mark itself. */
+  targetId: string;
+  candidates?: GeometryAddress[];
+  address?: GeometryAddress | null;
+}
+
 export interface PrepareResult {
   sessionId: string;
   prepared: boolean;

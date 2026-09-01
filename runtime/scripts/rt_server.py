@@ -131,6 +131,7 @@ class RuntimeServer:
             "candidate/list": self._m_candidate_list,
             "receipt/read": self._m_receipt_read,
             "document/render": self._m_document_render,
+            "document/pageGeometry": self._m_document_page_geometry,
             "event/poll": self._m_event_poll,
         }
         # One roster (rt_core.AGENT_METHODS). Adding a handler without listing
@@ -609,3 +610,12 @@ class RuntimeServer:
                          policy=self.unknown_field_policy)
         return self.core.document_render_prepare(
             params["sessionId"], timeout=params.get("timeoutSeconds"))
+
+    def _m_document_page_geometry(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "page", "runId"},
+                         required=("sessionId",),
+                         where="document/pageGeometry.params",
+                         policy=self.unknown_field_policy)
+        return self.core.document_page_geometry(
+            params["sessionId"], page=params.get("page", 0),
+            run_id=params.get("runId"))
