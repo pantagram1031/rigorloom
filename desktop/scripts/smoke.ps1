@@ -284,16 +284,32 @@ try {
     }
 
     # The window came back where it was left. Compared across a real process
-    # boundary: run 8 reports what it saved, run 9 reports what it restored.
+    # boundary, and from OUT HERE: run 8 reports the geometry it saved, run 9
+    # reports the geometry it restored. Asking run 9 to check its own prefs
+    # would be self-fulfilling — it writes them at startup from whatever it
+    # restored, so a restore that lost a frame's worth of pixels every launch
+    # would agree with itself forever.
     if (($ran -contains 'chrome') -and ($ran -contains 'chrome-reattach')) {
-        $finalPath = Join-Path $RunDir 'final-chrome.json'
-        if (Test-Path $finalPath) {
-            $final = Get-Content $finalPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            Write-Host ("  [note] run 8 saved {0}x{1} at ({2},{3})" -f `
-                $final.detail.window.width, $final.detail.window.height, `
-                $final.detail.window.x, $final.detail.window.y)
+        $saved    = Join-Path $RunDir 'final-chrome.json'
+        $restored = Join-Path $RunDir 'final-chrome-reattach.json'
+        if ((Test-Path $saved) -and (Test-Path $restored)) {
+            $a = (Get-Content $saved    -Raw -Encoding UTF8 | ConvertFrom-Json).detail.geometry
+            $b = (Get-Content $restored -Raw -Encoding UTF8 | ConvertFrom-Json).detail.geometry
+            $same = ($a.maximized -eq $true -and $b.maximized -eq $true) -or (
+                ([math]::Abs($a.width  - $b.width)  -le 2) -and
+                ([math]::Abs($a.height - $b.height) -le 2) -and
+                ([math]::Abs($a.x - $b.x) -le 2) -and
+                ([math]::Abs($a.y - $b.y) -le 2))
+            if ($same) {
+                Write-Host ("  [PASS] the window came back to {0}x{1} at ({2},{3}) across a process boundary" -f `
+                    $b.width, $b.height, $b.x, $b.y)
+            } else {
+                Write-Host ("  [FAIL] run 8 was {0}x{1} at ({2},{3}); run 9 came back {4}x{5} at ({6},{7})" -f `
+                    $a.width, $a.height, $a.x, $a.y, $b.width, $b.height, $b.x, $b.y)
+                $allOk = $false
+            }
         } else {
-            Write-Host "  [FAIL] the chrome phase wrote no window report"
+            Write-Host "  [FAIL] one of the two chrome phases wrote no window report"
             $allOk = $false
         }
     }
