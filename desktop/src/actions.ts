@@ -1267,8 +1267,48 @@ export async function clickOverlaySpan(
  * seat, exactly as a direct click on an unambiguous one would, and the value
  * still has to be typed and still has to be approved.
  */
-export function chooseCandidate(address: GeometryAddress): void {
+export async function chooseCandidate(address: GeometryAddress): Promise<void> {
   const pick = getState().overlayPick;
+
+  // A PARAGRAPH CANDIDATE IS A CARET, NOT A DEAD END. §12.4: a form label is
+  // routinely registered twice in the target set, once as an `anchor_record`
+  // and once as the table cell it sits in — so an ambiguous span's candidate
+  // list very often holds exactly one anchor and one cell. Before the caret
+  // existed, choosing the anchor half correctly said 값을 넣는 자리가
+  // 아닙니다; it is now the wrong sentence, because a paragraph IS somewhere a
+  // person types.
+  //
+  // The caret goes to the START of the line here, and says so, because a
+  // choice made from a list carried no pointer position to resolve an offset
+  // from. That is the same honest `caret: null` a line with no character boxes
+  // gets — a fallback, labelled as one.
+  if (addressIsCaretTarget(address)) {
+    const span = (getState().geometry?.spans ?? []).find(
+      (s) => `span-${s.index}` === pick?.targetId,
+    );
+    const refusal = span
+      ? await beginParagraphEdit({ ...span, address, confidence: "unique" })
+      : "no_address";
+    setState({
+      overlayPick: refusal
+        ? {
+            kind: "no_caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            refusal,
+            label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+          }
+        : {
+            kind: "caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            caret: null,
+            label: `${addressLabel(address)} — 사용자가 고름 · 줄 앞에 커서를 놓음`,
+          },
+    });
+    return;
+  }
+
   if (!addressIsEditable(address)) {
     setState({
       overlayPick: {
