@@ -643,3 +643,79 @@ def test_clean_tree_with_no_unreadable_files_is_still_complete(tmp_path: Path):
     assert code == 0
     assert payload["summary"]["incomplete"] is False
     assert "unreadable_file" not in rules(payload)
+
+
+# --- Binary assets and filename-@ exemptions (the Phase 6 desktop-tree scan) --
+# A 2 MB WOFF2 decoded "successfully" as cp949 and the email regex matched byte
+# noise; a Tauri icon list carries "128x128@2x.png". Both are false positives a
+# HARD=0 gate cannot live with, and both fixes are mechanisms with still-catches
+# pinned here, not corpus-specific carve-outs.
+
+
+def test_font_magic_content_is_not_prose(tmp_path: Path):
+    # wOF2 magic, then cp949-decodable bytes containing an email-shaped string:
+    # without the asset exit this is exactly the desktop font false positive.
+    blob = b"wOF2" + b"\x20" * 64 + ("someone@" + "gmail.com").encode() + b"\x20" * 64
+    (tmp_path / "face.woff2").write_bytes(blob)
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert "email_address" not in rules(payload)
+
+
+def test_the_same_bytes_without_magic_still_catch(tmp_path: Path):
+    # Still-catches: the exemption is the MAGIC, not the extension or content.
+    blob = b"XXXX" + b"\x20" * 64 + ("someone@" + "gmail.com").encode() + b"\x20" * 64
+    (tmp_path / "face.woff2").write_bytes(blob)
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "email_address" in rules(payload)
+
+
+def test_a_document_cannot_dress_up_as_an_asset(tmp_path: Path):
+    # Still-catches: a document extension keeps the W5.2 rules even when its
+    # leading bytes claim to be a font.
+    (tmp_path / "filled.hwpx").write_bytes(b"wOF2" + b"\x00" * 32)
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "binary_document_ext" in rules(payload)
+
+
+def test_a_large_font_is_size_flagged_but_not_text_scanned(tmp_path: Path):
+    blob = b"wOF2" + (b"\x20" * 40 + ("someone@" + "gmail.com").encode()) * 60_000
+    (tmp_path / "big.woff2").write_bytes(blob)
+
+    payload, code = run(tmp_path)
+
+    assert "large_file" in rules(payload)
+    assert "email_address" not in rules(payload)
+    assert code == 0  # a WARN alone never gates; only the email noise is gone
+
+
+def test_a_retina_filename_is_not_a_mailbox(tmp_path: Path):
+    (tmp_path / "tauri.conf.json").write_text(
+        '{"icons": ["icons/128x128@2x.png", "icons/icon@3x.ico"]}\n',
+        encoding="utf-8",
+    )
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert "email_address" not in rules(payload)
+
+
+def test_a_real_mailbox_beside_a_retina_name_still_catches(tmp_path: Path):
+    (tmp_path / "notes.txt").write_text(
+        "icon is 128x128@2x.png, mail pantagram-fake@" + "gmail.com\n",
+        encoding="utf-8",
+    )
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "email_address" in rules(payload)

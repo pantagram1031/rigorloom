@@ -21,41 +21,58 @@
  * gate passed because the label survived as a prefix. Surfacing the choice in
  * the UI is the entire point of drawing these differently.
  *
- * **3. One mutation path.** Clicking an editable target calls `beginEdit` —
- * the same function `TextView`'s cell click calls, opening the same inline
- * editor, producing the same `fill_cell` op in the same review queue, bound by
- * the same plan, gated by the same approval. There is no overlay-shaped edit
- * route. A value typed on the page and a value typed in the tree are
- * indistinguishable by the time they reach `plan/propose`, which is what makes
- * "editing on the page" a new surface rather than a new risk.
+ * **3. One mutation path, and one editor.** Clicking an editable target calls
+ * `beginEdit` — the same function `TextView`'s cell click calls — and mounts
+ * `SeatEditor`, the same COMPONENT `TextView` mounts, in the rectangle the
+ * runtime placed. Same element, same IME behaviour, same `fill_cell` op, same
+ * review queue, same plan hash, same approval, same receipt. There is no
+ * overlay-shaped edit route and no second field to keep in step.
  *
- * **4. Not a wall of boxes.** An editable seat is a quiet affordance that
- * appears on hover. What is permanently visible is the small number of things
- * the user genuinely has to know about: ambiguous spans, because a person has
- * to resolve them, and nothing else.
+ * That is a correction, not a boast: until the runtime placed its first real
+ * seat this branch had never fired, and when it did it opened an edit state
+ * with no field on screen — `SeatEditor` lived inside `TextView`, which
+ * 페이지 보기 does not mount. Extracting it into `SeatEditor.tsx` was the fix;
+ * writing a second input here would have been the defect.
+ *
+ * **4. An empty seat is an invitation, and it used to be invisible.** The first
+ * version of this rule read "an editable seat is a quiet affordance that appears
+ * on hover", and it was written when the runtime placed zero seats on every
+ * corpus form: there was nothing to be quiet about. `cell_borders` (§12.4)
+ * changed the measurement — 73 seats across the corpus, 55 of them on one form,
+ * every one of them an address `beginEdit` opens — and a hover-only affordance
+ * over 37 real seats on a page means the product's marquee interaction is
+ * undiscoverable unless you already know it is there. So a seat now has a
+ * resting state: a faint fill tint with a baseline rule, in the SAME accent
+ * vocabulary the tree view uses for a value slot, strengthening on hover. What
+ * did not change is the vocabulary boundary — ambiguity stays in the warning
+ * palette, because it is a question, not an invitation, and inert mapped text
+ * still gets nothing at all.
  *
  * WHAT THIS MACHINE'S CORPUS ACTUALLY PRODUCES, measured rather than assumed:
- * across all ten corpus forms, 51 pages and 473 editable fill regions,
- * `document/pageGeometry` places **zero** seats and returns **zero** unique
- * spans whose address is an editable cell (see desktop/README.md, overlay gap
- * 1). So on today's runtime the editable half of this component draws nothing
- * and the ambiguous half draws a great deal. It is written for both because the
- * seat rule is a runtime GAP with a named fix (§12.6), not a design decision —
- * and a component that only handled the empty case would have to be rewritten
- * the day the runtime places its first seat.
+ * across ten corpus forms, 51 pages and 473 editable fill regions,
+ * `document/pageGeometry` places **73** seats, all `cell_borders`, and still
+ * returns zero unique SPANS whose address is an editable cell — text matching
+ * reaches labels, never empty seats, which is the whole reason the border scan
+ * exists. The distribution is lumpy and honestly so: 55 on
+ * kstartup-jiwon-sincheongseo-saeopgyehoekseo, 0 on the two forms ruled with
+ * underlines rather than boxes. 400 of 473 regions still get no seat and §12.6
+ * says why, per cause. This component draws exactly what it is given.
  */
 import { useEffect, useRef } from "react";
 
 import {
   addressIsEditable,
   addressLabel,
+  cancelEdit,
   chooseCandidate,
   clickOverlaySeat,
   clickOverlaySpan,
+  commitEdit,
   dismissOverlayPick,
 } from "../actions";
 import { useWorkspace } from "../store";
 import type { GeometryResult, GeometrySeat, GeometrySpan, NormRect } from "../types";
+import { SeatEditor } from "./SeatEditor";
 import { Tag } from "./Tag";
 
 /** A normalized rect as CSS percentages. The only coordinate maths here. */
@@ -84,13 +101,45 @@ const DERIVATION_NOTE: Record<string, string> = {
   interpolated: "같은 줄의 이름표에서 미루어 잡은 자리입니다. 선이 그려져 있지 않아 위치가 정확하지 않을 수 있습니다.",
 };
 
-function SeatOverlay({ seat, picked }: { seat: GeometrySeat; picked: boolean }) {
+function SeatOverlay({
+  seat,
+  picked,
+  editing,
+}: {
+  seat: GeometrySeat;
+  picked: boolean;
+  /** The open inline edit, when it is THIS seat's. Null otherwise. */
+  editing: { before: string } | null;
+}) {
   const editable = addressIsEditable({
     kind: "cell",
     table: seat.table ?? null,
     row: seat.row ?? null,
     col: seat.col ?? null,
   });
+
+  // TYPING HAPPENS IN THE RECTANGLE THE RUNTIME PLACED.
+  //
+  // Found by the first evidence run that had a real seat to click: `beginEdit`
+  // opened an edit state and there was no field on screen to type into, because
+  // the only `<input>` in the app lived inside `TextView` and 페이지 보기 does
+  // not mount it. The fix is the same component, mounted here — not a second
+  // editor. `SeatEditor` moved out of `TextView` for exactly this, so a value
+  // typed on the page and a value typed in the tree go through one element,
+  // one IME path and one commit.
+  if (editing) {
+    return (
+      <div className="ov ov-seat ov-editing" style={place(seat.rect)} data-testid="overlay-editing">
+        <SeatEditor
+          className="seat-input ov-seat-input"
+          value={editing.before}
+          onCommit={(next) => void commitEdit(next)}
+          onCancel={cancelEdit}
+        />
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -108,7 +157,11 @@ function SeatOverlay({ seat, picked }: { seat: GeometrySeat; picked: boolean }) 
       title={`표${seat.table} (${seat.row},${seat.col})\n${
         DERIVATION_NOTE[seat.derivation] ?? "런타임이 이 자리를 어떻게 잡았는지 알 수 없습니다."
       }`}
-      aria-label={`표${seat.table} ${seat.row}행 ${seat.col}열 값 넣기`}
+      aria-label={
+        editable
+          ? `표${seat.table} ${seat.row}행 ${seat.col}열 — 빈 자리, 눌러서 값 넣기`
+          : `표${seat.table} ${seat.row}행 ${seat.col}열 — 값을 넣는 자리가 아님`
+      }
       onClick={(e) => {
         e.stopPropagation();
         clickOverlaySeat(seat);
@@ -286,6 +339,9 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
  */
 export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
   const pick = useWorkspace((s) => s.overlayPick);
+  // Read here rather than in the seat, so the store is subscribed to ONCE for
+  // a page that can carry dozens of seats.
+  const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const spans = geometry.spans ?? [];
   const seats = geometry.seats ?? [];
 
@@ -296,6 +352,14 @@ export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
           key={`seat-${seat.table}-${seat.row}-${seat.col}`}
           seat={seat}
           picked={pick?.targetId === `seat-${seat.table}-${seat.row}-${seat.col}`}
+          editing={
+            inlineEdit &&
+            inlineEdit.table === seat.table &&
+            inlineEdit.row === seat.row &&
+            inlineEdit.col === seat.col
+              ? { before: inlineEdit.before }
+              : null
+          }
         />
       ))}
       {spans.map((span) => (

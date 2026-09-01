@@ -9,15 +9,31 @@
  * This is that band: dense, keyboard-first, no icon cloning, no Hancom
  * anything. The hanji surface and the one teal accent are unchanged.
  *
- * EVERY FIELD IS READ-ONLY THIS SLICE, and every field is real.
+ * EVERY FIELD IS READ-ONLY, and every field is real.
  *
- * WHAT IS NOT HERE, AND WHY. A 글꼴 name. `document/inspect` reports a seat's
- * `charPr` as an ID and reports a HEIGHT only for the two document-level shapes
- * (`baselineCharPr`, `blackCharPr`); no typeface name is on the wire anywhere.
- * So the strip shows the id, shows the body size it can prove, and says the
- * name is not something this build knows — rather than drawing a font dropdown
- * reading "맑은 고딕" because that is what a toolbar usually says. Recorded as
- * runtime gap 16.
+ * 글꼴, AND THE TWO ABSENCES IT KEEPS APART. Runtime gap 16 is closed: §14 puts
+ * the declared face on the wire, joined out of the header's own `fontface`
+ * tables, so the strip shows 돋움체 where it used to show `charPr 11`. Three
+ * rules it is written to, because a font control is the easiest place in this
+ * application to fabricate:
+ *
+ * - **Nothing is defaulted.** A dropdown reading 맑은 고딕 because that is what
+ *   a toolbar usually says would be a fabrication. Where the document declares
+ *   no resolvable face, the id stands alone and the tooltip says the document
+ *   did not name one.
+ * - **Two absences stay apart.** `face: null` means THIS document names no face
+ *   for that charPr; `summary.typefaces.state === "unavailable"` means nothing
+ *   looked — a profile from an older scan, for instance. Collapsing them would
+ *   tell a user their document names no fonts when the truth is we did not read.
+ * - **한글 first, and the others on hover.** §14 carries a face PER LANGUAGE
+ *   because Hangul's own font dialog does; the strip has room for one, so it
+ *   shows the 한글 face and the tooltip carries every language declared. It
+ *   does not merge them into one name, which would be a guess about which of
+ *   two declared truths the reader meant.
+ *
+ * The T30 mismatch reads in names now rather than integers: a seat inheriting
+ * charPr 11 (돋움체) where the preflight suggests charPr 23 (한양중고딕) is a
+ * fact a person can act on; "11 vs 23" was not.
  */
 import { applyUiZoom, runCheck } from "../actions";
 import {
@@ -29,8 +45,64 @@ import {
   useWorkspace,
   type Selection,
 } from "../store";
-import type { InspectResult, RegionText } from "../types";
+import type { InspectResult, RegionText, TypefaceByLang } from "../types";
 import { Tag } from "./Tag";
+
+/**
+ * charPr id -> the face the DOCUMENT declares for it, joined from the two
+ * places `document/inspect` already publishes one.
+ *
+ * Built rather than looked up in one field because the two publishers cover
+ * different ids: `summary.baselineCharPr` / `summary.blackCharPr` carry the
+ * document-level shapes, and `regions[].charPrFace` /
+ * `regions[].charPrSuggestedFace` carry every fill seat's own and the one its
+ * preflight suggests. The toolbar's selection can be a graph cell that is not a
+ * fill seat, and the graph does not carry faces — so a selection whose charPr
+ * appears in neither publisher gets NO name, which is correct: nothing on the
+ * wire said what it is.
+ *
+ * Every pair here is one the runtime stated. Nothing is inferred from another
+ * id, nothing is inherited from the baseline, and an id absent from the map is
+ * absent from the toolbar.
+ */
+function faceIndex(inspect: InspectResult | null): Map<string, TypefaceByLang> {
+  const index = new Map<string, TypefaceByLang>();
+  if (!inspect) return index;
+  const add = (id: string | undefined | null, face: TypefaceByLang | null | undefined) => {
+    if (!id || !face) return;
+    if (!index.has(id)) index.set(id, face);
+  };
+  add(inspect.summary.baselineCharPr?.id, inspect.summary.baselineCharPr?.face);
+  add(inspect.summary.blackCharPr?.id, inspect.summary.blackCharPr?.face);
+  for (const region of inspect.regions.regions) {
+    add(region.charPr, region.charPrFace);
+    add(region.charPrSuggested, region.charPrSuggestedFace);
+  }
+  return index;
+}
+
+/** The 한글 face, which is the one a Korean form is set in. */
+function primaryFace(face: TypefaceByLang | undefined): string | null {
+  return face?.hangul ?? null;
+}
+
+/** Every language the header resolved, for the tooltip. Never merged. */
+function allFaces(face: TypefaceByLang | undefined): string {
+  if (!face) return "";
+  const LANG: Record<string, string> = {
+    hangul: "한글",
+    latin: "영문",
+    hanja: "한자",
+    japanese: "일어",
+    other: "기타",
+    symbol: "기호",
+    user: "사용자",
+  };
+  return Object.entries(face)
+    .filter(([, name]) => !!name)
+    .map(([lang, name]) => `${LANG[lang] ?? lang} ${name}`)
+    .join(" · ");
+}
 
 /**
  * The charPr the selected node carries, from the graph the runtime returned.
@@ -86,17 +158,68 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const hard = findings.filter((f) => f.severity === "hard").length;
   const anomalous = charPr.suggested !== null && charPr.id !== charPr.suggested;
 
+  const faces = faceIndex(inspect);
+  const typefaces = inspect?.summary.typefaces ?? null;
+  const face = charPr.id ? faces.get(charPr.id) : undefined;
+  const suggestedFace = charPr.suggested ? faces.get(charPr.suggested) : undefined;
+  const name = primaryFace(face);
+  const suggestedName = primaryFace(suggestedFace);
+  // "this document names none" vs "nothing looked" — the whole reason §14 has
+  // two fields. The toolbar prints a different dash for each.
+  const faceUnknown =
+    !typefaces || typefaces.state !== "read"
+      ? (typefaces?.reason ?? "이 빌드는 글꼴 이름을 읽지 못했습니다")
+      : null;
+
   return (
     <div className="toolbar" data-testid="editor-toolbar" role="toolbar" aria-label="편집 도구">
-      {/* 글자 모양. An id and a size, because that is what exists. */}
+      {/* 글꼴. The face the DOCUMENT declares, never a default (§14). */}
+      <div className="tool-group" data-testid="tool-typeface">
+        <span className="tool-label">글꼴</span>
+        <span
+          className="tool-value"
+          data-testid="typeface-name"
+          data-face={name ?? ""}
+          title={
+            name
+              ? `이 문서가 선언한 글꼴입니다 — ${allFaces(face)}`
+              : faceUnknown
+                ? `글꼴 이름을 읽을 수 없었습니다 — ${faceUnknown}`
+                : charPr.id
+                  ? "이 문서는 이 글자 모양에 쓸 글꼴 이름을 선언하지 않았습니다."
+                  : "선택한 곳이 없습니다."
+          }
+        >
+          {name ?? "—"}
+        </span>
+        {!name && charPr.id ? (
+          <span className="tool-note tiny" data-testid="typeface-absent">
+            {faceUnknown ? "읽지 못함" : "문서가 이름을 안 밝힘"}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="tool-sep" />
+
+      {/* 글자 모양. The id stays: it is what a plan op carries, and it is what
+          the T30 preflight names. The mismatch tag reads in NAMES now. */}
       <div className="tool-group" data-testid="tool-charpr">
         <span className="tool-label">글자 모양</span>
         <span className="tool-value mono" title={charPr.where || "선택한 곳이 없습니다"}>
           {charPr.id ?? "—"}
         </span>
         {anomalous ? (
-          <Tag tone="warn" title={`이 문서의 본문 모양은 ${charPr.suggested} 입니다`}>
-            본문과 다름
+          <Tag
+            tone="warn"
+            title={
+              suggestedName && name
+                ? `이 자리는 ${name}(charPr ${charPr.id}) 을 물려받는데, 서식 검사가 권하는 본문 모양은 ${suggestedName}(charPr ${charPr.suggested}) 입니다`
+                : `이 문서의 본문 모양은 charPr ${charPr.suggested} 입니다`
+            }
+          >
+            {suggestedName && name && suggestedName !== name
+              ? `본문은 ${suggestedName}`
+              : "본문과 다름"}
           </Tag>
         ) : null}
       </div>

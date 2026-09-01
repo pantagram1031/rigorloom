@@ -61,6 +61,21 @@ export interface DocumentGraph {
   tables: GraphTable[];
 }
 
+/**
+ * The typeface a charPr id resolves to, PER LANGUAGE (§14).
+ *
+ * Hangul's own font dialog carries separate 한글 and 영문 faces and a 기안문
+ * declares different ones, so the runtime never collapses them to one name. A
+ * language whose id resolves to no face is ABSENT from this map rather than
+ * null — the header did not say. `null` in place of the whole map means this
+ * document declares no resolvable face for that charPr at all, which is a
+ * different fact from `summary.typefaces.state === "unavailable"` (nothing
+ * looked). The UI must not merge the two.
+ */
+export type TypefaceByLang = Partial<
+  Record<"hangul" | "latin" | "hanja" | "japanese" | "other" | "symbol" | "user", string>
+>;
+
 /** A `fill_target` seat: where a value may be written, and what blocks it. */
 export interface EditableRegion {
   kind: "cell" | string;
@@ -70,7 +85,10 @@ export interface EditableRegion {
   atPara?: number;
   run?: number;
   charPr?: string;
+  /** §14. The face this seat's charPr declares, or null when it declares none. */
+  charPrFace?: TypefaceByLang | null;
   charPrSuggested?: string;
+  charPrSuggestedFace?: TypefaceByLang | null;
   colorAnomaly?: boolean;
   scriptAnomaly?: boolean;
 }
@@ -110,12 +128,32 @@ export interface DocumentSummary {
     max_pages: number | null;
     min_pages: number | null;
   };
-  baselineCharPr?: { id: string; height_pt: number; signature: unknown };
+  baselineCharPr?: {
+    id: string;
+    height_pt: number;
+    signature: unknown;
+    face?: TypefaceByLang | null;
+  };
   blackCharPr?: {
     id: string;
     color: string;
     height_pt: number;
     same_height_as_baseline: boolean;
+    face?: TypefaceByLang | null;
+  };
+  /**
+   * Whether faces could be read AT ALL, separate from what any one id says.
+   *
+   * `read` — the profile carries a charPr→face mapping. `unavailable` — nothing
+   * looked, with the runtime's reason. A face of `null` under `read` means the
+   * document names none; a face of `null` under `unavailable` means we do not
+   * know. Two absences, and the toolbar keeps them apart.
+   */
+  typefaces?: {
+    state: "read" | "unavailable" | string;
+    reason: string | null;
+    source?: string;
+    charPrsWithFace?: number;
   };
 }
 
@@ -164,6 +202,15 @@ export interface Capabilities {
   backends: Record<string, BackendCapability>;
   tools: Record<string, { state: string; reason: string | null; path: string | null }>;
   render?: RenderCapability;
+  /**
+   * What `module/check` can do on THIS connection (§13).
+   *
+   * The authority for whether a 작업 팩 can be run is enablement, and this is
+   * the runtime's own reading of it. The 작업 팩 list itself comes from a
+   * separate child process (`taskpacks.rs`), so the panel has two readers of
+   * the same file and says so when they disagree rather than picking one.
+   */
+  modules?: ModuleCapability;
   /** Named reasons the build does NOT claim something. Rendered verbatim. */
   unavailable: Record<string, string>;
 }
@@ -459,6 +506,15 @@ export interface OverlayPick {
   targetId: string;
   candidates?: GeometryAddress[];
   address?: GeometryAddress | null;
+  /**
+   * How the runtime came by this rectangle, carried through to the status bar.
+   *
+   * §12.4's three derivations are not equally trustworthy, and a seat is the
+   * one overlay class a person types into — so the bar says which one they are
+   * about to type into rather than leaving it in a tooltip nobody hovers.
+   * Absent for a span pick, which has no derivation: it has text.
+   */
+  derivation?: GeometrySeat["derivation"];
 }
 
 export interface PrepareResult {
@@ -722,5 +778,141 @@ export interface TaskPackList {
   schema?: string;
   version?: string;
   modulesRoot?: string;
+  /** Which enablement file THIS reader read (see `capabilities.modules`). */
+  enabledFile?: string;
+  enabledFilePresent?: boolean;
   packs: TaskPack[];
+}
+
+// --- module/check (protocol §13) -------------------------------------------
+//
+// The wire that turned 작업 팩 from a declaration viewer into something with a
+// button. Shaped like a VerificationReport and, crucially, never a fabricated
+// pass: a checker that could not run carries a `state` and a `reason` from a
+// closed set, and `acceptance` is false whenever anything did not run, ran
+// without an input it declares it needs, or reported findings.
+
+/** `severity: "skipped"` is a rule the checker itself could not decide. */
+export interface ModuleFinding {
+  severity: "hard" | "warn" | "skipped" | string;
+  code: string | null;
+  message: string | null;
+  /** The checker's own words for where it looked. Prose, shape, or an index. */
+  location: unknown;
+  /**
+   * The Runtime's own addressing, when a translation exists — never a half
+   * address that would select the wrong cell. Null means it does not exist,
+   * NOT that the finding has no place.
+   */
+  address: { table?: number; row?: number; col?: number; atPara?: number } | null;
+}
+
+export interface ModuleCheckRow {
+  checker: string;
+  module: string;
+  subject: "document" | "workspace" | null;
+  wants: string[];
+  state: "ran" | "skipped" | "unavailable" | string;
+  /** From `rt_codes` closed sets. Null exactly when `state === "ran"`. */
+  reason:
+    | "subject_undeclared"
+    | "needs_workspace"
+    | "spawn_failed"
+    | "timed_out"
+    | "missing_dependency"
+    | "usage_error"
+    | "no_verdict"
+    | string
+    | null;
+  detail?: string;
+  ok: boolean | null;
+  verdict: string | null;
+  counts?: Record<string, unknown>;
+  findings?: ModuleFinding[];
+  findingsTruncated?: Record<string, number>;
+  ruleStates?: Record<string, unknown>;
+  /** Declared inputs this call could not supply. `baseline`, on a document. */
+  wantsUnsatisfied?: string[];
+  partial?: boolean;
+  exitCode?: number;
+  durationMs?: number;
+  timedOut?: boolean;
+  outputTruncated?: boolean;
+}
+
+export interface ModuleCheckReport {
+  sessionId: string;
+  module: string;
+  modulesRoot: string;
+  enabledFile: string;
+  subject: { kind: string; name: string; sha256: string; bytes: number; runId: string | null };
+  baseline: { supplied: boolean; kind?: string; sha256?: string; reason: string | null };
+  selected: string[];
+  ranAll: boolean;
+  acceptance: boolean;
+  reason: string | null;
+  checks: ModuleCheckRow[];
+  counts: {
+    selected: number;
+    ran: number;
+    skipped: number;
+    unavailable: number;
+    partial: number;
+    hard: number;
+    warn: number;
+  };
+  bounds: { perCheckerSeconds: number; worstCaseSeconds: number; containment: string };
+  evidence: { class: string; note: string };
+  note: string;
+}
+
+/** One module as `module/list` describes it. Script paths are module-relative. */
+export interface ModuleListing {
+  name: string;
+  enabled: boolean;
+  requires: Record<string, unknown>;
+  requiresModules: string[];
+  checkers: Array<{
+    name: string;
+    script: string;
+    subject: "document" | "workspace" | null;
+    wants: string[];
+    /** The runtime's own answer, not ours to infer from `subject`. */
+    runnableAgainstDocument: boolean;
+    reason: string | null;
+  }>;
+  cli: string[];
+  packTypes: string[];
+  runModes: string[];
+  gateKinds: string[];
+  studioPanels: string[];
+  playbooks: number;
+  hasSkillFragment: boolean;
+}
+
+export interface ModuleList {
+  version: string;
+  modulesRoot: string;
+  enabledFile: string;
+  enabledFilePresent: boolean;
+  discovered: string[];
+  enabled: string[];
+  modules: ModuleListing[];
+  note: string;
+}
+
+/** What `capabilities.modules` says this connection can run, and where from. */
+export interface ModuleCapability {
+  state: "ready" | "unavailable" | string;
+  reason: string | null;
+  discovered?: string[];
+  enabled?: string[];
+  modulesRoot?: string;
+  enabledFile?: string;
+  enabledFilePresent?: boolean;
+  skipReasons?: string[];
+  unavailableReasons?: string[];
+  findingSeverities?: string[];
+  containment?: string;
+  limits?: Record<string, number>;
 }
