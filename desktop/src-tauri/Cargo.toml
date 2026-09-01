@@ -17,12 +17,18 @@ serde_json = "1"
 
 # Kill-on-close job object for the sidecar, and the liveness probe the exit
 # watcher uses. Spike finding 1 — see src/jobkill.rs.
+#
+# Phase 5 adds ONE feature to this existing dependency and no new crate:
+# `Win32_Security_Credentials` is CredWriteW/CredReadW/CredDeleteW/CredFree,
+# which is the whole of src/credstore.rs. `keyring` would have pulled a tree to
+# wrap four calls — the same reasoning that kept `sha2` out in Phase 4.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
   "Win32_Security",
+  "Win32_Security_Credentials",
 ] }
 
 [profile.release]
