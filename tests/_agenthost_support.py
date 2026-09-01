@@ -65,9 +65,14 @@ class FakeRouter:
             def log_message(self, *args):  # keep pytest output clean
                 pass
 
+            def do_GET(self):  # noqa: N802 - stdlib naming
+                self._serve(b"")
+
             def do_POST(self):  # noqa: N802 - stdlib naming
                 length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length) if length else b""
+                self._serve(self.rfile.read(length) if length else b"")
+
+            def _serve(self, raw: bytes):
                 try:
                     body = json.loads(raw.decode("utf-8")) if raw else {}
                 except ValueError:
@@ -99,6 +104,8 @@ class FakeRouter:
                     self.send_response(status)
                     self.send_header("Content-Type", content_type)
                     self.send_header("Content-Length", str(len(payload)))
+                    for name, value in (reply.get("headers") or {}).items():
+                        self.send_header(name, str(value))
                     self.end_headers()
                     self.wfile.write(payload)
                 except (BrokenPipeError, ConnectionResetError):
@@ -174,6 +181,101 @@ def sse_lines(pieces, tool_calls=None) -> list:
             ensure_ascii=False))
     lines.append("data: [DONE]")
     return lines
+
+
+# --- Anthropic Messages API shapes ------------------------------------------
+#: Obviously fake. No `sk-ant-` prefix, so nothing mistakes it for a real key.
+PLACEHOLDER_ANTHROPIC_KEY = "PLACEHOLDER-NOT-A-REAL-ANTHROPIC-KEY"
+ANTHROPIC_ENV = "RIGORLOOM_TEST_ANTHROPIC_REF"
+
+
+def anthropic_message(text: str | None = None, tool_calls=None,
+                      stop_reason: str | None = None,
+                      model: str = "claude-opus-5") -> dict:
+    """A Messages API response body (verified shape: curl/examples.md)."""
+    content: list[dict] = []
+    if text is not None:
+        content.append({"type": "text", "text": text})
+    for index, call in enumerate(tool_calls or []):
+        content.append({
+            "type": "tool_use",
+            "id": call.get("id", f"toolu_{index}"),
+            "name": call["name"],
+            "input": call.get("input", {}),
+        })
+    return {
+        "id": "msg_fake_0001",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": content,
+        "stop_reason": stop_reason or ("tool_use" if tool_calls else "end_turn"),
+        "stop_sequence": None,
+        "usage": {"input_tokens": 11, "output_tokens": 7},
+    }
+
+
+def anthropic_error(error_type: str, message: str = "nope") -> dict:
+    """The documented error envelope (shared/error-codes.md)."""
+    return {"type": "error", "error": {"type": error_type, "message": message},
+            "request_id": "req_fake_0001"}
+
+
+def anthropic_sse(pieces=(), tool_call=None, stop_reason: str = "end_turn") -> str:
+    """A full SSE body: message_start .. message_stop (curl/examples.md)."""
+    frames: list[str] = []
+
+    def frame(name: str, payload: dict) -> None:
+        frames.append(f"event: {name}\ndata: "
+                      + json.dumps(payload, ensure_ascii=False))
+
+    frame("message_start", {"type": "message_start",
+                            "message": {"id": "msg_fake_stream",
+                                        "type": "message", "role": "assistant",
+                                        "content": [], "usage": {}}})
+    if pieces:
+        frame("content_block_start",
+              {"type": "content_block_start", "index": 0,
+               "content_block": {"type": "text", "text": ""}})
+        for piece in pieces:
+            frame("content_block_delta",
+                  {"type": "content_block_delta", "index": 0,
+                   "delta": {"type": "text_delta", "text": piece}})
+        frame("content_block_stop", {"type": "content_block_stop", "index": 0})
+    if tool_call is not None:
+        index = 1 if pieces else 0
+        frame("content_block_start",
+              {"type": "content_block_start", "index": index,
+               "content_block": {"type": "tool_use",
+                                 "id": tool_call.get("id", "toolu_stream"),
+                                 "name": tool_call["name"], "input": {}}})
+        # the input arrives in fragments, as input_json_delta does on the wire
+        blob = json.dumps(tool_call.get("input", {}), ensure_ascii=False)
+        for start in range(0, len(blob), 5):
+            frame("content_block_delta",
+                  {"type": "content_block_delta", "index": index,
+                   "delta": {"type": "input_json_delta",
+                             "partial_json": blob[start:start + 5]}})
+        frame("content_block_stop",
+              {"type": "content_block_stop", "index": index})
+    frame("message_delta", {"type": "message_delta",
+                            "delta": {"stop_reason": stop_reason},
+                            "usage": {"output_tokens": 9}})
+    frame("message_stop", {"type": "message_stop"})
+    return "\n\n".join(frames) + "\n\n"
+
+
+def anthropic_config(base_url: str, **overrides) -> dict:
+    config = {
+        "providerId": "fake-anthropic",
+        "baseUrl": base_url,
+        "model": "claude-opus-5",
+        "credential": {"source": "env", "key": ANTHROPIC_ENV,
+                       "header": "x-api-key", "scheme": "raw"},
+        "timeoutSeconds": 30,
+    }
+    config.update(overrides)
+    return config
 
 
 def router_config(base_url: str, **overrides) -> dict:
