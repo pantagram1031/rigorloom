@@ -97,7 +97,7 @@ def test_sidecar_declares_an_uncertified_grade(gianmun_render):
     assert report["grade"] == "own-uncertified"
     assert report["renderer"].startswith("rigorloom-own/")
     assert "NOT certified" in report["grade_meaning"]
-    assert report["fonts"]["regular"]
+    assert report["fonts"]["fallback_regular"]
     assert report["elements_rendered"]["tables"] >= 1
     assert report["elements_rendered"]["cells"] >= 1
     assert report["elements_rendered"]["text_lines"] >= 1
@@ -394,6 +394,96 @@ def test_gianmun_declares_and_applies_the_metrics_it_carries(gianmun_render):
     # them here would be a lie the tests above cover instead.
     assert "hh:relSz" not in applied
     assert "hh:offset" not in applied
+
+
+# ---------------------------------------------------------------- fonts
+
+def test_the_font_index_reads_a_faces_own_family_names():
+    """Including the Korean records FreeType does not expose.
+
+    This is the whole mechanism of face resolution: a document says 돋움 and
+    only the font file itself knows that Dotum answers to that name.
+    """
+    index = own_render.SystemFontIndex.shared()
+    if not index.families:
+        pytest.skip("no system fonts found on this machine")
+    assert index.scanned > 0
+    # Latin families resolve by their only name.
+    latin = index.lookup("Times New Roman")
+    if latin is None:
+        pytest.skip("Times New Roman is not installed")
+    assert latin["regular"] is not None
+
+
+def test_normalising_a_face_name_ignores_separators_but_not_identity():
+    assert own_render._normalise_face("맑은 고딕") == own_render._normalise_face(
+        "맑은고딕")
+    assert own_render._normalise_face("Times New Roman") == "timesnewroman"
+    # 돋움 and 돋움체 are different faces and must not collapse together.
+    assert own_render._normalise_face("돋움") != own_render._normalise_face("돋움체")
+
+
+def test_gianmun_resolves_every_face_it_declares(gianmun_render):
+    """gianmun declares 돋움 / 돋움체 / 한양중고딕 / 한양견고딕.
+
+    Hancom's own render of this form uses Dotum and DotumChe (the reference
+    PDF names them in its font descriptors), so a resolver that lands on the
+    same families is measurably right, not merely plausible.  On a machine
+    missing them the share drops and the sidecar says which face was
+    substituted — that is the honest failure, and it is what makes this test
+    a skip rather than a lie elsewhere.
+    """
+    fonts = gianmun_render["report"]["fonts"]
+    assert fonts["pinned_single_face"] is False
+    if fonts["resolved_character_share"] in (None, 0):
+        pytest.skip("no declared face of this form is installed here")
+    declared = {f["declared"] for f in fonts["faces"]}
+    assert "돋움" in declared and "돋움체" in declared, declared
+    families = {f["installed_family"] for f in fonts["faces"] if f["resolved"]}
+    assert "돋움" in families or "Dotum" in families, families
+    for face in fonts["faces"]:
+        assert face["characters"] >= 1
+        if face["resolved"]:
+            assert face["file"], face
+        else:
+            assert face["substituted_with"], face
+
+
+def test_a_face_the_machine_does_not_have_is_named_as_substituted(tmp_path):
+    """The substitution path, driven without depending on a missing font.
+
+    An empty font index cannot resolve anything, so every declared face has to
+    come back substituted — and every one of them has to appear in
+    ``elements_skipped``, not just in the fonts block.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    renderer._face_cache.clear()
+    _images, report = renderer.render()
+    fonts = report["fonts"]
+    assert fonts["characters_on_a_resolved_face"] == 0
+    assert fonts["characters_on_a_substituted_face"] > 0
+    assert fonts["resolved_character_share"] == 0.0
+    named = {e["element"] for e in report["elements_skipped"]}
+    assert any(e.startswith("hh:fontface[") for e in named), named
+
+
+def test_pinning_one_face_turns_per_face_resolution_off(monkeypatch, tmp_path):
+    """RIGORLOOM_OWN_RENDER_FONT is how a run takes the machine out of the
+    measurement: one face, declared as pinned, no system index at all."""
+    import os
+
+    face = os.path.join("C:\\Windows\\Fonts", "malgun.ttf")
+    if not os.path.isfile(face):
+        pytest.skip("no pinnable face on this machine")
+    monkeypatch.setenv("RIGORLOOM_OWN_RENDER_FONT", face)
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    assert renderer.pinned_face is True
+    assert renderer.font_index is None
+    _images, report = renderer.render()
+    assert report["fonts"]["pinned_single_face"] is True
+    assert report["fonts"]["faces"] == []
 
 
 # ------------------------------------------------------------- alignment
