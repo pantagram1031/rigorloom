@@ -436,6 +436,23 @@ export interface GeometrySpan {
   address: GeometryAddress | null;
   confidence: "unique" | "ambiguous" | "unmapped" | string;
   candidates?: GeometryAddress[];
+  /**
+   * Where each character of `text` begins, as a fraction of the page width,
+   * plus the last right edge — so `charX.length === text.length + 1`. Same
+   * coordinate system as `rect`, so one pixel width scales both.
+   *
+   * ABSENT where the render did not resolve one box per character in order.
+   * A caret offset derived from anything else would be a cursor standing where
+   * the glyph is not, so a click on such a line snaps to its start and the
+   * status bar says so. Never interpolate this.
+   */
+  charX?: number[];
+  /**
+   * The point size the render declares for this line, where every span in it
+   * declares the same one. Absent for a line set in two sizes at once — one of
+   * them would be a pick.
+   */
+  sizePt?: number;
 }
 
 /**
@@ -478,6 +495,14 @@ export interface GeometryResult {
   seats?: GeometrySeat[];
   seatDerivations?: Record<string, number>;
   mapping?: GeometryMapping;
+  /** Whether sub-line offsets were emitted for this page, and for how much of it. */
+  charOffsets?: {
+    state: "read" | "page_too_dense" | "unavailable" | string;
+    reason?: string | null;
+    lines?: number;
+    of?: number;
+    chars?: number;
+  };
   cache?: { hit: boolean; key: string };
   /** Present when NOT available — the SAME closed reason set `render` uses. */
   unavailable?: {
@@ -499,7 +524,7 @@ export interface GeometryResult {
  * listed and nothing is chosen until a person chooses it.
  */
 export interface OverlayPick {
-  kind: "seat" | "unique" | "ambiguous" | "not_editable";
+  kind: "seat" | "unique" | "ambiguous" | "not_editable" | "caret" | "no_caret";
   /** What the status bar prints. Already Korean, already final. */
   label: string;
   /** The span or seat this came from, so the drawn overlay can mark itself. */
@@ -515,6 +540,15 @@ export interface OverlayPick {
    * Absent for a span pick, which has no derivation: it has text.
    */
   derivation?: GeometrySeat["derivation"];
+  /**
+   * The character offset a caret landed on, or `null` where the line carried
+   * no per-character boxes and the click snapped to its front. Present only
+   * for `kind: "caret"`, and the null is load-bearing: a measured 0 and a
+   * fallback 0 look identical on screen and are different facts.
+   */
+  caret?: number | null;
+  /** Why no caret was placed. Present only for `kind: "no_caret"`. */
+  refusal?: "no_address" | "multi_run" | "run_text_differs" | "no_inventory" | string;
 }
 
 export interface PrepareResult {
@@ -572,6 +606,13 @@ export interface TextRun {
   charpr?: string;
   color_anomaly?: boolean;
   color_value?: string;
+  /**
+   * §14, for a run rather than a seat. The face this run's charPr resolves to
+   * in the document's own header, or `null` where the document declares none.
+   * A caret standing in this run is the only way the toolbar can name a face
+   * for a paragraph; before this it could print the integer and nothing else.
+   */
+  charpr_face?: TypefaceByLang | null;
 }
 
 /** A region's full text. Cells carry `table` + `addr`; paragraphs `at_para`. */

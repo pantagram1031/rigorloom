@@ -703,9 +703,15 @@ unique on that same page — and gap 19 stands.
 
 Still true, and still the interesting number: **0 unique SPANS map to an
 editable cell.** Matching is by text and an empty seat has no text, so the text
-half of the mapping reaches labels and only labels. Every clickable target on
-the page today came from the border scan. 400 of 473 corpus fill regions still
-get no seat and §12.6 lists the causes one by one.
+half of the mapping reaches labels and only labels, and every *seat* on a page
+came from the border scan. 400 of 473 corpus fill regions still get no seat and
+§12.6 lists the causes one by one.
+
+What that number stopped meaning is "the text half of the mapping is wasted".
+It reaches **365 paragraph addresses across the corpus**, and 314 of those are
+now caret targets — see 지면 커서 below. The seats are where a form is *blank*;
+the paragraph lines are where it already says something, and both are places a
+person types.
 
 The legend under the raster prints the runtime's own counts (확정 / 후보 / 대응
 없음 / 자리) and, where there is nothing to click, still says so and points at
@@ -741,6 +747,100 @@ A seat pick also carries **how the rectangle was found** — `표10 (2,1) · 그
 a seat is the one overlay class a person types into. Leaving that in a tooltip
 means it is never read. `data-derivation` on the same element carries the raw
 `cell_borders` / `matched_text` / `interpolated` for the harness.
+
+### 지면 커서 — typing in a line, not only in a seat
+
+A seat is an empty cell. A form is mostly not empty cells, so for the life of
+the overlay the marquee interaction reached **73 places across the whole
+corpus** and every one of them was blank. The other half of "editing on the
+page" is the body text: click a uniquely-mapped paragraph line and a real caret
+stands in it, in a field mounted in that line's own rect, at the size the render
+drew it, at the character the pointer landed on.
+
+**The offset is measured or it is absent.** `document/pageGeometry` now carries
+`spans[].charX` — one normalized x per character of the line's text, read out of
+the same PDF every rect comes from (§12.2). The click's x, as a fraction of the
+page, is compared against those boundaries and the nearest one wins, which is
+why clicking the right half of a character puts the caret after it. Nothing is
+interpolated from a line's width and its character count: a proportional face
+makes that wrong by a character or more mid-line, and a cursor standing where
+the glyph is not is the same fabrication as a rectangle in the wrong place.
+Where a line carries no boxes the caret goes to the front and **the app says
+so** — `caret: null` rather than `caret: 0`, 줄 앞 rather than 0번째 글자 앞 in
+the status bar, and a dotted rather than solid hover rule on the line itself, so
+the limitation is visible before the click rather than after it.
+
+**One mutation path, two op kinds, no new route.** Typing goes through the same
+`commitEdit` → `setQueue` → `plan/propose` → `plan/validate` → review queue →
+approval → apply → receipt a seat fill goes through. What differs is the
+operation kind, and it is one the Runtime already had: `set_run` at
+`(atPara, run)`, which preserves the run's `charPrIDRef`
+(`engine/scripts/preedit.py:2464`). No `replace_paragraph_text` was invented on
+either side of the wire. The queue holds both kinds, the tree draws both as
+`before → after`, and an edit typed on the page shows up in 본문 보기 exactly
+as one typed in the tree does.
+
+**The check the shell has to make itself, and the refusals it produces.** A line
+is not a run. The two coincide only where the paragraph holds exactly one run
+whose text IS the line, and `beginParagraphEdit` asks `document/readRegion`
+rather than assuming it from the fact that the text matched. The refusals are a
+closed set with a sentence each — `multi_run`, `run_text_differs`,
+`no_inventory`, `no_address` — because a person who clicks visibly mapped text
+and gets silence concludes the feature is broken, when the honest answer is that
+this paragraph has no single run to address.
+
+**What that is worth, measured on the corpus** (ten forms, 51 real
+Hancom-rendered pages, before any of it was written):
+
+| | |
+| --- | ---: |
+| uniquely-mapped spans | 376 |
+| …that are paragraph addresses | 365 |
+| …that are cell addresses | 11 |
+| paragraph lines holding exactly one run — a caret target | **314** |
+| paragraph lines holding several runs — refused by name | 51 |
+| paragraph lines whose run text disagreed with the line | 0 |
+| empty seats the border scan places (unchanged) | 73 |
+| **places on a page a person can type, before → after** | **73 → 387** |
+
+And the offsets themselves: **2,591 of 2,591 lines** resolve one box per
+character, in order, none degenerate. 2,508 also carry a single `sizePt`; the 83
+that do not are set in two sizes at once, so they carry none — reporting one of
+them would be a pick.
+
+**Vocabulary, kept apart on purpose.** A seat is an empty box inviting a value
+and keeps its faint fill tint with a baseline rule. A caret target already *has*
+its text, so tinting it would repaint the body of the form: it gets the
+text-selection vocabulary instead — an I-beam and a hairline under the line on
+hover. Ambiguity keeps the warning palette and still refuses to resolve itself.
+Inert mapped text still gets nothing at all.
+
+**The 입력 indicator finally has something true to say.** It read 삽입/수정 없음
+for the life of this product and that was honest — there was no character-level
+caret, editing happened per seat, and an indicator claiming 삽입 would have been
+inventing one. There is a caret now, so it reads 삽입 while one is open. It never
+reads 수정: nothing in this build overwrites, and offering a mode that does not
+exist is the same fabrication as a font name nobody declared.
+
+### 글꼴 over a caret, and whose size it is
+
+The toolbar names the face the **run** is set in, from
+`document/readRegion` → `runs[].charpr_face` (§14's fourth field, added with
+this slice). A run's charPr appears in neither publisher `faceIndex` read
+before — the document-level shapes and the fill seats — so above a caret the
+strip could print the integer and nothing else.
+
+크기 is the one control where two different facts meet, and they are never
+merged. `summary.baselineCharPr.height_pt` is what the document's **header**
+declares for the body shape. `spans[].sizePt` is what the **renderer** drew the
+caret's line at. §14.1 is explicit that a run's charPr carries no point size of
+its own, so with a caret open the honest number is the render's — and it is
+labelled 지면에서 잰 값, with `data-source="render"` for the harness, because a
+measured size presented as a declared one is a fabrication in the one control
+this application must not fabricate in.
+
+Changing either is a later slice and a `preedit` question, not a protocol one:
+setting a face means a charPr the document does not have (§14.1).
 
 ## 작업 팩 — the panel that stopped being 준비 중
 
@@ -1196,6 +1296,122 @@ in them reads 돋움체 / 본문은 한양중고딕.
 - **One renderer, one machine.** Hancom Office 13.0.0.2986, a single
   200 %-scaled display. Seat placement tolerances against other Hancom versions
   are untested, and §12.6 already records that.
+
+### The caret slice — typing in a line, and what the evidence found
+
+Reproduced from a clean build on the operator machine (Windows 11, one Hancom
+Office 13.0.0.2986 install, open throughout — the runtime never touched it).
+
+| step | result |
+| --- | --- |
+| `npx tsc --noEmit` | exit 0 |
+| `sidecar/build.ps1` (PyInstaller one-dir) | exit 0, 60 s |
+| `npm run build` (tsc + vite) | exit 0, 15 s |
+| `npx tauri build` (cargo release + NSIS) | exit 0, 421 s |
+| `scripts/smoke.ps1`, 11 phases | **396 checks, 0 failures** (was 360 at Phase 6) |
+| `scripts/ime.ps1 -Surface both` | **IME PASS**, 2 surfaces, real 두벌식 scan codes |
+| `scripts/screenshots.ps1 -Only page-caret-edit` | `page-caret-edit.png`, 2880×1704 |
+| `tests/test_runtime_geometry.py` | 86 passed |
+| `tests/test_runtime_typeface.py` | 14 passed |
+| every other `tests/test_runtime_*.py` | 257 passed, 0 failed |
+| `tests/test_agenthost_compile.py` | 34 passed |
+| `scripts/py_compile_sweep.py` | 125 files, 0 failures |
+| `privacy_scan.py` over `git archive HEAD` | **HARD=0**, WARN=43 (all pre-existing corpus fixtures) |
+
+**The sidecar's role check gained a leg.** `serve role: sub-line offsets on
+spans[].charX, unit normalized` — the frozen runtime is asked whether it
+extracts per-character boxes before the bundle is allowed to ship, because a
+bundle that does not would answer every click by snapping to the front of the
+line and would do it *silently*: the field opens, the caret sits at offset 0,
+and nothing on screen is wrong except the position.
+
+**What the smoke measured on the page it exercises** (page 6 of the seated
+corpus form, the page the runtime seats most heavily):
+
+- 86 lines, all 86 resolving per-character offsets, 634 characters.
+- 37 seats, all 37 editable — unchanged.
+- 10 uniquely-mapped paragraph lines, all 10 carrying offsets, all 10 drawn as
+  caret targets with `cursor: text` and none of them dressed as a fill seat.
+- A caret placed on the first one tried: `문단 182`, offset **5** into a
+  7-character line, with the browser's own `selectionStart` at 5.
+- A real `MouseEvent` at a second position in the same line: offset **6**, the
+  number `charX` names for that x. Two positions, two offsets — the check that
+  the overlay's `clientX` → page-fraction arithmetic is right and not
+  accidentally always zero.
+- A refusal, provoked on purpose: `문단 338` holds two runs, so **no caret was
+  placed**, `multi_run` reached the status bar, and the queue did not move.
+- The typed sentence became one `set_run` op at `(atPara 182, run 0)`, in the
+  same queue as a seat fill, and the plan the *runtime* returned named that
+  same paragraph and run.
+- 글꼴 read 맑은 고딕 for charPr 21, from the document's own header. 크기 read
+  `14.04pt` with `data-source="render"` — the size the PDF was drawn at, not a
+  declaration the header does not make.
+
+**IME, on the page surface, by test rather than by construction.** Phase 6
+recorded the page field as "shared by construction, not by test", and
+construction is not evidence when the field is mounted in an absolutely-
+positioned overlay over a raster with its selection set programmatically.
+`ime.ps1 -Surface page` stages a rendered session, walks pages and lines until
+the runtime places a caret, and drives 두벌식 **scan codes** — not injected
+Unicode, which would bypass the IME and prove nothing — into it:
+
+    editor open at p:2
+    caret at character 12, page 1
+    [PASS] the IME composed into the shipped editor
+    [PASS] Enter committed the composed value into the plan queue
+    [PASS] the field saw real composition events, not injected characters
+    [PASS] the composed value queued a set_run op
+
+#### Six defects this evidence found
+
+1. **The caret worked; everything around it did not.** The first full run was
+   377/15. Every one of the 15 failures was in the code around the caret, and
+   the caret itself was right on its first real page.
+2. **A renamed testid broke a Phase 4 check.** `queued-0-1-2` became
+   `queued-c:0:1:2` when the queued-value component learned a second op kind,
+   and "the document itself shows the pending value in place" failed while the
+   value was on screen the whole time. The cell spelling is restored.
+3. **The harness was impatient, and it read as the feature being wrong.** The
+   check driving a real `MouseEvent` waited 300 ms; behind that click is
+   `document/readRegion`, which runs `form_inspect` as a child process. It
+   reported `caret none`, which looks exactly like the component computing the
+   wrong offset. Twelve downstream checks were failing on the empty caret that
+   left behind rather than on themselves.
+4. **`runOp!.opId` threw and killed the phase**, so eight checks never ran and
+   the harness reported a TypeError where it should have reported eight results
+   naming the cause.
+5. **`ime.ps1` lost its UTF-8 BOM when it was rewritten**, and PowerShell 5.1
+   read its Korean strings as ANSI and failed to parse the file at
+   `[ValidateSet(...)]` — an error pointing 180 lines away from the cause.
+   Every other script in `scripts/` carries a BOM; this one now does again.
+6. **A PowerShell function emits everything it does not consume.** `$failed +=
+   Invoke-Surface $which` collected stray objects and then tried to add an
+   array to an integer — *after* the seat surface had already printed three
+   `[PASS]` lines. `build-clean.ps1` carries a note about the same trap. The
+   counter is script-scoped now.
+
+And one found by reading rather than by running, which is worth saying because
+the harness could not have caught it: an ambiguous span's candidate list very
+often holds one anchor and one cell (§12.4), and choosing the anchor half
+answered 값을 넣는 자리가 아닙니다 — correct until a paragraph line became
+somewhere a person types. The smoke's ambiguous click asserts that nothing is
+queued and then dismisses, so it never chose a candidate at all.
+
+#### What this evidence does not cover
+
+- **One page of one form.** The caret checks run on whichever page the runtime
+  seats most heavily, which is page 6 of one corpus form. The corpus-wide
+  numbers (314 of 365) come from the runtime tests and an offline measurement,
+  not from the app.
+- **A wrapped paragraph.** Every corpus body paragraph is a single rendered
+  line, so `run_text_differs` was never provoked by a real wrap — only
+  `multi_run` was. Gap 25.
+- **A filled document.** Every corpus render is a blank form (§12.6), so
+  whether a caret lands correctly on a page whose paragraphs already carry
+  user-entered text is untested here.
+- **A machine that can render.** This one cannot: `renderPrepare` answers
+  `needs_hancom` because the frozen sidecar carries no pyhwpx (packaging gap
+  P1), so every page in this evidence is the corpus's own staged Hancom render.
 
 ### 한글 오버레이 — the overlay slice
 
@@ -1719,6 +1935,56 @@ rest stand.
     passes none of them. The panel says so in 아직 없는 것. Recorded as §13.7
     already does; repeated here because it is the second thing a person asks
     after pressing 실행 once.
+
+### New with the caret
+
+23. **`set_run` replaces a whole run, so an offset positions the cursor and
+    nothing else.** The caret lands on a measured character, and then the
+    operation that carries the edit rewrites the entire run
+    (`engine/scripts/preedit.py:2464`). For the 314 corpus lines where the run
+    IS the line that is exactly right and invisible to the user. It stops being
+    invisible the moment a paragraph is long enough that a person expects to
+    edit a clause without the whole paragraph appearing in the review queue's
+    `before → after`. The queue is honest about it — it shows the whole run
+    changing, because the whole run does change — but it reads as a heavier
+    edit than the person made. *Suggested shape:* not a new operation. A
+    `set_run` whose `text` differs from `expect` only in a substring could
+    carry the substring bounds for the reviewer's benefit, the way
+    `--at-cell-expect` already carries an exact-byte precondition; the write
+    stays run-wide and only the presentation gets finer.
+
+24. **51 of 365 mapped paragraph lines refuse a caret, and the refusal costs a
+    round trip.** A line's run count is only knowable from
+    `document/readRegion`, so the overlay draws every uniquely-mapped paragraph
+    line as a caret target and finds out on click whether it is one. That is
+    the honest ordering — the alternative is asking for every paragraph's run
+    inventory on page load, which is 119 addresses on one corpus form — but it
+    means a person can click something that looks clickable and be told no.
+    The refusal names itself, which is the mitigation, not the fix.
+    *Suggested shape:* `document/pageGeometry` could carry `runCount` on a
+    span whose address is a paragraph, from the profile it already holds — the
+    span mapping knows the `at_para`, and `full_text` is the only thing missing.
+    Then the overlay draws the 51 as inert from the start.
+
+25. **A caret cannot cross a line.** Geometry is per line and `set_run` is per
+    run, so a paragraph that wraps onto several rendered lines maps each line
+    to the same run and the mapping refuses all of them
+    (`run_text_differs` — the line's text is a fragment of the run's). On the
+    corpus this is 0 lines, because these are forms and their body paragraphs
+    are single-line; it will not be 0 on a report. *Suggested shape:* this is
+    the E2 line-breaker's question, not the caret's. Until Rigorloom can break
+    lines itself it cannot know that three rendered lines are one paragraph
+    except by string containment, which is the guess §12.3 refuses.
+
+26. **The size over a caret is the renderer's, because the header has no
+    other.** §14.1 says a run's charPr carries an id and a name but no point
+    size. So 크기 above a caret shows `spans[].sizePt` — what the PDF was drawn
+    at — labelled 지면에서 잰 값 to keep it apart from the header's declared
+    baseline. It is a real measurement and it is not the document's own
+    declaration, and on a document with no render there is no size for a run at
+    all. *Suggested shape:* `charpr_faces` is a join the profile already does;
+    the same join could carry the charPr's `height` where the header declares
+    one, which would make the control's two sources agree about what they are.
 
 ## Packaging gaps
 

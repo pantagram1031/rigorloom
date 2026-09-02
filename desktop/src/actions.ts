@@ -24,6 +24,8 @@ import {
   setSelection,
   setView,
   showToast,
+  queuedOpAt,
+  queuedRunOpAt,
   type Draft,
   type QueuedOp,
 } from "./store";
@@ -40,6 +42,7 @@ import type {
   Recent,
   RegionText,
   RuntimeError,
+  TextRun,
   Turn,
   VerificationReport,
 } from "./types";
@@ -343,12 +346,11 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     showToast("이 칸은 값을 넣는 자리가 아닙니다", 1600);
     return false;
   }
-  const queued = state.draft.ops.find(
-    (op) => op.table === table && op.row === row && op.col === col,
-  );
+  const queued = queuedOpAt(state, table, row, col);
   setState({
     selection: { kind: "cell", table, row, col },
     inlineEdit: {
+      kind: "cell",
       table,
       row,
       col,
@@ -358,6 +360,138 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     },
   });
   return true;
+}
+
+/**
+ * Why a click on a mapped paragraph line could NOT put a caret in it.
+ *
+ * A closed set, because every one of these is a real answer the runtime gave
+ * and the status bar prints a different sentence for each. "Nothing happened"
+ * is the one outcome not allowed here: a person who clicks visibly mapped text
+ * and gets silence concludes the feature is broken, when the honest answer is
+ * that this paragraph has no single run to address.
+ */
+export type CaretRefusal = "no_address" | "multi_run" | "run_text_differs" | "no_inventory";
+
+const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
+  no_address: "이 줄에는 문단 주소가 없습니다",
+  multi_run:
+    "이 문단은 글 덩어리가 여럿입니다. 어느 덩어리를 고칠지 런타임이 고르지 않으므로 여기에는 커서를 놓지 않습니다",
+  run_text_differs:
+    "이 줄과 문단의 글 덩어리가 서로 다릅니다. 한 문단이 여러 줄로 접힌 자리라, 줄만 골라 고칠 방법이 없습니다",
+  no_inventory: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
+};
+
+export function caretRefusalText(reason: CaretRefusal): string {
+  return CARET_REFUSAL_TEXT[reason];
+}
+
+/**
+ * The mapping's own normalizer, as far as a shell can honestly go.
+ *
+ * `pipeline/scripts/check_residue.normalize_text` is Python and lives on the
+ * other side of the wire; it cannot be imported here. So this comparison is
+ * deliberately the WEAKEST one that is still safe — collapse whitespace runs,
+ * trim — which is a strict subset of what the gate does. A pair this rejects
+ * the gate would reject too. A pair this accepts the gate might have accepted
+ * for reasons of its own, and the consequence of that direction is only that a
+ * caret is refused where it could have been placed, which is the direction
+ * this application errs in on purpose.
+ */
+function looselySameText(a: string, b: string): boolean {
+  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Where in a line a click landed, from the runtime's own character boxes.
+ *
+ * `null` where the line carried none — the caller SNAPS to the start and says
+ * so. Nothing is interpolated from the line's width and its character count: a
+ * proportional face makes that wrong by a character or more mid-line, and
+ * being wrong about where the cursor is is the failure this feature exists to
+ * avoid. `fraction` is a fraction of the PAGE width, the same units `charX`
+ * and `rect` are in, so the caller never converts anything.
+ */
+export function caretOffsetAt(span: GeometrySpan, fraction: number): number | null {
+  const xs = span.charX;
+  if (!xs || xs.length < 2) return null;
+  // The nearest boundary, so clicking the right half of a character puts the
+  // caret after it — what every text editor does.
+  let best = 0;
+  let bestGap = Infinity;
+  for (let i = 0; i < xs.length; i += 1) {
+    const gap = Math.abs(xs[i] - fraction);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  return Math.min(best, span.text.length);
+}
+
+/**
+ * Put a caret in a paragraph line, or refuse and say which refusal it is.
+ *
+ * THE CHECK THIS SHELL MUST MAKE ITSELF (§12.7). There is no
+ * `replace_paragraph_text` operation and none was invented: what writes a
+ * paragraph line is `set_run`, which addresses `(atPara, run)` and preserves
+ * the run's charPrIDRef. A line is not a run. The two coincide only where the
+ * paragraph holds exactly one run whose text IS the line — and the RUNTIME is
+ * asked whether that holds, through `document/readRegion`, rather than this
+ * shell inferring it from the fact that the text matched.
+ *
+ * Measured on the corpus before it was written: of 365 uniquely-mapped
+ * paragraph lines across 51 real pages, 314 hold exactly one run and 51 do
+ * not. The 51 are refused here, by name, with no caret placed.
+ */
+export async function beginParagraphEdit(
+  span: GeometrySpan,
+  fraction?: number,
+): Promise<CaretRefusal | null> {
+  const sessionId = getState().activeSessionId;
+  const address = span.address;
+  if (!sessionId || !address || address.atPara == null) return "no_address";
+  const atPara = address.atPara;
+
+  let runs: TextRun[] = [];
+  try {
+    const answer = await rt.readRegion(sessionId, [{ atPara }]);
+    const region = answer.regions.find((r) => r.at_para === atPara);
+    runs = region?.runs ?? [];
+    if (region) {
+      // Kept beside the cell texts the tree loaded, so the toolbar over this
+      // caret can name the run's face (§14) without a second call.
+      const existing = getState().texts[sessionId] ?? [];
+      setState({
+        texts: {
+          ...getState().texts,
+          [sessionId]: [...existing.filter((r) => r.at_para !== atPara), region],
+        },
+      });
+    }
+  } catch {
+    return "no_inventory";
+  }
+  if (runs.length === 0) return "no_inventory";
+  if (runs.length > 1) return "multi_run";
+  const run = runs[0];
+  if (!looselySameText(run.text ?? "", span.text)) return "run_text_differs";
+
+  const queued = queuedRunOpAt(getState(), atPara, run.index);
+  setState({
+    selection: { kind: "paragraph", atPara },
+    inlineEdit: {
+      kind: "run",
+      atPara,
+      run: run.index,
+      before: queued?.before ?? run.text ?? "",
+      opId: queued?.opId ?? null,
+      caret: fraction === undefined ? null : caretOffsetAt(span, fraction),
+      spanIndex: span.index,
+      sizePt: span.sizePt,
+    },
+  });
+  return null;
 }
 
 export function cancelEdit(): void {
@@ -381,17 +515,34 @@ export async function commitEdit(value: string): Promise<void> {
     return;
   }
   const ops = getState().draft.ops.filter((op) => op.opId !== edit.opId);
-  const next: QueuedOp = {
-    opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
-    kind: "fill_cell",
-    table: edit.table,
-    row: edit.row,
-    col: edit.col,
-    text: trimmed,
-    charPr: edit.charPr,
-    before: edit.before,
-    origin: "user",
-  };
+  // ONE QUEUE, ONE PLAN PATH, TWO OP KINDS. A value typed into a seat and a
+  // sentence typed into a paragraph differ by exactly the operation kind the
+  // runtime's own registry names for each. Everything past this line —
+  // `setQueue`, `plan/propose`, `plan/validate`, the review queue, approval,
+  // apply, the receipt — is the same code for both, which is what makes the
+  // caret a new surface rather than a second mutation route.
+  const next: QueuedOp =
+    edit.kind === "cell"
+      ? {
+          opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+          kind: "fill_cell",
+          table: edit.table,
+          row: edit.row,
+          col: edit.col,
+          text: trimmed,
+          charPr: edit.charPr,
+          before: edit.before,
+          origin: "user",
+        }
+      : {
+          opId: edit.opId ?? `op-p${edit.atPara}r${edit.run}`,
+          kind: "set_run",
+          atPara: edit.atPara,
+          run: edit.run,
+          text: trimmed,
+          before: edit.before,
+          origin: "user",
+        };
   await setQueue([...ops, next]);
 }
 
@@ -415,7 +566,10 @@ export async function declareSuggestedCharPr(opId: string): Promise<void> {
   const sessionId = state.activeSessionId;
   const inspect = sessionId ? (state.inspects[sessionId] ?? null) : null;
   const ops = state.draft.ops.map((op) => {
-    if (op.opId !== opId) return op;
+    // T30 is a fill seat's preflight, and `set_run` preserves the run's own
+    // charPrIDRef rather than declaring one — so there is nothing here for a
+    // run op to declare, and it is left exactly as it is.
+    if (op.opId !== opId || op.kind !== "fill_cell") return op;
     const seat = seatAt(inspect, op.table, op.row, op.col);
     // The value is the engine's own `charpr_suggested`, never a shell guess.
     return seat?.charPrSuggested ? { ...op, charPr: seat.charPrSuggested } : op;
@@ -492,15 +646,29 @@ async function setQueue(
   try {
     const plan = await rt.proposePlan(
       sessionId,
-      ops.map((op) => ({
-        opId: op.opId,
-        kind: op.kind,
-        table: op.table,
-        row: op.row,
-        col: op.col,
-        text: op.text,
-        ...(op.charPr ? { charPr: op.charPr } : {}),
-      })),
+      // Each kind carries exactly the fields its own op declares and no
+      // others: `plan/propose` refuses an op that carries a field its kind
+      // does not define (`unknown_field`, rt_plan.py:196), which is the check
+      // that would catch a shell sending a cell's triple with a run's address.
+      ops.map((op) =>
+        op.kind === "fill_cell"
+          ? {
+              opId: op.opId,
+              kind: op.kind,
+              table: op.table,
+              row: op.row,
+              col: op.col,
+              text: op.text,
+              ...(op.charPr ? { charPr: op.charPr } : {}),
+            }
+          : {
+              opId: op.opId,
+              kind: op.kind,
+              atPara: op.atPara,
+              run: op.run,
+              text: op.text,
+            },
+      ),
     );
     const validation = await rt.validatePlan(plan.planId);
     setState({
@@ -891,6 +1059,21 @@ export async function loadGeometry(page?: number): Promise<void> {
   return call;
 }
 
+/**
+ * Could this address hold a caret? A SHAPE check, and deliberately only that.
+ *
+ * True for a paragraph address carrying an `atPara`, which is the only thing
+ * `set_run` can address. It is NOT a promise that the caret will be placed:
+ * whether the paragraph holds exactly one run is a question only
+ * `document/readRegion` can answer, and `beginParagraphEdit` asks it at click
+ * time rather than this function guessing. The distinction matters because 51
+ * of the corpus's 365 mapped paragraph lines look exactly like the 314 that
+ * work, right up until the runtime answers.
+ */
+export function addressIsCaretTarget(address: GeometryAddress | null | undefined): boolean {
+  return !!address && address.kind === "anchor" && address.atPara != null;
+}
+
 /** Is this address a seat the editor will actually open? Runtime's answer. */
 export function addressIsEditable(address: GeometryAddress | null | undefined): boolean {
   if (!address || address.kind !== "cell") return false;
@@ -979,8 +1162,23 @@ export function derivationLabel(derivation: string): string {
   }
 }
 
-/** A click on a mapped line of text. */
-export function clickOverlaySpan(span: GeometrySpan): void {
+/**
+ * A click on a mapped line of text. Five honest outcomes, and never a sixth.
+ *
+ * Ambiguous asks. A mapped CELL opens the seat editor, as it always did. A
+ * mapped PARAGRAPH is the new one: it asks the runtime for the line's run
+ * inventory and either puts a caret in the line or names the reason it cannot
+ * (§12.7). Anything else says it is not a place to type.
+ *
+ * `fraction` is where along the page width the pointer landed. It is passed
+ * straight to `charX` — no scaling, no assumption about zoom — and where the
+ * line carries no character boxes, `caret` comes back null and the status bar
+ * says the click snapped to the front of the line.
+ */
+export async function clickOverlaySpan(
+  span: GeometrySpan,
+  fraction?: number,
+): Promise<void> {
   const id = `span-${span.index}`;
   if (span.confidence === "ambiguous") {
     // T41, surfaced. `engine/scripts/preedit.py:221`: one unscoped key
@@ -1001,6 +1199,46 @@ export function clickOverlaySpan(span: GeometrySpan): void {
   }
   const address = span.address;
   if (!address) return; // unmapped: not clickable, and nothing to say
+
+  // A PARAGRAPH LINE. The caret path, and the runtime decides whether there is
+  // one — this shell asks and prints the answer, whichever way it comes back.
+  if (addressIsCaretTarget(address)) {
+    const refusal = await beginParagraphEdit(span, fraction);
+    if (refusal) {
+      setState({
+        overlayPick: {
+          kind: "no_caret",
+          targetId: id,
+          address,
+          refusal,
+          label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+        },
+      });
+      setSelection({ kind: "paragraph", atPara: address.atPara! });
+      return;
+    }
+    const edit = getState().inlineEdit;
+    const snapped = edit?.kind === "run" && edit.caret === null;
+    setState({
+      overlayPick: {
+        kind: "caret",
+        targetId: id,
+        address,
+        // The offset is stated, and so is its absence. "커서를 줄 앞에 놓음"
+        // is not a nicety: it is the difference between a measured position
+        // and a fallback, and a user who is not told cannot know which they
+        // are looking at.
+        caret: edit?.kind === "run" ? edit.caret : null,
+        label:
+          `${addressLabel(address)}` +
+          (snapped
+            ? " · 글자별 위치가 없어 줄 앞에 커서를 놓음"
+            : ` · ${(edit?.kind === "run" ? edit.caret : 0) ?? 0}번째 글자 앞`),
+      },
+    });
+    return;
+  }
+
   if (!addressIsEditable(address)) {
     setState({
       overlayPick: {
@@ -1029,8 +1267,48 @@ export function clickOverlaySpan(span: GeometrySpan): void {
  * seat, exactly as a direct click on an unambiguous one would, and the value
  * still has to be typed and still has to be approved.
  */
-export function chooseCandidate(address: GeometryAddress): void {
+export async function chooseCandidate(address: GeometryAddress): Promise<void> {
   const pick = getState().overlayPick;
+
+  // A PARAGRAPH CANDIDATE IS A CARET, NOT A DEAD END. §12.4: a form label is
+  // routinely registered twice in the target set, once as an `anchor_record`
+  // and once as the table cell it sits in — so an ambiguous span's candidate
+  // list very often holds exactly one anchor and one cell. Before the caret
+  // existed, choosing the anchor half correctly said 값을 넣는 자리가
+  // 아닙니다; it is now the wrong sentence, because a paragraph IS somewhere a
+  // person types.
+  //
+  // The caret goes to the START of the line here, and says so, because a
+  // choice made from a list carried no pointer position to resolve an offset
+  // from. That is the same honest `caret: null` a line with no character boxes
+  // gets — a fallback, labelled as one.
+  if (addressIsCaretTarget(address)) {
+    const span = (getState().geometry?.spans ?? []).find(
+      (s) => `span-${s.index}` === pick?.targetId,
+    );
+    const refusal = span
+      ? await beginParagraphEdit({ ...span, address, confidence: "unique" })
+      : "no_address";
+    setState({
+      overlayPick: refusal
+        ? {
+            kind: "no_caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            refusal,
+            label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+          }
+        : {
+            kind: "caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            caret: null,
+            label: `${addressLabel(address)} — 사용자가 고름 · 줄 앞에 커서를 놓음`,
+          },
+    });
+    return;
+  }
+
   if (!addressIsEditable(address)) {
     setState({
       overlayPick: {

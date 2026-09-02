@@ -132,6 +132,15 @@ try {
         # value part-typed. Nothing about it is arranged — the page is found by
         # asking the runtime which one carries seats.
         @{ phase = 'hold-shot-overlay-seat';  name = 'page-seat-edit';       scale = 1.0 },
+        # THE CARET. Not a seat — a paragraph line of real body text with a
+        # cursor standing INSIDE it, at a position the runtime measured from
+        # the render's own per-character boxes, and a sentence typed around it.
+        # The line is FOUND, page by page and line by line, until one actually
+        # takes a caret: 51 of the corpus's 365 mapped paragraph lines hold
+        # several runs and refuse, so a capture aimed at "the first mapped
+        # line" would photograph a refusal and be captioned as a caret.
+        @{ phase = 'hold-shot-overlay-caret'; name = 'page-caret-edit';      scale = 1.0;
+           corpus = $SeatedCorpus },
         @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 },
         # Phase 5. Each one is reached by running the real thing: the composer
         # shot photographs a plan a real Agent Host process proposed, and the

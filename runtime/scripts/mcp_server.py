@@ -114,7 +114,9 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "document/readRegion": {
         "description": "Exact text and run records for named cells or "
                        "paragraphs. Opt-in and bounded: it refuses rather than "
-                       "truncating when the result is too large.",
+                       "truncating when the result is too large. Each run "
+                       "carries the typeface its charPr resolves to, or null "
+                       "where the document declares none.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -223,7 +225,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
                        "top-left. A span maps to one address, to several "
                        "candidates when the text is genuinely ambiguous, or to "
                        "none. Empty fill seats carry a rect and the method it "
-                       "was derived by.",
+                       "was derived by. A span also carries where each of its "
+                       "characters begins (charX), where the render resolved "
+                       "one box per character of the line's text; absent where "
+                       "it did not.",
         "inputSchema": {
             "type": "object",
             "properties": {
