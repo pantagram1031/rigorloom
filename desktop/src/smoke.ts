@@ -1156,16 +1156,24 @@ async function echoChecks() {
     !document.querySelector('[data-testid="layout-echo"]'),
     domText('[data-testid="page-preview"]').slice(0, 120));
 
+  // The edit has to land on an address the DRAWN page can mark, or this check
+  // is a coin flip: a form's first clean cell may sit on page 3 while the
+  // raster is page 1, and an overlay that marked nothing would then be right.
+  // So the seat is chosen from the intersection — clean per the runtime's own
+  // inspect, AND seated by the runtime on the page being rendered.
   const inspect = activeInspect(getState());
-  const seat = (inspect?.regions.regions ?? []).find(
+  const onPage = new Set(
+    (getState().geometry?.seats ?? []).map((g) => `${g.table}:${g.row}:${g.col}`),
+  );
+  const clean = (inspect?.regions.regions ?? []).filter(
     (r): r is EditableRegion & { table: number; row: number; col: number } =>
       r.kind === "cell" && r.table !== undefined && r.row !== undefined &&
       r.col !== undefined && r.scriptAnomaly !== true && r.colorAnomaly !== true,
   );
-  if (!seat) {
-    check("a clean seat exists on the staged form", false, "no clean seat");
-    return;
-  }
+  const seat = clean.find((r) => onPage.has(`${r.table}:${r.row}:${r.col}`));
+  check("a clean seat exists on the page being drawn", !!seat,
+    `page ${seatPage}: ${onPage.size} seated \u00b7 ${clean.length} clean`);
+  if (!seat) return;
 
   beginEdit(seat.table, seat.row, seat.col);
   await commitEdit("지면 반향 검사");
