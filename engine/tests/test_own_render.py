@@ -1398,6 +1398,46 @@ def test_solve_tracks_matches_declared_total_even_when_underdetermined():
     assert sum(widths) == 300
 
 
+def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
+    """Row 0 holds a one-line cell and a two-line cell; it must fit both.
+
+    Document order puts the short cell first.  Resolving the track from the
+    first constraint that covers it gives the row the short cell's height and
+    draws the tall cell's second line over the row below — which is what a
+    report-class table does and a one-line-per-row government form never
+    does.
+    """
+    heights = own_render.solve_tracks(
+        2, [(0, 1, 1182), (0, 1, 2622), (1, 1, 1182)])
+    assert heights == [2622, 1182]
+
+
+def test_a_track_takes_the_max_whichever_order_the_cells_arrive_in():
+    """The result cannot depend on the order the file lists its cells."""
+    forward = own_render.solve_tracks(1, [(0, 1, 900), (0, 1, 2400)])
+    backward = own_render.solve_tracks(1, [(0, 1, 2400), (0, 1, 900)])
+    assert forward == backward == [2400]
+
+
+def test_row_heights_sum_to_the_tables_own_declared_height(tmp_path):
+    """A synthetic two-column table whose rows differ in line count.
+
+    The check is the file's own internal agreement: solved rows must sum to
+    the table's declared hp:sz@height without the declared-total rescale
+    having to make up a shortfall, which is only true under the max reading.
+    """
+    rows = [(0, 1200), (1, 2400), (2, 1200)]
+    constraints = []
+    for row, tall in rows:
+        constraints.append((row, 1, 1200))   # the short cell, listed first
+        constraints.append((row, 1, tall))   # the tall cell, listed second
+    total = sum(tall for _row, tall in rows)
+    heights = own_render.solve_tracks(len(rows), constraints,
+                                      declared_total=total)
+    assert heights == [1200, 2400, 1200]
+    assert sum(heights) == total
+
+
 # ---------------------------------------------------------------- ink probe
 
 def _table_zero_geometry(path, dpi=144):
