@@ -25,6 +25,7 @@ import type {
   AppliedCandidate,
   ApprovalRecord,
   Candidate,
+  CandidateCompare,
   Capabilities,
   CredentialStatus,
   Finding,
@@ -108,6 +109,16 @@ export interface QueuedFillOp extends QueuedOpBase {
   table: number;
   row: number;
   col: number;
+  /**
+   * Write into a cell that is not empty (`preedit --overwrite`).
+   *
+   * Off for an ordinary fill, and that default is a guard worth keeping: a
+   * seat with something already in it is a seat somebody may have filled on
+   * purpose, and preedit refuses rather than clobbering it. A 되돌리기 제안
+   * sets it, because the cell it is restoring is occupied BY the edit being
+   * reversed — the one case where overwriting is precisely the intent.
+   */
+  overwrite?: boolean;
 }
 
 /**
@@ -156,6 +167,22 @@ export interface Draft {
   error: RuntimeError | null;
   /** Set when the user edited or removed an agent's op: the plan is now ours. */
   rewrittenFromAgent: boolean;
+  /**
+   * The candidate this queue chains onto, or null for the source (§15.2).
+   *
+   * Set from the head of the chain whenever there is one, so a second edit
+   * after an apply lands on TOP of the first rather than beside it. Before
+   * this existed the second candidate quietly did not contain the first edit.
+   */
+  baseRunId: string | null;
+  /**
+   * The candidate this queue undoes, when it is a 되돌리기 제안.
+   *
+   * A queue carrying this is still an ordinary queue: same review, same
+   * approval, same apply. The only difference is what the receipt will record
+   * and what gets proven afterwards.
+   */
+  reverses: string | null;
 }
 
 /**
@@ -290,6 +317,49 @@ export interface WorkspaceState {
   /** Set by the editor when a real `compositionend` fires. */
   sawComposition: boolean;
   draft: Draft;
+
+  // --- undo, in two tiers that are never blurred together (E1.4) -----------
+  /**
+   * Ops taken out of the QUEUE, newest last. The pre-approval undo's redo.
+   *
+   * This tier is exact and cheap because nothing has happened yet: an op in
+   * the queue is not in any candidate, so removing it IS the undo and there is
+   * no document to reconcile. It is labelled 대기열에서 제거 in the UI and
+   * never 문서 되돌리기 — conflating the two would be telling a person their
+   * document changed back when nothing ever changed.
+   *
+   * Cleared whenever the queue is bound to a different document or emptied
+   * into a candidate: a redo that re-enqueued an op against other bytes would
+   * be a different edit wearing the same label.
+   */
+  redoStack: QueuedOp[];
+  /**
+   * The candidate the shell treats as the document's current state.
+   *
+   * SHELL STATE, and it has to be: the runtime records parents but not a head
+   * (§15.7), because a chain can fork. So this is a selection, made explicit
+   * in the 기록 panel rather than drifting silently — and it is what a new
+   * edit chains onto and what an export writes.
+   */
+  head: string | null;
+  /** Which candidate the 기록 panel is showing, read-only. Never moves `head`. */
+  historySelected: string | null;
+  /** Phase of a 되돌리기 제안 while it reads the chain and proposes. */
+  undoPhase: Phase;
+  undoError: RuntimeError | null;
+  /**
+   * `candidate/compare` for the reversal that was just applied.
+   *
+   * The runtime's answer, held verbatim. `regionsEqual` is the claim an undo
+   * has to make good; `artifactEqual` is reported beside it and is normally
+   * false, because restoring text is not restoring bytes.
+   */
+  inverseProof: {
+    runId: string;
+    reversedRunId: string;
+    compare: CandidateCompare;
+  } | null;
+
   approval: ApprovalRecord | null;
   approvalPhase: ApprovalPhase;
   approvalError: RuntimeError | null;
@@ -506,6 +576,8 @@ export const EMPTY_DRAFT: Draft = {
   phase: "idle",
   error: null,
   rewrittenFromAgent: false,
+  baseRunId: null,
+  reverses: null,
 };
 
 const initial: WorkspaceState = {
@@ -541,6 +613,12 @@ const initial: WorkspaceState = {
   lastCommit: null,
   sawComposition: false,
   draft: EMPTY_DRAFT,
+  redoStack: [],
+  head: null,
+  historySelected: null,
+  undoPhase: "idle",
+  undoError: null,
+  inverseProof: null,
   approval: null,
   approvalPhase: "idle",
   approvalError: null,
@@ -922,6 +1000,68 @@ export function canRequestApproval(s: WorkspaceState): boolean {
   );
 }
 
+// --- the candidate chain, read side (E1.4) ------------------------------------
+
+/**
+ * The candidates of the active session in LINEAGE order, roots first.
+ *
+ * `candidate/list` already sorts by `createdUtc`, which is the order they were
+ * published in. This walks the `base` links on top of that so a child never
+ * precedes its parent even if two runs share a stamp, and so a fork is visible
+ * as two children of one parent rather than being flattened into a line.
+ *
+ * A row whose base is not in the list is treated as a root and SAID to be one
+ * by the panel, rather than being dropped: a candidate whose parent's receipt
+ * has gone is still a candidate, and hiding it would hide the loss.
+ */
+export function lineage(rows: Candidate[]): Candidate[] {
+  const byId = new Map<string, Candidate>();
+  for (const row of rows) if (row.runId) byId.set(row.runId, row);
+  const children = new Map<string | null, Candidate[]>();
+  for (const row of rows) {
+    const parent = row.base?.runId ?? null;
+    const key = parent !== null && byId.has(parent) ? parent : null;
+    const bucket = children.get(key) ?? [];
+    bucket.push(row);
+    children.set(key, bucket);
+  }
+  const out: Candidate[] = [];
+  const walk = (key: string | null) => {
+    for (const row of children.get(key) ?? []) {
+      out.push(row);
+      if (row.runId) walk(row.runId);
+    }
+  };
+  walk(null);
+  // Anything a cycle in the data would have stranded. Cannot happen with
+  // runtime-written receipts; appended rather than silently lost if it does.
+  for (const row of rows) if (!out.includes(row)) out.push(row);
+  return out;
+}
+
+/** The candidate a reversal names, when this one is a reversal. */
+export function reversedBy(rows: Candidate[], runId: string): Candidate | null {
+  return rows.find((row) => row.reverses?.runId === runId) ?? null;
+}
+
+/**
+ * Which candidate the shell is standing on: the explicit head, or the newest.
+ *
+ * The runtime has no head (§15.7) and this does not pretend otherwise — it is
+ * a shell decision with a stated default, and the 기록 panel shows which row
+ * carries it.
+ */
+export function headCandidate(s: WorkspaceState): Candidate | null {
+  const rows = activeCandidates(s);
+  if (rows.length === 0) return null;
+  if (s.head) {
+    const chosen = rows.find((row) => row.runId === s.head);
+    if (chosen) return chosen;
+  }
+  const ordered = lineage(rows);
+  return ordered[ordered.length - 1] ?? null;
+}
+
 /** A stable key for a cell, shared by the queue, the tree and the centre. */
 export function cellKey(table: number, row: number, col: number): string {
   return `c:${table}:${row}:${col}`;
@@ -997,6 +1137,17 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
       : null,
     approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
     applied: s.applied?.candidate.sha256 ?? null,
+    // E1.4. Undo is Workspace state like every other kind: a 되돌리기 제안
+    // half-reviewed in Document view must be the same proposal in Agent view,
+    // and a redo stack that emptied on Ctrl+2 would be a second history.
+    draftBase: s.draft.baseRunId,
+    draftReverses: s.draft.reverses,
+    redoStack: s.redoStack.map((op) => `${opTargetId(op)}=${op.text}`),
+    head: s.head,
+    historySelected: s.historySelected,
+    inverseProof: s.inverseProof
+      ? `${s.inverseProof.runId}:${s.inverseProof.compare.regionsEqual}`
+      : null,
     verdict: s.candidateVerdict?.report.acceptance ?? null,
     receiptOpen: s.receiptOpen,
     events: s.events.length,

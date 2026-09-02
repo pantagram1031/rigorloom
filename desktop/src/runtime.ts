@@ -14,6 +14,7 @@ import type {
   AppliedCandidate,
   ApprovalRecord,
   Candidate,
+  CandidateCompare,
   Capabilities,
   CredentialStatus,
   EventDelivery,
@@ -144,22 +145,53 @@ export const inspect = (sessionId: string) =>
 export const readRegion = (
   sessionId: string,
   regions: Array<{ table?: number; row?: number; col?: number; atPara?: number }>,
+  runId?: string | null,
 ) =>
-  call<{ sessionId: string; documentHash: string; regions: RegionText[] }>(
-    "document/readRegion",
-    { sessionId, regions },
-  );
+  call<{
+    sessionId: string;
+    documentHash: string;
+    /** Which document answered. Stated on every read, source included (§15.3). */
+    subject: { kind: string; runId?: string; sha256: string };
+    regions: RegionText[];
+  }>("document/readRegion", { sessionId, regions, ...(runId ? { runId } : {}) });
 
 export const candidates = (sessionId: string) =>
   call<{ sessionId: string; candidates: Candidate[] }>("candidate/list", {
     sessionId,
   }).then((r) => r.candidates);
 
+/**
+ * Compare a candidate with another candidate or the source (§15.4).
+ *
+ * The proof half of undo, and it is deliberately a RUNTIME call: a shell that
+ * compared two strings it had fetched would be comparing its own memory. Both
+ * sides here are re-read by the runtime from bytes their receipts re-verified.
+ */
+export const compareCandidate = (
+  sessionId: string,
+  runId: string,
+  against: { runId: string } | { source: true },
+  regions?: Array<{ table?: number; row?: number; col?: number; atPara?: number }>,
+) =>
+  call<CandidateCompare>("candidate/compare", {
+    sessionId,
+    runId,
+    against,
+    ...(regions && regions.length > 0 ? { regions } : {}),
+  });
+
 // --- the mutation path -------------------------------------------------------
 
+/**
+ * Build a plan. `baseRunId` is what makes an edit the NEXT one rather than a
+ * second first one (§15.2): without it the plan starts from the session source
+ * and the candidate it produces does not carry earlier edits. `reverses`
+ * declares which candidate this plan undoes, and the receipt records it.
+ */
 export const proposePlan = (
   sessionId: string,
   ops: Array<Record<string, unknown>>,
+  options: { baseRunId?: string | null; reverses?: string | null } = {},
   proposer = "rigorloom-desktop",
 ) =>
   call<{ plan: OperationPlan }>("plan/propose", {
@@ -167,6 +199,8 @@ export const proposePlan = (
     backend: "preedit",
     ops,
     proposer,
+    ...(options.baseRunId ? { baseRunId: options.baseRunId } : {}),
+    ...(options.reverses ? { reverses: { runId: options.reverses } } : {}),
   }).then((r) => r.plan);
 
 export const validatePlan = (planId: string) =>
@@ -238,9 +272,19 @@ export const renderPage = (
     ...(runId ? { runId } : {}),
   });
 
-/** HOST ONLY. Starts Hancom on the operator's machine, or refuses saying why. */
-export const renderPrepare = (sessionId: string) =>
-  call<PrepareResult>("document/renderPrepare", { sessionId });
+/**
+ * HOST ONLY. Starts Hancom on the operator's machine, or refuses saying why.
+ *
+ * With a `runId` it converts that CANDIDATE rather than the source — the only
+ * honest way to show the page a candidate draws, and the reason E1.2's
+ * 다시 그리기 has anywhere to go. Whether this machine can is a separate
+ * question, and its answer is the refusal.
+ */
+export const renderPrepare = (sessionId: string, runId?: string | null) =>
+  call<PrepareResult>("document/renderPrepare", {
+    sessionId,
+    ...(runId ? { runId } : {}),
+  });
 
 /**
  * Where the text is on the page, and what each line is addressable as (§12).

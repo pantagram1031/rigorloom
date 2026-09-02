@@ -8,6 +8,7 @@
 import { beginEdit } from "../actions";
 import { selectionId, useWorkspace, type Selection } from "../store";
 import type { InspectResult, SidecarStatus } from "../types";
+import { History } from "./History";
 import { ReviewQueue } from "./ReviewQueue";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 
@@ -186,6 +187,12 @@ export function ContextPanel({
             below the selection's facts because the order of work is: look at
             the seat, decide, then review what you decided. */}
         <ReviewQueue />
+
+        {/* 기록 sits under the queue for the same reason the queue sits under
+            the selection: the order of work is decide, review, then look at
+            what has already been decided — and undo is reached from what has
+            already been decided, never from the queue. */}
+        <History />
 
         <div className="section">
           <h3>연결</h3>
