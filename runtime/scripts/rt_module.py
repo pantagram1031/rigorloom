@@ -38,14 +38,22 @@ process group, no Windows Job, same gap ``rt_engine`` records and
 writes to an absolute path outside its cwd is therefore not stopped by
 anything here; it is only kept away from the session's own bytes.
 
-WHAT MAY BE RUN, AND WHY IT IS A DECLARATION. A session holds a document; half
-the shipped checkers take a report *workspace* directory instead. Telling them
-apart is not core's to guess: a name list in core violates the first module
-rule, and handing an ``.hwpx`` path to a workspace checker produces a verdict
-about an empty directory that reads exactly like a finding about the user's
-document. So ``provides.checkers[].subject`` (modules/README.md) says which,
-and a checker that has not declared one is reported ``skipped`` with reason
-``subject_undeclared`` — never run on a guess, never counted as a pass.
+WHAT MAY BE RUN, AND WHY IT IS A DECLARATION. A session holds a document OR a
+report workspace directory; most of the shipped checkers take the second kind.
+Telling them apart is not core's to guess: a name list in core violates the
+first module rule, and handing an ``.hwpx`` path to a workspace checker
+produces a verdict about an empty directory that reads exactly like a finding
+about the user's document. So ``provides.checkers[].subject``
+(modules/README.md) says which, and a checker that has not declared one is
+reported ``skipped`` with reason ``subject_undeclared`` — never run on a guess,
+never counted as a pass.
+
+THE SKIP IS SYMMETRIC (GAP 20). Until the Runtime learned a workspace session
+kind, ``needs_workspace`` was the only mismatch there was, and thirteen of the
+seventeen declared checkers were skipped by construction — the report-pipeline
+product behind one missing session kind. A workspace session runs those and
+skips the document-subject ones with ``needs_document``, the exact mirror. Both
+reasons mean the same thing: this session does not hold what that checker eats.
 """
 from __future__ import annotations
 
@@ -58,7 +66,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from rt_codes import CHILD_TIMEOUT_SECONDS, RpcError  # noqa: E402
+from rt_codes import CHILD_TIMEOUT_SECONDS, SESSION_KINDS, RpcError  # noqa: E402
 from rt_engine import child_python, run_child  # noqa: E402
 
 #: Where the distribution modules live, and which of them are enabled. Both
@@ -78,8 +86,14 @@ CHECK_SUBJECTS = ("document", "workspace")
 #: not a failure — it is a checker that was never asked.
 SKIP_REASONS = (
     "subject_undeclared",   # the declaration does not say what its input is
-    "needs_workspace",      # it takes a report workspace; a session is a document
+    "needs_workspace",      # it takes a report workspace; this session holds a document
+    "needs_document",       # it takes a document; this session holds a workspace
 )
+
+#: The session kind a checker's declared subject needs. One mapping, both
+#: directions, so the mismatch reason is derived rather than branched twice.
+SUBJECT_SESSION_KIND = {"document": "document", "workspace": "workspace"}
+MISMATCH_REASON = {"document": "needs_document", "workspace": "needs_workspace"}
 
 #: Decided AFTER trying. The child ran, or could not, and produced no verdict
 #: this Runtime is willing to read as one.
@@ -116,6 +130,10 @@ FINDING_SEVERITIES = ("hard", "warn", "skipped")
 #: NAME is deliberately not one of them: it is the code, and echoing it as a
 #: location would make every rule-level skip look like it pointed somewhere.
 _LOCATION_KEYS = ("at", "where", "location", "seat", "path")
+
+#: Keys a workspace checker uses for a FILE inside the workspace, when it
+#: writes its location as an object rather than a string.
+_PATH_KEYS = ("path", "file", "relpath")
 
 
 # --- registry access ---------------------------------------------------------
@@ -192,6 +210,7 @@ def module_capability(engine_root: Path, environ: dict | None = None) -> dict:
         "reason": None,
         "methods": ["module/list", "module/check"],
         "subjects": list(CHECK_SUBJECTS),
+        "sessionKinds": list(SESSION_KINDS),
         "skipReasons": list(SKIP_REASONS),
         "unavailableReasons": list(UNAVAILABLE_REASONS),
         "findingSeverities": list(FINDING_SEVERITIES),
@@ -273,10 +292,15 @@ def module_list(engine_root: Path, environ: dict | None = None) -> dict:
                 "script": _relative(str(spec.payload_path(entry["script"])), root),
                 "subject": subject,
                 "wants": list(entry.get("wants") or []),
+                # Which session kind can run it, both stated. Before the
+                # workspace kind existed only the first was, and "not runnable
+                # against a document" read as "not runnable" (GAP 20).
                 "runnableAgainstDocument": subject == "document",
-                "reason": None if subject == "document" else (
-                    "needs_workspace" if subject == "workspace"
-                    else "subject_undeclared"),
+                "runnableAgainstWorkspace": subject == "workspace",
+                "runnableIn": ([SUBJECT_SESSION_KIND[subject]]
+                               if subject in SUBJECT_SESSION_KIND else []),
+                "reason": None if subject in SUBJECT_SESSION_KIND
+                else "subject_undeclared",
             })
         modules.append({
             "name": name,
@@ -336,7 +360,81 @@ def _address(location) -> dict | None:
     return None
 
 
-def _finding(severity: str, row: dict) -> dict:
+class _Places:
+    """Turns a checker's own idea of "where" into the Runtime's addressing.
+
+    Two jobs, and the second is a privacy fix the document path needed too.
+
+    SCRUB. A checker is handed a path under the per-call scratch directory and
+    several of them echo that path straight into a finding —
+    ``check_claims`` writes ``str(ledger_path)``, an ABSOLUTE path. That is the
+    operator's directory layout plus a temp directory that no longer exists by
+    the time a caller reads the answer, on a wire an agent reads. §13.6 already
+    settled the principle for ``module/list`` ("an absolute path is the
+    operator's directory layout, and there is no reason for it to cross a
+    wire"); this applies it to findings.
+
+    ADDRESS. For a workspace subject the Runtime's addressing is a
+    workspace-relative path and an optional line, and it is emitted ONLY when
+    the whole location resolves to something that is actually in the copy.
+    ``"output/QUESTIONS.md numbers=[3]"`` gets no address and keeps its text:
+    the rule §13.4 states for cells — never a half-address that would select
+    the wrong thing — reads the same way for files.
+    """
+
+    def __init__(self, subject_kind: str, subject_path: Path):
+        self.subject_kind = subject_kind
+        self.root = subject_path
+        prefixes = {str(subject_path), str(subject_path.resolve())}
+        if subject_kind == "workspace":
+            prefixes |= {p + os.sep for p in list(prefixes)}
+        self.prefixes = sorted(prefixes, key=len, reverse=True)
+
+    def scrub(self, value):
+        """Any scratch path in a string becomes workspace/document-relative."""
+        if not isinstance(value, str):
+            return value
+        out = value
+        for prefix in self.prefixes:
+            if prefix in out:
+                out = out.replace(prefix, "" if prefix.endswith(os.sep) else ".")
+        if out != value:
+            out = out.replace("\\", "/").lstrip("/")
+        return out or value
+
+    def address(self, location):
+        if self.subject_kind != "workspace":
+            return _address(location)
+        candidate = None
+        if isinstance(location, dict):
+            for key in _PATH_KEYS:
+                if isinstance(location.get(key), str):
+                    candidate = location[key]
+                    break
+        elif isinstance(location, str):
+            candidate = location
+        if not candidate:
+            return None
+        text = self.scrub(candidate).strip().replace("\\", "/")
+        line = None
+        head, sep, tail = text.rpartition(":")
+        if sep and tail.isdigit() and head:
+            text, line = head, int(tail)
+        if not text or text.startswith("/") or ".." in text.split("/"):
+            return None
+        target = self.root / text
+        try:
+            if not (target.is_file() or target.is_dir()):
+                return None
+        except OSError:
+            return None
+        address = {"path": text}
+        if line is not None:
+            address["line"] = line
+        return address
+
+
+def _finding(severity: str, row: dict, places: "_Places") -> dict:
     assert severity in FINDING_SEVERITIES, severity
     code = row.get("code") or row.get("rule")
     message = row.get("msg") or row.get("message") or row.get("reason")
@@ -345,16 +443,19 @@ def _finding(severity: str, row: dict) -> dict:
         if key in row and row[key] is not None:
             location = row[key]
             break
+    if not isinstance(location, (dict, str, int)):
+        location = None
     return {
         "severity": severity,
         "code": str(code) if code is not None else None,
-        "message": _bounded(message, MAX_MESSAGE_CHARS) if message is not None else None,
-        "location": location if isinstance(location, (dict, str, int)) else None,
-        "address": _address(location),
+        "message": (_bounded(places.scrub(message), MAX_MESSAGE_CHARS)
+                    if message is not None else None),
+        "location": places.scrub(location) if isinstance(location, str) else location,
+        "address": places.address(location),
     }
 
 
-def _findings(parsed: dict) -> tuple[list, dict]:
+def _findings(parsed: dict, places: "_Places") -> tuple[list, dict]:
     rows: list[dict] = []
     truncated: dict[str, int] = {}
     for severity in FINDING_SEVERITIES:
@@ -365,7 +466,7 @@ def _findings(parsed: dict) -> tuple[list, dict]:
         if len(kept) > MAX_FINDINGS_PER_CHECKER:
             truncated[severity] = len(kept) - MAX_FINDINGS_PER_CHECKER
             kept = kept[:MAX_FINDINGS_PER_CHECKER]
-        rows.extend(_finding(severity, item) for item in kept)
+        rows.extend(_finding(severity, item, places) for item in kept)
     return rows, truncated
 
 
@@ -405,6 +506,21 @@ def _row(entry: dict, *, state: str, reason: str | None, **extra) -> dict:
 
 def _resolve_subject(session, run_id):
     """The bytes to check, and what they are. A candidate is re-verified first."""
+    if getattr(session, "kind", "document") == "workspace":
+        if run_id is not None:
+            raise RpcError("invalid_params",
+                           "runId names a published candidate, which only a "
+                           "document session has; a workspace session has no "
+                           "candidates",
+                           sessionId=session.id, sessionKind="workspace")
+        return session.workspace, {
+            "kind": "workspace",
+            "name": session.meta["workspaceName"],
+            "sha256": session.meta["workspaceTreeSha256"],
+            "bytes": session.meta["workspaceBytes"],
+            "files": session.meta["workspaceFiles"],
+            "runId": None,
+        }
     if run_id is None:
         return session.source, {
             "kind": "session_source",
@@ -496,8 +612,27 @@ def _timeout(value) -> float:
     return seconds
 
 
+def _install_env(facts: dict) -> dict:
+    """Tell the child which module installation this call is about.
+
+    MEASURED DEFECT, fixed here. Three of the shipped workspace checkers read
+    the registry themselves — ``check_numbers`` and ``check_tone_rules`` to
+    resolve a pack type their own module declares, ``content_audit`` to compose
+    a sibling module's checker — and they resolved it against the DEFAULT
+    ``modules/enabled.yaml``, because the environment allowlist carried neither
+    override. So a Runtime told to use one enablement selected a checker from
+    it and then handed that checker a machine on which its own module looked
+    disabled; all three came back ``usage_error`` saying "enable the module you
+    just ran me from". Passing the two names the Runtime already resolved makes
+    the child's answer be about the installation the caller asked about.
+    """
+    return {MODULES_ROOT_ENV: facts["modulesRoot"],
+            MODULES_ENABLED_ENV: facts["enabledFile"]}
+
+
 def _run_one(entry: dict, *, subject_copy: Path, baseline_copy: Path | None,
-             cwd: Path, timeout: float) -> dict:
+             cwd: Path, timeout: float, places: "_Places",
+             env_extra: dict) -> dict:
     argv = [child_python(), entry["script"], str(subject_copy)]
     wants = list(entry.get("wants") or [])
     unsatisfied = []
@@ -508,7 +643,7 @@ def _run_one(entry: dict, *, subject_copy: Path, baseline_copy: Path | None,
             argv += ["--baseline", str(baseline_copy)]
     started = time.monotonic()
     try:
-        result = run_child(argv, cwd=cwd, timeout=timeout)
+        result = run_child(argv, cwd=cwd, timeout=timeout, extra_env=env_extra)
     except RpcError as exc:
         return _row(entry, state="unavailable", reason="spawn_failed",
                     detail=_bounded(exc.message, MAX_DETAIL_CHARS),
@@ -532,21 +667,31 @@ def _run_one(entry: dict, *, subject_copy: Path, baseline_copy: Path | None,
     if result.returncode == 2:
         message = None
         if isinstance(parsed, dict):
-            message = parsed.get("error") or parsed.get("verdict")
+            # A composing checker exits 2 with its sub-checker's real message
+            # in ``hard[0].msg`` and only the word "usage_error" in ``verdict``.
+            # Measured: content_audit reporting check_claims' schema refusal
+            # came back as the bare word until the hard row was read first.
+            hard = parsed.get("hard")
+            if isinstance(hard, list) and hard and isinstance(hard[0], dict):
+                message = hard[0].get("msg") or hard[0].get("message")
+            message = (message or parsed.get("error")
+                       or parsed.get("verdict"))
         return _row(entry, state="unavailable", reason="usage_error",
-                    detail=_bounded(message or stderr or "exit 2 with no message",
-                                    MAX_DETAIL_CHARS),
+                    detail=_bounded(places.scrub(
+                        message or stderr or "exit 2 with no message"),
+                        MAX_DETAIL_CHARS),
                     **common)
     if parsed is None:
         reason = ("missing_dependency"
                   if ("ModuleNotFoundError" in stderr or "ImportError" in stderr)
                   else "no_verdict")
         return _row(entry, state="unavailable", reason=reason,
-                    detail=_bounded(stderr or result.text
-                                    or "no output at all", MAX_DETAIL_CHARS),
+                    detail=_bounded(places.scrub(stderr or result.text
+                                                 or "no output at all"),
+                                    MAX_DETAIL_CHARS),
                     **common)
 
-    findings, truncated = _findings(parsed)
+    findings, truncated = _findings(parsed, places)
     counts = parsed.get("counts")
     row = _row(entry, state="ran", reason=None, **common)
     row["ok"] = bool(parsed.get("ok"))
@@ -579,23 +724,53 @@ def run_module_checks(session, *, engine_root: Path, module: str,
     registry, facts = load_registry(engine_root, environ)
     selected = _select(registry, module_registry, module, checkers, facts)
 
+    session_kind = getattr(session, "kind", "document")
     subject_path, subject = _resolve_subject(session, run_id)
-    if not subject_path.is_file():
+    exists = subject_path.is_dir() if session_kind == "workspace" else subject_path.is_file()
+    if not exists:
         raise RpcError("artifact_missing",
-                       "the document this session holds is not on disk",
+                       f"the {session_kind} this session holds is not on disk",
                        sessionId=session.id, kind=subject["kind"])
 
     call_id = uuid.uuid4().hex
     scratch = session.dir / "checks" / call_id
     rows: list[dict] = []
-    baseline = {"supplied": False, "kind": None,
-                "reason": ("checking the session source itself: a document is "
-                           "never its own baseline")}
+    if session_kind == "workspace":
+        baseline = {"supplied": False, "kind": None,
+                    "reason": ("a report workspace has no blank form it was "
+                               "produced from, so there is no baseline to "
+                               "supply and none is claimed")}
+    else:
+        baseline = {"supplied": False, "kind": None,
+                    "reason": ("checking the session source itself: a document "
+                               "is never its own baseline")}
+    copy_facts: dict = {}
     try:
         try:
             (scratch / "subject").mkdir(parents=True, exist_ok=False)
             subject_copy = scratch / "subject" / subject["name"]
-            shutil.copyfile(subject_path, subject_copy)
+            started_copy = time.monotonic()
+            if session_kind == "workspace":
+                from rt_workspace import copy_tree  # noqa: PLC0415
+
+                copied = copy_tree(subject_path, subject_copy)
+                copy_facts = {"files": copied["files"], "bytes": copied["bytes"],
+                              "millis": copied["millis"],
+                              "treeSha256": copied["treeSha256"]}
+                # The scratch copy must be the session copy, byte for byte and
+                # name for name. If it were not, every finding below would be
+                # about a workspace nobody has.
+                if copied["treeSha256"] != subject["sha256"]:
+                    raise RpcError(
+                        "capability_unavailable",
+                        "the scratch copy of the workspace does not hash to the "
+                        "session copy; nothing is checked rather than something "
+                        "unidentified",
+                        expected=subject["sha256"], got=copied["treeSha256"])
+            else:
+                shutil.copyfile(subject_path, subject_copy)
+                copy_facts = {"files": 1, "bytes": subject.get("bytes"),
+                              "millis": int((time.monotonic() - started_copy) * 1000)}
             baseline_copy = None
             if run_id is not None:
                 # The blank form a candidate was produced from IS the session
@@ -610,10 +785,12 @@ def run_module_checks(session, *, engine_root: Path, module: str,
                             "reason": None}
         except OSError as exc:
             raise RpcError("capability_unavailable",
-                           "could not stage a scratch copy of the document; the "
-                           "checkers are never pointed at the session's own bytes",
+                           f"could not stage a scratch copy of the {session_kind}; "
+                           "the checkers are never pointed at the session's own "
+                           "bytes",
                            detail=str(exc)[:MAX_DETAIL_CHARS]) from exc
 
+        places = _Places(session_kind, subject_copy)
         for entry in selected:
             subject_kind = entry.get("subject")
             if subject_kind is None:
@@ -621,18 +798,19 @@ def run_module_checks(session, *, engine_root: Path, module: str,
                     entry, state="skipped", reason="subject_undeclared",
                     detail=("this checker's declaration does not say what its "
                             "positional argument is, so nothing here knows "
-                            "whether a document may be handed to it")))
+                            f"whether a {session_kind} may be handed to it")))
                 continue
-            if subject_kind != "document":
+            if SUBJECT_SESSION_KIND.get(subject_kind) != session_kind:
                 rows.append(_row(
-                    entry, state="skipped", reason="needs_workspace",
-                    detail=("this checker takes a report workspace directory; a "
-                            "Runtime session holds one document, which is not "
-                            "one")))
+                    entry, state="skipped",
+                    reason=MISMATCH_REASON.get(subject_kind, "subject_undeclared"),
+                    detail=(f"this checker takes a {subject_kind}; this session "
+                            f"holds a {session_kind}, which is not one")))
                 continue
             rows.append(_run_one(entry, subject_copy=subject_copy,
                                  baseline_copy=baseline_copy, cwd=scratch,
-                                 timeout=seconds))
+                                 timeout=seconds, places=places,
+                                 env_extra=_install_env(facts)))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -656,6 +834,7 @@ def run_module_checks(session, *, engine_root: Path, module: str,
 
     return {
         "sessionId": session.id,
+        "sessionKind": session_kind,
         "module": module,
         "modulesRoot": facts["modulesRoot"],
         "enabledFile": facts["enabledFile"],
@@ -681,6 +860,10 @@ def run_module_checks(session, *, engine_root: Path, module: str,
             "perCheckerSeconds": seconds,
             "worstCaseSeconds": round(seconds * max(len(rows), 1), 3),
             "containment": "not_established",
+            # What the isolation actually cost. A workspace is a tree, so the
+            # scratch copy is not free and a caller sizing a fix loop needs the
+            # number rather than an assurance that it is small.
+            "subjectCopy": copy_facts,
         },
         "evidence": {
             "class": "structural_only",
