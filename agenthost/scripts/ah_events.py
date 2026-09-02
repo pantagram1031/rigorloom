@@ -22,6 +22,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ah_codes import EVENT_SCHEMA  # noqa: E402
 
+RUNTIME_SCRIPTS = Path(__file__).resolve().parents[2] / "runtime" / "scripts"
+if str(RUNTIME_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_SCRIPTS))
+
+from rt_session import append_line  # noqa: E402
+
 #: Header names whose values are never written anywhere, in any casing.
 SECRET_HEADERS = frozenset({"authorization", "x-api-key", "api-key",
                             "proxy-authorization", "cookie", "set-cookie"})
@@ -41,6 +47,24 @@ EVENT_KINDS = (
     "tool.compiled",
     "runtime.result",
     "runtime.refused",
+    # --- conversation with memory (host 0.2.0) ---
+    #: a host process picked up an existing turn log and continued it
+    "session.attached",
+    #: one turn was appended to the persistent turn log
+    "session.turn",
+    #: history exceeded the window; carries the policy and the counts, so a
+    #: dropped exchange is always visible as a dropped exchange
+    "session.truncated",
+    # --- operator-granted document context (host 0.2.0) ---
+    #: an operator granted, or revoked, read-scoped document context
+    "context.granted",
+    "context.revoked",
+    #: granted context was actually put in a prompt. ADDRESSES and sizes only:
+    #: the whole point of the grant is that the text goes to the provider and
+    #: nowhere else, and a log that copies it defeats that on the first turn
+    "context.included",
+    #: the agent reached past the grant and was refused
+    "context.refused",
     "host.note",
 )
 
@@ -54,14 +78,28 @@ def redact_headers(headers: dict | None) -> dict:
 
 
 class EventLog:
-    """Append-only, ordered, renderable. Optionally mirrored to JSONL."""
+    """Append-only, ordered, renderable. Optionally mirrored to JSONL.
 
-    def __init__(self, path: Path | str | None = None):
+    ``sink`` is how a long-lived host pushes events to its client AS THEY
+    HAPPEN rather than at the end of the turn — which is the entire reason a
+    streaming turn is worth having. It is called with the event dict, in
+    order, from the thread that appended it; a sink that raises is a client
+    problem and must not take the run down with it.
+
+    ``append_mode`` keeps an existing mirror file: a one-shot run starts a
+    fresh log (a golden document wants exactly its own events), a long-lived
+    host adds to the one already there.
+    """
+
+    def __init__(self, path: Path | str | None = None, sink=None,
+                 append_mode: bool = False):
         self.path = Path(path) if path else None
+        self.sink = sink
         self._events: list[dict] = []
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_bytes(b"")
+            if not append_mode:
+                self.path.write_bytes(b"")
 
     def append(self, kind: str, **detail) -> dict:
         if kind not in EVENT_KINDS:
@@ -71,10 +109,22 @@ class EventLog:
             event["detail"] = detail
         self._events.append(event)
         if self.path is not None:
-            with self.path.open("ab") as handle:
-                handle.write((json.dumps(event, ensure_ascii=False,
-                                         sort_keys=True, allow_nan=False)
-                              + "\n").encode("utf-8"))
+            line = (json.dumps(event, ensure_ascii=False, sort_keys=True,
+                               allow_nan=False) + "\n").encode("utf-8")
+            # The Runtime's append primitive, imported rather than repeated:
+            # ``open("ab")`` is NOT an atomic append on Windows, and that was
+            # measured here (runtime/scripts/rt_session.append_line).
+            try:
+                append_line(self.path, line)
+            except OSError:
+                # A mirror is a projection. Losing a line of it must not take
+                # down the run whose events it is mirroring.
+                pass
+        if self.sink is not None:
+            try:
+                self.sink(event)
+            except Exception:  # noqa: BLE001 - a client's problem, not the run's
+                pass
         return event
 
     def events(self) -> list[dict]:
