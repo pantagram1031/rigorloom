@@ -776,6 +776,66 @@ def default_compress_type(name):
 
 
 # --------------------------------------------------------------------------
+# the one archive-assembly seam
+# --------------------------------------------------------------------------
+
+#: Archive metadata Hancom stamps on every member.  Measured over all 132
+#: members of the 12-form corpus: each field takes exactly one value, with no
+#: variation between forms, between members, or between stored and deflated.
+HANCOM_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+HANCOM_CREATE_SYSTEM = 11
+HANCOM_CREATE_VERSION = 23
+HANCOM_EXTRACT_VERSION = 20
+HANCOM_EXTERNAL_ATTR = 0x81800020
+
+
+def hancom_part(name, data, compress_type=None):
+    """One member carrying the archive metadata Hancom stamps on every member.
+
+    ``compress_type`` defaults to :func:`default_compress_type`, so the
+    stored/deflated split is Hancom's regardless of how the source archive (if
+    there was one) compressed the member.
+    """
+    if compress_type is None:
+        compress_type = default_compress_type(name)
+    deflated = compress_type == zipfile.ZIP_DEFLATED
+    return HwpxPart(
+        name, data,
+        compress_type=compress_type,
+        date_time=HANCOM_DATE_TIME,
+        create_system=HANCOM_CREATE_SYSTEM,
+        create_version=HANCOM_CREATE_VERSION,
+        extract_version=HANCOM_EXTRACT_VERSION,
+        external_attr=HANCOM_EXTERNAL_ATTR,
+        internal_attr=0,
+        extra=b"",
+        comment=b"",
+        flag_bits=_LEVEL_FLAG[HANCOM_DEFLATE_LEVEL] if deflated else 0,
+    )
+
+
+def hancom_package(members, zip_comment=b""):
+    """A package built from an ordered ``[(name, bytes)]`` sequence."""
+    return HwpxPackage([hancom_part(name, data) for name, data in members],
+                       zip_comment=zip_comment)
+
+
+def write_members(out_path, members, zip_comment=b""):
+    """Assemble an HWPX from ordered ``(name, bytes)`` pairs, Hancom-shaped.
+
+    This is the repo's single archive-assembly seam: ``tidy_hwpx``,
+    ``preedit``, ``xml_backend`` and the new-document builder all route here,
+    so every HWPX Rigorloom emits carries the member metadata, stored/deflated
+    split, deflate level (2) and general-purpose flag bits (``0x4``) Hancom
+    writes — whatever shape the source archive had.
+
+    Member ORDER is the caller's, because the caller inherits it from the
+    source archive it read; nothing here reorders members.
+    """
+    return hancom_package(members, zip_comment=zip_comment).write(out_path)
+
+
+# --------------------------------------------------------------------------
 # new document
 # --------------------------------------------------------------------------
 
@@ -1061,10 +1121,8 @@ def blank_package():
         "META-INF/container.xml": _xml_bytes(_BLANK_CONTAINER),
         "META-INF/manifest.xml": _xml_bytes(_BLANK_MANIFEST),
     }
-    parts = [HwpxPart(name, payloads[name],
-                      compress_type=default_compress_type(name))
-             for name in BLANK_MEMBER_ORDER]
-    package = HwpxPackage(parts)
+    package = hancom_package([(name, payloads[name])
+                              for name in BLANK_MEMBER_ORDER])
     package.validate()
     return package
 

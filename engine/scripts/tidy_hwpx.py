@@ -72,9 +72,7 @@ exit 2: 사용법/파일 오류.
 import argparse
 import json
 import re
-import shutil
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -82,6 +80,21 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from cli_io import utf8_stdio  # noqa: E402
+from hwpx_write import write_members  # noqa: E402
+
+
+def _write_hwpx(out_path, names, contents):
+    """산출 아카이브 조립 — 정식 OWPML 라이터(hwpx_write) 경유.
+
+    멤버 '순서'만 원본 아카이브에서 물려받고, 나머지 아카이브 속성(저장/압축
+    구분, deflate 레벨 2, general-purpose flag bits 0x4, 타임스탬프
+    1980-01-01, create_system 11)은 hwpx_write가 한컴 실측값으로 쓴다.
+    직접 zipfile.ZIP_DEFLATED로 조립하던 이전 방식은 레벨 6 / flag 0 —
+    내용은 같아도 아카이브가 한컴이 쓰는 모양이 아니었다(측정: 코퍼스 12편
+    전부 archive-bytes 불일치, deflate 멤버 96개 전부 flag bits 불일치).
+    """
+    return write_members(out_path, [(n, contents[n]) for n in names])
+
 
 NS = r'[A-Za-z0-9]+'
 P_TAG_RE = re.compile(r'<(' + NS + r'):p\b[^>]*>.*?</\1:p>', re.S)
@@ -275,19 +288,8 @@ def tidy_hwpx(path, before_anchors, after_anchors, keep=1, out_path=None, keep_m
         missing = remaining_before + remaining_after
         die(f"앵커를 찾지 못함: {missing}")
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
-    import os
-    os.close(tmp_fd)
-    try:
-        with zipfile.ZipFile(path) as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = changed_sections.get(item.filename, contents[item.filename])
-                zout.writestr(item, data)
-        shutil.move(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    contents.update(changed_sections)
+    _write_hwpx(out_path, names, contents)
 
     return {"ok": True, "removed": total_removed}
 
@@ -572,19 +574,7 @@ def restore_para_formats(path, baseline_path, out_path=None):
     for sname, sxml in section_xmls.items():
         contents[sname] = sxml.encode("utf-8")
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
-    import os
-    os.close(tmp_fd)
-    try:
-        with zipfile.ZipFile(path) as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = contents[item.filename]
-                zout.writestr(item, data)
-        shutil.move(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    _write_hwpx(out_path, names, contents)
 
     return {"ok": True, "restored": restored}
 
@@ -703,19 +693,7 @@ def apply_keep_with_next(path, prefixes, out_path=None):
     for sname, sxml in section_xmls.items():
         contents[sname] = sxml.encode("utf-8")
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
-    import os
-    os.close(tmp_fd)
-    try:
-        with zipfile.ZipFile(path) as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = contents[item.filename]
-                zout.writestr(item, data)
-        shutil.move(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    _write_hwpx(out_path, names, contents)
 
     return {"ok": True, "patched": patched}
 
@@ -951,19 +929,7 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
     for sname, sxml in section_xmls.items():
         contents[sname] = sxml.encode("utf-8")
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
-    import os
-    os.close(tmp_fd)
-    try:
-        with zipfile.ZipFile(path) as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = contents[item.filename]
-                zout.writestr(item, data)
-        shutil.move(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    _write_hwpx(out_path, names, contents)
 
     return {"ok": True, "patched": patched}
 
