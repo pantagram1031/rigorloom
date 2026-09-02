@@ -146,6 +146,11 @@
             }
           },
           "description": "Submission-preflight contributions: core's submission_preflight subprocess-composes each enabled contribution's JSON findings source-tagged into its own verdict. No modules enabled = those checks simply absent (absence is not failure)."
+        },
+        "workspace_layout": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Module-relative path to a JSON file declaring what a report WORKSPACE directory contains, for a runner that opens one. Exists for the same reason checkers[].subject does: a module's workspace-subject checkers read module-defined paths (bundle/content.md, claims.yaml, output/QUESTIONS.md …) and a runner must be able to report which of them a directory has WITHOUT core holding that list, which rule 1 forbids. The file is read for three keys and any others are ignored: 'canonical_dirs' (array of workspace-relative directory paths), 'stages' (object of {name, inputs[], outputs[]} whose entries carry {pattern, required}) and 'read_only_paths' (array of {pattern, role, required} naming paths a checker reads that no stage routes). A module with no workspace-subject checker has no reason to declare one. Consumer: the Runtime's workspace session kind (docs/runtime-protocol-v0.md §15)."
         }
       }
     }

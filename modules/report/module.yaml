@@ -13,7 +13,14 @@ requires: {rigorloom: ">=0.16"}
 # lookup, W4.2) — the dependency is real, so it is declared and enforced at
 # enablement: report cannot be enabled without style.
 requires_modules: [style]
+# Every checker below takes a report WORKSPACE, and a runner that opens one has
+# to be able to say which expected parts it holds. workspace_layout declares
+# that shape so core never carries the path list (modules/README.md rule 1) —
+# the same move checkers[].subject made for "what is this checker's argument".
+# workspace_layout.json was already the artifact-routing source of truth
+# (docs/architecture.md:17); this makes it readable THROUGH the contract.
 provides:
+  workspace_layout: references/workspace_layout.json
   checkers:
     - {name: check_scorecard, script: scripts/check_scorecard.py, subject: workspace}
     - {name: check_understanding, script: scripts/check_understanding.py, subject: workspace}
