@@ -173,7 +173,10 @@ def main(argv=None):
     text = json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(text + "\n", encoding="utf-8")
+        # newline="\n": the default translates to CRLF on Windows, so every
+        # regeneration would show the whole file as changed.
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
         sys.stdout.write(json.dumps(
             {"ok": True, "out": args.out, **payload["summary"]},
             ensure_ascii=False) + "\n")
