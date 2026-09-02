@@ -1643,7 +1643,20 @@ class OwnRenderer:
         """
         pr = para.para_pr
         heights = []
-        for ch, cid in para.chars[start:end]:
+        objects = 0
+        for offset, (ch, cid) in enumerate(para.chars[start:end]):
+            if ch == OBJECT_SLOT:
+                # An inline object occupies a character cell whose height is
+                # the OBJECT's, not the run's point size.  Measured defect
+                # (kstartup): a paragraph holding one full-page inline table
+                # has a cached vertsize of ~63000 HWPUNIT and a charPr height
+                # of 1000, so taking the run's size shrank the paragraph by a
+                # whole page and pushed everything after it up the sheet.
+                record = para.object_at.get(start + offset)
+                if record is not None and not record[3]:
+                    heights.append(self._object_extent(record[1])[1])
+                    objects += 1
+                    continue
             _ratio, _spacing, rel_sz, _offset = self._typography(cid, ch)
             pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
             heights.append(pt * HWPUNIT_PER_PT)
@@ -2415,7 +2428,12 @@ class OwnRenderer:
         avail_h = max(0, (y1 - y0) - margin["top"] - margin["bottom"])
         sub = _kid(cell["tc"], "subList")
         valign = (sub.get("vertAlign") if sub is not None else "TOP") or "TOP"
-        block = max((p.extent_hwp() for p in cell["paras"]), default=0)
+        # The block being centred has to be the block that will actually be
+        # DRAWN, not the one the cache describes: a relaid-out paragraph is a
+        # different height, and centring the cached height would move every
+        # line in the cell by half the difference.  Same measurement the row
+        # height was solved from.
+        block = self._paragraph_block_extent(draw, cell["paras"], avail_w)
         offset = 0
         if valign.upper() == "CENTER":
             offset = max(0, (avail_h - block) // 2)
