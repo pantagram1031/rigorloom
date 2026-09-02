@@ -56,6 +56,21 @@
                              through the same inline editor the tree uses, and
                              followed all the way to a plan op naming that
                              exact cell.
+    run 12 (phase "undo")    E1.4. Undo in two tiers, and the proof that the
+                             second one is an inverse. Queue-tier undo/redo
+                             exactness (no candidate is produced at all); then
+                             the chain — a second edit must land ON the first
+                             candidate, not beside it, which is the defect
+                             lineage closed; then 되돌리기 제안 → approve →
+                             apply → the runtime's own candidate/compare says
+                             the address came back, and the receipt records
+                             what was reversed. Nothing is deleted: all three
+                             candidates stay listed. It then switches to the
+                             staged rendered session for E1.2 — apply an edit
+                             and assert the page says 후보본과 다름 with the
+                             changed region marked, and that 다시 그리기 lands
+                             on this machine's honest refusal rather than a
+                             fabricated page.
     run 11 (phase "packs")   작업 팩 실행. module/check against an open
                              document, with a real enablement the harness wrote
                              outside the checkout. A document-subject checker
@@ -268,7 +283,7 @@ $ran = @()
 
 # Ordered, because run 2 depends on what run 1 left on disk. Everything after
 # that opens its own session and is order-independent.
-$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay', 'packs',
+$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay', 'undo', 'packs',
             'composer', 'settings', 'chrome', 'chrome-reattach')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 
@@ -282,7 +297,12 @@ try {
         # The app then finds it the way it finds any session left on disk. Its
         # id is passed in only so the phase does not have to guess which of
         # several sessions is the staged one.
-        if ($phase -eq 'overlay') {
+        #
+        # The undo phase needs one too, for its E1.2 half: the layout echo can
+        # only be shown on a document that HAS a page image, and this machine
+        # cannot make one on demand. Staged per phase rather than once, so each
+        # phase still meets a clean root except for the one session it asked for.
+        if ($phase -eq 'overlay' -or $phase -eq 'undo') {
             if (-not (Test-Path $RenderedPdf)) {
                 Write-Host "  [FAIL] no corpus render at $RenderedPdf; the overlay phase has no page to draw on"
                 $allOk = $false

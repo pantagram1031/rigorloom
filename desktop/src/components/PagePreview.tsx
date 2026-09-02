@@ -32,8 +32,15 @@
  */
 import { useEffect } from "react";
 
-import { loadGeometry, preparePages, renderCurrentPage } from "../actions";
-import { canPreparePages, setZoom, useWorkspace } from "../store";
+import {
+  layoutEcho,
+  loadChangedAddresses,
+  loadGeometry,
+  preparePages,
+  renderCurrentPage,
+  type LayoutEcho,
+} from "../actions";
+import { canPreparePages, headCandidate, setZoom, useWorkspace } from "../store";
 import type { GeometryResult, InspectResult, RenderResult, RuntimeError } from "../types";
 import { GeometryLegend, PageOverlay } from "./PageOverlay";
 import { Tag } from "./Tag";
@@ -186,6 +193,77 @@ function GeometryUnavailable({ geometry }: { geometry: GeometryResult }) {
   );
 }
 
+/**
+ * E1.2 — the page is the SOURCE and the document is a candidate. Say so.
+ *
+ * After an apply there is a newer document than the one this raster was drawn
+ * from, and on this machine there is no way to draw the newer one: the frozen
+ * sidecar carries no `pyhwpx`, so `renderPrepare` answers `needs_hancom`, and
+ * with a Hancom window open it answers `com_busy` instead. Both are real, both
+ * are refusals, and neither of them is a reason to fake a page.
+ *
+ * So the raster stays, labelled, with the affected regions marked from the
+ * addresses the RUNTIME's own receipts name — and 다시 그리기 asks for the
+ * candidate's page and prints whatever comes back, success or refusal.
+ *
+ * WHAT THIS WILL NOT DO is paint the edited text onto the raster. The overlay's
+ * rule (§12.2) is that every rectangle on the page came out of the renderer's
+ * own layout; drawing new glyphs at guessed positions would break it in the
+ * most convincing way available — a page that looks right and is not.
+ */
+function CandidateDiffers({ echo }: { echo: LayoutEcho }) {
+  const preparePhase = useWorkspace((s) => s.preparePhase);
+  const canPrepare = useWorkspace(canPreparePages);
+  return (
+    <div className="unavailable" data-testid="layout-echo">
+      <div className="unavailable-head">
+        <Tag tone="warn">후보본과 다름 — 이 그림은 원본 기준</Tag>
+        <code className="mono">{echo.runId.slice(0, 12)}</code>
+      </div>
+      <p>
+        승인한 편집이 담긴 후보본이 있지만, 이 지면 그림은 아직{" "}
+        {/* `kind` is the runtime's own word — `session_source_pdf`,
+            `prepared_pdf`, `candidate_pdf`. Anything that is not a candidate
+            was drawn from the source one way or another, and printing the raw
+            token instead would make a person guess. */}
+        {echo.rendered.kind.startsWith("candidate")
+          ? `다른 후보본(${echo.rendered.runId?.slice(0, 12) ?? "알 수 없음"})`
+          : "원본"}
+        을 그린 것입니다. 후보본을 그리려면 한 번 더 변환해야 합니다.
+      </p>
+      <p className="mono tiny">
+        그림의 출처 {echo.rendered.kind}
+        {echo.rendered.sha256 ? ` · ${echo.rendered.sha256.slice(0, 12)}` : ""}
+      </p>
+      <p className="mono tiny" data-testid="layout-echo-changed">
+        {echo.changed.length > 0
+          ? `달라진 자리 ${echo.changed.length}곳: ${echo.changed.join(" ")}`
+          : "달라진 자리 목록을 아직 읽지 못했습니다 — 영수증을 읽으면 표시됩니다"}
+      </p>
+      <p className="tiny">
+        바뀐 글자를 이 그림 위에 그려 넣지는 않습니다. 그것은 편집기가 지어낸
+        지면이지 렌더러가 그린 지면이 아니기 때문입니다.
+      </p>
+      {canPrepare ? (
+        <button
+          className="action primary"
+          data-testid="echo-redraw"
+          disabled={preparePhase === "starting"}
+          title="후보본을 PDF로 바꿔 다시 그립니다. 원본은 건드리지 않습니다."
+          onClick={() => void preparePages(echo.runId)}
+        >
+          {preparePhase === "starting" ? "한컴을 부르는 중…" : "다시 그리기"}
+        </button>
+      ) : (
+        <p className="reason">
+          document/renderPrepare 가 이 연결에 없습니다. 후보본을 그릴 방법이
+          없습니다.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Unavailable({ render }: { render: RenderResult }) {
   const reason = render.unavailable?.reason ?? "unknown";
   const detail = render.unavailable?.detail ?? "";
@@ -228,6 +306,14 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   const canPrepare = useWorkspace(canPreparePages);
   const sessionId = useWorkspace((s) => s.activeSessionId);
   const geometry = useWorkspace((s) => s.geometry);
+  const echo = useWorkspace(layoutEcho);
+  const head = useWorkspace(headCandidate);
+
+  // Read the plans behind the head's chain so the echo can name the regions
+  // that changed. Nothing is marked until the runtime has said which ones.
+  useEffect(() => {
+    if (head?.runId) void loadChangedAddresses(head.runId);
+  }, [head?.runId]);
 
   // Ask once when the mode is entered. A render is a real call with a real
   // cost; it is not re-run on every zoom nudge.
@@ -270,6 +356,9 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
         </div>
       ) : image?.data ? (
         <>
+          {/* Above the page, not under it: a person must know the picture is
+              out of date BEFORE they read it, not after they scroll past. */}
+          {echo ? <CandidateDiffers echo={echo} /> : null}
           {ruler}
           {/* The raster and the overlay share ONE box, sized once. The overlay
               positions its children in percentages of it, so the two cannot
@@ -286,7 +375,9 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
               src={`data:${image.mediaType};base64,${image.data}`}
               alt={`${page}쪽`}
             />
-            {geometry?.available ? <PageOverlay geometry={geometry} /> : null}
+            {geometry?.available ? (
+              <PageOverlay geometry={geometry} stale={echo?.changed ?? []} />
+            ) : null}
           </div>
           {geometry?.available ? (
             <GeometryLegend geometry={geometry} />

@@ -375,4 +375,16 @@ Write-Host ("serve role: {0} module declarations discovered, {1} enabled ({2})" 
     @($caps.modules.discovered).Count, @($caps.modules.enabled).Count,
     $(if (@($caps.modules.enabled).Count -eq 0) { 'none, which is the shipped default' }
       else { ($caps.modules.enabled -join ', ') }))
+
+# candidate/compare, the method an undo is PROVEN with (E1.4, protocol §15.4).
+# Asserted by name for the reason module/check is: the 기록 panel prints a
+# 되돌리기 확인됨 verdict, and a bundle predating this merge would leave that
+# verdict permanently unobtainable while the button that asks for it still shows.
+if ($caps.methods -notcontains 'candidate/compare') {
+    Write-Error ("the frozen server does not advertise candidate/compare. This bundle " +
+        "predates the lineage merge; a reversal could be proposed and applied but " +
+        "never proven. Methods: " + ($caps.methods -join ', '))
+    exit 3
+}
+Write-Host 'serve role: candidate/compare advertised'
 exit 0

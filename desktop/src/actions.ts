@@ -16,6 +16,7 @@ import {
   canRequestApproval,
   composerBlocker,
   getState,
+  headCandidate,
   locateSelection,
   patchTurn,
   providerConfigFields,
@@ -30,6 +31,7 @@ import {
   type QueuedOp,
 } from "./store";
 import type {
+  AppliedCandidate,
   EditableRegion,
   Finding,
   GeometryAddress,
@@ -37,6 +39,7 @@ import type {
   GeometrySpan,
   InspectResult,
   OperationPlan,
+  PlanOp,
   PlanValidation,
   ProviderSettings,
   Recent,
@@ -585,6 +588,48 @@ export async function removeOp(opId: string): Promise<void> {
   );
 }
 
+// --- undo, tier one: the queue (E1.4) ----------------------------------------
+//
+// AN EDIT IN THE QUEUE IS NOT IN ANY DOCUMENT. Nothing has been approved and
+// nothing has been applied, so taking the op out of the queue IS the undo:
+// exact, instant, and involving no runtime mutation at all. The only thing this
+// tier owes the user is honest labelling — it is 대기열에서 제거, never
+// 문서 되돌리기, because telling someone their document changed back when the
+// document never changed is the exact species of lie this application exists
+// not to tell.
+
+/** Take an op out of the queue and keep it, so 다시 하기 can put it back. */
+export async function undoQueuedOp(opId: string): Promise<boolean> {
+  const op = getState().draft.ops.find((x) => x.opId === opId);
+  if (!op) return false;
+  const rewritten = didRewriteAgent(opId);
+  setState({ redoStack: [...getState().redoStack, op] });
+  await setQueue(
+    getState().draft.ops.filter((x) => x.opId !== opId),
+    { rewritten },
+  );
+  showToast("대기열에서 뺐습니다. 문서는 처음부터 바뀐 적이 없습니다.", 2000);
+  return true;
+}
+
+/**
+ * Put the last removed op back — the same target, the same value.
+ *
+ * Exactness is the whole claim of this tier, so the op object itself is
+ * re-enqueued rather than rebuilt from fields: an op reconstructed from a
+ * remembered address and a remembered string would be a new edit that happened
+ * to look the same, and `before` would drift the first time it was wrong.
+ */
+export async function redoQueuedOp(): Promise<boolean> {
+  const stack = getState().redoStack;
+  const op = stack[stack.length - 1];
+  if (!op) return false;
+  setState({ redoStack: stack.slice(0, -1) });
+  const ops = getState().draft.ops.filter((x) => x.opId !== op.opId);
+  await setQueue([...ops, op]);
+  return true;
+}
+
 /** Was the op being changed one an agent proposed? */
 function didRewriteAgent(opId: string): boolean {
   const op = getState().draft.ops.find((x) => x.opId === opId);
@@ -614,11 +659,22 @@ export async function clearQueue(): Promise<void> {
  */
 async function setQueue(
   ops: QueuedOp[],
-  options: { rewritten?: boolean } = {},
+  options: { rewritten?: boolean; baseRunId?: string | null; reverses?: string | null } = {},
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
   const rewritten = state.draft.rewrittenFromAgent || options.rewritten === true;
+  // THE CHAIN. A queue built while a candidate exists chains onto it, so a
+  // second edit lands on top of the first rather than beside it — before
+  // lineage existed the second candidate silently did not contain the first
+  // edit. The head is a shell decision (the runtime keeps no head, §15.7) and
+  // it is shown in 기록; an explicit option wins over it, which is how a
+  // 되돌리기 제안 names the exact candidate it is chaining onto.
+  const baseRunId =
+    options.baseRunId !== undefined
+      ? options.baseRunId
+      : (state.draft.baseRunId ?? headCandidate(state)?.runId ?? null);
+  const reverses = options.reverses !== undefined ? options.reverses : state.draft.reverses;
 
   setState({
     approval: null,
@@ -640,6 +696,8 @@ async function setQueue(
       phase: "starting",
       error: null,
       rewrittenFromAgent: rewritten,
+      baseRunId,
+      reverses,
     },
   });
 
@@ -660,6 +718,7 @@ async function setQueue(
               col: op.col,
               text: op.text,
               ...(op.charPr ? { charPr: op.charPr } : {}),
+              ...(op.overwrite ? { overwrite: true } : {}),
             }
           : {
               opId: op.opId,
@@ -669,6 +728,7 @@ async function setQueue(
               text: op.text,
             },
       ),
+      { baseRunId, reverses },
     );
     const validation = await rt.validatePlan(plan.planId);
     setState({
@@ -681,6 +741,8 @@ async function setQueue(
         phase: "ready",
         error: null,
         rewrittenFromAgent: rewritten,
+        baseRunId,
+        reverses,
       },
     });
   } catch (e) {
@@ -697,6 +759,8 @@ async function setQueue(
         phase: "failed",
         error: rt.asRuntimeError(e),
         rewrittenFromAgent: rewritten,
+        baseRunId,
+        reverses,
       },
     });
   }
@@ -707,6 +771,246 @@ export async function reproposeDraft(): Promise<void> {
   const ops = getState().draft.ops;
   if (ops.length === 0) return;
   await setQueue(ops);
+}
+
+// --- undo, tier two: an applied candidate (E1.4) -----------------------------
+//
+// AN APPLIED CANDIDATE IS IMMUTABLE AND RECEIPTED, so undoing one cannot mean
+// changing it and must not mean deleting it. It means proposing the INVERSE as
+// a new plan, chained onto the current head, which then travels the same review
+// → approve → apply path as anything else and produces one more candidate with
+// one more receipt. History only ever grows.
+//
+// Three rules this function keeps, and each one is a way a shortcut would lie:
+//
+// 1. **The previous value is READ, never remembered.** It comes from
+//    `document/readRegion` against the candidate the edit was made ON — the
+//    parent named in the receipt, or the source at the root of the chain. A
+//    `before` string the queue happened to still hold would be a client's
+//    memory of the document, and the whole point is that it is the document.
+// 2. **What cannot be inverted is refused by name.** `fill_cell` and `set_run`
+//    are invertible because their previous value is readable. Nothing else is,
+//    and a plan carrying one is not offered a 되돌리기 제안 at all.
+// 3. **It is a PROPOSAL.** It lands in the queue, is labelled 되돌리기 제안,
+//    and a person approves it exactly as they approved the edit. Nothing here
+//    writes.
+
+/** Op kinds this shell can build an inverse for, and why only these. */
+const INVERTIBLE_KINDS = new Set(["fill_cell", "set_run"]);
+
+/** The address an op targets, in the shape `readRegion` takes. */
+function opAddress(op: PlanOp): Record<string, number> | null {
+  const p = op.params;
+  if (op.kind === "fill_cell") {
+    return {
+      table: Number(p.table ?? 0),
+      row: Number(p.row),
+      col: Number(p.col),
+    };
+  }
+  if (op.kind === "set_run") return { atPara: Number(p.atPara) };
+  return null;
+}
+
+/**
+ * Propose the inverse of an applied candidate. Reads the chain; writes nothing.
+ *
+ * Returns the number of ops queued, or throws nothing — the refusal lands in
+ * `undoError` where the panel can print it, because "this cannot be undone" is
+ * an answer a person needs to see rather than a silent dead button.
+ */
+export async function proposeUndoOf(runId: string): Promise<number> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return 0;
+  setState({ undoPhase: "starting", undoError: null });
+  try {
+    const receipt = state.receipts[runId] ?? (await rt.readReceipt(sessionId, runId));
+    const plan = await rt.getPlan(receipt.planId);
+
+    const uninvertible = plan.ops.filter((op) => !INVERTIBLE_KINDS.has(op.kind));
+    if (uninvertible.length > 0) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "not_invertible",
+          message:
+            `이 후보본에는 되돌릴 방법이 없는 작업이 있습니다: ` +
+            `${uninvertible.map((op) => op.kind).join(", ")}. ` +
+            `되돌리기는 이전 값을 읽어올 수 있는 작업(fill_cell, set_run)에만 만들 수 있습니다.`,
+          data: { kinds: uninvertible.map((op) => op.kind) },
+        },
+      });
+      return 0;
+    }
+
+    // The document this candidate was made FROM. `base` is null at the root of
+    // the chain, and then the previous value is the session source's.
+    const parentRunId = receipt.base?.runId ?? null;
+    const addresses = plan.ops
+      .map((op) => ({ op, address: opAddress(op) }))
+      .filter((row): row is { op: PlanOp; address: Record<string, number> } =>
+        row.address !== null,
+      );
+    if (addresses.length === 0) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "not_invertible",
+          message: "이 계획의 작업들이 주소를 갖고 있지 않아 이전 값을 읽을 수 없습니다.",
+        },
+      });
+      return 0;
+    }
+
+    const answer = await rt.readRegion(
+      sessionId,
+      addresses.map((row) => row.address),
+      parentRunId,
+    );
+
+    const ops: QueuedOp[] = [];
+    for (const { op, address } of addresses) {
+      const previous = regionTextAt(answer.regions, address);
+      if (previous === null) {
+        // The runtime did not return this address in the parent. That is not
+        // an empty string and it must not be filled in as one: the inverse
+        // would then WRITE a blank over something unknown.
+        setState({
+          undoPhase: "failed",
+          undoError: {
+            code: "previous_value_unreadable",
+            message:
+              "되돌릴 이전 값을 런타임이 돌려주지 못한 자리가 있습니다. " +
+              "빈 값으로 짐작해서 덮어쓰지 않습니다.",
+            data: { address, subject: answer.subject },
+          },
+        });
+        return 0;
+      }
+      ops.push(
+        op.kind === "fill_cell"
+          ? {
+              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+              kind: "fill_cell",
+              table: Number(op.params.table ?? 0),
+              row: Number(op.params.row),
+              col: Number(op.params.col),
+              text: previous,
+              // The seat is not empty any more — the edit filled it — so the
+              // inverse has to say so. Without this preedit refuses to write
+              // into an occupied cell, which is the correct default and the
+              // wrong one here.
+              overwrite: true,
+              before: String(op.params.text ?? ""),
+              origin: "user",
+            }
+          : {
+              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+              kind: "set_run",
+              atPara: Number(op.params.atPara),
+              run: Number(op.params.run),
+              text: previous,
+              before: String(op.params.text ?? ""),
+              origin: "user",
+            },
+      );
+    }
+
+    // Chained onto the HEAD, not onto the candidate being reversed: undoing an
+    // older edit must not throw away the newer ones on top of it.
+    await setQueue(ops, {
+      baseRunId: headCandidate(getState())?.runId ?? null,
+      reverses: runId,
+    });
+    setState({ undoPhase: "ready", undoError: null, inverseProof: null });
+    showToast("되돌리기를 제안했습니다. 승인해야 후보본이 하나 더 생깁니다.", 2600);
+    return ops.length;
+  } catch (e) {
+    setState({ undoPhase: "failed", undoError: rt.asRuntimeError(e) });
+    return 0;
+  }
+}
+
+/** The text the runtime returned for one address, or null if it returned none. */
+function regionTextAt(
+  regions: RegionText[],
+  address: Record<string, number>,
+): string | null {
+  const match =
+    address.atPara !== undefined
+      ? regions.find((r) => r.at_para === address.atPara)
+      : regions.find(
+          (r) =>
+            (r.table ?? 0) === address.table &&
+            r.addr?.row === address.row &&
+            r.addr?.col === address.col,
+        );
+  return match?.text ?? null;
+}
+
+/**
+ * Ask the runtime whether the reversal that was just applied IS the inverse.
+ *
+ * Not computed here on purpose. `candidate/compare` re-reads both documents
+ * from bytes their receipts re-verified, at the addresses the reversal
+ * touched, and reports equality; a shell comparing two strings it had already
+ * fetched would be comparing its own memory and calling it proof.
+ */
+export async function verifyReversal(
+  runId: string,
+  reversedRunId: string,
+): Promise<boolean> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return false;
+  try {
+    const receipt =
+      getState().receipts[reversedRunId] ??
+      (await rt.readReceipt(sessionId, reversedRunId));
+    const reversedPlan = await rt.getPlan(receipt.planId);
+    const regions = reversedPlan.ops
+      .map(opAddress)
+      .filter((a): a is Record<string, number> => a !== null);
+    // Compare against the document the reversed edit was made FROM: that is
+    // the state the undo claims to have restored.
+    const against = receipt.base?.runId
+      ? ({ runId: receipt.base.runId } as const)
+      : ({ source: true } as const);
+    const compare = await rt.compareCandidate(sessionId, runId, against, regions);
+    setState({ inverseProof: { runId, reversedRunId, compare } });
+    return compare.regionsEqual === true;
+  } catch (e) {
+    setState({ undoError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+/** Show an older candidate in the 기록 panel. Read-only; never moves the head. */
+export function selectHistory(runId: string | null): void {
+  setState({ historySelected: runId });
+  if (runId && !getState().receipts[runId]) void loadReceipt(runId);
+}
+
+/**
+ * Make a candidate the one the shell stands on.
+ *
+ * Explicit, because the runtime has no head and a silent one would be the
+ * shell deciding what the file IS without saying so. Moving it re-bases a
+ * pending queue, which is why it re-proposes rather than leaving a plan bound
+ * to bytes the user has just navigated away from.
+ */
+export async function setHead(runId: string | null): Promise<void> {
+  setState({ head: runId, applied: null });
+  if (runId) {
+    await loadReceipt(runId);
+    const receipt = getState().receipts[runId];
+    if (receipt) {
+      setState({ candidateVerdict: { runId, report: receipt.checks } });
+    }
+  }
+  if (getState().draft.ops.length > 0) {
+    await setQueue(getState().draft.ops, { baseRunId: runId });
+  }
 }
 
 // --- approval ------------------------------------------------------------------
@@ -769,6 +1073,7 @@ export async function applyApproved(): Promise<void> {
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   if (!plan || !approval || !sessionId) return;
+  const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
   try {
     const applied = await rt.applyPlan(plan.planId, approval.approvalId, APPLY_TAG);
@@ -779,11 +1084,24 @@ export async function applyApproved(): Promise<void> {
       // invite a second apply of an already-applied plan, which the runtime
       // would refuse anyway (`approval_already_resolved`).
       draft: EMPTY_DRAFT,
+      // The redo stack belonged to that queue. Offering to re-enqueue an op
+      // that is now inside a published candidate would put the same edit in
+      // twice, so it goes with the queue it came from.
+      redoStack: [],
       approvalPhase: "idle",
       approval: null,
       candidateVerdict: { runId: applied.runId, report: applied.checks },
+      // The new candidate is what the document now is, so the next edit chains
+      // onto it. Explicit rather than implicit; the 기록 panel shows it.
+      head: applied.runId,
+      historySelected: applied.runId,
+      inverseProof: null,
     });
     await loadCandidates(sessionId);
+    // A reversal is not finished when it is applied — it is finished when the
+    // runtime says the value came back. Asked here, straight after, so the
+    // claim and its proof arrive together rather than the claim standing alone.
+    if (reversed) await verifyReversal(applied.runId, reversed);
     showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
   } catch (e) {
     const error = rt.asRuntimeError(e);
@@ -871,6 +1189,37 @@ export function openReceipt(runId: string | null): void {
 // --- export -----------------------------------------------------------------------
 
 /**
+ * An `AppliedCandidate`-shaped record for a run this session did not apply.
+ *
+ * Built from the RECEIPT, which is the verifying read: `receipt/read` re-hashes
+ * the artifact against its binding before it returns, so exporting an older
+ * candidate from the 기록 panel goes through the same check as exporting the
+ * one just made. Null when the receipt refuses — and a refusal to export is
+ * the right outcome for bytes that drifted.
+ */
+async function candidateRefFor(
+  sessionId: string,
+  runId: string | null,
+): Promise<AppliedCandidate | null> {
+  if (!runId) return null;
+  const held = getState().receipts[runId];
+  const receipt = held ?? (await rt.readReceipt(sessionId, runId).catch(() => null));
+  if (!receipt) return null;
+  if (!held) setState({ receipts: { ...getState().receipts, [runId]: receipt } });
+  return {
+    runId,
+    sessionId,
+    planId: receipt.planId,
+    candidate: receipt.candidate,
+    base: receipt.base,
+    reverses: receipt.reverses,
+    checks: receipt.checks,
+    receipt: `${runId}/receipt.json`,
+    canonical: true,
+  };
+}
+
+/**
  * Save the candidate and its receipt where the user chooses.
  *
  * `artifact/exportTo` is GAP (§11.5), so the copy is the shell's own work,
@@ -879,11 +1228,27 @@ export function openReceipt(runId: string | null): void {
  * with no account of where it came from, which is the thing this program
  * exists not to produce.
  */
-export async function exportApplied(destination?: string): Promise<boolean> {
+export async function exportApplied(
+  destination?: string,
+  runId?: string,
+): Promise<boolean> {
   const state = getState();
   const sessionId = state.activeSessionId;
-  const applied = state.applied;
-  if (!sessionId || !applied) return false;
+  // WHICH CANDIDATE LEAVES IS ALWAYS NAMED. `runId` is the 기록 panel's
+  // explicit choice; otherwise it is the one this session just applied, and
+  // otherwise the head. History does not silently decide what gets written to
+  // the operator's disk — the receipt that travels says which run it is.
+  const chosen =
+    runId ??
+    state.applied?.runId ??
+    headCandidate(state)?.runId ??
+    null;
+  if (!sessionId || !chosen) return false;
+  const applied =
+    state.applied && state.applied.runId === chosen
+      ? state.applied
+      : await candidateRefFor(sessionId, chosen);
+  if (!applied) return false;
 
   let target = destination;
   if (!target) {
@@ -966,14 +1331,22 @@ const RENDER_DPI = 110;
  * image for this document" is an answer the UI has to draw, and the reason
  * comes from a closed set. So the unavailable state is stored, not thrown.
  */
-export async function renderCurrentPage(page?: number): Promise<void> {
+export async function renderCurrentPage(
+  page?: number,
+  runId?: string | null,
+): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return;
   const wanted = (page ?? state.page) - 1;
   setState({ renderPhase: "starting", renderError: null });
   try {
-    const render = await rt.renderPage(sessionId, Math.max(0, wanted), RENDER_DPI);
+    const render = await rt.renderPage(
+      sessionId,
+      Math.max(0, wanted),
+      RENDER_DPI,
+      runId ?? null,
+    );
     setState({ render, renderPhase: "ready", page: Math.max(0, wanted) + 1 });
   } catch (e) {
     setState({ renderPhase: "failed", renderError: rt.asRuntimeError(e) });
@@ -1345,22 +1718,148 @@ export function dismissOverlayPick(): void {
  * ran and did not produce a PDF, which is what a broken COM registration looks
  * like from here).
  */
-export async function preparePages(): Promise<void> {
+export async function preparePages(runId?: string | null): Promise<void> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return;
   setState({ preparePhase: "starting", prepareError: null, prepareNote: null });
   try {
-    const result = await rt.renderPrepare(sessionId);
+    const result = await rt.renderPrepare(sessionId, runId ?? null);
     setState({
       preparePhase: "ready",
       prepareNote: result.prepared
-        ? `PDF를 만들었습니다 · ${result.pdf?.sha256.slice(0, 12)}`
+        ? `${runId ? "후보본" : "원본"} PDF를 만들었습니다 · ${result.pdf?.sha256.slice(0, 12)}`
         : (result.reason ?? "이미 준비되어 있습니다"),
     });
-    await renderCurrentPage(1);
+    await renderCurrentPage(1, runId ?? null);
   } catch (e) {
     setState({ preparePhase: "failed", prepareError: rt.asRuntimeError(e) });
   }
+}
+
+/**
+ * E1.2, honestly: is the page on screen the document as it now stands?
+ *
+ * After an apply the raster is still the SOURCE's — a candidate has no raster
+ * until somebody converts it, and on a machine without a reachable Hancom
+ * nobody can. So the answer is a STATE, not a redraw: the page says
+ * 후보본과 다름, marks the regions the runtime says changed, and offers
+ * 다시 그리기, which asks the runtime and shows whatever it answers.
+ *
+ * What this deliberately does NOT do is draw the edited text onto the raster.
+ * That would be this shell inventing a layout and presenting it as the
+ * renderer's — the same rule the overlay keeps (§12.2), and the reason a
+ * refusal is on screen instead of a picture.
+ */
+export interface LayoutEcho {
+  /** The candidate the page ought to be showing. */
+  runId: string;
+  /** What the raster actually came from. */
+  rendered: { kind: string; runId?: string; sha256?: string };
+  /** Addresses the candidate's plan touched, as overlay-comparable keys. */
+  changed: string[];
+}
+
+/** One shared empty value, for the same `Object.is` reason `NO_CANDIDATES` is. */
+const NO_ECHO: LayoutEcho | null = null;
+let echoCache: LayoutEcho | null = NO_ECHO;
+
+/**
+ * The echo state, or null when the page IS the document on screen.
+ *
+ * Returns a stable reference while nothing changes: this is read through
+ * `useWorkspace`, which compares snapshots with `Object.is`, and a fresh
+ * object every call is the render loop that took the whole root down once
+ * already (see `draftStaleness`).
+ */
+export function layoutEcho(s: ReturnType<typeof getState>): LayoutEcho | null {
+  const head = headCandidate(s);
+  if (!head?.runId || !s.render?.available) return (echoCache = null);
+  const rendered = s.render.source ?? { kind: "unknown" };
+  // The raster already IS this candidate's. Nothing to say.
+  if (rendered.runId === head.runId) return (echoCache = null);
+  const changed = changedAddresses(s, head.runId);
+  const cached = echoCache;
+  if (
+    cached &&
+    cached.runId === head.runId &&
+    cached.rendered.kind === rendered.kind &&
+    cached.rendered.runId === rendered.runId &&
+    cached.changed.length === changed.length &&
+    cached.changed.every((key, i) => key === changed[i])
+  ) {
+    return cached;
+  }
+  echoCache = { runId: head.runId, rendered, changed };
+  return echoCache;
+}
+
+/**
+ * Which addresses this candidate's chain changed, as `c:t:r:c` / `p:N` keys.
+ *
+ * From the RECEIPTS' own step records — the ops that actually ran — walked
+ * back up the `base` links, so a chain of three edits marks all three. A
+ * candidate whose receipt has not been read yet contributes nothing rather
+ * than a guess, and the panel says the list is partial in that case.
+ */
+export function changedAddresses(s: ReturnType<typeof getState>, runId: string): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = runId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const plan: OperationPlan | undefined = planCache[cursor];
+    for (const op of plan?.ops ?? []) {
+      const key =
+        op.kind === "set_run"
+          ? `p:${Number(op.params.atPara)}`
+          : `c:${Number(op.params.table ?? 0)}:${Number(op.params.row)}:${Number(op.params.col)}`;
+      if (!keys.includes(key)) keys.push(key);
+    }
+    cursor = s.receipts[cursor]?.base?.runId ?? null;
+  }
+  return keys;
+}
+
+/**
+ * Plans read back for the receipts on screen, keyed on runId.
+ *
+ * Module-level rather than store state for the reason the geometry in-flight
+ * map is: nothing renders it, it is a memo of an idempotent read, and putting
+ * it in the store would make every echo recomputation a store write.
+ */
+const planCache: Record<string, OperationPlan> = {};
+
+/** Read the plans behind a candidate's chain so the echo can mark its regions. */
+export async function loadChangedAddresses(runId: string): Promise<number> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return 0;
+  let cursor: string | null = runId;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const current: string = cursor;
+    const receipt = getState().receipts[current] ?? (await loadReceiptQuiet(current));
+    if (!receipt) break;
+    if (!planCache[current]) {
+      try {
+        planCache[current] = await rt.getPlan(receipt.planId);
+      } catch {
+        // A plan the runtime cannot hand back leaves this candidate's regions
+        // unmarked. The page then says the marking is partial rather than
+        // marking the wrong ones.
+        break;
+      }
+    }
+    cursor = receipt.base?.runId ?? null;
+  }
+  // Bump nothing: `layoutEcho` recomputes from the caches on the next read,
+  // and the caller re-renders because the receipts it loaded are store state.
+  return Object.keys(planCache).length;
+}
+
+async function loadReceiptQuiet(runId: string) {
+  const ok = await loadReceipt(runId);
+  return ok ? getState().receipts[runId] : null;
 }
 
 // --- events -------------------------------------------------------------------------
@@ -2065,6 +2564,12 @@ async function adoptAgentPlan(
     phase: "ready",
     error: null,
     rewrittenFromAgent: false,
+    // The runtime's own copy of the plan is authoritative about its lineage
+    // too: whether the agent chained onto a candidate is the agent's decision
+    // to have made, and the queue reflects what the plan actually says rather
+    // than re-deriving it from this shell's head.
+    baseRunId: authoritative.base?.runId ?? null,
+    reverses: authoritative.reverses?.runId ?? null,
   };
   setState({
     draft,
