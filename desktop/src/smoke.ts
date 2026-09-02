@@ -2658,12 +2658,24 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   }
 
   // Every other stop needs a queue.
-  beginEdit(first.table, first.row, first.col);
-  await commitEdit("정보공개 청구서 검토본");
+  //
+  // ALL captures share one runtime root, so a corpus opened by a later capture
+  // is the SAME session an earlier one already applied a candidate to. Writing
+  // the same two cells again is then refused — the head has them filled, and
+  // the shell sets `overwrite` only on an inverse — which leaves `applied`
+  // null and every stop after the first apply photographing a refusal. The
+  // history capture is the one that cannot survive that, because it needs a
+  // candidate of its own to reverse, so it takes seats no earlier capture
+  // touches. The values it writes are its own too, for the same reason.
+  const chainShot = stop === "history";
+  const seatA = chainShot ? (clean[2] ?? first) : first;
+  const seatB = chainShot ? clean[3] : clean[1];
+  beginEdit(seatA.table, seatA.row, seatA.col);
+  await commitEdit(chainShot ? "되돌리기 촬영본" : "정보공개 청구서 검토본");
   await settled(200);
-  if (clean[1]) {
-    beginEdit(clean[1].table, clean[1].row, clean[1].col);
-    await commitEdit("2026-09-01");
+  if (seatB) {
+    beginEdit(seatB.table, seatB.row, seatB.col);
+    await commitEdit(chainShot ? "2026-09-03" : "2026-09-01");
     await settled(200);
   }
   // A refused op, so the queue screenshot shows a real verdict rather than a
