@@ -175,6 +175,22 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: exit 0 and report per part, which is an "
                         "answer)")
 
+    p = sub.add_parser("read-member",
+                       help="UTF-8 text of one workspace member, to aim an edit")
+    p.add_argument("--session", required=True)
+    p.add_argument("--path", required=True,
+                   help="workspace-relative member path, e.g. bundle/content.md")
+    p.add_argument("--run", default=None,
+                   help="read a published candidate instead of the session "
+                        "workspace")
+
+    p = sub.add_parser("list-members",
+                       help="every member of a workspace copy: path, kind, size")
+    p.add_argument("--session", required=True)
+    p.add_argument("--run", default=None,
+                   help="list a published candidate instead of the session "
+                        "workspace")
+
     p = sub.add_parser("inspect", help="summary, graph and editable regions")
     p.add_argument("--session", required=True)
     p.add_argument("--include", default=None,
@@ -313,6 +329,12 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         return result, EXIT_OK
     if command == "sessions":
         return core.session_list(), EXIT_OK
+    if command == "read-member":
+        return core.workspace_read_member(args.session, args.path,
+                                          run_id=args.run), EXIT_OK
+    if command == "list-members":
+        return core.workspace_list_members(args.session,
+                                           run_id=args.run), EXIT_OK
     if command == "inspect":
         include = ([item.strip() for item in args.include.split(",") if item.strip()]
                    if args.include else None)

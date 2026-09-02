@@ -318,6 +318,47 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "inputSchema": {"type": "object", "properties": dict(_SESSION),
                         "required": ["sessionId"]},
     },
+    "workspace/readMember": {
+        "description": "UTF-8 text of one workspace member, so an edit can be "
+                       "aimed at an exact anchor. Bounded exactly as a "
+                       "ws_replace_text/ws_set_yaml_key op bounds it: over the "
+                       "member size cap refuses member_too_large, non-UTF-8 or "
+                       "NUL-holding refuses member_not_text, a path outside the "
+                       "tree refuses path_not_relative, and an absent member "
+                       "refuses member_missing — this build creates nothing. "
+                       "Reads the session copy, or a published candidate when "
+                       "runId is given; never the operator's directory.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "path": {"type": "string",
+                          "description": "workspace-relative member path, e.g. "
+                                         "bundle/content.md"},
+                "runId": {"type": "string",
+                          "description": "read a published candidate instead "
+                                         "of the session workspace"},
+            },
+            "required": ["sessionId", "path"],
+        },
+    },
+    "workspace/listMembers": {
+        "description": "Every member of the workspace copy: path, kind "
+                       "(file/directory) and a file's size. The other half of "
+                       "workspace/readMember — an agent cannot aim a read or a "
+                       "write op at a member it cannot see. Reads the session "
+                       "copy, or a published candidate when runId is given.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "runId": {"type": "string",
+                          "description": "list a published candidate instead "
+                                         "of the session workspace"},
+            },
+            "required": ["sessionId"],
+        },
+    },
     "receipt/read": {
         "description": "Read a candidate's receipt. Refuses if the candidate "
                        "bytes or the receipt body no longer match their hashes.",
@@ -383,6 +424,13 @@ class McpAdapter:
             return core.session_list()
         if method == "workspace/inspect":
             return core.workspace_inspect(arguments.get("sessionId"))
+        if method == "workspace/readMember":
+            return core.workspace_read_member(arguments.get("sessionId"),
+                                              arguments.get("path"),
+                                              run_id=arguments.get("runId"))
+        if method == "workspace/listMembers":
+            return core.workspace_list_members(arguments.get("sessionId"),
+                                               run_id=arguments.get("runId"))
         if method == "document/inspect":
             return core.document_inspect(arguments.get("sessionId"),
                                          arguments.get("include"))
