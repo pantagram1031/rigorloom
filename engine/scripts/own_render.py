@@ -1643,7 +1643,6 @@ class OwnRenderer:
         """
         pr = para.para_pr
         heights = []
-        objects = 0
         for offset, (ch, cid) in enumerate(para.chars[start:end]):
             if ch == OBJECT_SLOT:
                 # An inline object occupies a character cell whose height is
@@ -1655,7 +1654,6 @@ class OwnRenderer:
                 record = para.object_at.get(start + offset)
                 if record is not None and not record[3]:
                     heights.append(self._object_extent(record[1])[1])
-                    objects += 1
                     continue
             _ratio, _spacing, rel_sz, _offset = self._typography(cid, ch)
             pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
