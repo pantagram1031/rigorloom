@@ -1398,6 +1398,71 @@ def test_solve_tracks_matches_declared_total_even_when_underdetermined():
     assert sum(widths) == 300
 
 
+def _border_probe(btype, width_hwp, dpi=144):
+    """Draw one top border of ``btype`` and return its dark-pixel runs.
+
+    ``px`` at 144 dpi is ``hwpunit / 50``, so the geometry below puts the edge
+    at y=20 px across a 100 px span.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"]["probe"] = {
+        "top": {"type": btype, "width_hwp": width_hwp, "color": (0, 0, 0)},
+        "bottom": {"type": "NONE"}, "left": {"type": "NONE"},
+        "right": {"type": "NONE"},
+    }
+    image = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    tc = ET.fromstring('<hp:tc xmlns:hp="urn:x" borderFillIDRef="probe"/>')
+    renderer._draw_cell_borders(draw, {"tc": tc}, 0, 1000, 5000, 2000)
+    grey = image.convert("L").load()
+    runs, y = [], 0
+    while y < 60:
+        if grey[50, y] < 160:
+            y0 = y
+            while y < 60 and grey[50, y] < 160:
+                y += 1
+            runs.append((y0, y - y0))
+        else:
+            y += 1
+    return renderer, runs
+
+
+def test_a_double_slim_border_is_two_strokes_not_one_fat_one():
+    """이중 실선: the declared width is the BAND, not the stroke.
+
+    Measured against a Hancom reference at 144 dpi — a 283.46 HWPUNIT border
+    (6 px) is drawn as two 2-px strokes with a 2-px gap, spanning those 6 px.
+    Stroking the band solid put three times the ink on every such edge.
+    """
+    renderer, runs = _border_probe("DOUBLE_SLIM", 283.46456692913387)
+    assert len(runs) == 2, runs
+    assert runs[0][1] == runs[1][1] == 2, runs
+    span = runs[1][0] + runs[1][1] - runs[0][0]
+    assert span == 6, runs
+    skipped = {e["element"] for e in renderer.skipped.values()}
+    assert not any("DOUBLE_SLIM" in s for s in skipped), skipped
+
+
+def test_a_double_border_too_narrow_to_resolve_stays_solid_and_declared():
+    """Below three pixels there is no room for two strokes and a gap."""
+    renderer, runs = _border_probe("DOUBLE_SLIM", 100.0)
+    assert len(runs) == 1, runs
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if "DOUBLE_SLIM" in e["element"]]
+    assert any("too narrow" in r for r in reasons), reasons
+
+
+def test_other_non_solid_border_types_are_still_declared_as_solid():
+    """DASH is in the corpus and is still stroked solid — say so."""
+    renderer, runs = _border_probe("DASH", 283.46456692913387)
+    assert len(runs) == 1, runs
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if "DASH" in e["element"]]
+    assert any("stroked as solid" in r for r in reasons), reasons
+
+
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
     """Row 0 holds a one-line cell and a two-line cell; it must fit both.
 

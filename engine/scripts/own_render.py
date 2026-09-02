@@ -2557,12 +2557,36 @@ class OwnRenderer:
             btype = (spec.get("type") or "NONE").upper()
             if btype == "NONE":
                 continue
-            if btype != "SOLID":
-                self._skip(f"hh:{side}Border@type={btype}",
-                           "non-solid border stroked as solid")
             width = max(1, self.px(spec.get("width_hwp") or 0))
-            draw.line([(self.px(ax), self.px(ay)), (self.px(bx), self.px(by))],
-                      fill=spec.get("color") or (0, 0, 0), width=width)
+            colour = spec.get("color") or (0, 0, 0)
+            ax_px, ay_px = self.px(ax), self.px(ay)
+            bx_px, by_px = self.px(bx), self.px(by)
+            if btype == "DOUBLE_SLIM" and width >= 3:
+                # 이중 실선.  The declared width is the width of the whole
+                # BAND, not of a stroke: measured against a Hancom reference
+                # at 144 dpi, a border declaring 283.46 HWPUNIT (6 px) is
+                # drawn as two 2-px strokes with a 2-px gap, spanning exactly
+                # those 6 px.  Stroking the band solid — which is what this
+                # did — puts three times the ink on every such edge.
+                stroke = max(1, width // 3)
+                shift = (width - stroke) / 2.0
+                vertical = ax_px == bx_px
+                for sign in (-1, 1):
+                    dx = int(round(sign * shift)) if vertical else 0
+                    dy = 0 if vertical else int(round(sign * shift))
+                    draw.line([(ax_px + dx, ay_px + dy),
+                               (bx_px + dx, by_px + dy)],
+                              fill=colour, width=stroke)
+                self.counts["borders"] += 1
+                continue
+            if btype != "SOLID":
+                reason = ("non-solid border stroked as solid"
+                          if btype != "DOUBLE_SLIM" else
+                          "the declared band is too narrow at this dpi to "
+                          "resolve two strokes and a gap; stroked as solid")
+                self._skip(f"hh:{side}Border@type={btype}", reason)
+            draw.line([(ax_px, ay_px), (bx_px, by_px)],
+                      fill=colour, width=width)
             self.counts["borders"] += 1
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
