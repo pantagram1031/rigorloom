@@ -344,6 +344,16 @@ export interface WorkspaceState {
   head: string | null;
   /** Which candidate the 기록 panel is showing, read-only. Never moves `head`. */
   historySelected: string | null;
+  /**
+   * Addresses each candidate's chain changed, as `c:t:r:c` / `p:N` keys (E1.2).
+   *
+   * Store state rather than a module memo, and that is not a style choice: the
+   * page's echo is rendered through `useWorkspace`, so a cache the store cannot
+   * see would fill in after the last re-render and the marks would never
+   * appear. Keyed on the head run; absent means "not read yet", which the page
+   * says out loud rather than drawing an unmarked page and looking clean.
+   */
+  changedByRun: Record<string, string[]>;
   /** Phase of a 되돌리기 제안 while it reads the chain and proposes. */
   undoPhase: Phase;
   undoError: RuntimeError | null;
@@ -616,6 +626,7 @@ const initial: WorkspaceState = {
   redoStack: [],
   head: null,
   historySelected: null,
+  changedByRun: {},
   undoPhase: "idle",
   undoError: null,
   inverseProof: null,
