@@ -44,7 +44,6 @@ import {
   selectionId,
   setSelection,
   useWorkspace,
-  opTargetId,
   type QueuedOp,
   type Selection,
 } from "../store";
@@ -59,8 +58,14 @@ import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
  * queues wearing one name.
  */
 function QueuedValue({ op }: { op: QueuedOp }) {
+  // The cell spelling is UNCHANGED — `queued-0-1-2`, the shape the harness has
+  // asserted against since Phase 4. A run gets its own, in the same convention
+  // the review queue uses. Renaming the existing one to make room would have
+  // been churn dressed as consistency, and it broke a check the first time.
+  const slug =
+    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
   return (
-    <span className="queued" data-testid={`queued-${opTargetId(op)}`} data-kind={op.kind}>
+    <span className="queued" data-testid={`queued-${slug}`} data-kind={op.kind}>
       {op.before.trim().length > 0 ? (
         <>
           <s className="was">{op.before}</s>

@@ -1533,19 +1533,67 @@ async function caretChecks(spans: GeometrySpan[]) {
     if (pick?.kind === "no_caret") refusals.push(`${pick.refusal}`);
   }
 
-  check("every line that refused a caret named WHICH refusal, from the closed set",
-    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(r)),
-    refusals.length ? refusals.join(", ") : "no line refused on this page");
-
   if (!placed) {
     check("some line on this page took a caret", false,
       `the first ${Math.min(CARET_ATTEMPTS, caretSpans.length)} of ${caretSpans.length} ` +
         `mapped paragraph lines all refused: ${refusals.join(", ")}`);
     return;
   }
+  const took = placed;
   check("a caret was placed within the attempts this phase allows itself",
     true,
     `${refusals.length} refusal(s) before one took: ${refusals.join(", ") || "none"}`);
+
+  // THE REFUSAL, DELIBERATELY PROVOKED.
+  //
+  // The walk above often succeeds on its FIRST attempt — it did on this
+  // machine — and "every refusal named itself" over an empty list passes
+  // without proving anything. So the longest mapped lines on the page are
+  // tried on purpose: a long line is the one most likely to carry several
+  // runs, which is exactly what `set_run` cannot address. If none of them
+  // refuses, that is said rather than papered over.
+  const provoke = caretSpans
+    .filter((s) => s !== took)
+    .sort((a, b) => b.text.length - a.text.length)
+    .slice(0, 3);
+  const queuedBeforeProbe = getState().draft.ops.length;
+  for (const span of provoke) {
+    if (getState().inlineEdit) cancelEdit();
+    await settled(120);
+    await clickOverlaySpan(span, span.rect[0] + (span.rect[2] - span.rect[0]) * 0.5);
+    await settled(200);
+    const pick = getState().overlayPick;
+    if (pick?.kind === "no_caret") {
+      refusals.push(`${pick.refusal}`);
+      check("a line the runtime will not address places NO caret and says why",
+        getState().inlineEdit === null &&
+          ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(
+            `${pick.refusal}`,
+          ),
+        `${pick.refusal} — ${pick.label}`);
+      checkDom("the refusal reaches the status bar rather than silence",
+        document
+          .querySelector('[data-testid="status-overlay-pick"]')
+          ?.getAttribute("data-refusal") === `${pick.refusal}` &&
+          domText('[data-testid="status-overlay-pick"]').length > 0,
+        domText('[data-testid="status-overlay-pick"]'));
+      check("and a refused click queued nothing at all",
+        getState().draft.ops.length === queuedBeforeProbe,
+        `${queuedBeforeProbe} → ${getState().draft.ops.length} ops`);
+      break;
+    }
+  }
+  check("every line that refused a caret named WHICH refusal, from the closed set",
+    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(r)),
+    refusals.length
+      ? refusals.join(", ")
+      : `no line among the ${provoke.length + Math.min(CARET_ATTEMPTS, caretSpans.length)} tried on this page refused`);
+
+  // Back onto the line that took the caret, for everything below.
+  if (getState().inlineEdit) cancelEdit();
+  await settled(150);
+  await clickOverlaySpan(took, took.rect[0] + (took.rect[2] - took.rect[0]) * 0.6);
+  await settled(250);
 
   const edit = getState().inlineEdit;
   const runEdit = edit?.kind === "run" ? edit : null;
@@ -1558,24 +1606,24 @@ async function caretChecks(spans: GeometrySpan[]) {
       ?.closest("[data-testid]")
       ?.getAttribute("data-testid") ?? "nowhere");
   check("the caret opened on the paragraph the SPAN carries, not a neighbour",
-    !!runEdit && runEdit.atPara === placed.address?.atPara,
-    `${runEdit?.atPara} vs ${placed.address?.atPara}`);
+    !!runEdit && runEdit.atPara === took.address?.atPara,
+    `${runEdit?.atPara} vs ${took.address?.atPara}`);
   check("the field holds the run's own text, read from document/readRegion",
     !!runEdit && runEdit.before.trim().length > 0 &&
-      runEdit.before.replace(/\s+/g, " ").trim() === placed.text.replace(/\s+/g, " ").trim(),
-    `${JSON.stringify(runEdit?.before ?? null)} vs ${JSON.stringify(placed.text)}`);
+      runEdit.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
+    `${JSON.stringify(runEdit?.before ?? null)} vs ${JSON.stringify(took.text)}`);
 
   // THE OFFSET. Measured, or honestly absent — never a plausible-looking zero.
-  const expected = placed.charX
-    ? caretOffsetAt(placed, placed.rect[0] + (placed.rect[2] - placed.rect[0]) * 0.6)
+  const expected = took.charX
+    ? caretOffsetAt(took, took.rect[0] + (took.rect[2] - took.rect[0]) * 0.6)
     : null;
   check("the caret offset is the one the runtime's own character boxes resolve",
     !!runEdit && runEdit.caret === expected,
-    `caret ${runEdit?.caret} vs charX-derived ${expected} (${placed.charX ? "offsets present" : "no offsets on this line"})`);
-  if (placed.charX) {
+    `caret ${runEdit?.caret} vs charX-derived ${expected} (${took.charX ? "offsets present" : "no offsets on this line"})`);
+  if (took.charX) {
     check("and a click past the line's start did not silently snap to zero",
       (runEdit?.caret ?? 0) > 0,
-      `offset ${runEdit?.caret} into a line of ${placed.text.length} characters`);
+      `offset ${runEdit?.caret} into a line of ${took.text.length} characters`);
   }
   const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
   checkDom("the browser caret sits where the runtime said, not at the front",
@@ -1592,27 +1640,33 @@ async function caretChecks(spans: GeometrySpan[]) {
   // looks like working software. So this dispatches a MouseEvent carrying a
   // real `clientX` at a known place inside the line's box and asks whether the
   // offset that comes back is the one the runtime's own boxes resolve there.
-  if (placed.charX) {
+  if (took.charX) {
     cancelEdit();
     await settled(200);
     const layer = document.querySelector<HTMLElement>('[data-testid="page-overlay"]');
     const button = document.querySelector<HTMLElement>(
-      `.ov[data-span-index="${placed.index}"]`,
+      `.ov[data-span-index="${took.index}"]`,
     );
     const box = layer?.getBoundingClientRect();
     if (layer && button && box && box.width > 0) {
-      const wantedFraction = placed.rect[0] + (placed.rect[2] - placed.rect[0]) * 0.75;
+      const wantedFraction = took.rect[0] + (took.rect[2] - took.rect[0]) * 0.75;
       button.dispatchEvent(
         new MouseEvent("click", {
           bubbles: true,
           cancelable: true,
           clientX: box.left + box.width * wantedFraction,
-          clientY: box.top + box.height * ((placed.rect[1] + placed.rect[3]) / 2),
+          clientY: box.top + box.height * ((took.rect[1] + took.rect[3]) / 2),
         }),
       );
-      await settled(300);
+      // POLL, do not sleep. A DOM click cannot be awaited, and the handler
+      // behind it asks `document/readRegion` — which runs `form_inspect` as a
+      // child process and takes seconds, not milliseconds. The first run of
+      // this check waited 300ms and reported "caret none", which read exactly
+      // like the component's arithmetic being wrong when it was the harness
+      // being impatient.
+      await waitFor(() => getState().inlineEdit?.kind === "run", 12000);
       const viaPointer = getState().inlineEdit;
-      const wanted = caretOffsetAt(placed, wantedFraction);
+      const wanted = caretOffsetAt(took, wantedFraction);
       check("a real pointer position resolves to the offset its x actually names",
         viaPointer?.kind === "run" && viaPointer.caret === wanted,
         `pointer at ${wantedFraction.toFixed(4)} of the page → caret ${
@@ -1651,8 +1705,8 @@ async function caretChecks(spans: GeometrySpan[]) {
     `${faceCell?.getAttribute("data-face")} · ${domText('[data-testid="tool-charpr"]')}`);
   const sizeCell = document.querySelector('[data-testid="size-value"]');
   check("and the size is labelled as the RENDER's, not as a declared one",
-    sizeCell?.getAttribute("data-source") === (placed.sizePt ? "render" : "baseline"),
-    `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${placed.sizePt}`);
+    sizeCell?.getAttribute("data-source") === (took.sizePt ? "render" : "baseline"),
+    `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${took.sizePt}`);
 
   // TYPE. The same commit path a seat uses, into the same queue.
   const TYPED = "지면에서 고쳐 쓴 문장";
@@ -1665,10 +1719,10 @@ async function caretChecks(spans: GeometrySpan[]) {
   check("and it queued a set_run op — the operation the runtime already had",
     runOp?.kind === "set_run", runOp?.kind ?? "none");
   check("the queued op names the paragraph and the run, not a cell",
-    !!runOp && runOp.atPara === placed.address?.atPara,
-    `atPara ${runOp?.atPara} run ${runOp?.run} vs span atPara ${placed.address?.atPara}`);
+    !!runOp && runOp.atPara === took.address?.atPara,
+    `atPara ${runOp?.atPara} run ${runOp?.run} vs span atPara ${took.address?.atPara}`);
   check("it records what the line said before, for the queue's before → after",
-    !!runOp && runOp.before.replace(/\s+/g, " ").trim() === placed.text.replace(/\s+/g, " ").trim(),
+    !!runOp && runOp.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
     JSON.stringify(runOp?.before ?? null));
   check("the caret produced ONE op, not a second path's duplicate",
     getState().draft.ops.length === queuedBeforeCaret + 1,
@@ -1726,10 +1780,21 @@ async function caretChecks(spans: GeometrySpan[]) {
   setCenterMode("page");
   await settled(200);
 
-  await removeOp(runOp!.opId);
-  await settled(300);
-  check("and it can be taken back out of the queue like any other op",
-    !runOps().some((o) => o.text === TYPED), `${getState().draft.ops.length} ops left`);
+  // Guarded, and the guard is not defensive style. The first run of this
+  // phase reached here with `runOp` undefined — the commit above had produced
+  // nothing because an earlier step had left no caret open — and the bare
+  // `runOp!.opId` threw a TypeError that killed the whole phase, so eight
+  // downstream checks never ran and the harness reported a crash instead of
+  // the eight results that would have named the cause.
+  if (runOp) {
+    await removeOp(runOp.opId);
+    await settled(300);
+    check("and it can be taken back out of the queue like any other op",
+      !runOps().some((o) => o.text === TYPED), `${getState().draft.ops.length} ops left`);
+  } else {
+    check("and it can be taken back out of the queue like any other op", false,
+      "no set_run op reached the queue, so there was nothing to remove");
+  }
 }
 
 /**
