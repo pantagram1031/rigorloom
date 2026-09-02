@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import re
@@ -335,6 +336,7 @@ STRUCTURAL_TAGS = frozenset({
     "pos", "inMargin", "outMargin", "shapeComment", "secPr", "grid",
     "startNum", "visibility", "lineNumberShape", "pagePr", "margin",
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
+    "orgSz", "imgDim",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
     "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
@@ -363,6 +365,41 @@ def _local(tag: str) -> str:
 
 def _kids(el, name):
     return [c for c in el if _local(c.tag) == name]
+
+
+def binary_items(z, names):
+    """``hc:img@binaryItemIDRef`` -> the container entry that holds the bytes.
+
+    The container's OPF manifest (``Contents/content.hpf``) is the only
+    published mapping from the id a picture cites to the ``BinData/`` entry
+    that carries it: the id is ``image7`` while the entry may be
+    ``BinData/image7.PNG``, ``.jpg``, ``.bmp`` — extension and case both vary
+    by authoring version, so guessing the filename is not sound.  Falls back
+    to a stem match when a document ships no manifest.
+    """
+    items = {}
+    manifest = next((n for n in names if n.endswith("content.hpf")), None)
+    if manifest is not None:
+        try:
+            root = ET.fromstring(z.read(manifest))
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            for el in root.iter():
+                if _local(el.tag) != "item":
+                    continue
+                item_id = el.get("id")
+                href = el.get("href")
+                if item_id and href and "BinData/" in href:
+                    tail = "BinData/" + href.split("BinData/", 1)[1]
+                    items[item_id] = next(
+                        (n for n in names if n.endswith(tail)), tail)
+    for name in names:
+        if "BinData/" not in name:
+            continue
+        stem = Path(name).stem
+        items.setdefault(stem, name)
+    return items
 
 
 def _kid(el, name):
@@ -1065,8 +1102,11 @@ class OwnRenderer:
         self.face_resolution = {}
         self._face_cache = {}
         self.skipped = {}
+        self._bin_cache = {}
+        self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
-                       "text_lines": 0, "placeholders": 0, "borders": 0}
+                       "text_lines": 0, "placeholders": 0, "borders": 0,
+                       "images": 0, "page_numbers": 0}
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -1140,6 +1180,7 @@ class OwnRenderer:
                 ET.fromstring(z.read(n))
                 for n in sorted(n for n in names if SECTION_RE.match(n))
             ]
+            self.bin_items = binary_items(z, names)
         if not self.sections:
             raise ValueError("HWPX carries no Contents/section*.xml")
         # Paragraph identity, and the only one this format supports: hp:p@id
@@ -2237,6 +2278,96 @@ class OwnRenderer:
             else:
                 self._render_placeholder(draw, el, name, (x, y))
 
+    def _binary_bytes(self, item_id):
+        """The bytes of one ``BinData/`` entry, read on demand and cached."""
+        if item_id in self._bin_cache:
+            return self._bin_cache[item_id]
+        entry = self.bin_items.get(item_id)
+        data = None
+        if entry:
+            try:
+                with zipfile.ZipFile(self.path) as z:
+                    data = z.read(entry)
+            except (KeyError, OSError, zipfile.BadZipFile):
+                data = None
+        self._bin_cache[item_id] = data
+        return data
+
+    def _render_picture(self, el, origin_hwp, w_hwp, h_hwp):
+        """Draw an ``hp:pic``'s embedded raster at its declared ``hp:sz`` box.
+
+        Everything about the placement is already decided by the caller: the
+        box is the declared extent, exactly where the placeholder box used to
+        go, so this changes what is inside the box and nothing about the
+        layout.  ``hp:imgClip`` is a crop expressed against ``hp:imgDim``'s
+        declared source extent, not against the file's pixel size, so the crop
+        is taken as a *fraction* of each — that keeps a clipped picture right
+        whatever resolution the embedded file happens to be.
+
+        Returns True when it drew; False sends the caller back to the
+        placeholder box, which is what an unreadable or vector-only binary
+        gets.
+        """
+        if self._image is None:
+            return False
+        img_el = _kid(el, "img")
+        item_id = img_el.get("binaryItemIDRef") if img_el is not None else None
+        if not item_id:
+            return False
+        data = self._binary_bytes(item_id)
+        if not data:
+            self._skip("hp:pic", "the BinData entry hp:pic cites is missing "
+                                 "from the container; placeholder box drawn")
+            return False
+        try:
+            src = self.Image.open(io.BytesIO(data))
+            src.load()
+        except Exception:                       # Pillow raises broadly here
+            self._skip("hp:pic",
+                       "the embedded image is in a format Pillow cannot "
+                       "decode (HWP also embeds EMF/WMF vector art, which "
+                       "this tier does not rasterise); placeholder box drawn")
+            return False
+        dim = _kid(el, "imgDim")
+        clip = _kid(el, "imgClip")
+        dim_w = _iattr(dim, "dimwidth")
+        dim_h = _iattr(dim, "dimheight")
+        if clip is not None and dim_w > 0 and dim_h > 0:
+            left = _iattr(clip, "left") / dim_w
+            right = _iattr(clip, "right") / dim_w
+            top = _iattr(clip, "top") / dim_h
+            bottom = _iattr(clip, "bottom") / dim_h
+            box = (int(round(left * src.width)), int(round(top * src.height)),
+                   int(round(right * src.width)),
+                   int(round(bottom * src.height)))
+            if box[2] > box[0] and box[3] > box[1] and box != (
+                    0, 0, src.width, src.height):
+                src = src.crop(box)
+        flip = _kid(el, "flip")
+        if _iattr(flip, "horizontal"):
+            src = src.transpose(self.Image.Transpose.FLIP_LEFT_RIGHT)
+        if _iattr(flip, "vertical"):
+            src = src.transpose(self.Image.Transpose.FLIP_TOP_BOTTOM)
+        angle = _iattr(_kid(el, "rotationInfo"), "angle")
+        if angle:
+            self._skip("hp:pic@rotationInfo",
+                       "the picture is drawn unrotated; its declared rotation "
+                       f"of {angle} is not applied")
+        ox, oy = origin_hwp
+        x0, y0 = self.px(ox), self.px(oy)
+        x1, y1 = self.px(ox + w_hwp), self.px(oy + h_hwp)
+        box_w, box_h = max(1, x1 - x0), max(1, y1 - y0)
+        # LANCZOS is pinned for the same reason Layout.BASIC is: the resample
+        # filter has to be part of the renderer, not of the Pillow build.
+        src = src.resize((box_w, box_h), self.Image.Resampling.LANCZOS)
+        if src.mode in ("RGBA", "LA", "P"):
+            src = src.convert("RGBA")
+            self._image.paste(src, (x0, y0), src)
+        else:
+            self._image.paste(src.convert("RGB"), (x0, y0))
+        self.counts["images"] += 1
+        return True
+
     def _render_placeholder(self, draw, el, name, origin_hwp):
         """An honest box where art would be, never a silent hole."""
         ox, oy = origin_hwp
@@ -2244,6 +2375,9 @@ class OwnRenderer:
         w = _iattr(sz, "width") if sz is not None else 0
         h = _iattr(sz, "height") if sz is not None else 0
         extent_known = bool(w and h)
+        if name == "pic" and extent_known and self._render_picture(
+                el, origin_hwp, w, h):
+            return
         if not extent_known:
             w = w or 6000
             h = h or 3000

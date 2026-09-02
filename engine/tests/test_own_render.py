@@ -21,6 +21,7 @@ the module skips when they or Pillow are absent.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -112,22 +113,114 @@ def test_sidecar_is_written_next_to_the_pages(gianmun_render):
 
 
 def test_skipped_elements_are_named_not_dropped(tmp_path):
-    """A form carrying an element this tier cannot draw must say so.
+    """Whatever this tier cannot draw must be named, with a reason and a count.
 
-    ``hp:equation`` is the element the slice was scoped around, but none of the
-    ten committed corpus forms contains one (verified by scanning every
-    ``Contents/section*.xml``), so the probe uses the same contract on the
-    element the corpus does carry: ``hp:pic``.  Both take the same code path —
-    ``_render_placeholder`` — so this pins the behaviour for equations too.
+    The element this probe used to hang on — ``hp:pic`` — is now drawn from
+    ``BinData``, so the contract is checked on whatever the form still cannot
+    render rather than on one named tag: every entry carries a non-empty
+    reason and a positive count, and nothing is dropped silently.
+    """
+    result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
+    report = result["report"]
+    assert report["elements_skipped"], "a form with unhandled elements said nothing"
+    for entry in report["elements_skipped"]:
+        assert entry["reason"], entry
+        assert entry["count"] >= 1
+
+
+def test_embedded_pictures_are_drawn_from_bindata(tmp_path):
+    """``hp:pic`` draws its embedded raster, not a placeholder box.
+
+    The corpus form carries pictures whose bytes are in ``BinData/``; the
+    manifest in ``Contents/content.hpf`` is what maps ``binaryItemIDRef`` to
+    the container entry.  Drawing them has to count as an image and drop
+    ``hp:pic`` out of ``elements_skipped``.
     """
     result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
     report = result["report"]
     skipped = {entry["element"] for entry in report["elements_skipped"]}
-    assert "hp:pic" in skipped, skipped
-    assert report["elements_rendered"]["placeholders"] >= 1
-    for entry in report["elements_skipped"]:
-        assert entry["reason"], entry
-        assert entry["count"] >= 1
+    assert "hp:pic" not in skipped, skipped
+    assert report["elements_rendered"]["images"] >= 1
+
+
+def test_binary_items_reads_the_opf_manifest(tmp_path):
+    """The id a picture cites is resolved through the manifest, not guessed.
+
+    The href in ``content.hpf`` and the id differ in case and extension often
+    enough that a stem guess is not sound; the stem fallback exists only for a
+    container that ships no manifest at all.
+    """
+    import zipfile as _zip
+
+    path = tmp_path / "manifest.hwpx"
+    with _zip.ZipFile(path, "w") as z:
+        z.writestr(
+            "Contents/content.hpf",
+            '<opf:package xmlns:opf="urn:x"><opf:manifest>'
+            '<opf:item id="image1" href="BinData/PICTURE1.BMP"/>'
+            "</opf:manifest></opf:package>")
+        z.writestr("BinData/PICTURE1.BMP", b"\x00")
+        z.writestr("BinData/loose9.png", b"\x00")
+    with _zip.ZipFile(path) as z:
+        items = own_render.binary_items(z, z.namelist())
+    assert items["image1"] == "BinData/PICTURE1.BMP"
+    assert items["loose9"] == "BinData/loose9.png"
+
+
+def test_an_undecodable_picture_falls_back_to_the_placeholder():
+    """Vector art (EMF/WMF) and corrupt bytes get a box and a named reason.
+
+    HWP embeds EMF as readily as PNG, and this tier does not rasterise vector
+    art.  The contract is that such a picture is still visible as a box and
+    still declared — never a silent hole.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    renderer.bin_items = {"image9": "BinData/image9.emf"}
+    renderer._bin_cache = {"image9": b"\x01\x00\x09\x00not-a-raster"}
+    renderer._image = renderer.Image.new("RGB", (400, 200), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(renderer._image)
+    pic = ET.fromstring(
+        '<hp:pic xmlns:hp="urn:x" xmlns:hc="urn:y">'
+        '<hc:img binaryItemIDRef="image9"/>'
+        '<hp:sz width="7200" height="3600"/></hp:pic>')
+    renderer._render_placeholder(draw, pic, "pic", (0, 0))
+    assert renderer.counts["images"] == 0
+    assert renderer.counts["placeholders"] == 1
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if e["element"] == "hp:pic"]
+    assert any("Pillow cannot" in r for r in reasons), reasons
+
+
+def test_a_clipped_picture_crops_by_the_declared_fraction(tmp_path):
+    """``hp:imgClip`` is a crop against ``hp:imgDim``, not against pixels.
+
+    A half-width clip on a two-colour source must leave only the kept half's
+    colour in the box, whatever the embedded file's own resolution is.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    source = renderer.Image.new("RGB", (40, 10), (255, 0, 0))
+    source.paste((0, 0, 255), (20, 0, 40, 10))
+    buf = io.BytesIO()
+    source.save(buf, format="PNG")
+    renderer.bin_items = {"i": "BinData/i.png"}
+    renderer._bin_cache = {"i": buf.getvalue()}
+    renderer._image = renderer.Image.new("RGB", (200, 100), (255, 255, 255))
+    pic = ET.fromstring(
+        '<hp:pic xmlns:hp="urn:x" xmlns:hc="urn:y">'
+        '<hc:img binaryItemIDRef="i"/>'
+        '<hp:imgDim dimwidth="4000" dimheight="1000"/>'
+        '<hp:imgClip left="0" right="2000" top="0" bottom="1000"/>'
+        '<hp:sz width="7200" height="3600"/></hp:pic>')
+    assert renderer._render_picture(pic, (0, 0), 7200, 3600)
+    assert renderer.counts["images"] == 1
+    box_w, box_h = renderer.px(7200), renderer.px(3600)
+    kept = renderer._image.crop((0, 0, box_w, box_h))
+    colours = {c for _n, c in kept.getcolors(maxcolors=1 << 16)}
+    assert all(c[0] > c[2] for c in colours), colours
 
 
 def test_equation_reaches_the_placeholder_path(tmp_path):
