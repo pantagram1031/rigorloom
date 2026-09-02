@@ -467,7 +467,7 @@ how the Runtime was launched — never a field a client sets in a request. A
 | Method | Why host-only | Existing enforcement to reuse |
 | --- | --- | --- |
 | `workspace/openPath` (arbitrary filesystem path) | escapes any containment the workspace root provides | `studio/main.py:100` (`safe_workspace`) refuses out-of-root today; agent-side opens must go through a slug, not a path |
-| `workspace/openDirectory` (arbitrary absolute directory) | the same reach, over a whole TREE (§15) | implemented; the walk is bounded and refuses symlinks root and member, but filesystem reach is the authority and no agent-safe method grants it. Note the name: `workspace/openPath` above opens a DOCUMENT, a wart §11.4 records and §15.6 proposes fixing at a version bump |
+| `workspace/openDirectory` (arbitrary absolute directory) | the same reach, over a whole TREE (§15) | implemented; the walk is bounded and refuses symlinks root and member, but filesystem reach is the authority and no agent-safe method grants it. Note the name: `workspace/openPath` above opens a DOCUMENT, a wart §11.4 records and §15.8 proposes fixing at a version bump |
 | `workspace/importAttachment` | brings unvetted bytes into the tree | `pipeline/scripts/hwp_ingress.py:40-46` bounds every input dimension; `pipeline/scripts/privacy_scan.py:1` is the content gate |
 | `approval/resolve` | this *is* the human gate | `modules/report/scripts/pipeline_ctl.py:1112-1159` — never fabricates approval |
 | `artifact/exportTo` (user-chosen path) | writes outside the workspace | `engine/scripts/document_evidence.py:558` (`_safe_relative_path`) refuses escapes for everything inside |
@@ -1801,7 +1801,126 @@ wire. A verdict here is evidence that a real checker received a real workspace
 and that its answer was carried and normalized correctly; it is evidence of
 nothing about report quality.
 
-### 15.6 Still GAP here
+### 15.6 The write half: a workspace can be edited through the plan path
+
+A workspace that can only be read produces findings nobody can act on. The
+E4 loop — check, propose the fix, have a human approve it, apply it, check the
+result — needs a write half, and it is the plan path already on the wire rather
+than a second mechanism:
+
+```
+plan/propose {sessionId, backend:"workspace", ops}  -> an OperationPlan (agent)
+plan/validate {planId}                              -> the ops, run on scratch (agent)
+approval/request / approval/resolve                 -> unchanged; resolve is HOST
+plan/apply {planId, approvalId}                     -> a candidate WORKSPACE (HOST)
+module/check {sessionId, module, runId}             -> the checkers, on that candidate
+```
+
+**`workspace` is a backend, not a fourth concept.** A plan declares its backend
+(decision D9); this one's ops are served by `rt_wsops` rather than by an engine
+script, and its subject is a workspace session. `SUPPORTED_BACKENDS` is now
+`("preedit", "workspace")` and `opsHash` covers
+`{backend:"workspace", boundSha256: the tree hash, ops}` — the same intent hash
+as a document plan, over the thing a workspace binds. A backend and a session
+kind that disagree is `session_kind_mismatch` before anything else happens; an
+op kind belonging to the other served backend is `unsupported_backend` naming
+it, exactly as `xml`/`com` kinds already are.
+
+**Three op kinds, closed and small.** Each is a change a checker finding can
+actually ask for:
+
+| kind | params | what it refuses |
+| --- | --- | --- |
+| `ws_replace_text` | `{path, old, new}` | an anchor that matches zero times (`anchor_not_found`) or more than once (`anchor_ambiguous`) |
+| `ws_set_yaml_key` | `{path, key, value}` | a key declared twice (`yaml_key_ambiguous`), absent (`yaml_key_unknown`), holding a structure (`yaml_key_not_scalar`), carrying an inline comment (`yaml_inline_comment`), or a file the scanner does not model (`yaml_unparseable`) |
+| `ws_append_source` | `{source, path?}` | a container that is not a JSON array (`source_container_invalid`) or an id already defined (`source_duplicate_id`) |
+
+`ws_replace_text` requires a UNIQUE match. Not "first match": a report says the
+same sentence twice more often than not, and choosing one silently is how an
+edit lands in the wrong section — the rule `replace_key_ambiguous`
+(engine/scripts/preedit.py:2708) already applies to the document path.
+
+`ws_set_yaml_key` rewrites ONE LINE and leaves every other byte, comment and
+key order alone. PyYAML is an optional dependency here
+(pipeline/scripts/backend_precheck.py:124) and a load-and-dump would rewrite a
+person's file to change one value, so the scalar index is a hand-written
+scanner that models block mappings and refuses everything else rather than
+guessing. A value is written bare only if it is a plain ASCII token; anything
+else is double-quoted, because a bare scalar with a space in it is legal YAML
+and still the wrong thing to write into a file someone will edit by hand.
+
+**Binary members are never operable.** A member must decode as UTF-8 and hold
+no NUL, so `bundle/figures/*.png` refuses with `member_not_text`, at pre-flight
+rather than after a half-written file. **`read_only_paths` refuse**
+(`member_read_only`): a path a checker reads and no stage routes —
+`.pipeline/handoff.json`, `_saeteuk/`, the simulation's provenance — is
+evidence a checker is about to read, and writing it would be the Runtime
+editing the exhibit. Core holds no such list; it comes from §15.1's
+declaration, which also means that with no module enabled there is nothing to
+enforce, and `layout.state: undeclared` is where a caller reads that.
+
+**No create, no delete, no rename** — recorded as gaps, named on the wire in
+`capabilities.backends.workspace.notImplemented` rather than left to be
+inferred from an `unknown_op_kind`. Every op above needs a member that already
+exists and leaves the tree's membership untouched, so the tree hash moves for
+content and never for shape. Creating a file is a stage's job and deleting one
+destroys a person's work; both want their own approval shape.
+
+**Pre-flight IS the ops, run.** `plan/validate` copies the session workspace to
+scratch, runs the ops on the copy, and deletes it. That is not a model of what
+apply does — it is the same function over a different root, which is the only
+honest answer for ops whose second step depends on the first one's output.
+Evaluation stops at the first refusal and reports `preflight.notEvaluated`,
+because a later anchor may only exist once an earlier op has written it. The
+refusals are FINDING codes, not new transport codes: a plan carrying one does
+not validate, and `plan/apply` refuses it with the existing `plan_invalid`.
+
+**Apply publishes a candidate TREE.** `<session>/candidates/<runId>/<name>/` is
+a whole second workspace: the session copy is copied there, asserted to hash to
+the session copy, edited, and then the session copy is re-hashed and the run
+destroyed if it moved. The receipt lands last and is what makes the run
+canonical (`rt_apply` property 2), and it carries the lineage the way a
+document receipt does — `source.treeSha256` → `candidate.treeSha256`, the plan
+and approval that authorised it, and `membershipChanged`, which is false for
+every op this build has. `checks.acceptance` is **false** with a reason: no
+checker runs at apply time for a workspace, and saying "verified" would be a
+pass nobody earned.
+
+**`module/check` takes the candidate.** `runId` on a workspace session used to
+be `invalid_params` — a workspace had no candidates. It has them now, so the
+answer for an unknown one is `artifact_missing`, the same answer a document
+session gives, and `read_receipt` re-verifies the candidate's tree hash before
+a checker is handed it. `baseline.supplied` stays false: a workspace candidate
+was produced from the session workspace, which is not a blank form.
+
+### 15.7 Measured: the loop, on the assembled fixture
+
+`tests/test_runtime_workspace_ops.py::test_the_fix_loop_moves_the_finding_count`,
+against `tests/_workspace_fixture.py` (assembled from repo-owned pieces; not a
+corpus, and no number here is about report quality).
+
+| stage | selected | ran | hard | warn |
+| --- | --- | --- | --- | --- |
+| `module/check` on the session workspace | 12 | 12 | **4** | 21 |
+| the same call on the candidate `runId` | 12 | 12 | **0** | 21 |
+
+The four are `claim_source_missing`, two from `check_claims` and two from
+`content_audit`, which composes it: the ledger's evidence cites `S1` and
+`research/sources.json` in the assembled workspace is a JSON *object*, while
+its only reader (`claims_ledger.source_identity_groups`,
+modules/report/scripts/claims_ledger.py:325-336) reads a top-level *array*. The
+plan is three ops — two `ws_replace_text` that unwrap the container, one
+`ws_append_source` that adds a second record to the array they produce — and
+the warnings are untouched, because nothing in the plan aimed at them.
+
+**What the loop could NOT target, named.** None of those four findings carries
+an `address`: their location is a source id, not a path, and §15.4's rule is
+that a half-resolved location is not an address. So the ops were aimed by
+reading the member's bytes, not by following a finding — and there is no
+agent-safe method to read a workspace member at all, which is the first gap
+below.
+
+### 15.8 Still GAP here
 
 - **`workspace/openPath` opens a DOCUMENT.** The name predates there being a
   workspace session and §11.4 already recorded where the confusion started. The
@@ -1810,12 +1929,27 @@ nothing about report quality.
   is `workspace/openPath` → `document/openPath`, with `workspace/openPath`
   becoming the directory opener; that is a wire break for every client on this
   stack and belongs in a protocol version bump, not here.
-- **A workspace session cannot be edited.** It opens, it summarises, its
-  checkers run. There is no `plan/propose` against a workspace, so the E4.2
-  fix loop — the agent proposes a change to `bundle/content.md`, a human
-  approves, a candidate is published with a receipt — has its read half only.
-  Everything a plan needs is in place (the copy, the tree hash, the scratch
-  discipline); the op kinds are not.
+- **A workspace member cannot be READ over the wire.** The write ops need an
+  exact anchor and there is no agent-safe way to get one: `workspace/inspect`
+  says which parts are present, not what they say, and `document/readRegion` is
+  about a document's runs. So an agent can propose an edit it cannot aim, and
+  the fix loop's own test reads the member off the session copy to build its
+  anchors. This is the next thing this slice wants — a bounded
+  `workspace/readMember`, the same shape `document/readRegion` already has.
+- **The write ops move content, never membership.** No create, no delete, no
+  rename (`WS_NOT_IMPLEMENTED` names all three). A finding that asks for a file
+  that does not exist yet — a missing stage output — cannot be fixed here at
+  all, and `member_missing` says so rather than creating one.
+- **Read-only is only as good as the declaration.** With no enabled module
+  declaring a layout there are no `read_only_paths`, so nothing is protected
+  and `_saeteuk/` is an ordinary member. That is the cost of core holding no
+  path list (§15.1), it is asserted by a test rather than hidden, and
+  `layout.state: undeclared` is where a caller reads it.
+- **One plan, one member, no transaction across members.** The ops run in
+  order on the candidate tree and stop at the first refusal, but a plan that
+  half-applies is impossible only because the candidate is thrown away — there
+  is no rollback of a partially edited tree, just a run directory that never
+  became canonical.
 - **The copy is whole, every time.** Each `module/check` re-copies the entire
   workspace. At the measured 62–217 ms for a small one that is nothing; at 2048
   entries it is tens of seconds. Nothing is incremental and nothing is cached
