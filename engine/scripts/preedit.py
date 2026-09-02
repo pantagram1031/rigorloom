@@ -83,9 +83,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -124,6 +122,8 @@ CHARPROPERTIES_RE = re.compile(r'<' + NS + r':charProperties\b[^>]*>')
 # 삭제 후보에서 구조적으로 제외된다 = sim의 in_tbl 배제와 동등).
 from tidy_hwpx import OBJECT_TAG_RE, _find_paragraphs, _para_text  # noqa: E402
 from hwpx_tables import find_cell, scan_tables  # noqa: E402
+# 아카이브 조립은 repo 단일 라이터 경유 — _write_zip 참조.
+from hwpx_write import write_members  # noqa: E402
 # T30 어휘(script/scale/offset 프로파일·본문 baseline·차이 판정)는
 # form_inspect(사전 점검)·visual_verify(사후 검출)와 **같은 모듈**을 쓴다.
 import charpr_script  # noqa: E402
@@ -366,18 +366,16 @@ def _read_zip(path):
 
 
 def _write_zip(out_path, infos, contents):
-    """임시파일에 쓴 뒤 move — 실패 시 out_path는 생성/변경되지 않는다."""
-    out_path = Path(out_path)
-    fd, tmp = tempfile.mkstemp(suffix=".hwpx", dir=str(out_path.parent))
-    os.close(fd)
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-            for info in infos:
-                z.writestr(info, contents[info.filename])
-        shutil.move(tmp, out_path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    """임시파일에 쓴 뒤 move — 실패 시 out_path는 생성/변경되지 않는다.
+
+    아카이브 조립은 정식 OWPML 라이터(hwpx_write.write_members) 경유:
+    멤버 '순서'만 infos에서 물려받고, 저장/압축 구분·deflate 레벨 2·
+    general-purpose flag bits 0x4·타임스탬프 1980-01-01·create_system 11은
+    한컴 실측값으로 쓴다. 직접 zipfile.ZIP_DEFLATED로 조립하던 이전 방식은
+    레벨 6 / flag 0이라, 내용이 같아도 아카이브가 한컴 모양이 아니었다.
+    """
+    return write_members(out_path, [(info.filename, contents[info.filename])
+                                    for info in infos])
 
 
 def _section_names(contents):

@@ -8,10 +8,8 @@ import hashlib
 import io
 import json
 import re
-import shutil
 import struct
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -23,7 +21,7 @@ from cli_io import utf8_stdio  # noqa: E402
 from eqn import (base_pt_to_hwpunit, count_hweqn_identifier,
                  hwpeqn_sanity_check, validate_equation_operation)  # noqa: E402
 from hwpx_write import (canonical_from_elementtree,  # noqa: E402
-                        root_ns_declarations)
+                        root_ns_declarations, write_members)
 
 
 SUPPORTED_OPS = {
@@ -233,22 +231,17 @@ class HwpxDocument:
         for name in self.package_dirty:
             replacements[name] = self._serialize(
                 name, self.package_trees[name].getroot())
-        out_path = Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(suffix=".hwpx", dir=str(out_path.parent))
-        import os
-        os.close(fd)
-        try:
-            with zipfile.ZipFile(temp_name, "w") as zout:
-                for item in self.items:
-                    zout.writestr(item, replacements.get(item.filename,
-                                                         self.contents[item.filename]))
-                for name, data in self.added_members.items():
-                    zout.writestr(name, data)
-            shutil.move(temp_name, out_path)
-        finally:
-            if Path(temp_name).exists():
-                Path(temp_name).unlink()
+        # Archive assembly goes through the repo's single writer seam, so a
+        # saved file is shaped the way Hancom shapes one: member order from the
+        # source archive, stored/deflated split, deflate level 2 and
+        # general-purpose flag bits 0x4 from hwpx_write.  `zipfile`'s defaults
+        # (level 6, flag bits 0, and ZIP_STORED for members added by name)
+        # made every saved file trivially distinguishable from a Hancom save.
+        members = [(item.filename,
+                    replacements.get(item.filename, self.contents[item.filename]))
+                   for item in self.items]
+        members.extend(self.added_members.items())
+        write_members(out_path, members)
 
     def _track_inserted(self, section_name, para):
         self.inserted_paragraphs.append((section_name, para))
