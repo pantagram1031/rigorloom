@@ -1647,6 +1647,110 @@ legend under the page inherited `.raster-note`'s single-line flex row and
 squeezed its counts into a four-character column. It wraps now, and the counts
 never break.
 
+### 되돌리기 — the undo slice (E1.4 + E1.2)
+
+Reproduced on the operator machine (Windows 11, one Hancom Office install open
+throughout — the runtime never touched it). The runtime changed in this slice,
+so the sidecar rebuild is not optional and the privacy gate runs over a real
+`git archive` of HEAD rather than over the working tree.
+
+```powershell
+npx tsc --noEmit
+powershell -File desktop/sidecar/build.ps1     # runtime changed: MUST precede
+cd desktop; npx tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+python -m pytest tests/test_runtime_*.py tests/test_agenthost_compile.py -q
+python scripts/py_compile_sweep.py
+git archive HEAD | tar -x -C <scratch>; python pipeline/scripts/privacy_scan.py <scratch>
+```
+
+| step | result |
+| --- | --- |
+| `npx tsc --noEmit` | 0 |
+| `sidecar/build.ps1` | 0 · 69.2 MiB payload · `candidate/compare` advertised |
+| `npx tauri build` (release) | 0 · 3m 34s |
+| `scripts/smoke.ps1` | 0 · **455 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 · 25 images |
+| `pytest tests/test_runtime_*.py` | 0 · **413 passed**, 382 s |
+| `pytest tests/test_agenthost_compile.py` | 0 · 35 passed |
+| `scripts/py_compile_sweep.py` | 0 · 125 files, 0 failures |
+| `privacy_scan.py` over `git archive HEAD` | 0 · **HARD=0**, WARN=43 |
+
+Shell exe 8.51 MiB · NSIS installer 26.55 MiB.
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· `overlay` 80 · **`undo` 59** · `packs` 34 · `composer` 31 · `settings` 28 ·
+`chrome` 33 · `chrome-reattach` 5, plus the checks the driver makes from
+outside the app.
+
+#### How the inverse is proven, in the run
+
+Nothing below is the shell comparing two strings it was already holding.
+
+- The pre-edit value is **read**, not remembered: `document/readRegion` against
+  the parent named in the receipt, and the answer states its own `subject`
+  (`{"kind":"candidate","runId":"fc769a9ebc69…"}` in the run).
+- The chain is real. A second edit binds the FIRST candidate's bytes
+  (`f5fb2fa4d56d` vs `f5fb2fa4d56d`) and the chained candidate still carries
+  the first edit — the two-siblings defect, asserted in the UI.
+- The reversal is a proposal: it lands in the queue as 되돌리기 제안 declaring
+  `reverses.runId`, chained onto the HEAD, and applies as one MORE candidate.
+  All three candidates stay listed.
+- The proof comes from the runtime. `candidate/compare` reported
+  `regions: [{"address":"0:0,14","equal":true}]` — **`regionsEqual: true`** —
+  and `artifactEqual: false`, printed apart, because `preedit` rezips the
+  package and an undo restores the value, never the bytes.
+- Two independent re-reads agree: `readRegion` on the reversal returns the
+  pre-edit value, and the newer edit ON TOP of the reversed one survived.
+- The receipt records both `reverses` and `base`, so the claim outlives the
+  session.
+- 기록 draws the whole lineage (3 rows, head marked 현재, parents named), and
+  selecting an older candidate opens it read-only without moving the head.
+
+The E1.2 half runs against the staged rendered session: after an apply the page
+keeps the SOURCE raster under 후보본과 다름 — 이 그림은 원본 기준, names the
+candidate it is not showing, marks the changed address on the overlay
+(**1 rect for `c:10:2:1`**, page 6, 37 seated of 99 clean), refuses to paint the
+new text onto the raster, and 다시 그리기 lands on this machine's real answer:
+`needs_hancom — pyhwpx is not importable`.
+
+Screenshots — `screenshots/`: the twenty-three from the seat slice, plus
+`history-reversal` (기록 with a three-row chain, the middle row marked 되돌려짐
+and the head marked 되돌리기, over the runtime's own 되돌리기 확인됨 verdict and
+its 파일 전체 해시 일치: false line) and `page-candidate-differs` (the stale page
+naming candidate `a03fd55fbebd` and its four changed addresses). Neither is
+staged.
+
+### Three defects the undo evidence found
+
+1. **A render loop took the whole root down on every apply.** `layoutEcho` is
+   read through `useSyncExternalStore`, so its result has to be
+   reference-stable while nothing changes — and `s.changedByRun[head.runId] ??
+   []` allocated a fresh array every call. The identity check below it never
+   matched, every snapshot read produced a new object, and React gave up with
+   #185. The window where that default is taken is exactly the moment after an
+   apply, which is the moment the echo exists for. One shared `NO_CHANGES`
+   closes it; the comment above the function had already named the hazard.
+   It cost the `undo` phase seven checks and hung `open` outright.
+2. **The echo check was a coin flip.** With the loop gone it failed honestly:
+   the banner named one changed address and the overlay marked zero rectangles,
+   and the overlay was right — the form's first clean cell sits outside the
+   drawn page, so there was no rectangle to mark. The seat now comes from the
+   intersection of clean-per-`form_inspect` and seated-on-the-page-being-drawn,
+   and an empty intersection is reported rather than passed over.
+3. **The 기록 capture photographed a refusal and would have been captioned as a
+   reversal.** All captures share one runtime root, so by the time the history
+   shot ran, the session already held a candidate an earlier capture had
+   applied; re-writing the same two cells was refused (`backend_refused` — the
+   shell sets `overwrite` only on an inverse), `applied` stayed null, and the
+   reversal block never ran. The capture takes seats no earlier capture touches
+   now. The collision itself is still open for every capture after the first
+   apply: `screenshots.ps1` clears its app-data once per RUN, not once per
+   capture, while the captures are written as though they were independent. The
+   real fix is a root per capture, which is a harness change with a staging
+   step to move, not a product one.
+
 ### Four defects the Phase 5 evidence found
 
 1. **The credential reference would have authenticated against nothing.**
