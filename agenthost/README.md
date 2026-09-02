@@ -13,6 +13,14 @@ python agenthost/scripts/host.py --root $R --provider mock
 python agenthost/scripts/host.py --root $R --provider mock --scenario escalate
 python agenthost/scripts/host.py --root $R --provider router --config router.json
 python agenthost/scripts/host.py --capabilities --provider mock   # no root needed
+
+# a conversation, instead of N cold starts
+python agenthost/scripts/host.py --root $R --serve --provider mock   # JSONL stdio
+python agenthost/scripts/host.py --root $R --provider mock --memory  # one shot, durable
+
+# read-scoped document context, granted by an OPERATOR and never by the agent
+python agenthost/scripts/host.py --root $R --provider mock \
+    --grant-summary --grant-region 0:0,14 --read-scope granted
 ```
 
 ## The shape of it
@@ -35,9 +43,14 @@ no export, no proof mutation.
 | `scripts/ah_provider.py` | the adapter contract and `CapabilityProfile` |
 | `scripts/ah_compile.py` | **the gate**: provider tool request → Runtime call, or refuse |
 | `scripts/ah_events.py` | the ordered event log a UI renders |
+| `scripts/ah_stream.py` | chunks → one whole response; refuses a truncated stream |
+| `scripts/ah_session.py` | the persistent turn log, the window, reattach |
+| `scripts/ah_grant.py` | operator-granted read-scoped document context |
 | `scripts/ah_mock.py` | the deterministic provider |
 | `scripts/ah_router.py` | the configurable OpenAI-compatible endpoint |
+| `scripts/ah_anthropic.py` | the official Messages API adapter |
 | `scripts/ah_host.py` | the turn loop |
+| `scripts/ah_serve.py` | the long-lived host: JSONL frames on stdio |
 | `scripts/host.py` | CLI entrypoint |
 
 Stdlib only. Tests live in `tests/` (`tests/test_agenthost_*.py`, helper
@@ -190,7 +203,78 @@ redact identically.
 Kinds: `run.started`, `provider.selected`, `provider.request`,
 `provider.response`, `provider.failed`, `provider.stream.chunk`,
 `tool.requested`, `tool.refused`, `tool.compiled`, `runtime.result`,
-`runtime.refused`, `host.note`, `run.finished`.
+`runtime.refused`, `session.attached`, `session.turn`, `session.truncated`,
+`context.granted`, `context.revoked`, `context.included`, `context.refused`,
+`host.note`, `run.finished`.
+
+## Streaming reaches the turn loop
+
+The loop calls `provider.stream()` **iff** the profile declares
+`streaming: "yes"`. `"no"` and `"unknown"` both fall back to `complete()`, and
+the run's `turnLog` records which path each turn actually took plus the reason
+it was not the other one — a measurement, never inferred from the promise.
+`--no-stream` forces the old path.
+
+Mock **yes** (deterministic, no network) · anthropic **yes** (SSE) · router
+**unknown**, which is a statement about the *gateway*: the router's SSE path is
+implemented and tested against a fake server, and an operator who knows their
+gateway declares `"capabilities": {"streaming": "yes"}` in the config.
+
+**A partial tool call is never dispatched**, structurally: the chunk
+vocabulary has no shape for one. An adapter assembles fragmentary tool input
+itself and yields nothing until it parses, so a stream cut mid-argument yields
+no tool-call chunk at all — and a stream that never reaches its terminal chunk
+is `provider_stream_incomplete`, a named provider fault, not a short answer.
+Proven by cutting an SSE body mid-`input_json_delta` and showing the Runtime is
+never asked.
+
+## A conversation with memory
+
+`--serve` keeps one process alive and speaks JSONL frames on stdio, reusing the
+Runtime's own framing (`rt_jsonl`): `initialize`, `turn`, `context/grant`,
+`context/revoke`, `session/state`, `shutdown`, with every event pushed as it
+happens so a streamed answer is visible mid-turn. `--memory` gives the one-shot
+CLI the same durability.
+
+State lives at `<root>/agenthost/<sessionId>/` — beside the Runtime's session
+store, never inside it — as `turns.jsonl` and `grants.jsonl`, appended through
+`rt_session.append_line`, the Runtime's primitive rather than a second copy of
+it (`open("ab")` is not an atomic append on Windows; this repo measured 167 of
+200 lines surviving four writers without the lock). A new host on the same
+session reloads both and continues, after a clean exit or a kill.
+
+Memory is bounded and the bound is declared: the newest `--history-window`
+exchanges (default 12) are resent, nothing is summarised, and anything dropped
+appears in the run payload, in a `session.truncated` event and in the turn
+record. A turn record holds identities — instruction, reply, transports, plan
+id, refusal codes — and never a tool result or a line of document text.
+
+Full wire contract for consumers: **`docs/agenthost-session-protocol-v0.md`**.
+
+## Read-scoped document context, by operator grant
+
+`--grant-summary` / `--grant-region T:R,C` on the CLI, or a `context/grant`
+frame on the long-lived host's own stdin. Those are the only two ways one
+exists. The model cannot ask: `context/grant` and its siblings are
+`HOST_CONTROL_METHODS`, refused by name with `tool_forbidden` in either
+spelling — the same treatment `plan/apply` gets.
+
+`--read-scope` bounds what the AGENT may reach: `open` (default — the Phase-2
+surface, unchanged), `granted` (a `document_readRegion` outside the grant is
+`grant_scope_exceeded` at the compile gate, before the Runtime is asked; a
+mixed batch is refused whole), or `none`.
+
+Be precise about what this is. Under `open` a model can still read any region
+by asking for it as a tool, so a grant is not by itself a confidentiality
+boundary over the document — it bounds what the host **volunteers**. `granted`
+makes it a boundary in both directions, and it is off by default because
+tightening the shipped surface silently would be a behaviour change wearing a
+feature's clothes.
+
+Privacy: the grant record and every event name **addresses, byte counts and
+SHA-256s — never text**. The granted text exists in one request body and in no
+log, event or turn record, which is also why reattach re-fetches it from the
+Runtime instead of replaying it.
 
 ## Exit codes
 
@@ -203,4 +287,14 @@ internal. Same table as the Runtime CLI.
   UI, which does not exist yet.
 - OS credential-store resolution is declared and refused, not implemented.
 - `resumableThread` is `no` everywhere; the host resends history each turn.
+  Memory is now the HOST's (`ah_session`), which is why that stays `no`: no
+  endpoint is trusted to have kept anything.
 - No retry, no backoff, no fallback provider. A fault ends the run.
+- **No live provider call, streaming included.** The SSE parser has never met a
+  real endpoint; every test talks to a local fake. E4.5 is still owed.
+- The long-lived host serves **one turn at a time**. There is no cancel frame:
+  a turn runs to its own bound (`maxTurns`), and a client that wants out closes
+  stdin.
+- `--read-scope granted` bounds `document/readRegion` only. Every other agent
+  method is untouched by a grant, and `document/inspect` still returns the
+  document's structure to any agent connection.

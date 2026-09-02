@@ -1542,3 +1542,30 @@ would print in something other than the body face.
   no point size of its own.
 - **No writing.** This is a read. Setting a face means a charPr the document
   does not have, which is a `preedit` question, not a protocol one.
+
+---
+
+## 15. The Agent Host session boundary (E4.3)
+
+The Agent Host is not a Runtime entry and its methods are not Runtime methods —
+`rt_core.METHODS` does not, and must not, contain any of them. Its own wire
+contract lives in **`docs/agenthost-session-protocol-v0.md`**: streamed chunk
+events, the long-lived JSONL host, reattach semantics, and the
+operator-granted document-context events.
+
+Three facts belong in *this* document, because they touch the Runtime:
+
+- **`document/readRegion` stays agent-safe, unchanged.** The Agent Host's
+  `--read-scope granted` narrows what the AGENT may reach *at the Agent Host's
+  own compile gate*; the Runtime still serves any address to an agent
+  connection. A reader of §4 must not conclude that a grant mechanism exists
+  down here. It does not, and the Agent Host says so in its own doc.
+- **`rt_session.append_line`** is now the named primitive behind every
+  append-only JSONL log in the repository, the Agent Host's turn log included;
+  `append_event` is one caller of it. The Windows non-atomic-append defence
+  (`_append_lock`, §the measured 167-of-200 bench) therefore has exactly one
+  implementation rather than one per log.
+- **The Agent Host's session state lives outside the session store**, at
+  `<root>/agenthost/<sessionId>/`. `<root>/sessions/` remains the Runtime's
+  alone, so neither side can corrupt the other's idea of what a directory
+  contains.
