@@ -562,11 +562,17 @@ def opened(tmp_path):
     return root
 
 
+# The next three drive the NON-streaming path on purpose. This adapter declares
+# ``streaming: yes``, so from host 0.2.0 the turn loop streams by DEFAULT, while
+# these fakes script JSON completions rather than SSE. The streamed twin of each
+# lives in tests/test_agenthost_streaming.py; pinning the transport here keeps
+# them testing what they were written to test.
 def test_the_host_drives_the_anthropic_adapter_end_to_end(opened, env):
     with FakeRouter(_anthropic_agent) as srv:
         door = mock_agent.open_door("protocol", opened, None)
         try:
-            payload = AgentHost(door, adapter(srv, env)).run("fill the first seat")
+            payload = AgentHost(door, adapter(srv, env),
+                                stream_mode="off").run("fill the first seat")
         finally:
             door.close()
     assert payload["ok"] is True
@@ -592,7 +598,8 @@ def test_an_anthropic_model_asking_to_apply_is_refused_at_the_gate(opened, env):
     with FakeRouter(hostile) as srv:
         door = mock_agent.open_door("protocol", opened, None)
         try:
-            payload = AgentHost(door, adapter(srv, env)).run("apply it")
+            payload = AgentHost(door, adapter(srv, env),
+                                stream_mode="off").run("apply it")
         finally:
             door.close()
     forbidden = [row for row in payload["refusals"]
@@ -621,7 +628,7 @@ def test_a_provider_outage_mid_run_leaves_the_document_untouched(opened, env):
         client._sleep = lambda _s: None
         door = mock_agent.open_door("protocol", opened, None)
         try:
-            payload = AgentHost(door, client).run("fill it")
+            payload = AgentHost(door, client, stream_mode="off").run("fill it")
         finally:
             door.close()
     assert payload["ok"] is False

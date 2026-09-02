@@ -22,10 +22,90 @@ EXIT_REFUSED = 3
 EXIT_INTERNAL = 4
 
 #: Bumped when the host's observable behaviour changes, not its docstrings.
-HOST_VERSION = "0.1.0"
+#: 0.2.0 — streaming reaches the turn loop, the host keeps a persistent
+#: session across processes, and read-scoped document context can be granted
+#: by an operator.
+HOST_VERSION = "0.2.0"
 
 EVENT_SCHEMA = "rigorloom/agenthost-events/v0"
 RUN_SCHEMA = "rigorloom/agenthost-run/v0"
+TURN_SCHEMA = "rigorloom/agenthost-turn/v0"
+GRANT_SCHEMA = "rigorloom/agenthost-grant/v0"
+SESSION_SCHEMA = "rigorloom/agenthost-session/v0"
+
+#: The long-lived host's stdio protocol. Bumped when a frame shape changes in
+#: a way a consumer cannot ignore; a new optional member does NOT bump it.
+SERVE_PROTOCOL_VERSION = "0.1.0"
+
+# --- streaming --------------------------------------------------------------
+
+#: The four chunk shapes an adapter's ``stream()`` may yield. Closed, so the
+#: assembler refuses an undeclared one rather than dropping it: a dropped
+#: chunk is a truncated answer that nobody notices.
+#:
+#:   {"type": "text",      "text": str}
+#:   {"type": "tool_call", "toolCall": {"callId", "name", "arguments"}}
+#:   {"type": "finish",    "finishReason": str}
+#:   {"type": "done",      "finishReason": str}
+#:
+#: A ``tool_call`` chunk is COMPLETE by construction: an adapter assembles
+#: fragmentary tool input (``input_json_delta`` and its OpenAI-shaped cousin)
+#: itself and yields nothing until it parses as an object. There is no
+#: partial-tool-call chunk shape, which is how a partial tool call can never
+#: reach the compile gate.
+STREAM_CHUNK_TYPES = ("text", "tool_call", "finish", "done")
+
+#: A stream that never reaches one of these ended mid-answer, and that is a
+#: provider fault rather than a short reply.
+STREAM_TERMINAL_TYPES = ("done",)
+
+#: Which path a turn actually took. Recorded per turn and never inferred by a
+#: reader from the capability profile: a capability is a promise, this is a
+#: measurement.
+TURN_TRANSPORTS = ("stream", "complete")
+
+#: What the operator asked for, before the capability was consulted.
+STREAM_MODES = ("auto", "off")
+
+# --- conversation memory ----------------------------------------------------
+
+#: How a bounded history drops what it drops. One policy today, NAMED rather
+#: than implicit, and recorded in every turn record it applied to.
+TRUNCATION_POLICIES = ("recent-exchanges",)
+
+#: The long-lived host's stdio protocol roster. ``initialize`` is the
+#: transport's handshake, exactly as it is on the Runtime's JSONL entry.
+SERVE_METHODS = (
+    "initialize",
+    "turn",
+    "context/grant",
+    "context/revoke",
+    "session/state",
+    "shutdown",
+)
+
+#: The operator-authority subset. These exist on NO provider surface: the
+#: Runtime has never heard of them, and they are not in the tool set handed to
+#: a model. Named here so ``ah_compile`` can refuse them BY NAME — a model
+#: asking to widen its own grant deserves an answer that says why, not a shrug
+#: about an unknown tool.
+HOST_CONTROL_METHODS = tuple(name for name in SERVE_METHODS
+                             if name != "initialize")
+
+# --- document-context grants ------------------------------------------------
+
+#: What an operator may grant the host permission to put in a prompt.
+GRANT_KINDS = ("summary", "region")
+
+#: How far the agent's own ``document/readRegion`` may reach.
+#:
+#:   open    — anywhere in the document. The Phase-2 agent surface, unchanged,
+#:             and still the default: narrowing it silently would be a
+#:             behaviour change wearing a feature's clothes.
+#:   granted — only addresses the operator granted; anything else is refused
+#:             at the compile gate, before the Runtime is asked.
+#:   none    — refused outright.
+READ_SCOPES = ("open", "granted", "none")
 
 # --- capability vocabulary --------------------------------------------------
 
@@ -73,6 +153,11 @@ PROVIDER_CODES = frozenset({
     "provider_malformed_response",
     "provider_response_too_large",
     "provider_empty_response",
+    # A stream that stopped before its terminal chunk. NOT a short answer:
+    # the difference matters, because a short answer is the model's decision
+    # and a truncated stream is a transport's accident.
+    "provider_stream_incomplete",
+    "provider_stream_chunk_invalid",
     "provider_capability_unavailable",
     "credential_unavailable",
     "credential_source_unsupported",
@@ -86,6 +171,9 @@ HOST_CODES = frozenset({
     "tool_forbidden",
     "tool_arguments_invalid",
     "turn_budget_exhausted",
+    "grant_invalid",
+    "grant_scope_exceeded",
+    "session_log_unreadable",
     "scenario_expectation_failed",
     "runtime_unavailable",
     "host_internal_error",

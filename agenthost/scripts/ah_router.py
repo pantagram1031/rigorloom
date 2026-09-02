@@ -290,11 +290,21 @@ class RouterAdapter(ProviderAdapter):
             {"role": "system",
              "content": ("You may inspect a document and propose an edit plan. "
                          "You cannot approve or apply anything.")},
+        ]
+        # Earlier exchanges in this host session, oldest first. Plain
+        # user/assistant turns, so a gateway that supports nothing beyond chat
+        # completions still carries the memory correctly.
+        for exchange in request.conversation:
+            messages.append({"role": "user",
+                             "content": str(exchange.get("instruction") or "")})
+            reply = exchange.get("reply")
+            if reply:
+                messages.append({"role": "assistant", "content": str(reply)})
+        messages.append(
             {"role": "user",
              "content": json.dumps({"instruction": request.instruction,
                                     "context": request.context},
-                                   ensure_ascii=False, sort_keys=True)},
-        ]
+                                   ensure_ascii=False, sort_keys=True)})
         for entry in request.history:
             messages.append({
                 "role": "tool",

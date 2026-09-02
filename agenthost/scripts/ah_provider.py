@@ -176,12 +176,25 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class ProviderRequest:
+    """One turn's worth of input to a provider.
+
+    ``history`` is THIS turn-loop's tool traffic. ``conversation`` is what came
+    before it — earlier exchanges in the same persistent host session, oldest
+    first, each ``{"instruction": str, "reply": str | None}``. They are
+    separate fields because they are separate things (a tool result belongs to
+    the assistant turn that asked for it; an earlier exchange does not), and
+    because the default is empty: an adapter that has not learned the new
+    field still behaves honestly rather than silently dropping memory it was
+    supposed to carry.
+    """
+
     instruction: str
     context: dict
     tools: list
     history: list = field(default_factory=list)
     thread_id: str | None = None
     stream: bool = False
+    conversation: tuple = ()
 
 
 @dataclass(frozen=True)

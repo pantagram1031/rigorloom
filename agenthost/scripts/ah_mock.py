@@ -47,6 +47,10 @@ MODEL_ID = "mock-deterministic-1"
 #: Fixed. Never a timestamp, never a counter that survives across runs.
 MARKER = "AGENT-HOST-0001"
 
+#: Characters per streamed text chunk. A constant, so a stream is a pure
+#: function of the answer's length and two runs chunk identically.
+STREAM_CHUNK_CHARS = 12
+
 SCENARIOS = ("propose-one", "propose-invalid", "propose-then-wait", "escalate")
 
 #: What the model "would have said", per scenario. Fixed strings, so streaming
@@ -176,12 +180,23 @@ class MockProvider(ProviderAdapter):
 
     # -- streaming ----------------------------------------------------------
     def stream(self, request: ProviderRequest) -> Iterator[dict]:
-        """Chunk the same answer. Deterministic split, no timing, no sleeps."""
+        """Chunk the same answer. Deterministic split, no timing, no sleeps.
+
+        Fixed-width slices, not a word split: concatenating the text chunks
+        must reproduce ``complete()``'s text BYTE FOR BYTE, or the streaming
+        and non-streaming paths would disagree about the answer and the host
+        could not claim they are two routes to one result. A word split lost
+        the spacing, quietly, which is precisely the class of drift this
+        fixture exists to make impossible.
+
+        The tool call is yielded whole, once — there is no partial-tool-call
+        chunk shape to yield even if this fixture wanted to be unhelpful.
+        """
         self.capabilities().require("streaming")
         response = self.complete(request)
-        for word in (response.text or "").split(" "):
-            if word:
-                yield {"type": "text", "text": word + " "}
+        text = response.text or ""
+        for start in range(0, len(text), STREAM_CHUNK_CHARS):
+            yield {"type": "text", "text": text[start:start + STREAM_CHUNK_CHARS]}
         for call in response.tool_calls:
             yield {"type": "tool_call", "toolCall": call.public()}
         yield {"type": "done", "finishReason": response.finish_reason}

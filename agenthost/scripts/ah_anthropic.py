@@ -281,7 +281,21 @@ class AnthropicAdapter(ProviderAdapter):
                                 "context": request.context},
                                ensure_ascii=False, sort_keys=True),
         }]
-        messages: list[dict] = [{"role": "user", "content": content}]
+        messages: list[dict] = []
+        # Earlier exchanges in this host session, oldest first, as ordinary
+        # user/assistant turns. The Messages API is stateless (the capability
+        # profile says ``resumableThread: no``), so memory is something the
+        # HOST carries and resends — never something the endpoint is trusted
+        # to have kept.
+        for exchange in request.conversation:
+            messages.append({"role": "user", "content": [
+                {"type": "text",
+                 "text": str(exchange.get("instruction") or "")}]})
+            reply = exchange.get("reply")
+            if reply:
+                messages.append({"role": "assistant", "content": [
+                    {"type": "text", "text": str(reply)}]})
+        messages.append({"role": "user", "content": content})
         for entry in request.history:
             call_id = entry.get("callId") or f"toolu_{entry.get('tool')}"
             # (v) The assistant's tool_use turn is echoed back, then the results
