@@ -161,6 +161,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("open", help="validate and copy a document into a session")
     p.add_argument("--path", required=True, help="absolute path to the source")
 
+    p = sub.add_parser("open-workspace",
+                       help="validate and copy a report workspace DIRECTORY "
+                            "into a session (host action; it reaches a tree)")
+    p.add_argument("--path", required=True,
+                   help="absolute path to the workspace directory")
+
+    p = sub.add_parser("workspace",
+                       help="which declared parts a workspace session has")
+    p.add_argument("--session", required=True)
+    p.add_argument("--require-parts", action="store_true",
+                   help="exit 3 when a declared-required part is absent "
+                        "(default: exit 0 and report per part, which is an "
+                        "answer)")
+
     p = sub.add_parser("inspect", help="summary, graph and editable regions")
     p.add_argument("--session", required=True)
     p.add_argument("--include", default=None,
@@ -288,6 +302,15 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
                 **core.capability_snapshot(methods=list(METHODS))}, EXIT_OK
     if command == "open":
         return core.open_path(args.path), EXIT_OK
+    if command == "open-workspace":
+        return core.open_workspace(args.path), EXIT_OK
+    if command == "workspace":
+        result = core.workspace_inspect(args.session)
+        # An absent part is an ANSWER — a workspace at stage 2 has no
+        # output/out.pdf and saying so is the point — so it exits 0 by default.
+        if args.require_parts and result["layout"]["counts"]["absentRequired"]:
+            return result, EXIT_REFUSED
+        return result, EXIT_OK
     if command == "sessions":
         return core.session_list(), EXIT_OK
     if command == "inspect":
