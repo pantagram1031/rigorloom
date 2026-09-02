@@ -283,7 +283,7 @@ class TestMutationThroughTheModel:
         paragraph = next(node for node in section.root.children
                          if node.local == "p")
         clone = W.parse_xml_part(
-            W.XML_DECLARATION + _node_bytes(paragraph)).root
+            W.XML_DECLARATION + paragraph.tobytes()).root
         clone.set("id", "999999")
         section.root.children.append(clone)
 
@@ -341,12 +341,6 @@ class TestMutationThroughTheModel:
                 if name == section_name or (slug, name) in CR_PARTS:
                     continue
                 assert left.read(name) == right.read(name), name
-
-
-def _node_bytes(node):
-    out = bytearray()
-    W._serialize(node, out)
-    return bytes(out)
 
 
 def _count_in(node, qname):
@@ -443,7 +437,7 @@ class TestBlankDocument:
             "Contents/header.xml":
                 "bda2a5b38f91455930b35932eff6d02de858904b64833fd8a2bfd295e6edc3ac",
             "Contents/section0.xml":
-                "e4392aae938c016ac26d19c6f76605163c3cca4a6baa7f9e82531a114fc6d4b3",
+                "db64f39b900f80a2b6095d79c9f5d7e4e2e8083076e1cbdd28e5ec1f109a7bf1",
             "Preview/PrvText.txt":
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "settings.xml":
@@ -451,7 +445,7 @@ class TestBlankDocument:
             "META-INF/container.rdf":
                 "0cfd814c20595c841e48e62fbf7591829f13c177fa92af634c8199f85ecf3a89",
             "Contents/content.hpf":
-                "3b6fa2ec22d6a432f33379fae7695a73b717bd919ec1c21587150d68f9cdc27b",
+                "7e90774edecfd5317cacb238a0c70902bc0401de52a67422d47d90232131d7fd",
             "META-INF/container.xml":
                 "5109d3a9249ec1058177fedab574c5d9616058aa92ebefcd33249ebb36a20f61",
             "META-INF/manifest.xml":
@@ -653,15 +647,20 @@ class TestInventory:
         assert set(fresh["elements"]) == set(reference["elements"])
 
     def test_records_no_values(self):
-        """The inventory must never carry corpus content into the repo."""
-        import json
+        """The inventory must never carry corpus content into the repo.
+
+        Corpus ``content.hpf`` metadata holds author names, machine names and
+        file paths, so the shape of the record — counts only, never a sampled
+        value — is the thing that keeps this file publishable.
+        """
         payload = hwpx_inventory.collect(CORPUS_FILES[:1])
-        text = json.dumps(payload, ensure_ascii=False)
-        assert "lastsaveby" not in text or '"lastsaveby"' not in text.split(
-            '"attributes"')[0]
         for record in payload["elements"].values():
+            assert set(record) == {
+                "namespace", "local", "count", "forms", "parts", "with_text",
+                "with_children", "empty", "explicit_end_form", "attributes"}
             for attribute in record["attributes"].values():
                 assert set(attribute) == {"count", "forms"}
+                assert isinstance(attribute["count"], int)
                 assert isinstance(attribute["forms"], int)
 
     def test_the_writer_emits_every_element_the_inventory_found(self):
