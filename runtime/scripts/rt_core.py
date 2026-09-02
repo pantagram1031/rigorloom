@@ -73,6 +73,7 @@ from rt_wsops import (  # noqa: E402
     WS_NOT_IMPLEMENTED,
     WS_OP_KINDS,
     WS_REFUSAL_CODES,
+    read_member,
     read_only_matcher,
 )
 from rt_geometry import geometry_capability, page_geometry  # noqa: E402
@@ -115,6 +116,8 @@ AGENT_METHODS: tuple[str, ...] = (
     "module/list",
     "module/check",
     "workspace/inspect",
+    "workspace/readMember",
+    "workspace/listMembers",
 )
 
 #: Agent-safe by authority, but transport-shaped: they push notifications, and
@@ -310,6 +313,72 @@ class RuntimeCore:
         """Which declared parts this workspace session has, per part."""
         session = self.store.get(session_id).require_kind("workspace")
         return self._workspace_summary(session)
+
+    def _workspace_read_root(self, session, run_id) -> tuple[Path, dict]:
+        """The tree an agent-safe workspace READ addresses, and what it is.
+
+        Never the operator's source path: with no ``runId`` it is the session
+        copy every other workspace method already addresses; with one, it is a
+        published candidate, and ``read_receipt`` re-verifies the candidate's
+        tree hash before a byte of it is read — the same rule
+        ``rt_module._resolve_subject`` already applies for ``module/check``.
+        """
+        if run_id is None:
+            return session.workspace, {"kind": "workspace", "runId": None}
+        receipt = read_receipt(session, run_id)
+        candidate = receipt["candidate"]
+        if candidate.get("role") != "workspace_tree":
+            raise RpcError("artifact_missing",
+                           "that runId names a document candidate, and this "
+                           "session holds a workspace",
+                           sessionId=session.id, runId=run_id,
+                           role=candidate.get("role"))
+        return session.candidates_dir / run_id / candidate["path"], {
+            "kind": "candidate_workspace", "runId": run_id,
+            "treeSha256": candidate["treeSha256"]}
+
+    @staticmethod
+    def _member_refusal(finding: dict) -> RpcError:
+        """A workspace-ops finding, surfaced as the transport error it names.
+
+        ``finding["code"]`` is one of the closed reasons ``rt_wsops`` already
+        refuses a write op with; §15.8's read gap wants the identical refusal
+        one layer up, not a second vocabulary invented for reading.
+        """
+        extra = {key: value for key, value in finding.items()
+                 if key not in ("code", "msg")}
+        return RpcError(finding["code"], finding["msg"], **extra)
+
+    def workspace_read_member(self, session_id, path, run_id=None) -> dict:
+        """UTF-8 text of one workspace member — the read half of the fix loop.
+
+        Bounded exactly as a write op bounds it: over ``MAX_MEMBER_BYTES`` is
+        ``member_too_large``, not UTF-8 is ``member_not_text``, outside the
+        tree or not relative is ``path_not_relative``, absent is
+        ``member_missing``. Reads the session copy, or a published candidate
+        when ``runId`` is given — never the operator's directory.
+        """
+        session = self.store.get(session_id).require_kind("workspace")
+        root, subject = self._workspace_read_root(session, run_id)
+        text, member, refusal = read_member(root, path, "path")
+        if refusal is not None:
+            raise self._member_refusal(refusal)
+        return {"sessionId": session.id, "subject": subject, "path": member,
+                "text": text, "bytes": len(text.encode("utf-8"))}
+
+    def workspace_list_members(self, session_id, run_id=None) -> dict:
+        """Every member of the workspace copy: path, kind and a file's size.
+
+        An agent cannot aim ``workspace/readMember`` at a path it cannot see,
+        so this is the other half of the same gap (§15.8).
+        """
+        from rt_workspace import list_members
+
+        session = self.store.get(session_id).require_kind("workspace")
+        root, subject = self._workspace_read_root(session, run_id)
+        members = list_members(root)
+        return {"sessionId": session.id, "subject": subject,
+                "members": members, "count": len(members)}
 
     # -- documents ----------------------------------------------------------
     def _document(self, session_id):
