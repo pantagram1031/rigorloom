@@ -22,6 +22,8 @@ if str(_HERE) not in sys.path:
 from cli_io import utf8_stdio  # noqa: E402
 from eqn import (base_pt_to_hwpunit, count_hweqn_identifier,
                  hwpeqn_sanity_check, validate_equation_operation)  # noqa: E402
+from hwpx_write import (canonical_from_elementtree,  # noqa: E402
+                        root_ns_declarations)
 
 
 SUPPORTED_OPS = {
@@ -170,6 +172,16 @@ class HwpxDocument:
             for name in ("Contents/content.hpf", "META-INF/manifest.xml")
             if name in self.contents
         }
+        # The root's namespace declarations as the SOURCE wrote them, for the
+        # canonical serializer: ElementTree drops the ones no qname references
+        # (13 of 15 on a section root), which would make every edited part
+        # textually distinguishable from a Hancom-written one. See
+        # hwpx_write.canonical_from_elementtree.
+        self.root_ns = {
+            name: root_ns_declarations(self.contents[name])
+            for name in list(section_names) + ["Contents/header.xml"]
+                        + list(self.package_trees)
+        }
         styles = existing_styles(self.header.getroot())
         self.bold_charprs = styles["bold"]
         self.normal_charprs = styles["normal"]
@@ -207,18 +219,20 @@ class HwpxDocument:
         self.next_object_id = max(object_ids, default=0) + 1
         self.next_zorder = max(zorders, default=-1) + 1
 
+    def _serialize(self, name, root):
+        return canonical_from_elementtree(root, self.root_ns.get(name))
+
     def save(self, out_path):
         replacements = {}
         for name in self.dirty:
-            replacements[name] = ET.tostring(
-                self.sections[name].getroot(), encoding="utf-8", xml_declaration=True)
+            replacements[name] = self._serialize(
+                name, self.sections[name].getroot())
         if self.header_dirty:
-            replacements["Contents/header.xml"] = ET.tostring(
-                self.header.getroot(), encoding="utf-8", xml_declaration=True)
+            replacements["Contents/header.xml"] = self._serialize(
+                "Contents/header.xml", self.header.getroot())
         for name in self.package_dirty:
-            replacements[name] = ET.tostring(
-                self.package_trees[name].getroot(), encoding="utf-8",
-                xml_declaration=True)
+            replacements[name] = self._serialize(
+                name, self.package_trees[name].getroot())
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(suffix=".hwpx", dir=str(out_path.parent))
