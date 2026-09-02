@@ -348,6 +348,37 @@ def _unlock_fd(fd: int) -> None:
         pass
 
 
+def append_line(path: Path, line: bytes) -> None:
+    """Append one complete line to a JSONL log, serialised and torn-safe.
+
+    THE primitive. Every append-only log in this repository goes through it —
+    the Runtime's session events and the Agent Host's conversation turn log
+    alike — because the Windows trap ``_append_lock`` defends against was
+    MEASURED here, and a second copy of that defence is a copy that will drift.
+
+    Raises ``OSError``. A caller for whom a lost note must not undo a deed
+    catches it; a caller whose log IS the state must not.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _append_lock(path):
+        # Repair a torn boundary first. A crash mid-write leaves a line with
+        # no terminator, and appending onto it would GLUE the next record to
+        # the wreck — losing a good record, permanently, to a bad one.
+        prefix = b""
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size:
+            with path.open("rb") as probe:
+                probe.seek(size - 1)
+                if probe.read(1) != b"\n":
+                    prefix = b"\n"
+        with path.open("ab") as handle:
+            handle.write(prefix + line)
+            handle.flush()
+
+
 def append_event(session: "Session", kind: str, **detail) -> None:
     """Append one complete line. Seq is NOT stored — the reader assigns it.
 
@@ -366,24 +397,7 @@ def append_event(session: "Session", kind: str, **detail) -> None:
                        allow_nan=False) + "\n").encode("utf-8")
     try:
         session.dir.mkdir(parents=True, exist_ok=True)
-        with _append_lock(session.events_path):
-            # Repair a torn boundary first. A crash mid-write leaves a line
-            # with no terminator, and appending onto it would GLUE the next
-            # event to the wreck — losing a good event, permanently, to a bad
-            # one.
-            prefix = b""
-            try:
-                size = session.events_path.stat().st_size
-            except OSError:
-                size = 0
-            if size:
-                with session.events_path.open("rb") as probe:
-                    probe.seek(size - 1)
-                    if probe.read(1) != b"\n":
-                        prefix = b"\n"
-            with session.events_path.open("ab") as handle:
-                handle.write(prefix + line)
-                handle.flush()
+        append_line(session.events_path, line)
     except OSError:
         # An event is a projection of something that already happened. Losing
         # the note must never undo the deed, so this cannot raise into a
