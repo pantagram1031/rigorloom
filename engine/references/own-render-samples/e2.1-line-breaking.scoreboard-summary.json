@@ -1,0 +1,452 @@
+{
+  "comparable_form_means": {
+    "after": {
+      "ssim_inked_mean": 0.122528,
+      "ssim_mean": 0.727022,
+      "text_line_iou_mean": 0.439302,
+      "text_line_pair_rate_mean": 0.801423
+    },
+    "before": {
+      "ssim_inked_mean": 0.122666,
+      "ssim_mean": 0.72751,
+      "text_line_iou_mean": 0.439395,
+      "text_line_pair_rate_mean": 0.801423
+    },
+    "computed": {
+      "ssim_inked_mean": 0.110299,
+      "ssim_mean": 0.719804,
+      "text_line_iou_mean": 0.403545,
+      "text_line_pair_rate_mean": 0.795333
+    }
+  },
+  "dpi": 144,
+  "forms": [
+    {
+      "after": {
+        "ink_delta_abs_max": 0.001444,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.306553,
+        "ssim_mean": 0.886316,
+        "text_line_iou_mean": 0.484499,
+        "text_line_pair_rate_mean": 0.44898,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.001444,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.306553,
+        "ssim_mean": 0.886316,
+        "text_line_iou_mean": 0.484499,
+        "text_line_pair_rate_mean": 0.44898,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.001445,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.24488,
+        "ssim_mean": 0.861834,
+        "text_line_iou_mean": 0.351264,
+        "text_line_pair_rate_mean": 0.44898,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+      "document_class": "petition",
+      "reference_geometry_scale": 0.996875
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.005998,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.100695,
+        "ssim_mean": 0.88105,
+        "text_line_iou_mean": 0.020607,
+        "text_line_pair_rate_mean": 0.692308,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.005998,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.100695,
+        "ssim_mean": 0.88105,
+        "text_line_iou_mean": 0.020607,
+        "text_line_pair_rate_mean": 0.692308,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "comparable": false,
+      "computed": {
+        "ink_delta_abs_max": 0.005998,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.100401,
+        "ssim_mean": 0.880589,
+        "text_line_iou_mean": 0.020598,
+        "text_line_pair_rate_mean": 0.692308,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "document": "gianmun-byeolji-1ho.hwpx",
+      "document_class": "gongmun",
+      "reference_geometry_scale": 0.706667
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.009235,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.035927,
+        "ssim_mean": 0.873707,
+        "text_line_iou_mean": 0.004319,
+        "text_line_pair_rate_mean": 0.652174,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.009235,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.035927,
+        "ssim_mean": 0.873707,
+        "text_line_iou_mean": 0.004319,
+        "text_line_pair_rate_mean": 0.652174,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "comparable": false,
+      "computed": {
+        "ink_delta_abs_max": 0.009235,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.036319,
+        "ssim_mean": 0.874069,
+        "text_line_iou_mean": 0.00442,
+        "text_line_pair_rate_mean": 0.608696,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "document": "gianmun-byeolji-2ho.hwpx",
+      "document_class": "gongmun",
+      "reference_geometry_scale": 0.707
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.00037,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.037182,
+        "ssim_mean": 0.617547,
+        "text_line_iou_mean": 0.438491,
+        "text_line_pair_rate_mean": 1.0,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.00037,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.037182,
+        "ssim_mean": 0.617547,
+        "text_line_iou_mean": 0.438491,
+        "text_line_pair_rate_mean": 1.0,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.000369,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.053539,
+        "ssim_mean": 0.645071,
+        "text_line_iou_mean": 0.504864,
+        "text_line_pair_rate_mean": 1.0,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "jeongbo-gonggae-cheongguseo.hwpx",
+      "document_class": "petition",
+      "reference_geometry_scale": 1.023158
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.015556,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.082037,
+        "ssim_mean": 0.637255,
+        "text_line_iou_mean": 0.574118,
+        "text_line_pair_rate_mean": 1.0,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.015556,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.082037,
+        "ssim_mean": 0.637255,
+        "text_line_iou_mean": 0.574118,
+        "text_line_pair_rate_mean": 1.0,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.015556,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.084497,
+        "ssim_mean": 0.627179,
+        "text_line_iou_mean": 0.58265,
+        "text_line_pair_rate_mean": 0.995556,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "jumin-deungchobon-sinchengseo.hwpx",
+      "document_class": "petition",
+      "reference_geometry_scale": 0.996
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.037475,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.219805,
+        "ssim_mean": 0.80797,
+        "text_line_iou_mean": 0.246994,
+        "text_line_pair_rate_mean": 0.800379,
+        "verdict": {
+          "blocked": false,
+          "pass": false
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.037475,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.220695,
+        "ssim_mean": 0.811386,
+        "text_line_iou_mean": 0.247025,
+        "text_line_pair_rate_mean": 0.800379,
+        "verdict": {
+          "blocked": false,
+          "pass": false
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.037475,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.216453,
+        "ssim_mean": 0.805063,
+        "text_line_iou_mean": 0.215349,
+        "text_line_pair_rate_mean": 0.800379,
+        "verdict": {
+          "blocked": false,
+          "pass": false
+        }
+      },
+      "document": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+      "document_class": "grant",
+      "reference_geometry_scale": 1.0
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.011802,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.044595,
+        "ssim_mean": 0.765313,
+        "text_line_iou_mean": 0.444838,
+        "text_line_pair_rate_mean": 0.668902,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.011802,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.044629,
+        "ssim_mean": 0.765299,
+        "text_line_iou_mean": 0.44545,
+        "text_line_pair_rate_mean": 0.668902,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.011776,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.015114,
+        "ssim_mean": 0.731622,
+        "text_line_iou_mean": 0.289137,
+        "text_line_pair_rate_mean": 0.662145,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "moel-pyojun-geunrogyeyakseo-2013.hwpx",
+      "document_class": "hr",
+      "reference_geometry_scale": 0.996
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.015738,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.148136,
+        "ssim_mean": 0.752953,
+        "text_line_iou_mean": 0.487202,
+        "text_line_pair_rate_mean": 0.705588,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.015738,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.148136,
+        "ssim_mean": 0.752953,
+        "text_line_iou_mean": 0.487202,
+        "text_line_pair_rate_mean": 0.705588,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.015718,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.133893,
+        "ssim_mean": 0.743321,
+        "text_line_iou_mean": 0.486175,
+        "text_line_pair_rate_mean": 0.676542,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "moel-pyojun-geunrogyeyakseo-2025.hwpx",
+      "document_class": "hr",
+      "reference_geometry_scale": 0.996154
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.014897,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.371681,
+        "ssim_mean": 0.75737,
+        "text_line_iou_mean": 0.033048,
+        "text_line_pair_rate_mean": 0.60754,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.014897,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.371681,
+        "ssim_mean": 0.75737,
+        "text_line_iou_mean": 0.033048,
+        "text_line_pair_rate_mean": 0.60754,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "comparable": false,
+      "computed": {
+        "ink_delta_abs_max": 0.014896,
+        "page_count_exact": false,
+        "ssim_inked_mean": 0.364169,
+        "ssim_mean": 0.752441,
+        "text_line_iou_mean": 0.044635,
+        "text_line_pair_rate_mean": 0.60754,
+        "verdict": {
+          "blocked": true,
+          "pass": null
+        }
+      },
+      "document": "nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+      "document_class": "research",
+      "reference_geometry_scale": 0.709091
+    },
+    {
+      "after": {
+        "ink_delta_abs_max": 0.0172,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.019385,
+        "ssim_mean": 0.621799,
+        "text_line_iou_mean": 0.398971,
+        "text_line_pair_rate_mean": 0.986111,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "before": {
+        "ink_delta_abs_max": 0.0172,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.019431,
+        "ssim_mean": 0.621815,
+        "text_line_iou_mean": 0.398983,
+        "text_line_pair_rate_mean": 0.986111,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "comparable": true,
+      "computed": {
+        "ink_delta_abs_max": 0.0172,
+        "page_count_exact": true,
+        "ssim_inked_mean": 0.02372,
+        "ssim_mean": 0.624539,
+        "text_line_iou_mean": 0.395376,
+        "text_line_pair_rate_mean": 0.98373,
+        "verdict": {
+          "blocked": false,
+          "pass": true
+        }
+      },
+      "document": "saeopja-deungnok-sinchengseo.hwpx",
+      "document_class": "petition",
+      "reference_geometry_scale": 1.005
+    }
+  ],
+  "note": "three of the ten reference PDFs are not 1:1 renders of the geometry their documents declare (a ~0.707 print reduction), so their verdicts are blocked and they are excluded from the means; see render_scoreboard.reference_geometry_scale.",
+  "slice": "E2.1 line breaking from metrics",
+  "states": {
+    "after": "this slice, as it ships: policy=auto, so a paragraph keeps the cached boxes unless they provably no longer describe its text. This column must not regress — it is the unedited-document path",
+    "before": "PR #173 (E2.3 typography + E2.2 face resolution); line boxes come entirely from the document's cached hp:lineseg, with an ad-hoc greedy wrap where there is no cache",
+    "computed": "policy=computed: every paragraph relaid out by this renderer's own line breaker. This column is the honest measure OF the breaker, and it is expected to be worse than the authoring engine's own cached layout"
+  }
+}
