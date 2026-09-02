@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -45,6 +46,37 @@ DEFAULT_MODULES_ROOT = REPO_ROOT / "modules"
 DEFAULT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 MODULE_MANIFEST = "module.yaml"
 ENABLED_FILE = "enabled.yaml"
+
+# Where modules live and which of them are enabled, when nobody says. A
+# packaged host installs modules beside the application rather than inside a
+# checkout, and a test needs an enablement that is not the operator's own.
+#
+# MEASURED DEFECT, fixed here (v0.17 GAP 20). These two names already existed
+# and were already documented as the way to point at another installation
+# (docs/runtime-protocol-v0.md §13.6), but only the Runtime read them — this
+# registry always resolved the checkout. So a Runtime told to use one
+# enablement would select a checker from it, spawn that checker, and the
+# checker's OWN registry lookup would answer about a different installation:
+# check_numbers and check_tone_rules refused their own module's pack types and
+# content_audit refused to compose its sibling's checker, each saying "enable
+# the module you just ran me from". Honouring the variables here makes one
+# selection reach every reader of it. An explicit argument still wins, and with
+# neither set nothing changes.
+MODULES_ROOT_ENV = "RIGORLOOM_MODULES_ROOT"
+MODULES_ENABLED_ENV = "RIGORLOOM_MODULES_ENABLED"
+
+
+def default_modules_root(environ: dict | None = None) -> Path:
+    environ = os.environ if environ is None else environ
+    override = (environ.get(MODULES_ROOT_ENV) or "").strip()
+    return Path(override) if override else DEFAULT_MODULES_ROOT
+
+
+def default_enabled_file(modules_root: Path,
+                         environ: dict | None = None) -> Path:
+    environ = os.environ if environ is None else environ
+    override = (environ.get(MODULES_ENABLED_ENV) or "").strip()
+    return Path(override) if override else Path(modules_root) / ENABLED_FILE
 MODULE_SCHEMA = "rigorloom-module/v1"
 ENABLED_SCHEMA = "rigorloom-enabled-modules/v1"
 
@@ -66,7 +98,7 @@ _CHECKER_WANTS = ("baseline",)
 _CHECKER_SUBJECTS = ("document", "workspace")
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes", "gate_kinds",
-    "studio_panels", "skill", "playbooks", "preflight",
+    "studio_panels", "skill", "playbooks", "preflight", "workspace_layout",
 )
 _COMPARATOR_RE = re.compile(r"^(==|!=|>=|<=|>|<)\s*(\d+(?:\.\d+){0,2})$")
 
@@ -489,6 +521,14 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
         out["preflight"] = _require_entry_list(
             module, provides["preflight"], "preflight",
             {"name": _CHECKER_NAME_RE, "script": None})
+    if "workspace_layout" in provides:
+        # One module-relative path to a JSON file describing the workspace
+        # directory this module's workspace-subject checkers read. It exists
+        # for the same reason ``checkers[].subject`` does: a runner that opens
+        # a workspace must be able to say which expected parts are present
+        # without core holding a path list that belongs to a module (rule 1).
+        out["workspace_layout"] = _require_str(
+            module, provides["workspace_layout"], "provides.workspace_layout")
     return normalized
 
 
@@ -518,16 +558,21 @@ class ModuleRegistry:
 
     def __init__(
         self,
-        modules_root: Path | str = DEFAULT_MODULES_ROOT,
+        modules_root: Path | str | None = None,
         *,
         enabled_file: Path | str | None = None,
         version: str | None = None,
         pyproject: Path | str = DEFAULT_PYPROJECT,
     ) -> None:
-        self.modules_root = Path(modules_root)
+        # An explicit argument wins; otherwise the environment names the
+        # installation; otherwise this checkout. One resolution order, so a
+        # caller and the children it spawns cannot disagree about which
+        # installation they are talking about.
+        self.modules_root = (Path(modules_root) if modules_root is not None
+                             else default_modules_root())
         self.enabled_file = (
             Path(enabled_file) if enabled_file is not None
-            else self.modules_root / ENABLED_FILE)
+            else default_enabled_file(self.modules_root))
         self._version = version
         self._pyproject = Path(pyproject)
         self._discovered: dict[str, ModuleSpec] | None = None
@@ -759,6 +804,23 @@ class ModuleRegistry:
         submission_preflight subprocess-composes them source-tagged."""
         return self._entries("preflight", ("script",))
 
+    def enabled_workspace_layouts(self) -> list[dict[str, Any]]:
+        """[{path(abs), module}] workspace-layout declarations.
+
+        A module whose checkers take a ``workspace`` declares what a workspace
+        IS, so a runner can report which expected parts a directory has without
+        core carrying a path list that belongs to a module (rule 1). Consumer:
+        the Runtime's workspace session kind
+        (docs/runtime-protocol-v0.md §15).
+        """
+        rows = []
+        for spec in self.enabled_modules():
+            layout = spec.provides.get("workspace_layout")
+            if layout:
+                rows.append({"path": str(spec.payload_path(layout)),
+                             "module": spec.name})
+        return rows
+
     def enabled_playbooks(self) -> list[dict[str, Any]]:
         """[{path(abs), module}]."""
         rows = []
@@ -792,6 +854,7 @@ class ModuleRegistry:
             "skill_fragments": self.enabled_skill_fragments(),
             "playbooks": self.enabled_playbooks(),
             "preflight": self.enabled_preflight(),
+            "workspace_layouts": self.enabled_workspace_layouts(),
         }
 
 
@@ -808,6 +871,9 @@ def _declared_paths(provides: dict[str, Any]) -> Iterator[str]:
     if skill:
         yield skill["fragment"]
         yield from skill["references"]
+    layout = provides.get("workspace_layout")
+    if layout:
+        yield layout
     yield from provides.get("playbooks", [])
 
 

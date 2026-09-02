@@ -17,6 +17,13 @@
     ".pipeline",
     ".pipeline/receipts"
   ],
+  "_read_only_paths_note": "Paths a shipped checker READS that no stage routes. Measured by reading every workspace-subject checker this module declares, not assumed: check_canonical reads .pipeline/handoff.json, check_saeteuk and verify_content read _saeteuk/, check_numbers reads sim/results.json and sim/provenance.json. They are listed apart from canonical_dirs on purpose — the organizer CREATES canonical_dirs, and creating _saeteuk/ empty would turn check_saeteuk's no-op PASS into a saeteuk_missing WARN. Consumer: a runner opening a workspace session (provides.workspace_layout).",
+  "read_only_paths": [
+    {"pattern": ".pipeline/handoff.json", "role": "handoff", "required": false},
+    {"pattern": "_saeteuk/", "role": "saeteuk-artifacts", "required": false},
+    {"pattern": "sim/results.json", "role": "simulation", "required": false},
+    {"pattern": "sim/provenance.json", "role": "simulation", "required": false}
+  ],
   "stages": {
     "-1": {
       "name": "setup",
