@@ -217,6 +217,25 @@ def _read_member(path: Path, member: str, at: str) -> tuple[str | None, dict | N
                              detail=str(exc)[:200])
 
 
+def read_member(root: Path, raw, at: str = "path") -> tuple[str | None, str | None, dict | None]:
+    """Resolve and read one workspace member, for a caller that only reads.
+
+    ``_member`` then ``_read_member`` — the exact two steps a write op runs
+    before it touches a byte — exposed on their own for ``workspace/readMember``
+    (§15.8's first gap: an agent could propose an edit and could not read the
+    member to aim it). Returns ``(text, member, refusal)``; a refusal is a
+    finding dict from the same closed vocabulary a write op refuses with, so a
+    caller sees one rule for "can this path be read" everywhere it is asked.
+    """
+    path, member, refusal = _member(root, raw, at)
+    if refusal is not None:
+        return None, member, refusal
+    text, refusal = _read_member(path, member, at)
+    if refusal is not None:
+        return None, member, refusal
+    return text, member, None
+
+
 # --- the YAML scalar index ------------------------------------------------------
 
 class _Unparseable(Exception):
