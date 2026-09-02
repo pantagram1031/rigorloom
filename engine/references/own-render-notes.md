@@ -508,18 +508,23 @@ not only here.
    codepoint→slot table, which the standard does not publish and this renderer
    therefore approximates, and the `user` slot, which is unreachable from the
    file alone. Both are declared in every sidecar.
-3. **Equations and pictures are placeholders.** `hp:equation`, `hp:pic`,
-   `hp:ole`, `hp:chart`, `hp:container` and the drawing shapes get a grey
-   outlined box labelled 수식 / 그림 / 도형. When the element declares `hp:sz`
+3. **Equations are placeholders; pictures are drawn.** `hp:pic` is
+   rasterised from the container — see *Report-class documents* below.
+   `hp:equation`, `hp:ole`, `hp:chart`, `hp:container` and the drawing shapes
+   get a grey outlined box labelled 수식 / 그림 / 도형. When the element declares `hp:sz`
    the box is at the declared extent; when it does not, the box is a fallback
    size and the label carries a `?` and the sidecar says
    `UNKNOWN extent`. **No corpus form contains an `hp:equation`** — verified by
    scanning every `Contents/section*.xml` in `tests/corpus/forms/converted/`;
    the equation path is therefore pinned by a direct unit test rather than a
    document fixture.
-4. **Non-solid borders are stroked as solid.** `DASH`, `DOUBLE_SLIM`, `CIRCLE`
-   appear in the corpus and are drawn as a solid line of the declared width,
-   named per side in the sidecar.
+4. **`DOUBLE_SLIM` is drawn as two strokes; the other non-solid types are
+   stroked as solid.** A `DOUBLE_SLIM` edge splits its declared width — which
+   is the width of the *band*, measured, not of a stroke — into two strokes of
+   a third each at the band's extremes. Below three pixels there is no room
+   for two strokes and a gap, and it stays solid and says so. `DASH` and
+   `CIRCLE` are still drawn as a solid line of the declared width, named per
+   side in the sidecar.
 5. **`<hp:tab/>` elements already in a document are not resolved.** They are
    not placed in the character stream, so the line they sit on is measured
    without them and the cached box absorbs them; where a form uses tabs to
@@ -536,11 +541,17 @@ not only here.
    to the paragraph's container.
 8. **Only `section0` is laid out.** No corpus form has more, but the sidecar
    says so when one does.
-9. **Headers, footers, footnotes, endnotes and master pages are not drawn.**
+9. **Headers, footers, footnotes, endnotes and master pages are not drawn
+   — but `hp:pageNum` is.** 쪽 번호 매기기 is a
+   control, not a footer paragraph, and is stamped on every page at a
+   measured position; see *Report-class documents*. `BOTTOM_LEFT`,
+   `BOTTOM_CENTER` and `BOTTOM_RIGHT` only — every other `pos` is declared
+   and nothing is drawn for it.
 10. **Row heights are approximate where the content extent is.** Eight of 81
     corpus tables miss their declared height by more than 2% before the
     residual is redistributed; the redistribution keeps the outer box exact but
-    shifts interior rows. Visible on `saeopja` as two colliding rows.
+    shifts interior rows. The `saeopja` collision this used to name was a
+    different defect and is fixed — see *Report-class documents*.
 11. **Cross-machine byte equality is not claimed.** Same input → same PNG bytes
     on one machine and one Pillow build (pinned by test). Different installed
     fonts or a different FreeType build will differ — and since face resolution
@@ -567,6 +578,147 @@ not only here.
 15. **The staleness detector is sound but incomplete.** It cannot see an edit
     that leaves every line still fitting; `relayout_paragraphs` is the channel
     an editor must use instead. See *Which engine laid out which paragraph*.
+
+## Report-class documents
+
+Every form in the corpus is a blank government form: one section, no
+pictures, no equations, no page numbers, and one line of text in every table
+cell. A *report* — multi-section prose with figures, equations, captions,
+numbered headings, page numbers and tables whose rows differ in height — was
+never rendered by this renderer until a Hancom-rendered report was measured
+against it. Six mechanisms came out of that measurement. The document itself
+is private and is not in this repo; only aggregate numbers appear here.
+
+The measured document: 18 pages, 485 paragraphs, 515 runs, 27 tables, 240
+cells, 11 embedded pictures, 14 equations, one `hp:pageNum` control, one
+section. Scored at 144 dpi against its own Hancom PDF, page count 18/18
+exact before and after.
+
+| channel | before | after |
+| --- | --- | --- |
+| `ssim_mean` | 0.7306 | 0.7273 |
+| `ssim_min` | 0.6310 | 0.6264 |
+| `ssim_inked_mean` | 0.1034 | **0.1263** |
+| `ssim_inked_min` | 0.0123 | −0.0367 |
+| `text_line_iou_mean` | 0.5508 | **0.5630** |
+| `text_line_pair_rate_mean` | 0.8134 | **0.8390** |
+| `changed_channel_ratio_mean` | 0.1060 | 0.1237 |
+| `ink_delta_abs_max` | 0.0371 | **0.0085** |
+
+`elements_skipped` went from 13 distinct entries to 5.
+
+### What was fixed, and what each was worth
+
+1. **`hp:pic` is drawn from `BinData`.** The OPF manifest in
+   `Contents/content.hpf` is the published mapping from the
+   `binaryItemIDRef` a picture cites to the container entry holding its
+   bytes; the id is `image7` while the entry may be `.PNG`, `.jpg` or `.bmp`,
+   so a filename guess is not sound. `hp:imgClip` is a crop *fraction* of
+   `hp:imgDim`'s declared source extent, not of the file's pixel size, so a
+   clipped picture is right whatever resolution it happens to be. `hp:flip`
+   is honoured; rotation is declared and not applied. A binary Pillow cannot
+   decode — HWP embeds EMF/WMF as readily as PNG — keeps the placeholder box
+   and stays named. Worth `ssim_inked_mean` 0.1034 → 0.1378 and
+   `ink_delta_abs_max` 0.0371 → 0.0162 on its own.
+2. **`hp:pageNum` is stamped on every page.** It is a control, not a footer
+   paragraph, so it is found by walking to the `hp:run` that carries it —
+   that run's `charPrIDRef` meters the number. Placement was measured, not
+   assumed: the number's line box sits with its **bottom edge on `page height
+   − bottom margin`**, aligned inside the body box `[left margin, width −
+   right margin]`. Predicted 807.86 pt / centre 307.57 pt against a reference
+   that draws 807.93 / 307.60. That covers `BOTTOM_LEFT`, `BOTTOM_CENTER`
+   and `BOTTOM_RIGHT`; every other `pos` is declared and nothing is drawn for
+   it rather than guessed from the one position measured. `sideChar`,
+   `formatType=DIGIT`, `hp:startNum@page` and `hideFirstPageNum` are
+   honoured. The stamp is recorded in `line_boxes` as `mode: "pagenum"`,
+   because the reference PDF extracts it as a text line like any other.
+   Worth `text_line_pair_rate_mean` 0.8134 → 0.8390.
+3. **A table row is as tall as its tallest cell, not its first.**
+   `solve_tracks` resolved a unit-span track from the *first* constraint
+   covering it and ignored every later one. For columns that is harmless —
+   every cell in a column declares the same `cellSz` width — and on a
+   government form it was harmless for rows too, because every row there is
+   one line tall. A report table separates them: a two-column row holding one
+   line on the left and two on the right got the left cell's height, and the
+   right cell's second line was drawn over the row below. The declared-total
+   redistribution then hid the cause by stretching every row proportionally,
+   so the outer box stayed exact while the interior was wrong.
+
+   Taking the max is not a heuristic. On the measured document every
+   `cellSz@height` is 282 HWPUNIT — a stored minimum carrying no information
+   — and once rows are solved as the max over their cells, the row heights
+   sum to the table's own declared `hp:sz@height` **exactly, on all 27
+   tables**, where before eight rows were short by 560–2300 HWPUNIT. The
+   file's two independent records agree only under the max reading. Worth
+   `text_line_iou_mean` 0.5547 → 0.5630 here, and on the corpus it fixed
+   `saeopja`'s two colliding rows: `text_line_iou` 0.3990 → 0.5393, `ssim`
+   0.6218 → 0.6441.
+4. **`DOUBLE_SLIM` declares a band, and Hancom draws two strokes in it.** An
+   edge declaring 283.46 HWPUNIT (6 px at 144 dpi) comes back from the
+   reference as two 2-px strokes with a 2-px gap spanning exactly those 6 px,
+   and the same 2/2/2 shape repeats on every such edge. Stroking the band
+   solid put three times the ink on it. Worth `ink_delta_abs_max` 0.0162 →
+   0.0085.
+5. **A bold run on a family with no bold cut is smeared, not dropped.** 바탕 /
+   Batang ships no bold face, and it is the face this document is set in, so
+   this is the ordinary case rather than an edge one: `_face_for` handed back
+   the regular face and every bold run — 281 of 16047 characters, which is
+   what a report's section headings are made of — drew at regular weight. HWP
+   fakes the weight; so does this now, by drawing the glyph again a fraction
+   of an em to the right. The smear is horizontal on purpose: Pillow's
+   `stroke_width` thickens in every direction and reads as an outline, not a
+   weight. The advance is **not** changed, so a cached line still measures
+   the width the authoring engine gave it. One pixel per 24 px of glyph size,
+   floor 1, is this renderer's choice and is declared — the standard does not
+   publish what HWP smears by, and at body sizes every em fraction between
+   about 1/40 and 1/13 rounds to the same single pixel. Visible, not
+   statistical: `ssim_inked_mean` moved 0.1261 → 0.1263.
+6. **A defect found on the way: the face cache never hit.** `_face_for`'s
+   inner loop `for key in (slot, slot.upper())` shadowed the cache key
+   `(cid, slot, bold)` computed six lines above it, so every write filed
+   itself under the string `"hangul"` while every read asked for the tuple.
+   Every character on the page re-ran a system font-index lookup, and any
+   per-face fact recorded there was filed under the wrong name — which is why
+   mechanism 5 was invisible until this was fixed.
+
+### Two numbers moved the wrong way, and why
+
+`ssim_inked_mean` is up overall, but `ssim_inked_min` went from 0.0123 to
+−0.0367 and `ssim_mean` slipped 0.003. Both come from mechanism 4. A single
+fat stroke covered the reference's two thin ones whatever the sub-pixel
+offset, so block SSIM rewarded it for the wrong reason; two thin strokes are
+punished by any misregistration at all. The ink channel halved and the
+side-by-side is plainly closer, so what the block statistic is measuring here
+is registration — the standing E2 gap — and not whether the border is right.
+`changed_channel_ratio_mean` rose 0.1060 → 0.1237 for the same class of
+reason plus mechanism 1: a page that used to be blank where a photograph
+belongs disagrees with the reference on fewer channels than one carrying a
+real photograph a fraction of a pixel out of place. Neither channel carries a
+threshold. `ssim_inked_min` −0.0367 still clears the −0.1 regression floor,
+and the floor passes on every comparable corpus form except `kstartup`'s
+pre-existing `page_count_exact` failure (limit 12), which none of this
+touches.
+
+### What a report-class document still does not get
+
+- `hp:equation` — 14 in the measured document, drawn as a placeholder box at
+  the declared `hp:sz` extent, content not rendered. Hancom draws the
+  equation's glyphs as real text, which is most of what `ssim_inked` still
+  misses on the equation pages, and it is also why the reference PDF extracts
+  more text lines there than this renderer draws.
+- `hp:script` (14), `hp:parameters` / `hp:stringParam` / `hp:integerParam`
+  (11 / 55 / 11) — field and equation-source bookkeeping, no ink of their
+  own.
+- Footnotes, endnotes, headers and footers. The measured document declares
+  `hp:footNotePr` and `hp:endNotePr` but carries no note and no header or
+  footer, so this lane is still unmeasured against a real one; one corpus
+  form does carry `hp:header` and it is still skipped and declared.
+- Multi-section documents. The measured document has one section, so limit 8
+  is still untested against a real multi-section report.
+- The measurement's own blind spot: on bibliography pages Hancom splits a
+  justified URL into many spans, so `unpaired_reference` reads high on the
+  line channel where the render is visually near-identical. That is a
+  property of the pairing, not of the renderer.
 
 ## Determinism
 
@@ -682,6 +834,10 @@ false` on both; the grade stays `own-uncertified` on every class.
 
 1. **Regenerate the three reduced reference PDFs at 1:1** — until then three
    document classes (gongmun, research) cannot be graded at all.
+1b. **Render `hp:equation`.** After the report-class slice it is the largest
+   *unimplemented* element left on a real report: 14 boxes on the measured
+   document, and Hancom draws their glyphs as real text. A committed synthetic
+   equation fixture is the prerequisite — no corpus form has one.
 2. **Close the advance-width gap the breaker exposed.** A cached line measures
    a median 0.92 of its own box by this renderer's advances, and the deficit is
    concentrated in the space character. This is now the largest single term in
