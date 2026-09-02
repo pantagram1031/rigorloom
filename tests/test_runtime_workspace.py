@@ -406,10 +406,12 @@ def test_entries_the_declaration_does_not_name_are_listed_not_hidden(
 def test_a_document_method_on_a_workspace_session_is_named_not_mangled(
         root, workspace):
     core, session_id = opened(root, workspace)
+    # ``candidate/list`` is deliberately NOT here: a workspace session
+    # publishes candidates of its own now (the write half, §15.6), and
+    # tests/test_runtime_workspace_ops.py asserts it answers for both kinds.
     for call in (lambda: core.document_inspect(session_id),
                  lambda: core.document_read_region(
                      session_id, [{"table": 0, "row": 1, "col": 1}]),
-                 lambda: core.candidate_list(session_id),
                  lambda: core.document_render(session_id)):
         with pytest.raises(rt_codes.RpcError) as excinfo:
             call()
@@ -429,13 +431,20 @@ def test_workspace_inspect_on_a_document_session_is_refused(root, tmp_path):
     assert excinfo.value.data["required"] == "workspace"
 
 
-def test_a_run_id_is_refused_on_a_workspace_session(root, workspace,
-                                                    enabled_all):
+def test_an_unknown_run_id_on_a_workspace_session_is_a_missing_candidate(
+        root, workspace, enabled_all):
+    """A workspace session HAS candidates now, so the answer changed.
+
+    Before the write half it was ``invalid_params``: a workspace could not
+    have a candidate at all. It can (§15.6), so an unknown
+    runId gets the same answer a document session gives — the candidate is
+    missing, not the concept.
+    """
     core, session_id = opened(root, workspace)
     with pytest.raises(rt_codes.RpcError) as excinfo:
         core.module_check(session_id, "style", run_id="0" * 32)
-    assert excinfo.value.code == "invalid_params"
-    assert excinfo.value.data["sessionKind"] == "workspace"
+    assert excinfo.value.code == "artifact_missing"
+    assert excinfo.value.data["runId"] == "0" * 32
 
 
 def test_a_pre_kind_session_directory_still_reads_as_a_document(root, tmp_path):

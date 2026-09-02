@@ -71,14 +71,14 @@ def test_a_declared_but_unserved_backend_is_refused_by_name(client, session, bac
                                         "ops": [CLEAN_OP]})
     assert error["code"] == "unsupported_backend"
     assert error["data"]["declared"] == backend
-    assert error["data"]["supported"] == ["preedit"]
+    assert error["data"]["supported"] == ["preedit", "workspace"]
 
 
 def test_an_unknown_backend_is_refused(client, session):
     error = client.err("plan/propose", {"sessionId": session, "backend": "quill",
                                         "ops": [CLEAN_OP]})
     assert error["code"] == "unsupported_backend"
-    assert error["data"]["known"] == ["preedit", "xml", "com"]
+    assert error["data"]["known"] == ["preedit", "xml", "com", "workspace"]
 
 
 def test_a_foreign_op_kind_names_the_backend_that_would_serve_it(client, session):
