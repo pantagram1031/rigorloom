@@ -191,11 +191,17 @@ APPROVAL_STATES = ("pending", "approved", "auto_approved", "rejected")
 #: refuses to (modules/report/scripts/pipeline_ctl.py:1159).
 APPROVAL_DECISIONS = ("approved", "rejected")
 
-#: The only backend this slice can execute. ``com`` and ``xml`` op kinds are
+#: The backends this build can execute. ``com`` and ``xml`` op kinds are
 #: refused with ``unsupported_backend`` naming which backend would serve them
 #: (orchestrator decision D9).
-SUPPORTED_BACKENDS = ("preedit",)
-KNOWN_BACKENDS = ("preedit", "xml", "com")
+#:
+#: ``workspace`` is the odd one and is a backend anyway: a plan declares its
+#: backend, its ops are served by ``rt_wsops`` rather than by an engine script,
+#: and its subject is a workspace session rather than a document. Making it a
+#: fourth session-shaped concept instead would fork every plan, approval and
+#: receipt path for one word.
+SUPPORTED_BACKENDS = ("preedit", "workspace")
+KNOWN_BACKENDS = ("preedit", "xml", "com", "workspace")
 
 
 class RpcError(Exception):

@@ -508,11 +508,29 @@ def _resolve_subject(session, run_id):
     """The bytes to check, and what they are. A candidate is re-verified first."""
     if getattr(session, "kind", "document") == "workspace":
         if run_id is not None:
-            raise RpcError("invalid_params",
-                           "runId names a published candidate, which only a "
-                           "document session has; a workspace session has no "
-                           "candidates",
-                           sessionId=session.id, sessionKind="workspace")
+            # A workspace session HAS candidates now (§15, write half): a
+            # candidate is a whole tree under the run directory, and checking
+            # one is how a fix loop closes. ``read_receipt`` re-verifies the
+            # candidate's tree hash first, so a checker is never handed a tree
+            # that drifted after publication.
+            from rt_apply import read_receipt  # noqa: PLC0415
+
+            receipt = read_receipt(session, run_id)
+            candidate = receipt["candidate"]
+            if candidate.get("role") != "workspace_tree":
+                raise RpcError("invalid_params",
+                               "that runId names a document candidate, and this "
+                               "session holds a workspace",
+                               sessionId=session.id, runId=run_id,
+                               role=candidate.get("role"))
+            return session.candidates_dir / run_id / candidate["path"], {
+                "kind": "candidate_workspace",
+                "name": candidate["path"],
+                "sha256": candidate["treeSha256"],
+                "bytes": candidate["bytes"],
+                "files": candidate["files"],
+                "runId": run_id,
+            }
         return session.workspace, {
             "kind": "workspace",
             "name": session.meta["workspaceName"],
@@ -772,7 +790,11 @@ def run_module_checks(session, *, engine_root: Path, module: str,
                 copy_facts = {"files": 1, "bytes": subject.get("bytes"),
                               "millis": int((time.monotonic() - started_copy) * 1000)}
             baseline_copy = None
-            if run_id is not None:
+            # A workspace candidate has no baseline either: the thing it was
+            # produced from is the session workspace, which is not a blank form
+            # and is not what ``wants: [baseline]`` asks for. So the baseline
+            # supply stays a document-candidate affair.
+            if run_id is not None and session_kind == "document":
                 # The blank form a candidate was produced from IS the session
                 # source, by construction: rt_apply reads it and writes the
                 # candidate. So the one checker input this Runtime can supply
