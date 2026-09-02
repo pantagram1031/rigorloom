@@ -41,8 +41,13 @@ from rt_codes import (  # noqa: E402
     MAX_FRAME_BYTES,
     MAX_REGION_BYTES,
     MAX_SOURCE_BYTES,
+    MAX_WORKSPACE_BYTES,
+    MAX_WORKSPACE_DEPTH,
+    MAX_WORKSPACE_FILES,
     PROTOCOL_VERSION,
+    SESSION_KINDS,
     SUPPORTED_BACKENDS,
+    WORKSPACE_REJECT_REASONS,
     RpcError,
 )
 from rt_engine import EngineTools, child_python_facts  # noqa: E402
@@ -100,6 +105,7 @@ AGENT_METHODS: tuple[str, ...] = (
     "event/poll",
     "module/list",
     "module/check",
+    "workspace/inspect",
 )
 
 #: Agent-safe by authority, but transport-shaped: they push notifications, and
@@ -113,8 +119,22 @@ PROTOCOL_ONLY_METHODS: tuple[str, ...] = (
 )
 
 #: Host authority. The agent registry does not BUILD these (decision D8).
+#:
+#: ``workspace/openDirectory`` is host-only for the same reason
+#: ``workspace/openPath`` is, and more so: it takes an arbitrary absolute path
+#: and reaches a whole TREE with it. Filesystem reach is the authority being
+#: granted, and no agent-safe method should grant it. Once a host has opened
+#: one, every agent-safe method operates on the session — never on a path.
+#:
+#: NAMING DEBT, recorded rather than papered over: ``workspace/openPath``
+#: opens a DOCUMENT. The name predates there being a workspace session at all
+#: and docs/runtime-protocol-v0.md §11.4 already records where the confusion
+#: started. Renaming it to ``document/openPath`` is a wire break for every
+#: client on this stack, so the new method takes a distinct name and the
+#: rename is proposed in §15.6, not smuggled in here.
 HOST_ONLY_METHODS: tuple[str, ...] = (
     "workspace/openPath",
+    "workspace/openDirectory",
     "approval/resolve",
     "plan/apply",
     "document/renderPrepare",
@@ -164,6 +184,18 @@ class RuntimeCore:
                 "maxFrameBytes": MAX_FRAME_BYTES,
                 "maxRegionBytes": MAX_REGION_BYTES,
                 "maxSourceBytes": MAX_SOURCE_BYTES,
+                "maxWorkspaceBytes": MAX_WORKSPACE_BYTES,
+                "maxWorkspaceFiles": MAX_WORKSPACE_FILES,
+                "maxWorkspaceDepth": MAX_WORKSPACE_DEPTH,
+            },
+            "sessionKinds": {
+                "kinds": list(SESSION_KINDS),
+                "open": {"document": "workspace/openPath",
+                         "workspace": "workspace/openDirectory"},
+                "workspaceRejectReasons": list(WORKSPACE_REJECT_REASONS),
+                "note": ("workspace/openPath opens a DOCUMENT; the name predates "
+                         "the workspace kind and is kept because renaming a "
+                         "shipped method breaks every client on this stack"),
             },
             "render": render_capability(),
             "geometry": geometry_capability(),
@@ -203,12 +235,59 @@ class RuntimeCore:
                      documentKind=session.meta["ingress"].get("documentKind"))
         return session.summary()
 
+    def open_workspace(self, path) -> dict:
+        """HOST ONLY. Validate, copy and hash a report workspace directory.
+
+        The answer is the summary a caller needs before it does anything else:
+        the copy's tree hash, its size, and which declared parts are there.
+        """
+        session = self.store.open_workspace(path)
+        append_event(session, "workspace.opened",
+                     workspaceName=session.meta["workspaceName"],
+                     treeSha256=session.meta["workspaceTreeSha256"],
+                     files=session.meta["workspaceFiles"],
+                     bytes=session.meta["workspaceBytes"])
+        return self._workspace_summary(session)
+
     def session_list(self) -> dict:
         return {"sessions": self.store.list()}
 
+    # -- workspaces ---------------------------------------------------------
+    def _workspace_summary(self, session) -> dict:
+        from rt_module import load_registry, _module_registry
+        from rt_workspace import declared_layout, layout_report, scan_undeclared
+
+        summary = session.summary()
+        try:
+            module_registry = _module_registry(self.tools.root)
+            registry, _facts = load_registry(self.tools.root)
+            layout = declared_layout(registry, module_registry)
+        except RpcError as exc:
+            layout = {"state": "undeclared", "reason": exc.message,
+                      "declaredBy": [], "schemas": [], "parts": [],
+                      "sources": [], "kinds": []}
+        root = session.workspace
+        summary["layout"] = layout_report(root, layout)
+        summary["undeclared"] = scan_undeclared(root, layout)
+        summary["immutability"] = (
+            "the operator's directory was read and copied; this session "
+            "addresses the copy, and every checker addresses a scratch copy of "
+            "the copy")
+        summary["copy"] = session.meta.get("copy", {})
+        summary["ingress"] = session.meta.get("ingress", {})
+        return summary
+
+    def workspace_inspect(self, session_id) -> dict:
+        """Which declared parts this workspace session has, per part."""
+        session = self.store.get(session_id).require_kind("workspace")
+        return self._workspace_summary(session)
+
     # -- documents ----------------------------------------------------------
+    def _document(self, session_id):
+        return self.store.get(session_id).require_kind("document")
+
     def document_inspect(self, session_id, include=None) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         include = list(include) if include else list(INCLUDE_SECTIONS)
         if not all(item in INCLUDE_SECTIONS for item in include):
             raise RpcError("invalid_params",
@@ -226,7 +305,7 @@ class RuntimeCore:
         return out
 
     def document_read_region(self, session_id, regions) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         if not isinstance(regions, list) or not regions:
             raise RpcError("invalid_params", "regions must be a non-empty array")
         specs: list[str] = []
@@ -253,7 +332,7 @@ class RuntimeCore:
 
     # -- plans --------------------------------------------------------------
     def plan_propose(self, session_id, backend, ops, proposer) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         if not isinstance(backend, str) or not backend:
             raise RpcError("invalid_params", "backend must be a non-empty string")
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
@@ -392,7 +471,7 @@ class RuntimeCore:
     def document_render(self, session_id, *, page: int = 0,
                         dpi: int | None = None, run_id=None,
                         inline: bool = True) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         session.ensure_dirs()
         from rt_codes import DEFAULT_RENDER_DPI
         return render_page(session, page=page,
@@ -404,7 +483,7 @@ class RuntimeCore:
         """HOST ONLY. Convert the session copy to a PDF so render can raster it."""
         from rt_convert import prepare_pdf
 
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         session.ensure_dirs()
         result = prepare_pdf(session, self.tools, timeout=timeout)
         if result.get("prepared"):
@@ -417,7 +496,7 @@ class RuntimeCore:
     def document_page_geometry(self, session_id, *, page: int = 0,
                                run_id=None) -> dict:
         """Real text positions from the rendered PDF, mapped to addresses."""
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         session.ensure_dirs()
         try:
             profile = load_profile(self.tools, session, tag="base")
@@ -476,11 +555,11 @@ class RuntimeCore:
 
     # -- candidates ---------------------------------------------------------
     def candidate_list(self, session_id) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         return {"sessionId": session.id, "candidates": list_candidates(session)}
 
     def receipt_read(self, session_id, run_id) -> dict:
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         return {"receipt": read_receipt(session, run_id)}
 
     def candidate_verify(self, session_id, run_id) -> dict:
@@ -494,7 +573,7 @@ class RuntimeCore:
         re-verified against their binding before any checker is asked about
         them (``rt_apply.read_receipt``).
         """
-        session = self.store.get(session_id)
+        session = self._document(session_id)
         receipt = read_receipt(session, run_id)
         artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
         profile = session.profile_dir / f"verify-{run_id}-recheck.json"
