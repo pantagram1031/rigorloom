@@ -1132,34 +1132,79 @@ list naming one anchor and one cell names one place, so nothing is picked —
 the difference between 11 anchors and 336. It never writes to `span.address`
 or `span.confidence`; the wire contract is unchanged.
 
-From each anchor the drawn row band is **walked outward** in lockstep with the
-row's declared cells. Every step must be adjacent (this box's right edge is
-the next box's left edge) and must **agree with the text the page itself
-shows** in that box: a labelled cell must show its label, and an empty fill
-cell must be empty. The first step that fails ends the walk in that direction
-and nothing past it is placed. An empty seat is trusted only because the
-labelled cells walked to reach it were confirmed by the render.
+From each anchor the drawn grid is **walked outward in all four directions**,
+in lockstep with the declared table. Every step must land on an **unambiguous**
+drawn neighbour and must **agree with the text the page itself shows** in that
+box: a labelled cell must show its label, and an empty fill cell must be empty.
+A step that fails is not taken and the walk does not continue through it. An
+empty seat is trusted only because the labelled cells walked to reach it were
+confirmed by the render.
+
+The first version of this walked one row band, left and right. That reached
+the seats *beside* a label and nothing else, and measured against the corpus
+**252 fill regions sat in tables that were anchored on the page and still got
+no box** — their own row simply held no label. A form's labels are as often a
+header *above* a column as a caption beside it, which is why the walk is 2D.
+
+The two axes ask different questions, and the asymmetry comes from how HWPX
+declares merges rather than from convenience:
+
+- **Sideways** stays inside one declared row, so the neighbour must share the
+  whole row band — top *and* bottom edges. The declared neighbour is the next
+  cell in that row's own ordering.
+- **Vertically** stays inside one declared column, whose `colspan` may change
+  from row to row (a label spanning two columns above a pair of narrow ones),
+  so only the **left edge** is shared and the width is free. The declared
+  neighbour is `(row + rowspan, col)` — the scan's own statement about itself,
+  never a guess from position.
+
+Where a direction **forks** — two drawn boxes both qualify — there is no
+neighbour and no step. A fork is exactly where a walk would drift.
 
 Gating the *anchor* on its own cell text is what made this trustworthy: it
 removed the last 31 wrong correspondences. An anchor that cannot verify itself
 vouches for nothing. Where two anchors reach the same declared cell and
 disagree about which box it is, that cell is refused rather than averaged.
 
-**Measured result: 73 of 473 seats, all `cell_borders`.** Per form:
+**The drift gate.** Every step is checked against the page's text, but two
+*empty* cells agree with each other trivially — a run of empty cells is the
+one place the text gate says nothing, and walking in 2D makes those runs
+longer. Reach is therefore paid for with a structural check the whole table
+must pass on that page. The correspondence has to be an **order-preserving
+injection**:
 
-| form | pages | fill regions | seats |
-| --- | ---: | ---: | ---: |
-| admrul-gajokdolbom-hyuga-sinchengseo | 1 | 7 | 5 |
-| gianmun-byeolji-1ho | 1 | 9 | 0 |
-| gianmun-byeolji-2ho | 1 | 35 | 3 |
-| jeongbo-gonggae-cheongguseo | 1 | 13 | 0 |
-| jumin-deungchobon-sinchengseo | 3 | 5 | 1 |
-| kstartup-jiwon-sincheongseo-saeopgyehoekseo | 22 | 125 | 55 |
-| moel-pyojun-geunrogyeyakseo-2013 | 7 | 3 | 0 |
-| moel-pyojun-geunrogyeyakseo-2025 | 7 | 0 | 0 |
-| nrf-gyeolgwa-bogoseo-yangsik | 2 | 5 | 1 |
-| saeopja-deungnok-sinchengseo | 6 | 271 | 8 |
-| **total** | **51** | **473** | **73** |
+- no drawn box is claimed by two declared cells (which is what a walk that
+  slipped a row or a column produces), and
+- declared cells left to right in a row take drawn boxes left to right, and
+  declared cells top to bottom in a column take drawn boxes top to bottom.
+
+A table failing either has **every** seat refused on that page
+(`lattice_inconsistent`), not just the suspect ones: the evidence that an
+alignment is sound is the alignment being sound as a whole. On the corpus the
+gate fires nowhere, which is the result it should have where the audit below
+passes — it is a guard against the form this corpus does not contain, and it
+costs 0 of the 229.
+
+**Measured result: 229 of 473 seats, all `cell_borders`.** Per form:
+
+| form | pages | fill regions | seats | `cell_borders` |
+| --- | ---: | ---: | ---: | ---: |
+| admrul-gajokdolbom-hyuga-sinchengseo | 1 | 7 | 6 | 6 |
+| gianmun-byeolji-1ho | 1 | 9 | 0 | 0 |
+| gianmun-byeolji-2ho | 1 | 35 | 13 | 13 |
+| jeongbo-gonggae-cheongguseo | 1 | 13 | 0 | 0 |
+| jumin-deungchobon-sinchengseo | 3 | 5 | 1 | 1 |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | 22 | 125 | 123 | 123 |
+| moel-pyojun-geunrogyeyakseo-2013 | 7 | 3 | 0 | 0 |
+| moel-pyojun-geunrogyeyakseo-2025 | 7 | 0 | 0 | 0 |
+| nrf-gyeolgwa-bogoseo-yangsik | 2 | 5 | 5 | 5 |
+| saeopja-deungnok-sinchengseo | 6 | 271 | 81 | 81 |
+| **total** | **51** | **473** | **229** | **229** |
+
+`matched_text` and `interpolated` place **0** across the corpus, and that is
+asserted rather than assumed: an empty fill cell never holds text for the
+first to match, and no corpus row puts a mapped label immediately beside a
+seat for the second.
 
 Audited on those same renders: every placed seat **is** one of the
 reconstructed cells, every one of them is empty in the render, and no two
@@ -1177,10 +1222,15 @@ has no box instead of implying one:
 | --- | --- |
 | `no_drawn_grid` | the page draws no closed cell at all |
 | `no_anchor_on_page` | nothing of this table was identified here (it may be on another page) |
-| `no_anchor_in_row` | the table is anchored on this page, but the walk never reached this row |
-| `grid_gap` | no drawn cell adjacent where the next declared cell should be |
+| `no_anchor_in_row` | the table is anchored on this page, but the walk never reached this cell |
+| `grid_gap` | no unambiguous drawn cell adjacent where the next declared cell should be |
 | `cell_mismatch` | the drawn cell there carries text contradicting the declared cell |
 | `alignment_failed` | two anchors disagree, or an anchor failed its own text check |
+| `lattice_inconsistent` | the table's correspondence is not an order-preserving injection, so all of it is refused here |
+
+`no_anchor_in_row` keeps its name from the one-dimensional walk and is now
+read as *the walk never reached this cell*; renaming a value the Desktop
+already switches on buys nothing this document cannot say instead.
 
 `drawnCells` reports how many closed cells the page yielded, which separates
 "this form is not ruled" from "this form is ruled and we could not align it".
@@ -1193,29 +1243,82 @@ bytes are a new key, so a re-prepared document never serves stale positions.
 
 ### 12.6 Still GAP here
 
-`cell_borders` closed the "seats not adjacent to a label" gap and was
-validated against real Hancom renders. **400 of 473 fill regions still get no
-seat**, and the reasons are structural, not tuning:
+`cell_borders` closed the "seats not adjacent to a label" gap and then the
+"label is a header, not a caption" gap, both validated against real Hancom
+renders. **244 of 473 fill regions still get no seat**, and the reasons are
+structural, not tuning:
 
-- **148 fill regions sit in tables with no anchor anywhere.** Every text-
-  bearing cell in them is either ambiguous across several distinct cells or
-  excluded as truncated, so there is nothing to align from. This is the
-  largest single block and it is where the next real gain is.
-- **Truncated previews cannot anchor.** A cell whose `text_preview` is a
-  30-character prefix is excluded from the target set — 34 or 35 such cells in
-  each of the larger forms. The prefix can still *refute* a correspondence
-  during the walk, and it does, but it cannot establish one. Prefix matching
-  would be exactly the guess §12.3 refuses.
-- **Unruled forms place nothing, correctly.** `gianmun-byeolji-1ho` is ruled
-  with underlines rather than boxes: 6 horizontal rules and 4 verticals on the
-  page, so almost nothing closes. Its 9 fill regions are absent and that is
-  the right answer. `jeongbo-gonggae-cheongguseo` has 25 horizontal rules and
-  9 verticals, and its label column has no left border on the body rows, so
-  its 13 regions are absent too. A form the renderer does not enclose cannot
-  be seated by reading enclosures.
-- **The walk does not cross a gap or a merged cell.** It stops at the first
-  box that is not adjacent or whose text disagrees, so a row with a rowspan
-  neighbour or an unruled middle stretch places only the run it verified.
+- **148 fill regions sit in tables with no anchor anywhere**, 138 of them in
+  the two 부표 sheets of `saeopja-deungnok-sinchengseo`. The cause measured
+  there is not a label one table over: each sheet is **the same sub-block
+  repeated five times down one table**, so every label in it matches five
+  distinct declared cells and refuses to anchor — T41, working as designed.
+  Pairing the five drawn copies with the five declared copies in reading order
+  is an assumption about ordering that no text on the page can confirm, so it
+  is not made. This is the largest single block and it is where the next real
+  gain would have to come from.
+
+  **Anchoring such a table from a neighbouring one was measured too, at 1 of
+  473.** Borrowing an adjacent table's grid needs an anchored table on the
+  same page, and there are four anchorless tables holding fills:
+
+  | form | table | fills | renders on | anchored tables there |
+  | --- | ---: | ---: | ---: | --- |
+  | admrul-gajokdolbom-hyuga-sinchengseo | 0 | 1 | page 0 | table 1 |
+  | gianmun-byeolji-1ho | 0 | 9 | page 0 | none |
+  | saeopja-deungnok-sinchengseo | 5 | 64 | pages 4–5 | none |
+  | saeopja-deungnok-sinchengseo | 6 | 74 | pages 4–5 | none |
+
+  147 of the 148 have nothing on their page to borrow from, so no cross-table
+  method reaches them; the 148th is one seat, which does not pay for a
+  cross-table geometry mechanism and the verification gate it would need. A
+  table is located here by its declared cell texts appearing as rendered
+  lines — ambiguous texts still locate a *page*, because that does not require
+  deciding *which* cell. Pinned by a test.
+- **Truncated previews cannot anchor, and untruncating them buys nothing.** A
+  cell whose `text_preview` is a 30-character prefix is excluded from the
+  target set; the prefix can still *refute* a correspondence during the walk,
+  and it does, but it cannot establish one. Whether the truncation was the
+  blocker is now measured rather than supposed. `form_inspect --full-text`
+  already returns a named cell's exact string, so all **145** truncated cells
+  in the corpus were fetched in full and spliced into the target set:
+
+  | | |
+  | --- | ---: |
+  | truncated cells recovered in full | 145 |
+  | equal to exactly one rendered line | 34 |
+  | wrapping over several rendered lines (mean 135 chars) | 111 |
+  | anchors gained / lost | 8 / 0 |
+  | **extra seats placed** | **0** |
+
+  The span unit is a **line**, so a cell that wraps can never match one at any
+  preview length, and the 34 that do match land where the walk already
+  reaches. Carrying full cell text as a new profile field would therefore buy
+  zero seats at the cost of the structure-only contract `form_inspect` keeps
+  on purpose (`_full_text`'s own docstring: the profile does not carry body
+  text, and the escape hatch is opt-in and cell-scoped). Not done.
+- **Forms the renderer does not enclose place nothing, correctly** — and the
+  two of them fail in different ways, which the earlier reading of this list
+  ran together. `gianmun-byeolji-1ho` is barely ruled *at all*: 6 horizontal
+  rules and 4 verticals on the whole page, and its fields (수신 / 참조 / 제목 /
+  기안자 …) carry none, so there is nothing under them either.
+  `jeongbo-gonggae-cheongguseo` is genuinely ruled — 26 horizontal rules and 9
+  verticals — but the outer frame is stroked only across the header and footer
+  bands, so its body cells are **three-sided**: top, bottom and left drawn,
+  right absent. Three sides is not an enclosure and does not become one.
+- **`underline_rule` as a separate derivation class: measured at zero, not
+  built.** The shape it was to be defined for is `라벨 ______` — a rule with
+  no enclosing box, on a uniquely-anchorable label's own line band, starting
+  after it. Across the 10 renders there are 1,141 joined horizontal rules,
+  **549** of them not an edge of any closed cell, and **exactly one** has that
+  shape; that one's label is followed by a `static` cell, not a fill target.
+  The class would place **0 seats** and would exist only to fire on the other
+  548, which are section separators and row borders running the full text
+  width — precisely the boxes-in-the-wrong-place this section refuses. The
+  census is pinned by a test so the number cannot rot.
+- **The walk does not cross a gap or a fork.** A direction with no
+  unambiguous adjacent box is not stepped, so an unruled middle stretch or a
+  place where the drawn grid branches bounds the region the walk verifies.
   Propagating a constant row offset down the table was tried and measured: it
   added 4 seats and could not be checked as tightly, so it is not in.
 - **Alignment is per page.** A table continued onto another page is anchored

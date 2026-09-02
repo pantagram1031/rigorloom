@@ -38,9 +38,10 @@ matching can never reach it — measured against the whole corpus, 10 forms and
 51 pages, text-based derivation placed 0 of 473 editable fill regions. What
 does enclose an empty cell is the ruling Hancom actually strokes on the page,
 so the grid is rebuilt from those segments and aligned to the form scan. The
-alignment is checked against the page's own text at every step and abandoned
-where the check fails; see ``align_drawn_grid``. A seat it cannot reach stays
-absent with a reason, because a box in the wrong place is worse than no box.
+alignment is walked outward from a verified anchor in all four directions,
+checked against the page's own text at every step and abandoned where the
+check fails; see ``align_drawn_grid``. A seat it cannot reach stays absent
+with a reason, because a box in the wrong place is worse than no box.
 """
 from __future__ import annotations
 
@@ -87,10 +88,11 @@ MAX_SEAT_PAGE_FRACTION = 0.6
 ABSENCE_REASONS = (
     "no_drawn_grid",       # the page draws no closed cell at all
     "no_anchor_on_page",   # nothing of this table was identified on this page
-    "no_anchor_in_row",    # the table is anchored here, this row is not reached
+    "no_anchor_in_row",    # the table is anchored here, the walk never got here
     "grid_gap",            # no drawn cell adjacent where the next one should be
     "cell_mismatch",       # the drawn cell there contradicts the declared cell
     "alignment_failed",    # two anchors disagree, or an anchor failed its check
+    "lattice_inconsistent",  # the table's correspondence is not order-preserving
 )
 
 # -- reconstructing the drawn grid ---------------------------------------------
@@ -170,6 +172,10 @@ def geometry_capability() -> dict:
                             "closed box AND the text in the boxes walked to "
                             "reach it matches the form scan; an unruled form "
                             "and an unanchored table both place nothing"),
+            "latticeWalk": ("the walk runs in all four directions from a "
+                            "verified anchor, and a table whose correspondence "
+                            "is not an order-preserving injection has every "
+                            "seat on that page refused"),
         },
         "unavailableReasons": list(UNAVAILABLE_REASONS),
     }
@@ -555,54 +561,167 @@ def cell_agrees(declared: dict, drawn, inside: dict, normalize) -> bool:
     return shown == declared_text
 
 
-def _walk_row(cells: list, anchor_cell, declared: list, index: int,
-              inside: dict, normalize) -> tuple[dict, dict]:
-    """Step outward from an anchor along one drawn row band.
+def drawn_adjacency(cells: list) -> dict:
+    """``cell -> {direction: neighbour}``, and only where the neighbour is
+    UNAMBIGUOUS.
 
-    The drawn cells sharing the anchor's band, left to right, are walked in
-    lockstep with the declared cells of that row. Each step must be ADJACENT
-    (this cell's right edge is the next one's left edge) and must AGREE with
-    the page's own text. The first step that fails ends the walk in that
-    direction; nothing past it is placed. That is the whole discipline — an
-    empty seat is trusted only because the labelled cells on the way to it
-    were verified.
+    Two directions ask two different questions, and the asymmetry comes from
+    how HWPX declares merges rather than from convenience. A horizontal step
+    stays inside one declared row, so the neighbour must share the whole row
+    band: its top AND bottom edges. A vertical step stays inside one declared
+    column, whose ``colspan`` may change from row to row (a label spanning two
+    columns above a pair of narrow ones), so only the LEFT edge is shared and
+    the width is free.
+
+    Where two drawn cells both qualify, the direction has NO neighbour. A fork
+    in the grid is exactly the place a walk would drift, and refusing it costs
+    nothing measurable: on the corpus every step the walk actually needed was
+    unambiguous.
     """
-    band = sorted([cell for cell in cells
-                   if abs(cell[1] - anchor_cell[1]) <= SEAT_BAND_TOL
-                   and abs(cell[3] - anchor_cell[3]) <= SEAT_BAND_TOL],
-                  key=lambda cell: cell[0])
-    if anchor_cell not in band:
-        return {}, {}
-    start = band.index(anchor_cell)
-    placed = {index: anchor_cell}
+    index: dict = {}
+    for cell in cells:
+        x0, y0, x1, y1 = cell
+        found: dict = {}
+        for direction, matches in (
+                ("right", lambda o: abs(o[0] - x1) <= SEAT_ADJACENCY_TOL
+                 and abs(o[1] - y0) <= SEAT_BAND_TOL
+                 and abs(o[3] - y1) <= SEAT_BAND_TOL),
+                ("left", lambda o: abs(o[2] - x0) <= SEAT_ADJACENCY_TOL
+                 and abs(o[1] - y0) <= SEAT_BAND_TOL
+                 and abs(o[3] - y1) <= SEAT_BAND_TOL),
+                ("down", lambda o: abs(o[1] - y1) <= SEAT_ADJACENCY_TOL
+                 and abs(o[0] - x0) <= SEAT_BAND_TOL),
+                ("up", lambda o: abs(o[3] - y0) <= SEAT_ADJACENCY_TOL
+                 and abs(o[0] - x0) <= SEAT_BAND_TOL)):
+            hits = [other for other in cells
+                    if other != cell and matches(other)]
+            if len(hits) == 1:
+                found[direction] = hits[0]
+        index[cell] = found
+    return index
+
+
+def declared_lattice(table: dict) -> tuple[dict, dict]:
+    """``({(row, col): cell}, {(row, col): {direction: (row, col)}})``.
+
+    Horizontal neighbours come from the order of the declared cells in a row,
+    which is how the shipped row walk already read them. Vertical neighbours
+    come from the declared ``span``: the cell under ``(row, col)`` is
+    ``(row + rowspan, col)`` when the scan declares one there. Both are the
+    table's own statement about itself; nothing is inferred from position.
+    """
+    by_addr: dict = {}
+    by_row: dict = {}
+    for cell in table.get("cells") or []:
+        addr = cell.get("addr") or {}
+        row, col = addr.get("row"), addr.get("col")
+        if row is None or col is None:
+            continue
+        by_addr[(row, col)] = cell
+        by_row.setdefault(row, []).append((col, cell))
+    for row in by_row.values():
+        row.sort(key=lambda item: item[0])
+
+    neighbours: dict = {}
+    for (row, col), cell in by_addr.items():
+        here: dict = {}
+        ordered = by_row[row]
+        at = next((i for i, item in enumerate(ordered) if item[0] == col), None)
+        if at is not None:
+            if at + 1 < len(ordered):
+                here["right"] = (row, ordered[at + 1][0])
+            if at - 1 >= 0:
+                here["left"] = (row, ordered[at - 1][0])
+        rowspan = int((cell.get("span") or {}).get("row") or 1)
+        if (row + rowspan, col) in by_addr:
+            here["down"] = (row + rowspan, col)
+        neighbours[(row, col)] = here
+    for key, here in neighbours.items():
+        below = here.get("down")
+        if below is not None:
+            neighbours[below]["up"] = key
+    return by_addr, neighbours
+
+
+def _walk_lattice(anchor_key, anchor_cell, by_addr: dict, neighbours: dict,
+                  adjacency: dict, inside: dict, normalize
+                  ) -> tuple[dict, dict]:
+    """Step outward from one anchor across the drawn lattice, in 2D.
+
+    The shipped version of this walked one row band, left and right. That
+    reached the seats BESIDE a label and nothing else, which is why 252 fill
+    regions sat in tables that were anchored on the page and still got no box:
+    their row simply held no label of its own. A form's labels are as often a
+    header ABOVE a column as a caption beside it, so the walk goes up and down
+    the drawn grid too.
+
+    The discipline is unchanged, and it is the only thing that makes the extra
+    reach honest. Every step must land on an UNAMBIGUOUS drawn neighbour in
+    that direction, and the cell it lands on must AGREE with what the page
+    shows there: a labelled cell shows its label, an empty fill cell is empty.
+    A step that fails is not taken and the walk does not continue through it —
+    breadth-first, so a blocked direction never blocks a route that verifies.
+    An empty seat is trusted only because of the cells walked to reach it.
+    """
+    reached = {anchor_key: anchor_cell}
     stops: dict = {}
+    queue = [anchor_key]
+    while queue:
+        key = queue.pop(0)
+        for direction, next_key in neighbours.get(key, {}).items():
+            if next_key in reached or next_key not in by_addr:
+                continue
+            step = adjacency.get(reached[key], {}).get(direction)
+            if step is None:
+                stops["grid_gap"] = stops.get("grid_gap", 0) + 1
+                continue
+            if not cell_agrees(by_addr[next_key], step, inside, normalize):
+                stops["cell_mismatch"] = stops.get("cell_mismatch", 0) + 1
+                continue
+            reached[next_key] = step
+            queue.append(next_key)
+    return reached, stops
 
-    def note(reason):
-        stops[reason] = stops.get(reason, 0) + 1
 
-    here, slot = start, index
-    while here + 1 < len(band) and slot + 1 < len(declared):
-        if abs(band[here][2] - band[here + 1][0]) > SEAT_ADJACENCY_TOL:
-            note("grid_gap")
-            break
-        if not cell_agrees(declared[slot + 1], band[here + 1], inside,
-                           normalize):
-            note("cell_mismatch")
-            break
-        here, slot = here + 1, slot + 1
-        placed[slot] = band[here]
-    here, slot = start, index
-    while here - 1 >= 0 and slot - 1 >= 0:
-        if abs(band[here - 1][2] - band[here][0]) > SEAT_ADJACENCY_TOL:
-            note("grid_gap")
-            break
-        if not cell_agrees(declared[slot - 1], band[here - 1], inside,
-                           normalize):
-            note("cell_mismatch")
-            break
-        here, slot = here - 1, slot - 1
-        placed[slot] = band[here]
-    return placed, stops
+def lattice_is_consistent(correspondence: dict) -> bool:
+    """Is this correspondence an order-preserving injection? The drift gate.
+
+    A walk verifies each step against the page's text, but two EMPTY cells
+    agree with each other trivially, so a run of empty cells is the one place
+    the text gate says nothing. Reaching further in 2D makes those runs longer,
+    so reach is paid for with a structural check the whole table has to pass:
+
+    * **injective** — no drawn box is claimed by two declared cells, which is
+      what a walk that slipped a column would produce; and
+    * **order-preserving** — declared cells left to right in a row take drawn
+      boxes left to right, and declared cells top to bottom in a column take
+      drawn boxes top to bottom.
+
+    A table failing either has every one of its seats refused on that page
+    (``lattice_inconsistent``), not just the suspect ones: the evidence that
+    the alignment is sound is the alignment being sound as a whole.
+    """
+    seen: dict = {}
+    for key, drawn in correspondence.items():
+        if drawn in seen:
+            return False
+        seen[drawn] = key
+    rows: dict = {}
+    columns: dict = {}
+    for (row, col), drawn in correspondence.items():
+        rows.setdefault(row, []).append((col, drawn))
+        columns.setdefault(col, []).append((row, drawn))
+    for entries in rows.values():
+        entries.sort()
+        for (_, left), (_, right) in zip(entries, entries[1:]):
+            if right[0] < left[0] + SEAT_ADJACENCY_TOL:
+                return False
+    for entries in columns.values():
+        entries.sort()
+        for (_, upper), (_, lower) in zip(entries, entries[1:]):
+            if lower[1] < upper[1] + SEAT_ADJACENCY_TOL:
+                return False
+    return True
 
 
 def align_drawn_grid(profile: dict, spans: list, cells: list, lines: list,
@@ -610,11 +729,13 @@ def align_drawn_grid(profile: dict, spans: list, cells: list, lines: list,
                      ) -> tuple[dict, dict]:
     """Drawn cells -> fill seats. ``({(table,row,col): rect}, {reason: n})``.
 
-    Alignment is earned in three stages and abandoned the moment it is not.
-    An anchor is a span that names exactly one table cell AND whose drawn cell
-    carries that cell's text. From each surviving anchor the row is walked
-    outward under the text gate. Where two anchors reach the same declared
-    cell and disagree about which box it is, that cell is refused.
+    Alignment is earned in stages and abandoned the moment it is not. An
+    anchor is a span that names exactly one table cell AND whose drawn cell
+    carries that cell's text. From each surviving anchor the drawn lattice is
+    walked outward in all four directions under the text gate. Where two
+    anchors reach the same declared cell and disagree about which box it is,
+    that cell is refused; where the table's whole correspondence is not an
+    order-preserving injection, the table is refused.
     """
     placed: dict = {}
     absences: dict = {}
@@ -623,6 +744,7 @@ def align_drawn_grid(profile: dict, spans: list, cells: list, lines: list,
         absences[reason] = absences.get(reason, 0) + count
 
     inside = text_by_drawn_cell(lines, cells, normalize)
+    adjacency = drawn_adjacency(cells)
 
     anchors: dict = {}
     for span in spans:
@@ -637,67 +759,57 @@ def align_drawn_grid(profile: dict, spans: list, cells: list, lines: list,
 
     for table in profile.get("table_map") or []:
         table_index = table.get("index")
-        by_row: dict = {}
-        for cell in table.get("cells") or []:
-            row = (cell.get("addr") or {}).get("row")
-            by_row.setdefault(row, []).append(cell)
-        for row_cells in by_row.values():
-            row_cells.sort(key=lambda cell: (cell.get("addr") or {}).get("col")
-                           if (cell.get("addr") or {}).get("col") is not None
-                           else -1)
+        by_addr, neighbours = declared_lattice(table)
+        fills = [key for key, cell in by_addr.items()
+                 if cell.get("classification") == "fill_target"]
 
         mine = {key: cell for key, cell in anchors.items()
                 if key[0] == table_index}
-        fills_total = sum(1 for row_cells in by_row.values()
-                          for cell in row_cells
-                          if cell.get("classification") == "fill_target")
         if not mine:
             # Nothing of this table was identified here. It may simply live on
             # another page; either way this page cannot place it.
-            if fills_total:
-                refuse("no_anchor_on_page", fills_total)
+            if fills:
+                refuse("no_anchor_on_page", len(fills))
             continue
 
         proposals: dict = {}
         for (_, row, col), anchor_cell in mine.items():
-            declared = by_row.get(row) or []
-            index = next((i for i, cell in enumerate(declared)
-                          if (cell.get("addr") or {}).get("col") == col), None)
-            if index is None:
+            key = (row, col)
+            if key not in by_addr:
                 continue
-            if not cell_agrees(declared[index], anchor_cell, inside, normalize):
+            if not cell_agrees(by_addr[key], anchor_cell, inside, normalize):
                 # The box holding this label is not the box the scan describes
                 # — a sub-cell, or a neighbour. An anchor that cannot verify
                 # itself cannot vouch for anything else.
                 refuse("alignment_failed")
                 continue
-            reached, stops = _walk_row(cells, anchor_cell, declared, index,
-                                       inside, normalize)
+            reached, stops = _walk_lattice(key, anchor_cell, by_addr,
+                                           neighbours, adjacency, inside,
+                                           normalize)
             for reason, count in stops.items():
                 refuse(reason, count)
-            for slot, cell in reached.items():
-                proposals.setdefault((row, slot), set()).add(cell)
+            for at, cell in reached.items():
+                proposals.setdefault(at, set()).add(cell)
 
-        reached_fills = set()
-        for (row, slot), candidates in proposals.items():
-            declared = by_row.get(row) or []
-            cell = declared[slot]
-            if cell.get("classification") != "fill_target":
-                continue
-            col = (cell.get("addr") or {}).get("col")
-            reached_fills.add((row, col))
-            if len(candidates) != 1:
+        # A cell two anchors disagree about is refused, not averaged, and it
+        # is left out of the consistency check below: a contested cell is
+        # already not part of the correspondence.
+        agreed = {at: next(iter(candidates))
+                  for at, candidates in proposals.items()
+                  if len(candidates) == 1}
+
+        if not lattice_is_consistent(agreed):
+            # Drift, not alignment. Nothing from this table is placed here.
+            refuse("lattice_inconsistent", len(fills))
+            continue
+
+        for at in fills:
+            if at in agreed:
+                placed[(table_index,) + at] = agreed[at]
+            elif at in proposals:
                 refuse("alignment_failed")
-                continue
-            placed[(table_index, row, col)] = next(iter(candidates))
-
-        for row, row_cells in by_row.items():
-            for cell in row_cells:
-                if cell.get("classification") != "fill_target":
-                    continue
-                col = (cell.get("addr") or {}).get("col")
-                if (row, col) not in reached_fills:
-                    refuse("no_anchor_in_row")
+            else:
+                refuse("no_anchor_in_row")
     return placed, absences
 
 
