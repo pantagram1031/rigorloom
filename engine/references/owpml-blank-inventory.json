@@ -8,7 +8,7 @@
  "form_count": 1,
  "summary": {
   "distinct_elements": 93,
-  "element_occurrences": 118,
+  "element_occurrences": 117,
   "distinct_element_attribute_pairs": 334,
   "distinct_attribute_names": 195,
   "xml_members": 8,
@@ -89,7 +89,7 @@
     "deflated"
    ],
    "xml": true,
-   "bytes_total": 1588
+   "bytes_total": 1503
   },
   "Contents/header.xml": {
    "forms": [
@@ -109,7 +109,7 @@
     "deflated"
    ],
    "xml": true,
-   "bytes_total": 3456
+   "bytes_total": 3450
   },
   "META-INF/container.rdf": {
    "forms": [
@@ -2476,7 +2476,7 @@
    "with_text": 0,
    "with_children": 0,
    "empty": 1,
-   "explicit_end_form": 1,
+   "explicit_end_form": 0,
    "attributes": {}
   },
   "hp:visibility": {
@@ -2863,7 +2863,7 @@
   "opf:meta": {
    "namespace": "http://www.idpf.org/2007/opf/",
    "local": "meta",
-   "count": 4,
+   "count": 3,
    "forms": [
     0
    ],
@@ -2872,15 +2872,15 @@
    ],
    "with_text": 0,
    "with_children": 0,
-   "empty": 4,
-   "explicit_end_form": 3,
+   "empty": 3,
+   "explicit_end_form": 0,
    "attributes": {
     "content": {
-     "count": 4,
+     "count": 3,
      "forms": 1
     },
     "name": {
-     "count": 4,
+     "count": 3,
      "forms": 1
     }
    }
@@ -3019,7 +3019,7 @@
    "with_text": 0,
    "with_children": 0,
    "empty": 1,
-   "explicit_end_form": 1,
+   "explicit_end_form": 0,
    "attributes": {}
   },
   "rdf:Description": {

@@ -19,7 +19,7 @@ it needs COM, and this slice had none.
 | | corpus (12 forms) | blank document |
 |---|---|---|
 | distinct elements | 161 | 93 |
-| element occurrences | 64 536 | 118 |
+| element occurrences | 64 536 | 117 |
 | distinct element/attribute pairs | 558 | 334 |
 | distinct attribute names | 299 | 195 |
 | distinct zip members | 12 | 10 |

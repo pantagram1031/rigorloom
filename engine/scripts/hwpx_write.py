@@ -170,6 +170,12 @@ class XmlNode:
     def text_content(self):
         return "".join(self.itertext())
 
+    def tobytes(self):
+        """This element and its subtree, serialized (no prolog, no tail)."""
+        out = bytearray()
+        _serialize(self, out)
+        return bytes(out)
+
     def __repr__(self):  # pragma: no cover - debugging aid
         return "<XmlNode %s attrs=%d children=%d>" % (
             self.qname, len(self.attrs), len(self.children))
@@ -492,7 +498,7 @@ class HwpxPart:
     __slots__ = ("name", "data", "compress_type", "date_time", "create_system",
                  "external_attr", "extra", "comment", "internal_attr",
                  "create_version", "extract_version", "flag_bits",
-                 "_tree", "_dirty")
+                 "_tree")
 
     def __init__(self, name, data, compress_type=zipfile.ZIP_DEFLATED,
                  date_time=(1980, 1, 1, 0, 0, 0), create_system=0,
@@ -514,7 +520,6 @@ class HwpxPart:
                          if compress_type == zipfile.ZIP_DEFLATED else 0)
         self.flag_bits = flag_bits
         self._tree = None
-        self._dirty = False
 
     @property
     def compresslevel(self):
@@ -533,13 +538,11 @@ class HwpxPart:
             if not self.is_xml:
                 raise HwpxWriteError("%s is not an XML member" % self.name)
             self._tree = parse_xml_part(self.data)
-            self._dirty = True
         return self._tree
 
     def set_bytes(self, data):
         self.data = bytes(data)
         self._tree = None
-        self._dirty = False
 
     def bytes(self):
         """Serialized bytes: from the tree once it has been materialized."""
@@ -936,7 +939,7 @@ _BLANK_SECTION = (
     '<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1"'
     ' sameSz="1" sameGap="0"/></hp:ctrl>'
     '</hp:run>'
-    '<hp:run charPrIDRef="0"><hp:t></hp:t></hp:run>'
+    '<hp:run charPrIDRef="0"><hp:t/></hp:run>'
     '<hp:linesegarray>'
     '<hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000"'
     ' baseline="850" spacing="600" horzpos="0" horzsize="42520"'
@@ -948,13 +951,14 @@ _BLANK_SECTION = (
 
 _BLANK_CONTENT_HPF = (
     '<opf:package' + _NS_ATTRS + ' version="" unique-identifier="" id="">'
+    # Empty elements are self-closing throughout: the corpus contains zero
+    # `<a></a>` forms across 96 members, so that is the shape Hancom writes.
     '<opf:metadata>'
-    '<opf:title></opf:title>'
+    '<opf:title/>'
     '<opf:language>ko</opf:language>'
-    '<opf:meta name="creator" content="text"></opf:meta>'
+    '<opf:meta name="creator" content="text"/>'
     '<opf:meta name="subject" content="text"/>'
-    '<opf:meta name="description" content="text"></opf:meta>'
-    '<opf:meta name="lastsaveby" content="text"></opf:meta>'
+    '<opf:meta name="description" content="text"/>'
     '</opf:metadata>'
     '<opf:manifest>'
     '<opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>'
