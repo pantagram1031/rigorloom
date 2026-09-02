@@ -564,6 +564,589 @@ def test_justification_stretches_spaces_when_the_line_has_them():
     assert own_render.OwnRenderer._elastic_slots(hangul) == [1, 3]
 
 
+# ------------------------------------------------- line breaking (E2.1)
+#
+# The breaker is graded twice over.  Its *mechanics* — which positions the
+# paragraph's own hh:breakSetting permits, what 금칙처리 forbids, what condense
+# tolerates, what the vertical metrics come to — are pinned on synthetic
+# paragraphs, because the corpus declares far too narrow a range of these
+# attributes to tell a working implementation from a broken one.  Its
+# *agreement with the authoring engine* is measured on the corpus, exactly,
+# below.
+
+def _synthetic_paragraph(renderer, text, cid, para_id="__para__", **parapr):
+    """An ``hp:p`` carrying ``text`` under a paraPr the test declares."""
+    from xml.etree import ElementTree as ET
+
+    settings = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 0, "tab_pr": None, "line_spacing_type": "PERCENT",
+        "line_spacing_value": 100, "line_spacing_unit": "HWPUNIT",
+        "margin_left": 0, "margin_right": 0, "indent": 0,
+    }
+    settings.update(parapr)
+    renderer.defs["para_pr"][para_id] = settings
+    element = ET.fromstring(
+        '<hp:p xmlns:hp="urn:x" paraPrIDRef="{pid}">'
+        '<hp:run charPrIDRef="{cid}"><hp:t>{text}</hp:t></hp:run>'
+        "</hp:p>".format(pid=para_id, cid=cid, text=text))
+    return own_render.Paragraph(element, renderer.defs["para_pr"])
+
+
+def _breaks(renderer, draw, text, cid, column_hwp, **parapr):
+    para = _synthetic_paragraph(renderer, text, cid, **parapr)
+    lines = renderer.compute_lines(draw, para, column_hwp)
+    return [(line["start"], line["end"]) for line in lines], lines
+
+
+def test_break_opportunities_follow_the_paragraphs_own_break_setting():
+    """hh:breakSetting decides where a line MAY break; nothing else does."""
+    hangul = "가나다라마"
+    # KEEP_WORD (어절 단위): no break inside a run of Hangul with no space.
+    assert own_render.break_opportunities(hangul, break_non_latin="KEEP_WORD") == []
+    # BREAK_WORD (글자 단위): between every pair of syllables.
+    assert own_render.break_opportunities(
+        hangul, break_non_latin="BREAK_WORD") == [1, 2, 3, 4]
+    # A space is a break opportunity whatever the attributes say, and the
+    # break goes AFTER the space, never before it.
+    assert own_render.break_opportunities("가나 다라") == [3]
+    latin = "abcde"
+    assert own_render.break_opportunities(latin, break_latin="KEEP_WORD") == []
+    assert own_render.break_opportunities(
+        latin, break_latin="BREAK_WORD") == [1, 2, 3, 4]
+    # The two attributes are independent, and the boundary between the two
+    # scripts is governed by the non-Latin one.
+    assert own_render.break_opportunities(
+        "가abc나", break_latin="BREAK_WORD",
+        break_non_latin="KEEP_WORD") == [2, 3]
+
+
+def test_prohibited_characters_never_start_or_end_a_line():
+    """금칙처리, on the table this renderer declares in every sidecar."""
+    # ')' may not start a line, so the break before it is withdrawn.
+    assert own_render.break_opportunities(
+        "가나)다", break_non_latin="BREAK_WORD") == [1, 3]
+    # '(' may not end one, so the break after it is withdrawn.
+    assert own_render.break_opportunities(
+        "가(나다", break_non_latin="BREAK_WORD") == [1, 3]
+    # The filter applies to a space break too, not only a syllable break.
+    assert own_render.break_opportunities("가나 ”다") == []
+    for ch in ")]}.,?!。、":
+        assert ch in own_render.LINE_START_PROHIBITED, ch
+    for ch in "([{（「":
+        assert ch in own_render.LINE_END_PROHIBITED, ch
+
+
+def test_hangul_wraps_at_the_syllable_the_box_ends_on(typo_probe):
+    """BREAK_WORD puts as many syllables on the line as the box holds."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__brk__", height=1000)
+    em = own_render.HWPUNIT_PER_PT * 10          # one 10 pt cell, in HWPUNIT
+    spans, lines = _breaks(renderer, draw, "가나다라마바사아자차", cid, em * 4,
+                           break_non_latin="BREAK_WORD")
+    assert spans == [(0, 4), (4, 8), (8, 10)], spans
+    assert not any(line["forced"] for line in lines)
+    for line in lines:
+        assert line["width_px"] <= renderer.pxf(line["horzsize"]) + 1e-6
+
+
+def test_a_latin_word_moves_whole_unless_the_paragraph_breaks_words(typo_probe):
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__lat__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 4
+    keep, _ = _breaks(renderer, draw, "aa bbbbbbbb cc", cid, column,
+                      break_latin="KEEP_WORD")
+    assert keep[0][1] == 3, keep      # 'aa ' then the whole long word moves
+    split, lines = _breaks(renderer, draw, "aa bbbbbbbb cc", cid, column,
+                           break_latin="BREAK_WORD")
+    assert split != keep, "BREAK_WORD must be able to split the word"
+    assert all(not line["forced"] for line in lines)
+
+
+def test_a_line_with_no_permitted_break_is_cut_and_counted(typo_probe):
+    """KEEP_WORD plus one very long word: the box wins, and it is recorded."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__forced__", height=1000)
+    before = renderer._forced_breaks
+    spans, lines = _breaks(renderer, draw, "가나다라마바사아자차", cid,
+                           own_render.HWPUNIT_PER_PT * 10 * 3,
+                           break_non_latin="KEEP_WORD")
+    assert len(spans) > 1, "an unbreakable run still has to fit the page"
+    assert any(line["forced"] for line in lines)
+    assert renderer._forced_breaks > before
+
+
+def test_condense_lets_a_line_keep_what_its_spaces_can_give_up(typo_probe):
+    """hp:paraPr@condense is 공백 축소: spaces may shrink BY that percentage.
+
+    Which way round the attribute reads was decided by measuring the corpus,
+    not by reading its name — see the comment in ``compute_lines``.  What is
+    pinned here is the mechanism: with condense=0 (the corpus default, and
+    the value 603 of its 774 paraPr carry) a line that overruns breaks, and
+    with a condense budget large enough to cover the overrun it does not.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__cond__", height=1000)
+    text = "가나 다라 마바 사아"
+    para = _synthetic_paragraph(renderer, text, cid, para_id="__condmeasure__")
+    full = renderer.span_width(draw, para, 0, len(text))
+    space = renderer._measure(draw, " ", cid)
+    # A box narrower than the line by less than what its three spaces can give
+    # up at condense=75: the line breaks without that budget and holds with it.
+    column = int(renderer.hwp_from_px(full - 1.5 * space))
+    tight, _ = _breaks(renderer, draw, text, cid, column, condense=0)
+    loose, _ = _breaks(renderer, draw, text, cid, column, condense=75)
+    assert len(tight) == 2, tight
+    assert len(loose) == 1, loose
+
+
+def test_line_advance_follows_the_declared_line_spacing(typo_probe):
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ls__", height=1300)
+    _spans, percent = _breaks(renderer, draw, "가나 다라", cid, 100000,
+                              line_spacing_type="PERCENT",
+                              line_spacing_value=160)
+    line = percent[0]
+    # The corpus relations, on a synthetic paragraph: vertsize == textheight,
+    # baseline == round(0.85 * textheight), vertsize + spacing == 160%.
+    assert line["textheight"] == 1300
+    assert line["vertsize"] == 1300
+    assert line["baseline"] == round(1300 * own_render.BASELINE_RATIO)
+    assert line["vertsize"] + line["spacing"] == round(1300 * 1.6)
+    _spans, fixed = _breaks(renderer, draw, "가나 다라", cid, 100000,
+                            line_spacing_type="FIXED",
+                            line_spacing_value=2000)
+    assert fixed[0]["vertsize"] + fixed[0]["spacing"] == 2000
+
+
+def test_the_first_line_carries_the_declared_indent(typo_probe):
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ind__", height=1000)
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            own_render.HWPUNIT_PER_PT * 10 * 5,
+                            break_non_latin="BREAK_WORD",
+                            margin_left=1000, margin_right=500, indent=2000)
+    assert lines[0]["horzpos"] == 3000
+    assert lines[1]["horzpos"] == 1000
+    column = own_render.HWPUNIT_PER_PT * 10 * 5
+    assert lines[0]["horzsize"] == column - 3000 - 500
+    assert lines[1]["horzsize"] == column - 1000 - 500
+    # A negative intent (내어쓰기) moves no box — the corpus's cached boxes
+    # say so; see OwnRenderer._line_box.
+    _spans, hanging = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                              column, break_non_latin="BREAK_WORD",
+                              margin_left=1000, indent=-2000)
+    assert len(hanging) > 1
+    assert hanging[0]["horzpos"] == 0        # 1000 + (-2000), clamped at 0
+    assert all(line["horzpos"] == 1000 for line in hanging[1:])
+
+
+def test_line_vertpos_stacks_the_way_the_cached_layout_does(typo_probe):
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__stack__", height=1000)
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차", cid,
+                            own_render.HWPUNIT_PER_PT * 10 * 4,
+                            break_non_latin="BREAK_WORD",
+                            line_spacing_value=160)
+    assert len(lines) == 3
+    assert lines[0]["vertpos"] == 0
+    for previous, line in zip(lines, lines[1:]):
+        assert line["vertpos"] == (previous["vertpos"] + previous["vertsize"]
+                                   + previous["spacing"])
+
+
+def test_a_tab_advances_to_the_paragraphs_next_declared_stop(typo_probe):
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__tab__", height=1000)
+    renderer.defs.setdefault("tab_pr", {})["__stops__"] = {
+        "stops": [(20000, "LEFT"), (40000, "LEFT")],
+        "auto_left": 0, "auto_right": 0,
+    }
+    para = _synthetic_paragraph(renderer, "가\t나", cid, para_id="__tabpara__",
+                                tab_pr="__stops__")
+    # <hp:t> keeps the tab as a literal character here, which is exactly the
+    # shape an edited paragraph has when a user presses Tab.
+    assert "\t" in para.text
+    lines = renderer.compute_lines(draw, para, 100000)
+    assert len(lines) == 1
+    # 가 + the jump to 20000 HWPUNIT + 나 — the tab is not zero-width.
+    assert lines[0]["width_px"] > renderer.pxf(20000)
+
+
+# ------------------------------------------- line breaking vs the authoring
+# engine.  These are THE measurement of this slice, and they are asserted
+# exactly: a change that moves any of them has to move the number here too.
+
+LINESEG_AGREEMENT = {
+    # form: (scored, line_count_exact, sequence_exact, multiline_scored,
+    #        multiline_line_count_exact, cached_break_positions, matched)
+    "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 21, 2, 2, 2, 1),
+    "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
+    "gianmun-byeolji-2ho": (20, 19, 19, 2, 1, 2, 1),
+    "jeongbo-gonggae-cheongguseo": (58, 58, 52, 6, 6, 7, 1),
+    "jumin-deungchobon-sinchengseo": (133, 132, 113, 27, 26, 36, 9),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 435, 416, 29, 26, 44, 12),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 254, 234, 34, 25, 49, 7),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 283, 37, 27, 47, 6),
+    "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
+    "saeopja-deungnok-sinchengseo": (764, 758, 747, 17, 14, 24, 5),
+}
+
+
+@pytest.mark.parametrize("name", sorted(LINESEG_AGREEMENT))
+def test_the_breaker_agrees_with_the_authoring_engine_exactly_this_much(name):
+    """Run our breaker on unedited text; compare to the document's own cache.
+
+    This number is NOT high and is not presented as if it were.  It is the
+    honest state of a from-scratch line breaker measured against the engine
+    that wrote the file, and every one of these counts is reproduced by
+    ``python own_render.py FORM.hwpx --lineseg-agreement``.
+
+    It depends on which faces this machine has installed — an unresolved face
+    is measured with a substitute whose advances differ — so a failure here on
+    another machine is a font difference, not necessarily a regression. The
+    reference machine is the one named in engine/references/own-render-notes.md.
+    """
+    path = os.path.join(CORPUS, name + ".hwpx")
+    _need(path)
+    report = own_render.lineseg_agreement(path, dpi=144)
+    a = report["all_paragraphs"]
+    m = report["multiline_paragraphs"]
+    expected = LINESEG_AGREEMENT[name]
+    actual = (a["paragraphs_scored"], a["paragraphs_line_count_exact"],
+              a["paragraphs_break_sequence_exact"], m["paragraphs_scored"],
+              m["paragraphs_line_count_exact"], a["break_positions_cached"],
+              a["break_positions_matched"])
+    assert actual == expected, (
+        f"{name}: measured {actual}, pinned {expected}. If this machine's "
+        "installed fonts differ from the reference machine's, that is the "
+        "first thing to check — see report['fonts'].")
+
+
+def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
+    """The single number the slice is graded on, summed over the corpus."""
+    totals = [0] * 7
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        report = own_render.lineseg_agreement(path, dpi=144)
+        a = report["all_paragraphs"]
+        m = report["multiline_paragraphs"]
+        for index, value in enumerate((
+                a["paragraphs_scored"], a["paragraphs_line_count_exact"],
+                a["paragraphs_break_sequence_exact"], m["paragraphs_scored"],
+                m["paragraphs_line_count_exact"],
+                a["break_positions_cached"], a["break_positions_matched"])):
+            totals[index] += value
+    # 2148 paragraphs carry a usable cache; the breaker reproduces the
+    # authoring engine's line COUNT on 2103 of them and its exact break
+    # SEQUENCE on 2003.  Restricted to the 158 paragraphs that actually break
+    # (the rest cannot disagree), it reproduces the line count on 131 and 43
+    # of the 216 individual break positions.
+    assert totals == [2148, 2103, 2003, 158, 131, 216, 43], totals
+
+
+def test_the_measurement_says_which_way_each_disagreement_falls():
+    """early vs late is the diagnosis, and it must be in the report."""
+    path = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2025.hwpx")
+    _need(path)
+    conditional = own_render.lineseg_agreement(
+        path, dpi=144)["conditional_breaks"]
+    assert conditional["decisions"] == 47
+    assert (conditional["exact"] + conditional["early"]
+            + conditional["late"]) == conditional["decisions"]
+    # The residual is an advance-width gap, not a rule gap: this renderer
+    # measures the authoring engine's own line as well under its box, so it
+    # keeps fitting the next word.  That is what `late` dominating and a
+    # cached-line fill below 1.0 mean, together.
+    assert conditional["late"] > conditional["early"]
+    assert conditional["cached_line_fill"]["median"] < 1.0
+
+
+# ------------------------------------------- the cache goes stale (E2.1/E2.5)
+
+def test_no_unedited_corpus_paragraph_is_judged_stale(tmp_path):
+    """Soundness of the staleness detector, on all ten forms.
+
+    The detector must never fire on a document nobody edited, or every render
+    would silently switch to a line breaker that measurably disagrees with the
+    authoring engine.  This is the test that makes ``auto`` safe.
+    """
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        result = own_render.render_to_dir(path, tmp_path / name, dpi=96)
+        layout = result["report"]["line_layout"]
+        assert layout["policy"] == "auto"
+        assert layout["computed_reasons"].get("stale_line_width", 0) == 0, (
+            f"{name}: {layout['computed_reasons']}")
+        assert layout["computed_reasons"].get("caller_marked_edited", 0) == 0
+
+
+def _edited_copy(source, target, paragraph_index, suffix):
+    """A corpus form with one paragraph's text lengthened.  E1's edit, offline.
+
+    Rewrites ``Contents/section0.xml`` through ElementTree, which is exactly
+    what the byte-preserving lanes must never do — but this is a test fixture
+    for the renderer, not an edit of a submission, and the renderer reads by
+    local name so the prefix rewrite is invisible to it.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(source) as archive:
+        names = archive.namelist()
+        payload = {name: archive.read(name) for name in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    seen = 0
+    for element in root.iter():
+        if own_render._local(element.tag) != "p":
+            continue
+        if seen == paragraph_index:
+            last = None
+            for run in element:
+                if own_render._local(run.tag) != "run":
+                    continue
+                for node in run:
+                    if (own_render._local(node.tag) == "t"
+                            and (node.text or "").strip()):
+                        last = node
+            assert last is not None, "fixture drifted: paragraph has no text"
+            last.text = (last.text or "") + suffix
+        seen += 1
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, payload[name])
+    return target
+
+
+EDIT_FORM = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2025.hwpx")
+EDIT_PARAGRAPH = 2
+EDIT_TEXT = ("추가로 입력한 문장을 여기에 길게 붙여넣어서 이 문단이 캐시된 "
+             "줄 상자보다 훨씬 길어지게 만든다.")
+
+
+@pytest.fixture(scope="module")
+def edited_render(tmp_path_factory):
+    out = tmp_path_factory.mktemp("edited")
+    edited = _edited_copy(_need(EDIT_FORM), out / "edited.hwpx",
+                          EDIT_PARAGRAPH, EDIT_TEXT)
+    return own_render.render_to_dir(edited, out / "render", dpi=96)
+
+
+def test_an_edited_paragraph_is_never_drawn_from_a_stale_box(edited_render):
+    """The rule this slice exists for: a stale cached box is never drawn.
+
+    The text of one paragraph is lengthened past what its cached line boxes
+    can hold.  The renderer must notice from the file alone, relay that
+    paragraph out itself, and say so — and it must leave every other
+    paragraph on the authoring engine's own boxes.
+    """
+    report = edited_render["report"]
+    layout = report["line_layout"]
+    assert layout["paragraphs"]["computed"] == 1, layout["paragraphs"]
+    assert layout["computed_reasons"] == {"stale_line_width": 1}
+    relaid = layout["paragraphs_relaid_out"]
+    assert len(relaid) == 1
+    record = relaid[0]
+    assert record["paragraph"] == EDIT_PARAGRAPH
+    assert record["mode"] == "computed"
+    assert record["reason"] == "stale_line_width"
+    assert record["cached_lines"] == 2
+    assert record["computed_lines"] > record["cached_lines"], (
+        "a longer paragraph must take more lines")
+    assert record["height_delta_hwpunit"] > 0
+
+
+def test_every_line_box_says_which_engine_broke_it(edited_render):
+    report = edited_render["report"]
+    modes = {}
+    for box in report["line_boxes"]:
+        modes[box["mode"]] = modes.get(box["mode"], 0) + 1
+    assert set(modes) == {"lineseg", "computed"}
+    assert modes["computed"] == (
+        report["line_layout"]["paragraphs_relaid_out"][0]["computed_lines"])
+    assert modes["lineseg"] > 0
+
+
+def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
+    """No computed line may run out of the text column it was broken for."""
+    report = edited_render["report"]
+    geo = report["page_geometry_hwpunit"]
+    dpi = report["dpi"]
+    left = geo["body_left"] * dpi / own_render.HWPUNIT_PER_INCH
+    right = ((geo["body_left"] + geo["usable_width"]) * dpi
+             / own_render.HWPUNIT_PER_INCH)
+    computed = [b for b in report["line_boxes"] if b["mode"] == "computed"]
+    assert computed
+    for box in computed:
+        assert box["x0"] >= left - 1.0, box
+        # One pixel of tolerance, and no more: a space that lands at a line
+        # end hangs outside the box rather than forcing a break, so the drawn
+        # advance can exceed the fitted width by that space.
+        assert box["x1"] <= right + 1.0, box
+
+
+def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
+    """The detector is sound but incomplete, so the editor gets a channel.
+
+    An edit that leaves every line still fitting is invisible in the file.
+    ``relayout_paragraphs`` is how E1's apply path says "I changed this one",
+    and the sidecar has to repeat the claim rather than absorb it.
+    """
+    # Paragraph numbering is document order over every hp:p in section0, which
+    # the caller can compute from the same file; an empty paragraph never
+    # reaches the decision at all, so pick the first one that carries text.
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    chosen = next(
+        renderer.paragraph_index[id(el)]
+        for el in renderer.sections[0].iter()
+        if own_render._local(el.tag) == "p"
+        and own_render.Paragraph(el, renderer.defs["para_pr"]).chars)
+
+    result = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "marked", dpi=96,
+        relayout_paragraphs={chosen})
+    layout = result["report"]["line_layout"]
+    assert layout["caller_marked_edited"] == [chosen]
+    assert layout["computed_reasons"] == {"caller_marked_edited": 1}
+    assert layout["paragraphs"]["computed"] == 1
+    assert [r["paragraph"]
+            for r in layout["paragraphs_relaid_out"]] == [chosen]
+
+
+def test_computed_policy_relays_out_every_paragraph(tmp_path):
+    default = own_render.render_to_dir(_need(GIANMUN), tmp_path / "auto",
+                                       dpi=96)
+    forced = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "computed", dpi=96,
+        line_layout=own_render.LINE_LAYOUT_COMPUTED)
+    assert default["report"]["line_layout"]["paragraphs"]["computed"] == 0
+    assert forced["report"]["line_layout"]["paragraphs"]["lineseg"] == 0
+    assert forced["report"]["line_layout"]["paragraphs"]["computed"] > 0
+    assert forced["report"]["line_layout"]["computed_reasons"] == {
+        "policy": forced["report"]["line_layout"]["paragraphs"]["computed"]}
+    assert all(box["mode"] == "computed"
+               for box in forced["report"]["line_boxes"])
+
+
+def test_the_sidecar_declares_what_the_breaker_honours_and_what_it_does_not(
+        gianmun_render):
+    layout = gianmun_render["report"]["line_layout"]
+    honored = " ".join(layout["parapr_honored"])
+    not_honored = " ".join(layout["parapr_not_honored"])
+    for attribute in ("breakLatinWord", "breakNonLatinWord", "lineWrap",
+                      "condense", "lineSpacing", "intent"):
+        assert attribute in honored, attribute
+    for attribute in ("HYPHENATION", "widowOrphan", "keepWithNext",
+                      "fontLineHeight", "snapToGrid"):
+        assert attribute in not_honored, attribute
+    assert layout["prohibition_table"]["line_start_forbidden"]
+    assert layout["prohibition_table"]["line_end_forbidden"]
+    assert "not the spec" in layout["prohibition_table"]["note"]
+    assert "0.85" in layout["line_geometry_model"]["baseline"]
+
+
+def test_the_break_settings_the_corpus_actually_declares():
+    """Pin what the corpus can and cannot tell us about these attributes.
+
+    The same discipline the language-slot model is held to: a mechanism the
+    corpus never exercises is pinned by unit test, not by a document, and the
+    count of what it does exercise is itself pinned so the claim stays
+    falsifiable.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+    from collections import Counter
+
+    census = {"breakLatinWord": Counter(), "breakNonLatinWord": Counter(),
+              "lineWrap": Counter(), "condense": Counter()}
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        with zipfile.ZipFile(path) as archive:
+            header = next(n for n in archive.namelist()
+                          if n.endswith("header.xml"))
+            root = ET.fromstring(archive.read(header))
+        for element in root.iter():
+            if own_render._local(element.tag) != "paraPr":
+                continue
+            census["condense"][element.get("condense")] += 1
+            brk = own_render._kid(element, "breakSetting")
+            if brk is None:
+                continue
+            for key in ("breakLatinWord", "breakNonLatinWord", "lineWrap"):
+                census[key][brk.get(key)] += 1
+    assert dict(census["breakLatinWord"]) == {
+        "KEEP_WORD": 669, "BREAK_WORD": 104, "HYPHENATION": 1}
+    assert dict(census["breakNonLatinWord"]) == {
+        "KEEP_WORD": 592, "BREAK_WORD": 182}
+    # lineWrap has exactly one value in the corpus, so BREAK is the only
+    # branch a document has ever driven here.
+    assert dict(census["lineWrap"]) == {"BREAK": 774}
+    assert dict(census["condense"]) == {
+        "0": 603, "25": 130, "20": 37, "30": 4}
+
+
+def test_the_cached_line_geometry_relations_hold_across_the_corpus():
+    """The four relations the vertical model is built on, re-measured.
+
+    They are not quoted from KS X 6101 — the standard does not publish them —
+    so the model is only as good as this measurement, and the measurement is
+    a test rather than a comment.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    segments = 0
+    vertsize_is_textheight = 0
+    baseline_exact = 0
+    baseline_within_one = 0
+    chained = 0
+    chain_exact = 0
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        with zipfile.ZipFile(path) as archive:
+            for entry in sorted(n for n in archive.namelist()
+                                if own_render.SECTION_RE.match(n)):
+                root = ET.fromstring(archive.read(entry))
+                for array in root.iter():
+                    if own_render._local(array.tag) != "linesegarray":
+                        continue
+                    segs = own_render._kids(array, "lineseg")
+                    previous = None
+                    for seg in segs:
+                        segments += 1
+                        height = own_render._iattr(seg, "textheight")
+                        size = own_render._iattr(seg, "vertsize")
+                        base = own_render._iattr(seg, "baseline")
+                        top = own_render._iattr(seg, "vertpos")
+                        if size == height:
+                            vertsize_is_textheight += 1
+                        want = height * own_render.BASELINE_RATIO
+                        if base == round(want):
+                            baseline_exact += 1
+                        if abs(base - want) <= 1:
+                            baseline_within_one += 1
+                        if previous is not None:
+                            chained += 1
+                            if top == previous:
+                                chain_exact += 1
+                        previous = (top + size
+                                    + own_render._iattr(seg, "spacing"))
+    assert segments == 3214
+    assert vertsize_is_textheight == 3214
+    assert baseline_exact == 3212
+    assert baseline_within_one == 3214
+    assert chained == 219
+    assert chain_exact == 219
+
+
 # ---------------------------------------------------------------- determinism
 
 def test_two_renders_are_byte_identical(tmp_path):
@@ -576,6 +1159,24 @@ def test_two_renders_are_byte_identical(tmp_path):
         with open(right, "rb") as fh:
             b = fh.read()
         assert a == b, "identical input produced different PNG bytes"
+
+
+def test_the_computed_breaker_is_deterministic_too(tmp_path):
+    """The mode the editor will actually run in has to be reproducible."""
+    first = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "c1", dpi=144,
+        line_layout=own_render.LINE_LAYOUT_COMPUTED)
+    second = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "c2", dpi=144,
+        line_layout=own_render.LINE_LAYOUT_COMPUTED)
+    for left, right in zip(first["pngs"], second["pngs"]):
+        with open(left, "rb") as fh:
+            a = fh.read()
+        with open(right, "rb") as fh:
+            b = fh.read()
+        assert a == b, "the computed line breaker is not deterministic"
+    assert (first["report"]["line_boxes"]
+            == second["report"]["line_boxes"])
 
 
 # ---------------------------------------------------------------- geometry
@@ -618,7 +1219,12 @@ def _table_zero_geometry(path, dpi=144):
     section = renderer.sections[0]
     table = next(el for el in section.iter()
                  if own_render._local(el.tag) == "tbl")
-    xs, ys, cells = renderer._table_tracks(table)
+    # Row heights are now measured from the layout each paragraph will
+    # actually get, so track solving needs a drawing context to measure with.
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    xs, ys, cells = renderer._table_tracks(
+        renderer.ImageDraw.Draw(canvas), table)
     return renderer, geo, xs, ys, cells
 
 

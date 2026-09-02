@@ -104,6 +104,159 @@ SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 HEX_COLOR_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 
 # --------------------------------------------------------------------------
+# Line geometry, read off the corpus rather than assumed
+# --------------------------------------------------------------------------
+# Every relation below was measured across all 3214 <hp:lineseg> elements of
+# the ten committed corpus forms before any of it was implemented, and each
+# one is pinned by a test in engine/tests/test_own_render.py:
+#
+#   vertsize == textheight                                  3214 / 3214
+#   baseline == round(0.85 * textheight)                    3212 exact,
+#                                                           3214 within 1
+#   vertpos[i] == vertpos[i-1] + vertsize[i-1] + spacing[i-1]
+#                                                            219 / 219
+#                                                           (every
+#                                                           continuation line
+#                                                           in the corpus)
+#   (vertsize + spacing) / textheight == lineSpacing@value / 100
+#                                                           for every PERCENT
+#                                                           paragraph
+#
+# The 0.85 is HWP's baseline convention: the baseline sits 85% of the way down
+# the character cell.  It is a *measured constant of this corpus*, not a number
+# KS X 6101 publishes, and it is declared as such in every sidecar.
+BASELINE_RATIO = 0.85
+
+# --------------------------------------------------------------------------
+# Line breaking (UAX #14 class, Korean rules as hh:breakSetting declares them)
+# --------------------------------------------------------------------------
+# hp:paraPr/hh:breakSetting carries the two attributes that decide where a line
+# may break:
+#
+#   breakNonLatinWord   KEEP_WORD  (어절 단위) — Hangul/CJK breaks only at word
+#                                  boundaries, i.e. at spaces
+#                       BREAK_WORD (글자 단위) — Hangul/CJK breaks between any
+#                                  two syllables
+#   breakLatinWord      KEEP_WORD  (단어)     — Latin breaks only at spaces
+#                       BREAK_WORD (글자)     — Latin breaks between letters
+#                       HYPHENATION (하이픈)  — hyphenated; NOT implemented,
+#                                  treated as KEEP_WORD and named in the
+#                                  sidecar
+#
+# Corpus census (774 paraPr definitions): breakLatinWord KEEP_WORD 669 /
+# BREAK_WORD 104 / HYPHENATION 1; breakNonLatinWord KEEP_WORD 592 /
+# BREAK_WORD 182; lineWrap BREAK 774 (the only value present).
+
+# 금칙처리 — the characters Korean typesetting forbids at a line boundary.
+# KS X 6101 does not publish the set (it is an implementing engine's table),
+# so this is the conventional Korean/CJK prohibition list and is declared as
+# this renderer's table in the sidecar, exactly as the language-slot partition
+# is.
+LINE_START_PROHIBITED = frozenset(
+    "!%),.:;?]}¢°'\"‰′″℃、。｝〉》」』】〕）］｝，．：；？！"
+    "’”ゝゞーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ"
+    "々〆·ㆍ…‥"
+)
+LINE_END_PROHIBITED = frozenset(
+    "$([\\{£¥‵〈《「『【〔（［｛＄￥￦＃＠‘“#@"
+)
+# UAX #14 class BA/HY: a break is always allowed *after* these, whatever the
+# word-integrity attributes say.
+BREAK_AFTER_ALWAYS = frozenset("-–—/")
+SPACE_CHARS = frozenset(" \t 　")
+
+# HWP's default tab interval when hh:tabPr declares no explicit stop.  THIS IS
+# THIS RENDERER'S CHOICE, not the standard's: 8 corpus tabPr definitions carry
+# no <hh:tab> child at all, and the format does not carry the interval, so a
+# renderer reading only the file has to pick one.  40 pt is HWP's documented
+# default 탭 간격.  Declared in the sidecar, never presented as the spec.
+DEFAULT_TAB_INTERVAL_HWP = 40 * HWPUNIT_PER_PT
+
+
+# Line-layout policy.  ``auto`` is the lineseg mode: the authoring engine's
+# cached boxes wherever they are present and still describe the text.
+LINE_LAYOUT_AUTO = "auto"
+LINE_LAYOUT_COMPUTED = "computed"
+LINE_LAYOUT_MODES = (LINE_LAYOUT_AUTO, LINE_LAYOUT_COMPUTED)
+
+# How far a cached line's *font-independent lower bound* width may exceed its
+# cached horzsize before the cache is judged stale.  The bound counts only
+# full-width cells (whose advance in HWP is exactly the declared character
+# size x hh:ratio) plus the declared hh:spacing gaps, so it can never exceed
+# the true width of text the authoring engine actually fitted.  Measured
+# across the corpus, the worst unedited cached line reaches 0.901 of its box
+# by this bound (admrul), so 1% of headroom leaves the detector sound with
+# room to spare — it raises no false positive on any of the ten corpus forms
+# — while still firing on an edit that adds a syllable to a full line.
+STALE_LINE_TOLERANCE = 0.01
+
+
+def break_class(ch):
+    """UAX #14-ish class of ``ch``, reduced to what the paraPr attributes need.
+
+    Four classes, because ``hh:breakSetting`` only distinguishes two scripts
+    plus whitespace: ``SPACE``, ``CJK`` (Hangul/Hanja/kana/CJK punctuation and
+    fullwidth forms — everything ``breakNonLatinWord`` governs), ``OBJECT``
+    (the inline-object slot, which behaves as a CJK cell), and ``LATIN``
+    (everything ``breakLatinWord`` governs).
+    """
+    if ch in SPACE_CHARS:
+        return "SPACE"
+    if ch == OBJECT_SLOT:
+        return "OBJECT"
+    slot = script_slot(ch)
+    if slot in ("hangul", "hanja", "japanese"):
+        return "CJK"
+    code = ord(ch)
+    if 0x3000 <= code <= 0x303F or 0xFF01 <= code <= 0xFF60:
+        return "CJK"
+    return "LATIN"
+
+
+def is_full_width(ch):
+    """Does ``ch`` occupy a full character cell in HWP's model?
+
+    Hangul, Hanja, kana, CJK punctuation and the fullwidth forms advance by
+    exactly the declared character size (times ``hh:ratio``); Latin is
+    proportional.  Used for the *font-independent* lower bound that decides
+    whether a cached line box can still be holding the text it claims to.
+    """
+    return break_class(ch) in ("CJK", "OBJECT")
+
+
+def break_opportunities(text, break_latin="KEEP_WORD",
+                        break_non_latin="KEEP_WORD"):
+    """Indices ``i`` at which a line may end before ``text[i]``.
+
+    Returned ascending.  Index 0 is never an opportunity (a line cannot be
+    empty); ``len(text)`` is not returned either (the paragraph end is not a
+    break).  The 금칙 filter is applied last and uniformly, so it removes a
+    space break just as it removes a syllable break.
+    """
+    ops = []
+    for i in range(1, len(text)):
+        a, b = text[i - 1], text[i]
+        ca, cb = break_class(a), break_class(b)
+        if cb == "SPACE":
+            # Never break before a space: trailing spaces hang off the line
+            # end, they do not start the next one.
+            continue
+        if ca == "SPACE":
+            allowed = True
+        elif a in BREAK_AFTER_ALWAYS:
+            allowed = True
+        elif ca in ("CJK", "OBJECT") or cb in ("CJK", "OBJECT"):
+            allowed = (break_non_latin == "BREAK_WORD")
+        else:
+            allowed = (break_latin == "BREAK_WORD")
+        if not allowed:
+            continue
+        if b in LINE_START_PROHIBITED or a in LINE_END_PROHIBITED:
+            continue
+        ops.append(i)
+    return ops
+
+# --------------------------------------------------------------------------
 # Character typography (hh:charPr children), per language slot
 # --------------------------------------------------------------------------
 # OWPML declares character metrics once per *language slot*, not once per
@@ -217,6 +370,25 @@ def _kid(el, name):
         if _local(c.tag) == name:
             return c
     return None
+
+
+def _para_pr_geometry_source(pp):
+    """The ``hh:paraPr`` branch a reader without the 2016 extension must take.
+
+    Every corpus ``hh:paraPr`` wraps its ``hh:margin`` and ``hh:lineSpacing``
+    in ``<hh:switch><hh:case hp:required-namespace="…/2016/HwpUnitChar">…
+    </hh:case><hh:default>…</hh:default></hh:switch>`` — the MCE pattern.  The
+    ``case`` branch states the same quantities in the 2016 *character* unit
+    (measured: its margins are consistently half the default branch's), so a
+    renderer that does not implement that namespace takes ``default``.  774 of
+    774 corpus paraPr carry the switch; 477 of them differ between the two
+    branches, so picking the wrong one is not cosmetic.
+    """
+    switch = _kid(pp, "switch")
+    if switch is None:
+        return pp
+    default = _kid(switch, "default")
+    return default if default is not None else pp
 
 
 def _iattr(el, name, default=0):
@@ -341,14 +513,71 @@ def parse_header(header_xml: bytes) -> dict:
         if pid is None:
             continue
         align = _kid(pp, "align")
+        geometry = _para_pr_geometry_source(pp)
+        margin = _kid(geometry, "margin")
+        spacing = _kid(geometry, "lineSpacing")
+        brk = _kid(pp, "breakSetting")
+
+        def _margin(name):
+            el = _kid(margin, name) if margin is not None else None
+            return _iattr(el, "value", 0)
+
+        def _brk(name, default):
+            raw = brk.get(name) if brk is not None else None
+            return (raw or default).upper()
+
         para_pr[pid] = {
             "align": (align.get("horizontal") if align is not None else None) or "LEFT",
+            # hh:breakSetting — where a line may break.
+            "break_latin": _brk("breakLatinWord", "KEEP_WORD"),
+            "break_non_latin": _brk("breakNonLatinWord", "KEEP_WORD"),
+            "line_wrap": _brk("lineWrap", "BREAK"),
+            # Parsed and reported, NOT honoured — they are block-level
+            # (pagination) rules and this tier does not do block layout.
+            "widow_orphan": _iattr(brk, "widowOrphan"),
+            "keep_with_next": _iattr(brk, "keepWithNext"),
+            "keep_lines": _iattr(brk, "keepLines"),
+            "page_break_before": _iattr(brk, "pageBreakBefore"),
+            # hp:paraPr attributes.
+            "condense": _iattr(pp, "condense"),
+            "font_line_height": _iattr(pp, "fontLineHeight"),
+            "snap_to_grid": _iattr(pp, "snapToGrid"),
+            "tab_pr": pp.get("tabPrIDRef"),
+            # hh:lineSpacing / hh:margin, from the branch a reader that does
+            # not implement the 2016 HwpUnitChar extension must take.
+            "line_spacing_type": (
+                (spacing.get("type") if spacing is not None else None)
+                or "PERCENT").upper(),
+            "line_spacing_value": _iattr(spacing, "value", 100),
+            "line_spacing_unit": (
+                (spacing.get("unit") if spacing is not None else None)
+                or "HWPUNIT").upper(),
+            "margin_left": _margin("left"),
+            "margin_right": _margin("right"),
+            "indent": _margin("intent"),
+        }
+
+    tab_pr = {}
+    for tp in root.iter():
+        if _local(tp.tag) != "tabPr":
+            continue
+        tid = tp.get("id")
+        if tid is None:
+            continue
+        stops = sorted(
+            (_iattr(t, "pos"), (t.get("type") or "LEFT").upper())
+            for t in _kids(tp, "tab"))
+        tab_pr[tid] = {
+            "stops": stops,
+            "auto_left": _iattr(tp, "autoTabLeft"),
+            "auto_right": _iattr(tp, "autoTabRight"),
         }
 
     return {
         "char_pr": char_pr,
         "border_fill": border_fill,
         "para_pr": para_pr,
+        "tab_pr": tab_pr,
         "fontfaces": fontfaces,
     }
 
@@ -800,11 +1029,30 @@ def own_paragraphs(container):
 # --------------------------------------------------------------------------
 
 class OwnRenderer:
-    def __init__(self, hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
+    def __init__(self, hwpx_path, dpi=DEFAULT_DPI, repo_root=None,
+                 line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None):
         self.path = Path(hwpx_path)
         self.dpi = int(dpi)
         if self.dpi <= 0:
             raise ValueError("dpi must be positive")
+        if line_layout not in LINE_LAYOUT_MODES:
+            raise ValueError(
+                f"line_layout must be one of {sorted(LINE_LAYOUT_MODES)}")
+        # ``auto``     — a paragraph keeps the authoring engine's cached
+        #                hp:lineseg boxes unless they are provably stale, in
+        #                which case this renderer's own breaker lays it out.
+        # ``computed`` — every paragraph is laid out by this renderer's
+        #                breaker.  This is the mode that measures the breaker
+        #                itself; it is not the mode that renders a document
+        #                most faithfully.
+        self.line_layout = line_layout
+        # Paragraph identities (``id(hp:p element)`` is useless across parses,
+        # so this is document-order index within section0's top-level flow,
+        # counted the way ``paragraph_index`` below counts) that the CALLER
+        # knows it edited.  An edit that neither shortens the text past the
+        # cache nor overflows a cached line cannot be detected from the file,
+        # so the edit path must say so; this is that channel.
+        self.relayout_paragraphs = set(relayout_paragraphs or ())
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
         self.fonts_meta = resolve_fonts(repo_root)
         self.fontbook = FontBook(self.fonts_meta)
@@ -834,13 +1082,33 @@ class OwnRenderer:
         # what was *applied*, not only what was skipped, or "we apply hh:ratio"
         # would be unfalsifiable on a document that never declares one.
         self.applied = {}
+        # Per-paragraph line-layout provenance: which engine laid out each
+        # paragraph's lines, and — where it was this renderer — why.
+        self.layout_records = []
+        self.paragraph_index = {}
+        # >0 while a measurement pass runs (a table row asking how tall its
+        # content is).  Skips and forced-break counts are suppressed there so
+        # the sidecar counts what was *drawn*, once, not what was measured.
+        self._quiet = 0
+        self._layout_counts = {"lineseg": 0, "computed": 0}
+        self._layout_reasons = {}
+        self._forced_breaks = 0
+        # Which engine is laying out the line currently being drawn; stamped
+        # onto every line box so a reader of the sidecar can tell, per line,
+        # whether they are looking at Hancom's break or ours.
+        self._line_mode = "lineseg"
         # Standing caveats that apply to every render, not just this document.
         # They belong in the artefact, not only in the notes file, because the
         # sidecar is what travels with the PNG.
         self.notes = [
-            "line boxes come from the document's own cached hp:lineseg layout; "
-            "line breaking matches the authoring engine, intra-line text "
-            "extents do not (see fonts)",
+            "line boxes come from the document's own cached hp:lineseg layout "
+            "wherever that cache is present and provably still describes the "
+            "paragraph's text; where it is not, this renderer's own line "
+            "breaker lays the paragraph out and line_layout says which "
+            "paragraphs and why",
+            "line breaking therefore matches the authoring engine exactly on "
+            "an unedited paragraph, and is this renderer's own answer on an "
+            "edited one; intra-line text extents match neither (see fonts)",
             "character typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) "
             "IS applied, per language slot; see typography for what this "
             "document exercised and typography_slot_model for how a character "
@@ -874,11 +1142,25 @@ class OwnRenderer:
             ]
         if not self.sections:
             raise ValueError("HWPX carries no Contents/section*.xml")
+        # Paragraph identity, and the only one this format supports: hp:p@id
+        # is NOT unique (moel-2025 gives 2147483648 to 329 of its 330
+        # paragraphs), so a paragraph is named by its document-order position
+        # among every hp:p in section0, nested table cells included, counting
+        # from 0.  An editor can compute the same number from the same file
+        # without asking the renderer, which is what makes it usable as the
+        # ``relayout_paragraphs`` key.
+        self.paragraph_index = {
+            id(el): index
+            for index, el in enumerate(
+                e for e in self.sections[0].iter() if _local(e.tag) == "p")
+        }
         if len(self.sections) > 1:
             self._skip("multi-section document",
                        f"only section0 is laid out; {len(self.sections)} present")
 
     def _skip(self, element, reason, where=None):
+        if self._quiet:
+            return
         key = (element, reason)
         entry = self.skipped.get(key)
         if entry is None:
@@ -1244,43 +1526,358 @@ class OwnRenderer:
             return 0.0
         return slack / slots
 
-    def _greedy_wrap(self, draw, chars, avail_px):
-        """CJK-aware greedy wrap, used only when the cached layout is unusable.
+    # -- line breaking from metrics (E2.1) -------------------------------
+    def _char_advance_tables(self, draw, para):
+        """Per-character advance and letter-spacing gap, in device pixels.
 
-        Latin words stay whole (break at spaces); Hangul/CJK breaks anywhere,
-        which is what the format's own ``breakNonLatinWord`` default does.
+        Two arrays rather than one, because ``hh:spacing`` opens a gap
+        *between* characters: a line of ``k`` characters carries ``k``
+        advances and ``k-1`` gaps, and the line breaker has to be able to drop
+        the trailing one exactly the way ``_measure`` does.
+
+        An inline object contributes its declared ``hp:sz@width``; a floating
+        (``treatAsChar="0"``) object contributes nothing, because it is placed
+        from its own anchor offsets and never consumes inline width.
         """
-        lines = []
-        current = []
-        width = 0.0
-        for ch, cid in chars:
-            if ch == "\n":
-                lines.append(current)
-                current, width = [], 0.0
-                continue
-            w = self._measure(draw, ch, cid)
-            if current and width + w > avail_px:
-                if ch.isascii() and ch.isalnum():
-                    # back up to the last space so a Latin word is not split
-                    cut = len(current)
-                    while cut > 0 and current[cut - 1][0] not in " \t":
-                        cut -= 1
-                    if 0 < cut < len(current):
-                        carry = current[cut:]
-                        lines.append(current[:cut])
-                        current = carry
-                        width = sum(self._measure(draw, c, i) for c, i in current)
-                    else:
-                        lines.append(current)
-                        current, width = [], 0.0
+        advances = []
+        gaps = []
+        for index, (ch, cid) in enumerate(para.chars):
+            if ch == OBJECT_SLOT:
+                record = para.object_at.get(index)
+                if record is not None and record[3]:
+                    advances.append(0.0)          # floating: no inline width
                 else:
-                    lines.append(current)
-                    current, width = [], 0.0
-            current.append((ch, cid))
-            width += w
-        if current:
-            lines.append(current)
+                    element = record[1] if record else None
+                    width = (self._object_extent(element)[0]
+                             if element is not None else 0)
+                    advances.append(self.pxf(width))
+                gaps.append(0.0)
+                continue
+            if ch == "\t":
+                advances.append(0.0)              # resolved against tab stops
+                gaps.append(0.0)
+                continue
+            _ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
+            advances.append(self._measure(draw, ch, cid))
+            gaps.append(self._spacing_px(cid, rel_sz, spacing)
+                        if spacing else 0.0)
+        return advances, gaps
+
+    def span_width(self, draw, para, start, end):
+        """Advance of ``para.chars[start:end]`` in device pixels.
+
+        The same quantity the breaker fits against a line box: character
+        advances plus the ``hh:spacing`` gaps *between* them, with no trailing
+        gap.  Exposed because the measurement in ``lineseg_agreement`` has to
+        ask how full the authoring engine's own line is by this renderer's
+        reckoning, and it must ask with the breaker's own arithmetic.
+        """
+        if end <= start:
+            return 0.0
+        advances, gaps = self._char_advance_tables(draw, para)
+        return (sum(advances[start:end]) + sum(gaps[start:end])
+                - gaps[end - 1])
+
+    def _tab_advance(self, para, x_px, column_hwp):
+        """Where a ``\\t`` at ``x_px`` lands, per ``hh:tabPr``.
+
+        Explicit ``<hh:tab pos=…>`` stops are honoured (LEFT behaviour only —
+        RIGHT/CENTER/DECIMAL need the *following* text, which a left-to-right
+        greedy breaker does not have yet, and are named in the sidecar).
+        Where the paragraph's tabPr declares no stop at all — 23 of the 42
+        corpus tabPr definitions — the interval is this renderer's declared
+        default, not the file's.
+        """
+        table = self.defs.get("tab_pr", {}).get(para.para_pr.get("tab_pr") or "")
+        here = self.hwp_from_px(x_px)
+        if table and table["stops"]:
+            for pos, kind in table["stops"]:
+                if pos > here + 1:
+                    if kind != "LEFT":
+                        self._skip(f"hh:tab@type={kind}",
+                                   "non-left tab stop advanced as a left stop")
+                    return self.pxf(min(pos, column_hwp))
+        self._skip("hh:tabPr",
+                   "paragraph declares no explicit tab stop; the default "
+                   f"interval used is this renderer's "
+                   f"({DEFAULT_TAB_INTERVAL_HWP // HWPUNIT_PER_PT} pt), not "
+                   "the file's")
+        step = DEFAULT_TAB_INTERVAL_HWP
+        nxt = (int(here) // step + 1) * step
+        return self.pxf(min(nxt, column_hwp))
+
+    def _line_box(self, para, index, column_hwp):
+        """``(horzpos, horzsize)`` in HWPUNIT for the ``index``-th line.
+
+        ``hh:margin`` gives ``left``/``right``/``intent``.  A positive
+        ``intent`` is 들여쓰기 — the first line starts that much further in.
+
+        A negative ``intent`` is 내어쓰기, and the textbook reading of it —
+        first line at the left margin, every *continuation* line pushed in by
+        its magnitude — is **not** what this corpus's cached boxes show.
+        Measured over all 3214 cached line boxes, three readings score:
+
+            horzpos == max(0, left + intent), intent on line 0 only    2860
+            horzpos == left, intent never moves the box                2895
+            first line at left, continuations indented by |intent|     2710
+
+        The hanging reading is the worst of the three, so it is not
+        implemented: a negative ``intent`` moves no line box here.  The other
+        two are within 35 boxes of each other and the first is the plain
+        reading of the attribute, so that is the one kept.
+        """
+        pr = para.para_pr
+        left = pr.get("margin_left", 0)
+        right = max(0, pr.get("margin_right", 0))
+        indent = pr.get("indent", 0)
+        horzpos = max(0, left + (indent if index == 0 else 0))
+        return horzpos, max(1, column_hwp - horzpos - right)
+
+    def _line_metrics(self, para, start, end):
+        """``(textheight, vertsize, baseline, spacing)`` in HWPUNIT.
+
+        Every relation here is a measurement of the corpus, listed at
+        ``BASELINE_RATIO``: ``vertsize == textheight`` (3214/3214),
+        ``baseline == round(0.85 * textheight)``, and for a ``PERCENT``
+        paragraph ``vertsize + spacing == textheight * value / 100``.
+        """
+        pr = para.para_pr
+        heights = []
+        for ch, cid in para.chars[start:end]:
+            _ratio, _spacing, rel_sz, _offset = self._typography(cid, ch)
+            pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+            heights.append(pt * HWPUNIT_PER_PT)
+        if not heights:
+            cid = para.chars[0][1] if para.chars else None
+            heights.append((self._charpr(cid).get("height_pt") or 10.0)
+                           * HWPUNIT_PER_PT)
+        if pr.get("font_line_height"):
+            self._skip("hp:paraPr@fontLineHeight",
+                       "line height from the font's own ascent/descent is not "
+                       "implemented; the declared character size is used")
+        textheight = int(round(max(heights)))
+        vertsize = textheight
+        baseline = int(round(textheight * BASELINE_RATIO))
+        kind = pr.get("line_spacing_type", "PERCENT")
+        value = pr.get("line_spacing_value", 100)
+        if kind == "PERCENT":
+            spacing = int(round(textheight * value / 100.0)) - vertsize
+        elif kind == "FIXED":
+            spacing = value - vertsize
+        elif kind in ("BETWEEN_LINES", "ATLEAST", "AT_LEAST"):
+            spacing = max(0, value)
+        else:
+            self._skip(f"hh:lineSpacing@type={kind}",
+                       "unknown line spacing type; treated as 100% PERCENT")
+            spacing = 0
+        return textheight, vertsize, baseline, spacing
+
+    def compute_lines(self, draw, para, column_hwp, from_char=0,
+                      from_line=0):
+        """Break ``para`` into line boxes from font metrics — this is E2.1.
+
+        Returns paragraph-relative line records:
+        ``{start, end, horzpos, horzsize, vertpos, vertsize, textheight,
+        baseline, spacing, forced, width_px}``, where ``start``/``end`` index
+        the paragraph's character stream exactly the way ``hp:lineseg@textpos``
+        does, so a record is directly comparable to a cached one.
+
+        Greedy first-fit, which is what HWP's own line breaker is (its cached
+        boxes are reproducible by a greedy pass; a Knuth-Plass total-fit pass
+        would disagree with them on purpose).  ``width_px`` excludes trailing
+        whitespace, because a space that falls at a line end hangs outside the
+        box rather than forcing a break.
+        """
+        pr = para.para_pr
+        chars = para.chars
+        count = len(chars)
+        advances, gaps = self._char_advance_tables(draw, para)
+        prefix_advance = [0.0]
+        prefix_gap = [0.0]
+        prefix_space = [0.0]
+        for i in range(count):
+            prefix_advance.append(prefix_advance[-1] + advances[i])
+            prefix_gap.append(prefix_gap[-1] + gaps[i])
+            prefix_space.append(
+                prefix_space[-1]
+                + (advances[i] if chars[i][0] in SPACE_CHARS else 0.0))
+
+        def width(start, end):
+            if end <= start:
+                return 0.0
+            return ((prefix_advance[end] - prefix_advance[start])
+                    + (prefix_gap[end] - prefix_gap[start]) - gaps[end - 1])
+
+        opportunities = break_opportunities(
+            para.text, pr.get("break_latin", "KEEP_WORD"),
+            pr.get("break_non_latin", "KEEP_WORD"))
+        if pr.get("break_latin") == "HYPHENATION":
+            self._skip("hh:breakSetting@breakLatinWord=HYPHENATION",
+                       "hyphenation is not implemented; the paragraph breaks "
+                       "at word boundaries instead")
+        if pr.get("line_wrap", "BREAK") != "BREAK":
+            self._skip(f"hh:breakSetting@lineWrap={pr.get('line_wrap')}",
+                       "only lineWrap=BREAK is implemented; the paragraph is "
+                       "broken as if it were BREAK")
+        # hp:paraPr@condense — 공백 축소.  The spaces on a line may be squeezed
+        # by up to this percentage to keep one more character on it, so a line
+        # fits while its overflow is no larger than what its spaces can give
+        # up.  Corpus values: 0 (603 paraPr), 25 (130), 20 (37), 30 (4).
+        #
+        # WHICH WAY ROUND THIS READS WAS DECIDED BY MEASUREMENT, not by
+        # reading the attribute name.  Taken as "spaces may shrink TO
+        # condense%" (so 0 would mean they may vanish entirely) the corpus
+        # break-position recall is 16/216 = 0.074; taken as "spaces may shrink
+        # BY condense%" (so 0 is the default, no condensing) it is 48/216 =
+        # 0.222.  The second reading is the one the authoring engine's own
+        # cached line breaks support, by a factor of three.
+        condense = max(0, min(100, pr.get("condense", 0)))
+
+        def slack(start, end):
+            spaces = prefix_space[end] - prefix_space[start]
+            return spaces * condense / 100.0
+
+        spans = []
+        start = from_char
+        index = from_line
+        cursor = from_char
+        while cursor < count:
+            ch = chars[cursor][0]
+            if ch == "\n":
+                spans.append((start, cursor + 1, False))
+                start = cursor + 1
+                index += 1
+                cursor += 1
+                continue
+            # The tab test comes first: "\t" is whitespace, and whitespace is
+            # otherwise skipped without a width decision.
+            if ch != "\t" and ch in SPACE_CHARS:
+                cursor += 1
+                continue
+            horzpos, horzsize = self._line_box(para, index, column_hwp)
+            avail = self.pxf(horzsize)
+            if ch == "\t":
+                here = self.pxf(horzpos) + width(start, cursor)
+                advances[cursor] = max(
+                    0.0, self._tab_advance(para, here, column_hwp) - here)
+                for i in range(cursor, count):
+                    prefix_advance[i + 1] = prefix_advance[i] + advances[i]
+                cursor += 1
+                continue
+            if (cursor > start
+                    and width(start, cursor + 1)
+                    > avail + slack(start, cursor + 1)):
+                cut = None
+                for position in opportunities:
+                    if start < position <= cursor:
+                        cut = position
+                    elif position > cursor:
+                        break
+                forced = cut is None
+                if forced:
+                    cut = cursor
+                    if not self._quiet:
+                        self._forced_breaks += 1
+                spans.append((start, cut, forced))
+                start = cut
+                index += 1
+                continue
+            cursor += 1
+        spans.append((start, count, False))
+
+        lines = []
+        vertpos = 0
+        for offset, (first, last, forced) in enumerate(spans):
+            index = from_line + offset
+            horzpos, horzsize = self._line_box(para, index, column_hwp)
+            textheight, vertsize, baseline, spacing = self._line_metrics(
+                para, first, last)
+            visible = last
+            while visible > first and chars[visible - 1][0] in SPACE_CHARS:
+                visible -= 1
+            lines.append({
+                "start": first, "end": last,
+                "horzpos": horzpos, "horzsize": horzsize,
+                "vertpos": vertpos, "vertsize": vertsize,
+                "textheight": textheight, "baseline": baseline,
+                "spacing": spacing, "forced": forced,
+                "width_px": width(first, visible),
+            })
+            vertpos += vertsize + spacing
         return lines
+
+    # -- is the cached layout still describing this paragraph? -----------
+    def _cached_lower_bound_hwp(self, para, start, end):
+        """Font-independent lower bound on the width of ``chars[start:end]``.
+
+        A full-width cell (Hangul, Hanja, kana, CJK punctuation, an inline
+        object slot) advances by exactly the declared character size times
+        ``hh:ratio`` in HWP's model, whatever face draws it; Latin is
+        proportional and contributes nothing to the bound.  ``hh:spacing``
+        gaps are exact and are counted with their sign.  The result therefore
+        can never exceed the width the authoring engine actually laid out, so
+        exceeding the cached box proves the text changed — no font on the
+        machine can explain it away.
+        """
+        total = 0.0
+        window = para.chars[start:end]
+        for offset, (ch, cid) in enumerate(window):
+            ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
+            size = ((self._charpr(cid).get("height_pt") or 10.0)
+                    * rel_sz / 100.0 * HWPUNIT_PER_PT)
+            if is_full_width(ch):
+                total += size * ratio / 100.0
+            # n-1 gaps: the gap after the last character of the span is not
+            # drawn, exactly as `_measure` drops it.
+            if spacing and offset < len(window) - 1:
+                total += size * spacing / 100.0
+        return total
+
+    def line_layout_mode(self, para, column_hwp, paragraph_index=None):
+        """``(mode, reason)`` — which engine lays this paragraph's lines out.
+
+        ``computed`` wins for four named reasons, and only those:
+
+          ``policy``            the whole render was asked for computed lines;
+          ``cache_absent``      the paragraph carries no ``hp:linesegarray``;
+          ``textpos_past_end``  a cached line starts past the end of the
+                                paragraph's character stream, so the text is
+                                shorter than the cache describes;
+          ``stale_line_width``  a cached line's font-independent lower-bound
+                                width exceeds its own cached ``horzsize``, so
+                                the text is longer than that line could hold;
+          ``caller_marked_edited`` the caller said it edited this paragraph.
+
+        The last two matter because a stale box is the one thing this renderer
+        must never draw.  ``stale_line_width`` is **sound but incomplete**: it
+        never fires on an unedited paragraph (the bound is a lower bound on
+        text the authoring engine did fit), and it does not fire on an edit
+        that leaves every line still fitting.  An editor that knows it changed
+        a paragraph must say so through ``relayout_paragraphs`` rather than
+        rely on detection.
+        """
+        if self.line_layout == LINE_LAYOUT_COMPUTED:
+            return LINE_LAYOUT_COMPUTED, "policy"
+        if paragraph_index is not None and paragraph_index in self.relayout_paragraphs:
+            return LINE_LAYOUT_COMPUTED, "caller_marked_edited"
+        if not para.linesegs:
+            return LINE_LAYOUT_COMPUTED, "cache_absent"
+        count = len(para.chars)
+        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
+        if positions and max(positions) > count:
+            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+        if count and len(positions) > 1 and max(positions) >= count:
+            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+        for i, seg in enumerate(para.linesegs):
+            first = positions[i]
+            last = positions[i + 1] if i + 1 < len(positions) else count
+            horzsize = _iattr(seg, "horzsize") or column_hwp
+            if horzsize <= 0:
+                continue
+            bound = self._cached_lower_bound_hwp(para, first, last)
+            if bound > horzsize * (1.0 + STALE_LINE_TOLERANCE):
+                return LINE_LAYOUT_COMPUTED, "stale_line_width"
+        return "lineseg", None
 
     @staticmethod
     def _object_extent(el):
@@ -1447,6 +2044,7 @@ class OwnRenderer:
             # about to be paired against a reference PDF's text lines.
             self.line_boxes.append({
                 "page": self._page,
+                "mode": self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
                 "x1": round(text_x1, 3),
@@ -1455,38 +2053,113 @@ class OwnRenderer:
 
     def _render_paragraphs(self, draw, paragraphs, origin_hwp, avail_w_hwp,
                            block_offset_hwp=0):
-        """Lay out a paragraph list whose ``vertpos`` is relative to ``origin``."""
+        """Lay out a paragraph list whose ``vertpos`` is relative to ``origin``.
+
+        A paragraph this renderer relaid out is very likely a different height
+        from the one the cache describes, so the paragraphs after it in the
+        same container are shifted by the difference.  That is the whole of
+        the incremental relayout this slice does: it keeps an edited paragraph
+        from drawing on top of its neighbour.  It does NOT reflow across a
+        page or grow a table row — both are named limits.
+        """
         ox, oy = origin_hwp
         oy += block_offset_hwp
+        shift = 0
         for para in paragraphs:
             self.counts["paragraphs"] += 1
             self.counts["runs"] += len(_kids(para.el, "run"))
             if para.tabs:
-                self._skip("hp:tab", "tab stops are not resolved; the cached "
-                                     "line box absorbs them")
-            self._render_floating(draw, para, (ox, oy))
+                self._skip("hp:tab", "hp:tab elements inside a run are not "
+                                     "placed in the character stream, so the "
+                                     "line they sit on is measured without "
+                                     "them")
+            self._render_floating(draw, para, (ox, oy + shift))
             if not para.chars:
                 continue
-            if para.linesegs:
-                self._render_cached_lines(draw, para, (ox, oy), avail_w_hwp)
-            else:
-                self._skip("hp:linesegarray",
-                           "paragraph carries no cached layout; own greedy "
-                           "wrap used instead")
-                self._render_wrapped(draw, para, (ox, oy), avail_w_hwp)
+            index = self.paragraph_index.get(id(para.el))
+            mode, reason = self.line_layout_mode(para, avail_w_hwp, index)
+            self._layout_counts[mode] += 1
+            if mode == "lineseg":
+                self._record_layout(index, para, mode, reason, None)
+                self._render_cached_lines(draw, para, (ox, oy + shift),
+                                          avail_w_hwp)
+                continue
+            self._layout_reasons[reason] = self._layout_reasons.get(reason, 0) + 1
+            lines = self.compute_lines(draw, para, avail_w_hwp)
+            self._record_layout(index, para, mode, reason, lines)
+            self._render_computed_lines(draw, para, (ox, oy + shift), lines)
+            shift += self._extent_delta(para, lines)
+
+    @staticmethod
+    def _cached_extent(para):
+        """Paragraph-relative height of the cached line boxes, or ``None``."""
+        if not para.linesegs:
+            return None
+        top = _iattr(para.linesegs[0], "vertpos")
+        last = para.linesegs[-1]
+        return _iattr(last, "vertpos") + _iattr(last, "vertsize") - top
+
+    @staticmethod
+    def _computed_extent(lines):
+        if not lines:
+            return 0
+        return lines[-1]["vertpos"] + lines[-1]["vertsize"]
+
+    def _extent_delta(self, para, lines):
+        cached = self._cached_extent(para)
+        if cached is None:
+            return 0
+        return self._computed_extent(lines) - cached
+
+    def _record_layout(self, index, para, mode, reason, lines):
+        record = {
+            "paragraph": index,
+            "page": self._page,
+            "mode": mode,
+            "characters": len(para.chars),
+            "cached_lines": len(para.linesegs),
+        }
+        if mode == "lineseg":
+            self.layout_records.append(record)
+            return
+        record["reason"] = reason
+        record["computed_lines"] = len(lines or ())
+        record["forced_breaks"] = sum(1 for l in (lines or ()) if l["forced"])
+        record["height_delta_hwpunit"] = self._extent_delta(para, lines or [])
+        self.layout_records.append(record)
+
+    def _render_computed_lines(self, draw, para, origin_hwp, lines):
+        """Draw the lines this renderer's own breaker produced.
+
+        The paragraph's *origin* still comes from the cached layout where one
+        exists: this slice re-derives line breaking inside a paragraph, not
+        the block stacking that decides where a paragraph starts.  A paragraph
+        with no cache at all starts at the container's flow position, exactly
+        as before.
+        """
+        ox, oy = origin_hwp
+        if para.linesegs:
+            oy += _iattr(para.linesegs[0], "vertpos")
+        self._line_mode = "computed"
+        for index, line in enumerate(lines):
+            chunk = para.chars[line["start"]:line["end"]]
+            if not chunk:
+                continue
+            self._draw_line(
+                draw,
+                self._line_items(para, chunk, line["start"]),
+                ox + line["horzpos"],
+                oy + line["vertpos"],
+                oy + line["vertpos"] + line["baseline"],
+                para.align,
+                line["horzsize"],
+                last_line=(index == len(lines) - 1),
+            )
 
     def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp):
         ox, oy = origin_hwp
         positions = [_iattr(s, "textpos") for s in para.linesegs]
-        if positions and max(positions) > len(para.chars):
-            # textpos disagrees with the character stream we reconstructed —
-            # most likely an inline control this tier does not count.  Say so
-            # and fall back rather than slicing text onto the wrong lines.
-            self._skip("hp:lineseg@textpos",
-                       "cached line offsets exceed the reconstructed character "
-                       "stream; own greedy wrap used for this paragraph")
-            self._render_wrapped(draw, para, origin_hwp, avail_w_hwp)
-            return
+        self._line_mode = "lineseg"
         for i, seg in enumerate(para.linesegs):
             start = positions[i]
             end = positions[i + 1] if i + 1 < len(positions) else len(para.chars)
@@ -1507,25 +2180,6 @@ class OwnRenderer:
                 horzsize,
                 last_line=(i == len(para.linesegs) - 1),
             )
-
-    def _render_wrapped(self, draw, para, origin_hwp, avail_w_hwp):
-        ox, oy = origin_hwp
-        avail_px = self.pxf(avail_w_hwp)
-        cid = para.chars[0][1] if para.chars else None
-        pt = self._charpr(cid).get("height_pt") or 10.0
-        line_h = pt * HWPUNIT_PER_PT * 1.6
-        baseline = pt * HWPUNIT_PER_PT * 0.85
-        y = oy
-        if para.linesegs:
-            y = oy + _iattr(para.linesegs[0], "vertpos")
-        consumed = 0
-        wrapped = self._greedy_wrap(draw, para.chars, avail_px)
-        for index, line in enumerate(wrapped):
-            self._draw_line(draw, self._line_items(para, line, consumed),
-                            ox, y, y + baseline, para.align, avail_w_hwp,
-                            last_line=(index == len(wrapped) - 1))
-            consumed += len(line)
-            y += line_h
 
     # -- anchored (non-inline) objects -----------------------------------
     def _object_line(self, para, char_index):
@@ -1606,7 +2260,33 @@ class OwnRenderer:
         self.counts["placeholders"] += 1
 
     # -- tables ----------------------------------------------------------
-    def _table_tracks(self, tbl):
+    def _paragraph_block_extent(self, draw, paras, avail_w_hwp):
+        """How tall a cell's paragraphs are, in the layout each will get.
+
+        A paragraph the cache still describes contributes its cached extent
+        (unchanged from before this slice); one this renderer has to relay out
+        contributes the extent of the lines it will actually draw, so an
+        edited cell grows its row instead of overflowing it.  Measurement
+        only: nothing is drawn and nothing is counted.
+        """
+        self._quiet += 1
+        try:
+            extent = 0
+            for para in paras:
+                cached = para.extent_hwp()
+                index = self.paragraph_index.get(id(para.el))
+                mode, _reason = self.line_layout_mode(para, avail_w_hwp, index)
+                if mode == "computed" and para.chars:
+                    lines = self.compute_lines(draw, para, avail_w_hwp)
+                    top = (_iattr(para.linesegs[0], "vertpos")
+                           if para.linesegs else 0)
+                    cached = top + self._computed_extent(lines)
+                extent = max(extent, cached)
+            return extent
+        finally:
+            self._quiet -= 1
+
+    def _table_tracks(self, draw, tbl):
         rows = _iattr(tbl, "rowCnt", 0)
         cols = _iattr(tbl, "colCnt", 0)
         sz = _kid(tbl, "sz")
@@ -1632,15 +2312,11 @@ class OwnRenderer:
                 mb = _iattr(cmargin, "bottom")
                 paras = [Paragraph(p, self.defs["para_pr"])
                          for p in own_paragraphs(tc)]
-                content_h = max((p.extent_hwp() for p in paras), default=0)
                 col_cons.append((col, cspan, width))
-                # cellSz height is a *minimum*: HWP grows a row to fit its
-                # content and leaves the stored value behind.  Taking the max
-                # of the two is what tracks the declared table height.
-                row_cons.append((row, rspan, max(height, content_h + mt + mb)))
                 cells.append({
                     "tc": tc, "row": row, "col": col,
                     "rspan": rspan, "cspan": cspan,
+                    "declared_height": height,
                     "margin": {
                         "left": _iattr(cmargin, "left"),
                         "right": _iattr(cmargin, "right"),
@@ -1649,6 +2325,25 @@ class OwnRenderer:
                     "paras": paras,
                 })
         widths = solve_tracks(cols, col_cons, decl_w)
+        # Columns first, then content extents, then rows: a cell's content
+        # height depends on the width it gets, and its width does not depend
+        # on any content.  A paragraph this renderer has to relay out is a
+        # different height from the one the cache records, so the row it sits
+        # in has to be measured from the relaid-out lines or the row will be
+        # too short for what is about to be drawn in it.
+        for cell in cells:
+            c0 = min(cell["col"], len(widths))
+            c1 = min(cell["col"] + cell["cspan"], len(widths))
+            inner = max(0, sum(widths[c0:c1])
+                        - cell["margin"]["left"] - cell["margin"]["right"])
+            content_h = self._paragraph_block_extent(draw, cell["paras"], inner)
+            # cellSz height is a *minimum*: HWP grows a row to fit its content
+            # and leaves the stored value behind.  Taking the max of the two is
+            # what tracks the declared table height.
+            row_cons.append((
+                cell["row"], cell["rspan"],
+                max(cell["declared_height"],
+                    content_h + cell["margin"]["top"] + cell["margin"]["bottom"])))
         heights = solve_tracks(rows, row_cons, decl_h)
         xs = [0]
         for w in widths:
@@ -1661,7 +2356,7 @@ class OwnRenderer:
     def _render_table(self, draw, tbl, origin_hwp):
         ox, oy = origin_hwp
         self.counts["tables"] += 1
-        xs, ys, cells = self._table_tracks(tbl)
+        xs, ys, cells = self._table_tracks(draw, tbl)
         if not cells:
             return
         rects = []
@@ -1797,6 +2492,116 @@ class OwnRenderer:
             ),
         }
 
+    # hp:paraPr / hh:breakSetting attributes this tier reads and acts on, and
+    # the ones it parses but cannot act on.  Kept next to the report that
+    # emits them so a new attribute cannot be honoured without being declared.
+    PARAPR_HONORED = (
+        "hh:breakSetting@breakLatinWord (KEEP_WORD / BREAK_WORD)",
+        "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD)",
+        "hh:breakSetting@lineWrap=BREAK",
+        "hp:paraPr@condense (최소 공백: a line may overrun by the width its "
+        "spaces can give up)",
+        "hh:lineSpacing@type=PERCENT and @type=FIXED, with @value",
+        "hh:margin/hh:left, hh:right, hh:intent (들여쓰기 positive, 내어쓰기 "
+        "negative)",
+        "hh:align@horizontal (LEFT / CENTER / RIGHT / JUSTIFY / DISTRIBUTE)",
+        "hp:paraPr@tabPrIDRef, for the explicit LEFT stops hh:tabPr declares",
+    )
+    PARAPR_NOT_HONORED = (
+        "hh:breakSetting@breakLatinWord=HYPHENATION — hyphenation is not "
+        "implemented; broken at word boundaries instead",
+        "hh:breakSetting@widowOrphan / @keepWithNext / @keepLines / "
+        "@pageBreakBefore — block-level pagination rules; this tier does not "
+        "do block layout",
+        "hp:paraPr@fontLineHeight=1 — line height from the resolved font's "
+        "own ascent/descent; the declared character size is used instead",
+        "hp:paraPr@snapToGrid — the section grid is not implemented",
+        "hh:lineSpacing@type=BETWEEN_LINES — implemented as pure leading, "
+        "never exercised by the corpus",
+        "hh:tab@type=RIGHT / CENTER / DECIMAL — advanced as a LEFT stop",
+        "hp:tab elements inside a run are not placed in the character stream",
+    )
+
+    def _line_layout_report(self):
+        """Which engine laid out each paragraph's lines, and on what evidence.
+
+        The per-paragraph list is the point: a reader has to be able to tell,
+        without re-running anything, which paragraphs on a page carry the
+        authoring engine's own line breaks and which carry this renderer's.
+        """
+        computed = [r for r in self.layout_records if r["mode"] == "computed"]
+        return {
+            "policy": self.line_layout,
+            "policy_meaning": (
+                "auto: a paragraph keeps the document's cached hp:lineseg "
+                "boxes unless they provably no longer describe its text, in "
+                "which case this renderer's own breaker lays it out. "
+                "computed: every paragraph is laid out by this renderer's "
+                "breaker, which is how the breaker itself is measured — not "
+                "how a document is rendered most faithfully."
+            ),
+            "paragraphs": dict(self._layout_counts),
+            "computed_reasons": dict(sorted(self._layout_reasons.items())),
+            "forced_breaks": self._forced_breaks,
+            "forced_breaks_meaning": (
+                "lines this renderer had to cut at a position the paragraph's "
+                "own breakSetting forbids, because no permitted break "
+                "opportunity existed inside the box"
+            ),
+            "caller_marked_edited": sorted(self.relayout_paragraphs),
+            "stale_detection": (
+                "a cached line box is judged stale when a cached textpos "
+                "starts past the end of the character stream, or when a "
+                "cached line's FONT-INDEPENDENT lower-bound width (full-width "
+                "cells at their declared size x hh:ratio, plus the declared "
+                "hh:spacing gaps) exceeds that line's own cached horzsize by "
+                f"more than {STALE_LINE_TOLERANCE:.0%}. The bound can never "
+                "exceed the width the authoring engine actually fitted, so "
+                "the detector raises no false positive on an unedited "
+                "paragraph — but it is INCOMPLETE: an edit that leaves every "
+                "line still fitting is invisible in the file, and an editor "
+                "that knows it changed a paragraph must declare it through "
+                "relayout_paragraphs instead of relying on detection."
+            ),
+            "paragraph_origin": (
+                "a relaid-out paragraph still starts where the cached layout "
+                "put it; this slice re-derives line breaking inside a "
+                "paragraph, not the block stacking that decides where a "
+                "paragraph begins. Paragraphs after a relaid-out one in the "
+                "same container are shifted by its height change so they "
+                "cannot be drawn over, but a table row does not grow and no "
+                "content reflows onto another page."
+            ),
+            "line_geometry_model": {
+                "vertsize": "== textheight (3214/3214 corpus line boxes)",
+                "baseline": (f"== round({BASELINE_RATIO} * textheight) "
+                             "(3212/3214 exact, all 3214 within 1 HWPUNIT); "
+                             "the ratio is a measured constant of this "
+                             "corpus, not a number KS X 6101 publishes"),
+                "vertpos": ("== previous vertpos + previous vertsize + "
+                            "previous spacing (219/219 corpus continuation "
+                            "lines)"),
+                "spacing": ("PERCENT: vertsize + spacing == round(textheight "
+                            "* value / 100); FIXED: vertsize + spacing == "
+                            "value"),
+                "textheight": ("max declared hh:charPr@height x hh:relSz over "
+                               "the characters on the line"),
+            },
+            "prohibition_table": {
+                "line_start_forbidden": "".join(sorted(LINE_START_PROHIBITED)),
+                "line_end_forbidden": "".join(sorted(LINE_END_PROHIBITED)),
+                "note": (
+                    "금칙처리. KS X 6101 does not publish the prohibited-"
+                    "character sets any more than it publishes the language-"
+                    "slot partition; this is the conventional Korean/CJK "
+                    "table and is this renderer's, declared, not the spec's."
+                ),
+            },
+            "parapr_honored": list(self.PARAPR_HONORED),
+            "parapr_not_honored": list(self.PARAPR_NOT_HONORED),
+            "paragraphs_relaid_out": computed,
+        }
+
     def render(self):
         geo = self.page_geometry()
         pages = self.paginate()
@@ -1857,6 +2662,7 @@ class OwnRenderer:
                     "it"
                 ),
             },
+            "line_layout": self._line_layout_report(),
             "line_boxes": list(self.line_boxes),
             "line_boxes_meaning": (
                 "every text line box drawn, in device pixels at this render's "
@@ -1878,13 +2684,224 @@ class OwnRenderer:
 # Output
 # --------------------------------------------------------------------------
 
+def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
+    """Measure this renderer's line breaker against the authoring engine's.
+
+    For every paragraph of the document that carries a usable
+    ``<hp:linesegarray>``, the breaker is run on the paragraph's **unedited**
+    text and its line starts are compared to the cached ``@textpos`` values.
+    This is the primary metric of E2.1: it is the only channel on which a
+    from-scratch line breaker can be graded without a reference render, and it
+    grades exactly the thing this slice built.
+
+    Two deliberate choices, both of which make the number *about the breaker*:
+
+      * the line box is taken from the paragraph's own cached first line
+        (``horzpos + horzsize``, plus the declared right margin), not from
+        this renderer's page/table geometry.  A disagreement is then the
+        breaker's, never the track solver's.
+      * a paragraph whose cache is unusable (absent, or a ``textpos`` past the
+        end of the character stream) is *excluded and counted*, not scored as
+        a failure — there is nothing to compare against.
+
+    Two agreement numbers are reported, and they answer different questions.
+    The *sequence* numbers run the breaker over the whole paragraph, so one
+    wrong break throws every later one off.  ``conditional_breaks`` restarts
+    the breaker at each line start the authoring engine chose and asks only
+    where it would put the *next* break — the per-decision accuracy, with the
+    error propagation removed.  Each disagreement is classified as ``early``
+    (the authoring engine's own line already overflows the box this renderer
+    measures) or ``late`` (the next word still fits it), which is what says
+    whether the breaking rules or the advance widths are wrong.
+
+    Reported separately for all paragraphs and for the multi-line subset,
+    because a corpus of government forms is overwhelmingly single-line
+    paragraphs (2995 paragraphs, 161 of them multi-line) and an "agreement"
+    number dominated by paragraphs that cannot break is not a measurement.
+    """
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root)
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    renderer._quiet += 1
+
+    totals = {
+        "paragraphs_scored": 0,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 0,
+        "paragraphs_break_sequence_exact": 0,
+        "cached_lines": 0,
+        "computed_lines": 0,
+        "break_positions_cached": 0,
+        "break_positions_computed": 0,
+        "break_positions_matched": 0,
+        "first_line_box_exact": 0,
+    }
+    multi = dict(totals)
+    disagreements = []
+    conditional = {"decisions": 0, "exact": 0, "early": 0, "late": 0}
+    fills = []
+
+    for element in renderer.sections[0].iter():
+        if _local(element.tag) != "p":
+            continue
+        para = Paragraph(element, renderer.defs["para_pr"])
+        if not para.chars:
+            continue
+        index = renderer.paragraph_index.get(id(element))
+        if not para.linesegs:
+            totals["paragraphs_excluded"] += 1
+            continue
+        cached = [_iattr(seg, "textpos") for seg in para.linesegs]
+        if max(cached) > len(para.chars) or (
+                len(cached) > 1 and max(cached) >= len(para.chars)):
+            totals["paragraphs_excluded"] += 1
+            continue
+        first = para.linesegs[0]
+        column = (_iattr(first, "horzpos") + _iattr(first, "horzsize")
+                  + max(0, para.para_pr.get("margin_right", 0)))
+        if column <= 0:
+            totals["paragraphs_excluded"] += 1
+            continue
+        lines = renderer.compute_lines(draw, para, column)
+        computed = [line["start"] for line in lines]
+        cached_breaks = set(cached[1:])
+        computed_breaks = set(computed[1:])
+        matched = cached_breaks & computed_breaks
+        buckets = [totals] + ([multi] if len(cached) > 1 else [])
+        for bucket in buckets:
+            bucket["paragraphs_scored"] += 1
+            bucket["cached_lines"] += len(cached)
+            bucket["computed_lines"] += len(computed)
+            bucket["break_positions_cached"] += len(cached_breaks)
+            bucket["break_positions_computed"] += len(computed_breaks)
+            bucket["break_positions_matched"] += len(matched)
+            if len(cached) == len(computed):
+                bucket["paragraphs_line_count_exact"] += 1
+            if cached == computed:
+                bucket["paragraphs_break_sequence_exact"] += 1
+            if (lines[0]["horzpos"] == _iattr(first, "horzpos")
+                    and lines[0]["horzsize"] == _iattr(first, "horzsize")):
+                bucket["first_line_box_exact"] += 1
+        # Per-decision accuracy: restart the breaker where the authoring
+        # engine started each line, and ask only where it puts the next break.
+        for i in range(len(cached) - 1):
+            here, target = cached[i], cached[i + 1]
+            one = renderer.compute_lines(draw, para, column, from_char=here,
+                                         from_line=i)
+            if not one:
+                continue
+            conditional["decisions"] += 1
+            if one[0]["end"] == target:
+                conditional["exact"] += 1
+            elif one[0]["end"] < target:
+                conditional["early"] += 1
+            else:
+                conditional["late"] += 1
+            box_px = renderer.pxf(_iattr(para.linesegs[i], "horzsize")
+                                  or column)
+            visible = target
+            while (visible > here
+                   and para.chars[visible - 1][0] in SPACE_CHARS):
+                visible -= 1
+            if box_px > 0 and visible > here:
+                # How full the authoring engine's own line is, measured by
+                # this renderer.  A value under 1.0 says this renderer thinks
+                # there was still room where the authoring engine broke.
+                fills.append(renderer.span_width(draw, para, here, visible)
+                             / box_px)
+        if cached != computed and len(disagreements) < 40:
+            disagreements.append({
+                "paragraph": index,
+                "cached": cached,
+                "computed": computed,
+                "characters": len(para.chars),
+                "break_latin": para.para_pr.get("break_latin"),
+                "break_non_latin": para.para_pr.get("break_non_latin"),
+                "text": para.text[:120],
+            })
+    renderer._quiet -= 1
+
+    def _rate(bucket, hit, total):
+        return (round(bucket[hit] / bucket[total], 6)
+                if bucket[total] else None)
+
+    for bucket in (totals, multi):
+        bucket["line_count_agreement"] = _rate(
+            bucket, "paragraphs_line_count_exact", "paragraphs_scored")
+        bucket["break_sequence_agreement"] = _rate(
+            bucket, "paragraphs_break_sequence_exact", "paragraphs_scored")
+        bucket["break_position_recall"] = _rate(
+            bucket, "break_positions_matched", "break_positions_cached")
+        bucket["first_line_box_agreement"] = _rate(
+            bucket, "first_line_box_exact", "paragraphs_scored")
+    multi.pop("paragraphs_excluded", None)
+    conditional["accuracy"] = (
+        round(conditional["exact"] / conditional["decisions"], 6)
+        if conditional["decisions"] else None)
+    conditional["meaning"] = (
+        "the breaker restarted at each line start the authoring engine chose, "
+        "asked only where it would put the NEXT break, and compared. 'early' "
+        "means this renderer would break sooner (it measures the authoring "
+        "engine's own line as already overflowing the box); 'late' means it "
+        "would break further on (the next word still fits by its reckoning)."
+    )
+    ordered = sorted(fills)
+    conditional["cached_line_fill"] = {
+        "n": len(ordered),
+        "median": round(ordered[len(ordered) // 2], 6) if ordered else None,
+        "p10": (round(ordered[int(len(ordered) * 0.1)], 6)
+                if ordered else None),
+        "p90": (round(ordered[int(len(ordered) * 0.9)], 6)
+                if ordered else None),
+        "meaning": (
+            "how full the authoring engine's own line is when this renderer "
+            "measures it, as a fraction of that line's own cached horzsize. "
+            "1.0 would mean the two agree exactly about advance widths; below "
+            "1.0 says this renderer measures the same text narrower than the "
+            "authoring engine did, and will therefore fit more of the next "
+            "word onto the line."
+        ),
+    }
+
+    return {
+        "document": Path(hwpx_path).name,
+        "dpi": dpi,
+        "renderer": RENDERER_STAMP,
+        "fonts": renderer._font_report(),
+        "all_paragraphs": totals,
+        "multiline_paragraphs": multi,
+        "conditional_breaks": conditional,
+        "disagreements": disagreements,
+        "method": (
+            "the breaker is run on each paragraph's unedited character stream "
+            "inside the line box the authoring engine itself used (the "
+            "paragraph's cached first hp:lineseg horzpos+horzsize, plus the "
+            "declared right margin), and its line starts are compared to the "
+            "cached hp:lineseg@textpos values. break_position_recall is the "
+            "share of the authoring engine's own break positions this breaker "
+            "also chose; break_sequence_agreement is the share of paragraphs "
+            "where every line start matches exactly."
+        ),
+        "caveat": (
+            "this number depends on which faces this machine has installed: "
+            "an unresolved face is measured with a substitute whose advance "
+            "widths differ from the authoring engine's, and a line then "
+            "breaks in a different place for a reason that has nothing to do "
+            "with the breaking rules. See fonts."
+        ),
+    }
+
+
 def save_png(image, path):
     """Write a PNG with no timestamp chunk and a pinned compression level."""
     image.save(path, format="PNG", optimize=False, compress_level=6)
 
 
-def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None):
-    renderer = OwnRenderer(hwpx_path, dpi=dpi)
+def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
+                  line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None):
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
+                           relayout_paragraphs=relayout_paragraphs)
     images, sidecar = renderer.render()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1902,7 +2919,8 @@ def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None):
     return {"pngs": written, "sidecar": str(sidecar_path), "report": sidecar}
 
 
-def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI):
+def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
+                  line_layout=LINE_LAYOUT_AUTO):
     """Raster PDF, for the ``[binary, {in}, {out}]`` argv render_cert expects.
 
     The pages carry no text layer, so ``render_cert``'s unique-word anchor
@@ -1910,7 +2928,7 @@ def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI):
     can.  A vector text backend is the prerequisite for full certification;
     see engine/references/own-render-notes.md.
     """
-    renderer = OwnRenderer(hwpx_path, dpi=dpi)
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout)
     images, sidecar = renderer.render()
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -1932,7 +2950,19 @@ def build_parser():
                         help="optional output .pdf (render_cert argv shape)")
     parser.add_argument("--out-dir", help="directory for per-page PNG + sidecar")
     parser.add_argument("--dpi", type=int, default=DEFAULT_DPI)
+    parser.add_argument(
+        "--lineseg-agreement", action="store_true",
+        help="do not render: measure this renderer's line breaker "
+             "against the document's own cached hp:lineseg layout and "
+             "print the report as JSON")
     parser.add_argument("--stem", help="override the output filename stem")
+    parser.add_argument(
+        "--line-layout", choices=list(LINE_LAYOUT_MODES),
+        default=LINE_LAYOUT_AUTO,
+        help="auto (default): keep the document's cached hp:lineseg line "
+             "boxes unless they are provably stale. computed: lay every "
+             "paragraph out with this renderer's own line breaker, which "
+             "is how the breaker itself is measured.")
     return parser
 
 
@@ -1945,13 +2975,28 @@ def main(argv=None):
     if not args.input:
         print("own_render: an input .hwpx is required", file=sys.stderr)
         return 2
+    if args.lineseg_agreement:
+        try:
+            report = lineseg_agreement(args.input, dpi=args.dpi)
+        except RendererUnavailable as exc:
+            print(f"own_render: unavailable - {exc}", file=sys.stderr)
+            return 3
+        except (ValueError, OSError, zipfile.BadZipFile,
+                ET.ParseError) as exc:
+            print(f"own_render: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2,
+                         sort_keys=True))
+        return 0
     try:
         if args.output:
-            result = render_to_pdf(args.input, args.output, dpi=args.dpi)
+            result = render_to_pdf(args.input, args.output, dpi=args.dpi,
+                                   line_layout=args.line_layout)
         else:
             out_dir = args.out_dir or Path(args.input).with_suffix("").name + "-render"
             result = render_to_dir(args.input, out_dir, dpi=args.dpi,
-                                   stem=args.stem)
+                                   stem=args.stem,
+                                   line_layout=args.line_layout)
     except RendererUnavailable as exc:
         print(f"own_render: unavailable — {exc}", file=sys.stderr)
         return 3
