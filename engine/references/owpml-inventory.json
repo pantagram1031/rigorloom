@@ -1,0 +1,6703 @@
+{
+ "schema_version": 2,
+ "generator": "engine/scripts/hwpx_inventory.py",
+ "note": "Element and attribute NAMES with counts only; no attribute or text values are recorded (corpus metadata carries author names and paths).",
+ "forms": [
+  "admrul-gajokdolbom-hyuga-sinchengseo",
+  "gianmun-byeolji-1ho",
+  "gianmun-byeolji-2ho",
+  "jeongbo-gonggae-cheongguseo",
+  "jumin-deungchobon-sinchengseo",
+  "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+  "moel-pyojun-geunrogyeyakseo-2013",
+  "moel-pyojun-geunrogyeyakseo-2025",
+  "nrf-gyeolgwa-bogoseo-yangsik",
+  "pps-hyeopeop-seungin-sinchengseo",
+  "pps-jeongbogonggae-donguiseo",
+  "saeopja-deungnok-sinchengseo"
+ ],
+ "form_count": 12,
+ "summary": {
+  "distinct_elements": 161,
+  "element_occurrences": 64536,
+  "distinct_element_attribute_pairs": 558,
+  "distinct_attribute_names": 299,
+  "xml_members": 8,
+  "distinct_members": 12
+ },
+ "roots": {
+  "ha:HWPApplicationSetting": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "settings.xml"
+   ]
+  },
+  "hh:head": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ]
+  },
+  "hs:sec": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ]
+  },
+  "hv:HCFVersion": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "version.xml"
+   ]
+  },
+  "ocf:container": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "META-INF/container.xml"
+   ]
+  },
+  "odf:manifest": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "META-INF/manifest.xml"
+   ]
+  },
+  "opf:package": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ]
+  },
+  "rdf:RDF": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "parts": [
+    "META-INF/container.rdf"
+   ]
+  }
+ },
+ "members": {
+  "BinData/image1.png": {
+   "forms": [
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo"
+   ],
+   "compress": [
+    "stored"
+   ],
+   "xml": false,
+   "bytes_total": 1666
+  },
+  "Contents/content.hpf": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 23291
+  },
+  "Contents/header.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 2266468
+  },
+  "Contents/section0.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 2100553
+  },
+  "META-INF/container.rdf": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 10404
+  },
+  "META-INF/container.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 5700
+  },
+  "META-INF/manifest.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 1608
+  },
+  "Preview/PrvImage.png": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "stored"
+   ],
+   "xml": false,
+   "bytes_total": 321983
+  },
+  "Preview/PrvText.txt": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": false,
+   "bytes_total": 19524
+  },
+  "mimetype": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "stored"
+   ],
+   "xml": false,
+   "bytes_total": 228
+  },
+  "settings.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "deflated"
+   ],
+   "xml": true,
+   "bytes_total": 7125
+  },
+  "version.xml": {
+   "forms": [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "pps-hyeopeop-seungin-sinchengseo",
+    "pps-jeongbogonggae-donguiseo",
+    "saeopja-deungnok-sinchengseo"
+   ],
+   "compress": [
+    "stored"
+   ],
+   "xml": true,
+   "bytes_total": 3720
+  }
+ },
+ "elements": {
+  "config:config-item": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+   "local": "config-item",
+   "count": 44,
+   "forms": [
+    1,
+    2,
+    5,
+    6,
+    7,
+    8
+   ],
+   "parts": [
+    "settings.xml"
+   ],
+   "with_text": 44,
+   "with_children": 0,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "name": {
+     "count": 44,
+     "forms": 6
+    },
+    "type": {
+     "count": 44,
+     "forms": 6
+    }
+   }
+  },
+  "config:config-item-set": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+   "local": "config-item-set",
+   "count": 6,
+   "forms": [
+    1,
+    2,
+    5,
+    6,
+    7,
+    8
+   ],
+   "parts": [
+    "settings.xml"
+   ],
+   "with_text": 0,
+   "with_children": 6,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "name": {
+     "count": 6,
+     "forms": 6
+    }
+   }
+  },
+  "ha:CaretPosition": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/app",
+   "local": "CaretPosition",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "settings.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "listIDRef": {
+     "count": 12,
+     "forms": 12
+    },
+    "paraIDRef": {
+     "count": 12,
+     "forms": 12
+    },
+    "pos": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "ha:HWPApplicationSetting": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/app",
+   "local": "HWPApplicationSetting",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "settings.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "xmlns:config": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ha": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hc:fillBrush": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "fillBrush",
+   "count": 132,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml",
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 132,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hc:img": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "img",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 2,
+   "explicit_end_form": 0,
+   "attributes": {
+    "alpha": {
+     "count": 2,
+     "forms": 2
+    },
+    "binaryItemIDRef": {
+     "count": 2,
+     "forms": 2
+    },
+    "bright": {
+     "count": 2,
+     "forms": 2
+    },
+    "contrast": {
+     "count": 2,
+     "forms": 2
+    },
+    "effect": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hc:intent": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "intent",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hc:left": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "left",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hc:next": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "next",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hc:prev": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "prev",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hc:pt0": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "pt0",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "x": {
+     "count": 7,
+     "forms": 3
+    },
+    "y": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:pt1": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "pt1",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "x": {
+     "count": 7,
+     "forms": 3
+    },
+    "y": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:pt2": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "pt2",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "x": {
+     "count": 7,
+     "forms": 3
+    },
+    "y": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:pt3": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "pt3",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "x": {
+     "count": 7,
+     "forms": 3
+    },
+    "y": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:right": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "right",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hc:rotMatrix": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "rotMatrix",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "e1": {
+     "count": 7,
+     "forms": 3
+    },
+    "e2": {
+     "count": 7,
+     "forms": 3
+    },
+    "e3": {
+     "count": 7,
+     "forms": 3
+    },
+    "e4": {
+     "count": 7,
+     "forms": 3
+    },
+    "e5": {
+     "count": 7,
+     "forms": 3
+    },
+    "e6": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:scaMatrix": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "scaMatrix",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "e1": {
+     "count": 7,
+     "forms": 3
+    },
+    "e2": {
+     "count": 7,
+     "forms": 3
+    },
+    "e3": {
+     "count": 7,
+     "forms": 3
+    },
+    "e4": {
+     "count": 7,
+     "forms": 3
+    },
+    "e5": {
+     "count": 7,
+     "forms": 3
+    },
+    "e6": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:transMatrix": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "transMatrix",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "e1": {
+     "count": 7,
+     "forms": 3
+    },
+    "e2": {
+     "count": 7,
+     "forms": 3
+    },
+    "e3": {
+     "count": 7,
+     "forms": 3
+    },
+    "e4": {
+     "count": 7,
+     "forms": 3
+    },
+    "e5": {
+     "count": 7,
+     "forms": 3
+    },
+    "e6": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hc:winBrush": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/core",
+   "local": "winBrush",
+   "count": 132,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml",
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 132,
+   "explicit_end_form": 0,
+   "attributes": {
+    "alpha": {
+     "count": 132,
+     "forms": 12
+    },
+    "faceColor": {
+     "count": 132,
+     "forms": 12
+    },
+    "hatchColor": {
+     "count": 132,
+     "forms": 12
+    }
+   }
+  },
+  "hh:align": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "align",
+   "count": 811,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 811,
+   "explicit_end_form": 0,
+   "attributes": {
+    "horizontal": {
+     "count": 811,
+     "forms": 12
+    },
+    "vertical": {
+     "count": 811,
+     "forms": 12
+    }
+   }
+  },
+  "hh:autoSpacing": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "autoSpacing",
+   "count": 811,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 811,
+   "explicit_end_form": 0,
+   "attributes": {
+    "eAsianEng": {
+     "count": 811,
+     "forms": 12
+    },
+    "eAsianNum": {
+     "count": 811,
+     "forms": 12
+    }
+   }
+  },
+  "hh:backSlash": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "backSlash",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "Crooked": {
+     "count": 495,
+     "forms": 12
+    },
+    "isCounter": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:beginNum": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "beginNum",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "endnote": {
+     "count": 12,
+     "forms": 12
+    },
+    "equation": {
+     "count": 12,
+     "forms": 12
+    },
+    "footnote": {
+     "count": 12,
+     "forms": 12
+    },
+    "page": {
+     "count": 12,
+     "forms": 12
+    },
+    "pic": {
+     "count": 12,
+     "forms": 12
+    },
+    "tbl": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:bold": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "bold",
+   "count": 193,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 193,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:border": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "border",
+   "count": 811,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 811,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 811,
+     "forms": 12
+    },
+    "connect": {
+     "count": 811,
+     "forms": 12
+    },
+    "ignoreMargin": {
+     "count": 811,
+     "forms": 12
+    },
+    "offsetBottom": {
+     "count": 811,
+     "forms": 12
+    },
+    "offsetLeft": {
+     "count": 811,
+     "forms": 12
+    },
+    "offsetRight": {
+     "count": 811,
+     "forms": 12
+    },
+    "offsetTop": {
+     "count": 811,
+     "forms": 12
+    }
+   }
+  },
+  "hh:borderFill": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "borderFill",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 495,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "breakCellSeparateLine": {
+     "count": 495,
+     "forms": 12
+    },
+    "centerLine": {
+     "count": 495,
+     "forms": 12
+    },
+    "id": {
+     "count": 495,
+     "forms": 12
+    },
+    "shadow": {
+     "count": 495,
+     "forms": 12
+    },
+    "threeD": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:borderFills": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "borderFills",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:bottomBorder": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "bottomBorder",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    },
+    "width": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:breakSetting": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "breakSetting",
+   "count": 811,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 811,
+   "explicit_end_form": 0,
+   "attributes": {
+    "breakLatinWord": {
+     "count": 811,
+     "forms": 12
+    },
+    "breakNonLatinWord": {
+     "count": 811,
+     "forms": 12
+    },
+    "keepLines": {
+     "count": 811,
+     "forms": 12
+    },
+    "keepWithNext": {
+     "count": 811,
+     "forms": 12
+    },
+    "lineWrap": {
+     "count": 811,
+     "forms": 12
+    },
+    "pageBreakBefore": {
+     "count": 811,
+     "forms": 12
+    },
+    "widowOrphan": {
+     "count": 811,
+     "forms": 12
+    }
+   }
+  },
+  "hh:charPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "charPr",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 848,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 848,
+     "forms": 12
+    },
+    "height": {
+     "count": 848,
+     "forms": 12
+    },
+    "id": {
+     "count": 848,
+     "forms": 12
+    },
+    "shadeColor": {
+     "count": 848,
+     "forms": 12
+    },
+    "symMark": {
+     "count": 848,
+     "forms": 12
+    },
+    "textColor": {
+     "count": 848,
+     "forms": 12
+    },
+    "useFontSpace": {
+     "count": 848,
+     "forms": 12
+    },
+    "useKerning": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:charProperties": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "charProperties",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:compatibleDocument": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "compatibleDocument",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "targetProgram": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:diagonal": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "diagonal",
+   "count": 364,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 364,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 364,
+     "forms": 12
+    },
+    "type": {
+     "count": 364,
+     "forms": 12
+    },
+    "width": {
+     "count": 364,
+     "forms": 12
+    }
+   }
+  },
+  "hh:docOption": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "docOption",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:font": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "font",
+   "count": 663,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 663,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "face": {
+     "count": 663,
+     "forms": 12
+    },
+    "id": {
+     "count": 663,
+     "forms": 12
+    },
+    "isEmbedded": {
+     "count": 663,
+     "forms": 12
+    },
+    "type": {
+     "count": 663,
+     "forms": 12
+    }
+   }
+  },
+  "hh:fontRef": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "fontRef",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hangul": {
+     "count": 848,
+     "forms": 12
+    },
+    "hanja": {
+     "count": 848,
+     "forms": 12
+    },
+    "japanese": {
+     "count": 848,
+     "forms": 12
+    },
+    "latin": {
+     "count": 848,
+     "forms": 12
+    },
+    "other": {
+     "count": 848,
+     "forms": 12
+    },
+    "symbol": {
+     "count": 848,
+     "forms": 12
+    },
+    "user": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:fontface": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "fontface",
+   "count": 84,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 84,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "fontCnt": {
+     "count": 84,
+     "forms": 12
+    },
+    "lang": {
+     "count": 84,
+     "forms": 12
+    }
+   }
+  },
+  "hh:fontfaces": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "fontfaces",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:head": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "head",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "secCnt": {
+     "count": 12,
+     "forms": 12
+    },
+    "version": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:config": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:dc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:epub": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ha": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hh": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hhs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hm": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp10": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hpf": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hwpunitchar": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ooxmlchart": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:opf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:heading": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "heading",
+   "count": 814,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 814,
+   "explicit_end_form": 0,
+   "attributes": {
+    "idRef": {
+     "count": 814,
+     "forms": 12
+    },
+    "level": {
+     "count": 814,
+     "forms": 12
+    },
+    "type": {
+     "count": 814,
+     "forms": 12
+    }
+   }
+  },
+  "hh:italic": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "italic",
+   "count": 11,
+   "forms": [
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 11,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:layoutCompatibility": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "layoutCompatibility",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:leftBorder": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "leftBorder",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    },
+    "width": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:lineSpacing": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "lineSpacing",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1622,
+   "explicit_end_form": 0,
+   "attributes": {
+    "type": {
+     "count": 1622,
+     "forms": 12
+    },
+    "unit": {
+     "count": 1622,
+     "forms": 12
+    },
+    "value": {
+     "count": 1622,
+     "forms": 12
+    }
+   }
+  },
+  "hh:linkinfo": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "linkinfo",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "footnoteInherit": {
+     "count": 12,
+     "forms": 12
+    },
+    "pageInherit": {
+     "count": 12,
+     "forms": 12
+    },
+    "path": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:margin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "margin",
+   "count": 1622,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1622,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:memoPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "memoPr",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 2,
+   "explicit_end_form": 0,
+   "attributes": {
+    "activeColor": {
+     "count": 2,
+     "forms": 2
+    },
+    "fillColor": {
+     "count": 2,
+     "forms": 2
+    },
+    "id": {
+     "count": 2,
+     "forms": 2
+    },
+    "lineColor": {
+     "count": 2,
+     "forms": 2
+    },
+    "lineType": {
+     "count": 2,
+     "forms": 2
+    },
+    "lineWidth": {
+     "count": 2,
+     "forms": 2
+    },
+    "memoType": {
+     "count": 2,
+     "forms": 2
+    },
+    "width": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hh:memoProperties": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "memoProperties",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 2,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hh:numbering": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "numbering",
+   "count": 11,
+   "forms": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    7
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 11,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "id": {
+     "count": 11,
+     "forms": 7
+    },
+    "start": {
+     "count": 11,
+     "forms": 7
+    }
+   }
+  },
+  "hh:numberings": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "numberings",
+   "count": 7,
+   "forms": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    7
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 7,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 7,
+     "forms": 7
+    }
+   }
+  },
+  "hh:offset": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "offset",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hangul": {
+     "count": 848,
+     "forms": 12
+    },
+    "hanja": {
+     "count": 848,
+     "forms": 12
+    },
+    "japanese": {
+     "count": 848,
+     "forms": 12
+    },
+    "latin": {
+     "count": 848,
+     "forms": 12
+    },
+    "other": {
+     "count": 848,
+     "forms": 12
+    },
+    "symbol": {
+     "count": 848,
+     "forms": 12
+    },
+    "user": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:outline": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "outline",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "type": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:paraHead": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "paraHead",
+   "count": 110,
+   "forms": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    7
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 78,
+   "with_children": 0,
+   "empty": 32,
+   "explicit_end_form": 0,
+   "attributes": {
+    "align": {
+     "count": 110,
+     "forms": 7
+    },
+    "autoIndent": {
+     "count": 110,
+     "forms": 7
+    },
+    "charPrIDRef": {
+     "count": 110,
+     "forms": 7
+    },
+    "checkable": {
+     "count": 110,
+     "forms": 7
+    },
+    "level": {
+     "count": 110,
+     "forms": 7
+    },
+    "numFormat": {
+     "count": 110,
+     "forms": 7
+    },
+    "start": {
+     "count": 110,
+     "forms": 7
+    },
+    "textOffset": {
+     "count": 110,
+     "forms": 7
+    },
+    "textOffsetType": {
+     "count": 110,
+     "forms": 7
+    },
+    "useInstWidth": {
+     "count": 110,
+     "forms": 7
+    },
+    "widthAdjust": {
+     "count": 110,
+     "forms": 7
+    }
+   }
+  },
+  "hh:paraPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "paraPr",
+   "count": 811,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 811,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "checked": {
+     "count": 811,
+     "forms": 12
+    },
+    "condense": {
+     "count": 811,
+     "forms": 12
+    },
+    "fontLineHeight": {
+     "count": 811,
+     "forms": 12
+    },
+    "id": {
+     "count": 811,
+     "forms": 12
+    },
+    "snapToGrid": {
+     "count": 811,
+     "forms": 12
+    },
+    "suppressLineNumbers": {
+     "count": 811,
+     "forms": 12
+    },
+    "tabPrIDRef": {
+     "count": 811,
+     "forms": 12
+    },
+    "textDir": {
+     "count": 774,
+     "forms": 10
+    }
+   }
+  },
+  "hh:paraProperties": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "paraProperties",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:ratio": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "ratio",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hangul": {
+     "count": 848,
+     "forms": 12
+    },
+    "hanja": {
+     "count": 848,
+     "forms": 12
+    },
+    "japanese": {
+     "count": 848,
+     "forms": 12
+    },
+    "latin": {
+     "count": 848,
+     "forms": 12
+    },
+    "other": {
+     "count": 848,
+     "forms": 12
+    },
+    "symbol": {
+     "count": 848,
+     "forms": 12
+    },
+    "user": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:refList": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "refList",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:relSz": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "relSz",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hangul": {
+     "count": 848,
+     "forms": 12
+    },
+    "hanja": {
+     "count": 848,
+     "forms": 12
+    },
+    "japanese": {
+     "count": 848,
+     "forms": 12
+    },
+    "latin": {
+     "count": 848,
+     "forms": 12
+    },
+    "other": {
+     "count": 848,
+     "forms": 12
+    },
+    "symbol": {
+     "count": 848,
+     "forms": 12
+    },
+    "user": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:rightBorder": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "rightBorder",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    },
+    "width": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:shadow": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "shadow",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 848,
+     "forms": 12
+    },
+    "offsetX": {
+     "count": 848,
+     "forms": 12
+    },
+    "offsetY": {
+     "count": 848,
+     "forms": 12
+    },
+    "type": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:slash": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "slash",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "Crooked": {
+     "count": 495,
+     "forms": 12
+    },
+    "isCounter": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:spacing": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "spacing",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hangul": {
+     "count": 848,
+     "forms": 12
+    },
+    "hanja": {
+     "count": 848,
+     "forms": 12
+    },
+    "japanese": {
+     "count": 848,
+     "forms": 12
+    },
+    "latin": {
+     "count": 848,
+     "forms": 12
+    },
+    "other": {
+     "count": 848,
+     "forms": 12
+    },
+    "symbol": {
+     "count": 848,
+     "forms": 12
+    },
+    "user": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:strikeout": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "strikeout",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 848,
+     "forms": 12
+    },
+    "shape": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hh:style": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "style",
+   "count": 305,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 305,
+   "explicit_end_form": 0,
+   "attributes": {
+    "charPrIDRef": {
+     "count": 305,
+     "forms": 12
+    },
+    "engName": {
+     "count": 305,
+     "forms": 12
+    },
+    "id": {
+     "count": 305,
+     "forms": 12
+    },
+    "langID": {
+     "count": 305,
+     "forms": 12
+    },
+    "lockForm": {
+     "count": 305,
+     "forms": 12
+    },
+    "name": {
+     "count": 305,
+     "forms": 12
+    },
+    "nextStyleIDRef": {
+     "count": 305,
+     "forms": 12
+    },
+    "paraPrIDRef": {
+     "count": 305,
+     "forms": 12
+    },
+    "type": {
+     "count": 305,
+     "forms": 12
+    }
+   }
+  },
+  "hh:styles": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "styles",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:substFont": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "substFont",
+   "count": 33,
+   "forms": [
+    4,
+    5,
+    7,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 33,
+   "explicit_end_form": 0,
+   "attributes": {
+    "binaryItemIDRef": {
+     "count": 33,
+     "forms": 6
+    },
+    "face": {
+     "count": 33,
+     "forms": 6
+    },
+    "isEmbedded": {
+     "count": 33,
+     "forms": 6
+    },
+    "type": {
+     "count": 33,
+     "forms": 6
+    }
+   }
+  },
+  "hh:supscript": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "supscript",
+   "count": 1,
+   "forms": [
+    9
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hh:tabItem": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "tabItem",
+   "count": 700,
+   "forms": [
+    1,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 700,
+   "explicit_end_form": 0,
+   "attributes": {
+    "leader": {
+     "count": 700,
+     "forms": 8
+    },
+    "pos": {
+     "count": 700,
+     "forms": 8
+    },
+    "type": {
+     "count": 700,
+     "forms": 8
+    },
+    "unit": {
+     "count": 350,
+     "forms": 8
+    }
+   }
+  },
+  "hh:tabPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "tabPr",
+   "count": 45,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 20,
+   "empty": 25,
+   "explicit_end_form": 0,
+   "attributes": {
+    "autoTabLeft": {
+     "count": 45,
+     "forms": 12
+    },
+    "autoTabRight": {
+     "count": 45,
+     "forms": 12
+    },
+    "id": {
+     "count": 45,
+     "forms": 12
+    }
+   }
+  },
+  "hh:tabProperties": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "tabProperties",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "itemCnt": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:topBorder": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "topBorder",
+   "count": 495,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 495,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 495,
+     "forms": 12
+    },
+    "type": {
+     "count": 495,
+     "forms": 12
+    },
+    "width": {
+     "count": 495,
+     "forms": 12
+    }
+   }
+  },
+  "hh:trackchageConfig": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "trackchageConfig",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "flags": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hh:typeInfo": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "typeInfo",
+   "count": 634,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 634,
+   "explicit_end_form": 0,
+   "attributes": {
+    "armStyle": {
+     "count": 634,
+     "forms": 12
+    },
+    "contrast": {
+     "count": 634,
+     "forms": 12
+    },
+    "familyType": {
+     "count": 634,
+     "forms": 12
+    },
+    "letterform": {
+     "count": 634,
+     "forms": 12
+    },
+    "midline": {
+     "count": 634,
+     "forms": 12
+    },
+    "proportion": {
+     "count": 634,
+     "forms": 12
+    },
+    "strokeVariation": {
+     "count": 634,
+     "forms": 12
+    },
+    "weight": {
+     "count": 634,
+     "forms": 12
+    },
+    "xHeight": {
+     "count": 634,
+     "forms": 12
+    }
+   }
+  },
+  "hh:underline": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/head",
+   "local": "underline",
+   "count": 848,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 848,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 848,
+     "forms": 12
+    },
+    "shape": {
+     "count": 848,
+     "forms": 12
+    },
+    "type": {
+     "count": 848,
+     "forms": 12
+    }
+   }
+  },
+  "hp:autoNumFormat": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "autoNumFormat",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "prefixChar": {
+     "count": 24,
+     "forms": 12
+    },
+    "suffixChar": {
+     "count": 24,
+     "forms": 12
+    },
+    "supscript": {
+     "count": 24,
+     "forms": 12
+    },
+    "type": {
+     "count": 24,
+     "forms": 12
+    },
+    "userChar": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "hp:case": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "case",
+   "count": 1164,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1164,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hp:required-namespace": {
+     "count": 1164,
+     "forms": 12
+    }
+   }
+  },
+  "hp:cellAddr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellAddr",
+   "count": 1671,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1671,
+   "explicit_end_form": 0,
+   "attributes": {
+    "colAddr": {
+     "count": 1671,
+     "forms": 12
+    },
+    "rowAddr": {
+     "count": 1671,
+     "forms": 12
+    }
+   }
+  },
+  "hp:cellMargin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellMargin",
+   "count": 1671,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1671,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 1671,
+     "forms": 12
+    },
+    "left": {
+     "count": 1671,
+     "forms": 12
+    },
+    "right": {
+     "count": 1671,
+     "forms": 12
+    },
+    "top": {
+     "count": 1671,
+     "forms": 12
+    }
+   }
+  },
+  "hp:cellSpan": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellSpan",
+   "count": 1671,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1671,
+   "explicit_end_form": 0,
+   "attributes": {
+    "colSpan": {
+     "count": 1671,
+     "forms": 12
+    },
+    "rowSpan": {
+     "count": 1671,
+     "forms": 12
+    }
+   }
+  },
+  "hp:cellSz": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellSz",
+   "count": 1671,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1671,
+   "explicit_end_form": 0,
+   "attributes": {
+    "height": {
+     "count": 1671,
+     "forms": 12
+    },
+    "width": {
+     "count": 1671,
+     "forms": 12
+    }
+   }
+  },
+  "hp:cellzone": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellzone",
+   "count": 4,
+   "forms": [
+    5,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 4,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 4,
+     "forms": 2
+    },
+    "endColAddr": {
+     "count": 4,
+     "forms": 2
+    },
+    "endRowAddr": {
+     "count": 4,
+     "forms": 2
+    },
+    "startColAddr": {
+     "count": 4,
+     "forms": 2
+    },
+    "startRowAddr": {
+     "count": 4,
+     "forms": 2
+    }
+   }
+  },
+  "hp:cellzoneList": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "cellzoneList",
+   "count": 2,
+   "forms": [
+    5,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 2,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:colPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "colPr",
+   "count": 34,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 34,
+   "explicit_end_form": 0,
+   "attributes": {
+    "colCount": {
+     "count": 34,
+     "forms": 12
+    },
+    "id": {
+     "count": 34,
+     "forms": 12
+    },
+    "layout": {
+     "count": 34,
+     "forms": 12
+    },
+    "sameGap": {
+     "count": 34,
+     "forms": 12
+    },
+    "sameSz": {
+     "count": 34,
+     "forms": 12
+    },
+    "type": {
+     "count": 34,
+     "forms": 12
+    }
+   }
+  },
+  "hp:ctrl": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "ctrl",
+   "count": 57,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 57,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:curSz": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "curSz",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "height": {
+     "count": 7,
+     "forms": 3
+    },
+    "width": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hp:default": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "default",
+   "count": 1164,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1164,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:drawText": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "drawText",
+   "count": 5,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 5,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "editable": {
+     "count": 5,
+     "forms": 1
+    },
+    "lastWidth": {
+     "count": 5,
+     "forms": 1
+    },
+    "name": {
+     "count": 5,
+     "forms": 1
+    }
+   }
+  },
+  "hp:effects": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "effects",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 2,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:endNotePr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "endNotePr",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:fieldBegin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "fieldBegin",
+   "count": 9,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 9,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "dirty": {
+     "count": 9,
+     "forms": 2
+    },
+    "editable": {
+     "count": 9,
+     "forms": 2
+    },
+    "fieldid": {
+     "count": 9,
+     "forms": 2
+    },
+    "id": {
+     "count": 9,
+     "forms": 2
+    },
+    "name": {
+     "count": 9,
+     "forms": 2
+    },
+    "type": {
+     "count": 9,
+     "forms": 2
+    },
+    "zorder": {
+     "count": 9,
+     "forms": 2
+    }
+   }
+  },
+  "hp:fieldEnd": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "fieldEnd",
+   "count": 9,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 9,
+   "explicit_end_form": 0,
+   "attributes": {
+    "beginIDRef": {
+     "count": 9,
+     "forms": 2
+    },
+    "fieldid": {
+     "count": 9,
+     "forms": 2
+    }
+   }
+  },
+  "hp:flip": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "flip",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "horizontal": {
+     "count": 7,
+     "forms": 3
+    },
+    "vertical": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hp:footNotePr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "footNotePr",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:fwSpace": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "fwSpace",
+   "count": 8,
+   "forms": [
+    0,
+    4,
+    5,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 8,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:grid": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "grid",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "charGrid": {
+     "count": 12,
+     "forms": 12
+    },
+    "lineGrid": {
+     "count": 12,
+     "forms": 12
+    },
+    "wonggojiFormat": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:header": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "header",
+   "count": 1,
+   "forms": [
+    3
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "applyPageType": {
+     "count": 1,
+     "forms": 1
+    },
+    "id": {
+     "count": 1,
+     "forms": 1
+    }
+   }
+  },
+  "hp:imgClip": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "imgClip",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 2,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 2,
+     "forms": 2
+    },
+    "left": {
+     "count": 2,
+     "forms": 2
+    },
+    "right": {
+     "count": 2,
+     "forms": 2
+    },
+    "top": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hp:imgDim": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "imgDim",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 2,
+   "explicit_end_form": 0,
+   "attributes": {
+    "dimheight": {
+     "count": 2,
+     "forms": 2
+    },
+    "dimwidth": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hp:imgRect": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "imgRect",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 2,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:inMargin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "inMargin",
+   "count": 88,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 88,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 88,
+     "forms": 12
+    },
+    "left": {
+     "count": 88,
+     "forms": 12
+    },
+    "right": {
+     "count": 88,
+     "forms": 12
+    },
+    "top": {
+     "count": 88,
+     "forms": 12
+    }
+   }
+  },
+  "hp:integerParam": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "integerParam",
+   "count": 9,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 9,
+   "with_children": 0,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "name": {
+     "count": 9,
+     "forms": 2
+    }
+   }
+  },
+  "hp:lineBreak": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "lineBreak",
+   "count": 30,
+   "forms": [
+    3,
+    5,
+    7
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 30,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:lineNumberShape": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "lineNumberShape",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "countBy": {
+     "count": 12,
+     "forms": 12
+    },
+    "distance": {
+     "count": 12,
+     "forms": 12
+    },
+    "restartType": {
+     "count": 12,
+     "forms": 12
+    },
+    "startNumber": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:lineShape": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "lineShape",
+   "count": 5,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 5,
+   "explicit_end_form": 0,
+   "attributes": {
+    "alpha": {
+     "count": 5,
+     "forms": 1
+    },
+    "color": {
+     "count": 5,
+     "forms": 1
+    },
+    "endCap": {
+     "count": 5,
+     "forms": 1
+    },
+    "headStyle": {
+     "count": 5,
+     "forms": 1
+    },
+    "headSz": {
+     "count": 5,
+     "forms": 1
+    },
+    "headfill": {
+     "count": 5,
+     "forms": 1
+    },
+    "outlineStyle": {
+     "count": 5,
+     "forms": 1
+    },
+    "style": {
+     "count": 5,
+     "forms": 1
+    },
+    "tailStyle": {
+     "count": 5,
+     "forms": 1
+    },
+    "tailSz": {
+     "count": 5,
+     "forms": 1
+    },
+    "tailfill": {
+     "count": 5,
+     "forms": 1
+    },
+    "width": {
+     "count": 5,
+     "forms": 1
+    }
+   }
+  },
+  "hp:lineseg": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "lineseg",
+   "count": 3355,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 3355,
+   "explicit_end_form": 0,
+   "attributes": {
+    "baseline": {
+     "count": 3355,
+     "forms": 12
+    },
+    "flags": {
+     "count": 3355,
+     "forms": 12
+    },
+    "horzpos": {
+     "count": 3355,
+     "forms": 12
+    },
+    "horzsize": {
+     "count": 3355,
+     "forms": 12
+    },
+    "spacing": {
+     "count": 3355,
+     "forms": 12
+    },
+    "textheight": {
+     "count": 3355,
+     "forms": 12
+    },
+    "textpos": {
+     "count": 3355,
+     "forms": 12
+    },
+    "vertpos": {
+     "count": 3355,
+     "forms": 12
+    },
+    "vertsize": {
+     "count": 3355,
+     "forms": 12
+    }
+   }
+  },
+  "hp:linesegarray": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "linesegarray",
+   "count": 3124,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 3124,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:margin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "margin",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 12,
+     "forms": 12
+    },
+    "footer": {
+     "count": 12,
+     "forms": 12
+    },
+    "gutter": {
+     "count": 12,
+     "forms": 12
+    },
+    "header": {
+     "count": 12,
+     "forms": 12
+    },
+    "left": {
+     "count": 12,
+     "forms": 12
+    },
+    "right": {
+     "count": 12,
+     "forms": 12
+    },
+    "top": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:markpenBegin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "markpenBegin",
+   "count": 1,
+   "forms": [
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 1,
+     "forms": 1
+    }
+   }
+  },
+  "hp:markpenEnd": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "markpenEnd",
+   "count": 1,
+   "forms": [
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 1,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:newNum": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "newNum",
+   "count": 4,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 4,
+   "explicit_end_form": 0,
+   "attributes": {
+    "num": {
+     "count": 4,
+     "forms": 2
+    },
+    "numType": {
+     "count": 4,
+     "forms": 2
+    }
+   }
+  },
+  "hp:noteLine": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "noteLine",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "color": {
+     "count": 24,
+     "forms": 12
+    },
+    "length": {
+     "count": 24,
+     "forms": 12
+    },
+    "type": {
+     "count": 24,
+     "forms": 12
+    },
+    "width": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "hp:noteSpacing": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "noteSpacing",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "aboveLine": {
+     "count": 24,
+     "forms": 12
+    },
+    "belowLine": {
+     "count": 24,
+     "forms": 12
+    },
+    "betweenNotes": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "hp:numbering": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "numbering",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "newNum": {
+     "count": 24,
+     "forms": 12
+    },
+    "type": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "hp:offset": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "offset",
+   "count": 43,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 43,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 36,
+     "forms": 12
+    },
+    "left": {
+     "count": 36,
+     "forms": 12
+    },
+    "right": {
+     "count": 36,
+     "forms": 12
+    },
+    "top": {
+     "count": 36,
+     "forms": 12
+    },
+    "x": {
+     "count": 7,
+     "forms": 3
+    },
+    "y": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hp:orgSz": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "orgSz",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "height": {
+     "count": 7,
+     "forms": 3
+    },
+    "width": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hp:outMargin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "outMargin",
+   "count": 93,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 93,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 93,
+     "forms": 12
+    },
+    "left": {
+     "count": 93,
+     "forms": 12
+    },
+    "right": {
+     "count": 93,
+     "forms": 12
+    },
+    "top": {
+     "count": 93,
+     "forms": 12
+    }
+   }
+  },
+  "hp:p": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "p",
+   "count": 3127,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 3127,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "columnBreak": {
+     "count": 3127,
+     "forms": 12
+    },
+    "id": {
+     "count": 3127,
+     "forms": 12
+    },
+    "merged": {
+     "count": 3127,
+     "forms": 12
+    },
+    "pageBreak": {
+     "count": 3127,
+     "forms": 12
+    },
+    "paraPrIDRef": {
+     "count": 3127,
+     "forms": 12
+    },
+    "styleIDRef": {
+     "count": 3127,
+     "forms": 12
+    }
+   }
+  },
+  "hp:pageBorderFill": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "pageBorderFill",
+   "count": 36,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 36,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 36,
+     "forms": 12
+    },
+    "fillArea": {
+     "count": 36,
+     "forms": 12
+    },
+    "footerInside": {
+     "count": 36,
+     "forms": 12
+    },
+    "headerInside": {
+     "count": 36,
+     "forms": 12
+    },
+    "textBorder": {
+     "count": 36,
+     "forms": 12
+    },
+    "type": {
+     "count": 36,
+     "forms": 12
+    }
+   }
+  },
+  "hp:pagePr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "pagePr",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "gutterType": {
+     "count": 12,
+     "forms": 12
+    },
+    "height": {
+     "count": 12,
+     "forms": 12
+    },
+    "landscape": {
+     "count": 12,
+     "forms": 12
+    },
+    "width": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:parameters": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "parameters",
+   "count": 9,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 9,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "cnt": {
+     "count": 9,
+     "forms": 2
+    },
+    "name": {
+     "count": 9,
+     "forms": 2
+    }
+   }
+  },
+  "hp:pic": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "pic",
+   "count": 2,
+   "forms": [
+    3,
+    4
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 2,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "dropcapstyle": {
+     "count": 2,
+     "forms": 2
+    },
+    "groupLevel": {
+     "count": 2,
+     "forms": 2
+    },
+    "href": {
+     "count": 2,
+     "forms": 2
+    },
+    "id": {
+     "count": 2,
+     "forms": 2
+    },
+    "instid": {
+     "count": 2,
+     "forms": 2
+    },
+    "lock": {
+     "count": 2,
+     "forms": 2
+    },
+    "numberingType": {
+     "count": 2,
+     "forms": 2
+    },
+    "reverse": {
+     "count": 2,
+     "forms": 2
+    },
+    "textFlow": {
+     "count": 2,
+     "forms": 2
+    },
+    "textWrap": {
+     "count": 2,
+     "forms": 2
+    },
+    "zOrder": {
+     "count": 2,
+     "forms": 2
+    }
+   }
+  },
+  "hp:placement": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "placement",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "beneathText": {
+     "count": 24,
+     "forms": 12
+    },
+    "place": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "hp:pos": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "pos",
+   "count": 93,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 93,
+   "explicit_end_form": 0,
+   "attributes": {
+    "affectLSpacing": {
+     "count": 93,
+     "forms": 12
+    },
+    "allowOverlap": {
+     "count": 93,
+     "forms": 12
+    },
+    "flowWithText": {
+     "count": 93,
+     "forms": 12
+    },
+    "holdAnchorAndSO": {
+     "count": 93,
+     "forms": 12
+    },
+    "horzAlign": {
+     "count": 93,
+     "forms": 12
+    },
+    "horzOffset": {
+     "count": 93,
+     "forms": 12
+    },
+    "horzRelTo": {
+     "count": 93,
+     "forms": 12
+    },
+    "treatAsChar": {
+     "count": 93,
+     "forms": 12
+    },
+    "vertAlign": {
+     "count": 93,
+     "forms": 12
+    },
+    "vertOffset": {
+     "count": 93,
+     "forms": 12
+    },
+    "vertRelTo": {
+     "count": 93,
+     "forms": 12
+    }
+   }
+  },
+  "hp:rect": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "rect",
+   "count": 5,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 5,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "dropcapstyle": {
+     "count": 5,
+     "forms": 1
+    },
+    "groupLevel": {
+     "count": 5,
+     "forms": 1
+    },
+    "href": {
+     "count": 5,
+     "forms": 1
+    },
+    "id": {
+     "count": 5,
+     "forms": 1
+    },
+    "instid": {
+     "count": 5,
+     "forms": 1
+    },
+    "lock": {
+     "count": 5,
+     "forms": 1
+    },
+    "numberingType": {
+     "count": 5,
+     "forms": 1
+    },
+    "ratio": {
+     "count": 5,
+     "forms": 1
+    },
+    "textFlow": {
+     "count": 5,
+     "forms": 1
+    },
+    "textWrap": {
+     "count": 5,
+     "forms": 1
+    },
+    "zOrder": {
+     "count": 5,
+     "forms": 1
+    }
+   }
+  },
+  "hp:renderingInfo": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "renderingInfo",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 7,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:rotationInfo": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "rotationInfo",
+   "count": 7,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 7,
+   "explicit_end_form": 0,
+   "attributes": {
+    "angle": {
+     "count": 7,
+     "forms": 3
+    },
+    "centerX": {
+     "count": 7,
+     "forms": 3
+    },
+    "centerY": {
+     "count": 7,
+     "forms": 3
+    },
+    "rotateimage": {
+     "count": 7,
+     "forms": 3
+    }
+   }
+  },
+  "hp:run": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "run",
+   "count": 4225,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 3249,
+   "empty": 976,
+   "explicit_end_form": 0,
+   "attributes": {
+    "charPrIDRef": {
+     "count": 4225,
+     "forms": 12
+    }
+   }
+  },
+  "hp:secPr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "secPr",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "id": {
+     "count": 12,
+     "forms": 12
+    },
+    "masterPageCnt": {
+     "count": 12,
+     "forms": 12
+    },
+    "memoShapeIDRef": {
+     "count": 12,
+     "forms": 12
+    },
+    "outlineShapeIDRef": {
+     "count": 12,
+     "forms": 12
+    },
+    "spaceColumns": {
+     "count": 12,
+     "forms": 12
+    },
+    "tabStop": {
+     "count": 12,
+     "forms": 12
+    },
+    "tabStopUnit": {
+     "count": 12,
+     "forms": 12
+    },
+    "tabStopVal": {
+     "count": 12,
+     "forms": 12
+    },
+    "textDirection": {
+     "count": 12,
+     "forms": 12
+    },
+    "textVerticalWidthHead": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:shadow": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "shadow",
+   "count": 5,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 5,
+   "explicit_end_form": 0,
+   "attributes": {
+    "alpha": {
+     "count": 5,
+     "forms": 1
+    },
+    "color": {
+     "count": 5,
+     "forms": 1
+    },
+    "offsetX": {
+     "count": 5,
+     "forms": 1
+    },
+    "offsetY": {
+     "count": 5,
+     "forms": 1
+    },
+    "type": {
+     "count": 5,
+     "forms": 1
+    }
+   }
+  },
+  "hp:shapeComment": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "shapeComment",
+   "count": 4,
+   "forms": [
+    3,
+    4,
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 4,
+   "with_children": 0,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:startNum": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "startNum",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "equation": {
+     "count": 12,
+     "forms": 12
+    },
+    "page": {
+     "count": 12,
+     "forms": 12
+    },
+    "pageStartsOn": {
+     "count": 12,
+     "forms": 12
+    },
+    "pic": {
+     "count": 12,
+     "forms": 12
+    },
+    "tbl": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hp:stringParam": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "stringParam",
+   "count": 37,
+   "forms": [
+    5,
+    6
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 37,
+   "with_children": 0,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "name": {
+     "count": 37,
+     "forms": 2
+    }
+   }
+  },
+  "hp:subList": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "subList",
+   "count": 1677,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1677,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "hasNumRef": {
+     "count": 1677,
+     "forms": 12
+    },
+    "hasTextRef": {
+     "count": 1677,
+     "forms": 12
+    },
+    "id": {
+     "count": 1677,
+     "forms": 12
+    },
+    "lineWrap": {
+     "count": 1677,
+     "forms": 12
+    },
+    "linkListIDRef": {
+     "count": 1677,
+     "forms": 12
+    },
+    "linkListNextIDRef": {
+     "count": 1677,
+     "forms": 12
+    },
+    "textDirection": {
+     "count": 1677,
+     "forms": 12
+    },
+    "textHeight": {
+     "count": 1677,
+     "forms": 12
+    },
+    "textWidth": {
+     "count": 1677,
+     "forms": 12
+    },
+    "vertAlign": {
+     "count": 1677,
+     "forms": 12
+    }
+   }
+  },
+  "hp:switch": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "switch",
+   "count": 1164,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/header.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1164,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:sz": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "sz",
+   "count": 93,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 93,
+   "explicit_end_form": 0,
+   "attributes": {
+    "height": {
+     "count": 93,
+     "forms": 12
+    },
+    "heightRelTo": {
+     "count": 93,
+     "forms": 12
+    },
+    "protect": {
+     "count": 93,
+     "forms": 12
+    },
+    "width": {
+     "count": 93,
+     "forms": 12
+    },
+    "widthRelTo": {
+     "count": 93,
+     "forms": 12
+    }
+   }
+  },
+  "hp:t": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "t",
+   "count": 3229,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 3120,
+   "with_children": 31,
+   "empty": 102,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:tab": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "tab",
+   "count": 15,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 15,
+   "explicit_end_form": 0,
+   "attributes": {
+    "leader": {
+     "count": 15,
+     "forms": 1
+    },
+    "type": {
+     "count": 15,
+     "forms": 1
+    },
+    "width": {
+     "count": 15,
+     "forms": 1
+    }
+   }
+  },
+  "hp:tbl": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "tbl",
+   "count": 86,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 86,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 86,
+     "forms": 12
+    },
+    "cellSpacing": {
+     "count": 86,
+     "forms": 12
+    },
+    "colCnt": {
+     "count": 86,
+     "forms": 12
+    },
+    "dropcapstyle": {
+     "count": 86,
+     "forms": 12
+    },
+    "id": {
+     "count": 86,
+     "forms": 12
+    },
+    "lock": {
+     "count": 86,
+     "forms": 12
+    },
+    "noAdjust": {
+     "count": 86,
+     "forms": 12
+    },
+    "numberingType": {
+     "count": 86,
+     "forms": 12
+    },
+    "pageBreak": {
+     "count": 86,
+     "forms": 12
+    },
+    "repeatHeader": {
+     "count": 86,
+     "forms": 12
+    },
+    "rowCnt": {
+     "count": 86,
+     "forms": 12
+    },
+    "textFlow": {
+     "count": 86,
+     "forms": 12
+    },
+    "textWrap": {
+     "count": 86,
+     "forms": 12
+    },
+    "zOrder": {
+     "count": 86,
+     "forms": 12
+    }
+   }
+  },
+  "hp:tc": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "tc",
+   "count": 1671,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 1671,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "borderFillIDRef": {
+     "count": 1671,
+     "forms": 12
+    },
+    "dirty": {
+     "count": 1671,
+     "forms": 12
+    },
+    "editable": {
+     "count": 1671,
+     "forms": 12
+    },
+    "hasMargin": {
+     "count": 1671,
+     "forms": 12
+    },
+    "header": {
+     "count": 1671,
+     "forms": 12
+    },
+    "name": {
+     "count": 1671,
+     "forms": 12
+    },
+    "protect": {
+     "count": 1671,
+     "forms": 12
+    }
+   }
+  },
+  "hp:textMargin": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "textMargin",
+   "count": 5,
+   "forms": [
+    5
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 5,
+   "explicit_end_form": 0,
+   "attributes": {
+    "bottom": {
+     "count": 5,
+     "forms": 1
+    },
+    "left": {
+     "count": 5,
+     "forms": 1
+    },
+    "right": {
+     "count": 5,
+     "forms": 1
+    },
+    "top": {
+     "count": 5,
+     "forms": 1
+    }
+   }
+  },
+  "hp:tr": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "tr",
+   "count": 540,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 540,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "hp:visibility": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+   "local": "visibility",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "border": {
+     "count": 12,
+     "forms": 12
+    },
+    "fill": {
+     "count": 12,
+     "forms": 12
+    },
+    "hideFirstEmptyLine": {
+     "count": 12,
+     "forms": 12
+    },
+    "hideFirstFooter": {
+     "count": 12,
+     "forms": 12
+    },
+    "hideFirstHeader": {
+     "count": 12,
+     "forms": 12
+    },
+    "hideFirstMasterPage": {
+     "count": 12,
+     "forms": 12
+    },
+    "hideFirstPageNum": {
+     "count": 12,
+     "forms": 12
+    },
+    "showLineNumber": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hs:sec": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/section",
+   "local": "sec",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/section0.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "xmlns:config": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:dc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:epub": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ha": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hh": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hhs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hm": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp10": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hpf": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hwpunitchar": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ooxmlchart": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:opf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "hv:HCFVersion": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2011/version",
+   "local": "HCFVersion",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "version.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "appVersion": {
+     "count": 12,
+     "forms": 12
+    },
+    "application": {
+     "count": 12,
+     "forms": 12
+    },
+    "buildNumber": {
+     "count": 12,
+     "forms": 12
+    },
+    "major": {
+     "count": 12,
+     "forms": 12
+    },
+    "micro": {
+     "count": 12,
+     "forms": 12
+    },
+    "minor": {
+     "count": 12,
+     "forms": 12
+    },
+    "os": {
+     "count": 12,
+     "forms": 12
+    },
+    "tagetApplication": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlVersion": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hv": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "ns0:hasPart": {
+   "namespace": "http://www.hancom.co.kr/hwpml/2016/meta/pkg#",
+   "local": "hasPart",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.rdf"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "rdf:resource": {
+     "count": 24,
+     "forms": 12
+    },
+    "xmlns:ns0": {
+     "count": 24,
+     "forms": 12
+    }
+   }
+  },
+  "ocf:container": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:container",
+   "local": "container",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "xmlns:hpf": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ocf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "ocf:rootfile": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:container",
+   "local": "rootfile",
+   "count": 36,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 36,
+   "explicit_end_form": 0,
+   "attributes": {
+    "full-path": {
+     "count": 36,
+     "forms": 12
+    },
+    "media-type": {
+     "count": 36,
+     "forms": 12
+    }
+   }
+  },
+  "ocf:rootfiles": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:container",
+   "local": "rootfiles",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.xml"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "odf:manifest": {
+   "namespace": "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0",
+   "local": "manifest",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/manifest.xml"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 12,
+   "explicit_end_form": 0,
+   "attributes": {
+    "xmlns:odf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "opf:item": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "item",
+   "count": 38,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 38,
+   "explicit_end_form": 0,
+   "attributes": {
+    "href": {
+     "count": 38,
+     "forms": 12
+    },
+    "id": {
+     "count": 38,
+     "forms": 12
+    },
+    "isEmbeded": {
+     "count": 2,
+     "forms": 2
+    },
+    "media-type": {
+     "count": 38,
+     "forms": 12
+    }
+   }
+  },
+  "opf:itemref": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "itemref",
+   "count": 24,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 24,
+   "explicit_end_form": 0,
+   "attributes": {
+    "idref": {
+     "count": 24,
+     "forms": 12
+    },
+    "linear": {
+     "count": 22,
+     "forms": 12
+    }
+   }
+  },
+  "opf:language": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "language",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 12,
+   "with_children": 0,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "opf:manifest": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "manifest",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "opf:meta": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "meta",
+   "count": 96,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 68,
+   "with_children": 0,
+   "empty": 28,
+   "explicit_end_form": 0,
+   "attributes": {
+    "content": {
+     "count": 96,
+     "forms": 12
+    },
+    "name": {
+     "count": 96,
+     "forms": 12
+    },
+    "xml:space": {
+     "count": 2,
+     "forms": 1
+    }
+   }
+  },
+  "opf:metadata": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "metadata",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "opf:package": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "package",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "id": {
+     "count": 12,
+     "forms": 12
+    },
+    "unique-identifier": {
+     "count": 12,
+     "forms": 12
+    },
+    "version": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:config": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:dc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:epub": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ha": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hc": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hh": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hhs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hm": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hp10": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hpf": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hs": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:hwpunitchar": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:ooxmlchart": {
+     "count": 12,
+     "forms": 12
+    },
+    "xmlns:opf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "opf:spine": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "spine",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "opf:title": {
+   "namespace": "http://www.idpf.org/2007/opf/",
+   "local": "title",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "Contents/content.hpf"
+   ],
+   "with_text": 6,
+   "with_children": 0,
+   "empty": 6,
+   "explicit_end_form": 0,
+   "attributes": {}
+  },
+  "rdf:Description": {
+   "namespace": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+   "local": "Description",
+   "count": 60,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.rdf"
+   ],
+   "with_text": 0,
+   "with_children": 60,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "rdf:about": {
+     "count": 60,
+     "forms": 12
+    }
+   }
+  },
+  "rdf:RDF": {
+   "namespace": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+   "local": "RDF",
+   "count": 12,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.rdf"
+   ],
+   "with_text": 0,
+   "with_children": 12,
+   "empty": 0,
+   "explicit_end_form": 0,
+   "attributes": {
+    "xmlns:rdf": {
+     "count": 12,
+     "forms": 12
+    }
+   }
+  },
+  "rdf:type": {
+   "namespace": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+   "local": "type",
+   "count": 36,
+   "forms": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "parts": [
+    "META-INF/container.rdf"
+   ],
+   "with_text": 0,
+   "with_children": 0,
+   "empty": 36,
+   "explicit_end_form": 0,
+   "attributes": {
+    "rdf:resource": {
+     "count": 36,
+     "forms": 12
+    }
+   }
+  }
+ }
+}
