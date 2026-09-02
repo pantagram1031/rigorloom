@@ -195,11 +195,16 @@ compression-option bits on write with no API to keep them.
    root per node made a 500 KB section take minutes. `iter_with_scope` carries
    the scope down the walk; a test asserts the two agree.
 
-4. Not a defect but worth recording: `tidy_hwpx.py` and `preedit.py` rewrite
-   archives with `zipfile.ZIP_DEFLATED` at the default level and let `zipfile`
-   recompute flag bits, so their output is deflate-level-6 with flag bits `0`
-   where Hancom writes level 2 with `0x4`. Content is unaffected; archive
-   bytes are not Hancom-shaped. Left alone in this slice — see §8.
+4. Was true through this document's §8 pending item, now closed: `tidy_hwpx.py`
+   and `preedit.py` used to rewrite archives with `zipfile.ZIP_DEFLATED` at the
+   default level and let `zipfile` recompute flag bits (deflate-level-6, flag
+   bits `0`, where Hancom writes level 2 with `0x4`). Both now route through
+   `hwpx_write.write_members` (`tidy_hwpx._write_hwpx`,
+   `preedit._write_zip`), covered by `engine/tests/test_hwpx_archive_routing.py`:
+   132/132 members byte-identical and CRC-equal on an unchanged write, on both
+   writers; archive-container bytes match source on 10/12 corpus forms — the
+   other 2 are the same non-reproducible-deflate-encoding case as §5's archive
+   level (member CRC still matches).
 
 ## 7. New-document path
 
@@ -230,9 +235,6 @@ output can vary with the zlib build while member content cannot.
   deflate encoding of identical content. Closing that would mean shipping a
   deflate implementation matched to Hancom's, which is not worth it — CRC
   equality is the right claim.
-- **`tidy_hwpx.py` / `preedit.py` archive assembly** still uses `zipfile`
-  defaults (§6.4). They should route through `HwpxPackage.write`; that is a
-  separate slice because both have live fixture-backed suites.
 - **A schema.** The inventory says what the corpus *uses*, not what KS X 6101
   *permits*. An element the corpus never showed is not in the 161, and the
   writer will emit it fine (it is lexical) but nothing here validates it.
