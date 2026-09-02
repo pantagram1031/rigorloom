@@ -3025,16 +3025,26 @@ export async function runSmoke(): Promise<void> {
   }
 
   let finished = false;
+  // 180 s is the budget every phase has had, and it is deliberately tight:
+  // a phase that needs longer is usually a phase that is waiting on something
+  // it should be asserting about. `undo` is the exception and it is a measured
+  // one — it drives FOUR real applies (edit, chain, reversal, and the staged
+  // session's echo edit), each spawning preedit and check_residue children,
+  // plus two form_inspect runs for candidate/compare and an eight-page geometry
+  // scan. Giving it the default would make the watchdog a coin flip on machine
+  // load rather than a budget.
+  const budgetMs = config.phase === "undo" ? 480_000 : 180_000;
   const watchdog = setTimeout(() => {
     if (finished) return;
-    check("smoke finished within its own budget", false, "180s watchdog fired");
+    check("smoke finished within its own budget", false,
+      `${Math.round(budgetMs / 1000)}s watchdog fired`);
     void rt.smokeFinish({
       phase: config.phase,
       passed: checks.filter((c) => c.ok).length,
       failed: checks.filter((c) => !c.ok).length,
       checks,
     });
-  }, 180_000);
+  }, budgetMs);
 
   try {
     if (config.phase === "open") await phaseOpen(config);

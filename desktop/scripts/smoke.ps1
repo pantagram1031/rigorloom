@@ -109,7 +109,10 @@ param(
     # The packs phase uses it too, because it is the form whose grant checker
     # returns a finding the runtime could translate into an address.
     [string]$SeatedCorpus = "",
-    [int]$TimeoutSec = 300,
+    # The driver's own bound, and it must sit ABOVE the in-app watchdog or the
+    # app gets killed before it can write the report that says what failed.
+    # The undo phase gives itself 480 s (four real applies), so this is 540.
+    [int]$TimeoutSec = 540,
     [switch]$KeepRoot,
     # Run a subset. Handy while iterating; the evidence run passes nothing.
     [string[]]$Only = @()
