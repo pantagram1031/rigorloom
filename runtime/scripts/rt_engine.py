@@ -144,8 +144,21 @@ class ChildResult:
 
 def run_child(argv: list[str], *, cwd: Path | None = None,
               timeout: float = CHILD_TIMEOUT_SECONDS,
-              max_output: int = MAX_CHILD_OUTPUT_BYTES) -> ChildResult:
-    """One bounded child. stdin is closed; stdout and stderr are drained apart."""
+              max_output: int = MAX_CHILD_OUTPUT_BYTES,
+              extra_env: dict | None = None) -> ChildResult:
+    """One bounded child. stdin is closed; stdout and stderr are drained apart.
+
+    ``extra_env`` ADDS to the allowlist; it does not inherit. The caller names
+    each variable and its value, so the child's environment stays something
+    somebody decided. It exists because a child can need to see a choice the
+    Runtime already made — which module installation is in use, for one — and a
+    child answering about a DIFFERENT installation than the caller selected is
+    worse than a child that cannot answer at all.
+    """
+    env = child_env()
+    for key, value in (extra_env or {}).items():
+        if value is not None:
+            env[str(key)] = str(value)
     try:
         proc = subprocess.Popen(
             argv,
@@ -153,7 +166,7 @@ def run_child(argv: list[str], *, cwd: Path | None = None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(cwd) if cwd is not None else None,
-            env=child_env(),
+            env=env,
         )
     except (OSError, ValueError) as exc:
         raise RpcError("capability_unavailable",
