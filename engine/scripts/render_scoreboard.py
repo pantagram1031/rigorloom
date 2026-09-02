@@ -526,7 +526,8 @@ def _median(values):
 
 
 def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
-               out_dir=None, stem=None):
+               out_dir=None, stem=None,
+               line_layout=own_render.LINE_LAYOUT_AUTO):
     """Render the form and score it against its Hancom reference PDF."""
     Image, _ = _require_pillow()
     hwpx_path = Path(hwpx_path)
@@ -536,7 +537,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
     if not reference_pdf.is_file():
         raise ValueError(f"not a file: {reference_pdf}")
 
-    renderer = own_render.OwnRenderer(hwpx_path, dpi=dpi)
+    renderer = own_render.OwnRenderer(hwpx_path, dpi=dpi,
+                                      line_layout=line_layout)
     images, sidecar = renderer.render()
     if out_dir is not None:
         out_dir = Path(out_dir)
@@ -644,6 +646,11 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
             "renderer until it emits a PDF text layer."
         ),
         "label": label,
+        "line_layout": sidecar.get("line_layout", {}).get("policy"),
+        "line_layout_paragraphs": (
+            sidecar.get("line_layout", {}).get("paragraphs")),
+        "line_layout_meaning": (
+            "which engine laid out the line boxes being scored. auto: the document's own cached hp:lineseg wherever it still describes the text, so this column measures everything EXCEPT the line breaker. computed: every line broken by this renderer, so this column is the honest measure OF the line breaker."),
         "document": hwpx_path.name,
         "reference_pdf": reference_pdf.name,
         "dpi": dpi,
@@ -756,6 +763,10 @@ def build_parser():
     parser.add_argument("--out", required=True, help="output directory")
     parser.add_argument("--dpi", type=int, default=DEFAULT_DPI)
     parser.add_argument("--label", help="scoreboard label, e.g. before / after")
+    parser.add_argument(
+        "--line-layout", choices=list(own_render.LINE_LAYOUT_MODES),
+        default=own_render.LINE_LAYOUT_AUTO,
+        help="auto (default) scores the render as it ships; computed scores it with every paragraph relaid out by the own line breaker")
     parser.add_argument("--corpus", action="store_true",
                         help="score every corpus form that has a reference PDF")
     parser.add_argument("--save-pages", action="store_true",
@@ -773,7 +784,8 @@ def main(argv=None):
             for hwpx, pdf, family in _corpus_pairs(repo_root):
                 report = score_form(
                     hwpx, pdf, dpi=args.dpi, label=args.label,
-                    out_dir=args.out if args.save_pages else None)
+                    out_dir=args.out if args.save_pages else None,
+                    line_layout=args.line_layout)
                 report["document_class"] = family
                 write_scoreboard(report, args.out, hwpx.stem, args.label)
                 reports.append({
@@ -796,7 +808,8 @@ def main(argv=None):
             return 2
         report = score_form(args.input, args.reference, dpi=args.dpi,
                             label=args.label,
-                            out_dir=args.out if args.save_pages else None)
+                            out_dir=args.out if args.save_pages else None,
+                            line_layout=args.line_layout)
         path = write_scoreboard(report, args.out, Path(args.input).stem,
                                 args.label)
         print(json.dumps({"scoreboard": str(path), "report": report},
