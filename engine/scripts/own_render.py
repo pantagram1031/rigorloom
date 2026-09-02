@@ -1115,6 +1115,7 @@ class OwnRenderer:
         self._face_cache = {}
         self.skipped = {}
         self._bin_cache = {}
+        self._synthetic_bold = {}
         self._page_num_spec = _UNSET
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
@@ -1339,8 +1340,13 @@ class OwnRenderer:
             return hit[0]
         font_ids = self._charpr(cid).get("font_ids") or {}
         face_name = None
-        for key in (slot, slot.upper()):
-            font_id = font_ids.get(key)
+        # NOT ``key``: this loop used to shadow the cache key computed above,
+        # so every write below filed itself under the string "hangul" while
+        # every read asked for the tuple.  The cache therefore never hit —
+        # each character re-ran a system font-index lookup — and any other
+        # per-face fact recorded here was filed under the wrong name too.
+        for slot_key in (slot, slot.upper()):
+            font_id = font_ids.get(slot_key)
             if font_id is None:
                 continue
             table = (self.defs["fontfaces"].get(slot.upper())
@@ -1357,6 +1363,14 @@ class OwnRenderer:
         if entry is not None:
             chosen = entry["bold" if bold else "regular"] or entry["regular"] \
                 or entry["bold"]
+        # A family with no bold cut installed — 바탕 / Batang is one, and it is
+        # the face a report-class document is set in — hands back its regular
+        # face here.  HWP does not then draw regular text: it fakes the weight.
+        # Record that this face has to be emboldened by hand, so the drawing
+        # side can do the same rather than silently losing every bold run.
+        self._synthetic_bold[key] = bool(
+            bold and chosen is not None and entry is not None
+            and not entry["bold"])
         record = self._declare_face(face_name, slot,
                                     entry if chosen else None, bold)
         self._face_cache[key] = (chosen, record)
@@ -1394,6 +1408,28 @@ class OwnRenderer:
         bold = bool(cp.get("bold"))
         return self.fontbook.get(self.pt_to_px(pt), bold,
                                  self._face_for(cid, slot, bold))
+
+    def _embolden_px(self, cid, slot, font):
+        """Stroke width, in pixels, for a bold run drawn on a regular face.
+
+        ``_face_for`` has already decided whether this ``(charPr, slot)`` had
+        a real bold cut to resolve to.  Where it did not, the weight has to be
+        synthesised or the run is drawn at regular weight and the document's
+        emphasis disappears — which is what a report's section headings are
+        made of.  One pixel of stroke per 24 px of glyph size, floor 1, is
+        this renderer's choice and is declared: the standard does not publish
+        what HWP smears a faked bold by, and at body sizes every em fraction
+        between about 1/40 and 1/13 rounds to the same single pixel anyway.
+        The advance is NOT changed — the stroke grows the glyph outward only,
+        so a cached line still measures the width the authoring engine gave it.
+        """
+        if not self._charpr(cid).get("bold"):
+            return 0
+        if not self._synthetic_bold.get((cid, slot, True)):
+            return 0
+        self.applied["synthetic_bold"] = self.applied.get(
+            "synthetic_bold", 0) + 1
+        return max(1, int(round(getattr(font, "size", 0) / 24.0)))
 
     def _typography(self, cid, ch):
         """``(ratio, spacing, relSz, offset)`` for ``ch`` under ``cid``.
@@ -1462,6 +1498,7 @@ class OwnRenderer:
                 "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
                 "offset_px": size_px * offset / 100.0,
+                "embolden": self._embolden_px(cid, slot, font),
             })
             run.clear()
 
@@ -2008,21 +2045,30 @@ class OwnRenderer:
         renderer, not of the build.
         """
         y = baseline_px - piece["offset_px"]
+        # A faked bold is a HORIZONTAL smear: the glyph is drawn again a
+        # fraction of an em to the right, which thickens stems without
+        # growing the glyph vertically.  Pillow's ``stroke_width`` would
+        # thicken it in every direction and read as an outline, not a weight.
+        smear = [0] + ([piece.get("embolden")] if piece.get("embolden") else [])
         if piece["ratio"] == 100 or self._image is None:
             if piece["ratio"] != 100:
                 self._skip("hh:ratio", "horizontal glyph scaling could not be "
                                        "composited; drawn unscaled")
-            draw.text((x, y), piece["text"], font=piece["font"],
-                      fill=piece["colour"], anchor="ls")
+            for dx in smear:
+                draw.text((x + dx, y), piece["text"], font=piece["font"],
+                          fill=piece["colour"], anchor="ls")
             return
         font = piece["font"]
         ascent, descent = font.getmetrics()
         natural = max(1, int(math.ceil(
-            float(draw.textlength(piece["text"], font=font)) + 2)))
+            float(draw.textlength(piece["text"], font=font)) + 2
+            + max(smear))))
         height = max(1, ascent + descent)
         mask = self.Image.new("L", (natural, height), 0)
-        self.ImageDraw.Draw(mask).text((0, ascent), piece["text"], font=font,
-                                       fill=255, anchor="ls")
+        mask_draw = self.ImageDraw.Draw(mask)
+        for dx in smear:
+            mask_draw.text((dx, ascent), piece["text"], font=font,
+                           fill=255, anchor="ls")
         scaled = max(1, int(round(natural * piece["ratio"] / 100.0)))
         if scaled != natural:
             mask = mask.resize((scaled, height),

@@ -1398,6 +1398,74 @@ def test_solve_tracks_matches_declared_total_even_when_underdetermined():
     assert sum(widths) == 300
 
 
+def _ink(image):
+    return sum(image.convert("L").histogram()[:160])
+
+
+def test_the_face_cache_is_keyed_by_what_the_lookup_asks_for():
+    """A shadowed loop variable filed every entry under the wrong key.
+
+    ``_face_for`` reads ``self._face_cache[(cid, slot, bold)]`` and used to
+    write ``self._face_cache["hangul"]``, so the cache could never hit and
+    every character re-ran a system font-index lookup.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    if renderer.font_index is None:
+        pytest.skip("no system font index on this machine")
+    cid = next(iter(renderer.defs["char_pr"]))
+    renderer._face_for(cid, "hangul", False)
+    assert renderer._face_cache, "nothing was cached at all"
+    assert all(isinstance(k, tuple) and len(k) == 3
+               for k in renderer._face_cache), list(renderer._face_cache)
+    before = dict(renderer._face_cache)
+    renderer._face_for(cid, "hangul", False)
+    assert list(renderer._face_cache) == list(before), "the cache missed"
+
+
+def test_a_bold_run_on_a_family_with_no_bold_cut_is_smeared():
+    """HWP fakes the weight; drawing regular glyphs loses the emphasis.
+
+    바탕 / Batang ships no bold cut, and it is the face a report-class
+    document is set in, so this is the ordinary case rather than an edge one.
+    The smear is horizontal — a vertical one would read as an outline — and
+    it must not change the advance, or a cached line stops fitting its box.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    font = renderer.fontbook.get(30, False, None)
+    piece = {"kind": "glyph", "text": "강", "font": font, "ratio": 100,
+             "size_px": 30, "offset_px": 0, "colour": (0, 0, 0),
+             "embolden": 0}
+    plain = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    renderer._image = plain
+    renderer._draw_glyph_piece(renderer.ImageDraw.Draw(plain), piece, 5, 45)
+    heavy = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    renderer._image = heavy
+    renderer._draw_glyph_piece(renderer.ImageDraw.Draw(heavy),
+                               {**piece, "embolden": 1}, 5, 45)
+    assert _ink(heavy) > _ink(plain), (_ink(heavy), _ink(plain))
+    # Horizontal only: the smeared glyph occupies no extra rows.
+    def rows(image):
+        grey = image.convert("L").load()
+        return {y for y in range(60) for x in range(120) if grey[x, y] < 160}
+    assert rows(heavy) == rows(plain)
+
+
+def test_embolden_is_asked_for_only_when_no_real_bold_cut_resolved():
+    """A family that does have a bold face is drawn with it, not smeared."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    cid = next(iter(renderer.defs["char_pr"]))
+    font = renderer.fontbook.get(30, False, None)
+    renderer.defs["char_pr"][cid] = {
+        **renderer.defs["char_pr"][cid], "bold": True}
+    renderer._synthetic_bold[(cid, "hangul", True)] = False
+    assert renderer._embolden_px(cid, "hangul", font) == 0
+    renderer._synthetic_bold[(cid, "hangul", True)] = True
+    assert renderer._embolden_px(cid, "hangul", font) >= 1
+    renderer.defs["char_pr"][cid] = {
+        **renderer.defs["char_pr"][cid], "bold": False}
+    assert renderer._embolden_px(cid, "hangul", font) == 0
+
+
 def _border_probe(btype, width_hwp, dpi=144):
     """Draw one top border of ``btype`` and return its dark-pixel runs.
 
