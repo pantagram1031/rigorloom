@@ -47,6 +47,7 @@ left to fail somewhere downstream.
 | `scripts/rt_engine.py` | bounded child adapters onto `engine/` and `pipeline/` |
 | `scripts/rt_session.py` | ingress, the session/plan/approval store, document views |
 | `scripts/rt_workspace.py` | workspace ingress, the declared layout, the tree hash |
+| `scripts/rt_wsops.py` | the workspace write ops, their refusals, the pre-flight |
 | `scripts/rt_plan.py` | OperationPlan, validation, approvals |
 | `scripts/rt_apply.py` | execution, candidate publication, receipts |
 | `scripts/rt_module.py` | distribution-module checkers, run against a session |
@@ -447,6 +448,57 @@ every piece it is built from and is not a corpus): **13 ran, 4 skipped
 `needs_document`, 0 unavailable**; the same six modules on a document session
 are **4 ran, 13 skipped `needs_workspace`**.
 
+### Editing a workspace: the fix loop
+
+A workspace is also EDITABLE through the plan path already on the wire — the
+agent proposes, a host approves and applies, and the checkers re-run against the
+candidate. Design: `docs/runtime-protocol-v0.md` §15.6.
+
+```sh
+python runtime/scripts/cli.py --root $R propose --session $SID \
+    --backend workspace --ops-file fix.json
+python runtime/scripts/cli.py --root $R validate --plan $PID
+python runtime/scripts/cli.py --root $R request-approval --plan $PID
+python runtime/scripts/cli.py --root $R approve --approval $AID \
+    --plan $PID --plan-hash $PHASH
+python runtime/scripts/cli.py --root $R apply --plan $PID --approval $AID
+python runtime/scripts/cli.py --root $R module-check --session $SID \
+    --module report --run $RUNID
+```
+
+**`workspace` is a backend** (`SUPPORTED_BACKENDS` is `preedit, workspace`), so
+a plan binds the workspace TREE hash and `opsHash` covers
+`{backend, boundSha256, ops}` exactly as a document plan does. Three op kinds,
+closed:
+
+| kind | params | the refusal that matters |
+| --- | --- | --- |
+| `ws_replace_text` | `{path, old, new}` | the anchor must match **once** — `anchor_ambiguous`, never "first match" |
+| `ws_set_yaml_key` | `{path, key, value}` | one dotted key, one scalar, one line rewritten; `yaml_key_ambiguous` on a key declared twice |
+| `ws_append_source` | `{source, path?}` | `research/sources.json` must be the JSON array its reader reads; `source_duplicate_id` on an id already there |
+
+No create, no delete, no rename — `capabilities.backends.workspace.notImplemented`
+names all three. Binary members are never operable (`member_not_text`), and a
+path a module declared `read_only` refuses (`member_read_only`).
+
+**Pre-flight is the ops, run** on a scratch copy of the session workspace that
+is then deleted; it stops at the first refusal and reports `notEvaluated`. The
+refusals are finding codes, so a plan carrying one simply does not validate and
+`plan/apply` refuses it with `plan_invalid`.
+
+**Apply publishes a candidate TREE** under `<session>/candidates/<runId>/`, with
+the session copy re-hashed afterwards and the run destroyed if it moved. The
+receipt binds `source.treeSha256` → `candidate.treeSha256` and carries the plan,
+the approval and `membershipChanged`. `checks.acceptance` is false with a
+reason: nothing ran at apply time, and `module/check --run $RUNID` is the
+verification.
+
+Measured, same fixture (`tests/test_runtime_workspace_ops.py`): the report
+module's checkers report **4 hard, 21 warn** on the session workspace and
+**0 hard, 21 warn** on the candidate a three-op plan produced. The four were
+`claim_source_missing`; none of them carried an `address`, so the ops were aimed
+by reading the member — see the gaps.
+
 ## Events
 
 Every session keeps `<session>/events.jsonl`, appended on each mutation:
@@ -537,8 +589,14 @@ to provoke, and `expectationMet` says so.
   driving one root.
 - The MCP adapter implements the five methods above and no resources, prompts,
   sampling, completion or logging capabilities.
-- A workspace session is read-only: it opens, it summarises, its checkers run.
-  There is no `plan/propose` against a workspace, so the report-pipeline fix
-  loop has its read half only.
+- A workspace member cannot be READ over the wire. The write ops need an exact
+  anchor and no agent-safe method returns a member's bytes, so an agent can
+  propose an edit it cannot aim; the fix-loop test reads the session copy to
+  build its anchors.
+- The workspace ops move content, never membership: no create, no delete, no
+  rename, so a finding that asks for a file which does not exist yet cannot be
+  fixed through the wire at all.
+- `read_only_paths` are a module's declaration, so with nothing enabled nothing
+  is protected — `layout.state: undeclared` is where a caller learns that.
 - Each `module/check` re-copies the whole workspace. Measured 62–217 ms on a
   small one; nothing is incremental and nothing is cached on the tree hash.
