@@ -1764,6 +1764,18 @@ const NO_ECHO: LayoutEcho | null = null;
 let echoCache: LayoutEcho | null = NO_ECHO;
 
 /**
+ * The empty address list, shared.
+ *
+ * `changedByRun` holds no entry until `loadChangedAddresses` has walked the
+ * chain, and that window is exactly the moment after an apply — so this
+ * default is taken on the renders that matter most. A fresh `[]` there fails
+ * the identity check below, rebuilds the echo on every call, and turns
+ * `useSyncExternalStore` into the unbounded render loop React reports as
+ * #185. The comment on `layoutEcho` said so; the `?? []` did it anyway.
+ */
+const NO_CHANGES: string[] = [];
+
+/**
  * The echo state, or null when the page IS the document on screen.
  *
  * Returns a stable reference while nothing changes: this is read through
@@ -1777,7 +1789,7 @@ export function layoutEcho(s: ReturnType<typeof getState>): LayoutEcho | null {
   const rendered = s.render.source ?? { kind: "unknown" };
   // The raster already IS this candidate's. Nothing to say.
   if (rendered.runId === head.runId) return (echoCache = null);
-  const changed = s.changedByRun[head.runId] ?? [];
+  const changed = s.changedByRun[head.runId] ?? NO_CHANGES;
   const cached = echoCache;
   if (
     cached &&
