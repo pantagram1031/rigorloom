@@ -424,6 +424,58 @@ class TestBlankDocument:
         assert len(paragraphs) == 1
         assert paragraphs[0].text_content() == ""
 
+    def test_part_content_hashes_are_pinned(self):
+        """The fixture is the generator plus these pins, not a committed blob.
+
+        engine's privacy gate makes every ``.hwpx`` a HARD finding unless it is
+        sha256-pinned in the corpus manifest (pipeline/scripts/privacy_scan.py),
+        and the corpus manifest documents provenance and licence for official
+        government forms — a Rigorloom-authored blank does not belong in it.
+        So the blank ships as a deterministic builder, pinned here on the
+        UNCOMPRESSED bytes of each member: deflate output can vary with the
+        zlib build, member content cannot.
+        """
+        expected = {
+            "mimetype":
+                "5ab5230b5af04f78947736bf8dd1a269aa684e234f7f4a392efb85289d1655c2",
+            "version.xml":
+                "e4c5e60e84f7a0f756639719bd5acc70bd7f17dc81c23ef33160cc6440b5b13d",
+            "Contents/header.xml":
+                "bda2a5b38f91455930b35932eff6d02de858904b64833fd8a2bfd295e6edc3ac",
+            "Contents/section0.xml":
+                "e4392aae938c016ac26d19c6f76605163c3cca4a6baa7f9e82531a114fc6d4b3",
+            "Preview/PrvText.txt":
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "settings.xml":
+                "677fc367cfa775597d38d4e3fdeefe67d74d5129b13c9d0e6552c28e65345756",
+            "META-INF/container.rdf":
+                "0cfd814c20595c841e48e62fbf7591829f13c177fa92af634c8199f85ecf3a89",
+            "Contents/content.hpf":
+                "3b6fa2ec22d6a432f33379fae7695a73b717bd919ec1c21587150d68f9cdc27b",
+            "META-INF/container.xml":
+                "5109d3a9249ec1058177fedab574c5d9616058aa92ebefcd33249ebb36a20f61",
+            "META-INF/manifest.xml":
+                "2b4b155c1bb6a9ccc212fef113c4831d2f558e67cf1260eb314ce54f26fd32ea",
+        }
+        actual = {part.name: hashlib.sha256(part.bytes()).hexdigest()
+                  for part in W.blank_package().parts}
+        assert actual == expected
+
+    def test_matches_its_committed_inventory(self, tmp_path):
+        committed = os.path.join(ENGINE, "references",
+                                 "owpml-blank-inventory.json")
+        if not os.path.exists(committed):
+            pytest.skip("engine/references/owpml-blank-inventory.json absent")
+        import json
+        with open(committed, encoding="utf-8") as handle:
+            reference = json.load(handle)
+        out = tmp_path / "blank-document.hwpx"
+        W.blank_package().write(out)
+        fresh = hwpx_inventory.collect([out])
+        assert fresh["summary"] == reference["summary"]
+        assert fresh["elements"] == reference["elements"]
+        assert fresh["members"].keys() == reference["members"].keys()
+
     def test_inventory_of_the_blank_is_a_subset_of_the_corpus_surface(
             self, tmp_path):
         """A new document must not invent elements the corpus never showed."""
