@@ -24,6 +24,15 @@ forms:
 | `<form>.render.json` | the sidecar for that render |
 | `<form>-embedded-preview.png` | the **document's own** `Preview/PrvImage.png`, i.e. what the authoring engine drew |
 | `<form>.{before-e2.3,after-e2.3,after-e2.2}.scoreboard.json` | the measurement against that form's Hancom reference PDF, at each of the three renderer states |
+| `<form>.{before,after,computed}-e2.1.scoreboard.json` | the same measurement across the E2.1 line-breaking slice: before it, after it as it ships (`auto`), and with every line broken by the own breaker (`computed`) |
+
+…plus two corpus-wide artefacts, which are the evidence for E2.1 and cover all
+ten forms rather than two:
+
+| file | what it is |
+| --- | --- |
+| `e2.1-line-breaking.scoreboard-summary.json` | before / after / computed, every form, every scored channel, with the comparable-form means |
+| `e2.1-lineseg-agreement.json` | the line breaker measured against each document's own cached `hp:lineseg`, per form and summed |
 
 The embedded preview is there so a human can judge the gap at a glance. It is
 a comparison aid, not a measurement — the measurement is the scoreboard
@@ -57,14 +66,20 @@ jumin 3; nrf 4; moel-2013 7, moel-2025 7; saeopja 6; kstartup 20.
 `@pageBreak` is deliberately **not** consulted — on this corpus it also appears
 on paragraphs whose `vertpos` does not restart, so honouring it invents pages.
 
-**Line layout — read the file's own cache, do not re-derive it.** This is the
-single largest fidelity decision in the slice.
+**Line layout — the file's own cache where it still describes the text, this
+renderer's own breaker where it does not.**
 `<hp:linesegarray><hp:lineseg …/>` carries the line boxes the authoring engine
 already computed: `vertpos`, `horzpos`, `horzsize`, `vertsize`, `baseline`, and
 `textpos` (the paragraph character offset the line starts at). The renderer
 slices the paragraph's character stream by `textpos` and draws each line at its
 cached box. Line breaking therefore matches the authoring engine exactly
-wherever the cache is present and consistent.
+wherever the cache is present and still describes the paragraph's text — which
+is every paragraph of an unedited document.
+
+The moment an edit changes a paragraph's text that cache is stale, and a stale
+box is the one thing this renderer must never draw. *Line breaking from
+metrics* below is the breaker that takes over, what decides when it takes over,
+and exactly how well it agrees with the engine that wrote the file.
 
 Alignment is *not* in the cache — `horzpos` stays 0 and `horzsize` stays the
 full column even for a centred line — so horizontal alignment is applied here
@@ -180,6 +195,254 @@ The sidecar reports what was **applied**, not only what was skipped
 document that never declares one; on gianmun the sidecar says 371 characters
 spaced, 19 ratio-scaled, 2 lines justified.
 
+## Line breaking from metrics (E2.1)
+
+`own_render.compute_lines` breaks a paragraph into line boxes from font
+metrics and `hp:paraPr`, with no reference to the cached layout. It exists
+because an edited paragraph has no usable cache, and it is measured against
+the cache on unedited paragraphs — the only channel on which a from-scratch
+line breaker can be graded without a reference render.
+
+### Which engine laid out which paragraph, and why
+
+Two policies, declared per render in `line_layout.policy`, and per paragraph
+in `line_layout.paragraphs_relaid_out`:
+
+- **`auto`** (default, and what ships). A paragraph keeps its cached
+  `hp:lineseg` boxes unless they provably no longer describe its text.
+- **`computed`** (`--line-layout computed`). Every paragraph is relaid out by
+  this breaker. This is how the breaker is *measured*; it is not how a
+  document is rendered most faithfully, and the scoreboard below says by how
+  much.
+
+Under `auto`, `computed` wins for exactly five named reasons, each counted in
+`line_layout.computed_reasons`:
+
+| reason | what it means |
+| --- | --- |
+| `cache_absent` | the paragraph carries no `hp:linesegarray` at all |
+| `textpos_past_end` | a cached line starts past the end of the character stream, so the text is *shorter* than the cache describes |
+| `stale_line_width` | a cached line's font-independent lower-bound width exceeds its own cached `horzsize`, so the text is *longer* than that line could hold |
+| `caller_marked_edited` | the caller passed the paragraph in `relayout_paragraphs` |
+| `policy` | the whole render was asked for computed lines |
+
+`stale_line_width` is the interesting one. The bound counts only full-width
+cells (Hangul, Hanja, kana, CJK punctuation, an inline object slot — whose
+advance in HWP is exactly the declared character size × `hh:ratio`, whatever
+face draws them) plus the declared `hh:spacing` gaps; Latin and spaces
+contribute nothing. It can therefore never exceed the width the authoring
+engine actually fitted, which makes the detector **sound**: it fires on no
+paragraph of any of the ten corpus forms (the worst unedited line reaches
+0.901 of its box by this bound, against a 1% tolerance), and
+`test_no_unedited_corpus_paragraph_is_judged_stale` asserts that on all ten.
+
+It is also **incomplete**, and the sidecar says so in those words: an edit
+that leaves every line still fitting is invisible in the file. An editor that
+knows it changed a paragraph must declare it through `relayout_paragraphs`
+rather than rely on detection. A paragraph is named there by its document-order
+position among every `hp:p` in `section0`, counting from 0 — `hp:p@id` is not
+unique (moel-2025 gives `2147483648` to 329 of its 330 paragraphs), and the
+caller can compute the ordinal from the same file without asking the renderer.
+
+Every line box in the sidecar carries `mode: "lineseg" | "computed"`, so a
+reader can tell per line which engine broke it.
+
+### What the breaker honours
+
+Read off `hp:paraPr` and acted on: `hh:breakSetting@breakLatinWord` and
+`@breakNonLatinWord` (`KEEP_WORD` = 어절/단어 단위, `BREAK_WORD` = 글자 단위),
+`@lineWrap=BREAK`, `@condense`, `hh:lineSpacing@type` `PERCENT` and `FIXED`
+with `@value`, `hh:margin` `left`/`right`/`intent`, `hh:align@horizontal`, and
+the explicit `LEFT` stops of `hh:tabPr`. Parsed and **not** acted on, named in
+every sidecar: `HYPHENATION`, `@widowOrphan`/`@keepWithNext`/`@keepLines`/
+`@pageBreakBefore` (block-level pagination, which this tier does not do),
+`@fontLineHeight=1`, `@snapToGrid`, `BETWEEN_LINES` spacing, non-`LEFT` tab
+stops, and `<hp:tab/>` elements already in a document (they are not placed in
+the character stream, so the line they sit on is measured without them).
+
+`hh:margin`/`hh:lineSpacing` are read from the `<hh:default>` branch of the
+`<hh:switch>` every corpus `paraPr` wraps them in — the `<hh:case>` branch
+requires the 2016 `HwpUnitChar` namespace and states the same quantities in
+character units. 774 of 774 corpus paraPr carry the switch and 477 differ
+between the branches, so the choice is not cosmetic.
+
+**금칙처리.** KS X 6101 no more publishes the prohibited-character sets than it
+publishes the language-slot partition, so the table is this renderer's
+conventional Korean/CJK one and every sidecar declares it as such
+(`line_layout.prohibition_table`). A break opportunity is withdrawn when the
+character after it may not start a line or the character before it may not end
+one, and the filter applies to a space break exactly as to a syllable break.
+
+### The vertical model is four measurements, not four assumptions
+
+Taken off all 3214 cached `hp:lineseg` of the corpus *before* being
+implemented, and re-measured by
+`test_the_cached_line_geometry_relations_hold_across_the_corpus`:
+
+| relation | holds on |
+| --- | --- |
+| `vertsize == textheight` | 3214 / 3214 |
+| `baseline == round(0.85 × textheight)` | 3212 exact, all 3214 within 1 HWPUNIT |
+| `vertpos[i] == vertpos[i-1] + vertsize[i-1] + spacing[i-1]` | 219 / 219 continuation lines |
+| PERCENT: `vertsize + spacing == round(textheight × value/100)` | every PERCENT paragraph |
+
+The 0.85 is HWP's baseline convention and is a **measured constant of this
+corpus**, not a number the standard publishes. `textheight` is the maximum
+declared `hh:charPr@height × hh:relSz` over the characters on the line — and
+over any inline object's `hp:sz@height`, which was a measured defect before it
+was a rule (see below). Against the cache, the computed `textheight` is exact
+on 2303 of the 2370 comparable lines, `baseline` on 2303, and `spacing` on
+1421; almost every `spacing` miss is ±2 HWPUNIT, i.e. 0.04 px at 144 dpi.
+
+### Two attribute readings were decided by measurement, not by their names
+
+- **`hp:paraPr@condense`** (공백 축소; corpus values 0 ×603, 25 ×130, 20 ×37,
+  30 ×4). Read as "spaces may shrink **to** `condense`%", so that 0 lets them
+  vanish, the breaker matches 16 of the corpus's 216 break positions. Read as
+  "spaces may shrink **by** `condense`%", so that 0 is the default and means no
+  condensing, it matches 48. The second reading is kept.
+- **A negative `hh:intent`** (내어쓰기). The textbook reading — first line at
+  the left margin, continuation lines pushed in by its magnitude — matches
+  2710 of the 3214 cached boxes. "The intent moves the first line only,
+  clamped at 0" matches 2860, and "the intent never moves the box" matches
+  2895. The hanging reading is therefore **not implemented**; a negative
+  intent moves no line box here. That choice costs a little on the break
+  numbers (recall 48 → 43) and is kept anyway, because 3214 cached boxes are a
+  far larger and more direct sample than 216 break positions.
+
+### How well the breaker agrees with the engine that wrote the file
+
+`python own_render.py FORM.hwpx --lineseg-agreement` reproduces every number
+below; the committed run is
+`engine/references/own-render-samples/e2.1-lineseg-agreement.json`.
+
+The breaker is run on each paragraph's **unedited** text, inside the line box
+the authoring engine itself used (the paragraph's cached first `horzpos +
+horzsize`, plus the declared right margin), so a disagreement is the breaker's
+and never the table solver's. A paragraph whose cache is unusable is excluded
+and counted, not scored as a failure.
+
+144 dpi, on a machine with Hancom Office's faces installed:
+
+| form | paras | line count | break sequence | multi-line | multi-line count | break positions |
+| --- | --- | --- | --- | --- | --- | --- |
+| admrul | 22 | 22 | 21 | 2 | 2 | 1 / 2 |
+| gianmun-1ho | 32 | 32 | 31 | 1 | 1 | 0 / 2 |
+| gianmun-2ho | 20 | 19 | 19 | 2 | 1 | 1 / 2 |
+| jeongbo | 58 | 58 | 52 | 6 | 6 | 1 / 7 |
+| jumin | 133 | 132 | 113 | 27 | 26 | 9 / 36 |
+| kstartup | 453 | 435 | 416 | 29 | 26 | 12 / 44 |
+| moel-2013 | 263 | 254 | 234 | 34 | 25 | 7 / 49 |
+| moel-2025 | 314 | 304 | 283 | 37 | 27 | 6 / 47 |
+| nrf | 89 | 89 | 87 | 3 | 3 | 1 / 3 |
+| saeopja | 764 | 758 | 747 | 17 | 14 | 5 / 24 |
+| **total** | **2148** | **2103** (0.979) | **2003** (0.932) | **158** | **131** (0.829) | **43 / 216** (0.199) |
+
+Twelve further paragraphs carry no usable cache and are excluded.
+
+Read honestly, the headline number is the last column and it is **0.199**. The
+first two columns are high because a corpus of government forms is
+overwhelmingly single-line paragraphs — 2148 paragraphs, only 158 of which
+break at all — and a paragraph that cannot break cannot disagree. The multi-line
+subset is where the breaker is actually tested, and there it reproduces the
+authoring engine's exact line sequence on 31 of 158.
+
+### Where it fails, and why — this is an advance-width gap, not a rule gap
+
+Restarting the breaker at each line start the authoring engine chose and asking
+only where it puts the *next* break (`conditional_breaks`, error propagation
+removed): **45 of 216 exact, 29 too early, 142 too late.**
+
+`late` dominating by five to one is the diagnosis. `cached_line_fill` — how
+full the authoring engine's own line is when this renderer measures it — has a
+median of **0.92**: the breaker thinks there was still a tenth of the box free
+where the authoring engine had already closed the line, so it keeps fitting the
+next word on. The breaking *rules* put the break at a permitted position; the
+*advance widths* say the wrong position is permitted.
+
+Two things localise the gap further. Both were measured with a probe harness
+that takes each line's box straight from its own cached `horzsize` instead of
+re-deriving it from the margins, which scores **49/216** as its baseline
+rather than the 45/216 above; the difference is the first-line box model, not
+the breaking, and the deltas below are what matter.
+
+- Splitting by face resolution: on lines where every declared face resolved,
+  per-break accuracy is 38/156 and the fill median 0.925; where at least one
+  face was substituted, 11/60 and 0.894. Substitution makes it worse but is
+  **not** the main term — 0.925 is still a long way from 1.0.
+- Sweeping the space advance: replacing the resolved face's space advance with
+  a fixed fraction of the em moves per-break accuracy 49 → 60 → **69** → 52 →
+  40 for 0.35 / 0.4 / 0.45 / 0.5 / 0.55 em (font advance itself: 49). The
+  deficit is concentrated in the space character. **0.45 em is not adopted**:
+  no reading of the standard justifies that number, the curve is a fit rather
+  than a discovery, and tuning it against the corpus would turn the measuring
+  stick into a training set.
+
+One further variant was tested and rejected: making `hh:spacing` open no gap
+adjacent to a space (자간 as strictly letter-spacing) raises per-break accuracy
+from 49/216 to 59/216. It is not adopted because it would also change
+intra-line *drawing*, which E2.3 pinned against the Hancom reference, and 10
+breaks out of 216 is not enough evidence to move a measured model. It is the
+first thing to try next.
+
+### Incremental relayout, and what it does not do
+
+Paragraphs after a relaid-out one in the same container are shifted by its
+height change, so an edited paragraph cannot be drawn over its neighbour; and
+a table's row heights are now solved *after* its columns, from the layout each
+paragraph will actually get, so an edited cell grows its row instead of
+overflowing it. Cell content is vertically centred against the same measured
+block, not against the cached one.
+
+That is the whole of the incremental relayout in this slice. It is **not**
+E2.5: nothing reflows onto another page, no paragraph moves between pages, and
+a relaid-out paragraph still *starts* where the cached layout put it — this
+slice re-derives line breaking inside a paragraph, not the block stacking that
+decides where a paragraph begins.
+
+### A measured defect this slice found and fixed
+
+Running the breaker over the corpus in `computed` mode and diffing every line
+box against the cached layout showed admrul drifting up the page by a median
+104 px and as much as 430, with `dx` of exactly 0 — purely vertical, so the
+block model. The cause: `_line_metrics` took a line's height from the point
+size of the runs on it, and an inline object is not a run. kstartup has
+paragraphs whose entire content is one full-page inline table, cached
+`vertsize` ≈ 63000 HWPUNIT against a `charPr` height of 1000; taking the run's
+size shrank such a paragraph by a whole page and pushed everything below it up
+the sheet. An inline (`treatAsChar="1"`) object now contributes its declared
+`hp:sz@height`. Effect: computed `textheight` exact 2287 → 2303 of 2370;
+admrul `|dy|` median 104.36 → 5.64, max 430.00 → 11.28.
+
+### The scoreboard, before / after / computed
+
+`engine/references/own-render-samples/e2.1-line-breaking.scoreboard-summary.json`
+carries the full three-state run; the two sample forms also have their
+individual `*.{before,after,computed}-e2.1.scoreboard.json`.
+
+Means over the seven comparable forms (the three reduced references are
+excluded — see *Three of the ten reference PDFs are not 1:1 renders*):
+
+| | `ssim` | `ssim_inked` | line-box IoU | pair rate |
+| --- | --- | --- | --- | --- |
+| before (PR #173) | 0.7275 | 0.1227 | 0.4394 | 0.8014 |
+| after (`auto`, what ships) | 0.7270 | 0.1225 | **0.4393** | 0.8014 |
+| `computed` (the breaker itself) | 0.7198 | 0.1103 | **0.4035** | 0.7953 |
+
+The shipping path is unchanged to four decimal places, and every form keeps
+its verdict against the regression floor in all three states. The residual
+movement is confined to the three forms that contain paragraphs with **no**
+cache (kstartup 4, moel-2013 1, saeopja 1): those previously used an ad-hoc
+greedy wrap and now use the real breaker, which moves kstartup's IoU by
+−0.00003, moel-2013's by −0.0006 and saeopja's by −0.00001. No paragraph whose
+cache is usable changed at all.
+
+The honest measure of the breaker is the third row: laying every line out
+ourselves costs **0.036 of line-box IoU** against the authoring engine's own
+cached boxes, and 0.012 of `ssim_inked`. Per form, `computed` mode is *better*
+than the cache on jeongbo (0.4385 → 0.5049) and jumin (0.5741 → 0.5827) and
+worse on the rest, worst on moel-2013 (0.4455 → 0.2891).
+
 ### Alignment
 
 `hp:lineseg` carries the line box but never the alignment offset — `horzpos`
@@ -257,9 +520,16 @@ not only here.
 4. **Non-solid borders are stroked as solid.** `DASH`, `DOUBLE_SLIM`, `CIRCLE`
    appear in the corpus and are drawn as a solid line of the declared width,
    named per side in the sidecar.
-5. **Tabs are not resolved.** `hp:tab` inside a run advances nothing; the
-   cached line box absorbs it. Where a form uses tabs to build a column, that
-   column collapses.
+5. **`<hp:tab/>` elements already in a document are not resolved.** They are
+   not placed in the character stream, so the line they sit on is measured
+   without them and the cached box absorbs them; where a form uses tabs to
+   build a column, that column collapses. Three corpus paragraphs are
+   affected. The computed breaker *does* resolve a literal `\t` in the stream
+   — which is the shape an edited paragraph has when a user presses Tab —
+   against `hh:tabPr`'s explicit `LEFT` stops, falling back to a 40 pt
+   interval that is this renderer's choice and is named in the sidecar
+   (23 of the 42 corpus `tabPr` declare no stop at all). `RIGHT`, `CENTER`
+   and `DECIMAL` stops are advanced as `LEFT`.
 6. **Text does not wrap around anchored objects.** They are drawn at their
    declared offset, over whatever is there.
 7. **Multi-column text (`hp:colPr`) is ignored** — PARA and COLUMN both resolve
@@ -279,7 +549,24 @@ not only here.
 12. **`kstartup-jiwon-sincheongseo-saeopgyehoekseo` paginates wrong.** It is
     the one comparable form whose rendered page count does not match its
     Hancom reference, so it fails the regression floor's `page_count_exact`
-    check today. A pagination defect, not a typography one; unfixed.
+    check today. A pagination defect, not a typography one; unfixed. The same
+    form also draws line boxes at `y0` ≈ 85.9 million px on page 18, from an
+    anchored object at a wild declared `vertOffset`; identical in both line
+    layout modes, so it is this same defect and not the breaker's.
+13. **The line breaker agrees with the authoring engine on 43 of the corpus's
+    216 break positions** (*Line breaking from metrics*, above). It is used
+    only where the cached layout cannot be, which on an unedited document is
+    nowhere — but it is what an edited paragraph gets, and 0.199 is what that
+    is worth today. The residual is an advance-width gap concentrated in the
+    space character, not a gap in the breaking rules.
+14. **Block layout is not implemented, so relayout does not reflow the page.**
+    A relaid-out paragraph shifts the paragraphs after it in its own container
+    and grows its table row, and nothing else: it still starts where the cache
+    put it, nothing moves between pages, and a paragraph that grows past the
+    bottom of the body box is drawn there anyway. That is E2.5's work.
+15. **The staleness detector is sound but incomplete.** It cannot see an edit
+    that leaves every line still fitting; `relayout_paragraphs` is the channel
+    an editor must use instead. See *Which engine laid out which paragraph*.
 
 ## Determinism
 
@@ -395,12 +682,25 @@ false` on both; the grade stays `own-uncertified` on every class.
 
 1. **Regenerate the three reduced reference PDFs at 1:1** — until then three
    document classes (gongmun, research) cannot be graded at all.
-2. Vector PDF text output — unlocks `render_cert`'s word-anchor channel and
+2. **Close the advance-width gap the breaker exposed.** A cached line measures
+   a median 0.92 of its own box by this renderer's advances, and the deficit is
+   concentrated in the space character. This is now the largest single term in
+   *both* open measurements: it is why the breaker matches only 43 of 216 break
+   positions, and it is the same quantity `ssim_inked` is measuring inside a
+   line. Two candidate mechanisms are named and rejected as unproven in *Line
+   breaking from metrics*; the way to settle it is a reference PDF measurement
+   of what Hancom actually advances for a space in a Korean face, not another
+   sweep against the corpus.
+3. Vector PDF text output — unlocks `render_cert`'s word-anchor channel and
    with it the actual certificate.
-3. Sub-pixel glyph registration: the largest remaining term, per `ssim_inked`.
-4. A vendored font with known metrics, so cross-machine determinism becomes
+4. Sub-pixel glyph registration: see item 2, of which this is the intra-line
+   half.
+5. **Block layout (E2.5).** Paragraph stacking, page reflow and a table row
+   that can push its table onto the next page — without them a relaid-out
+   paragraph is correct only inside its own container.
+6. A vendored font with known metrics, so cross-machine determinism becomes
    claimable and the scoreboard stops depending on which faces this machine has.
-5. `kstartup` pagination (limit 12).
-6. Equations and pictures, in that order.
-7. Only then ask `render_cert` for a per-document-class grade. Until it
+7. `kstartup` pagination (limit 12).
+8. Equations and pictures, in that order.
+9. Only then ask `render_cert` for a per-document-class grade. Until it
    answers, the grade stays `own-uncertified`.
