@@ -179,6 +179,7 @@
   "hwpunit_per_inch": 7200,
   "line_boxes": [
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 113.36,
       "x1": 761.6,
@@ -186,6 +187,7 @@
       "y1": 134.48
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 412.625,
       "x1": 640.575,
@@ -193,6 +195,7 @@
       "y1": 202.04
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 123.56,
       "x1": 587.56,
@@ -200,6 +203,7 @@
       "y1": 247.98
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 123.56,
       "x1": 579.56,
@@ -207,6 +211,7 @@
       "y1": 274.22
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 123.56,
       "x1": 189.62,
@@ -214,6 +219,7 @@
       "y1": 304.12
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 420.38,
       "x1": 474.8,
@@ -221,6 +227,7 @@
       "y1": 304.12
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 670.16,
       "x1": 754.46,
@@ -228,6 +235,7 @@
       "y1": 304.12
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 138.07,
       "x1": 199.01,
@@ -235,6 +243,7 @@
       "y1": 442.46
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 489.24,
@@ -242,6 +251,7 @@
       "y1": 343.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 694.0,
       "x1": 808.9,
@@ -249,6 +259,7 @@
       "y1": 343.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 694.0,
       "x1": 890.85,
@@ -256,6 +267,7 @@
       "y1": 369.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 563.64,
@@ -263,6 +275,7 @@
       "y1": 399.76
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 694.0,
       "x1": 911.6,
@@ -270,6 +283,7 @@
       "y1": 399.76
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 329.04,
@@ -277,6 +291,7 @@
       "y1": 455.58
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 694.0,
       "x1": 910.9,
@@ -284,6 +299,7 @@
       "y1": 455.58
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 342.94,
@@ -291,6 +307,7 @@
       "y1": 511.4
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 694.0,
       "x1": 767.0,
@@ -298,6 +315,7 @@
       "y1": 511.4
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 130.085,
       "x1": 216.075,
@@ -305,6 +323,7 @@
       "y1": 595.78
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 130.085,
       "x1": 216.075,
@@ -312,6 +331,7 @@
       "y1": 656.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 352.72,
@@ -319,6 +339,7 @@
       "y1": 655.24
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 369.84,
       "x1": 506.62,
@@ -326,6 +347,7 @@
       "y1": 655.24
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 524.36,
       "x1": 625.14,
@@ -333,6 +355,7 @@
       "y1": 655.24
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 655.46,
       "x1": 792.24,
@@ -340,6 +363,7 @@
       "y1": 655.24
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 849.02,
       "x1": 965.76,
@@ -347,6 +371,7 @@
       "y1": 655.24
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 130.085,
       "x1": 216.075,
@@ -354,6 +379,7 @@
       "y1": 703.54
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 340.11,
@@ -361,6 +387,7 @@
       "y1": 701.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 369.84,
       "x1": 434.62,
@@ -368,6 +395,7 @@
       "y1": 701.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 524.36,
       "x1": 630.53,
@@ -375,6 +403,7 @@
       "y1": 701.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 655.46,
       "x1": 774.24,
@@ -382,6 +411,7 @@
       "y1": 701.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 849.02,
       "x1": 1025.15,
@@ -389,6 +419,7 @@
       "y1": 701.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 142.61,
       "x1": 203.55,
@@ -396,6 +427,7 @@
       "y1": 802.8
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 358.89,
@@ -403,6 +435,7 @@
       "y1": 747.38
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 524.36,
       "x1": 672.96,
@@ -410,6 +443,7 @@
       "y1": 747.38
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 312.59,
@@ -417,6 +451,7 @@
       "y1": 780.64
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 987.24,
@@ -424,6 +459,7 @@
       "y1": 832.58
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 233.94,
       "x1": 583.14,
@@ -431,6 +467,7 @@
       "y1": 858.18
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 123.56,
       "x1": 1078.76,
@@ -438,6 +475,7 @@
       "y1": 898.52
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 123.56,
       "x1": 337.36,
@@ -445,6 +483,7 @@
       "y1": 930.52
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 949.63,
       "x1": 1064.3,
@@ -452,6 +491,7 @@
       "y1": 959.16
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 489.66,
       "x1": 545.06,
@@ -459,6 +499,7 @@
       "y1": 990.62
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 907.0,
       "x1": 996.98,
@@ -466,6 +507,7 @@
       "y1": 994.06
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 333.31,
@@ -473,6 +515,7 @@
       "y1": 1025.2
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 537.32,
       "x1": 623.16,
@@ -480,6 +523,7 @@
       "y1": 1056.84
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 190.62,
@@ -487,6 +531,7 @@
       "y1": 1084.38
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 524.36,
       "x1": 618.15,
@@ -494,6 +539,7 @@
       "y1": 1084.38
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 190.62,
@@ -501,6 +547,7 @@
       "y1": 1112.02
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 524.36,
       "x1": 900.16,
@@ -508,6 +555,7 @@
       "y1": 1112.02
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 458.17,
@@ -515,6 +563,7 @@
       "y1": 1139.16
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 932.32,
       "x1": 1064.26,
@@ -522,6 +571,7 @@
       "y1": 1165.6
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 466.53,
       "x1": 598.53,
@@ -529,6 +579,7 @@
       "y1": 1238.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 621.51,
       "x1": 705.51,
@@ -536,6 +587,7 @@
       "y1": 1238.94
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 537.16,
       "x1": 646.16,
@@ -543,6 +595,7 @@
       "y1": 1317.92
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 1033.32,
@@ -550,6 +603,7 @@
       "y1": 1345.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 689.02,
@@ -557,6 +611,7 @@
       "y1": 1375.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 1037.47,
@@ -564,6 +619,7 @@
       "y1": 1405.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 1009.97,
@@ -571,6 +627,7 @@
       "y1": 1435.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 573.07,
@@ -578,6 +635,7 @@
       "y1": 1465.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 1048.04,
@@ -585,6 +643,7 @@
       "y1": 1495.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 498.76,
@@ -592,6 +651,7 @@
       "y1": 1525.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 1040.67,
@@ -599,6 +659,7 @@
       "y1": 1555.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 119.02,
       "x1": 609.57,
@@ -606,6 +667,7 @@
       "y1": 1585.7
     },
     {
+      "mode": "lineseg",
       "page": 1,
       "x0": 772.84,
       "x1": 1068.84,
@@ -614,8 +676,55 @@
     }
   ],
   "line_boxes_meaning": "every text line box drawn, in device pixels at this render's dpi; y bounds are the font's ascent/descent about the cached baseline, x bounds are the measured text extent (inline objects excluded). The comparison channel engine/scripts/render_scoreboard.py pairs these against a reference PDF's text lines.",
+  "line_layout": {
+    "caller_marked_edited": [],
+    "computed_reasons": {},
+    "forced_breaks": 0,
+    "forced_breaks_meaning": "lines this renderer had to cut at a position the paragraph's own breakSetting forbids, because no permitted break opportunity existed inside the box",
+    "line_geometry_model": {
+      "baseline": "== round(0.85 * textheight) (3212/3214 exact, all 3214 within 1 HWPUNIT); the ratio is a measured constant of this corpus, not a number KS X 6101 publishes",
+      "spacing": "PERCENT: vertsize + spacing == round(textheight * value / 100); FIXED: vertsize + spacing == value",
+      "textheight": "max declared hh:charPr@height x hh:relSz over the characters on the line",
+      "vertpos": "== previous vertpos + previous vertsize + previous spacing (219/219 corpus continuation lines)",
+      "vertsize": "== textheight (3214/3214 corpus line boxes)"
+    },
+    "paragraph_origin": "a relaid-out paragraph still starts where the cached layout put it; this slice re-derives line breaking inside a paragraph, not the block stacking that decides where a paragraph begins. Paragraphs after a relaid-out one in the same container are shifted by its height change so they cannot be drawn over, but a table row does not grow and no content reflows onto another page.",
+    "paragraphs": {
+      "computed": 0,
+      "lineseg": 58
+    },
+    "paragraphs_relaid_out": [],
+    "parapr_honored": [
+      "hh:breakSetting@breakLatinWord (KEEP_WORD / BREAK_WORD)",
+      "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD)",
+      "hh:breakSetting@lineWrap=BREAK",
+      "hp:paraPr@condense (최소 공백: a line may overrun by the width its spaces can give up)",
+      "hh:lineSpacing@type=PERCENT and @type=FIXED, with @value",
+      "hh:margin/hh:left, hh:right, hh:intent (들여쓰기 positive, 내어쓰기 negative)",
+      "hh:align@horizontal (LEFT / CENTER / RIGHT / JUSTIFY / DISTRIBUTE)",
+      "hp:paraPr@tabPrIDRef, for the explicit LEFT stops hh:tabPr declares"
+    ],
+    "parapr_not_honored": [
+      "hh:breakSetting@breakLatinWord=HYPHENATION — hyphenation is not implemented; broken at word boundaries instead",
+      "hh:breakSetting@widowOrphan / @keepWithNext / @keepLines / @pageBreakBefore — block-level pagination rules; this tier does not do block layout",
+      "hp:paraPr@fontLineHeight=1 — line height from the resolved font's own ascent/descent; the declared character size is used instead",
+      "hp:paraPr@snapToGrid — the section grid is not implemented",
+      "hh:lineSpacing@type=BETWEEN_LINES — implemented as pure leading, never exercised by the corpus",
+      "hh:tab@type=RIGHT / CENTER / DECIMAL — advanced as a LEFT stop",
+      "hp:tab elements inside a run are not placed in the character stream"
+    ],
+    "policy": "auto",
+    "policy_meaning": "auto: a paragraph keeps the document's cached hp:lineseg boxes unless they provably no longer describe its text, in which case this renderer's own breaker lays it out. computed: every paragraph is laid out by this renderer's breaker, which is how the breaker itself is measured — not how a document is rendered most faithfully.",
+    "prohibition_table": {
+      "line_end_forbidden": "#$(@[\\{£¥‘“‵〈《「『【〔＃＄（＠［｛￥￦",
+      "line_start_forbidden": "!\"%'),.:;?]}¢°·’”‥…‰′″℃、。々〆〉》」』】〕ぁぃぅぇぉっゃゅょゎゝゞァィゥェォッャュョヮヵヶーㆍ！），．：；？］｝",
+      "note": "금칙처리. KS X 6101 does not publish the prohibited-character sets any more than it publishes the language-slot partition; this is the conventional Korean/CJK table and is this renderer's, declared, not the spec's."
+    },
+    "stale_detection": "a cached line box is judged stale when a cached textpos starts past the end of the character stream, or when a cached line's FONT-INDEPENDENT lower-bound width (full-width cells at their declared size x hh:ratio, plus the declared hh:spacing gaps) exceeds that line's own cached horzsize by more than 1%. The bound can never exceed the width the authoring engine actually fitted, so the detector raises no false positive on an unedited paragraph — but it is INCOMPLETE: an edit that leaves every line still fitting is invisible in the file, and an editor that knows it changed a paragraph must declare it through relayout_paragraphs instead of relying on detection."
+  },
   "notes": [
-    "line boxes come from the document's own cached hp:lineseg layout; line breaking matches the authoring engine, intra-line text extents do not (see fonts)",
+    "line boxes come from the document's own cached hp:lineseg layout wherever that cache is present and provably still describes the paragraph's text; where it is not, this renderer's own line breaker lays the paragraph out and line_layout says which paragraphs and why",
+    "line breaking therefore matches the authoring engine exactly on an unedited paragraph, and is this renderer's own answer on an edited one; intra-line text extents match neither (see fonts)",
     "character typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) IS applied, per language slot; see typography for what this document exercised and typography_slot_model for how a character is assigned to a slot",
     "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no trailing gap), measured against the Hancom reference render",
     "hh:align JUSTIFY stretches every line of a paragraph except its last; DISTRIBUTE stretches every line; neither ever shrinks a line that already overruns its box",
