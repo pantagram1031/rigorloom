@@ -177,6 +177,13 @@ canonical root set is enumerated at `pipeline/scripts/ws_snapshot.py:29`
 (`ARCHIVE_ROOTS`). Slug validation and traversal refusal already exist at
 `studio/main.py:98` (`_SLUG_RE`) and `studio/main.py:100` (`safe_workspace`).
 
+**Superseded by §15.** §11.4 withdrew `workspace/list` on the grounds that this
+object was "the REPORT PIPELINE's workspace, which the Runtime does not manage
+and has no method for". It manages one now, as a session KIND. The correction
+§11.4 could not make is that the path list above is a *module's* contract and
+not core's to hold: §15.1 replaces this enumeration with a declaration read
+through `provides.workspace_layout`.
+
 ### 3.2 Session
 
 GAP. Nothing in the tree holds cross-call state — every script is a one-shot
@@ -460,6 +467,7 @@ how the Runtime was launched — never a field a client sets in a request. A
 | Method | Why host-only | Existing enforcement to reuse |
 | --- | --- | --- |
 | `workspace/openPath` (arbitrary filesystem path) | escapes any containment the workspace root provides | `studio/main.py:100` (`safe_workspace`) refuses out-of-root today; agent-side opens must go through a slug, not a path |
+| `workspace/openDirectory` (arbitrary absolute directory) | the same reach, over a whole TREE (§15) | implemented; the walk is bounded and refuses symlinks root and member, but filesystem reach is the authority and no agent-safe method grants it. Note the name: `workspace/openPath` above opens a DOCUMENT, a wart §11.4 records and §15.6 proposes fixing at a version bump |
 | `workspace/importAttachment` | brings unvetted bytes into the tree | `pipeline/scripts/hwp_ingress.py:40-46` bounds every input dimension; `pipeline/scripts/privacy_scan.py:1` is the content gate |
 | `approval/resolve` | this *is* the human gate | `modules/report/scripts/pipeline_ctl.py:1112-1159` — never fabricates approval |
 | `artifact/exportTo` (user-chosen path) | writes outside the workspace | `engine/scripts/document_evidence.py:558` (`_safe_relative_path`) refuses escapes for everything inside |
@@ -476,7 +484,10 @@ how the Runtime was launched — never a field a client sets in a request. A
 `plan/validate`, `approval/request`, `candidate/read`, `verify/read`,
 `receipt/read`, `event/poll`, `module/list`, `module/check` (§13 — read-only
 analysis over a scratch copy, reachable only for a module the operator
-enabled), and the protocol-only `event/subscribe` / `event/unsubscribe`.
+enabled), `workspace/inspect` (§15 — a read of an already-open workspace
+session; it takes a session id, never a path, which is the whole difference
+from the host-only opener), and the protocol-only `event/subscribe` /
+`event/unsubscribe`.
 
 Note what is *not* on the agent list: `plan/apply`. In v0 an agent proposes and
 validates; the host applies. This is the conservative reading of "one
@@ -528,6 +539,13 @@ marks the genuinely new codes.
 `frame_too_large` · `frame_malformed` · `unknown_method` · `unknown_field` ·
 `invalid_params` · `authority_denied` · `cancelled` · `plan_stale` ·
 `capability_unavailable`.
+
+Two more arrived with the workspace session kind (§15) and live in the same
+closed set, `rt_codes.ERROR_CODES`, which is authoritative over this table:
+`workspace_rejected` (a directory that fails ingress; carries a `reason` from
+`WORKSPACE_REJECT_REASONS`, itself closed) and `session_kind_mismatch` (a
+document method reached a workspace session or the reverse — named, so a caller
+is not left reading a backend refusal about a file that is a directory).
 
 Build note (one line each): they are the protocol's own failure modes and have
 no engine counterpart; put them in one module beside the framing code, with a
@@ -999,6 +1017,15 @@ passed would be surface without a concept, so it is withdrawn from the method
 table rather than left as a GAP implying someone should build it. If a Desktop
 Workspace turns out to be a grouping of sessions, that grouping is shell state
 and should live in the shell.
+
+**Half of this held and half did not, and §15 says which.** The withdrawal of
+`workspace/list` stands: the store still holds sessions and `session/list`
+still enumerates them. What did not hold is "the Runtime does not manage a
+report workspace and has no method for it" — it manages one as a session KIND,
+because thirteen shipped checkers take a directory and skipping all of them
+forever was not a design, it was a gap (§13.7). The right reading of this
+section is therefore: a workspace is not a grouping of sessions, it is
+something a session can HOLD.
 
 ### 11.5 Still GAP after Phase 3
 
@@ -1479,14 +1506,32 @@ to cross a wire an agent reads.
 
 ### 13.7 Still GAP here
 
-- **Workspace checkers have no session.** Twelve of the eighteen are skipped by
-  construction, because the Runtime has no workspace concept at all. The honest
-  fix is a workspace session kind, not a directory guessed from a document.
+- **~~Workspace checkers have no session.~~ Closed by §15.** The count in the
+  original entry was wrong too, and is corrected here from a re-count of the
+  declarations on disk: this checkout declares **seventeen** checkers across
+  six modules, not eighteen, and **thirteen** of them take a workspace, not
+  twelve — `grant` landed after §13 was written and nobody re-counted. Until
+  §15 all thirteen were skipped `needs_workspace` by construction. They now run
+  against a workspace session: measured 13 ran / 0 skipped / 0 unavailable
+  (§15.5). The four document-subject checkers are skipped on a workspace
+  session with `needs_document`, the mirror reason.
 - **`--pack`, `--vocabulary`, `--mode`.** Every checker gets its own defaults;
   the Runtime passes none of them. A pack instance is operator state
   (`personalization_ctl`) and there is no wire surface for it (`policy/set` is
   still GAP), so passing one would mean inventing that surface here.
 - **Containment.** As above: bounded, killed, not contained.
+- **The child sees the installation now, and only that.** §13.6 said
+  `RIGORLOOM_MODULES_ROOT` and `RIGORLOOM_MODULES_ENABLED` override where
+  modules are read from, and until §15 only the Runtime honoured them:
+  `module_registry.ModuleRegistry()` always resolved the checkout, so a checker
+  that consults the registry itself answered about a *different* installation
+  than the one its caller had selected. Measured on three of the thirteen —
+  `check_numbers` and `check_tone_rules` resolving a pack type their own module
+  declares, `content_audit` composing a sibling module's checker — each
+  returning `usage_error` reading, in effect, "enable the module you just ran
+  me from". The registry now honours both names when given no argument, and
+  `module/check` passes the pair it resolved into the child's allowlisted
+  environment. Nothing else was added to that environment.
 
 ---
 
@@ -1542,3 +1587,244 @@ would print in something other than the body face.
   no point size of its own.
 - **No writing.** This is a read. Setting a face means a charPr the document
   does not have, which is a `preedit` question, not a protocol one.
+
+---
+
+## 15. Workspace sessions (gap 20)
+
+Thirteen of the seventeen checkers the six shipped distribution modules declare
+take a report **workspace** directory, not a document. The Runtime had no
+workspace concept, so `module/check` skipped all thirteen with
+`needs_workspace` by construction (§13.7) and the report-pipeline engine — the
+product this repository started as — could not run inside the application at
+all. One session kind closes it.
+
+```
+workspace/openDirectory {path}       -> a workspace session summary   (HOST ONLY)
+workspace/inspect       {sessionId}  -> the same summary, re-read     (agent-safe)
+module/check            {sessionId, module, …}  -> the workspace checkers run
+```
+
+### 15.1 What a workspace IS — declared by a module, never held by core
+
+The paths a workspace holds are a distribution module's vocabulary. A list of
+them inside the Runtime is exactly the per-module knowledge `modules/README.md`
+rule 1 forbids, and it is the same question `provides.checkers[].subject`
+answered one slice earlier (§13.2). So the answer takes the same shape: a
+declaration.
+
+`provides.workspace_layout` names a module-relative JSON file. The Runtime
+reads three keys from it and ignores the rest — `canonical_dirs`, `stages`
+(each `inputs`/`outputs` entry a `{pattern, required}` pair, the stage name
+becoming the part's role) and `read_only_paths` (`{pattern, role, required}`,
+for a path a checker reads that no stage routes). `enabled_workspace_layouts()`
+is the typed accessor; core still never learns a module's name to get there.
+
+**The contract below is derived from the checkers, not from the file.** Every
+path was found by reading all thirteen workspace-subject checkers, and the file
+was then checked against that list. It is closed: no other workspace-relative
+path is read by any of them.
+
+| path | kind | read by, and for what |
+| --- | --- | --- |
+| `PIPELINE.md` | file | the run mode; stage/gate done claims |
+| `request.yaml` | file | the run mode; the recorded student identity |
+| `build.yaml` | file | the recorded student identity |
+| `claims.yaml` | file | the evidence ledger every numeric claim traces to |
+| `bundle/content.md` | file | the report body — read by eight of the thirteen |
+| `bundle/figures/` | dir | figure files a `[[FIG]]` tag must resolve to |
+| `output/scorecard*.json` | glob | the evaluation panel's verdict |
+| `output/QUESTIONS.md` | file | the understanding gate's questions and answers |
+| `output/out.pdf` | file | the assembled artifact, for the leak check |
+| `research/sources.json` | file | the source ids the ledger cites |
+| `.pipeline/handoff.json` | file | the machine FINAL/canonical pointer |
+| `_saeteuk/` | dir | the saeteuk artifact a report must not contradict |
+| `sim/results.json`, `results.json` | file | simulation results numbers are checked against |
+| `sim/provenance.json`, `sim/provenance` | file/dir | the simulation's seed and provenance |
+
+Four of those — `.pipeline/handoff.json`, `_saeteuk/`, `sim/results.json`,
+`sim/provenance.json` — are read by a checker and routed by no stage, so the
+declaration grew a `read_only_paths` list rather than the Runtime growing a
+special case. `_saeteuk/` is deliberately **not** in `canonical_dirs`: the
+organizer creates canonical directories, and creating that one empty would turn
+`check_saeteuk`'s no-op PASS into a `saeteuk_missing` WARN.
+
+**Paths a checker reads that are NOT workspace parts**, listed so nobody adds
+them: `packs/*_allowlist.*`, `packs/constants_allowlist.json` and
+`cache/sources/` resolve under `RIGORLOOM_PROFILE_ROOT`, the operator's private
+personalization store, not under the workspace.
+
+With no enabled module declaring a layout the answer is
+`layout.state: "undeclared"` with a reason and **zero** parts. The workspace
+still opens and its checkers still run — a checker knows its own paths, and
+nothing here needs to.
+
+### 15.2 The summary: per part, present or absent, and what nobody declared
+
+`layout.parts[]` carries `{path, kind, role, required, source, present,
+matches}`. `kind` is `file | directory | glob`, because "present" means
+something different for a glob: at least one match. `source` is
+`canonical_dir | stage_output | stage_input | read_only`, and `role` is the
+declaration's own word — a stage name — passed through untouched.
+
+A workspace is also a person's directory and holds things no contract knows
+about, so `undeclared.entries[]` lists the top-level names the declaration does
+not name, bounded and counted. Without it the summary would read as a complete
+inventory when it is a declared one.
+
+### 15.3 Immutability, and what the isolation costs
+
+The same rule as a document, one level up. `workspace/openDirectory` walks the
+operator's directory read-only, copies it into `<session>/workspace/` and
+hashes the copy; everything after that addresses the copy. `module/check` then
+copies THAT into `<session>/checks/<callId>/subject/` and deletes it in a
+`finally`, exactly as it does for a document — so a checker that writes reaches
+scratch and nothing else, which a test asserts against a checker that really
+writes rather than promising it.
+
+The tree hash is SHA-256 over the sorted `(relative posix path, sha256)` pairs,
+so it is stable across filesystems and orderings and moves if any file's bytes,
+name or place move. The scratch copy is re-hashed and refused if it does not
+equal the session copy: a finding about a workspace nobody has is worse than no
+finding.
+
+**Bounds, from measurement on this bench, not from what a disk holds:**
+
+| shape | files | bytes | copy |
+| --- | --- | --- | --- |
+| a real scaffolded workspace | 19 | 26 KB | 0.14–0.44 s |
+| few and large | 64 | 64 MB | 1.16 s (58 MB/s) |
+| many and small | 4096 | 16 MB | **72.4 s** (17.7 ms/file) |
+
+The third row sets the file cap. Entries cost; bytes do not. On Windows the
+per-file open/close/scan dominates by two orders of magnitude, so a byte-only
+bound would let a 16 MB workspace cost seventy seconds **on every check**.
+`MAX_WORKSPACE_FILES = 2048`, `MAX_WORKSPACE_BYTES = 64 MiB`,
+`MAX_WORKSPACE_DEPTH = 16`. Every call publishes what its own copy actually
+cost in `bounds.subjectCopy` — measured 62–217 ms on the assembled workspace —
+rather than asking a caller to trust that it was small.
+
+Refusals carry a reason from `WORKSPACE_REJECT_REASONS`, closed:
+`path_not_absolute`, `not_a_directory`, `symlink_or_reparse`, `member_symlink`,
+`workspace_too_large`, `too_many_files`, `too_deep`, `unreadable`. The walk is
+its own bound — it stops at the first entry that would cross a limit, so a
+pathological directory costs the walk to find that entry and not a byte more,
+and nothing is staged before it passes.
+
+Symlinks are refused at the root and inside. A link in the tree can name
+anything on the operator's disk: following it pulls unbounded bytes past the
+size check, and reproducing it hands a checker a path out of its scratch.
+Refusing is the only answer that keeps the bound honest — the posture
+`rt_session._zip_sanity` already takes for a symlinked zip member.
+
+### 15.4 `module/check` on a workspace, and the mirror skip
+
+| session holds | `subject: document` | `subject: workspace` | subject absent |
+| --- | --- | --- | --- |
+| a document | runs it | `skipped: needs_workspace` | `skipped: subject_undeclared` |
+| a workspace | `skipped: needs_document` | runs it | `skipped: subject_undeclared` |
+
+`needs_document` is the new reason and it is the exact mirror of the one that
+made this slice necessary. Both mean the same thing: this session does not hold
+what that checker eats. Neither is ever a pass.
+
+A workspace has no baseline and none is claimed — there is no blank form a
+workspace was produced from — so `baseline.supplied` is false with that reason,
+and a workspace checker declaring `wants: [baseline]` would be `partial`.
+`runId` names a published candidate, which only a document session has, and is
+an `invalid_params` refusal on a workspace session rather than a silent ignore.
+
+**The location vocabulary, extended and still closed.** A finding's `address`
+is `{table, row, col}` or `{atPara}` for a document, and for a workspace it is
+`{path}` or `{path, line}` — the path relative to the workspace root. It is
+emitted only when the whole location resolves to something the copy actually
+has. `"bundle/content.md"` and `"bundle/content.md:12"` get addresses;
+`"output/QUESTIONS.md numbers=[1,2]"` and `"build.yaml or request.yaml"` do
+not, and keep their text instead. That is §13.4's rule for cells — never a
+half-address that would select the wrong thing — read for files.
+
+**A path leak, found and closed.** Several checkers echo the path they were
+handed straight into a finding; `check_claims` writes `str(ledger_path)`, an
+absolute one. That is the operator's directory layout plus a scratch directory
+that no longer exists by the time a caller reads the answer, on a wire an agent
+reads — the thing §13.6 already refused for `module/list`. Every location,
+message and detail is now scrubbed of the scratch prefix before it leaves, for
+document subjects as well as workspace ones, and a test asserts that no part of
+the report carries the session directory.
+
+### 15.5 Measured, on an assembled workspace
+
+There is no complete report workspace in this checkout and there is not
+supposed to be one: a workspace holds a person's report and `.gitignore` keeps
+them out. So the fixture is **assembled**, `tests/_workspace_fixture.py` names
+every piece, and it is not called a corpus. Its skeleton — `PIPELINE.md`,
+`.pipeline/handoff.json`, `.pipeline/artifacts.json`, `events.jsonl`,
+`WORKSPACE_INDEX.md`, `work/stage-0/` and the canonical directories — is
+written by `modules/report/scripts/pipeline_ctl.py init` against the real
+corpus form, resolved through the registry the way `scripts/new_report.py`
+resolves it, with `request.yaml`, `build.yaml` and `APPROVALS.md` from
+`new_report`'s own template functions imported rather than retyped. The
+stage-4-and-later content a scaffolder does not write comes from this
+repository's own checker tests, file by file, per that docstring's table.
+
+18 files, 23.5 KB, depth 3. Open: copy 217 ms; 51 declared parts, 27 present,
+14 absent-and-required (the workspace stops before stage 5, so those outputs
+genuinely do not exist yet), 4 top-level entries the declaration does not name.
+
+| module | checker | state | verdict |
+| --- | --- | --- | --- |
+| report | `check_canonical` | ran | pass |
+| report | `check_claims` | ran | fail — 2 hard, the ledger cites a source id the assembled bibliography does not define |
+| report | `check_corpus` | ran | skipped — the checker's own optional skip, no `RIGORLOOM_CORPUS_ROOT` configured |
+| report | `check_numbers` | ran | pass |
+| report | `check_refs` | ran | pass |
+| report | `check_saeteuk` | ran | pass |
+| report | `check_scorecard` | ran | pass |
+| report | `check_sources` | ran | pass |
+| report | `check_tone_rules` | ran | pass |
+| report | `check_understanding` | ran | pass |
+| report | `content_audit` | ran | fail — it composes `check_claims`, same 2 hard |
+| report | `verify_content` | ran | pass |
+| style | `check_style` | ran | pass |
+| gongmun | `check_gongmun` | skipped | `needs_document` |
+| grant | `check_grant` | skipped | `needs_document` |
+| hr | `check_hr` | skipped | `needs_document` |
+| minwon | `check_minwon` | skipped | `needs_document` |
+
+**13 ran, 4 skipped, 0 unavailable** on the workspace session. The same six
+modules against a document session, unchanged: **4 ran, 13 skipped
+(`needs_workspace`), 0 unavailable**. Per-checker wall clock 389–1015 ms;
+per-call scratch copy 62–125 ms.
+
+The two `fail` rows are findings about the fixture's own content, not about the
+wire. A verdict here is evidence that a real checker received a real workspace
+and that its answer was carried and normalized correctly; it is evidence of
+nothing about report quality.
+
+### 15.6 Still GAP here
+
+- **`workspace/openPath` opens a DOCUMENT.** The name predates there being a
+  workspace session and §11.4 already recorded where the confusion started. The
+  new opener therefore took a distinct name, `workspace/openDirectory`, rather
+  than a rename being smuggled into this slice. The rename this actually wants
+  is `workspace/openPath` → `document/openPath`, with `workspace/openPath`
+  becoming the directory opener; that is a wire break for every client on this
+  stack and belongs in a protocol version bump, not here.
+- **A workspace session cannot be edited.** It opens, it summarises, its
+  checkers run. There is no `plan/propose` against a workspace, so the E4.2
+  fix loop — the agent proposes a change to `bundle/content.md`, a human
+  approves, a candidate is published with a receipt — has its read half only.
+  Everything a plan needs is in place (the copy, the tree hash, the scratch
+  discipline); the op kinds are not.
+- **The copy is whole, every time.** Each `module/check` re-copies the entire
+  workspace. At the measured 62–217 ms for a small one that is nothing; at 2048
+  entries it is tens of seconds. Nothing is incremental and nothing is cached
+  on the tree hash.
+- **Containment, still.** Bounded (wall clock, captured output, environment
+  allowlist) and killed on timeout; not contained — no process group, no
+  Windows Job. A checker that writes to an absolute path outside its cwd is
+  stopped by nothing here. `bounds.containment` says `not_established`.
+- **A layout declaration is trusted to be sane.** Two enabled modules declaring
+  layouts are merged as a union with `required` ORed, and a declaration with
+  more than 512 parts is truncated. Nothing validates the declared file against
+  a schema; a malformed one is reported as a reason, never raised.
