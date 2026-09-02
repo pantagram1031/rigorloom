@@ -1777,15 +1777,14 @@ export function layoutEcho(s: ReturnType<typeof getState>): LayoutEcho | null {
   const rendered = s.render.source ?? { kind: "unknown" };
   // The raster already IS this candidate's. Nothing to say.
   if (rendered.runId === head.runId) return (echoCache = null);
-  const changed = changedAddresses(s, head.runId);
+  const changed = s.changedByRun[head.runId] ?? [];
   const cached = echoCache;
   if (
     cached &&
     cached.runId === head.runId &&
     cached.rendered.kind === rendered.kind &&
     cached.rendered.runId === rendered.runId &&
-    cached.changed.length === changed.length &&
-    cached.changed.every((key, i) => key === changed[i])
+    cached.changed === changed
   ) {
     return cached;
   }
@@ -1794,67 +1793,49 @@ export function layoutEcho(s: ReturnType<typeof getState>): LayoutEcho | null {
 }
 
 /**
- * Which addresses this candidate's chain changed, as `c:t:r:c` / `p:N` keys.
+ * Read the plans behind a candidate's chain and record which addresses changed.
  *
- * From the RECEIPTS' own step records — the ops that actually ran — walked
- * back up the `base` links, so a chain of three edits marks all three. A
- * candidate whose receipt has not been read yet contributes nothing rather
- * than a guess, and the panel says the list is partial in that case.
+ * The keys come from the RECEIPTS' own plans — the ops that actually ran —
+ * walked back up the `base` links, so a chain of three edits marks all three.
+ * Nothing here is inferred from the page.
+ *
+ * The result goes into the STORE and not into a module memo, and that is a
+ * defect this was written around rather than a preference: the echo renders
+ * through `useWorkspace`, the last store write in this walk is the receipt
+ * read, and a cache filled after it would never reach a render. An ancestor
+ * whose plan the runtime cannot hand back stops the walk, and the page then
+ * says the list is unread rather than marking a shorter one and looking
+ * complete.
  */
-export function changedAddresses(s: ReturnType<typeof getState>, runId: string): string[] {
+export async function loadChangedAddresses(runId: string): Promise<number> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return 0;
+  if (getState().changedByRun[runId]) return getState().changedByRun[runId].length;
   const keys: string[] = [];
   const seen = new Set<string>();
   let cursor: string | null = runId;
   while (cursor && !seen.has(cursor)) {
     seen.add(cursor);
-    const plan: OperationPlan | undefined = planCache[cursor];
-    for (const op of plan?.ops ?? []) {
+    const current: string = cursor;
+    const receipt = getState().receipts[current] ?? (await loadReceiptQuiet(current));
+    if (!receipt) break;
+    let plan: OperationPlan;
+    try {
+      plan = await rt.getPlan(receipt.planId);
+    } catch {
+      break;
+    }
+    for (const op of plan.ops) {
       const key =
         op.kind === "set_run"
           ? `p:${Number(op.params.atPara)}`
           : `c:${Number(op.params.table ?? 0)}:${Number(op.params.row)}:${Number(op.params.col)}`;
       if (!keys.includes(key)) keys.push(key);
     }
-    cursor = s.receipts[cursor]?.base?.runId ?? null;
-  }
-  return keys;
-}
-
-/**
- * Plans read back for the receipts on screen, keyed on runId.
- *
- * Module-level rather than store state for the reason the geometry in-flight
- * map is: nothing renders it, it is a memo of an idempotent read, and putting
- * it in the store would make every echo recomputation a store write.
- */
-const planCache: Record<string, OperationPlan> = {};
-
-/** Read the plans behind a candidate's chain so the echo can mark its regions. */
-export async function loadChangedAddresses(runId: string): Promise<number> {
-  const sessionId = getState().activeSessionId;
-  if (!sessionId) return 0;
-  let cursor: string | null = runId;
-  const seen = new Set<string>();
-  while (cursor && !seen.has(cursor)) {
-    seen.add(cursor);
-    const current: string = cursor;
-    const receipt = getState().receipts[current] ?? (await loadReceiptQuiet(current));
-    if (!receipt) break;
-    if (!planCache[current]) {
-      try {
-        planCache[current] = await rt.getPlan(receipt.planId);
-      } catch {
-        // A plan the runtime cannot hand back leaves this candidate's regions
-        // unmarked. The page then says the marking is partial rather than
-        // marking the wrong ones.
-        break;
-      }
-    }
     cursor = receipt.base?.runId ?? null;
   }
-  // Bump nothing: `layoutEcho` recomputes from the caches on the next read,
-  // and the caller re-renders because the receipts it loaded are store state.
-  return Object.keys(planCache).length;
+  setState({ changedByRun: { ...getState().changedByRun, [runId]: keys } });
+  return keys.length;
 }
 
 async function loadReceiptQuiet(runId: string) {

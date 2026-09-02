@@ -1183,7 +1183,11 @@ async function echoChecks() {
   check("the staged edit applied", !!echoRun,
     echoRun ?? JSON.stringify(getState().applyError));
   if (!echoRun) return;
-  await settled(600);
+  // The banner needs the head; the MARKS need one plan read per ancestor. Wait
+  // for the reads rather than sleeping past them — a fixed sleep here would
+  // make this check a race that passes on a fast machine.
+  await waitFor(() => (getState().changedByRun[echoRun] ?? []).length > 0, 20000);
+  await settled(400);
 
   checkDom("the page now says 후보본과 다름 — 이 그림은 원본 기준",
     domText('[data-testid="layout-echo"]').includes("후보본과 다름") &&
@@ -2309,7 +2313,12 @@ async function phaseShot(config: SmokeConfig, stop: string) {
         for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
           await settled(500);
         }
-        await settled(1200);
+        const shotRun = getState().applied?.runId;
+        if (shotRun) {
+          await waitFor(
+            () => (getState().changedByRun[shotRun] ?? []).length > 0, 20000);
+        }
+        await settled(800);
       }
       await ready(`shot-${stop}`);
       return;

@@ -238,7 +238,7 @@ function CandidateDiffers({ echo }: { echo: LayoutEcho }) {
       <p className="mono tiny" data-testid="layout-echo-changed">
         {echo.changed.length > 0
           ? `달라진 자리 ${echo.changed.length}곳: ${echo.changed.join(" ")}`
-          : "달라진 자리 목록을 아직 읽지 못했습니다 — 영수증을 읽으면 표시됩니다"}
+          : "달라진 자리 목록을 아직 읽지 못했습니다 — 영수증과 계획을 읽는 중입니다"}
       </p>
       <p className="tiny">
         바뀐 글자를 이 그림 위에 그려 넣지는 않습니다. 그것은 편집기가 지어낸
