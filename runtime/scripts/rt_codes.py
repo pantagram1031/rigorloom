@@ -154,6 +154,13 @@ DOMAIN_CODES = frozenset({
     "artifact_missing",
     "candidate_hash_mismatch",
     "receipt_body_mismatch",
+    # workspace/readMember reuses these exact reason words from
+    # rt_wsops.WS_REFUSAL_CODES (the write ops refuse a member the same way) —
+    # not new vocabulary, the same refusal surfaced one layer up (§15.8).
+    "member_missing",
+    "member_not_text",
+    "member_too_large",
+    "path_not_relative",
     "capability_unavailable",
     "publication_failed",
     "backend_refused",
