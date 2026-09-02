@@ -336,7 +336,7 @@ STRUCTURAL_TAGS = frozenset({
     "pos", "inMargin", "outMargin", "shapeComment", "secPr", "grid",
     "startNum", "visibility", "lineNumberShape", "pagePr", "margin",
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
-    "orgSz", "imgDim",
+    "orgSz", "imgDim", "pageNum",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
     "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
@@ -358,6 +358,9 @@ class RendererUnavailable(RuntimeError):
 # guaranteed by the format, only the namespace URI is, and different producers
 # bind different prefixes.
 # --------------------------------------------------------------------------
+
+_UNSET = object()
+
 
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
@@ -1103,6 +1106,7 @@ class OwnRenderer:
         self._face_cache = {}
         self.skipped = {}
         self._bin_cache = {}
+        self._page_num_spec = _UNSET
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
@@ -2752,6 +2756,113 @@ class OwnRenderer:
             "paragraphs_relaid_out": computed,
         }
 
+    # -- page numbers ----------------------------------------------------
+    # Where Hancom draws a BOTTOM_* page number, measured — not assumed —
+    # against a reference PDF of a report-class document: the number's line
+    # box sits with its BOTTOM EDGE on ``page height - bottom margin``, and is
+    # aligned inside the body box ``[left margin, width - right margin]``.
+    # On the measured document (A4, bottom 3402, right 5669, left 7654 HWPUNIT)
+    # the reference draws its number's box bottom at 807.93 pt against a
+    # predicted 807.86, and its centre at 307.60 pt against a predicted
+    # 307.57.  Every other ``pos`` value is declared unmeasured and skipped
+    # rather than guessed from this one.
+    PAGE_NUM_POSITIONS = ("BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT")
+
+    def page_number_spec(self):
+        """The document's ``hp:pageNum`` control, or None.
+
+        ``hp:pageNum`` is 쪽 번호 매기기: it is not a footer paragraph, it is a
+        control that makes Hancom stamp a number on every page of the section.
+        It sits inside an ``hp:run``, and that run's ``charPrIDRef`` is what
+        meters the number, so the run is what has to be found, not the tag.
+        """
+        if self._page_num_spec is not _UNSET:
+            return self._page_num_spec
+        spec = None
+        for run in self.sections[0].iter():
+            if _local(run.tag) != "run":
+                continue
+            el = next((e for e in run.iter() if _local(e.tag) == "pageNum"),
+                      None)
+            if el is None:
+                continue
+            spec = {
+                "pos": (el.get("pos") or "").upper(),
+                "format": (el.get("formatType") or "DIGIT").upper(),
+                "side_char": el.get("sideChar") or "",
+                "charpr": run.get("charPrIDRef") or "",
+            }
+            break
+        if spec is not None:
+            start = next((e for e in self.sections[0].iter()
+                          if _local(e.tag) == "startNum"), None)
+            vis = next((e for e in self.sections[0].iter()
+                        if _local(e.tag) == "visibility"), None)
+            spec["first_number"] = max(1, _iattr(start, "page") or 1)
+            spec["hide_first"] = bool(_iattr(vis, "hideFirstPageNum"))
+        self._page_num_spec = spec
+        return spec
+
+    def _render_page_number(self, draw, geo, page_number):
+        """Stamp this page's number where ``hp:pageNum`` says to put it."""
+        spec = self.page_number_spec()
+        if spec is None:
+            return
+        if spec["pos"] not in self.PAGE_NUM_POSITIONS:
+            self._skip(f"hp:pageNum@pos={spec['pos'] or 'MISSING'}",
+                       "only the BOTTOM_LEFT/CENTER/RIGHT positions have been "
+                       "measured against a Hancom reference; no number is "
+                       "drawn for the others rather than one guessed")
+            return
+        if spec["format"] != "DIGIT":
+            self._skip(f"hp:pageNum@formatType={spec['format']}",
+                       "only DIGIT numbering is implemented; the number is "
+                       "drawn in arabic digits")
+        if page_number == 1 and spec["hide_first"]:
+            return
+        number = spec["first_number"] + page_number - 1
+        side = spec["side_char"]
+        text = f"{side} {number} {side}" if side else str(number)
+        cid = spec["charpr"]
+        pieces = self._text_pieces(draw, cid, text)
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        colour = self._charpr(cid).get("color") or (0, 0, 0)
+        for piece in pieces:
+            piece["colour"] = colour
+        width = sum(p["advance"] for p in pieces)
+        glyph = next((p for p in pieces if p["kind"] == "glyph"), None)
+        if glyph is None:
+            return
+        ascent, descent = glyph["font"].getmetrics()
+        left = self.px(geo["margin"]["left"])
+        right = self.px(geo["width"] - geo["margin"]["right"])
+        if spec["pos"] == "BOTTOM_LEFT":
+            x = left
+        elif spec["pos"] == "BOTTOM_RIGHT":
+            x = right - width
+        else:
+            x = left + (right - left - width) / 2.0
+        bottom = self.px(geo["height"] - geo["margin"]["bottom"])
+        baseline = bottom - descent
+        x0 = x
+        for piece in pieces:
+            if piece["kind"] == "glyph":
+                self._draw_glyph_piece(draw, piece, x, baseline)
+            x += piece["advance"]
+        self.counts["page_numbers"] += 1
+        # A stamped number is a text line the reference PDF also extracts, so
+        # it belongs in the geometric comparison channel like any other line.
+        self.counts["text_lines"] += 1
+        self.line_boxes.append({
+            "page": self._page,
+            "mode": "pagenum",
+            "x0": round(x0, 3),
+            "y0": round(baseline - ascent, 3),
+            "x1": round(x0 + width, 3),
+            "y1": round(baseline + descent, 3),
+        })
+
     def render(self):
         geo = self.page_geometry()
         pages = self.paginate()
@@ -2768,6 +2879,7 @@ class OwnRenderer:
                 (geo["body_left"], geo["body_top"]),
                 geo["usable_width"],
             )
+            self._render_page_number(draw, geo, page_number)
             images.append(img)
         self._audit_unsupported()
         sidecar = {
