@@ -223,6 +223,100 @@ def test_a_clipped_picture_crops_by_the_declared_fraction(tmp_path):
     assert all(c[0] > c[2] for c in colours), colours
 
 
+def _pagenum_renderer(pos, side="-", fmt="DIGIT", start=1, hide_first=0):
+    """A renderer whose section declares one ``hp:pageNum`` control.
+
+    No corpus form uses 쪽 번호 매기기, so the control is injected the way the
+    equation path is driven directly: the geometry under test is the page
+    box's, which the corpus form supplies for real.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    run = ET.fromstring(
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        f'<hp:pageNum pos="{pos}" formatType="{fmt}" sideChar="{side}"/>'
+        "</hp:ctrl></hp:run>")
+    section = renderer.sections[0]
+    section.append(run)
+    # The form already declares hp:startNum / hp:visibility; the renderer
+    # reads the first of each, so the test has to edit those rather than
+    # append rivals it would never see.
+    for tag, attr, value in (("startNum", "page", start),
+                             ("visibility", "hideFirstPageNum", hide_first)):
+        el = next((e for e in section.iter() if e.tag.rsplit("}", 1)[-1] == tag),
+                  None)
+        if el is None:
+            el = ET.SubElement(section, tag)
+        el.set(attr, str(value))
+    renderer._page_num_spec = own_render._UNSET
+    return renderer
+
+
+def test_a_page_number_is_stamped_on_every_page():
+    """``hp:pageNum`` is a control, not a footer: every page gets a number."""
+    renderer = _pagenum_renderer("BOTTOM_CENTER")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == sidecar["pages"]
+    assert sidecar["pages"] >= 1
+
+
+def test_a_bottom_page_number_sits_on_the_bottom_margin():
+    """Measured placement, not a guess.
+
+    Against a Hancom reference the number's line box has its BOTTOM EDGE on
+    ``page height - bottom margin`` and is centred in the body box.  Both are
+    asserted here in the renderer's own pixel units, so a change to either
+    rule is caught.
+    """
+    renderer = _pagenum_renderer("BOTTOM_CENTER")
+    _images, sidecar = renderer.render()
+    geo = renderer.page_geometry()
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "pagenum"]
+    assert boxes
+    bottom = renderer.px(geo["height"] - geo["margin"]["bottom"])
+    left = renderer.px(geo["margin"]["left"])
+    right = renderer.px(geo["width"] - geo["margin"]["right"])
+    for box in boxes:
+        assert abs(box["y1"] - bottom) <= 1, box
+        centre = (box["x0"] + box["x1"]) / 2.0
+        assert abs(centre - (left + right) / 2.0) <= 1, box
+
+
+def test_page_number_alignment_follows_pos():
+    """LEFT and RIGHT anchor on the body box's own edges."""
+    left_boxes = [b for b in _pagenum_renderer("BOTTOM_LEFT").render()[1]
+                  ["line_boxes"] if b["mode"] == "pagenum"]
+    right_boxes = [b for b in _pagenum_renderer("BOTTOM_RIGHT").render()[1]
+                   ["line_boxes"] if b["mode"] == "pagenum"]
+    renderer = _pagenum_renderer("BOTTOM_LEFT")
+    geo = renderer.page_geometry()
+    assert abs(left_boxes[0]["x0"] - renderer.px(geo["margin"]["left"])) <= 1
+    assert abs(right_boxes[0]["x1"]
+               - renderer.px(geo["width"] - geo["margin"]["right"])) <= 1
+
+
+def test_an_unmeasured_page_number_position_is_declared_not_guessed():
+    """A TOP_* or INSIDE_* number has never been measured; draw nothing."""
+    renderer = _pagenum_renderer("TOP_CENTER")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == 0
+    skipped = {e["element"] for e in sidecar["elements_skipped"]}
+    assert "hp:pageNum@pos=TOP_CENTER" in skipped, skipped
+
+
+def test_hide_first_page_number_is_honoured():
+    renderer = _pagenum_renderer("BOTTOM_CENTER", hide_first=1)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == sidecar["pages"] - 1
+
+
+def test_start_number_offsets_the_stamped_number():
+    """``hp:startNum@page`` renumbers; the count of stamps does not change."""
+    renderer = _pagenum_renderer("BOTTOM_CENTER", start=7)
+    assert renderer.page_number_spec()["first_number"] == 7
+
+
 def test_equation_reaches_the_placeholder_path(tmp_path):
     """No corpus form has an equation, so drive the path directly.
 
