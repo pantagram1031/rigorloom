@@ -4,6 +4,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      desktop_smoke:
+        description: >-
+          Run desktop/scripts/smoke.ps1 against the built app on the hosted
+          Windows runner. Off by default: the harness drives a real WebView2
+          window and has never been observed to complete on a hosted runner.
+          See the comment on the step before reading anything into a result.
+        type: boolean
+        default: false
+
+# Expected wall time, so a slow run can be told from a hung one. Everything
+# in parentheses was measured on the program's Windows machine at c14a8bc;
+# hosted runners are slower.
+#   test (x4)   ~35-50 min each — pytest alone ran 30 m 39 s (4455 passed,
+#               146 skipped, 81 subtests, all-modules), plus ~30 s for the
+#               collection census and ~1 min for the compose and bootstrap
+#               smokes.
+#   privacy      ~2 min (checkout, archive of 690 files, one scan pass).
+#   render-smoke ~6-9 min, most of it apt.
+#   desktop     ~35-50 min cold. Measured legs: the sidecar freeze ~13 min
+#               from a cold venv, `cargo test --release` 49.6 s warm, and
+#               `npm run tauri build` 5 m 21 s to compile plus the NSIS
+#               bundle (a 27.8 MB installer). A warm cargo cache takes the
+#               bulk off the build.
+# The matrix runs in parallel, so a full green run is the slowest job's clock.
 
 # Branch pushes with an open PR were double-running the whole matrix
 # (12+ concurrent jobs after the module-set dimension) and starving the
@@ -27,11 +53,23 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         module-set: [core-only, all-modules]
     runs-on: ${{ matrix.os }}
+    # pytest alone is 30 m 39 s on the program's machine; a hosted runner is
+    # slower and the census and smokes sit on top. 90 leaves room for that
+    # without letting a deadlock run to the six-hour default, which turns a
+    # hang into a silently burned runner-day instead of a failure anybody
+    # notices.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          # The install list below is inline rather than in a requirements
+          # file, so the workflow itself is the thing whose change must
+          # invalidate the wheel cache. Keying on it is honest; keying on
+          # pyproject.toml would keep a stale cache after an edit here.
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - run: python -m pip install --upgrade pip pytest fastapi pymupdf pillow pyyaml
       - name: Select distribution modules (${{ matrix.module-set }})
         shell: bash
@@ -42,7 +80,34 @@ jobs:
             python pipeline/scripts/module_registry.py write-enabled --none
           fi
           python pipeline/scripts/module_registry.py list
-      - run: python -m pytest -q
+      # A tripwire, not a fix. Runtime and Agent Host live under tests/, which
+      # pytest's testpaths already globs, so both module-sets collect them
+      # today (measured: 4601 collected, 552 of them from these two prefixes).
+      # If a future testpaths edit or module-set selection ever stops
+      # collecting a suite, the matrix would go green having run none of it —
+      # a job silently passing a leg it did not run. This refuses instead.
+      - name: Collection census
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest --collect-only -q > "$RUNNER_TEMP/collected.txt"
+          tail -n 1 "$RUNNER_TEMP/collected.txt"
+          missing=0
+          for prefix in tests/test_runtime_ tests/test_agenthost_; do
+            n="$(grep -c "^${prefix}" "$RUNNER_TEMP/collected.txt" || true)"
+            echo "${prefix}* -> ${n} collected"
+            if [ "$n" -eq 0 ]; then
+              echo "::error::${{ matrix.module-set }} on ${{ matrix.os }} collects nothing from ${prefix}*"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      # -rs prints the skip reasons. Hancom-dependent legs, rasterizer-
+      # dependent legs and module-gated legs must read as skipped-with-reason
+      # in the public log exactly as they do locally; without this a hosted
+      # runner's log shows only a count, and "skipped" and "ran" become
+      # indistinguishable from outside.
+      - run: python -m pytest -q -rs
       # Module-agnostic by contract (modules/README.md rule 4): the sweep's
       # patterns live in the script and include modules/*/scripts/*.py, so a
       # new distribution module needs no edit here. Python does the globbing,
@@ -147,6 +212,212 @@ jobs:
           PY
       # Prove clone-and-go on both operating systems (COM-free by design).
       - run: python scripts/bootstrap.py --profile-root .ci-profile --workspace-root .ci-ws
+
+  privacy:
+    # The per-slice privacy gate, in public, in the program's exact form.
+    #
+    # Scanning the working tree is NOT the same check and never was: a working
+    # tree carries node_modules/, desktop/src-tauri/target/, the sidecar venv,
+    # workspaces/ and .ci-ws/, so it scans dirty and its verdict is partly
+    # about build output. `git archive HEAD` is the tree a stranger would
+    # clone, so that is the tree the gate rules on.
+    name: privacy gate (git archive)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Scan a clean archive of HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/archive"
+          log="$RUNNER_TEMP/privacy_scan.txt"
+          mkdir -p "$archive"
+          git archive HEAD | tar -x -C "$archive"
+          echo "archived $(find "$archive" -type f | wc -l) files from ${GITHUB_SHA}"
+          # The scanner auto-detects <root>/tests/corpus/forms/manifest.json,
+          # which the archive carries, so the sha256-pinned binary allowlist
+          # applies here exactly as it does on a developer machine. The
+          # scanner is stdlib-only; no install step is needed.
+          rc=0
+          python pipeline/scripts/privacy_scan.py "$archive" > "$log" 2>&1 || rc=$?
+          cat "$log"
+          # Parse the SUMMARY LINE, not the exit code alone. An exit code says
+          # only "something went wrong"; the summary says what the gate
+          # actually ruled, and the two disagreeing is itself a finding.
+          summary="$(grep -E '^summary: HARD=' "$log" | tail -n 1 || true)"
+          if [ -z "$summary" ]; then
+            echo "::error::privacy_scan printed no summary line (exit ${rc}); the verdict is unknown, so this gate fails."
+            exit 1
+          fi
+          echo "gate line: ${summary}"
+          case "$summary" in
+            *"SCAN INCOMPLETE"*)
+              echo "::error::privacy_scan could not read every path under the archive; coverage is not total. ${summary}"
+              exit 1
+              ;;
+          esac
+          case "$summary" in
+            "summary: HARD=0 "*) ;;
+            *)
+              echo "::error::privacy gate: ${summary}"
+              exit 1
+              ;;
+          esac
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::privacy_scan reported HARD=0 but exited ${rc}; the summary and the exit code disagree."
+            exit 1
+          fi
+          echo "privacy gate: HARD=0 on a clean archive of ${GITHUB_SHA}"
+
+  desktop:
+    # The desktop gate: type-check, the sidecar freeze with its own role
+    # checks, the Rust unit tests, the packaged build. The freeze sits before
+    # cargo on purpose — see the comment on that step.
+    name: desktop (windows-latest)
+    runs-on: windows-latest
+    # Sized for the case where the smoke is enabled: freeze 30 + smoke 40 +
+    # the build itself. A job cap that fires on a legitimately slow run is a
+    # false-blocking gate, which this repo holds to be worse than none.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      # desktop/sidecar/build.ps1 refuses anything that is not CPython 3.12.x,
+      # and refuses the PATH default on a developer box because a Microsoft
+      # Store build cannot be frozen by PyInstaller. setup-python installs a
+      # real CPython, so the pinned-interpreter override points at that rather
+      # than at the %LOCALAPPDATA% path the program's machine uses.
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup update stable --no-self-update
+          rustup default stable
+          rustc -V
+          cargo -V
+      # A cold cargo build of this tree is several minutes; a warm one is
+      # under a minute (measured: 49.6 s for `cargo test --release` with the
+      # target dir populated). Caching src-tauri/target is what buys that, and
+      # it is also the entry most likely to press on the 10 GB per-repository
+      # cache budget — if evictions start showing up in the logs, drop the
+      # target entry and keep the registry ones rather than raising the key
+      # churn.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+      - name: npm ci
+        working-directory: desktop
+        run: npm ci
+      - name: Type-check
+        working-directory: desktop
+        run: npx tsc --noEmit
+      # The freeze comes BEFORE cargo, not after, and this is not a style
+      # choice. tauri.conf.json declares bundle.resources
+      # "resources/rigorloomd/**/*"; tauri-build resolves that glob in the
+      # build script, and on a fresh checkout — where src-tauri/resources/
+      # does not exist at all — it fails the build script with
+      # "glob pattern resources/rigorloomd/**/* path not found or didn't match
+      # any files." So `cargo test --release` cannot even compile until the
+      # sidecar has been frozen. Measured on the program's machine: cargo test
+      # --release on a fresh checkout exits 101 with exactly that message.
+      #
+      # build.ps1 does not merely freeze: it launches the frozen binary in both
+      # of its roles and refuses the build unless the server answers
+      # initialize, advertises document/pageGeometry, module/list and
+      # module/check, reports its rasterizer present, lists cell_borders among
+      # its seat derivations, and reads its bundled module declarations back
+      # through the runtime's own registry. Exit 2 is a missing prerequisite,
+      # exit 3 a failed build or a failed role check.
+      - name: Freeze the sidecar (build.ps1 role checks)
+        shell: pwsh
+        # Measured at ~13 min on the program's machine from a cold venv,
+        # several of those minutes spent in the role checks while the AV
+        # scanned a freshly written 69 MiB one-dir bundle on first execution.
+        # 30 is headroom for a slower runner, not an expectation.
+        timeout-minutes: 30
+        env:
+          RIGORLOOM_SIDECAR_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: powershell -ExecutionPolicy Bypass -File desktop/sidecar/build.ps1
+      - name: cargo test --release
+        working-directory: desktop/src-tauri
+        run: cargo test --release
+      # `npm run tauri build`, never `cargo build --release`: tauri-build emits
+      # cargo:rustc-cfg=dev for a bare cargo invocation, so the binary would
+      # point at the Vite dev server and fail to launch standalone.
+      - name: Package the app
+        working-directory: desktop
+        run: npm run tauri build
+      # THE HONEST STATE OF THIS STEP — read it before reading a result.
+      #
+      # smoke.ps1 launches the BUILT executable eleven times and drives a real
+      # WebView2 window; the assertions live in the app (desktop/src/smoke.ts)
+      # and report through one JSON file per phase. It reaches 360 checks / 0
+      # failures on the program's Windows machine. It has NEVER been observed
+      # on a GitHub-hosted runner, and this branch cannot observe one without
+      # pushing, so it is OFF by default rather than green by assumption.
+      #
+      # What is known to be fine on a Hancom-free runner:
+      #   * Every COM leg is written to accept a refusal. The page phase
+      #     asserts that document/renderPrepare REFUSES and accepts
+      #     needs_hancom / com_busy / not_convertible / convert_failed;
+      #     needs_hancom is what a machine with no Hancom returns, so the
+      #     phase proves the designed refusal state rather than a success it
+      #     did not earn.
+      #   * The overlay phase needs no Hancom either: it stages the corpus's
+      #     own committed Hancom render (tests/corpus/forms/render/*.pdf)
+      #     through desktop/scripts/stage-rendered-session.py, which is
+      #     stdlib-only.
+      #
+      # What is NOT known, and is exactly why this is guarded:
+      #   * WebView2 throttles a window that is not composited and withholds
+      #     rAF from a minimised one (smoke.ps1 says so at its Start-Process
+      #     call). If a hosted runner's session composites nothing, phases
+      #     hang to the 300 s timeout instead of failing honestly.
+      #   * The settings phase writes a FAKE credential through the Windows
+      #     credential store; CredWrite behaviour under the runner account is
+      #     unmeasured.
+      #
+      # To measure it: dispatch this workflow with desktop_smoke = true, or
+      # set the repository variable RIGORLOOM_DESKTOP_SMOKE to "on". Then read
+      # the uploaded reports. Do not describe this job as a passing desktop
+      # smoke until one of those runs has been read.
+      - name: Desktop smoke (UNVERIFIED on hosted runners; opt-in)
+        id: smoke
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.desktop_smoke == 'true' || vars.RIGORLOOM_DESKTOP_SMOKE == 'on'
+        shell: pwsh
+        # Eleven phases, each with its own 300 s in-script timeout. 40 min
+        # bounds the case the script's own timeouts do not cover — a runner
+        # session that never composites the window, where every phase would
+        # burn its full 300 s and the job would otherwise run to the default
+        # six hours before anyone learned anything.
+        timeout-minutes: 40
+        run: powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1
+      - name: Upload smoke reports
+        if: always() && steps.smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-reports
+          path: desktop/scripts/_run/*.json
+          if-no-files-found: warn
 
   render-smoke:
     runs-on: ubuntu-latest
