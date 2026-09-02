@@ -931,9 +931,18 @@ def solve_tracks(count: int, constraints, declared_total=None):
     occupies exactly the space the file says it does.
     """
     sizes = [None] * count
+    # A track is as big as the LARGEST constraint that covers it alone, not as
+    # big as the first one document order happens to hand over.  For columns
+    # the two readings agree — every cell in a column declares the same
+    # cellSz width — which is why taking the first was never wrong on a
+    # government form, where every row is one line tall as well.  For rows
+    # they diverge the moment one cell in a row wraps to more lines than its
+    # neighbours: the row must fit its tallest cell, and first-wins gives it
+    # the height of whichever cell the file lists first.
     for start, span, total in constraints:
-        if span == 1 and 0 <= start < count and sizes[start] is None:
-            sizes[start] = total
+        if span == 1 and 0 <= start < count:
+            if sizes[start] is None or total > sizes[start]:
+                sizes[start] = total
 
     changed = True
     while changed:
