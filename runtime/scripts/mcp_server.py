@@ -14,15 +14,18 @@ duplicate-key and non-finite refusals.
 
 SURFACE: derived, never rostered. The tool list is
 ``rt_core.AGENT_METHODS`` minus ``initialize`` (MCP has its own handshake), so
-``approval/resolve``, ``plan/apply`` and ``workspace/openPath`` are absent by
-construction rather than by a filter someone could later loosen. Adding an
-agent method without a tool schema raises at import; adding a schema for a
-method that is not agent-safe raises at import too.
+``approval/resolve``, ``plan/apply``, ``workspace/openPath`` and
+``workspace/openDirectory`` are absent by construction rather than by a filter
+someone could later loosen. Adding an agent method without a tool schema raises
+at import; adding a schema for a method that is not agent-safe raises at import
+too — which is why the workspace session kind grew this surface by exactly one
+tool without anyone editing a list of tools.
 
-A tool therefore cannot open a document, approve a plan, or apply one. An MCP
-client inspects, proposes, validates and asks for approval; a human on the
-host CLI or the host connection does the rest. Sessions come from the shared
-``--root`` store, which is why ``--root`` is required and has no default.
+A tool therefore cannot open a document or a workspace, approve a plan, or
+apply one. An MCP client inspects, proposes, validates and asks for approval; a
+human on the host CLI or the host connection does the rest. Sessions come from
+the shared ``--root`` store, which is why ``--root`` is required and has no
+default.
 """
 from __future__ import annotations
 
@@ -256,15 +259,22 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "description": "The distribution modules installed here, which are "
                        "enabled, and what each contributes — checkers, CLI "
                        "commands, pack types, run modes, panels. A checker row "
-                       "says whether it can be run against a document session "
-                       "and, when it cannot, why.",
+                       "says which session kind can run it — document, "
+                       "workspace, or neither when its declaration does not "
+                       "say.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "module/check": {
         "description": "Run a distribution module's declared checkers against "
-                       "the document in a session and return their findings "
-                       "with severity and, where the checker gives one, an "
-                       "address. Read-only: each checker sees a scratch copy. A "
+                       "what a session holds — the document, or the report "
+                       "workspace directory — and return their findings with "
+                       "severity and, where the checker gives one, an address "
+                       "({table,row,col} or {atPara} for a document; "
+                       "{path,line} relative to the workspace root for a "
+                       "workspace). A checker whose declared subject is the "
+                       "other kind is skipped with needs_document or "
+                       "needs_workspace, never run on a guess. "
+                       "Read-only: each checker sees a scratch copy. A "
                        "checker that could not run is reported skipped or "
                        "unavailable with a reason and is never counted as a "
                        "pass, so acceptance:false with checks present is a real "
@@ -293,6 +303,20 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
             "required": ["sessionId", "module"],
         },
+    },
+    "workspace/inspect": {
+        "description": "What a workspace session holds: the copy's tree hash "
+                       "and size, and — for each part an enabled distribution "
+                       "module DECLARES a report workspace should have — "
+                       "whether it is present, with its role and whether it is "
+                       "required. With no module declaring a layout the state "
+                       "is 'undeclared' with a reason and no part is guessed. "
+                       "Top-level entries the declaration does not name are "
+                       "listed separately, so this reads as a declared "
+                       "inventory rather than a complete one. Workspaces are "
+                       "opened by a host, not by this adapter.",
+        "inputSchema": {"type": "object", "properties": dict(_SESSION),
+                        "required": ["sessionId"]},
     },
     "receipt/read": {
         "description": "Read a candidate's receipt. Refuses if the candidate "
@@ -357,6 +381,8 @@ class McpAdapter:
             return core.capabilities(entry="agent", methods=list(EXPOSED_METHODS))
         if method == "session/list":
             return core.session_list()
+        if method == "workspace/inspect":
+            return core.workspace_inspect(arguments.get("sessionId"))
         if method == "document/inspect":
             return core.document_inspect(arguments.get("sessionId"),
                                          arguments.get("include"))

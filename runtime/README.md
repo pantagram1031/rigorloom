@@ -30,6 +30,14 @@ One vertical path, end to end: open a document → inspect it → propose a plan
 validate it → request approval → (host) resolve it → apply it → publish a
 candidate with a hash-bound receipt and an offline verification report.
 
+A session holds one of two things. `workspace/openPath` opens a **document**
+(the name predates the other kind and is kept because renaming a shipped method
+breaks every client on this stack). `workspace/openDirectory` opens a report
+**workspace** directory, so the thirteen workspace-subject checkers the shipped
+modules declare can run — see *Workspace sessions* below. A document method
+reached with a workspace session is `session_kind_mismatch`, named rather than
+left to fail somewhere downstream.
+
 ## Layout
 
 | File | Owns |
@@ -38,6 +46,7 @@ candidate with a hash-bound receipt and an offline verification report.
 | `scripts/rt_jsonl.py` | framing, strict JSON, canonical bytes |
 | `scripts/rt_engine.py` | bounded child adapters onto `engine/` and `pipeline/` |
 | `scripts/rt_session.py` | ingress, the session/plan/approval store, document views |
+| `scripts/rt_workspace.py` | workspace ingress, the declared layout, the tree hash |
 | `scripts/rt_plan.py` | OperationPlan, validation, approvals |
 | `scripts/rt_apply.py` | execution, candidate publication, receipts |
 | `scripts/rt_module.py` | distribution-module checkers, run against a session |
@@ -358,15 +367,16 @@ wire call can perform.
 
 **A checker that did not run is never a pass.** Rows are `ran` / `skipped` /
 `unavailable`, each with a reason from a closed set: `subject_undeclared`,
-`needs_workspace`, `spawn_failed`, `timed_out`, `missing_dependency`,
-`usage_error`, `no_verdict`. `acceptance` is true only when every selected
-checker ran, was clean, and had every input its declaration says it needs; a
-checker that ran without one is `partial`, not clean.
+`needs_workspace`, `needs_document`, `spawn_failed`, `timed_out`,
+`missing_dependency`, `usage_error`, `no_verdict`. `acceptance` is true only
+when every selected checker ran, was clean, and had every input its declaration
+says it needs; a checker that ran without one is `partial`, not clean.
 
 **Which checkers are runnable** comes from `provides.checkers[].subject`
-(`modules/README.md`): `document` runs, `workspace` is skipped
-(`needs_workspace` — a session is one document, not a report workspace),
-absent is skipped (`subject_undeclared`). Core never learns a module's name.
+(`modules/README.md`), matched against what the session holds: `document` runs
+on a document session and is `needs_document` on a workspace one, `workspace`
+is the mirror, and an absent subject is `subject_undeclared` either way. Core
+never learns a module's name.
 
 Each checker is bounded by `timeoutSeconds` (default 120s, clamped to
 [1, 600]); a hung one is killed and the rest of the pack still runs. The kill
@@ -375,7 +385,67 @@ everywhere else here.
 
 `RIGORLOOM_MODULES_ROOT` and `RIGORLOOM_MODULES_ENABLED` override where modules
 and enablement are read from; both default to this checkout, and
-`capabilities.modules` reports which was used.
+`capabilities.modules` reports which was used. The checker CHILD is told the
+same pair, added by name to its allowlisted environment — three of the shipped
+workspace checkers consult the registry themselves, and until that was passed
+they answered about a different installation than the one their caller had
+selected (`docs/runtime-protocol-v0.md` §13.7).
+
+## Workspace sessions
+
+Thirteen of the seventeen checkers the six shipped distribution modules declare
+take a report WORKSPACE directory, not a document. Before this the Runtime knew
+only documents, so `module/check` skipped all thirteen by construction and the
+report pipeline — this repository's original product — could not run inside the
+application. Design and the full argument: `docs/runtime-protocol-v0.md` §15.
+
+```sh
+python runtime/scripts/cli.py --root $R open-workspace --path /abs/report-slug
+python runtime/scripts/cli.py --root $R workspace --session $SID
+python runtime/scripts/cli.py --root $R workspace --session $SID --require-parts
+python runtime/scripts/cli.py --root $R module-check --session $SID --module report
+```
+
+**Host-only to open, agent-safe to read.** `workspace/openDirectory` takes an
+absolute path and reaches a whole tree, so it is host authority; after that
+`workspace/inspect` takes a session id and no path at all, and is on the agent
+surface. `workspace/openPath` — note the name — still opens a *document*.
+
+**What a workspace is, is declared by a module.** The paths a workspace holds
+(`bundle/content.md`, `claims.yaml`, `output/QUESTIONS.md` …) are a module's
+vocabulary, and a list of them in core is the per-module knowledge
+`modules/README.md` rule 1 forbids — the same question `checkers[].subject`
+already answered with a declaration. `provides.workspace_layout` names a
+module-relative JSON file; the summary reports each declared part
+`{path, kind, role, required, present, matches}`, plus the top-level entries
+the declaration does NOT name so the answer reads as a declared inventory and
+not a complete one. With no module declaring a layout the state is
+`undeclared` with a reason and zero parts — the workspace still opens and its
+checkers still run.
+
+**Immutability, one level up.** The operator's directory is walked read-only,
+copied into `<session>/workspace/` and tree-hashed; each `module/check` copies
+THAT into per-call scratch and deletes it, so a checker that writes reaches
+scratch and nothing else.
+
+**Bounds, measured, not assumed.** Entries cost and bytes do not: on this bench
+4096 small files copy in 72.4 s (17.7 ms each) while 64 MB in 64 files copies in
+1.16 s. Hence 2048 files / 64 MiB / depth 16, and every call publishes what its
+own copy cost in `bounds.subjectCopy`. A refusal carries a reason from a closed
+set (`too_many_files`, `workspace_too_large`, `too_deep`, `member_symlink`, …);
+symlinks are refused at the root and inside, because following one escapes the
+size bound and reproducing one escapes the scratch.
+
+**Findings get workspace-relative places.** A finding's `address` is
+`{path}` or `{path, line}` relative to the workspace root, emitted only when the
+whole location resolves to something the copy has — `bundle/content.md:12` does,
+`output/QUESTIONS.md numbers=[1,2]` does not and keeps its text. Absolute
+scratch paths a checker echoes are rewritten relative before they leave.
+
+Measured on the assembled fixture (`tests/_workspace_fixture.py`, which names
+every piece it is built from and is not a corpus): **13 ran, 4 skipped
+`needs_document`, 0 unavailable**; the same six modules on a document session
+are **4 ran, 13 skipped `needs_workspace`**.
 
 ## Events
 
@@ -467,3 +537,8 @@ to provoke, and `expectationMet` says so.
   driving one root.
 - The MCP adapter implements the five methods above and no resources, prompts,
   sampling, completion or logging capabilities.
+- A workspace session is read-only: it opens, it summarises, its checkers run.
+  There is no `plan/propose` against a workspace, so the report-pipeline fix
+  loop has its read half only.
+- Each `module/check` re-copies the whole workspace. Measured 62–217 ms on a
+  small one; nothing is incremental and nothing is cached on the tree hash.

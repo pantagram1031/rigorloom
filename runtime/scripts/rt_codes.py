@@ -49,6 +49,39 @@ MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_ZIP_MEMBERS = 1024
 MAX_ZIP_TOTAL_UNCOMPRESSED = 128 * 1024 * 1024
 MAX_ZIP_COMPRESSION_RATIO = 100
+
+# --- workspace ingress (GAP 20) ----------------------------------------------
+#: A report WORKSPACE is a directory, and a directory has three dimensions a
+#: file does not. These bounds are the ones a copy has to survive TWICE — once
+#: into the session at open, once into each ``module/check`` scratch — so they
+#: are set from MEASURED copy cost on this bench, not from what a disk holds.
+#:
+#:   19 files /  26 KB (a real scaffolded workspace)  →   0.14–0.44 s
+#:   64 files /  64 MB (few, large)                   →   1.16 s   (58 MB/s)
+#: 4096 files /  16 MB (many, small)                  →  72.4 s    (17.7 ms/file)
+#:
+#: The third row is the one that sets the file cap. Bytes are cheap and entries
+#: are not: on Windows a per-file open/close/scan dominates by two orders of
+#: magnitude, so a byte-only bound would let a 16 MB workspace cost 72 seconds
+#: PER CHECK. 2048 entries keeps the measured worst case near 36 s and the
+#: shape a real workspace has (tens of files) near a fifth of a second; the
+#: actual cost of every call is published in
+#: ``module/check``'s ``bounds.subjectCopy`` rather than assumed to be small.
+MAX_WORKSPACE_BYTES = 64 * 1024 * 1024
+MAX_WORKSPACE_FILES = 2048
+MAX_WORKSPACE_DEPTH = 16
+#: Reasons a workspace open may refuse, closed. Same discipline as
+#: ``CHECK_STATES``: a reason nobody declared is a reason nobody can branch on.
+WORKSPACE_REJECT_REASONS = (
+    "path_not_absolute",       # the Runtime has no ambient cwd
+    "not_a_directory",         # a file, a device, or nothing at all
+    "symlink_or_reparse",      # the root itself is a link; open the real one
+    "member_symlink",          # a link INSIDE the tree; it could point anywhere
+    "workspace_too_large",     # total bytes exceed MAX_WORKSPACE_BYTES
+    "too_many_files",          # entry count exceeds MAX_WORKSPACE_FILES
+    "too_deep",                # nesting exceeds MAX_WORKSPACE_DEPTH
+    "unreadable",              # the tree could not be walked
+)
 #: Bounded child stdout/stderr, as pipeline/scripts/renderer_runtime_v2.py:64.
 MAX_CHILD_OUTPUT_BYTES = 8 * 1024 * 1024
 #: Child wall clock. Above the measured loaded-spawn distribution recorded in
@@ -115,6 +148,8 @@ DOMAIN_CODES = frozenset({
     "approval_already_resolved",
     "region_too_large",
     "source_rejected",
+    "workspace_rejected",
+    "session_kind_mismatch",
     "path_escape",
     "artifact_missing",
     "candidate_hash_mismatch",
@@ -137,6 +172,12 @@ ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES
 
 #: Per-rule outcome, unchanged from pipeline/scripts/checker_base.py:41.
 RULE_STATES = ("hard", "warn", "skipped", "clean")
+
+#: What a session HOLDS. Closed, because every method that touches a session
+#: has to branch on it and a third value would fork that branch everywhere.
+#: ``document`` = one artifact, copied and hashed; ``workspace`` = a report
+#: workspace directory, copied and tree-hashed (GAP 20).
+SESSION_KINDS = ("document", "workspace")
 
 #: A checker row in a VerificationReport. ``unavailable`` is a first-class
 #: state and is NEVER collapsed into a pass: a gate may not claim more than it
