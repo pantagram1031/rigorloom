@@ -42,6 +42,7 @@ from rt_codes import (  # noqa: E402
     MAX_ZIP_COMPRESSION_RATIO,
     MAX_ZIP_MEMBERS,
     MAX_ZIP_TOTAL_UNCOMPRESSED,
+    SESSION_KINDS,
     RpcError,
 )
 from rt_jsonl import canonical_bytes  # noqa: E402
@@ -155,12 +156,24 @@ def _zip_sanity(path: Path) -> dict:
 
 
 class Session:
-    """One opened document and everything derived from it."""
+    """One opened subject and everything derived from it.
+
+    TWO KINDS, ONE STORE (GAP 20). ``kind`` is ``document`` — one artifact,
+    copied into ``source/`` and hashed — or ``workspace`` — a report workspace
+    directory, copied into ``workspace/`` and tree-hashed. They share the id
+    space, the store, the event log and the scratch discipline, because they
+    are the same object with different contents; forking them into two stores
+    would fork ``session/list``, the events and the check path with it.
+
+    A session opened before this kind existed carries no ``kind`` member and
+    reads as ``document``, which is what it is.
+    """
 
     def __init__(self, root: Path, session_id: str):
         self.id = session_id
         self.dir = root / "sessions" / session_id
         self.source_dir = self.dir / "source"
+        self.workspace_dir = self.dir / "workspace"
         self.profile_dir = self.dir / "profile"
         self.work_dir = self.dir / "work"
         self.candidates_dir = self.dir / "candidates"
@@ -195,11 +208,55 @@ class Session:
         digest, size = sha256_file(target)
         session.meta = {
             "sessionId": session.id,
+            "kind": "document",
             "openedUtc": now_utc(),
             "sourceName": name,
             "sourceSha256": digest,
             "sourceBytes": size,
             "ingress": facts,
+        }
+        atomic_write_bytes(
+            session.meta_path,
+            json.dumps(session.meta, ensure_ascii=False, indent=2,
+                       allow_nan=False).encode("utf-8"))
+        return session
+
+    @classmethod
+    def open_workspace(cls, root: Path, raw_path: str) -> "Session":
+        """Validate, copy and hash a report workspace directory (GAP 20).
+
+        The operator's directory is walked and read; it is never opened for
+        writing and never operated on in place. Everything downstream — the
+        summary, every checker — addresses the copy under
+        ``<session>/workspace/``.
+        """
+        from rt_workspace import copy_tree, reject, survey  # noqa: PLC0415
+
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise RpcError("invalid_params", "path must be a non-empty string")
+        source = Path(raw_path).expanduser()
+        if not source.is_absolute():
+            raise reject("path_not_absolute",
+                         "path must be absolute; the Runtime has no ambient cwd")
+        facts = survey(source)
+        session = cls(root, uuid.uuid4().hex)
+        for directory in (session.profile_dir, session.work_dir,
+                          session.candidates_dir, session.renders_dir):
+            directory.mkdir(parents=True, exist_ok=False)
+        name = safe_component(source.name)
+        target = session.workspace_dir / name
+        copied = copy_tree(source, target)
+        session.meta = {
+            "sessionId": session.id,
+            "kind": "workspace",
+            "openedUtc": now_utc(),
+            "workspaceName": name,
+            "workspaceTreeSha256": copied["treeSha256"],
+            "workspaceBytes": copied["bytes"],
+            "workspaceFiles": copied["files"],
+            "ingress": facts,
+            "copy": {"millis": copied["millis"], "bytes": copied["bytes"],
+                     "files": copied["files"]},
         }
         atomic_write_bytes(
             session.meta_path,
@@ -218,7 +275,16 @@ class Session:
             meta = json.loads(session.meta_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError):
             return None
-        if not isinstance(meta, dict) or "sourceName" not in meta:
+        if not isinstance(meta, dict):
+            return None
+        # A session written before the workspace kind existed has no ``kind``
+        # and a ``sourceName``: that IS a document session, and reading it as
+        # one is the only honest answer.
+        kind = meta.get("kind", "document")
+        if kind not in SESSION_KINDS:
+            return None
+        required = "sourceName" if kind == "document" else "workspaceName"
+        if required not in meta:
             return None
         session.meta = meta
         return session
@@ -235,15 +301,57 @@ class Session:
 
     # -- accessors ----------------------------------------------------------
     @property
+    def kind(self) -> str:
+        return self.meta.get("kind", "document")
+
+    @property
     def source(self) -> Path:
         return self.source_dir / self.meta["sourceName"]
+
+    @property
+    def workspace(self) -> Path:
+        """The COPY. Nothing addresses the operator's directory after open."""
+        return self.workspace_dir / self.meta["workspaceName"]
+
+    def require_kind(self, kind: str) -> "Session":
+        """Refuse a method that is about the other kind of session.
+
+        Named, not silent: a workspace handed to ``document/inspect`` would
+        otherwise reach ``form_inspect`` as a directory path and come back as a
+        backend refusal about a file, which tells a caller nothing about what
+        it actually did wrong.
+        """
+        assert kind in SESSION_KINDS, kind
+        if self.kind != kind:
+            raise RpcError(
+                "session_kind_mismatch",
+                f"this session holds a {self.kind}; that method is about a "
+                f"{kind}",
+                sessionId=self.id, sessionKind=self.kind, required=kind,
+                kinds=list(SESSION_KINDS))
+        return self
 
     def current_source_sha256(self) -> str:
         return sha256_file(self.source)[0]
 
     def summary(self) -> dict:
+        if self.kind == "workspace":
+            return {
+                "sessionId": self.id,
+                "kind": "workspace",
+                "openedUtc": self.meta["openedUtc"],
+                "workspace": {
+                    "name": self.meta["workspaceName"],
+                    "treeSha256": self.meta["workspaceTreeSha256"],
+                    "bytes": self.meta["workspaceBytes"],
+                    "files": self.meta["workspaceFiles"],
+                    "directories": self.meta["ingress"].get("directories"),
+                    "maxDepth": self.meta["ingress"].get("maxDepth"),
+                },
+            }
         return {
             "sessionId": self.id,
+            "kind": "document",
             "openedUtc": self.meta["openedUtc"],
             "source": {
                 "name": self.meta["sourceName"],
@@ -260,6 +368,7 @@ class Session:
 #: file about a different thing, and the two are deliberately not merged.
 EVENT_KINDS = (
     "session.opened",
+    "workspace.opened",
     "plan.proposed",
     "plan.validated",
     "approval.requested",
@@ -464,6 +573,11 @@ class SessionStore:
 
     def open_path(self, raw_path: str) -> Session:
         session = Session.open_path(self.root, raw_path)
+        self._sessions[session.id] = session
+        return session
+
+    def open_workspace(self, raw_path: str) -> Session:
+        session = Session.open_workspace(self.root, raw_path)
         self._sessions[session.id] = session
         return session
 
