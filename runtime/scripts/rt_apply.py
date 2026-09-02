@@ -246,6 +246,148 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
     }
 
 
+def workspace_verification_report() -> dict:
+    """What apply verified about a workspace candidate: nothing, and it says so.
+
+    A document candidate gets ``check_residue`` here. A workspace has no such
+    offline gate at apply time — its verification is ``module/check`` against
+    this candidate's ``runId``, which is a separate call because it runs a
+    module's checkers and costs seconds per checker. So ``acceptance`` is false
+    with the reason, never a pass nobody earned
+    (pipeline/scripts/visual_verify.py:42-47).
+    """
+    return {
+        "required": [],
+        "ranAll": False,
+        "acceptance": False,
+        "reason": ("no checker ran at apply time; a workspace candidate is "
+                   "verified by module/check with this runId"),
+        "checks": [],
+        "note": ("acceptance is never true here: this build verifies a "
+                 "workspace candidate by running the modules' checkers against "
+                 "it, and that is a call the caller makes"),
+    }
+
+
+def apply_workspace_plan(session, plan, approval, *, read_only,
+                         checkpoint=None) -> dict:
+    """Execute a workspace plan onto a CANDIDATE TREE, then publish a receipt.
+
+    The document rule, one level up (rt_apply's property 1): the session's own
+    workspace copy is input and never output. The candidate is a whole second
+    tree under the run directory, and the session copy is re-hashed after the
+    ops have run — if it moved, the run is destroyed rather than published,
+    because a candidate whose source drifted is a candidate about nothing.
+    """
+    from rt_workspace import copy_tree, hash_tree  # noqa: PLC0415
+    from rt_wsops import run_ops  # noqa: PLC0415
+
+    run_id = uuid.uuid4().hex
+    run_dir = session.candidates_dir / run_id
+    name = session.meta["workspaceName"]
+    source_tree = session.meta["workspaceTreeSha256"]
+
+    def tick():
+        if checkpoint is not None:
+            checkpoint()
+
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise RpcError("publication_failed", "could not create the run directory",
+                       detail=str(exc)) from exc
+
+    try:
+        tick()
+        copied = copy_tree(session.workspace, run_dir / name)
+        if copied["treeSha256"] != source_tree:
+            raise RpcError(
+                "candidate_hash_mismatch",
+                "the copy of the session workspace does not hash to the session "
+                "copy; nothing is edited rather than something unidentified",
+                expected=source_tree, got=copied["treeSha256"])
+        tick()
+        result = run_ops(run_dir / name, plan.payload["ops"], read_only=read_only)
+        if result["hard"]:
+            # Validation passed on a scratch copy and apply refused: the
+            # workspace moved under us, or the copy differs. Either way the
+            # engine's own answer goes back verbatim.
+            raise RpcError("backend_refused",
+                           "an op refused while applying it to the candidate "
+                           "tree, after validating on a scratch copy",
+                           backend="workspace", hard=result["hard"],
+                           applied=result["steps"],
+                           notEvaluated=result["notEvaluated"])
+        tick()
+        candidate = hash_tree(run_dir / name)
+        after = hash_tree(session.workspace)
+        if after["treeSha256"] != source_tree:
+            raise RpcError(
+                "candidate_hash_mismatch",
+                "the session workspace changed while the plan was being applied "
+                "to the candidate; the source is never the subject",
+                expected=source_tree, got=after["treeSha256"])
+
+        receipt = {
+            "schema": RECEIPT_SCHEMA,
+            "implVersion": IMPL_VERSION,
+            "createdUtc": now_utc(),
+            "runId": run_id,
+            "sessionId": session.id,
+            "planId": plan.id,
+            "planHash": plan.hash,
+            "backend": plan.payload["backend"],
+            "source": {
+                "name": name,
+                "treeSha256": source_tree,
+                "files": session.meta["workspaceFiles"],
+                "bytes": session.meta["workspaceBytes"],
+            },
+            "candidate": {
+                "role": "workspace_tree",
+                "path": name,
+                "treeSha256": candidate["treeSha256"],
+                "files": candidate["files"],
+                "bytes": candidate["bytes"],
+            },
+            "approval": approval.public(),
+            "steps": result["steps"],
+            "checks": workspace_verification_report(),
+            "lineage": {
+                # Lineage the way a document candidate records it: the plan
+                # binds the source hash, the receipt names both ends, and
+                # module/check --run walks forward from here.
+                "kind": "workspace",
+                "boundSha256": plan.payload["boundSha256"],
+                "fromTreeSha256": source_tree,
+                "toTreeSha256": candidate["treeSha256"],
+                "approvalId": approval.id,
+                "membershipChanged": candidate["files"] != copied["files"],
+            },
+            "evidence": {
+                "class": "structural_only",
+                "note": ("this receipt binds a source tree hash to a candidate "
+                         "tree hash and the ops between them; no checker ran "
+                         "here and it claims no verdict about the report"),
+            },
+        }
+        _publish_receipt(run_dir, receipt)
+    except BaseException:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+
+    return {
+        "runId": run_id,
+        "sessionId": session.id,
+        "planId": plan.id,
+        "candidate": receipt["candidate"],
+        "checks": receipt["checks"],
+        "steps": result["steps"],
+        "receipt": f"{run_id}/{RECEIPT_NAME}",
+        "canonical": True,
+    }
+
+
 def list_candidates(session) -> list[dict]:
     """Only runs whose receipt landed. A bare artifact is not a candidate."""
     rows = []
@@ -295,6 +437,23 @@ def read_receipt(session, run_id: str) -> dict:
                        runId=run_id, declared=declared, recomputed=recomputed)
     candidate = payload.get("candidate") or {}
     artifact = run_dir / str(candidate.get("path") or "")
+    if candidate.get("role") == "workspace_tree":
+        # A tree, so the binding is the tree hash — the same re-verification a
+        # document candidate gets, over the thing this candidate actually is.
+        from rt_workspace import hash_tree  # noqa: PLC0415
+
+        if not artifact.is_dir():
+            raise RpcError("artifact_missing",
+                           "the bound candidate workspace is gone",
+                           runId=run_id, path=candidate.get("path"))
+        actual = hash_tree(artifact)
+        if actual["treeSha256"] != candidate.get("treeSha256"):
+            raise RpcError("candidate_hash_mismatch",
+                           "the candidate workspace changed after the receipt "
+                           "was written",
+                           runId=run_id, declared=candidate.get("treeSha256"),
+                           actual=actual["treeSha256"])
+        return payload
     if not artifact.is_file():
         raise RpcError("artifact_missing", "the bound candidate is gone",
                        runId=run_id, path=candidate.get("path"))

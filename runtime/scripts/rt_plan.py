@@ -50,6 +50,14 @@ from rt_codes import (  # noqa: E402
 )
 from rt_jsonl import canonical_bytes  # noqa: E402
 from rt_session import full_text_spec, now_utc  # noqa: E402
+from rt_wsops import (  # noqa: E402
+    WS_BACKEND,
+    WS_NOT_IMPLEMENTED,
+    WS_OP_FIELDS,
+    WS_OP_KINDS,
+    WS_REFUSAL_CODES,
+    preflight,
+)
 
 # --- op kinds ---------------------------------------------------------------
 #: What this backend can execute, mapped onto the preedit subcommand that does
@@ -100,6 +108,18 @@ _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "delete_guides": ((), ("color", "charPrIds")),
 }
 
+#: Which op table serves which backend. One mapping, so a plan's backend
+#: decides its vocabulary in exactly one place and an op kind belonging to the
+#: OTHER served backend is a routing answer rather than "unknown".
+BACKEND_OP_FIELDS: dict[str, dict] = {
+    "preedit": _OP_FIELDS,
+    WS_BACKEND: WS_OP_FIELDS,
+}
+BACKEND_NOT_IMPLEMENTED: dict[str, tuple[str, ...]] = {
+    "preedit": PREEDIT_NOT_IMPLEMENTED,
+    WS_BACKEND: WS_NOT_IMPLEMENTED,
+}
+
 
 def _finding(code: str, msg: str, at: str, **extra) -> dict:
     row = {"code": code, "msg": msg, "at": at}
@@ -139,7 +159,10 @@ class OperationPlan:
         return dict(self.payload)
 
 
-def _classify_foreign_kind(kind: str) -> str | None:
+def _classify_foreign_kind(kind: str, backend: str = "preedit") -> str | None:
+    for name, table in BACKEND_OP_FIELDS.items():
+        if name != backend and kind in table:
+            return name
     if kind in XML_OP_KINDS and kind in COM_OP_KINDS:
         return "xml or com"
     if kind in XML_OP_KINDS:
@@ -173,22 +196,22 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         kind = op.get("kind")
         if not isinstance(kind, str):
             raise RpcError("invalid_params", f"{at}.kind must be a string")
-        if kind not in PREEDIT_OP_KINDS:
-            owner = _classify_foreign_kind(kind)
+        fields = BACKEND_OP_FIELDS[backend]
+        if kind not in fields:
+            owner = _classify_foreign_kind(kind, backend)
             if owner is not None:
                 raise RpcError(
                     "unsupported_backend",
-                    f"op kind {kind!r} is served by the {owner} backend, which "
-                    "this build does not execute",
+                    f"op kind {kind!r} is served by the {owner} backend; this "
+                    f"plan declares {backend!r}",
                     at=at, kind=kind, servedBy=owner,
                     supported=list(SUPPORTED_BACKENDS))
             raise RpcError(
                 "unknown_op_kind",
-                f"op kind {kind!r} is not known to the "
-                f"{', '.join(SUPPORTED_BACKENDS)} backend",
-                at=at, kind=kind, knownKinds=sorted(PREEDIT_OP_KINDS),
-                notImplemented=list(PREEDIT_NOT_IMPLEMENTED))
-        required, optional = _OP_FIELDS[kind]
+                f"op kind {kind!r} is not known to the {backend} backend",
+                at=at, kind=kind, knownKinds=sorted(fields),
+                notImplemented=list(BACKEND_NOT_IMPLEMENTED[backend]))
+        required, optional = fields[kind]
         allowed = set(required) | set(optional) | {"kind", "opId"}
         unknown = sorted(set(op) - allowed)
         if unknown:
@@ -480,6 +503,60 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
             "note": ("preedit raises its own refusals from inside its edit path "
                      "and ships no dry run; a clean validation is not a promise "
                      "that apply cannot refuse"),
+        },
+    }
+
+
+def validate_workspace_plan(plan: OperationPlan, *, workspace: Path,
+                            current_tree_sha256: str, read_only,
+                            scratch_parent: Path) -> dict:
+    """PlanValidation for a workspace plan. Writes nothing the caller keeps.
+
+    The pre-flight IS the ops, run against a throwaway copy of the session
+    workspace, which is then deleted. Deriving the answer any other way would
+    mean modelling what an anchored replace does to a file a second op then
+    edits — the same trap ``validate_plan`` records for preedit, avoided here
+    because these ops are the Runtime's own and can be run on a copy safely.
+    """
+    stale = plan.payload["boundSha256"] != current_tree_sha256
+    hard: list[dict] = []
+    if stale:
+        hard.append(_finding(
+            "plan_stale",
+            "the session workspace changed after this plan was proposed; "
+            "re-propose against the current tree",
+            "plan", boundSha256=plan.payload["boundSha256"],
+            currentSha256=current_tree_sha256))
+        result = {"steps": [], "hard": [],
+                  "notEvaluated": [op["opId"] for op in plan.payload["ops"]]}
+    else:
+        result = preflight(workspace, plan.payload["ops"], read_only=read_only,
+                           scratch_parent=scratch_parent)
+        hard.extend(result["hard"])
+    return {
+        "planId": plan.id,
+        "planHash": plan.hash,
+        "backend": plan.payload["backend"],
+        "boundSha256": plan.payload["boundSha256"],
+        "currentSha256": current_tree_sha256,
+        "stale": stale,
+        "ok": not hard,
+        "verdict": "pass" if not hard else "fail",
+        "hard": hard,
+        "warn": [],
+        "counts": {"hard": len(hard), "warn": 0,
+                   "ops": len(plan.payload["ops"])},
+        "preflight": {
+            "level": "scratch-copy execution",
+            "source": "runtime/scripts/rt_wsops.py run_ops, over a copy of the "
+                      "session workspace that is deleted afterwards",
+            "deferred": [],
+            "applied": result["steps"],
+            "notEvaluated": result["notEvaluated"],
+            "refusalCodes": list(WS_REFUSAL_CODES),
+            "note": ("the ops really ran, on a copy nobody keeps; evaluation "
+                     "stops at the first refusal because a later op's anchor "
+                     "may only exist once an earlier one has written it"),
         },
     }
 

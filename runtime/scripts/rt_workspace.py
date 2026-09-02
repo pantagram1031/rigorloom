@@ -205,15 +205,45 @@ def copy_tree(source: Path, target: Path) -> dict:
                     writer.write(chunk)
                     total += len(chunk)
             rows.append((relative.as_posix(), digest.hexdigest()))
-    rows.sort()
+    return {"files": len(rows), "bytes": total, "treeSha256": _tree_digest(rows),
+            "millis": int((time.monotonic() - started) * 1000)}
+
+
+def _tree_digest(rows: list[tuple[str, str]]) -> str:
+    """SHA-256 over the sorted ``(relative posix path, sha256)`` pairs."""
     tree = hashlib.sha256()
-    for name, digest_hex in rows:
+    for name, digest_hex in sorted(rows):
         tree.update(name.encode("utf-8"))
         tree.update(b"\0")
         tree.update(digest_hex.encode("ascii"))
         tree.update(b"\n")
-    return {"files": len(rows), "bytes": total, "treeSha256": tree.hexdigest(),
-            "millis": int((time.monotonic() - started) * 1000)}
+    return tree.hexdigest()
+
+
+def hash_tree(root: Path) -> dict:
+    """The same hash ``copy_tree`` produces, without copying anything.
+
+    One definition, two callers: the copy hashes as it writes, and a caller
+    that only needs to know whether a tree MOVED — a plan's staleness check,
+    the immutability assertion around apply — reads it here rather than
+    copying a whole tree to find out.
+    """
+    rows: list[tuple[str, str]] = []
+    total = 0
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        for entry in sorted(current.iterdir()):
+            if entry.is_dir() and not entry.is_symlink():
+                stack.append(entry)
+                continue
+            digest = hashlib.sha256()
+            with entry.open("rb") as reader:
+                for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    total += len(chunk)
+            rows.append((entry.relative_to(root).as_posix(), digest.hexdigest()))
+    return {"files": len(rows), "bytes": total, "treeSha256": _tree_digest(rows)}
 
 
 # --- the declared layout --------------------------------------------------------

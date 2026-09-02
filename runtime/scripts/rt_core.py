@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_apply import (  # noqa: E402
     apply_plan,
+    apply_workspace_plan,
     list_candidates,
     read_receipt,
     verification_report,
@@ -64,7 +65,15 @@ from rt_plan import (  # noqa: E402
     resolve_approval,
     safe_full_text_specs,
     validate_plan,
+    validate_workspace_plan,
     wanted_full_text,
+)
+from rt_wsops import (  # noqa: E402
+    WS_BACKEND,
+    WS_NOT_IMPLEMENTED,
+    WS_OP_KINDS,
+    WS_REFUSAL_CODES,
+    read_only_matcher,
 )
 from rt_geometry import geometry_capability, page_geometry  # noqa: E402
 from rt_module import (  # noqa: E402
@@ -131,7 +140,7 @@ PROTOCOL_ONLY_METHODS: tuple[str, ...] = (
 #: and docs/runtime-protocol-v0.md §11.4 already records where the confusion
 #: started. Renaming it to ``document/openPath`` is a wire break for every
 #: client on this stack, so the new method takes a distinct name and the
-#: rename is proposed in §15.6, not smuggled in here.
+#: rename is proposed in §15.8, not smuggled in here.
 HOST_ONLY_METHODS: tuple[str, ...] = (
     "workspace/openPath",
     "workspace/openDirectory",
@@ -166,6 +175,15 @@ class RuntimeCore:
                 "reason": tools["preedit"]["reason"],
                 "opKinds": sorted(PREEDIT_OP_KINDS),
                 "notImplemented": list(PREEDIT_NOT_IMPLEMENTED),
+                "subject": "document",
+            },
+            WS_BACKEND: {
+                "state": "available",
+                "reason": None,
+                "opKinds": sorted(WS_OP_KINDS),
+                "notImplemented": list(WS_NOT_IMPLEMENTED),
+                "subject": "workspace",
+                "refusalCodes": list(WS_REFUSAL_CODES),
             },
             "xml": {"state": "unavailable",
                     "reason": "declared by the protocol; not executed by this build",
@@ -253,19 +271,30 @@ class RuntimeCore:
         return {"sessions": self.store.list()}
 
     # -- workspaces ---------------------------------------------------------
-    def _workspace_summary(self, session) -> dict:
-        from rt_module import load_registry, _module_registry
-        from rt_workspace import declared_layout, layout_report, scan_undeclared
+    def _declared_layout(self) -> dict:
+        """Every enabled module's workspace layout, or an honest 'undeclared'.
 
-        summary = session.summary()
+        Read here by both the summary and the write path: which parts a module
+        declares ``read_only`` is the same declaration that says which parts
+        exist, and a second source for it would be a second contract.
+        """
+        from rt_module import load_registry, _module_registry
+        from rt_workspace import declared_layout
+
         try:
             module_registry = _module_registry(self.tools.root)
             registry, _facts = load_registry(self.tools.root)
-            layout = declared_layout(registry, module_registry)
+            return declared_layout(registry, module_registry)
         except RpcError as exc:
-            layout = {"state": "undeclared", "reason": exc.message,
-                      "declaredBy": [], "schemas": [], "parts": [],
-                      "sources": [], "kinds": []}
+            return {"state": "undeclared", "reason": exc.message,
+                    "declaredBy": [], "schemas": [], "parts": [],
+                    "sources": [], "kinds": []}
+
+    def _workspace_summary(self, session) -> dict:
+        from rt_workspace import layout_report, scan_undeclared
+
+        summary = session.summary()
+        layout = self._declared_layout()
         root = session.workspace
         summary["layout"] = layout_report(root, layout)
         summary["undeclared"] = scan_undeclared(root, layout)
@@ -331,13 +360,25 @@ class RuntimeCore:
         })
 
     # -- plans --------------------------------------------------------------
+    def _workspace_ops(self, session):
+        """(the workspace root, the read-only matcher) for a workspace plan."""
+        return session.workspace, read_only_matcher(self._declared_layout())
+
     def plan_propose(self, session_id, backend, ops, proposer) -> dict:
-        session = self._document(session_id)
         if not isinstance(backend, str) or not backend:
             raise RpcError("invalid_params", "backend must be a non-empty string")
+        # The backend decides which session kind the plan is about, and
+        # ``require_kind`` names the mismatch rather than letting a workspace
+        # reach a document validator and refuse about a file that is a
+        # directory (rt_session.require_kind, §15.4).
+        if backend == WS_BACKEND:
+            session = self.store.get(session_id).require_kind("workspace")
+            bound = self.workspace_tree_sha256(session)
+        else:
+            session = self._document(session_id)
+            bound = session.current_source_sha256()
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
-                          proposer=proposer,
-                          bound_sha256=session.current_source_sha256())
+                          proposer=proposer, bound_sha256=bound)
         self.save_plan(plan)
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
@@ -354,8 +395,26 @@ class RuntimeCore:
     def save_plan(self, plan: OperationPlan) -> None:
         self.store.save_record("plans", plan.id, plan.payload)
 
+    def workspace_tree_sha256(self, session) -> str:
+        """The session copy's tree hash, read now rather than trusted from meta.
+
+        A plan binds bytes, and "the bytes I copied at open" is not the same
+        claim as "the bytes that are there" — the staleness check is only worth
+        anything if it re-reads.
+        """
+        from rt_workspace import hash_tree
+
+        return hash_tree(session.workspace)["treeSha256"]
+
     def validated(self, plan: OperationPlan) -> dict:
         session = self.store.get(plan.payload["sessionId"])
+        if plan.payload["backend"] == WS_BACKEND:
+            session.ensure_dirs()
+            workspace, read_only = self._workspace_ops(session)
+            return validate_workspace_plan(
+                plan, workspace=workspace,
+                current_tree_sha256=self.workspace_tree_sha256(session),
+                read_only=read_only, scratch_parent=session.work_dir)
         base = load_profile(self.tools, session, tag="base")
         profile = base
         specs = safe_full_text_specs(wanted_full_text(plan), base)
@@ -454,15 +513,25 @@ class RuntimeCore:
                            currentSha256=report["currentSha256"])
         if not report["ok"]:
             raise RpcError("plan_invalid",
-                           "this plan does not validate against the current document",
+                           "this plan does not validate against the current "
+                           f"{session.kind}",
                            planId=plan.id, hard=report["hard"])
-        result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint)
+        if plan.payload["backend"] == WS_BACKEND:
+            session.ensure_dirs()
+            _workspace, read_only = self._workspace_ops(session)
+            result = apply_workspace_plan(session, plan, record,
+                                          read_only=read_only,
+                                          checkpoint=checkpoint)
+        else:
+            result = apply_plan(self.tools, session, plan, record,
+                                checkpoint=checkpoint)
         plan.state = "applied"
         self.save_plan(plan)
         append_event(session, "plan.applied", planId=plan.id,
                      runId=result["runId"])
         append_event(session, "candidate.published", runId=result["runId"],
-                     sha256=result["candidate"]["sha256"],
+                     sha256=result["candidate"].get("sha256")
+                     or result["candidate"].get("treeSha256"),
                      acceptance=result["checks"]["acceptance"],
                      ranAll=result["checks"]["ranAll"])
         return {"candidate": result}
@@ -555,11 +624,14 @@ class RuntimeCore:
 
     # -- candidates ---------------------------------------------------------
     def candidate_list(self, session_id) -> dict:
-        session = self._document(session_id)
+        # Either session kind: a candidate is a published run with a receipt,
+        # and a workspace session publishes them the same way a document one
+        # does. ``read_receipt`` re-verifies whichever thing the receipt binds.
+        session = self.store.get(session_id)
         return {"sessionId": session.id, "candidates": list_candidates(session)}
 
     def receipt_read(self, session_id, run_id) -> dict:
-        session = self._document(session_id)
+        session = self.store.get(session_id)
         return {"receipt": read_receipt(session, run_id)}
 
     def candidate_verify(self, session_id, run_id) -> dict:
