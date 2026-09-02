@@ -147,6 +147,21 @@ def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dic
         from rt_apply import read_receipt
         receipt = read_receipt(session, run_id)
         candidate = receipt["candidate"]
+        # A PDF prepared FROM this candidate, if renderPrepare made one and it
+        # still binds the candidate's digest. Without this, a candidate render
+        # of an HWPX would always answer `needs_conversion` even after the
+        # conversion had run — E1.2's 다시 그리기 would have had nowhere to
+        # put its result.
+        from rt_convert import existing_pdf
+
+        prepared = existing_pdf(session, run_id=run_id,
+                                expect_sha256=candidate["sha256"])
+        if prepared is not None:
+            return (session.dir / prepared["path"], "candidate_prepared",
+                    {"runId": run_id, "sha256": prepared["sha256"],
+                     "bytes": prepared["bytes"],
+                     "producedBy": prepared["producedBy"],
+                     "candidateSha256": candidate["sha256"]})
         path = session.candidates_dir / run_id / candidate["path"]
         return path, "candidate", {"runId": run_id, "sha256": candidate["sha256"],
                                    "bytes": candidate["bytes"]}

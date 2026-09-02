@@ -529,10 +529,19 @@ def _profile_path(session: Session, tag: str) -> Path:
 
 
 def load_profile(tools, session: Session, *, tag: str = "base",
-                 full_text: list[str] | None = None) -> dict:
-    """Run form_inspect against the session copy and return its profile object."""
+                 full_text: list[str] | None = None,
+                 subject: Path | None = None) -> dict:
+    """Run form_inspect against a document of this session; return the profile.
+
+    ``subject`` defaults to the session copy. The only other legal subject is a
+    PUBLISHED CANDIDATE inside this session's ``candidates/`` tree, and callers
+    resolve one through ``rt_apply.candidate_artifact`` — which reads the
+    receipt first, so the bytes were re-verified against their binding before
+    anything profiled them. No path from a client ever reaches this argument.
+    """
     out = _profile_path(session, tag)
-    tools.profile(session.source, out, full_text=full_text)
+    tools.profile(session.source if subject is None else subject, out,
+                  full_text=full_text)
     try:
         return json.loads(out.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:

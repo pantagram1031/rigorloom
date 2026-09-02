@@ -1516,3 +1516,121 @@ would print in something other than the body face.
   does not have, which is a `preedit` question, not a protocol one. So the
   toolbar over a caret is read-only in exactly the way it was over a seat, and
   E1.3's formatting *changes* wait on that question being answered.
+
+---
+
+## 15. Candidate lineage, reads on a candidate, and proving a reversal (E1.4)
+
+### 15.1 The defect this closes
+
+Until this slice `plan/apply` chained every operation from `session.source`.
+Two applies in a row therefore produced two SIBLINGS of the source, not a
+chain: the second candidate silently did not contain the first candidate's
+edit, and exporting it lost work the operator had already approved. There was
+no lineage to walk, so there was also nothing an undo could be the inverse OF —
+`plan/apply` ordered operations *within* one plan and nothing ordered plans.
+
+`docs/plans/hangul-editor-endgame.md` §2 E1.4 assumed "the receipt chain
+already orders operations". It did not. It does now, and the ordering is a
+declared parent rather than a timestamp.
+
+### 15.2 `plan/propose` gains `baseRunId` and `reverses`
+
+| Param | Meaning |
+| --- | --- |
+| `baseRunId` | the published candidate these ops are chained onto. Omitted = the session source, which is the pre-E1.4 behaviour byte for byte. |
+| `reverses` | `{runId}` — this plan undoes that candidate. A CLAIM, recorded, never derived. |
+
+A based plan's `boundSha256` is the base candidate's digest, so `opsHash` still
+means "this document, this backend, these operations" and the Phase 2 parity
+property (§10) is unchanged — the subject is still exactly one digest.
+
+`plan/validate` follows the plan's own subject: a based plan is profiled
+against its base candidate, because the second edit of a paragraph addresses
+runs the first edit produced. Such a plan can never be `plan_stale`: a
+published candidate is immutable. That is the honest reason, not an exemption.
+
+The plan payload and the receipt both carry `base` and `reverses`, `null` at
+the root of a chain. Nothing is ever deleted or rewritten: an undo is one more
+candidate, and history is append-only.
+
+### 15.3 `document/readRegion` gains `runId`
+
+Reads the named addresses out of a published candidate instead of the session
+source. The candidate is resolved through `receipt/read`, so its bytes were
+re-verified against their binding before anything profiled them.
+
+Every answer — source or candidate — now carries `subject: {kind, sha256,
+runId?}`. A caller that asked for a candidate and silently got the source would
+draw the wrong "before" and call it proof.
+
+This is what makes an undo *derivable*: the value a reversal must restore is
+read off the chain through the runtime's own reader, never out of client
+memory.
+
+### 15.4 `candidate/compare` — where a reversal is PROVEN
+
+Agent-safe read. `{sessionId, runId, against?: {runId} | {source: true},
+regions?}`.
+
+Both sides are re-read through `form_inspect` from receipt-verified bytes, and
+each address reports `{left, right, equal}`. Two levels of equality, kept
+apart because they are different facts:
+
+- `regionsEqual` — the addresses asked about hold identical text. This is what
+  "the undo restored the value" means, and what an inverse must satisfy.
+- `artifactEqual` — the two documents are the same bytes. An edit and its
+  inverse will normally NOT reach this: `preedit` rewrites XML and rezips, so
+  member order and zip metadata move even when every character is restored. It
+  is reported rather than hidden, and `artifactEqual: false` beside
+  `regionsEqual: true` is the normal, honest outcome for a reversal.
+
+`equal` is `null` — never `false`, never `true` — for an address neither
+profile returned: the comparison did not happen, and a caller must not read
+that as a match. `regionsEqual` is `null` when nothing was compared.
+
+### 15.5 `candidate/list` carries the lineage
+
+Each row gains `sha256`, `bytes`, `createdUtc`, `planId`, `base`, `reverses`,
+`acceptance` and `opKinds`, read from the receipt on disk, so a history view is
+one call rather than one per candidate. Ordered by `createdUtc` — a directory
+listing is alphabetical by a random hex id, which is not history.
+
+The listing does **not** re-hash the artifact. `receipt/read` is the verifying
+read and `candidate_hash_mismatch` is its refusal, so every row states
+`verified: false` rather than leaving the reader to assume.
+
+### 15.6 `document/renderPrepare` gains `runId`
+
+Converts a published candidate instead of the session copy, into
+`derived/candidate-<runId>.pdf`, bound to the candidate's digest in a separate
+`derivedPdfByRun` map so a candidate's PDF can never be served as the source's.
+`document/render` with the same `runId` prefers that prepared PDF
+(`artifactKind: "candidate_prepared"`) and otherwise still answers
+`needs_conversion`.
+
+Rule 1 of `rt_convert` is unchanged: the subject is the session copy or an
+artifact under `candidates/` that `read_receipt` already verified. No path from
+a client is ever opened.
+
+### 15.7 Still GAP here
+
+- **No `head`.** The runtime records parents; it does not record which
+  candidate a session is "on". A chain can fork — two plans may name the same
+  base — and the runtime will publish both without complaint. Deciding what the
+  document IS remains the client's, which is why the desktop's 기록 panel makes
+  the head an explicit selection rather than a silent state.
+- **`reverses` is unverified at propose time.** The runtime records the claim
+  and offers `candidate/compare` to check it afterwards. It does not refuse a
+  plan that declares a reversal and then does something else — proving that at
+  propose time would mean executing the ops, which is precisely what
+  `plan/validate` may not do (§3.7).
+- **No inverse derivation.** The runtime will not build the inverse of a plan
+  for you. `fill_cell` and `set_run` are invertible by reading the previous
+  value; `delete_guides` is not, and a protocol that offered "undo any plan"
+  would have to lie about that one. The client derives what it can and the
+  runtime proves the result.
+- **Comparison is byte-exact.** `normalizer: "exact"` — there is no
+  `check_residue.normalize_text` in this path, so two texts that differ only in
+  whitespace compare unequal. Correct for a reversal, and stated so a caller
+  does not read it as a semantic match.
