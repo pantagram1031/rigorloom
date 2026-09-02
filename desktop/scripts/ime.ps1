@@ -1,4 +1,4 @@
-<#
+﻿<#
   M13/M14 against the SHIPPED inline editor: does Hangul actually compose in
   the field a person types into?
 
@@ -91,6 +91,15 @@ $RenderedPdf = Join-Path $RepoRoot ('tests\corpus\forms\render\' +
 $failed = 0
 $ran = 0
 
+# THE COUNTER IS SCRIPT-SCOPED, NOT A RETURN VALUE.
+#
+# A PowerShell function emits everything it does not consume, so
+# `$failed += Invoke-Surface $which` collected every stray object the body
+# produced and then tried to add an array to an integer. build-clean.ps1
+# carries the same note about the same trap; this file learned it the same
+# way, by watching a passing IME run die on the line after it printed [PASS].
+$script:failedChecks = 0
+
 function Invoke-Surface {
     param([string]$Which)
 
@@ -114,7 +123,8 @@ function Invoke-Surface {
     if ($Which -eq 'page') {
         if (-not (Test-Path $RenderedPdf)) {
             Write-Host ("  [FAIL] no corpus render at {0}; the page surface has no page to type on" -f $RenderedPdf)
-            return 1
+            $script:failedChecks++
+            return
         }
         $stageRoot = Join-Path $AppData 'runtime-root'
         New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
@@ -122,14 +132,14 @@ function Invoke-Surface {
                 Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0 -or -not $out) {
             Write-Host ("  [FAIL] could not stage a rendered session: {0}" -f $out)
-            return 1
+            $script:failedChecks++
+            return
         }
         $staged = $out.ToString().Trim()
         Write-Host ("  staged a rendered session: {0}" -f $staged)
     }
 
     $origAppData = $env:RIGORLOOM_APPDATA
-    $localFailed = 0
     $proc = $null
     try {
         $env:RIGORLOOM_APPDATA = $AppData
@@ -184,19 +194,19 @@ function Invoke-Surface {
             Write-Host "  [PASS] the IME composed into the shipped editor"
         } else {
             Write-Host "  [FAIL] the field received something else"
-            $localFailed++
+            $script:failedChecks++
         }
         if ($got.queued -ceq $Text) {
             Write-Host "  [PASS] Enter committed the composed value into the plan queue"
         } else {
             Write-Host ("  [FAIL] the queue holds {0}" -f $got.queued)
-            $localFailed++
+            $script:failedChecks++
         }
         if ($got.composed -eq $true) {
             Write-Host "  [PASS] the field saw real composition events, not injected characters"
         } else {
             Write-Host "  [FAIL] no compositionend fired — the IME was bypassed, so this proved nothing"
-            $localFailed++
+            $script:failedChecks++
         }
         if ($Which -eq 'page') {
             # The assertion the seat run cannot make: a paragraph line is
@@ -207,13 +217,13 @@ function Invoke-Surface {
                 Write-Host "  [PASS] the composed value queued a set_run op — the operation a paragraph line takes"
             } else {
                 Write-Host ("  [FAIL] the page surface queued a {0} op" -f $got.kind)
-                $localFailed++
+                $script:failedChecks++
             }
         }
     }
     catch {
         Write-Warning $_
-        $localFailed++
+        $script:failedChecks++
     }
     finally {
         if ($proc) { try { $proc.Kill(); $proc.WaitForExit(5000) | Out-Null } catch {} }
@@ -227,16 +237,16 @@ function Invoke-Surface {
             -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force $AppData -ErrorAction SilentlyContinue
     }
-    return $localFailed
 }
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
 $surfaces = if ($Surface -eq 'both') { @('seat', 'page') } else { @($Surface) }
 foreach ($which in $surfaces) {
-    $failed += Invoke-Surface $which
+    Invoke-Surface $which | Out-Null
     $ran++
 }
+$failed = $script:failedChecks
 
 Write-Host ""
 Write-Host ("{0} surface(s) driven with real scan codes" -f $ran)
