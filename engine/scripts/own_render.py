@@ -411,7 +411,7 @@ STRUCTURAL_TAGS = frozenset({
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
     "orgSz", "imgDim", "pageNum", "header", "footer", "footNote", "endNote",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
-    "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
+    "ctrl", "colPr", "colLine", "colSz", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
     "titleMark", "tab", "lineBreak", "hiddenComment", "fieldBegin",
     "fieldEnd", "bookmark", "parameterset", "parameteritem", "parameterarray",
@@ -476,6 +476,67 @@ def binary_items(z, names):
         stem = Path(name).stem
         items.setdefault(stem, name)
     return items
+
+
+def spine_section_order(z, names):
+    """``Contents/section*.xml`` names, in ``content.hpf``'s spine order.
+
+    The OPF ``opf:manifest`` maps an ``id`` to an ``href``; ``opf:spine``
+    lists those ids in document order via ``opf:itemref@idref``.  That is the
+    only authoritative ordering a multi-section document declares — the
+    filenames themselves are not: ``section10`` sorts before ``section2`` as
+    a string, and nothing in the format promises the writer even names them
+    in reading order.  Falls back to a numeric sort of the filenames
+    (``sectionN`` by ``N``, not lexicographically) when the manifest carries
+    no usable spine, which is every corpus form measured so far — none
+    declares more than one section, so the fallback is what every existing
+    test exercises.
+    """
+    candidates = sorted(
+        (n for n in names if SECTION_RE.match(n)),
+        key=lambda n: int(re.search(r"\d+", n).group()))
+    manifest = next((n for n in names if n.endswith("content.hpf")), None)
+    if manifest is None:
+        return candidates
+    try:
+        root = ET.fromstring(z.read(manifest))
+    except ET.ParseError:
+        return candidates
+    href_by_id = {}
+    for el in root.iter():
+        if _local(el.tag) != "item":
+            continue
+        item_id, href = el.get("id"), el.get("href")
+        if item_id and href:
+            href_by_id[item_id] = href
+    spine = next((e for e in root.iter() if _local(e.tag) == "spine"), None)
+    if spine is None:
+        return candidates
+    ordered = []
+    seen = set()
+    for itemref in spine:
+        if _local(itemref.tag) != "itemref":
+            continue
+        href = (href_by_id.get(itemref.get("idref") or "") or "").lstrip("/")
+        if not href:
+            continue
+        # The manifest href is container-root-relative ("Contents/section0.
+        # xml"); match it against the actual zip entries the way binary_items
+        # matches a BinData href, so a differently-rooted container still
+        # resolves.
+        hit = next((n for n in names
+                    if SECTION_RE.match(n)
+                    and (n == href or n.endswith("/" + href))), None)
+        if hit is not None and hit not in seen:
+            ordered.append(hit)
+            seen.add(hit)
+    if not ordered:
+        return candidates
+    # A spine that omits a section file this container actually carries is a
+    # malformed manifest, not a reason to silently drop content — append
+    # anything the spine missed, in numeric order, after what it did name.
+    missing = [n for n in candidates if n not in seen]
+    return ordered + missing
 
 
 def _kid(el, name):
@@ -1304,7 +1365,6 @@ class OwnRenderer:
         self.skipped = {}
         self._bin_cache = {}
         self._synthetic_bold = {}
-        self._page_num_spec = _UNSET
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
@@ -1316,7 +1376,6 @@ class OwnRenderer:
         # scan, its per-note numbering, and the per-page footnote reserve the
         # flow pass subtracts from usable_height.  All three are lazy, because
         # a document with no furniture must reach exactly the pre-E2.6 path.
-        self._furniture = None
         self._note_marks = {}
         self._flow_reserve = {}
         self._furniture_report = {}
@@ -1341,6 +1400,12 @@ class OwnRenderer:
         # engine/scripts/render_scoreboard.py.  E1's caret work needs the same
         # record.
         self.line_boxes = []
+        # Every hp:pageNum value actually stamped, absolute-page-indexed —
+        # ``{absolute_page: number}``.  Not carried in the sidecar (the drawn
+        # digits are already in line_boxes/the raster); this is what a
+        # multi-section restart/continue test checks directly instead of
+        # measuring glyph pixels.
+        self._page_numbers_drawn = {}
         self._page = 1
         self._image = None
         self._typo_cache = {}
@@ -1441,28 +1506,43 @@ class OwnRenderer:
             if header_name is None:
                 raise ValueError("HWPX is missing Contents/header.xml")
             self.defs = parse_header(z.read(header_name))
-            self.sections = [
-                ET.fromstring(z.read(n))
-                for n in sorted(n for n in names if SECTION_RE.match(n))
-            ]
+            self.section_names = spine_section_order(z, names)
+            self.sections = [ET.fromstring(z.read(n))
+                             for n in self.section_names]
             self.bin_items = binary_items(z, names)
         if not self.sections:
             raise ValueError("HWPX carries no Contents/section*.xml")
         # Paragraph identity, and the only one this format supports: hp:p@id
         # is NOT unique (moel-2025 gives 2147483648 to 329 of its 330
         # paragraphs), so a paragraph is named by its document-order position
-        # among every hp:p in section0, nested table cells included, counting
-        # from 0.  An editor can compute the same number from the same file
-        # without asking the renderer, which is what makes it usable as the
-        # ``relayout_paragraphs`` key.
+        # among every hp:p in the WHOLE document, sections walked in spine
+        # order and nested table cells included, counting from 0.  An editor
+        # can compute the same number from the same file without asking the
+        # renderer, which is what makes it usable as the
+        # ``relayout_paragraphs`` key.  Global rather than per-section: a
+        # single flat namespace is what the caller already has to reproduce,
+        # and it means an edit anywhere in the document is named the same way
+        # regardless of which section it lands in.
         self.paragraph_index = {
             id(el): index
             for index, el in enumerate(
-                e for e in self.sections[0].iter() if _local(e.tag) == "p")
+                e for section in self.sections for e in section.iter()
+                if _local(e.tag) == "p")
         }
+        self._current_section = 0
+        self._furniture_by_section = {}
+        self._page_num_spec_by_section = {}
+        self._column_spec_by_section = {}
         if len(self.sections) > 1:
-            self._skip("multi-section document",
-                       f"only section0 is laid out; {len(self.sections)} present")
+            self.notes.append(
+                f"{len(self.sections)} sections rendered in content.hpf "
+                "spine order (falling back to a numeric filename sort when "
+                "the manifest carries no usable spine); each hp:secPr's own "
+                "hp:pagePr, hp:startNum and hp:colPr are applied per "
+                "section and a section always starts a new page. NOT "
+                "measured against any Hancom reference render or corpus "
+                "form -- none in reach of this repo declares more than one "
+                "section")
 
     def _skip(self, element, reason, where=None):
         if self._quiet:
@@ -1496,10 +1576,11 @@ class OwnRenderer:
 
     # -- page geometry ---------------------------------------------------
     def page_geometry(self):
-        root = self.sections[0]
+        root = self.sections[self._current_section]
         page_pr = next((e for e in root.iter() if _local(e.tag) == "pagePr"), None)
         if page_pr is None:
-            raise ValueError("section0 declares no hp:pagePr")
+            name = self.section_names[self._current_section]
+            raise ValueError(f"{name} declares no hp:pagePr")
         margin = _kid(page_pr, "margin")
         m = {k: _iattr(margin, k) for k in
              ("left", "right", "top", "bottom", "header", "footer", "gutter")}
@@ -1519,6 +1600,82 @@ class OwnRenderer:
             "usable_height": (height - m["top"] - m["bottom"]
                               - m["header"] - m["footer"]),
         }
+
+    def column_spec(self):
+        """This section's ``hp:colPr``, reduced to what this tier lays out.
+
+        ``None`` when the section is single-column (``colCount<=1``, which is
+        every corpus form measured), when it declares unequal column widths
+        (``sameSz="false"``, read from ``hp:colSz`` per column — schema:
+        ``DevDoc/OWPML SCHEMA/ParaList XML schema.xml::ColumnDefType``), or
+        when the section's own ``hp:secPr@textDirection`` is not
+        ``HORIZONTAL``.  Both of the latter two are declared-skipped rather
+        than guessed at, and the section then renders single-column instead
+        of raising.
+        """
+        si = self._current_section
+        if si in self._column_spec_by_section:
+            return self._column_spec_by_section[si]
+        section = self.sections[si]
+        colpr = next((e for e in section.iter() if _local(e.tag) == "colPr"),
+                     None)
+        spec = None
+        if colpr is not None:
+            count = _iattr(colpr, "colCount", 1)
+            if count > 1:
+                secpr = next((e for e in section.iter()
+                             if _local(e.tag) == "secPr"), None)
+                text_dir = ((secpr.get("textDirection") if secpr is not None
+                            else None) or "HORIZONTAL").upper()
+                same_sz = (colpr.get("sameSz") or "").strip().lower() in (
+                    "1", "true")
+                if text_dir != "HORIZONTAL":
+                    self._skip(
+                        f"hp:secPr@textDirection={text_dir}",
+                        "vertical text is not laid out; a multi-column "
+                        "section with a non-HORIZONTAL text direction is "
+                        "rendered as a single column instead of guessed at")
+                elif not same_sz:
+                    self._skip(
+                        "hp:colPr@sameSz=false",
+                        "unequal column widths (per-column hp:colSz) are not "
+                        "laid out; a multi-column section with sameSz=false "
+                        "is rendered as a single column instead of guessed "
+                        "at")
+                else:
+                    line = next((e for e in colpr if _local(e.tag)
+                                == "colLine"), None)
+                    separator = None
+                    if line is not None:
+                        separator = {
+                            "type": (line.get("type") or "SOLID").upper(),
+                            "width": line.get("width") or "0.12 mm",
+                            "color": line.get("color") or "#000000",
+                        }
+                    spec = {
+                        "count": count,
+                        "gap": _iattr(colpr, "sameGap", 0),
+                        "separator": separator,
+                        "layout": (colpr.get("layout") or "LEFT").upper(),
+                        "type": (colpr.get("type") or "NEWSPAPER").upper(),
+                    }
+        self._column_spec_by_section[si] = spec
+        return spec
+
+    def column_geometry(self, geo):
+        """``(column_width, gap, count)`` in HWPUNIT for this section.
+
+        ``count`` is 1 (no columns) when :meth:`column_spec` is ``None``, so
+        this is always the width one flowed block should be measured
+        against, whether or not the section has real columns.
+        """
+        spec = self.column_spec()
+        if spec is None:
+            return geo["usable_width"], 0, 1
+        count = spec["count"]
+        gap = spec["gap"]
+        width = max(1, (geo["usable_width"] - gap * (count - 1)) // count)
+        return width, gap, count
 
     # -- page splitting --------------------------------------------------
     def paginate(self):
@@ -1548,7 +1705,7 @@ class OwnRenderer:
         current = []
         prev_first = -1
         prev_bottom = -1
-        for el in _kids(self.sections[0], "p"):
+        for el in _kids(self.sections[self._current_section], "p"):
             para = Paragraph(el, self.defs["para_pr"])
             if para.linesegs:
                 first = _iattr(para.linesegs[0], "vertpos")
@@ -1702,7 +1859,7 @@ class OwnRenderer:
         """Every top-level ``hp:p`` of section0, measured and ready to place."""
         blocks = []
         body_top = self.page_geometry()["body_top"]
-        for el in _kids(self.sections[0], "p"):
+        for el in _kids(self.sections[self._current_section], "p"):
             para = Paragraph(el, self.defs["para_pr"])
             mode, rows = self._flow_lines(draw, para, column_hwp)
             pr = para.para_pr
@@ -1745,10 +1902,14 @@ class OwnRenderer:
           longer fits inside ``usable_height``.
         * ``hp:p@pageBreak`` and ``hh:breakSetting@pageBreakBefore`` — an
           explicit page before this block.
-        * ``hp:p@columnBreak`` — the corpus is single-column
-          (``hp:colPr@colCount=1`` on all 32), so a column break is a page
-          break here, and the sidecar says so rather than pretending columns
-          are implemented.
+        * ``hp:p@columnBreak`` — where the section declares real columns
+          (:meth:`column_spec`), this advances to the next column, wrapping
+          to the next page's first column after the last one; where it does
+          not (every corpus form: ``hp:colPr@colCount=1``), a column break is
+          a page break instead, and the sidecar says so.
+        * ``hp:colPr`` (equal-width columns only) — blocks are measured
+          against the column width, not the full body width, and fill each
+          column top to bottom before advancing; see *Columns*, below.
         * ``@keepLines`` (문단 보호) — a paragraph that would split moves whole
           to the next page instead, unless it is taller than a page.
         * ``@widowOrphan`` (외톨이 줄 보호) — never one line of a multi-line
@@ -1759,20 +1920,39 @@ class OwnRenderer:
         * ``hp:tbl@pageBreak`` — a table splits at a row boundary only when it
           declares ``CELL``; otherwise the whole table moves.
 
-        What is NOT honoured, and is counted rather than faked: multi-column
-        text, ``hp:tbl@repeatHeader`` (a split table does not repeat its
-        header row), text wrap around an anchored object, and any block that
-        is taller than a page, which is placed and allowed to overflow because
-        nothing else can be done with it.
+        Columns.  A page whose section declares real columns (equal widths,
+        ``hp:colPr@sameSz=true``, ``colCount>1``) is modelled as
+        ``colCount`` virtual pages per real page: the placement sweep below
+        never changes to do this — it already starts a new "page" the moment
+        a block stops fitting ``usable_height``, and a narrower column is
+        just a smaller ``column`` measured against the same ``usable_height``
+        — so filling column 1 top-to-bottom then column 2 is the SAME
+        mechanism as filling page 1 then page 2, one level down.  What DOES
+        change: an explicit ``hp:p@pageBreak`` has to skip every remaining
+        column of the current page, not just advance one virtual page.  The
+        caller (``render``) turns a virtual page back into ``(real page,
+        column)`` via ``divmod(page, colCount)`` and draws each column at its
+        own x-offset.  A footnote's reserve (``_flow_reserve``) is therefore
+        also keyed per COLUMN rather than per real page — declared, and
+        unmeasured: no corpus form and no fixture in this repo combines a
+        footnote with a multi-column section.
+
+        What is NOT honoured, and is counted rather than faked:
+        unequal-width columns, vertical text, ``hp:tbl@repeatHeader`` (a
+        split table does not repeat its header row), text wrap around an
+        anchored object, and any block that is taller than a page, which is
+        placed and allowed to overflow because nothing else can be done with
+        it.
         """
         draw = draw or self._scratch_draw()
         geo = self.page_geometry()
         usable = max(1, geo["usable_height"])
-        column = geo["usable_width"]
+        column, _gap, col_count = self.column_geometry(geo)
         blocks = self._flow_blocks(draw, column)
         counters = {
             "explicit_page_breaks": 0,
             "column_breaks_as_page_breaks": 0,
+            "column_breaks_honored": 0,
             "keep_lines_moved": 0,
             "widow_orphan_moved": 0,
             "keep_with_next_moved": 0,
@@ -1787,14 +1967,15 @@ class OwnRenderer:
         counters["footnote_reserve_capped"] = 0
         counters["footnote_reserve_unsettled"] = 0
         placements = self._flow_blocks_once(
-            draw, blocks, usable, counters, start_page, start_y, from_block)
+            draw, blocks, usable, counters, start_page, start_y, from_block,
+            col_count)
         placements, counters = self._apply_keep_with_next(
             blocks, placements, counters, usable, from_block)
         pages = self._flow_pages(placements, start_page)
         return placements, pages, counters
 
     def _flow_blocks_once(self, draw, blocks, usable, counters, start_page,
-                          start_y, from_block):
+                          start_y, from_block, col_count=1):
         """One placing sweep, reserving each block's footnotes as it goes.
 
         The reserve is applied DURING the sweep rather than by re-running the
@@ -1818,17 +1999,33 @@ class OwnRenderer:
             block = blocks[i]
             gap = int((prev_next_margin + block["margin_prev"])
                       * PARA_MARGIN_SCALE)
+            forced_col = block["column_break"] and not block["page_break_before"]
             forced = (block["page_break_before"] or block["column_break"])
             if forced and (placements or y > 0):
-                if block["column_break"] and not block["page_break_before"]:
+                if forced_col and col_count > 1:
+                    # A real column break in a real multi-column section:
+                    # advance exactly one virtual page, which IS the next
+                    # column (wrapping to the next real page's first column
+                    # when this was the last one) -- see flow()'s "Columns".
+                    counters["column_breaks_honored"] += 1
+                    page += 1
+                elif forced_col:
                     counters["column_breaks_as_page_breaks"] += 1
                     self._skip(
                         "hp:p@columnBreak",
                         "multi-column text is not implemented; a column break "
                         "is honoured as a page break")
+                    page += 1
                 else:
                     counters["explicit_page_breaks"] += 1
-                page += 1
+                    if col_count > 1:
+                        # An explicit PAGE break inside a real multi-column
+                        # section skips any columns left on the current page
+                        # rather than just advancing one -- pageBreak means
+                        # "next page", not "next column".
+                        page = (page // col_count + 1) * col_count
+                    else:
+                        page += 1
                 y = 0
                 gap = 0
             notes = note_heights.get(block["index"], 0)
@@ -2077,13 +2274,22 @@ class OwnRenderer:
         renderer takes exactly the path it took before E2.5 — which is what
         makes "unedited output is byte-identical" a property rather than a
         hope.
+
+        A section with a real multi-column layout (:meth:`column_spec`) is
+        the one exception: it is ALWAYS placed by the computed flow pass,
+        never seeded from the cache, because ``vertpos``/``horzpos`` on a
+        cached line inside a column is not something any corpus form or
+        reference render exists to confirm this renderer reads correctly.
+        The declared cost is real: an unedited multi-column section does NOT
+        render byte-identical to a naive cache-read, unlike every
+        single-column section on this corpus.
         """
         draw = self._scratch_draw()
-        column = self.page_geometry()["usable_width"]
-        if self.block_layout == BLOCK_LAYOUT_COMPUTED:
+        column = self.column_geometry(self.page_geometry())[0]
+        if self.block_layout == BLOCK_LAYOUT_COMPUTED or self.column_spec():
             return self.flow(draw), 0
         first = None
-        for order, el in enumerate(_kids(self.sections[0], "p")):
+        for order, el in enumerate(_kids(self.sections[self._current_section], "p")):
             para = Paragraph(el, self.defs["para_pr"])
             index = self.paragraph_index.get(id(el))
             mode, _reason = self.line_layout_mode(para, column, index)
@@ -4232,9 +4438,14 @@ class OwnRenderer:
         "page; a block starts a new page when its next line no longer fits",
         "hp:p@pageBreak and hh:breakSetting@pageBreakBefore — an explicit "
         "page before the block",
-        "hp:p@columnBreak — honoured as a PAGE break: every corpus "
-        "hp:colPr declares colCount=1, so this tier has no second column to "
-        "break into and says so rather than dropping the instruction",
+        "hp:p@columnBreak — honoured as a COLUMN break where the section "
+        "declares real columns (E2.7); as a PAGE break where it does not "
+        "(every corpus form: hp:colPr declares colCount=1) rather than "
+        "dropping the instruction",
+        "hp:colPr — equal-width columns (colCount>1, sameSz=true): a column "
+        "is modelled as a narrower virtual page (see flow's 'Columns'), so "
+        "filling column 1 then column 2 reuses the same overflow mechanism "
+        "a page break already has",
         "hh:breakSetting@keepLines (문단 보호) — a paragraph that would split "
         "moves whole to the next page, unless it is taller than a page",
         "hh:breakSetting@widowOrphan (외톨이 줄 보호) — never one line of a "
@@ -4258,8 +4469,10 @@ class OwnRenderer:
         "flow, so the next block starts below it",
     )
     BLOCK_NOT_HONORED = (
-        "multi-column text — hp:colPr@colCount > 1 is not laid out; a column "
-        "break becomes a page break",
+        "unequal-width columns (hp:colPr@sameSz=false, per-column hp:colSz) "
+        "and vertical text (hp:secPr@textDirection != HORIZONTAL) — a "
+        "multi-column section declaring either renders as a single column "
+        "instead of guessed at",
         "hp:tbl@repeatHeader — a table split across a page boundary does not "
         "repeat its header row on the continuation page",
         "text wrap AROUND an anchored object — the object's full extent is "
@@ -4276,8 +4489,14 @@ class OwnRenderer:
         "a footnote block is reserved on the page its BLOCK starts on, not on "
         "the page the reference character itself lands on, which differ only "
         "for a block that straddles a page boundary",
-        "hp:secPr beyond section0 — a second section is not laid out, so it "
-        "cannot start a page either",
+        "a footnote's reserve is computed per COLUMN rather than per page "
+        "when a section has real columns — declared, untested: no fixture "
+        "combines the two",
+        "a multi-column section is ALWAYS placed by the computed flow pass "
+        "(never seeded from the cache), so an unedited multi-column section "
+        "does not render byte-identical the way a single-column one does",
+        "footnote/endnote CONTINUOUS numbering restarts at 1 in every "
+        "section rather than carrying on from the section before it",
     )
 
     def _block_layout_report(self, placements, counters, page_count,
@@ -4466,11 +4685,18 @@ class OwnRenderer:
         control that makes Hancom stamp a number on every page of the section.
         It sits inside an ``hp:run``, and that run's ``charPrIDRef`` is what
         meters the number, so the run is what has to be found, not the tag.
+
+        ``restart`` is whether THIS section's own ``hp:startNum@page`` is
+        declared nonzero (schema default 0 = 쪽 시작 번호 미지정, i.e.
+        continue from the previous section) — ``render`` uses it to decide
+        whether the displayed number picks up where the last section left
+        off or starts over at ``first_number``.
         """
-        if self._page_num_spec is not _UNSET:
-            return self._page_num_spec
+        si = self._current_section
+        if si in self._page_num_spec_by_section:
+            return self._page_num_spec_by_section[si]
         spec = None
-        for run in self.sections[0].iter():
+        for run in self.sections[si].iter():
             if _local(run.tag) != "run":
                 continue
             el = next((e for e in run.iter() if _local(e.tag) == "pageNum"),
@@ -4485,17 +4711,29 @@ class OwnRenderer:
             }
             break
         if spec is not None:
-            start = next((e for e in self.sections[0].iter()
+            start = next((e for e in self.sections[si].iter()
                           if _local(e.tag) == "startNum"), None)
-            vis = next((e for e in self.sections[0].iter()
+            vis = next((e for e in self.sections[si].iter()
                         if _local(e.tag) == "visibility"), None)
-            spec["first_number"] = max(1, _iattr(start, "page") or 1)
+            declared_start = _iattr(start, "page")
+            spec["restart"] = declared_start > 0
+            spec["first_number"] = max(1, declared_start or 1)
             spec["hide_first"] = bool(_iattr(vis, "hideFirstPageNum"))
-        self._page_num_spec = spec
+        self._page_num_spec_by_section[si] = spec
         return spec
 
-    def _render_page_number(self, draw, geo, page_number):
-        """Stamp this page's number where ``hp:pageNum`` says to put it."""
+    def _render_page_number(self, draw, geo, page_number, first_number_override=None):
+        """Stamp this page's number where ``hp:pageNum`` says to put it.
+
+        ``page_number`` is 1-based WITHIN the current section (it also
+        governs ``hideFirstPageNum``, which is a per-section declaration).
+        ``first_number_override``, set by ``render`` for a multi-section
+        document, is the number this section's first page actually gets:
+        ``spec["first_number"]`` when the section's own ``hp:startNum@page``
+        restarts it, or one past the previous section's last stamped number
+        when it does not (schema default: continue).  A single-section
+        document never passes it, and behaves exactly as before.
+        """
         spec = self.page_number_spec()
         if spec is None:
             return
@@ -4511,7 +4749,10 @@ class OwnRenderer:
                        "drawn in arabic digits")
         if page_number == 1 and spec["hide_first"]:
             return
-        number = spec["first_number"] + page_number - 1
+        first_number = (spec["first_number"] if first_number_override is None
+                        else first_number_override)
+        number = first_number + page_number - 1
+        self._page_numbers_drawn[self._page] = number
         side = spec["side_char"]
         text = f"{side} {number} {side}" if side else str(number)
         cid = spec["charpr"]
@@ -4606,9 +4847,17 @@ class OwnRenderer:
         ``charPrIDRef`` of the run that holds it (which is what meters its
         reference mark).  The walk stops at every control it finds, so a
         header's own paragraphs are never scanned for notes.
+
+        Scoped to the current section (``self._current_section``) and cached
+        per section: a footnote/endnote's ``CONTINUOUS`` numbering therefore
+        restarts at 1 in every section rather than carrying on from the
+        previous one — declared in ``own-render-notes.md``, not measured; no
+        corpus form has more than one section.
         """
-        if self._furniture is not None:
-            return self._furniture
+        si = self._current_section
+        cached = self._furniture_by_section.get(si)
+        if cached is not None:
+            return cached
         kinds = {"header": "header", "footer": "footer",
                  "footNote": "footnote", "endNote": "endnote"}
         found = {"header": [], "footer": [], "footnote": [], "endnote": []}
@@ -4628,9 +4877,9 @@ class OwnRenderer:
                     continue
                 walk(child, block, charpr)
 
-        for el in _kids(self.sections[0], "p"):
+        for el in _kids(self.sections[si], "p"):
             walk(el, self.paragraph_index.get(id(el)), "0")
-        self._furniture = found
+        self._furniture_by_section[si] = found
         for kind in ("footnote", "endnote"):
             start = self._note_start_number(kind)
             for order, entry in enumerate(found[kind]):
@@ -4642,7 +4891,7 @@ class OwnRenderer:
     def _note_pr(self, kind):
         """``hp:footNotePr`` / ``hp:endNotePr`` reduced to what is drawn."""
         tag = "footNotePr" if kind == "footnote" else "endNotePr"
-        pr = next((e for e in self.sections[0].iter()
+        pr = next((e for e in self.sections[self._current_section].iter()
                    if _local(e.tag) == tag), None)
         fmt = _kid(pr, "autoNumFormat") if pr is not None else None
         line = _kid(pr, "noteLine") if pr is not None else None
@@ -4750,7 +4999,7 @@ class OwnRenderer:
         return True
 
     def _hide_first(self, attr):
-        vis = next((e for e in self.sections[0].iter()
+        vis = next((e for e in self.sections[self._current_section].iter()
                     if _local(e.tag) == "visibility"), None)
         return bool(_iattr(vis, attr))
 
@@ -5008,25 +5257,35 @@ class OwnRenderer:
                 "and named rather than drawn outside the box")
         self._flow_reserve[page] = value
 
-    def _page_of_block(self, placements, pages):
-        """``{block index -> 1-based page}`` for whichever path is drawing.
+    def _page_of_block(self, placements, pages, col_count=1, page_offset=0):
+        """``{block index -> 1-based ABSOLUTE page}`` for whichever path is
+        drawing.
 
         Both paths are covered because both can carry a footnote: ``auto``
         keeps the authoring engine's page assignment (``paginate``), and the
         flow pass computes its own.  The flow pass is the only one that can
         also RESERVE room for the note, which is why the collision check in
         ``_render_footnotes`` is a real test on the cached path.
+
+        ``placements``' own ``page`` is a *virtual* page (``real*colCount +
+        column`` — see ``flow``'s *Columns*) when the section has real
+        columns; ``col_count`` folds it back to the real, 1-based page this
+        document draws.  ``page_offset`` is this section's own absolute page
+        count so far in the whole document — 0-based, added before the
+        1-based page numbering below.
         """
         out = {}
         if placements:
             for record in sorted(placements,
                                  key=lambda r: (r["page"], r["top"])):
-                out.setdefault(record["block"], record["page"] + 1)
+                real = record["page"] // col_count
+                out.setdefault(record["block"], page_offset + real + 1)
             return out
-        for page_number, page in enumerate(pages, start=1):
+        for page_number, page in enumerate(pages or [], start=1):
             for para in page:
                 el = para.el if hasattr(para, "el") else para["para"].el
-                out.setdefault(self.paragraph_index.get(id(el)), page_number)
+                out.setdefault(self.paragraph_index.get(id(el)),
+                               page_offset + page_number)
         return out
 
     def _render_footnotes(self, draw, geo, page_number, page_of_block):
@@ -5083,8 +5342,9 @@ class OwnRenderer:
             used = min(used, max(0, ceiling - geo["body_top"]))
         return int(round(used))
 
-    def _render_endnotes(self, images, geo, page_w, page_h):
-        """Set 미주 at the end of the section, continuing onto new pages.
+    def _render_endnotes(self, images, geo, page_w, page_h, page_offset=0,
+                         first_number_override=None):
+        """Set 미주 at the end of THIS section, continuing onto new pages.
 
         Unlike a footnote, an endnote block is not bound to one page, so the
         standard's continuation IS implemented here — at a note boundary, not
@@ -5092,6 +5352,15 @@ class OwnRenderer:
         page whole.  A single note taller than a page is placed at the top of
         its own page and allowed to overflow, which is the same answer this
         tier already gives a block taller than a page, and it is counted.
+
+        ``images`` is THIS SECTION's own page list — one call per section, in
+        ``render``'s per-section loop — so END_OF_SECTION and END_OF_DOCUMENT
+        are drawn identically here (both mean "at the end of the pages this
+        call was given"), which is what the sidecar note below still says.
+        ``page_offset`` is how many pages precede this section in the whole
+        document, so ``self._page``/``line_boxes`` stay absolute while
+        ``local_page_number`` (passed to header/footer/page-number) stays
+        section-relative.
         """
         entries = self._furniture_scan()["endnote"]
         if not entries:
@@ -5101,7 +5370,8 @@ class OwnRenderer:
                                                "END_OF_SECTION"):
             self._skip(f"hp:endNotePr/hp:placement@place={pr['place']}",
                        "only END_OF_DOCUMENT and END_OF_SECTION are "
-                       "implemented; the notes are set at the end of section0")
+                       "implemented; both are drawn at the end of the "
+                       "section's own pages")
         usable = max(1, geo["usable_height"])
         scratch = self._scratch_draw()
         self._quiet += 1
@@ -5110,7 +5380,8 @@ class OwnRenderer:
                                                    entries, geo)
         finally:
             self._quiet -= 1
-        page_number = len(images)
+        local_page_number = len(images)
+        page_number = page_offset + local_page_number
         self._page = page_number
         draw = self.ImageDraw.Draw(images[-1])
         y = self._body_bottom_hwp(page_number, geo) + pr["above"]
@@ -5137,6 +5408,7 @@ class OwnRenderer:
                 y += pr["between"]
             if y + item["height"] > usable and y > 0:
                 page_number += 1
+                local_page_number += 1
                 image = self.Image.new("RGB", (page_w, page_h),
                                        (255, 255, 255))
                 images.append(image)
@@ -5144,8 +5416,9 @@ class OwnRenderer:
                 draw = self.ImageDraw.Draw(image)
                 self._page = page_number
                 y = 0
-                self._render_header_footer(draw, geo, page_number)
-                self._render_page_number(draw, geo, page_number)
+                self._render_header_footer(draw, geo, local_page_number)
+                self._render_page_number(draw, geo, local_page_number,
+                                         first_number_override)
             if item["height"] > usable:
                 self._skip("hp:endNote taller than one page",
                            "a single endnote taller than the body box is set "
@@ -5167,8 +5440,7 @@ class OwnRenderer:
 
     def _furniture_note(self):
         """The standing caveat this document's furniture earns, or None."""
-        f = self._furniture_scan()
-        counts = {k: len(v) for k, v in f.items()}
+        counts = self._furniture_declared_totals()
         if not any(counts.values()):
             return None
         return (
@@ -5211,51 +5483,190 @@ class OwnRenderer:
             pages.setdefault(record["page"], []).append(record)
         return pages
 
+    @staticmethod
+    def _column_page_groups(placements, col_count):
+        """``placements`` (keyed by *virtual* page, ``real*colCount+column``)
+        folded into ``{real_page: {column: [record, ...]}}``, each column's
+        records already in top-to-bottom order — see ``flow``'s *Columns*.
+        """
+        groups = {}
+        seen_block = set()
+        for record in sorted(placements, key=lambda r: (r["page"], r["top"])):
+            real_page, column = divmod(record["page"], col_count)
+            record = dict(record)
+            record["placement"] = "flowed"
+            record["first_of_block"] = record["block"] not in seen_block
+            seen_block.add(record["block"])
+            groups.setdefault(real_page, {}).setdefault(column, []).append(
+                record)
+        return groups
+
+    def _draw_column_separators(self, draw, geo, col_width, gap, col_count,
+                                separator):
+        """``hp:colPr/hp:colLine`` — one vertical rule centred in each gap.
+
+        Only drawn when the section declares one; ``DOUBLE_SLIM`` and every
+        other non-solid ``hc:LineType2`` this tier does not special-case for
+        a column rule is stroked solid, same reading as a cell border (limit
+        4).
+        """
+        if separator is None or col_count < 2:
+            return
+        if separator["type"] != "SOLID":
+            self._skip(f"hp:colPr/hp:colLine@type={separator['type']}",
+                       "a non-solid column separator is stroked as a solid "
+                       "line of the declared width")
+        colour = _colour(separator["color"]) or (0, 0, 0)
+        width_px = max(1, self.px(_mm_to_hwp(separator["width"])))
+        top_px = self.px(geo["body_top"])
+        bottom_px = self.px(geo["body_top"] + geo["usable_height"])
+        for column in range(1, col_count):
+            centre = geo["body_left"] + column * col_width + (
+                column - 1) * gap + gap / 2.0
+            x_px = self.px(centre)
+            draw.line([(x_px, top_px), (x_px, bottom_px)], fill=colour,
+                      width=width_px)
+            self.counts["borders"] += 1
+
     def render(self):
-        geo = self.page_geometry()
-        # Before anything measures a line: a reference mark's cell width comes
-        # from the scan, so a scan that ran late would measure it as zero.
-        self._furniture_scan()
-        plan, first_flowed = self.flow_plan()
-        page_records = None
-        if plan is None:
-            pages = self.paginate()
-            counters = None
-            placements = None
-        else:
-            placements, _flow_pages, counters = plan
-            page_records = self._flow_page_records(placements, first_flowed)
-            pages = [page_records.get(n, [])
-                     for n in range(max(page_records) + 1)]
-        self._flow_report = self._block_layout_report(
-            placements, counters, len(pages), first_flowed, page_records)
-        page_w = self.px(geo["width"])
-        page_h = self.px(geo["height"])
+        """Render every section in spine order onto one growing page list.
+
+        A section always starts a new page: its pages are simply appended
+        after the previous section's.  Each section supplies its OWN
+        ``hp:pagePr`` (size, margins, header/footer heights — via
+        ``page_geometry``), its own ``hp:startNum`` page-number restart, and
+        its own ``hp:colPr`` column layout; nothing here is shared across a
+        section boundary except the running page-number DISPLAY counter,
+        which continues unless the next section's own ``startNum@page``
+        restarts it (see ``page_number_spec``).
+        """
         images = []
-        page_of_block = self._page_of_block(placements, pages)
-        for page_number, page_paras in enumerate(pages, start=1):
-            self._page = page_number
-            img = self.Image.new("RGB", (page_w, page_h), (255, 255, 255))
-            self._image = img
-            draw = self.ImageDraw.Draw(img)
-            if page_records is None:
-                self._render_paragraphs(
-                    draw, page_paras,
-                    (geo["body_left"], geo["body_top"]),
-                    geo["usable_width"],
-                )
+        block_layout_reports = []
+        section_infos = []
+        first_geo = None
+        display_counter = None
+        absolute_page = 0
+        for si in range(len(self.sections)):
+            self._current_section = si
+            geo = self.page_geometry()
+            if first_geo is None:
+                first_geo = geo
+            # Before anything measures a line: a reference mark's cell width
+            # comes from the scan, so a scan that ran late would measure it
+            # as zero.
+            self._furniture_scan()
+            col_spec = self.column_spec()
+            col_width, gap, col_count = self.column_geometry(geo)
+            plan, first_flowed = self.flow_plan()
+            page_w = self.px(geo["width"])
+            page_h = self.px(geo["height"])
+            section_images = []
+            pages = None
+            if col_count > 1:
+                placements, _vpages, counters = plan
+                groups = self._column_page_groups(placements, col_count)
+                last_virtual = max((r["page"] for r in placements),
+                                   default=0)
+                real_page_count = last_virtual // col_count + 1
+                page_records = {rp: [r for cols in group.values() for r in cols]
+                                for rp, group in groups.items()}
+                pages_for_report = real_page_count
+                separator = col_spec["separator"] if col_spec else None
+                for real_page in range(real_page_count):
+                    img = self.Image.new("RGB", (page_w, page_h),
+                                         (255, 255, 255))
+                    draw = self.ImageDraw.Draw(img)
+                    self._image = img
+                    self._page = absolute_page + real_page + 1
+                    for column in range(col_count):
+                        records = groups.get(real_page, {}).get(column, [])
+                        col_x = geo["body_left"] + column * (col_width + gap)
+                        self._render_flow_page(
+                            draw, records, (col_x, geo["body_top"]),
+                            col_width)
+                    self._draw_column_separators(
+                        draw, geo, col_width, gap, col_count, separator)
+                    section_images.append(img)
             else:
-                self._render_flow_page(
-                    draw, page_paras,
-                    (geo["body_left"], geo["body_top"]),
-                    geo["usable_width"],
-                )
-            self._render_footnotes(draw, geo, page_number, page_of_block)
-            self._render_header_footer(draw, geo, page_number)
-            self._render_page_number(draw, geo, page_number)
-            images.append(img)
-        images = self._render_endnotes(images, geo, page_w, page_h)
+                page_records = None
+                if plan is None:
+                    pages = self.paginate()
+                    counters = None
+                    placements = None
+                else:
+                    placements, _flow_pages, counters = plan
+                    page_records = self._flow_page_records(
+                        placements, first_flowed)
+                    pages = [page_records.get(n, [])
+                             for n in range(max(page_records) + 1)]
+                pages_for_report = len(pages)
+                for local_idx, page_paras in enumerate(pages, start=1):
+                    img = self.Image.new("RGB", (page_w, page_h),
+                                         (255, 255, 255))
+                    draw = self.ImageDraw.Draw(img)
+                    self._image = img
+                    self._page = absolute_page + local_idx
+                    if page_records is None:
+                        self._render_paragraphs(
+                            draw, page_paras,
+                            (geo["body_left"], geo["body_top"]),
+                            geo["usable_width"])
+                    else:
+                        self._render_flow_page(
+                            draw, page_paras,
+                            (geo["body_left"], geo["body_top"]),
+                            geo["usable_width"])
+                    section_images.append(img)
+            self._flow_report = self._block_layout_report(
+                placements, counters, pages_for_report, first_flowed,
+                page_records)
+            block_layout_reports.append(self._flow_report)
+            page_of_block = self._page_of_block(
+                placements, pages, col_count=col_count,
+                page_offset=absolute_page)
+            pagenum_spec = self.page_number_spec()
+            if pagenum_spec is not None:
+                section_first_number = (
+                    pagenum_spec["first_number"]
+                    if pagenum_spec["restart"] or display_counter is None
+                    else display_counter + 1)
+            else:
+                section_first_number = None
+            for local_idx in range(1, len(section_images) + 1):
+                self._page = absolute_page + local_idx
+                draw = self.ImageDraw.Draw(section_images[local_idx - 1])
+                self._render_footnotes(draw, geo, self._page, page_of_block)
+                self._render_header_footer(draw, geo, local_idx)
+                if pagenum_spec is not None:
+                    self._render_page_number(draw, geo, local_idx,
+                                             section_first_number)
+            section_images = self._render_endnotes(
+                section_images, geo, page_w, page_h,
+                page_offset=absolute_page,
+                first_number_override=section_first_number)
+            if pagenum_spec is not None:
+                display_counter = (section_first_number
+                                   + len(section_images) - 1)
+            images.extend(section_images)
+            section_infos.append({
+                "index": si,
+                "id": (self.section_names[si]
+                      if si < len(self.section_names) else f"section{si}"),
+                "pages": [absolute_page + 1, absolute_page + len(section_images)],
+                "page_geometry_hwpunit": geo,
+                "page_size_px": [page_w, page_h],
+                "columns": ({**col_spec, "column_width_hwpunit": col_width,
+                            "gap_hwpunit": gap} if col_spec else None),
+            })
+            absolute_page += len(section_images)
         self._audit_unsupported()
+        self._current_section = 0
+        geo = first_geo
+        page_w, page_h = (section_infos[0]["page_size_px"]
+                          if section_infos else (0, 0))
+        self._flow_report = (block_layout_reports[0]
+                             if len(block_layout_reports) == 1
+                             else block_layout_reports)
         sidecar = {
             "renderer": RENDERER_STAMP,
             "renderer_version": RENDERER_VERSION,
@@ -5311,6 +5722,18 @@ class OwnRenderer:
                 "reference PDF's text lines."
             ),
             "page_furniture": self._page_furniture_report(geo),
+            "sections": section_infos,
+            "sections_meaning": (
+                "one entry per Contents/section*.xml, in content.hpf spine "
+                "order (spine_section_order falls back to a numeric filename "
+                "sort when the manifest carries no usable spine). "
+                "page_geometry_hwpunit/page_size_px/page_geometry_hwpunit and "
+                "columns are THIS section's own hp:secPr/hp:pagePr/hp:colPr; "
+                "pages is the [first, last] 1-based ABSOLUTE page range this "
+                "section drew, inclusive. The top-level page_size_px/"
+                "page_geometry_hwpunit above are section 0's, kept for "
+                "single-section back-compatibility."
+            ),
             "elements_skipped": sorted(
                 self.skipped.values(),
                 key=lambda e: (e["element"], e["reason"])),
@@ -5318,12 +5741,31 @@ class OwnRenderer:
         }
         return images, sidecar
 
+    def _furniture_declared_totals(self):
+        """``{header, footer, footnote, endnote} -> count``, ALL sections."""
+        totals = {"header": 0, "footer": 0, "footnote": 0, "endnote": 0}
+        saved = self._current_section
+        try:
+            for si in range(len(self.sections)):
+                self._current_section = si
+                f = self._furniture_scan()
+                for kind in totals:
+                    totals[kind] += len(f[kind])
+        finally:
+            self._current_section = saved
+        return totals
+
     def _page_furniture_report(self, geo):
-        """What the header/footer/note lane found, drew, and cannot claim."""
+        """What the header/footer/note lane found, drew, and cannot claim.
+
+        ``declared`` is summed over every section; ``areas_hwpunit`` and
+        ``footnote_reserve_hwpunit`` describe the CURRENT section only (its
+        own margins), named as such when the document has more than one.
+        """
         f = self._furniture_scan()
         m = geo["margin"]
         report = {
-            "declared": {k: len(v) for k, v in sorted(f.items())},
+            "declared": self._furniture_declared_totals(),
             "drawn": {k: self.counts[k] for k in
                       ("headers", "footers", "footnotes", "endnotes",
                        "note_marks")},
@@ -5364,14 +5806,15 @@ class OwnRenderer:
         "implemented; a note that does not fit its reserved block is dropped "
         "and named",
         "hp:footNotePr/hp:placement@place — EACH_COLUMN and beneathText are "
-        "read and not acted on: this tier is single-column and always sets "
-        "the block on the body box's bottom edge",
+        "read and not acted on: a footnote block always sets on the body "
+        "box's bottom edge, spanning the full page width even in a "
+        "multi-column section, never reserved per column",
         "the reference mark's own character cell is this renderer's reading "
         "of how hp:lineseg@textpos counts a note control, not a measurement — "
         "no document in reach of this repo carries a note to measure it on",
         "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT and "
-        "END_OF_SECTION are the same thing here, because only section0 is "
-        "laid out",
+        "END_OF_SECTION are the same thing here (E2.7): both mean the end of "
+        "the CURRENT section's own pages, not the whole document",
         "the endnote cursor is the bottom of the page's INKED body text, not "
         "a layout cursor: a page whose last block draws no ink is treated as "
         "ending where its ink ends",
