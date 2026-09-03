@@ -406,7 +406,7 @@ STRUCTURAL_TAGS = frozenset({
     "pos", "inMargin", "outMargin", "shapeComment", "secPr", "grid",
     "startNum", "visibility", "lineNumberShape", "pagePr", "margin",
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
-    "orgSz", "imgDim", "pageNum",
+    "orgSz", "imgDim", "pageNum", "header", "footer", "footNote", "endNote",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
     "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
@@ -1289,7 +1289,17 @@ class OwnRenderer:
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
-                       "images": 0, "page_numbers": 0, "equations": 0}
+                       "images": 0, "page_numbers": 0, "equations": 0,
+                       "headers": 0, "footers": 0, "footnotes": 0,
+                       "endnotes": 0, "note_marks": 0}
+        # Page furniture (E2.6): the hp:header/hp:footer/hp:footNote/hp:endNote
+        # scan, its per-note numbering, and the per-page footnote reserve the
+        # flow pass subtracts from usable_height.  All three are lazy, because
+        # a document with no furniture must reach exactly the pre-E2.6 path.
+        self._furniture = None
+        self._note_marks = {}
+        self._flow_reserve = {}
+        self._furniture_report = {}
         # Equation bookkeeping.  ``eq_constructs`` is what the HwpEqn parser
         # laid out, by construct; ``eq_unsupported`` is what it could not and
         # drew as raw token text; ``eq_scaled`` records every scale-to-fit
@@ -1374,8 +1384,9 @@ class OwnRenderer:
             "hh:align JUSTIFY stretches every line of a paragraph except its "
             "last; DISTRIBUTE stretches every line; neither ever shrinks a "
             "line that already overruns its box",
-            "headers, footers, footnotes, endnotes and master pages are not "
-            "drawn",
+            "headers and footers ARE drawn, in the areas hh:margin@header / "
+            "@footer declare, per @applyPageType and @hideFirstHeader / "
+            "@hideFirstFooter; master pages are still not drawn",
             "full limits and the certification path: "
             "engine/references/own-render-notes.md",
         ]
@@ -4438,6 +4449,296 @@ class OwnRenderer:
             "y1": round(baseline + descent, 3),
         })
 
+    # -- page furniture: headers, footers, footnotes, endnotes (E2.6) -----
+    #
+    # Where each of the four lives in the file, and why the scan below has the
+    # shape it has:
+    #
+    #   * ``hp:header`` / ``hp:footer`` are *controls*, exactly like
+    #     ``hp:pageNum``: they sit inside an ``hp:ctrl`` inside a run of an
+    #     ordinary body paragraph, and each carries its own ``hp:subList`` of
+    #     paragraphs plus an ``@applyPageType`` saying which pages it runs on.
+    #     They are NOT children of ``hp:secPr`` — verified on the one corpus
+    #     form that carries one (jeongbo).
+    #   * ``hp:footNote`` / ``hp:endNote`` are controls too, and their position
+    #     in the run stream IS the reference position, so the mark this
+    #     renderer draws goes exactly there and the note body goes elsewhere.
+    #   * ``hp:secPr/hp:footNotePr`` and ``/hp:endNotePr`` carry the separator
+    #     line, the spacing and the numbering format for the note *bodies*.
+    #
+    # NOTHING in the corpus and nothing in the private report-class holdout
+    # exercises a note: ten corpus forms declare hp:footNotePr and
+    # hp:endNotePr and carry no hp:footNote or hp:endNote at all, one form
+    # (jeongbo) carries a single EMPTY hp:header, and no form carries an
+    # hp:footer.  So no reference render measures any of this; the geometry is
+    # pinned by synthetic fixtures and by the spec, and that is stated in the
+    # sidecar rather than implied away.
+
+    # ``@applyPageType`` — 머리말/꼬리말이 적용되는 쪽.
+    FURNITURE_APPLY_TYPES = ("BOTH", "EVEN", "ODD")
+    # ``hp:noteLine@length`` is negative on every corpus form ("-1"), which is
+    # the writer saying "the default", and KS X 6101 does not publish what the
+    # default is.  Hancom's own 각주 구분선 default is 5 cm, so that is what is
+    # drawn, capped at the column width.  This renderer's reading, declared.
+    NOTE_LINE_DEFAULT_HWP = int(round(5.0 / 2.54 * HWPUNIT_PER_INCH))
+    # A reference mark is set at this fraction of its run's character size and
+    # raised by this fraction of that size.  ``hp:autoNumFormat@supscript`` is
+    # a flag, not a size and not an offset, so both numbers are this
+    # renderer's and are declared.
+    NOTE_MARK_RELSZ = 65
+    NOTE_MARK_RAISE = 0.35
+    # How many times the flow pass may re-run to settle the per-page footnote
+    # reserve before it gives up and says so.  Bounded on purpose: a note that
+    # shrinks its own page can push its reference off that page, which takes
+    # the note with it and un-shrinks the page, and no fixed point exists.
+    NOTE_FLOW_MAX_PASSES = 6
+
+    def _furniture_scan(self):
+        """``{header, footer, footnote, endnote}`` -> entries, in flow order.
+
+        An entry carries the control element, the top-level block index it
+        sits in (which is what maps a footnote onto a page), and the
+        ``charPrIDRef`` of the run that holds it (which is what meters its
+        reference mark).  The walk stops at every control it finds, so a
+        header's own paragraphs are never scanned for notes.
+        """
+        if self._furniture is not None:
+            return self._furniture
+        kinds = {"header": "header", "footer": "footer",
+                 "footNote": "footnote", "endNote": "endnote"}
+        found = {"header": [], "footer": [], "footnote": [], "endnote": []}
+
+        def walk(el, block, charpr):
+            for child in el:
+                name = _local(child.tag)
+                if name == "run":
+                    walk(child, block, child.get("charPrIDRef") or charpr)
+                    continue
+                kind = kinds.get(name)
+                if kind is not None:
+                    found[kind].append({
+                        "el": child, "block": block, "charpr": charpr,
+                        "apply": (child.get("applyPageType") or "BOTH").upper(),
+                    })
+                    continue
+                walk(child, block, charpr)
+
+        for el in _kids(self.sections[0], "p"):
+            walk(el, self.paragraph_index.get(id(el)), "0")
+        self._furniture = found
+        for kind in ("footnote", "endnote"):
+            start = self._note_start_number(kind)
+            for order, entry in enumerate(found[kind]):
+                entry["number"] = start + order
+                entry["mark"] = self._note_mark_text(kind, entry["number"])
+                self._note_marks[id(entry["el"])] = entry
+        return found
+
+    def _note_pr(self, kind):
+        """``hp:footNotePr`` / ``hp:endNotePr`` reduced to what is drawn."""
+        tag = "footNotePr" if kind == "footnote" else "endNotePr"
+        pr = next((e for e in self.sections[0].iter()
+                   if _local(e.tag) == tag), None)
+        fmt = _kid(pr, "autoNumFormat") if pr is not None else None
+        line = _kid(pr, "noteLine") if pr is not None else None
+        space = _kid(pr, "noteSpacing") if pr is not None else None
+        num = _kid(pr, "numbering") if pr is not None else None
+        place = _kid(pr, "placement") if pr is not None else None
+        return {
+            "format": ((fmt.get("type") if fmt is not None else None)
+                       or "DIGIT").upper(),
+            "prefix": (fmt.get("prefixChar") or "") if fmt is not None else "",
+            "suffix": (fmt.get("suffixChar") or "") if fmt is not None else "",
+            # HWP writes the flag as @supscript; the schema spells it
+            # @superscript.  Both are read, because both occur.
+            "superscript": bool(
+                _iattr(fmt, "supscript") or _iattr(fmt, "superscript")
+            ) if fmt is not None else False,
+            "line_type": ((line.get("type") if line is not None else None)
+                          or "SOLID").upper(),
+            "line_length": _iattr(line, "length") if line is not None else -1,
+            "line_width": (_mm_to_hwp(line.get("width"))
+                           if line is not None else 0),
+            "line_colour": (_colour(line.get("color"))
+                            if line is not None else None) or (0, 0, 0),
+            "above": _iattr(space, "aboveLine") if space is not None else 0,
+            "below": _iattr(space, "belowLine") if space is not None else 0,
+            "between": (_iattr(space, "betweenNotes")
+                        if space is not None else 0),
+            "numbering": ((num.get("type") if num is not None else None)
+                          or "CONTINUOUS").upper(),
+            "new_num": _iattr(num, "newNum") if num is not None else 0,
+            "place": ((place.get("place") if place is not None else None)
+                      or "").upper(),
+        }
+
+    def _note_start_number(self, kind):
+        """The first note's number.
+
+        ``hp:numbering@newNum`` is only a start number where the numbering
+        actually restarts.  On this corpus every form declares
+        ``type="CONTINUOUS"`` with ``newNum`` 2720/2721 — the writer's own
+        internal ids, not a start number — so CONTINUOUS starts at 1 and says
+        so rather than stamping a four-digit note.
+        """
+        pr = self._note_pr(kind)
+        if pr["numbering"] != "CONTINUOUS" and pr["new_num"] >= 1:
+            return pr["new_num"]
+        if pr["numbering"] != "CONTINUOUS":
+            self._skip(
+                f"hp:{kind}Pr/hp:numbering@type={pr['numbering']}",
+                "note numbering never restarts in this tier; the notes are "
+                "numbered straight through from the start number")
+        return 1
+
+    def _note_mark_text(self, kind, number):
+        pr = self._note_pr(kind)
+        if pr["format"] != "DIGIT":
+            self._skip(f"hp:{kind}Pr/hp:autoNumFormat@type={pr['format']}",
+                       "only DIGIT note numbering is implemented; the mark is "
+                       "drawn in arabic digits")
+        return f"{pr['prefix']}{number}{pr['suffix']}"
+
+    def _note_mark_font(self, charpr):
+        return self._font_for(charpr, self.NOTE_MARK_RELSZ, "latin")
+
+    def _note_mark_extent(self, el):
+        """``(width, height)`` in HWPUNIT of a note's inline reference mark.
+
+        The mark occupies one character cell in the line — which is what makes
+        ``hp:lineseg@textpos`` count it — but it is a raised, reduced numeral,
+        so its cell is deliberately *shorter* than the run's own characters and
+        cannot inflate the line box it sits in.
+        """
+        entry = self._note_marks.get(id(el))
+        if entry is None:
+            return (0, 0)
+        font = self._note_mark_font(entry["charpr"])
+        width = float(self._scratch_draw().textlength(entry["mark"], font=font))
+        height = ((self._charpr(entry["charpr"]).get("height_pt") or 10.0)
+                  * HWPUNIT_PER_PT * self.NOTE_MARK_RELSZ / 100.0)
+        return (int(round(self.hwp_from_px(width))), int(round(height)))
+
+    def _draw_note_mark(self, draw, el, cursor_px, baseline_px):
+        """Draw one reference mark as a raised, reduced numeral."""
+        entry = self._note_marks.get(id(el))
+        if entry is None:
+            return
+        font = self._note_mark_font(entry["charpr"])
+        colour = self._charpr(entry["charpr"]).get("color") or (0, 0, 0)
+        raise_px = font.size / self.NOTE_MARK_RELSZ * 100.0 * self.NOTE_MARK_RAISE
+        ascent, _descent = font.getmetrics()
+        draw.text((cursor_px, baseline_px - raise_px - ascent),
+                  entry["mark"], font=font, fill=colour)
+        self.counts["note_marks"] += 1
+
+    def _applies_to_page(self, kind, apply_type, page_number):
+        if apply_type == "ODD":
+            return page_number % 2 == 1
+        if apply_type == "EVEN":
+            return page_number % 2 == 0
+        if apply_type != "BOTH":
+            self._skip(f"hp:{kind}@applyPageType={apply_type}",
+                       "only BOTH, EVEN and ODD are implemented; nothing is "
+                       "drawn for any other apply type")
+            return False
+        return True
+
+    def _hide_first(self, attr):
+        vis = next((e for e in self.sections[0].iter()
+                    if _local(e.tag) == "visibility"), None)
+        return bool(_iattr(vis, attr))
+
+    def _sublist_paragraphs(self, container):
+        return [Paragraph(p, self.defs["para_pr"])
+                for p in own_paragraphs(container)]
+
+    def _stack_height(self, draw, paras, column_hwp):
+        """How tall a container's paragraphs are, stacked, in HWPUNIT."""
+        self._quiet += 1
+        try:
+            return sum(sum(row["advance"] for row in
+                           self._flow_lines(draw, para, column_hwp)[1])
+                       for para in paras)
+        finally:
+            self._quiet -= 1
+
+    def _draw_stacked(self, draw, paras, origin_hwp, column_hwp):
+        """Draw a container's paragraphs stacked from ``origin``.
+
+        A header, a footer and a note body are all ``hp:subList`` content whose
+        cached ``vertpos`` is relative to that subList, so each paragraph is
+        drawn at the running cursor with its own cached top subtracted — the
+        same correction ``_render_flow_page`` applies to a flowed block.
+        """
+        ox, oy = origin_hwp
+        used = 0
+        for para in paras:
+            height = self._stack_height(draw, [para], column_hwp)
+            cached_top = (_iattr(para.linesegs[0], "vertpos")
+                          if para.linesegs else 0)
+            self._render_paragraphs(draw, [para], (ox, oy + used - cached_top),
+                                    column_hwp)
+            used += height
+        return used
+
+    def _render_header_footer(self, draw, geo, page_number):
+        """Draw this page's 머리말 / 꼬리말 in the areas the margins declare.
+
+        ``hh:margin@header`` and ``@footer`` are the heights of those areas:
+        the body box already starts at ``top + header`` and ends at
+        ``height - bottom - footer`` (``page_geometry``), so the header area is
+        ``[top, top + header]`` and the footer area is
+        ``[height - bottom - footer, height - bottom]``.  Content is set from
+        the TOP of its area in both cases; that is this renderer's reading, and
+        content taller than the declared area is drawn and named rather than
+        clipped, because clipping would hide the defect.
+        """
+        furniture = self._furniture_scan()
+        if not furniture["header"] and not furniture["footer"]:
+            return
+        m = geo["margin"]
+        areas = (
+            ("header", "hideFirstHeader", m["top"], m["header"]),
+            ("footer", "hideFirstFooter",
+             geo["height"] - m["bottom"] - m["footer"], m["footer"]),
+        )
+        for kind, hide_attr, area_top, area_height in areas:
+            if page_number == 1 and self._hide_first(hide_attr):
+                continue
+            for entry in furniture[kind]:
+                if not self._applies_to_page(kind, entry["apply"],
+                                             page_number):
+                    continue
+                paras = self._sublist_paragraphs(entry["el"])
+                if not paras:
+                    continue
+                used = self._draw_stacked(
+                    draw, paras, (geo["body_left"], area_top),
+                    geo["usable_width"])
+                if area_height and used > area_height:
+                    self._skip(
+                        f"hp:{kind} taller than hh:margin@{kind}",
+                        f"the declared {kind} area is {area_height} HWPUNIT "
+                        f"and its content measures {used}; it is drawn at "
+                        "full height into the body box rather than clipped, "
+                        "because Hancom grows the area and this tier does not")
+                self.counts[kind + "s"] += 1
+
+    def _furniture_note(self):
+        """The standing caveat this document's furniture earns, or None."""
+        f = self._furniture_scan()
+        counts = {k: len(v) for k, v in f.items()}
+        if not any(counts.values()):
+            return None
+        return (
+            "page furniture drawn: "
+            + ", ".join(f"{k}={counts[k]}" for k in sorted(counts))
+            + "; NO Hancom reference render in this repo exercises any of "
+            "them, so their geometry is pinned by synthetic fixtures and by "
+            "KS X 6101, not measured against Hancom"
+        )
+
     def _flow_page_records(self, placements, first_flowed):
         """``{page number -> [record]}``, cached head and flowed tail merged.
 
@@ -4505,6 +4806,7 @@ class OwnRenderer:
                     (geo["body_left"], geo["body_top"]),
                     geo["usable_width"],
                 )
+            self._render_header_footer(draw, geo, page_number)
             self._render_page_number(draw, geo, page_number)
             images.append(img)
         self._audit_unsupported()
@@ -4562,12 +4864,57 @@ class OwnRenderer:
                 "engine/scripts/render_scoreboard.py pairs these against a "
                 "reference PDF's text lines."
             ),
+            "page_furniture": self._page_furniture_report(geo),
             "elements_skipped": sorted(
                 self.skipped.values(),
                 key=lambda e: (e["element"], e["reason"])),
-            "notes": self.notes,
+            "notes": self.notes + [n for n in (self._furniture_note(),) if n],
         }
         return images, sidecar
+
+    def _page_furniture_report(self, geo):
+        """What the header/footer/note lane found, drew, and cannot claim."""
+        f = self._furniture_scan()
+        m = geo["margin"]
+        report = {
+            "declared": {k: len(v) for k, v in sorted(f.items())},
+            "drawn": {k: self.counts[k] for k in
+                      ("headers", "footers", "footnotes", "endnotes",
+                       "note_marks")},
+            "areas_hwpunit": {
+                "header": [m["top"], m["top"] + m["header"]],
+                "footer": [geo["height"] - m["bottom"] - m["footer"],
+                           geo["height"] - m["bottom"]],
+                "body": [geo["body_top"],
+                         geo["body_top"] + geo["usable_height"]],
+            },
+            "footnote_reserve_hwpunit": dict(sorted(
+                (str(page), value)
+                for page, value in self._flow_reserve.items())),
+            "evidence": (
+                "NOT measured against any Hancom reference render: no corpus "
+                "form and no report-class holdout in reach of this repo "
+                "carries a footnote, an endnote or a footer, and the one "
+                "corpus hp:header is empty. Every geometry in this lane is "
+                "pinned by synthetic fixtures and by KS X 6101."
+            ),
+            "not_honored": list(self.FURNITURE_NOT_HONORED),
+        }
+        report.update(self._furniture_report)
+        if f["footnote"] or f["endnote"]:
+            for kind in ("footnote", "endnote"):
+                if f[kind]:
+                    report.setdefault("note_properties", {})[kind] = \
+                        self._note_pr(kind)
+        return report
+
+    FURNITURE_NOT_HONORED = (
+        "hp:masterPage — a master page is neither read nor drawn",
+        "a header or footer taller than its declared hh:margin area is drawn "
+        "at full height into the body box, not clipped and not grown into",
+        "the body box is NOT shortened by a header or footer that overruns "
+        "its area, so such content and the first body line can collide",
+    )
 
 
 # --------------------------------------------------------------------------
