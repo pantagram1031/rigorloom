@@ -483,10 +483,12 @@ validates; the host applies. This is the conservative reading of "one
 OperationPlan path for human and agent edits" — the path is shared, the
 authority to run it is not.
 
-Refusal for an authority violation is `authority_denied`, exit-3-class,
-naming the method and the authority the connection actually has. It must be
-distinguishable from `unknown_method`, so that a client can tell "this build
-cannot do that" from "you may not do that."
+A host-only method is absent from an agent connection's registry, so the agent
+receives `unknown_method`. The error carries `knownOnHostEntry: true` when the
+same method exists on the host entrypoint. This preserves the diagnostic
+distinction without adding a permission check that an agent could influence:
+`knownOnHostEntry: true` means "host surface only"; false means the build has
+no such method.
 
 ---
 
@@ -522,18 +524,20 @@ marks the genuinely new codes.
 | `source_not_a_document` | `engine/scripts/com_backend.py:111` | privacy-safe inspect refusal, one token, path never echoed |
 | `certificate_invalid_json` / `operation_failed` | `pipeline/scripts/render_cert.py:1597` / `:637` | legacy v1 certificate boundary — do not repurpose |
 
-### 5.2 New transport codes (GAP — all of them)
+### 5.2 Transport codes (implemented)
 
 `protocol_version_unsupported` · `not_initialized` · `already_initialized` ·
-`frame_too_large` · `frame_malformed` · `unknown_method` · `unknown_field` ·
-`invalid_params` · `authority_denied` · `cancelled` · `plan_stale` ·
-`capability_unavailable`.
+`frame_too_large` · `frame_malformed` · `duplicate_key` · `nonfinite_number` ·
+`unknown_field` · `unknown_method` · `invalid_params` ·
+`duplicate_request_id` · `response_too_large` · `cancelled` · `internal_error`.
 
-Build note (one line each): they are the protocol's own failure modes and have
-no engine counterpart; put them in one module beside the framing code, with a
-test asserting the set is closed — the same discipline `BACKEND_IDS`
+They are the protocol's own failure modes and live together in
+`runtime/scripts/rt_codes.py` beside the framing code. The set is closed by
+`ERROR_CODES`, using the same discipline `BACKEND_IDS`
 (`engine/scripts/document_evidence.py:32`) and `RULE_STATES`
-(`pipeline/scripts/checker_base.py:41`) already apply to their vocabularies.
+(`pipeline/scripts/checker_base.py:41`) apply to their vocabularies. Domain
+codes such as `plan_stale` and `capability_unavailable` remain in the separate
+closed `DOMAIN_CODES` set.
 
 `plan_stale` deserves its own note: it is the exact-byte binding refusal. The
 engine's nearest existing relative is `--at-cell-expect`
@@ -686,13 +690,13 @@ must act on it while a request is still in flight.
 
 ### Codes
 
-All twelve transport codes from §5.2 are implemented and closed
+All fourteen transport codes from §5.2 are implemented and closed
 (`runtime/scripts/rt_codes.py`), plus `unsupported_backend`,
 `unknown_op_kind`, `plan_invalid`, `approval_binding_mismatch`,
 `approval_already_resolved`, `region_too_large`, `source_rejected`,
 `candidate_hash_mismatch`, `receipt_body_mismatch`, `backend_refused`,
-`publication_failed`. `authority_denied` is NOT implemented and should be
-dropped from v0: authority is registry membership, so a host-only method is
+`publication_failed`. `authority_denied` is not part of v0: authority is
+registry membership, so a host-only method is
 `unknown_method` on an agent connection, with `knownOnHostEntry: true` carrying
 the diagnostic §4 wanted.
 
