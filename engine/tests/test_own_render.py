@@ -317,6 +317,522 @@ def test_start_number_offsets_the_stamped_number():
     assert renderer.page_number_spec()["first_number"] == 7
 
 
+# ------------------------------------------------- headers and footers (E2.6)
+#
+# No corpus form carries an hp:footer, and the one that carries an hp:header
+# (jeongbo) carries an EMPTY one, so nothing here can be measured against a
+# Hancom reference render.  The fixtures below are synthetic, and what they
+# pin is geometry the format publishes: the areas hh:margin@header/@footer
+# declare, @applyPageType, and @hideFirstHeader/@hideFirstFooter.
+
+MULTIPAGE = os.path.join(CORPUS, "saeopja-deungnok-sinchengseo.hwpx")
+
+
+def _furniture_xml(kind, text, apply_type="BOTH", char_height=1000):
+    """One hp:header / hp:footer control, as HWP writes it: inside a run."""
+    return (
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        f'<hp:{kind} id="1" applyPageType="{apply_type}"><hp:subList>'
+        '<hp:p id="1" paraPrIDRef="0" styleIDRef="0">'
+        f'<hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run>'
+        '<hp:linesegarray>'
+        f'<hp:lineseg textpos="0" vertpos="0" vertsize="{char_height}" '
+        f'textheight="{char_height}" baseline="{int(char_height * 0.85)}" '
+        'spacing="0" horzpos="0" horzsize="40000" flags="0"/>'
+        '</hp:linesegarray></hp:p></hp:subList>'
+        f'</hp:{kind}></hp:ctrl></hp:run>')
+
+
+def _furniture_renderer(source=None, header=None, footer=None,
+                        header_margin=2000, footer_margin=2000,
+                        hide_first_header=0, hide_first_footer=0,
+                        apply_type="BOTH"):
+    """A corpus form with a header and/or footer control grafted onto it.
+
+    The control goes into the first TOP-LEVEL paragraph, which is where HWP
+    puts it and where ``_furniture_scan`` looks; the margins are edited on the
+    form's own ``hh:margin`` so the header/footer areas have a real height
+    (every corpus form declares header="0" footer="0").
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(source or GIANMUN), dpi=144)
+    section = renderer.sections[0]
+    margin = next(e for e in section.iter()
+                  if own_render._local(e.tag) == "margin"
+                  and e.get("header") is not None)
+    margin.set("header", str(header_margin))
+    margin.set("footer", str(footer_margin))
+    vis = next(e for e in section.iter()
+               if own_render._local(e.tag) == "visibility")
+    vis.set("hideFirstHeader", str(hide_first_header))
+    vis.set("hideFirstFooter", str(hide_first_footer))
+    host = own_render._kids(section, "p")[0]
+    for kind, text in (("header", header), ("footer", footer)):
+        if text is None:
+            continue
+        host.append(ET.fromstring(_furniture_xml(kind, text, apply_type)))
+    renderer._furniture = None
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in section.iter() if own_render._local(e.tag) == "p")
+    }
+    return renderer
+
+
+def test_the_corpus_carries_exactly_one_header_and_no_footer_or_note():
+    """The measurement this whole slice rests on, asserted rather than told.
+
+    If a form with a real header, footer or note is ever added, this test is
+    what says so — and the claim "no reference render exercises this lane"
+    has to be rewritten rather than quietly left standing.
+    """
+    import glob
+    import zipfile
+
+    found = {"header": [], "footer": [], "footNote": [], "endNote": []}
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        stem = os.path.basename(path)[:-5]
+        renderer = own_render.OwnRenderer(path, dpi=96)
+        scan = renderer._furniture_scan()
+        for tag, key in (("header", "header"), ("footer", "footer"),
+                         ("footNote", "footnote"), ("endNote", "endnote")):
+            if scan[key]:
+                found[tag].append((stem, len(scan[key])))
+        with zipfile.ZipFile(path) as archive:
+            assert any(n.endswith("section0.xml") for n in archive.namelist())
+    assert found["header"] == [("jeongbo-gonggae-cheongguseo", 1)], found
+    assert found["footer"] == [], found
+    assert found["footNote"] == [], found
+    assert found["endNote"] == [], found
+    # And that one header is empty: drawing it adds no ink, which is why the
+    # corpus renders stay byte-identical across this slice.
+    renderer = own_render.OwnRenderer(_need(PICTURE_FORM), dpi=96)
+    entry = renderer._furniture_scan()["header"][0]
+    paras = renderer._sublist_paragraphs(entry["el"])
+    assert paras and not any(p.chars for p in paras)
+
+
+def _extreme_box(sidecar, top):
+    boxes = [b for b in sidecar["line_boxes"] if b["page"] == 1]
+    return min(boxes, key=lambda b: b["y0"]) if top else max(
+        boxes, key=lambda b: b["y1"])
+
+
+def test_a_header_and_a_footer_land_in_the_areas_the_margins_declare():
+    """The two areas, pinned against each other so no font metric leaks in.
+
+    ``line_boxes`` are *ink* boxes -- the font ascent about the cached
+    baseline -- so asserting one against a margin would really be asserting
+    the fallback face's ascent.  The same text drawn in both areas has the
+    same ink box shape, so the DIFFERENCE between the two is pure geometry,
+    and that difference is exactly what ``hh:margin`` declares:
+    ``(height - bottom - footer) - top``.
+    """
+    text = "\ubc38\ub9ac\ub9d0"
+    head = _furniture_renderer(header=text)
+    _images, head_side = head.render()
+    foot = _furniture_renderer(footer=text)
+    _images, foot_side = foot.render()
+    geo = head.page_geometry()
+    m = geo["margin"]
+    head_box = _extreme_box(head_side, top=True)
+    foot_box = _extreme_box(foot_side, top=False)
+    expected = (head.px(geo["height"] - m["bottom"] - m["footer"])
+                - head.px(m["top"]))
+    assert abs((foot_box["y0"] - head_box["y0"]) - expected) <= 1, (
+        head_box, foot_box, expected)
+    # And each stays on its own side of the body box.
+    assert head_box["y1"] <= head.px(geo["body_top"]), head_box
+    assert foot_box["y0"] >= head.px(geo["body_top"]), foot_box
+    assert head_side["elements_rendered"]["headers"] == head_side["pages"]
+    assert foot_side["elements_rendered"]["footers"] == foot_side["pages"]
+    assert head_side["page_furniture"]["areas_hwpunit"]["header"] == [
+        m["top"], m["top"] + m["header"]]
+    assert foot_side["page_furniture"]["areas_hwpunit"]["footer"] == [
+        geo["height"] - m["bottom"] - m["footer"],
+        geo["height"] - m["bottom"]]
+
+
+def test_the_header_area_moves_with_the_declared_header_margin():
+    """A header is set from the TOP of its area, so growing ``@header``
+    leaves the header where it is and pushes the BODY down."""
+    small = _furniture_renderer(header="H", header_margin=2000)
+    _images, small_side = small.render()
+    big = _furniture_renderer(header="H", header_margin=6000)
+    _images, big_side = big.render()
+    assert (_extreme_box(small_side, top=True)["y0"]
+            == _extreme_box(big_side, top=True)["y0"])
+    assert (big.page_geometry()["body_top"]
+            - small.page_geometry()["body_top"]) == 4000
+
+
+def test_a_header_and_the_page_number_stamp_coexist():
+    """쪽 번호 is a control and the header is a container; both draw."""
+    renderer = _furniture_renderer(header="머리말", footer="꼬리말")
+    from xml.etree import ElementTree as ET
+    own_render._kids(renderer.sections[0], "p")[0].append(ET.fromstring(
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        '<hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/>'
+        "</hp:ctrl></hp:run>"))
+    renderer._page_num_spec = own_render._UNSET
+    _images, sidecar = renderer.render()
+    drawn = sidecar["elements_rendered"]
+    assert drawn["headers"] == drawn["footers"] == sidecar["pages"]
+    assert drawn["page_numbers"] == sidecar["pages"]
+    assert any(b["mode"] == "pagenum" for b in sidecar["line_boxes"])
+
+
+def test_apply_page_type_selects_odd_and_even_pages():
+    odd = _furniture_renderer(source=MULTIPAGE, header="홀", apply_type="ODD")
+    _images, sidecar = odd.render()
+    pages = sidecar["pages"]
+    assert pages > 1, "fixture drifted: need a multi-page form"
+    assert sidecar["elements_rendered"]["headers"] == len(
+        [n for n in range(1, pages + 1) if n % 2 == 1])
+    even = _furniture_renderer(source=MULTIPAGE, header="짝", apply_type="EVEN")
+    _images, sidecar = even.render()
+    assert sidecar["elements_rendered"]["headers"] == len(
+        [n for n in range(1, pages + 1) if n % 2 == 0])
+
+
+def test_an_unknown_apply_page_type_is_declared_not_guessed():
+    renderer = _furniture_renderer(header="?", apply_type="MASTER_ODD")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["headers"] == 0
+    assert "hp:header@applyPageType=MASTER_ODD" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+
+
+def test_hide_first_header_and_footer_are_honoured():
+    renderer = _furniture_renderer(source=MULTIPAGE, header="h", footer="f",
+                                   hide_first_header=1, hide_first_footer=1)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["headers"] == sidecar["pages"] - 1
+    assert sidecar["elements_rendered"]["footers"] == sidecar["pages"] - 1
+
+
+def test_a_header_taller_than_its_area_is_named_not_clipped():
+    renderer = _furniture_renderer(header="머리말", header_margin=100)
+    _images, sidecar = renderer.render()
+    skipped = {e["element"] for e in sidecar["elements_skipped"]}
+    assert "hp:header taller than hh:margin@header" in skipped, skipped
+    assert sidecar["elements_rendered"]["headers"] == sidecar["pages"]
+
+
+def test_the_furniture_lane_declares_that_no_reference_render_measures_it():
+    renderer = _furniture_renderer(header="머리말")
+    _images, sidecar = renderer.render()
+    evidence = sidecar["page_furniture"]["evidence"]
+    assert "NOT measured against any Hancom reference render" in evidence
+    assert any("NO Hancom reference render" in n for n in sidecar["notes"])
+
+
+# ----------------------------------------------- footnotes and endnotes (E2.6)
+#
+# NOTHING measures this lane against Hancom.  Ten corpus forms declare
+# hp:footNotePr and hp:endNotePr and carry no note at all, and the private
+# report-class holdout this repo is scored against carries none either (it has
+# an hp:pageNum and nothing else).  Everything below is a synthetic fixture
+# proving geometry the format publishes: placement inside the declared box,
+# the body height reduced by exactly the block that was reserved, numbering,
+# and — the property that matters most — that a note which does not fit is
+# DROPPED and named rather than drawn outside its box.
+
+NOTE_FILLER = "\uac00\ub098\ub2e4\ub77c\ub9c8\ubc14\uc0ac\uc544\uc790\ucc28"
+
+
+def _note_xml(kind, text):
+    """One hp:footNote / hp:endNote control, as HWP writes it: inside a run,
+    at the reference position, carrying its body in its own hp:subList."""
+    return (
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        f'<hp:{kind} number="0" instId="1"><hp:subList>'
+        '<hp:p id="9" paraPrIDRef="0" styleIDRef="0">'
+        f'<hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run>'
+        f'</hp:p></hp:subList></hp:{kind}></hp:ctrl></hp:run>')
+
+
+def _note_renderer(source=None, kind="footNote", count=1, block=1, reps=1,
+                   layout="auto", note_pr=None):
+    """A corpus form with ``count`` notes grafted onto consecutive blocks."""
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(
+        _need(source or GIANMUN), dpi=144, block_layout=layout)
+    section = renderer.sections[0]
+    hosts = own_render._kids(section, "p")
+    for n in range(count):
+        host = hosts[min(block + n, len(hosts) - 1)]
+        host.append(ET.fromstring(_note_xml(
+            kind, "note%d %s" % (n + 1, NOTE_FILLER * reps))))
+    if note_pr:
+        tag = "footNotePr" if kind == "footNote" else "endNotePr"
+        pr = next(e for e in section.iter()
+                  if own_render._local(e.tag) == tag)
+        for child_tag, attrs in note_pr.items():
+            child = next(e for e in pr
+                         if own_render._local(e.tag) == child_tag)
+            for key, value in attrs.items():
+                child.set(key, str(value))
+    renderer._furniture = None
+    renderer._note_marks = {}
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in section.iter() if own_render._local(e.tag) == "p")
+    }
+    return renderer
+
+
+def _body_floor_px(renderer):
+    """The bottom of the body box: where a footnote block's bottom edge is."""
+    geo = renderer.page_geometry()
+    return renderer.px(geo["body_top"] + geo["usable_height"])
+
+
+def test_a_footnote_is_drawn_at_the_bottom_of_the_body_box():
+    renderer = _note_renderer(count=2)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["footnotes"] == 2
+    assert sidecar["elements_rendered"]["note_rules"] >= 1
+    floor = _body_floor_px(renderer)
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] != "pagenum"]
+    assert boxes
+    assert max(b["y1"] for b in boxes) <= floor, "ink below the body box"
+    # The block is bottom-anchored, so the notes are the lowest ink there is.
+    lowest = max(boxes, key=lambda b: b["y1"])
+    assert lowest["y1"] > floor - renderer.px(
+        renderer.page_geometry()["usable_height"] // 2)
+
+
+def test_a_footnote_reference_mark_is_drawn_where_the_control_sits():
+    """The mark occupies one character cell in the body line, which is what
+    makes hp:lineseg@textpos count it; the cell is deliberately shorter than
+    the run's own characters so it cannot inflate the line box."""
+    renderer = _note_renderer(count=3)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["note_marks"] == 3
+    entry = renderer._furniture_scan()["footnote"][0]
+    width, height = renderer._note_mark_extent(entry["el"])
+    assert width > 0
+    full = (renderer._charpr(entry["charpr"]).get("height_pt") or 10.0) * 100
+    assert height < full, (height, full)
+
+
+def test_the_flow_pass_shortens_the_page_by_exactly_the_footnote_block():
+    """The reserve is the block's own measured height, and the body above it
+    stops short of it — which is the whole claim of "the flow pass accounts
+    for a footnote"."""
+    renderer = _note_renderer(count=1, reps=6, layout="computed")
+    _images, sidecar = renderer.render()
+    reserve = sidecar["page_furniture"]["footnote_reserve_hwpunit"]
+    assert reserve, sidecar["page_furniture"]
+    draw = renderer._scratch_draw()
+    geo = renderer.page_geometry()
+    entries = renderer._furniture_scan()["footnote"]
+    height, _items = renderer._note_block_plan(draw, "footnote", entries, geo)
+    assert set(reserve.values()) == {height}, (reserve, height)
+    assert sidecar["elements_rendered"]["note_collisions"] == 0
+    assert sidecar["block_layout"]["flow_counters"][
+        "footnote_reserve_unsettled"] == 0
+
+
+def test_the_cached_page_assignment_cannot_reserve_and_says_so():
+    """``auto`` keeps the authoring engine's page assignment, so it cannot
+    shorten a page for a note.  That is a real defect and it is declared per
+    render rather than left for a reader to spot."""
+    auto = _note_renderer(source=MULTIPAGE, count=3, reps=6, layout="auto")
+    _images, side = auto.render()
+    assert side["elements_rendered"]["note_collisions"] >= 1
+    assert "hp:footNote block over body text" in {
+        e["element"] for e in side["elements_skipped"]}
+
+
+def test_a_footnote_that_does_not_fit_is_dropped_and_named_not_overflowed():
+    """The rule the slice was asked for: no continuation implemented, so no
+    overflow either."""
+    renderer = _note_renderer(count=3, reps=40, layout="computed")
+    _images, sidecar = renderer.render()
+    skipped = {e["element"] for e in sidecar["elements_skipped"]}
+    assert "hp:footNote continuation" in skipped, skipped
+    assert sidecar["elements_rendered"]["footnotes"] < 3
+    floor = _body_floor_px(renderer)
+    over = [b for b in sidecar["line_boxes"]
+            if b["mode"] != "pagenum" and b["y1"] > floor]
+    assert not over, over[:3]
+
+
+def test_the_separator_spacing_comes_from_footnotepr():
+    """Growing ``@aboveLine`` grows the block, and the reserve grows with it."""
+    small = _note_renderer(count=1, reps=2, layout="computed")
+    _images, small_side = small.render()
+    big = _note_renderer(count=1, reps=2, layout="computed",
+                         note_pr={"noteSpacing": {"aboveLine": 5000}})
+    _images, big_side = big.render()
+    a = list(small_side["page_furniture"]["footnote_reserve_hwpunit"].values())
+    b = list(big_side["page_furniture"]["footnote_reserve_hwpunit"].values())
+    assert a and b
+    declared = small._note_pr("footnote")["above"]
+    assert b[0] - a[0] == 5000 - declared, (a, b, declared)
+
+
+def test_a_none_separator_draws_no_rule():
+    renderer = _note_renderer(count=1, layout="computed",
+                              note_pr={"noteLine": {"type": "NONE"}})
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["note_rules"] == 0
+    assert sidecar["elements_rendered"]["footnotes"] == 1
+
+
+def test_note_numbering_follows_autonumformat():
+    renderer = _note_renderer(count=3)
+    marks = [e["mark"] for e in renderer._furniture_scan()["footnote"]]
+    assert marks == ["1)", "2)", "3)"], marks
+    other = _note_renderer(count=2, note_pr={
+        "autoNumFormat": {"prefixChar": "[", "suffixChar": "]"}})
+    assert [e["mark"] for e in other._furniture_scan()["footnote"]] == \
+        ["[1]", "[2]"]
+
+
+def test_an_unimplemented_numbering_format_is_declared_not_guessed():
+    renderer = _note_renderer(count=1, note_pr={
+        "autoNumFormat": {"type": "CIRCLE_DIGIT"}})
+    _images, sidecar = renderer.render()
+    assert "hp:footNotePr/hp:autoNumFormat@type=CIRCLE_DIGIT" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+
+
+def test_a_continuous_numberings_newnum_is_not_a_start_number():
+    """Every corpus form declares CONTINUOUS with newNum 2720/2721 — the
+    writer's own internal ids.  Stamping those would put a four-digit note on
+    the page, so CONTINUOUS starts at 1 and a restart type uses @newNum."""
+    renderer = _note_renderer(count=1)
+    pr = renderer._note_pr("footnote")
+    assert pr["numbering"] == "CONTINUOUS", pr
+    assert renderer._note_start_number("footnote") == 1
+    # The corpus form this repo scores hp:pageNum on declares the four-digit
+    # internal id that made this rule necessary.
+    jeongbo = own_render.OwnRenderer(_need(PICTURE_FORM), dpi=96)
+    assert jeongbo._note_pr("footnote")["new_num"] == 2720
+    assert jeongbo._note_start_number("footnote") == 1
+    restart = _note_renderer(count=1, note_pr={
+        "numbering": {"type": "ON_SECTION", "newNum": 5}})
+    assert restart._note_start_number("footnote") == 5
+
+
+def test_the_default_separator_length_is_declared_as_a_reading():
+    renderer = _note_renderer(count=1)
+    _images, sidecar = renderer.render()
+    assert "hp:footNotePr/hp:noteLine@length=-1" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+
+
+def test_an_endnote_is_set_at_the_end_of_the_section():
+    renderer = _note_renderer(kind="endNote", count=2)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 2
+    assert sidecar["elements_rendered"]["note_marks"] == 2
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    last = max(b["page"] for b in boxes)
+    assert last == sidecar["pages"], (last, sidecar["pages"])
+    body = [b for b in sidecar["line_boxes"]
+            if b["mode"] in ("lineseg", "computed") and b["page"] == last]
+    if body:
+        assert min(b["y0"] for b in boxes) >= max(b["y0"] for b in body)
+
+
+def test_endnotes_continue_onto_new_pages_at_a_note_boundary():
+    """Unlike a footnote, an endnote block is not bound to one page, so the
+    continuation the standard describes IS implemented — between notes."""
+    base = _note_renderer(kind="endNote", count=0)
+    _images, base_side = base.render()
+    many = _note_renderer(kind="endNote", count=4, reps=60)
+    _images, side = many.render()
+    assert side["pages"] > base_side["pages"]
+    assert side["elements_rendered"]["endnotes"] == 4
+    pages = {b["page"] for b in side["line_boxes"] if b["mode"] == "endnote"}
+    assert len(pages) > 1, pages
+
+
+def test_an_endnote_taller_than_one_page_is_declared_not_hidden():
+    renderer = _note_renderer(source=os.path.join(
+        CORPUS, "nrf-gyeolgwa-bogoseo-yangsik.hwpx"),
+        kind="endNote", count=1, reps=60)
+    _images, sidecar = renderer.render()
+    assert "hp:endNote taller than one page" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+
+
+def test_footnote_and_endnote_numbering_are_separate_sequences():
+    from xml.etree import ElementTree as ET
+
+    renderer = _note_renderer(kind="footNote", count=2)
+    host = own_render._kids(renderer.sections[0], "p")[1]
+    for n in range(2):
+        host.append(ET.fromstring(_note_xml("endNote", "e%d" % (n + 1))))
+    renderer._furniture = None
+    renderer._note_marks = {}
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in renderer.sections[0].iter()
+            if own_render._local(e.tag) == "p")}
+    scan = renderer._furniture_scan()
+    assert [e["number"] for e in scan["footnote"]] == [1, 2]
+    assert [e["number"] for e in scan["endnote"]] == [1, 2]
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["footnotes"] == 2
+    assert sidecar["elements_rendered"]["endnotes"] == 2
+    assert sidecar["elements_rendered"]["note_marks"] == 4
+
+
+def test_a_page_with_furniture_renders_deterministically():
+    """The furniture lane joins the determinism promise the rest of the
+    renderer already makes: same bytes in, same bytes out."""
+    def once():
+        renderer = _furniture_renderer(header="H", footer="F")
+        from xml.etree import ElementTree as ET
+        host = own_render._kids(renderer.sections[0], "p")[1]
+        host.append(ET.fromstring(_note_xml("footNote", "f " + NOTE_FILLER)))
+        host.append(ET.fromstring(_note_xml("endNote", "e " + NOTE_FILLER)))
+        renderer._furniture = None
+        renderer._note_marks = {}
+        renderer.paragraph_index = {
+            id(el): index
+            for index, el in enumerate(
+                e for e in renderer.sections[0].iter()
+                if own_render._local(e.tag) == "p")}
+        images, sidecar = renderer.render()
+        blobs = []
+        for image in images:
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            blobs.append(buffer.getvalue())
+        return blobs, sidecar
+
+    first_images, first_side = once()
+    second_images, second_side = once()
+    assert first_images == second_images
+    assert first_side["elements_rendered"] == second_side["elements_rendered"]
+    assert first_side["line_boxes"] == second_side["line_boxes"]
+    assert first_side["elements_rendered"]["footnotes"] == 1
+    assert first_side["elements_rendered"]["endnotes"] == 1
+
+
+def test_every_line_box_says_which_furniture_drew_it():
+    renderer = _furniture_renderer(header="H", footer="F")
+    _images, sidecar = renderer.render()
+    modes = {b["mode"] for b in sidecar["line_boxes"]}
+    assert {"header", "footer"} <= modes, modes
+    notes = _note_renderer(kind="endNote", count=1)
+    _images, side = notes.render()
+    assert "endnote" in {b["mode"] for b in side["line_boxes"]}
+
+
 def test_equation_reaches_the_placeholder_path(tmp_path):
     """No corpus form has an equation, so drive the path directly.
 

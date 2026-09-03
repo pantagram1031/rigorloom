@@ -101,6 +101,9 @@ DEFAULT_DPI = 144
 # U+FFFC OBJECT REPLACEMENT CHARACTER: the single textpos slot an
 # inline object occupies in a paragraph character stream.
 OBJECT_SLOT = "\ufffc"
+# Internal note kind -> the OWPML element name, so every declared skip names
+# the tag a reader can grep the file for.
+_NOTE_TAG = {"footnote": "footNote", "endnote": "endNote"}
 
 SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 HEX_COLOR_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
@@ -406,7 +409,7 @@ STRUCTURAL_TAGS = frozenset({
     "pos", "inMargin", "outMargin", "shapeComment", "secPr", "grid",
     "startNum", "visibility", "lineNumberShape", "pagePr", "margin",
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
-    "orgSz", "imgDim", "pageNum",
+    "orgSz", "imgDim", "pageNum", "header", "footer", "footNote", "endNote",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
     "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
@@ -1099,6 +1102,22 @@ class Paragraph:
                     for sub in child.iter():
                         if _local(sub.tag) == "tab":
                             self.tabs += 1
+                elif name == "ctrl":
+                    # hp:footNote / hp:endNote sit inside an hp:ctrl, and
+                    # their position in the run stream IS the reference
+                    # position.  The note occupies ONE character cell, which
+                    # is this renderer's reading of how hp:lineseg@textpos
+                    # counts a note control; it is declared in the sidecar,
+                    # not measured, because no document in reach carries one.
+                    for note in child:
+                        note_name = _local(note.tag)
+                        if note_name not in ("footNote", "endNote"):
+                            continue
+                        index = len(self.chars)
+                        self.objects.append((index, note_name, note, charpr))
+                        self.object_at[index] = (note_name, note, charpr,
+                                                 False)
+                        self.chars.append((OBJECT_SLOT, charpr))
                 elif name in ("tbl", "equation", "pic", "ole", "chart",
                               "container", "rect", "ellipse", "line", "arc",
                               "polygon", "curve", "connectLine", "textart",
@@ -1289,7 +1308,18 @@ class OwnRenderer:
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
-                       "images": 0, "page_numbers": 0, "equations": 0}
+                       "images": 0, "page_numbers": 0, "equations": 0,
+                       "headers": 0, "footers": 0, "footnotes": 0,
+                       "endnotes": 0, "note_marks": 0, "note_rules": 0,
+                       "note_collisions": 0}
+        # Page furniture (E2.6): the hp:header/hp:footer/hp:footNote/hp:endNote
+        # scan, its per-note numbering, and the per-page footnote reserve the
+        # flow pass subtracts from usable_height.  All three are lazy, because
+        # a document with no furniture must reach exactly the pre-E2.6 path.
+        self._furniture = None
+        self._note_marks = {}
+        self._flow_reserve = {}
+        self._furniture_report = {}
         # Equation bookkeeping.  ``eq_constructs`` is what the HwpEqn parser
         # laid out, by construct; ``eq_unsupported`` is what it could not and
         # drew as raw token text; ``eq_scaled`` records every scale-to-fit
@@ -1344,6 +1374,12 @@ class OwnRenderer:
         # onto every line box so a reader of the sidecar can tell, per line,
         # whether they are looking at Hancom's break or ours.
         self._line_mode = "lineseg"
+        # Set while a header, footer or note body is being drawn, so its line
+        # boxes are distinguishable from body text in the sidecar -- and so
+        # the endnote cursor can find the bottom of the BODY rather than the
+        # bottom of a bottom-anchored footnote block.
+        self._furniture_mode = None
+        self._footnote_block_top = {}
         # Standing caveats that apply to every render, not just this document.
         # They belong in the artefact, not only in the notes file, because the
         # sidecar is what travels with the PNG.
@@ -1374,8 +1410,21 @@ class OwnRenderer:
             "hh:align JUSTIFY stretches every line of a paragraph except its "
             "last; DISTRIBUTE stretches every line; neither ever shrinks a "
             "line that already overruns its box",
-            "headers, footers, footnotes, endnotes and master pages are not "
-            "drawn",
+            "headers and footers ARE drawn, in the areas hh:margin@header / "
+            "@footer declare, per @applyPageType and @hideFirstHeader / "
+            "@hideFirstFooter; master pages are still not drawn",
+            "footnotes ARE drawn, bottom-anchored inside the body box above "
+            "the footer area, with the hp:footNotePr separator and spacing "
+            "and a superscript reference mark in the body; under "
+            "--block-layout computed the flow pass shortens the page by the "
+            "block it reserves, and under the auto policy it cannot, so a "
+            "collision with the cached body layout is DECLARED per render",
+            "endnotes ARE drawn, at the end of section0, continuing onto new "
+            "pages at a NOTE boundary; a single endnote taller than the body "
+            "box is set from the top of its own page and declared",
+            "every line box carries the piece of furniture that drew it in "
+            "its mode field (header / footer / footnote / endnote), so a "
+            "reference-PDF comparison can include or exclude furniture",
             "full limits and the certification path: "
             "engine/references/own-render-notes.md",
         ]
@@ -1727,12 +1776,37 @@ class OwnRenderer:
             "anchored_extents_ignored": 0,
             "blocks_taller_than_page": 0,
         }
+        counters["footnote_blocks_moved"] = 0
+        counters["footnote_reserve_capped"] = 0
+        counters["footnote_reserve_unsettled"] = 0
+        placements = self._flow_blocks_once(
+            draw, blocks, usable, counters, start_page, start_y, from_block)
+        placements, counters = self._apply_keep_with_next(
+            blocks, placements, counters, usable, from_block)
+        pages = self._flow_pages(placements, start_page)
+        return placements, pages, counters
+
+    def _flow_blocks_once(self, draw, blocks, usable, counters, start_page,
+                          start_y, from_block):
+        """One placing sweep, reserving each block's footnotes as it goes.
+
+        The reserve is applied DURING the sweep rather than by re-running the
+        whole sweep against last time's page assignment, and that is what
+        makes it terminate.  Iterating whole sweeps does not converge: a note
+        shrinks the page its reference sits on, which pushes the reference off
+        that page, which takes the note away and un-shrinks the page, and the
+        two states alternate forever.  Reserving as the block is placed makes
+        the note travel WITH its reference by construction, which is the
+        standard's own rule; the only thing left to bound is the one retry
+        below, when adding the reserve is itself what pushes the block off.
+        """
         placements = []
         page = start_page
         y = start_y
         prev_next_margin = 0
+        self._flow_reserve = {}
+        note_heights = self._block_note_heights(draw)
         i = from_block
-        keep_chain = 0
         while i < len(blocks):
             block = blocks[i]
             gap = int((prev_next_margin + block["margin_prev"])
@@ -1750,8 +1824,30 @@ class OwnRenderer:
                 page += 1
                 y = 0
                 gap = 0
-            placed = self._place_block(draw, block, page, y + gap, usable,
-                                       counters)
+            notes = note_heights.get(block["index"], 0)
+            target, top = page, y + gap
+            for attempt in range(2):
+                if notes:
+                    self._reserve_add(target, notes, usable, counters)
+                placed = self._place_block(draw, block, target, top, usable,
+                                           counters)
+                landed = placed[0]["page"]
+                if not notes or landed == target:
+                    break
+                # Reserving the note is what pushed the block off this page,
+                # so the note goes with it — one retry, then it is declared.
+                self._reserve_add(target, -notes, usable, counters)
+                counters["footnote_blocks_moved"] += 1
+                target, top = landed, 0
+            else:
+                counters["footnote_reserve_unsettled"] += 1
+                self._skip(
+                    "hp:footNote reserve",
+                    "a block and its own footnotes could not be settled onto "
+                    "one page in a single retry; the notes are reserved on "
+                    "the page the block started from and any note that then "
+                    "does not fit is dropped and named")
+            page = target
             # keepWithNext: a block may only end on the page its successor
             # starts on.  Resolved after the successor is placed, by pushing
             # THIS block forward; the loop below is what bounds the chain.
@@ -1760,10 +1856,7 @@ class OwnRenderer:
             y = placed[-1]["top"] + placed[-1]["height"]
             prev_next_margin = block["margin_next"]
             i += 1
-        placements, counters = self._apply_keep_with_next(
-            blocks, placements, counters, usable, from_block)
-        pages = self._flow_pages(placements, start_page)
-        return placements, pages, counters
+        return placements
 
     def _flow_record(self, block, page, top, height, rows=(0, 0),
                      kind="paragraph", split=None):
@@ -1803,19 +1896,21 @@ class OwnRenderer:
             return [self._flow_record(block, page, top, anchor_extent,
                                       (0, 0))]
         total = max(block["height"], anchor_extent)
-        if total > usable:
+        cap = self._usable_on(page, usable)
+        if total > cap:
             counters["blocks_taller_than_page"] += 1
         # An anchored object cannot be split and does not flow, so a block
         # that reserves room for one moves whole or not at all.
-        if (reserve and top > 0 and top + total > usable
-                and total <= usable):
+        if (reserve and top > 0 and top + total > cap
+                and total <= self._usable_on(page + 1, usable)):
             counters["anchored_blocks_moved"] += 1
             page, top = page + 1, 0
+            cap = self._usable_on(page, usable)
         # Would this block split at all?  Only then do the two 문단 보호 rules
         # have anything to say, and only when moving it can actually help —
         # a block taller than a page splits wherever it is put.
-        fits = self._rows_that_fit(rows, top, usable)
-        if 0 < fits < len(rows) and block["height"] <= usable and top > 0:
+        fits = self._rows_that_fit(rows, top, cap)
+        if 0 < fits < len(rows) and block["height"] <= cap and top > 0:
             if block["keep_lines"]:
                 counters["keep_lines_moved"] += 1
                 page, top = page + 1, 0
@@ -1835,7 +1930,7 @@ class OwnRenderer:
         index = 0
         while index < len(rows):
             row = rows[index]
-            room = usable - cursor
+            room = self._usable_on(page, usable) - cursor
             if row["extent"] <= room or cursor == 0:
                 cursor += row["advance"]
                 seg_height += row["advance"]
@@ -2700,8 +2795,9 @@ class OwnRenderer:
                 return LINE_LAYOUT_COMPUTED, "stale_line_width"
         return "lineseg", None
 
-    @staticmethod
-    def _object_extent(el):
+    def _object_extent(self, el):
+        if _local(el.tag) in ("footNote", "endNote"):
+            return self._note_mark_extent(el)
         sz = _kid(el, "sz")
         return (_iattr(sz, "width") if sz is not None else 0,
                 _iattr(sz, "height") if sz is not None else 0)
@@ -2842,7 +2938,9 @@ class OwnRenderer:
             if piece["kind"] == "obj":
                 name, el, _charpr, _floating = piece["payload"]
                 origin = (self.hwp_from_px(cursor), line_top_hwp)
-                if name == "tbl":
+                if name in ("footNote", "endNote"):
+                    self._draw_note_mark(draw, el, cursor, baseline_px)
+                elif name == "tbl":
                     self._render_table(draw, el, origin)
                 else:
                     self._render_placeholder(draw, el, name, origin)
@@ -2874,7 +2972,7 @@ class OwnRenderer:
             # about to be paired against a reference PDF's text lines.
             self.line_boxes.append({
                 "page": self._page,
-                "mode": self._line_mode,
+                "mode": self._furniture_mode or self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
                 "x1": round(text_x1, 3),
@@ -4140,6 +4238,10 @@ class OwnRenderer:
         "hp:tbl@pageBreak — a table is split at a row boundary ONLY when it "
         "declares CELL (셀 단위로 나눔); NONE and TABLE both move the whole "
         "table to the next page",
+        "hp:footNote — the notes a block carries are reserved at the bottom "
+        "of the page that block starts on, and the block's own usable height "
+        "is reduced by exactly that reserve, so the note travels WITH its "
+        "reference the way the standard's continuation rule requires",
         "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), each at "
         f"{PARA_MARGIN_SCALE:g} of its declared value — see the constant, "
         "which records why that halving is a measurement and not a reading "
@@ -4158,8 +4260,15 @@ class OwnRenderer:
         "a block taller than one page is placed and allowed to overflow, "
         "because no rule can make it fit; counted in "
         "flow_counters.blocks_taller_than_page",
-        "headers, footers, footnotes and endnotes take no room in the flow, "
-        "because this tier does not draw them at all",
+        "a header or footer takes no room in the FLOW: it is drawn in the "
+        "area hh:margin declares, and content that overruns that area is "
+        "named rather than allowed to shorten the body box",
+        "a footnote is NOT continued onto the next page — the standard splits "
+        "a note that no longer fits and this tier does not, so such a note is "
+        "dropped and named instead of drawn outside its box",
+        "a footnote block is reserved on the page its BLOCK starts on, not on "
+        "the page the reference character itself lands on, which differ only "
+        "for a block that straddles a page boundary",
         "hp:secPr beyond section0 — a second section is not laid out, so it "
         "cannot start a page either",
     )
@@ -4438,6 +4547,631 @@ class OwnRenderer:
             "y1": round(baseline + descent, 3),
         })
 
+    # -- page furniture: headers, footers, footnotes, endnotes (E2.6) -----
+    #
+    # Where each of the four lives in the file, and why the scan below has the
+    # shape it has:
+    #
+    #   * ``hp:header`` / ``hp:footer`` are *controls*, exactly like
+    #     ``hp:pageNum``: they sit inside an ``hp:ctrl`` inside a run of an
+    #     ordinary body paragraph, and each carries its own ``hp:subList`` of
+    #     paragraphs plus an ``@applyPageType`` saying which pages it runs on.
+    #     They are NOT children of ``hp:secPr`` — verified on the one corpus
+    #     form that carries one (jeongbo).
+    #   * ``hp:footNote`` / ``hp:endNote`` are controls too, and their position
+    #     in the run stream IS the reference position, so the mark this
+    #     renderer draws goes exactly there and the note body goes elsewhere.
+    #   * ``hp:secPr/hp:footNotePr`` and ``/hp:endNotePr`` carry the separator
+    #     line, the spacing and the numbering format for the note *bodies*.
+    #
+    # NOTHING in the corpus and nothing in the private report-class holdout
+    # exercises a note: ten corpus forms declare hp:footNotePr and
+    # hp:endNotePr and carry no hp:footNote or hp:endNote at all, one form
+    # (jeongbo) carries a single EMPTY hp:header, and no form carries an
+    # hp:footer.  So no reference render measures any of this; the geometry is
+    # pinned by synthetic fixtures and by the spec, and that is stated in the
+    # sidecar rather than implied away.
+
+    # ``@applyPageType`` — 머리말/꼬리말이 적용되는 쪽.
+    FURNITURE_APPLY_TYPES = ("BOTH", "EVEN", "ODD")
+    # ``hp:noteLine@length`` is negative on every corpus form ("-1"), which is
+    # the writer saying "the default", and KS X 6101 does not publish what the
+    # default is.  Hancom's own 각주 구분선 default is 5 cm, so that is what is
+    # drawn, capped at the column width.  This renderer's reading, declared.
+    NOTE_LINE_DEFAULT_HWP = int(round(5.0 / 2.54 * HWPUNIT_PER_INCH))
+    # A reference mark is set at this fraction of its run's character size and
+    # raised by this fraction of that size.  ``hp:autoNumFormat@supscript`` is
+    # a flag, not a size and not an offset, so both numbers are this
+    # renderer's and are declared.
+    NOTE_MARK_RELSZ = 65
+    NOTE_MARK_RAISE = 0.35
+    # How many times the flow pass may re-run to settle the per-page footnote
+    # reserve before it gives up and says so.  Bounded on purpose: a note that
+    # shrinks its own page can push its reference off that page, which takes
+    # the note with it and un-shrinks the page, and no fixed point exists.
+    NOTE_FLOW_MAX_PASSES = 6
+
+    def _furniture_scan(self):
+        """``{header, footer, footnote, endnote}`` -> entries, in flow order.
+
+        An entry carries the control element, the top-level block index it
+        sits in (which is what maps a footnote onto a page), and the
+        ``charPrIDRef`` of the run that holds it (which is what meters its
+        reference mark).  The walk stops at every control it finds, so a
+        header's own paragraphs are never scanned for notes.
+        """
+        if self._furniture is not None:
+            return self._furniture
+        kinds = {"header": "header", "footer": "footer",
+                 "footNote": "footnote", "endNote": "endnote"}
+        found = {"header": [], "footer": [], "footnote": [], "endnote": []}
+
+        def walk(el, block, charpr):
+            for child in el:
+                name = _local(child.tag)
+                if name == "run":
+                    walk(child, block, child.get("charPrIDRef") or charpr)
+                    continue
+                kind = kinds.get(name)
+                if kind is not None:
+                    found[kind].append({
+                        "el": child, "block": block, "charpr": charpr,
+                        "apply": (child.get("applyPageType") or "BOTH").upper(),
+                    })
+                    continue
+                walk(child, block, charpr)
+
+        for el in _kids(self.sections[0], "p"):
+            walk(el, self.paragraph_index.get(id(el)), "0")
+        self._furniture = found
+        for kind in ("footnote", "endnote"):
+            start = self._note_start_number(kind)
+            for order, entry in enumerate(found[kind]):
+                entry["number"] = start + order
+                entry["mark"] = self._note_mark_text(kind, entry["number"])
+                self._note_marks[id(entry["el"])] = entry
+        return found
+
+    def _note_pr(self, kind):
+        """``hp:footNotePr`` / ``hp:endNotePr`` reduced to what is drawn."""
+        tag = "footNotePr" if kind == "footnote" else "endNotePr"
+        pr = next((e for e in self.sections[0].iter()
+                   if _local(e.tag) == tag), None)
+        fmt = _kid(pr, "autoNumFormat") if pr is not None else None
+        line = _kid(pr, "noteLine") if pr is not None else None
+        space = _kid(pr, "noteSpacing") if pr is not None else None
+        num = _kid(pr, "numbering") if pr is not None else None
+        place = _kid(pr, "placement") if pr is not None else None
+        return {
+            "format": ((fmt.get("type") if fmt is not None else None)
+                       or "DIGIT").upper(),
+            "prefix": (fmt.get("prefixChar") or "") if fmt is not None else "",
+            "suffix": (fmt.get("suffixChar") or "") if fmt is not None else "",
+            # HWP writes the flag as @supscript; the schema spells it
+            # @superscript.  Both are read, because both occur.
+            "superscript": bool(
+                _iattr(fmt, "supscript") or _iattr(fmt, "superscript")
+            ) if fmt is not None else False,
+            "line_type": ((line.get("type") if line is not None else None)
+                          or "SOLID").upper(),
+            "line_length": _iattr(line, "length") if line is not None else -1,
+            "line_width": (_mm_to_hwp(line.get("width"))
+                           if line is not None else 0),
+            "line_colour": (_colour(line.get("color"))
+                            if line is not None else None) or (0, 0, 0),
+            "above": _iattr(space, "aboveLine") if space is not None else 0,
+            "below": _iattr(space, "belowLine") if space is not None else 0,
+            "between": (_iattr(space, "betweenNotes")
+                        if space is not None else 0),
+            "numbering": ((num.get("type") if num is not None else None)
+                          or "CONTINUOUS").upper(),
+            "new_num": _iattr(num, "newNum") if num is not None else 0,
+            "place": ((place.get("place") if place is not None else None)
+                      or "").upper(),
+        }
+
+    def _note_start_number(self, kind):
+        """The first note's number.
+
+        ``hp:numbering@newNum`` is only a start number where the numbering
+        actually restarts.  On this corpus every form declares
+        ``type="CONTINUOUS"`` with ``newNum`` 2720/2721 — the writer's own
+        internal ids, not a start number — so CONTINUOUS starts at 1 and says
+        so rather than stamping a four-digit note.
+        """
+        pr = self._note_pr(kind)
+        if pr["numbering"] != "CONTINUOUS" and pr["new_num"] >= 1:
+            return pr["new_num"]
+        if pr["numbering"] != "CONTINUOUS":
+            self._skip(
+                f"hp:{_NOTE_TAG[kind]}Pr/hp:numbering@type={pr['numbering']}",
+                "note numbering never restarts in this tier; the notes are "
+                "numbered straight through from the start number")
+        return 1
+
+    def _note_mark_text(self, kind, number):
+        pr = self._note_pr(kind)
+        if pr["format"] != "DIGIT":
+            self._skip(f"hp:{_NOTE_TAG[kind]}Pr/hp:autoNumFormat@type={pr['format']}",
+                       "only DIGIT note numbering is implemented; the mark is "
+                       "drawn in arabic digits")
+        return f"{pr['prefix']}{number}{pr['suffix']}"
+
+    def _note_mark_font(self, charpr):
+        return self._font_for(charpr, self.NOTE_MARK_RELSZ, "latin")
+
+    def _note_mark_extent(self, el):
+        """``(width, height)`` in HWPUNIT of a note's inline reference mark.
+
+        The mark occupies one character cell in the line — which is what makes
+        ``hp:lineseg@textpos`` count it — but it is a raised, reduced numeral,
+        so its cell is deliberately *shorter* than the run's own characters and
+        cannot inflate the line box it sits in.
+        """
+        entry = self._note_marks.get(id(el))
+        if entry is None:
+            return (0, 0)
+        font = self._note_mark_font(entry["charpr"])
+        width = float(self._scratch_draw().textlength(entry["mark"], font=font))
+        height = ((self._charpr(entry["charpr"]).get("height_pt") or 10.0)
+                  * HWPUNIT_PER_PT * self.NOTE_MARK_RELSZ / 100.0)
+        return (int(round(self.hwp_from_px(width))), int(round(height)))
+
+    def _draw_note_mark(self, draw, el, cursor_px, baseline_px):
+        """Draw one reference mark as a raised, reduced numeral."""
+        entry = self._note_marks.get(id(el))
+        if entry is None:
+            return
+        font = self._note_mark_font(entry["charpr"])
+        colour = self._charpr(entry["charpr"]).get("color") or (0, 0, 0)
+        raise_px = font.size / self.NOTE_MARK_RELSZ * 100.0 * self.NOTE_MARK_RAISE
+        ascent, _descent = font.getmetrics()
+        draw.text((cursor_px, baseline_px - raise_px - ascent),
+                  entry["mark"], font=font, fill=colour)
+        self.counts["note_marks"] += 1
+
+    def _applies_to_page(self, kind, apply_type, page_number):
+        if apply_type == "ODD":
+            return page_number % 2 == 1
+        if apply_type == "EVEN":
+            return page_number % 2 == 0
+        if apply_type != "BOTH":
+            self._skip(f"hp:{kind}@applyPageType={apply_type}",
+                       "only BOTH, EVEN and ODD are implemented; nothing is "
+                       "drawn for any other apply type")
+            return False
+        return True
+
+    def _hide_first(self, attr):
+        vis = next((e for e in self.sections[0].iter()
+                    if _local(e.tag) == "visibility"), None)
+        return bool(_iattr(vis, attr))
+
+    def _sublist_paragraphs(self, container):
+        return [Paragraph(p, self.defs["para_pr"])
+                for p in own_paragraphs(container)]
+
+    def _stack_height(self, draw, paras, column_hwp):
+        """How tall a container's paragraphs are, stacked, in HWPUNIT."""
+        self._quiet += 1
+        try:
+            return sum(sum(row["advance"] for row in
+                           self._flow_lines(draw, para, column_hwp)[1])
+                       for para in paras)
+        finally:
+            self._quiet -= 1
+
+    def _draw_stacked(self, draw, paras, origin_hwp, column_hwp):
+        """Draw a container's paragraphs stacked from ``origin``.
+
+        A header, a footer and a note body are all ``hp:subList`` content whose
+        cached ``vertpos`` is relative to that subList, so each paragraph is
+        drawn at the running cursor with its own cached top subtracted — the
+        same correction ``_render_flow_page`` applies to a flowed block.
+        """
+        ox, oy = origin_hwp
+        used = 0
+        for para in paras:
+            height = self._stack_height(draw, [para], column_hwp)
+            cached_top = (_iattr(para.linesegs[0], "vertpos")
+                          if para.linesegs else 0)
+            self._render_paragraphs(draw, [para], (ox, oy + used - cached_top),
+                                    column_hwp)
+            used += height
+        return used
+
+    def _render_header_footer(self, draw, geo, page_number):
+        """Draw this page's 머리말 / 꼬리말 in the areas the margins declare.
+
+        ``hh:margin@header`` and ``@footer`` are the heights of those areas:
+        the body box already starts at ``top + header`` and ends at
+        ``height - bottom - footer`` (``page_geometry``), so the header area is
+        ``[top, top + header]`` and the footer area is
+        ``[height - bottom - footer, height - bottom]``.  Content is set from
+        the TOP of its area in both cases; that is this renderer's reading, and
+        content taller than the declared area is drawn and named rather than
+        clipped, because clipping would hide the defect.
+        """
+        furniture = self._furniture_scan()
+        if not furniture["header"] and not furniture["footer"]:
+            return
+        m = geo["margin"]
+        areas = (
+            ("header", "hideFirstHeader", m["top"], m["header"]),
+            ("footer", "hideFirstFooter",
+             geo["height"] - m["bottom"] - m["footer"], m["footer"]),
+        )
+        for kind, hide_attr, area_top, area_height in areas:
+            if page_number == 1 and self._hide_first(hide_attr):
+                continue
+            for entry in furniture[kind]:
+                if not self._applies_to_page(kind, entry["apply"],
+                                             page_number):
+                    continue
+                paras = self._sublist_paragraphs(entry["el"])
+                if not paras:
+                    continue
+                self._furniture_mode = kind
+                try:
+                    used = self._draw_stacked(
+                        draw, paras, (geo["body_left"], area_top),
+                        geo["usable_width"])
+                finally:
+                    self._furniture_mode = None
+                if area_height and used > area_height:
+                    self._skip(
+                        f"hp:{kind} taller than hh:margin@{kind}",
+                        f"the declared {kind} area is {area_height} HWPUNIT "
+                        f"and its content measures {used}; it is drawn at "
+                        "full height into the body box rather than clipped, "
+                        "because Hancom grows the area and this tier does not")
+                self.counts[kind + "s"] += 1
+
+    def _note_rule_height(self, pr):
+        """Room the separator and its spacing take above the first note."""
+        thickness = (0 if pr["line_type"] == "NONE"
+                     else max(pr["line_width"], self.hwp_from_px(1)))
+        return int(round(pr["above"] + thickness + pr["below"]))
+
+    def _note_block_plan(self, draw, kind, entries, geo):
+        """``(height, items)`` for one page's notes, or one section's.
+
+        Height is the whole block: the spacing above the separator, the
+        separator, the spacing below it, every note body, and
+        ``@betweenNotes`` between adjacent ones.  It is what the flow pass
+        subtracts from ``usable_height`` on the page the notes belong to.
+        """
+        pr = self._note_pr(kind)
+        column = geo["usable_width"]
+        items = []
+        for entry in entries:
+            paras = self._sublist_paragraphs(entry["el"])
+            cid = (paras[0].chars[0][1]
+                   if paras and paras[0].chars else entry["charpr"])
+            font = self._font_for(cid, 100, "latin")
+            width = int(round(self.hwp_from_px(
+                float(draw.textlength(entry["mark"] + " ", font=font)))))
+            body_column = max(1, column - width)
+            items.append({
+                "entry": entry, "paras": paras, "cid": cid,
+                "mark_width": width, "column": body_column,
+                "height": self._stack_height(draw, paras, body_column),
+            })
+        total = self._note_rule_height(pr) + sum(i["height"] for i in items)
+        if len(items) > 1:
+            total += pr["between"] * (len(items) - 1)
+        return total, items
+
+    def _draw_note_prefix(self, draw, item, geo, y_hwp):
+        """The note body's own number, set flush left at the body baseline."""
+        paras = item["paras"]
+        font = self._font_for(item["cid"], 100, "latin")
+        baseline = (_iattr(paras[0].linesegs[0], "baseline")
+                    if paras and paras[0].linesegs else 0)
+        if not baseline:
+            baseline = int(0.85 * ((self._charpr(item["cid"]).get("height_pt")
+                                    or 10.0) * HWPUNIT_PER_PT))
+        ascent, _descent = font.getmetrics()
+        draw.text((self.px(geo["body_left"]),
+                   self.pxf(y_hwp + baseline) - ascent),
+                  item["entry"]["mark"], font=font,
+                  fill=self._charpr(item["cid"]).get("color") or (0, 0, 0))
+
+    def _draw_note_block(self, draw, kind, geo, items, top_hwp, room_hwp):
+        """Draw a note block from ``top_hwp``, never past ``room_hwp``.
+
+        A note whose body no longer fits is DROPPED and named, not overflowed:
+        this tier does not implement the standard's note continuation (a note
+        split across the page boundary), and the honest failure is a declared
+        gap rather than ink outside the box it was given.
+        """
+        pr = self._note_pr(kind)
+        y = top_hwp + pr["above"]
+        thickness = 0
+        if pr["line_type"] != "NONE":
+            if pr["line_type"] != "SOLID":
+                self._skip(f"hp:{_NOTE_TAG[kind]}Pr/hp:noteLine@type={pr['line_type']}",
+                           "a non-solid separator is stroked as a solid line "
+                           "of the declared width")
+            length = (pr["line_length"] if pr["line_length"] > 0
+                      else self.NOTE_LINE_DEFAULT_HWP)
+            if pr["line_length"] <= 0:
+                self._skip(f"hp:{_NOTE_TAG[kind]}Pr/hp:noteLine@length"
+                           f"={pr['line_length']}",
+                           "a non-positive separator length is the writer "
+                           "asking for the default, which KS X 6101 does not "
+                           f"publish; {self.NOTE_LINE_DEFAULT_HWP} HWPUNIT "
+                           "(5 cm) is drawn, capped at the column")
+            length = min(length, geo["usable_width"])
+            width_px = max(1, self.px(pr["line_width"]))
+            y_px = self.px(y)
+            draw.line([(self.px(geo["body_left"]), y_px),
+                       (self.px(geo["body_left"] + length), y_px)],
+                      fill=pr["line_colour"], width=width_px)
+            thickness = self.hwp_from_px(width_px)
+            self.counts["note_rules"] += 1
+        y += thickness + pr["below"]
+        drawn = 0
+        for index, item in enumerate(items):
+            if index:
+                y += pr["between"]
+            if y + item["height"] > top_hwp + room_hwp:
+                break
+            self._draw_note_prefix(draw, item, geo, y)
+            self._furniture_mode = kind
+            try:
+                self._draw_stacked(
+                    draw, item["paras"],
+                    (geo["body_left"] + item["mark_width"], y),
+                    item["column"])
+            finally:
+                self._furniture_mode = None
+            y += item["height"]
+            drawn += 1
+        if drawn < len(items):
+            self._skip(
+                f"hp:{_NOTE_TAG[kind]} continuation",
+                f"{len(items) - drawn} note(s) did not fit the room reserved "
+                "for them and were DROPPED; the standard continues a note on "
+                "the next page and this tier does not implement that, so the "
+                "note is declared missing rather than drawn outside its box")
+        self.counts[kind + "s"] += drawn
+        return drawn
+
+    def _notes_by_page(self, kind, page_of_block):
+        """``{page -> [entry]}`` in flow order for one note kind."""
+        pages = {}
+        for entry in self._furniture_scan()[kind]:
+            page = page_of_block.get(entry["block"])
+            if page is None:
+                continue
+            pages.setdefault(page, []).append(entry)
+        return pages
+
+    def _usable_on(self, page, usable):
+        """``usable_height`` on ``page`` once its footnotes are reserved.
+
+        At least one line of body has to survive: a footnote block that would
+        take the whole page is capped, counted, and the notes that then do not
+        fit are dropped and named by ``_draw_note_block``.
+        """
+        reserve = self._flow_reserve.get(page, 0)
+        if not reserve:
+            return usable
+        return max(usable // 8, usable - reserve)
+
+    def _block_note_heights(self, draw):
+        """``{block index -> HWPUNIT}`` the block's own footnotes take.
+
+        Measured once per flow, because the block's notes travel with it and
+        their height does not depend on where it lands.  Two notes on one
+        block cost one separator, not two, which is why the plan is built per
+        block rather than per note.
+        """
+        by_block = {}
+        for entry in self._furniture_scan()["footnote"]:
+            by_block.setdefault(entry["block"], []).append(entry)
+        if not by_block:
+            return {}
+        geo = self.page_geometry()
+        out = {}
+        self._quiet += 1
+        try:
+            for block, entries in by_block.items():
+                out[block] = self._note_block_plan(
+                    draw, "footnote", entries, geo)[0]
+        finally:
+            self._quiet -= 1
+        return out
+
+    def _reserve_add(self, page, delta, usable, counters):
+        """Add (or give back) a page's footnote reserve, capped at the page."""
+        value = self._flow_reserve.get(page, 0) + delta
+        if value <= 0:
+            self._flow_reserve.pop(page, None)
+            return
+        cap = usable - usable // 8
+        if value > cap:
+            counters["footnote_reserve_capped"] += 1
+            self._skip(
+                "hp:footNote block taller than its page",
+                "the footnote block would leave the body no room at all; the "
+                "reserve is capped so at least an eighth of the body box "
+                "survives, and the notes that then do not fit are dropped "
+                "and named rather than drawn outside the box")
+        self._flow_reserve[page] = value
+
+    def _page_of_block(self, placements, pages):
+        """``{block index -> 1-based page}`` for whichever path is drawing.
+
+        Both paths are covered because both can carry a footnote: ``auto``
+        keeps the authoring engine's page assignment (``paginate``), and the
+        flow pass computes its own.  The flow pass is the only one that can
+        also RESERVE room for the note, which is why the collision check in
+        ``_render_footnotes`` is a real test on the cached path.
+        """
+        out = {}
+        if placements:
+            for record in sorted(placements,
+                                 key=lambda r: (r["page"], r["top"])):
+                out.setdefault(record["block"], record["page"] + 1)
+            return out
+        for page_number, page in enumerate(pages, start=1):
+            for para in page:
+                el = para.el if hasattr(para, "el") else para["para"].el
+                out.setdefault(self.paragraph_index.get(id(el)), page_number)
+        return out
+
+    def _render_footnotes(self, draw, geo, page_number, page_of_block):
+        """Draw this page's 각주 block, bottom-anchored inside the body box.
+
+        The block sits directly above the footer area — its bottom edge on
+        ``height - bottom - footer``, which is the body box's own bottom — and
+        grows upward.  Under ``--block-layout computed`` the flow pass has
+        already shortened this page's usable height by exactly this block's
+        height, so the body above it stops short of the block; under ``auto``
+        the cached page assignment is kept and nothing can be reserved, so a
+        collision is possible and is detected and named here rather than left
+        for a reader to notice.
+        """
+        entries = self._notes_by_page("footnote", page_of_block).get(
+            page_number)
+        if not entries:
+            return
+        height, items = self._note_block_plan(draw, "footnote", entries, geo)
+        usable = max(1, geo["usable_height"])
+        room = min(height, usable)
+        bottom = geo["body_top"] + usable
+        top = bottom - room
+        body_bottom_px = max(
+            (b["y1"] for b in self.line_boxes if b["page"] == page_number),
+            default=None)
+        if body_bottom_px is not None and body_bottom_px > self.px(top):
+            self._skip(
+                "hp:footNote block over body text",
+                "the footnote block starts above the last body line on this "
+                "page; only the flow pass (--block-layout computed) can "
+                "shorten a page for its notes, and the cached page assignment "
+                "the auto policy keeps cannot be shortened")
+            self.counts["note_collisions"] += 1
+        self._footnote_block_top[page_number] = top
+        self._draw_note_block(draw, "footnote", geo, items, top, room)
+
+    def _body_bottom_hwp(self, page_number, geo):
+        """How far down the body box this page's BODY text reaches, in
+        HWPUNIT from ``body_top``.
+
+        Ink-based, because that is the only measure both layout paths share;
+        header, footer and note boxes are excluded by their ``mode`` stamp,
+        and the page's footnote block is an explicit ceiling on top of that.
+        """
+        floor = self.px(geo["body_top"])
+        inked = [b["y1"] for b in self.line_boxes
+                 if b["page"] == page_number
+                 and b["mode"] in ("lineseg", "computed")]
+        bottom = max(inked, default=floor)
+        used = max(0, self.hwp_from_px(bottom - floor))
+        ceiling = self._footnote_block_top.get(page_number)
+        if ceiling is not None:
+            used = min(used, max(0, ceiling - geo["body_top"]))
+        return int(round(used))
+
+    def _render_endnotes(self, images, geo, page_w, page_h):
+        """Set 미주 at the end of the section, continuing onto new pages.
+
+        Unlike a footnote, an endnote block is not bound to one page, so the
+        standard's continuation IS implemented here — at a note boundary, not
+        inside a note: a note that does not fit the room left starts the next
+        page whole.  A single note taller than a page is placed at the top of
+        its own page and allowed to overflow, which is the same answer this
+        tier already gives a block taller than a page, and it is counted.
+        """
+        entries = self._furniture_scan()["endnote"]
+        if not entries:
+            return images
+        pr = self._note_pr("endnote")
+        if pr["place"] and pr["place"] not in ("END_OF_DOCUMENT",
+                                               "END_OF_SECTION"):
+            self._skip(f"hp:endNotePr/hp:placement@place={pr['place']}",
+                       "only END_OF_DOCUMENT and END_OF_SECTION are "
+                       "implemented; the notes are set at the end of section0")
+        usable = max(1, geo["usable_height"])
+        scratch = self._scratch_draw()
+        self._quiet += 1
+        try:
+            _height, items = self._note_block_plan(scratch, "endnote",
+                                                   entries, geo)
+        finally:
+            self._quiet -= 1
+        page_number = len(images)
+        self._page = page_number
+        draw = self.ImageDraw.Draw(images[-1])
+        y = self._body_bottom_hwp(page_number, geo) + pr["above"]
+        thickness = 0
+        if pr["line_type"] != "NONE":
+            if pr["line_type"] != "SOLID":
+                self._skip("hp:endNotePr/hp:noteLine@type="
+                           f"{pr['line_type']}",
+                           "a non-solid separator is stroked as a solid line "
+                           "of the declared width")
+            length = (pr["line_length"] if pr["line_length"] > 0
+                      else self.NOTE_LINE_DEFAULT_HWP)
+            length = min(length, geo["usable_width"])
+            width_px = max(1, self.px(pr["line_width"]))
+            y_px = self.px(geo["body_top"] + y)
+            draw.line([(self.px(geo["body_left"]), y_px),
+                       (self.px(geo["body_left"] + length), y_px)],
+                      fill=pr["line_colour"], width=width_px)
+            thickness = self.hwp_from_px(width_px)
+            self.counts["note_rules"] += 1
+        y += thickness + pr["below"]
+        for index, item in enumerate(items):
+            if index:
+                y += pr["between"]
+            if y + item["height"] > usable and y > 0:
+                page_number += 1
+                image = self.Image.new("RGB", (page_w, page_h),
+                                       (255, 255, 255))
+                images.append(image)
+                self._image = image
+                draw = self.ImageDraw.Draw(image)
+                self._page = page_number
+                y = 0
+                self._render_header_footer(draw, geo, page_number)
+                self._render_page_number(draw, geo, page_number)
+            if item["height"] > usable:
+                self._skip("hp:endNote taller than one page",
+                           "a single endnote taller than the body box is set "
+                           "from the top of its own page and allowed to "
+                           "overflow; no rule can make it fit")
+            self._draw_note_prefix(draw, item, geo, geo["body_top"] + y)
+            self._furniture_mode = "endnote"
+            try:
+                self._draw_stacked(
+                    draw, item["paras"],
+                    (geo["body_left"] + item["mark_width"],
+                     geo["body_top"] + y),
+                    item["column"])
+            finally:
+                self._furniture_mode = None
+            y += item["height"]
+            self.counts["endnotes"] += 1
+        return images
+
+    def _furniture_note(self):
+        """The standing caveat this document's furniture earns, or None."""
+        f = self._furniture_scan()
+        counts = {k: len(v) for k, v in f.items()}
+        if not any(counts.values()):
+            return None
+        return (
+            "page furniture drawn: "
+            + ", ".join(f"{k}={counts[k]}" for k in sorted(counts))
+            + "; NO Hancom reference render in this repo exercises any of "
+            "them, so their geometry is pinned by synthetic fixtures and by "
+            "KS X 6101, not measured against Hancom"
+        )
+
     def _flow_page_records(self, placements, first_flowed):
         """``{page number -> [record]}``, cached head and flowed tail merged.
 
@@ -4472,6 +5206,9 @@ class OwnRenderer:
 
     def render(self):
         geo = self.page_geometry()
+        # Before anything measures a line: a reference mark's cell width comes
+        # from the scan, so a scan that ran late would measure it as zero.
+        self._furniture_scan()
         plan, first_flowed = self.flow_plan()
         page_records = None
         if plan is None:
@@ -4488,6 +5225,7 @@ class OwnRenderer:
         page_w = self.px(geo["width"])
         page_h = self.px(geo["height"])
         images = []
+        page_of_block = self._page_of_block(placements, pages)
         for page_number, page_paras in enumerate(pages, start=1):
             self._page = page_number
             img = self.Image.new("RGB", (page_w, page_h), (255, 255, 255))
@@ -4505,8 +5243,11 @@ class OwnRenderer:
                     (geo["body_left"], geo["body_top"]),
                     geo["usable_width"],
                 )
+            self._render_footnotes(draw, geo, page_number, page_of_block)
+            self._render_header_footer(draw, geo, page_number)
             self._render_page_number(draw, geo, page_number)
             images.append(img)
+        images = self._render_endnotes(images, geo, page_w, page_h)
         self._audit_unsupported()
         sidecar = {
             "renderer": RENDERER_STAMP,
@@ -4562,12 +5303,72 @@ class OwnRenderer:
                 "engine/scripts/render_scoreboard.py pairs these against a "
                 "reference PDF's text lines."
             ),
+            "page_furniture": self._page_furniture_report(geo),
             "elements_skipped": sorted(
                 self.skipped.values(),
                 key=lambda e: (e["element"], e["reason"])),
-            "notes": self.notes,
+            "notes": self.notes + [n for n in (self._furniture_note(),) if n],
         }
         return images, sidecar
+
+    def _page_furniture_report(self, geo):
+        """What the header/footer/note lane found, drew, and cannot claim."""
+        f = self._furniture_scan()
+        m = geo["margin"]
+        report = {
+            "declared": {k: len(v) for k, v in sorted(f.items())},
+            "drawn": {k: self.counts[k] for k in
+                      ("headers", "footers", "footnotes", "endnotes",
+                       "note_marks")},
+            "areas_hwpunit": {
+                "header": [m["top"], m["top"] + m["header"]],
+                "footer": [geo["height"] - m["bottom"] - m["footer"],
+                           geo["height"] - m["bottom"]],
+                "body": [geo["body_top"],
+                         geo["body_top"] + geo["usable_height"]],
+            },
+            "footnote_reserve_hwpunit": dict(sorted(
+                (str(page), value)
+                for page, value in self._flow_reserve.items())),
+            "evidence": (
+                "NOT measured against any Hancom reference render: no corpus "
+                "form and no report-class holdout in reach of this repo "
+                "carries a footnote, an endnote or a footer, and the one "
+                "corpus hp:header is empty. Every geometry in this lane is "
+                "pinned by synthetic fixtures and by KS X 6101."
+            ),
+            "not_honored": list(self.FURNITURE_NOT_HONORED),
+        }
+        report.update(self._furniture_report)
+        if f["footnote"] or f["endnote"]:
+            for kind in ("footnote", "endnote"):
+                if f[kind]:
+                    report.setdefault("note_properties", {})[kind] = \
+                        self._note_pr(kind)
+        return report
+
+    FURNITURE_NOT_HONORED = (
+        "hp:masterPage — a master page is neither read nor drawn",
+        "a header or footer taller than its declared hh:margin area is drawn "
+        "at full height into the body box, not clipped and not grown into",
+        "the body box is NOT shortened by a header or footer that overruns "
+        "its area, so such content and the first body line can collide",
+        "note continuation (a note split across a page boundary) is not "
+        "implemented; a note that does not fit its reserved block is dropped "
+        "and named",
+        "hp:footNotePr/hp:placement@place — EACH_COLUMN and beneathText are "
+        "read and not acted on: this tier is single-column and always sets "
+        "the block on the body box's bottom edge",
+        "the reference mark's own character cell is this renderer's reading "
+        "of how hp:lineseg@textpos counts a note control, not a measurement — "
+        "no document in reach of this repo carries a note to measure it on",
+        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT and "
+        "END_OF_SECTION are the same thing here, because only section0 is "
+        "laid out",
+        "the endnote cursor is the bottom of the page's INKED body text, not "
+        "a layout cursor: a page whose last block draws no ink is treated as "
+        "ending where its ink ends",
+    )
 
 
 # --------------------------------------------------------------------------
