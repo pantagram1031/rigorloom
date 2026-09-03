@@ -115,6 +115,11 @@ matters: gianmun is mostly an *invisible* grid with three horizontal rules and
 one grey band, and a renderer that stroked every cell would produce a page that
 looks nothing like the form.
 
+**Inline objects.** `hp:pic` is rasterised from `BinData` and `hp:equation` is
+laid out from its `hp:script`, both at the declared `hp:sz` extent — see
+*Report-class documents* and *Equations* below. Everything else this tier
+cannot draw gets a named placeholder box rather than a hole.
+
 ### Absent borders on gianmun are the form, not the renderer
 
 Worth writing down because the render *looks* like borders are missing, and the
@@ -508,16 +513,19 @@ not only here.
    codepoint→slot table, which the standard does not publish and this renderer
    therefore approximates, and the `user` slot, which is unreachable from the
    file alone. Both are declared in every sidecar.
-3. **Equations are placeholders; pictures are drawn.** `hp:pic` is
-   rasterised from the container — see *Report-class documents* below.
-   `hp:equation`, `hp:ole`, `hp:chart`, `hp:container` and the drawing shapes
-   get a grey outlined box labelled 수식 / 그림 / 도형. When the element declares `hp:sz`
-   the box is at the declared extent; when it does not, the box is a fallback
-   size and the label carries a `?` and the sidecar says
-   `UNKNOWN extent`. **No corpus form contains an `hp:equation`** — verified by
-   scanning every `Contents/section*.xml` in `tests/corpus/forms/converted/`;
-   the equation path is therefore pinned by a direct unit test rather than a
-   document fixture.
+3. **Equations and pictures are drawn; the other objects are placeholders.**
+   `hp:pic` is rasterised from the container and `hp:equation` is laid out
+   from its `hp:script` — see *Report-class documents* and *Equations* below.
+   `hp:ole`, `hp:chart`, `hp:container` and the drawing shapes still get a
+   grey outlined box labelled 그림 / 도형, and so does an `hp:equation` whose
+   script is missing or unparseable. When the element declares `hp:sz` the box
+   is at the declared extent; when it does not, the box is a fallback size and
+   the label carries a `?` and the sidecar says `UNKNOWN extent`. **No corpus
+   form contains an `hp:equation`** — verified by scanning every
+   `Contents/section*.xml` in `tests/corpus/forms/converted/`; the equation
+   path is therefore pinned by synthetic fixtures, built in
+   `engine/tests/test_own_render.py` from a corpus form plus scripts the
+   repo's own `eqn.py` converter emits.
 4. **`DOUBLE_SLIM` is drawn as two strokes; the other non-solid types are
    stroked as solid.** A `DOUBLE_SLIM` edge splits its declared width — which
    is the width of the *band*, measured, not of a stroke — into two strokes of
@@ -701,14 +709,8 @@ touches.
 
 ### What a report-class document still does not get
 
-- `hp:equation` — 14 in the measured document, drawn as a placeholder box at
-  the declared `hp:sz` extent, content not rendered. Hancom draws the
-  equation's glyphs as real text, which is most of what `ssim_inked` still
-  misses on the equation pages, and it is also why the reference PDF extracts
-  more text lines there than this renderer draws.
-- `hp:script` (14), `hp:parameters` / `hp:stringParam` / `hp:integerParam`
-  (11 / 55 / 11) — field and equation-source bookkeeping, no ink of their
-  own.
+- `hp:parameters` / `hp:stringParam` / `hp:integerParam` (11 / 55 / 11) —
+  field bookkeeping, no ink of its own.
 - Footnotes, endnotes, headers and footers. The measured document declares
   `hp:footNotePr` and `hp:endNotePr` but carries no note and no header or
   footer, so this lane is still unmeasured against a real one; one corpus
@@ -719,6 +721,130 @@ touches.
   justified URL into many spans, so `unpaired_reference` reads high on the
   line channel where the render is visually near-identical. That is a
   property of the pairing, not of the renderer.
+
+## Equations (`hp:equation`)
+
+An `hp:equation` carries its content as an HwpEqn *script*, in an `hp:script`
+child, plus a declared `hp:sz`, a `baseUnit` (the base size, in HWPUNIT), a
+`baseLine` (where inside the box the equation's baseline sits, as a percentage
+of the height) and a `font`. Until this slice all of that became a grey box
+labelled 수식.
+
+`engine/scripts/eqn.py` already converts LaTeX **into** HwpEqn so a document
+can be authored; nothing read the other way, which is why the element could
+only ever be boxed. `engine/scripts/hwpeqn_parse.py` is that other direction:
+a metric-free parser — no Pillow, no font — producing the tree
+`own_render._eq_layout` measures and `_eq_draw` inks.
+
+### What is laid out
+
+Fractions (`over`, `atop`), sub- and superscripts including limits, roots
+(`sqrt`, `root … of …`), fences with sizing (`left ( … right )` and the other
+delimiters), the big operators, operator names set upright, Greek and the
+symbol vocabulary, quoted literals, the `` ` `` / `~` spacing atoms, accents,
+style words, and grids (`matrix`, `pmatrix`, `bmatrix`, `dmatrix`, `cases`,
+`pile`, `eqalign`). On the measured report all 14 equations parse with **zero**
+unsupported constructs: 86 subscripts, 15 superscripts, 14 `over`, 14 Greek,
+16 literals, 10 symbols, 8 `sum`, 8 function names, 5 fences, 2 `min`, 1 each
+of `int`, `max`, `sqrt` and `bar`.
+
+A construct with no node — `size`, `color`, `binom`, `buildrel`, the size
+words — becomes a `Raw` node that draws its own token text and is named per
+construct in `elements_skipped` as `hp:equation@script[<name>]`. An equation
+with no script, or one that nests past the parser's recursion budget, falls
+back to the placeholder box and says which.
+
+### Three decisions were made by measurement, and are declared as such
+
+1. **`over` binds the immediately preceding primary**, not the whole preceding
+   expression. KS X 6101 does not publish HwpEqn's grammar and the readings
+   differ on unbraced input; Hancom's own editor always writes
+   `{numerator}over{denominator}`, where they agree.
+2. **`sum` and the other symbol operators stack their limits; integrals and
+   the word-shaped operators do not.** The reference render sets `sum_{x}`
+   with x under the sigma, and `int_{e}`, `min_{s,m}`, `max_{q}` with the
+   limit to the right. That split is one reference render's evidence, not a
+   rule anybody published.
+3. **Stacking runs on a nominal 0.78 / 0.22 em character cell, not on the
+   face's own ascent/descent.** The face metrics carry line leading that a
+   maths layout must not stack: reading them made every fraction about 12%
+   taller than the extent Hancom recorded in `hp:sz`, so every equation was
+   then scaled down to fit a box it should have filled. The `hp:sz` fit is
+   decided on the **drawn ink** instead (`_eq_bounds`), which is also what
+   makes the containment claim below checkable.
+
+### `hp:sz` is the ground truth, and scale-to-fit is a declared fallback
+
+The declared extent is what the authoring engine measured the equation to be,
+and it is what the paragraph's line box was sized around. So the equation is
+laid out *inside* it. Where this renderer's metrics do not fit — a substituted
+maths face advances differently — the equation is re-laid out smaller, and if
+rounding still leaves it over, the raster is reduced. Either way the scaling
+is declared as `hp:equation@equation_scaled` and recorded per equation. The
+box is never overflowed: an equation that spills draws over the text around
+it, which is worse than a box.
+
+Every equation's declared box and inked rectangle are written to the sidecar
+(`equations.placements`), so containment is checkable from the output rather
+than asserted in a docstring. On the measured report 13 of 14 equations scale,
+between 0.812 and 0.995 — the residual is font substitution and this
+renderer's spacing choices, both named.
+
+### One line box per baseline, not one per equation
+
+A PDF text extractor reads a stacked equation as several text lines — a
+numerator line, a denominator line. Recording the whole equation as one
+`line_boxes` entry would pair one candidate box against three reference lines
+and score right geometry as wrong. The drawn glyphs are grouped by baseline
+instead; the 14 equations contribute 55 line boxes. Rules and strokes are
+excluded: a fraction bar is not a text line.
+
+### What it is worth, measured
+
+Same document, same scoreboard build, 144 dpi, page count 18/18 exact before
+and after.
+
+| channel | before | after |
+| --- | --- | --- |
+| `ssim_mean` | 0.7273 | **0.7280** |
+| `ssim_min` | 0.6264 | 0.6264 |
+| `ssim_inked_mean` | 0.1263 | 0.1262 |
+| `ssim_inked_min` | −0.0367 | −0.0405 |
+| `text_line_iou_mean` | 0.5630 | 0.5334 |
+| `text_line_pair_rate_mean` | 0.8390 | **0.9041** |
+| `changed_channel_ratio_mean` | 0.1237 | 0.1247 |
+| `ink_delta_abs_max` | 0.0085 | 0.0099 |
+
+`elements_skipped` stays at 5 distinct entries: `hp:script` leaves it and
+`hp:equation@equation_scaled` joins it.
+
+Read honestly. The pair rate moves 6.5 points, which is the real result: two
+thirds of the reference text lines this renderer was not accounting for on the
+equation pages are now drawn and recorded. `text_line_iou_mean` falls for the
+arithmetic reason that those newly paired lines were previously *not scored at
+all* — an unpaired reference line contributes nothing to the IoU mean, and a
+paired one at imperfect registration contributes a low number. The raster
+channels barely move because 14 equations are about 1.5% of 18 pages, and they
+move slightly the *wrong* way for the same reason mechanisms 1 and 4 did: a
+page that used to be blank where an equation belongs disagrees with the
+reference on fewer channels than one carrying an equation a fraction of a pixel
+out of place. Every regression-floor check still passes, on this document and
+on every comparable corpus form.
+
+### What an equation still does not get
+
+- **Italic variable shaping.** Hancom sets equation variables in italic; this
+  renderer sets them upright, because OWPML names a *family* and
+  `SystemFontIndex` resolves regular and bold cuts only. This is the largest
+  remaining visual difference on the reference comparison — the geometry lines
+  up, the letterforms do not.
+- `hp:equation@lineMode` and `@textWrap`. The equation is drawn at the object
+  box the paragraph already reserved for it; no text is re-wrapped around it.
+- Integral limits are tucked less tightly against the sign than Hancom tucks
+  them, and a fence carries slightly more air than Hancom's.
+- The `_EQ_AXIS`, `_EQ_ASC`/`_EQ_DESC`, spacing and operator-scale constants
+  are this renderer's calibration against one reference render. They are named
+  in the source with that status; they are not published metrics.
 
 ## Determinism
 
@@ -834,10 +960,9 @@ false` on both; the grade stays `own-uncertified` on every class.
 
 1. **Regenerate the three reduced reference PDFs at 1:1** — until then three
    document classes (gongmun, research) cannot be graded at all.
-1b. **Render `hp:equation`.** After the report-class slice it is the largest
-   *unimplemented* element left on a real report: 14 boxes on the measured
-   document, and Hancom draws their glyphs as real text. A committed synthetic
-   equation fixture is the prerequisite — no corpus form has one.
+1b. ~~**Render `hp:equation`.**~~ Done — see *Equations* above. What it left
+   open is italic variable shaping, which is now the largest visual difference
+   on the equation pages and needs per-cut face resolution, not equation work.
 2. **Close the advance-width gap the breaker exposed.** A cached line measures
    a median 0.92 of its own box by this renderer's advances, and the deficit is
    concentrated in the space character. This is now the largest single term in
@@ -857,6 +982,7 @@ false` on both; the grade stays `own-uncertified` on every class.
 6. A vendored font with known metrics, so cross-machine determinism becomes
    claimable and the scoreboard stops depending on which faces this machine has.
 7. `kstartup` pagination (limit 12).
-8. Equations and pictures, in that order.
+8. Italic (and other non-regular) cuts in `SystemFontIndex`, which is what
+   equations and emphasised prose both now wait on.
 9. Only then ask `render_cert` for a per-document-class grade. Until it
    answers, the grade stays `own-uncertified`.
