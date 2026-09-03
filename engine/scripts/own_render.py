@@ -1374,6 +1374,12 @@ class OwnRenderer:
         # onto every line box so a reader of the sidecar can tell, per line,
         # whether they are looking at Hancom's break or ours.
         self._line_mode = "lineseg"
+        # Set while a header, footer or note body is being drawn, so its line
+        # boxes are distinguishable from body text in the sidecar -- and so
+        # the endnote cursor can find the bottom of the BODY rather than the
+        # bottom of a bottom-anchored footnote block.
+        self._furniture_mode = None
+        self._footnote_block_top = {}
         # Standing caveats that apply to every render, not just this document.
         # They belong in the artefact, not only in the notes file, because the
         # sidecar is what travels with the PNG.
@@ -1413,6 +1419,12 @@ class OwnRenderer:
             "--block-layout computed the flow pass shortens the page by the "
             "block it reserves, and under the auto policy it cannot, so a "
             "collision with the cached body layout is DECLARED per render",
+            "endnotes ARE drawn, at the end of section0, continuing onto new "
+            "pages at a NOTE boundary; a single endnote taller than the body "
+            "box is set from the top of its own page and declared",
+            "every line box carries the piece of furniture that drew it in "
+            "its mode field (header / footer / footnote / endnote), so a "
+            "reference-PDF comparison can include or exclude furniture",
             "full limits and the certification path: "
             "engine/references/own-render-notes.md",
         ]
@@ -2960,7 +2972,7 @@ class OwnRenderer:
             # about to be paired against a reference PDF's text lines.
             self.line_boxes.append({
                 "page": self._page,
-                "mode": self._line_mode,
+                "mode": self._furniture_mode or self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
                 "x1": round(text_x1, 3),
@@ -4799,9 +4811,13 @@ class OwnRenderer:
                 paras = self._sublist_paragraphs(entry["el"])
                 if not paras:
                     continue
-                used = self._draw_stacked(
-                    draw, paras, (geo["body_left"], area_top),
-                    geo["usable_width"])
+                self._furniture_mode = kind
+                try:
+                    used = self._draw_stacked(
+                        draw, paras, (geo["body_left"], area_top),
+                        geo["usable_width"])
+                finally:
+                    self._furniture_mode = None
                 if area_height and used > area_height:
                     self._skip(
                         f"hp:{kind} taller than hh:margin@{kind}",
@@ -4902,9 +4918,14 @@ class OwnRenderer:
             if y + item["height"] > top_hwp + room_hwp:
                 break
             self._draw_note_prefix(draw, item, geo, y)
-            self._draw_stacked(
-                draw, item["paras"],
-                (geo["body_left"] + item["mark_width"], y), item["column"])
+            self._furniture_mode = kind
+            try:
+                self._draw_stacked(
+                    draw, item["paras"],
+                    (geo["body_left"] + item["mark_width"], y),
+                    item["column"])
+            finally:
+                self._furniture_mode = None
             y += item["height"]
             drawn += 1
         if drawn < len(items):
@@ -5033,7 +5054,109 @@ class OwnRenderer:
                 "shorten a page for its notes, and the cached page assignment "
                 "the auto policy keeps cannot be shortened")
             self.counts["note_collisions"] += 1
+        self._footnote_block_top[page_number] = top
         self._draw_note_block(draw, "footnote", geo, items, top, room)
+
+    def _body_bottom_hwp(self, page_number, geo):
+        """How far down the body box this page's BODY text reaches, in
+        HWPUNIT from ``body_top``.
+
+        Ink-based, because that is the only measure both layout paths share;
+        header, footer and note boxes are excluded by their ``mode`` stamp,
+        and the page's footnote block is an explicit ceiling on top of that.
+        """
+        floor = self.px(geo["body_top"])
+        inked = [b["y1"] for b in self.line_boxes
+                 if b["page"] == page_number
+                 and b["mode"] in ("lineseg", "computed")]
+        bottom = max(inked, default=floor)
+        used = max(0, self.hwp_from_px(bottom - floor))
+        ceiling = self._footnote_block_top.get(page_number)
+        if ceiling is not None:
+            used = min(used, max(0, ceiling - geo["body_top"]))
+        return int(round(used))
+
+    def _render_endnotes(self, images, geo, page_w, page_h):
+        """Set 미주 at the end of the section, continuing onto new pages.
+
+        Unlike a footnote, an endnote block is not bound to one page, so the
+        standard's continuation IS implemented here — at a note boundary, not
+        inside a note: a note that does not fit the room left starts the next
+        page whole.  A single note taller than a page is placed at the top of
+        its own page and allowed to overflow, which is the same answer this
+        tier already gives a block taller than a page, and it is counted.
+        """
+        entries = self._furniture_scan()["endnote"]
+        if not entries:
+            return images
+        pr = self._note_pr("endnote")
+        if pr["place"] and pr["place"] not in ("END_OF_DOCUMENT",
+                                               "END_OF_SECTION"):
+            self._skip(f"hp:endNotePr/hp:placement@place={pr['place']}",
+                       "only END_OF_DOCUMENT and END_OF_SECTION are "
+                       "implemented; the notes are set at the end of section0")
+        usable = max(1, geo["usable_height"])
+        scratch = self._scratch_draw()
+        self._quiet += 1
+        try:
+            _height, items = self._note_block_plan(scratch, "endnote",
+                                                   entries, geo)
+        finally:
+            self._quiet -= 1
+        page_number = len(images)
+        self._page = page_number
+        draw = self.ImageDraw.Draw(images[-1])
+        y = self._body_bottom_hwp(page_number, geo) + pr["above"]
+        thickness = 0
+        if pr["line_type"] != "NONE":
+            if pr["line_type"] != "SOLID":
+                self._skip("hp:endNotePr/hp:noteLine@type="
+                           f"{pr['line_type']}",
+                           "a non-solid separator is stroked as a solid line "
+                           "of the declared width")
+            length = (pr["line_length"] if pr["line_length"] > 0
+                      else self.NOTE_LINE_DEFAULT_HWP)
+            length = min(length, geo["usable_width"])
+            width_px = max(1, self.px(pr["line_width"]))
+            y_px = self.px(geo["body_top"] + y)
+            draw.line([(self.px(geo["body_left"]), y_px),
+                       (self.px(geo["body_left"] + length), y_px)],
+                      fill=pr["line_colour"], width=width_px)
+            thickness = self.hwp_from_px(width_px)
+            self.counts["note_rules"] += 1
+        y += thickness + pr["below"]
+        for index, item in enumerate(items):
+            if index:
+                y += pr["between"]
+            if y + item["height"] > usable and y > 0:
+                page_number += 1
+                image = self.Image.new("RGB", (page_w, page_h),
+                                       (255, 255, 255))
+                images.append(image)
+                self._image = image
+                draw = self.ImageDraw.Draw(image)
+                self._page = page_number
+                y = 0
+                self._render_header_footer(draw, geo, page_number)
+                self._render_page_number(draw, geo, page_number)
+            if item["height"] > usable:
+                self._skip("hp:endNote taller than one page",
+                           "a single endnote taller than the body box is set "
+                           "from the top of its own page and allowed to "
+                           "overflow; no rule can make it fit")
+            self._draw_note_prefix(draw, item, geo, geo["body_top"] + y)
+            self._furniture_mode = "endnote"
+            try:
+                self._draw_stacked(
+                    draw, item["paras"],
+                    (geo["body_left"] + item["mark_width"],
+                     geo["body_top"] + y),
+                    item["column"])
+            finally:
+                self._furniture_mode = None
+            y += item["height"]
+            self.counts["endnotes"] += 1
+        return images
 
     def _furniture_note(self):
         """The standing caveat this document's furniture earns, or None."""
@@ -5124,6 +5247,7 @@ class OwnRenderer:
             self._render_header_footer(draw, geo, page_number)
             self._render_page_number(draw, geo, page_number)
             images.append(img)
+        images = self._render_endnotes(images, geo, page_w, page_h)
         self._audit_unsupported()
         sidecar = {
             "renderer": RENDERER_STAMP,
@@ -5238,6 +5362,12 @@ class OwnRenderer:
         "the reference mark's own character cell is this renderer's reading "
         "of how hp:lineseg@textpos counts a note control, not a measurement — "
         "no document in reach of this repo carries a note to measure it on",
+        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT and "
+        "END_OF_SECTION are the same thing here, because only section0 is "
+        "laid out",
+        "the endnote cursor is the bottom of the page's INKED body text, not "
+        "a layout cursor: a page whose last block draws no ink is treated as "
+        "ending where its ink ends",
     )
 
 
