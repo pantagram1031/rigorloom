@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import re
@@ -335,6 +336,7 @@ STRUCTURAL_TAGS = frozenset({
     "pos", "inMargin", "outMargin", "shapeComment", "secPr", "grid",
     "startNum", "visibility", "lineNumberShape", "pagePr", "margin",
     "footNotePr", "endNotePr", "pageBorderFill", "offset", "masterPage",
+    "orgSz", "imgDim", "pageNum",
     "autoNumFormat", "noteLine", "noteSpacing", "numbering", "placement",
     "ctrl", "colPr", "switch", "case", "default", "markpenBegin",
     "markpenEnd", "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
@@ -357,12 +359,50 @@ class RendererUnavailable(RuntimeError):
 # bind different prefixes.
 # --------------------------------------------------------------------------
 
+_UNSET = object()
+
+
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
 def _kids(el, name):
     return [c for c in el if _local(c.tag) == name]
+
+
+def binary_items(z, names):
+    """``hc:img@binaryItemIDRef`` -> the container entry that holds the bytes.
+
+    The container's OPF manifest (``Contents/content.hpf``) is the only
+    published mapping from the id a picture cites to the ``BinData/`` entry
+    that carries it: the id is ``image7`` while the entry may be
+    ``BinData/image7.PNG``, ``.jpg``, ``.bmp`` — extension and case both vary
+    by authoring version, so guessing the filename is not sound.  Falls back
+    to a stem match when a document ships no manifest.
+    """
+    items = {}
+    manifest = next((n for n in names if n.endswith("content.hpf")), None)
+    if manifest is not None:
+        try:
+            root = ET.fromstring(z.read(manifest))
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            for el in root.iter():
+                if _local(el.tag) != "item":
+                    continue
+                item_id = el.get("id")
+                href = el.get("href")
+                if item_id and href and "BinData/" in href:
+                    tail = "BinData/" + href.split("BinData/", 1)[1]
+                    items[item_id] = next(
+                        (n for n in names if n.endswith(tail)), tail)
+    for name in names:
+        if "BinData/" not in name:
+            continue
+        stem = Path(name).stem
+        items.setdefault(stem, name)
+    return items
 
 
 def _kid(el, name):
@@ -891,9 +931,18 @@ def solve_tracks(count: int, constraints, declared_total=None):
     occupies exactly the space the file says it does.
     """
     sizes = [None] * count
+    # A track is as big as the LARGEST constraint that covers it alone, not as
+    # big as the first one document order happens to hand over.  For columns
+    # the two readings agree — every cell in a column declares the same
+    # cellSz width — which is why taking the first was never wrong on a
+    # government form, where every row is one line tall as well.  For rows
+    # they diverge the moment one cell in a row wraps to more lines than its
+    # neighbours: the row must fit its tallest cell, and first-wins gives it
+    # the height of whichever cell the file lists first.
     for start, span, total in constraints:
-        if span == 1 and 0 <= start < count and sizes[start] is None:
-            sizes[start] = total
+        if span == 1 and 0 <= start < count:
+            if sizes[start] is None or total > sizes[start]:
+                sizes[start] = total
 
     changed = True
     while changed:
@@ -1065,8 +1114,13 @@ class OwnRenderer:
         self.face_resolution = {}
         self._face_cache = {}
         self.skipped = {}
+        self._bin_cache = {}
+        self._synthetic_bold = {}
+        self._page_num_spec = _UNSET
+        self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
-                       "text_lines": 0, "placeholders": 0, "borders": 0}
+                       "text_lines": 0, "placeholders": 0, "borders": 0,
+                       "images": 0, "page_numbers": 0}
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -1140,6 +1194,7 @@ class OwnRenderer:
                 ET.fromstring(z.read(n))
                 for n in sorted(n for n in names if SECTION_RE.match(n))
             ]
+            self.bin_items = binary_items(z, names)
         if not self.sections:
             raise ValueError("HWPX carries no Contents/section*.xml")
         # Paragraph identity, and the only one this format supports: hp:p@id
@@ -1285,8 +1340,13 @@ class OwnRenderer:
             return hit[0]
         font_ids = self._charpr(cid).get("font_ids") or {}
         face_name = None
-        for key in (slot, slot.upper()):
-            font_id = font_ids.get(key)
+        # NOT ``key``: this loop used to shadow the cache key computed above,
+        # so every write below filed itself under the string "hangul" while
+        # every read asked for the tuple.  The cache therefore never hit —
+        # each character re-ran a system font-index lookup — and any other
+        # per-face fact recorded here was filed under the wrong name too.
+        for slot_key in (slot, slot.upper()):
+            font_id = font_ids.get(slot_key)
             if font_id is None:
                 continue
             table = (self.defs["fontfaces"].get(slot.upper())
@@ -1303,6 +1363,14 @@ class OwnRenderer:
         if entry is not None:
             chosen = entry["bold" if bold else "regular"] or entry["regular"] \
                 or entry["bold"]
+        # A family with no bold cut installed — 바탕 / Batang is one, and it is
+        # the face a report-class document is set in — hands back its regular
+        # face here.  HWP does not then draw regular text: it fakes the weight.
+        # Record that this face has to be emboldened by hand, so the drawing
+        # side can do the same rather than silently losing every bold run.
+        self._synthetic_bold[key] = bool(
+            bold and chosen is not None and entry is not None
+            and not entry["bold"])
         record = self._declare_face(face_name, slot,
                                     entry if chosen else None, bold)
         self._face_cache[key] = (chosen, record)
@@ -1340,6 +1408,28 @@ class OwnRenderer:
         bold = bool(cp.get("bold"))
         return self.fontbook.get(self.pt_to_px(pt), bold,
                                  self._face_for(cid, slot, bold))
+
+    def _embolden_px(self, cid, slot, font):
+        """Stroke width, in pixels, for a bold run drawn on a regular face.
+
+        ``_face_for`` has already decided whether this ``(charPr, slot)`` had
+        a real bold cut to resolve to.  Where it did not, the weight has to be
+        synthesised or the run is drawn at regular weight and the document's
+        emphasis disappears — which is what a report's section headings are
+        made of.  One pixel of stroke per 24 px of glyph size, floor 1, is
+        this renderer's choice and is declared: the standard does not publish
+        what HWP smears a faked bold by, and at body sizes every em fraction
+        between about 1/40 and 1/13 rounds to the same single pixel anyway.
+        The advance is NOT changed — the stroke grows the glyph outward only,
+        so a cached line still measures the width the authoring engine gave it.
+        """
+        if not self._charpr(cid).get("bold"):
+            return 0
+        if not self._synthetic_bold.get((cid, slot, True)):
+            return 0
+        self.applied["synthetic_bold"] = self.applied.get(
+            "synthetic_bold", 0) + 1
+        return max(1, int(round(getattr(font, "size", 0) / 24.0)))
 
     def _typography(self, cid, ch):
         """``(ratio, spacing, relSz, offset)`` for ``ch`` under ``cid``.
@@ -1408,6 +1498,7 @@ class OwnRenderer:
                 "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
                 "offset_px": size_px * offset / 100.0,
+                "embolden": self._embolden_px(cid, slot, font),
             })
             run.clear()
 
@@ -1954,21 +2045,30 @@ class OwnRenderer:
         renderer, not of the build.
         """
         y = baseline_px - piece["offset_px"]
+        # A faked bold is a HORIZONTAL smear: the glyph is drawn again a
+        # fraction of an em to the right, which thickens stems without
+        # growing the glyph vertically.  Pillow's ``stroke_width`` would
+        # thicken it in every direction and read as an outline, not a weight.
+        smear = [0] + ([piece.get("embolden")] if piece.get("embolden") else [])
         if piece["ratio"] == 100 or self._image is None:
             if piece["ratio"] != 100:
                 self._skip("hh:ratio", "horizontal glyph scaling could not be "
                                        "composited; drawn unscaled")
-            draw.text((x, y), piece["text"], font=piece["font"],
-                      fill=piece["colour"], anchor="ls")
+            for dx in smear:
+                draw.text((x + dx, y), piece["text"], font=piece["font"],
+                          fill=piece["colour"], anchor="ls")
             return
         font = piece["font"]
         ascent, descent = font.getmetrics()
         natural = max(1, int(math.ceil(
-            float(draw.textlength(piece["text"], font=font)) + 2)))
+            float(draw.textlength(piece["text"], font=font)) + 2
+            + max(smear))))
         height = max(1, ascent + descent)
         mask = self.Image.new("L", (natural, height), 0)
-        self.ImageDraw.Draw(mask).text((0, ascent), piece["text"], font=font,
-                                       fill=255, anchor="ls")
+        mask_draw = self.ImageDraw.Draw(mask)
+        for dx in smear:
+            mask_draw.text((dx, ascent), piece["text"], font=font,
+                           fill=255, anchor="ls")
         scaled = max(1, int(round(natural * piece["ratio"] / 100.0)))
         if scaled != natural:
             mask = mask.resize((scaled, height),
@@ -2237,6 +2337,96 @@ class OwnRenderer:
             else:
                 self._render_placeholder(draw, el, name, (x, y))
 
+    def _binary_bytes(self, item_id):
+        """The bytes of one ``BinData/`` entry, read on demand and cached."""
+        if item_id in self._bin_cache:
+            return self._bin_cache[item_id]
+        entry = self.bin_items.get(item_id)
+        data = None
+        if entry:
+            try:
+                with zipfile.ZipFile(self.path) as z:
+                    data = z.read(entry)
+            except (KeyError, OSError, zipfile.BadZipFile):
+                data = None
+        self._bin_cache[item_id] = data
+        return data
+
+    def _render_picture(self, el, origin_hwp, w_hwp, h_hwp):
+        """Draw an ``hp:pic``'s embedded raster at its declared ``hp:sz`` box.
+
+        Everything about the placement is already decided by the caller: the
+        box is the declared extent, exactly where the placeholder box used to
+        go, so this changes what is inside the box and nothing about the
+        layout.  ``hp:imgClip`` is a crop expressed against ``hp:imgDim``'s
+        declared source extent, not against the file's pixel size, so the crop
+        is taken as a *fraction* of each — that keeps a clipped picture right
+        whatever resolution the embedded file happens to be.
+
+        Returns True when it drew; False sends the caller back to the
+        placeholder box, which is what an unreadable or vector-only binary
+        gets.
+        """
+        if self._image is None:
+            return False
+        img_el = _kid(el, "img")
+        item_id = img_el.get("binaryItemIDRef") if img_el is not None else None
+        if not item_id:
+            return False
+        data = self._binary_bytes(item_id)
+        if not data:
+            self._skip("hp:pic", "the BinData entry hp:pic cites is missing "
+                                 "from the container; placeholder box drawn")
+            return False
+        try:
+            src = self.Image.open(io.BytesIO(data))
+            src.load()
+        except Exception:                       # Pillow raises broadly here
+            self._skip("hp:pic",
+                       "the embedded image is in a format Pillow cannot "
+                       "decode (HWP also embeds EMF/WMF vector art, which "
+                       "this tier does not rasterise); placeholder box drawn")
+            return False
+        dim = _kid(el, "imgDim")
+        clip = _kid(el, "imgClip")
+        dim_w = _iattr(dim, "dimwidth")
+        dim_h = _iattr(dim, "dimheight")
+        if clip is not None and dim_w > 0 and dim_h > 0:
+            left = _iattr(clip, "left") / dim_w
+            right = _iattr(clip, "right") / dim_w
+            top = _iattr(clip, "top") / dim_h
+            bottom = _iattr(clip, "bottom") / dim_h
+            box = (int(round(left * src.width)), int(round(top * src.height)),
+                   int(round(right * src.width)),
+                   int(round(bottom * src.height)))
+            if box[2] > box[0] and box[3] > box[1] and box != (
+                    0, 0, src.width, src.height):
+                src = src.crop(box)
+        flip = _kid(el, "flip")
+        if _iattr(flip, "horizontal"):
+            src = src.transpose(self.Image.Transpose.FLIP_LEFT_RIGHT)
+        if _iattr(flip, "vertical"):
+            src = src.transpose(self.Image.Transpose.FLIP_TOP_BOTTOM)
+        angle = _iattr(_kid(el, "rotationInfo"), "angle")
+        if angle:
+            self._skip("hp:pic@rotationInfo",
+                       "the picture is drawn unrotated; its declared rotation "
+                       f"of {angle} is not applied")
+        ox, oy = origin_hwp
+        x0, y0 = self.px(ox), self.px(oy)
+        x1, y1 = self.px(ox + w_hwp), self.px(oy + h_hwp)
+        box_w, box_h = max(1, x1 - x0), max(1, y1 - y0)
+        # LANCZOS is pinned for the same reason Layout.BASIC is: the resample
+        # filter has to be part of the renderer, not of the Pillow build.
+        src = src.resize((box_w, box_h), self.Image.Resampling.LANCZOS)
+        if src.mode in ("RGBA", "LA", "P"):
+            src = src.convert("RGBA")
+            self._image.paste(src, (x0, y0), src)
+        else:
+            self._image.paste(src.convert("RGB"), (x0, y0))
+        self.counts["images"] += 1
+        return True
+
     def _render_placeholder(self, draw, el, name, origin_hwp):
         """An honest box where art would be, never a silent hole."""
         ox, oy = origin_hwp
@@ -2244,6 +2434,9 @@ class OwnRenderer:
         w = _iattr(sz, "width") if sz is not None else 0
         h = _iattr(sz, "height") if sz is not None else 0
         extent_known = bool(w and h)
+        if name == "pic" and extent_known and self._render_picture(
+                el, origin_hwp, w, h):
+            return
         if not extent_known:
             w = w or 6000
             h = h or 3000
@@ -2410,12 +2603,36 @@ class OwnRenderer:
             btype = (spec.get("type") or "NONE").upper()
             if btype == "NONE":
                 continue
-            if btype != "SOLID":
-                self._skip(f"hh:{side}Border@type={btype}",
-                           "non-solid border stroked as solid")
             width = max(1, self.px(spec.get("width_hwp") or 0))
-            draw.line([(self.px(ax), self.px(ay)), (self.px(bx), self.px(by))],
-                      fill=spec.get("color") or (0, 0, 0), width=width)
+            colour = spec.get("color") or (0, 0, 0)
+            ax_px, ay_px = self.px(ax), self.px(ay)
+            bx_px, by_px = self.px(bx), self.px(by)
+            if btype == "DOUBLE_SLIM" and width >= 3:
+                # 이중 실선.  The declared width is the width of the whole
+                # BAND, not of a stroke: measured against a Hancom reference
+                # at 144 dpi, a border declaring 283.46 HWPUNIT (6 px) is
+                # drawn as two 2-px strokes with a 2-px gap, spanning exactly
+                # those 6 px.  Stroking the band solid — which is what this
+                # did — puts three times the ink on every such edge.
+                stroke = max(1, width // 3)
+                shift = (width - stroke) / 2.0
+                vertical = ax_px == bx_px
+                for sign in (-1, 1):
+                    dx = int(round(sign * shift)) if vertical else 0
+                    dy = 0 if vertical else int(round(sign * shift))
+                    draw.line([(ax_px + dx, ay_px + dy),
+                               (bx_px + dx, by_px + dy)],
+                              fill=colour, width=stroke)
+                self.counts["borders"] += 1
+                continue
+            if btype != "SOLID":
+                reason = ("non-solid border stroked as solid"
+                          if btype != "DOUBLE_SLIM" else
+                          "the declared band is too narrow at this dpi to "
+                          "resolve two strokes and a gap; stroked as solid")
+                self._skip(f"hh:{side}Border@type={btype}", reason)
+            draw.line([(ax_px, ay_px), (bx_px, by_px)],
+                      fill=colour, width=width)
             self.counts["borders"] += 1
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
@@ -2618,6 +2835,113 @@ class OwnRenderer:
             "paragraphs_relaid_out": computed,
         }
 
+    # -- page numbers ----------------------------------------------------
+    # Where Hancom draws a BOTTOM_* page number, measured — not assumed —
+    # against a reference PDF of a report-class document: the number's line
+    # box sits with its BOTTOM EDGE on ``page height - bottom margin``, and is
+    # aligned inside the body box ``[left margin, width - right margin]``.
+    # On the measured document (A4, bottom 3402, right 5669, left 7654 HWPUNIT)
+    # the reference draws its number's box bottom at 807.93 pt against a
+    # predicted 807.86, and its centre at 307.60 pt against a predicted
+    # 307.57.  Every other ``pos`` value is declared unmeasured and skipped
+    # rather than guessed from this one.
+    PAGE_NUM_POSITIONS = ("BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT")
+
+    def page_number_spec(self):
+        """The document's ``hp:pageNum`` control, or None.
+
+        ``hp:pageNum`` is 쪽 번호 매기기: it is not a footer paragraph, it is a
+        control that makes Hancom stamp a number on every page of the section.
+        It sits inside an ``hp:run``, and that run's ``charPrIDRef`` is what
+        meters the number, so the run is what has to be found, not the tag.
+        """
+        if self._page_num_spec is not _UNSET:
+            return self._page_num_spec
+        spec = None
+        for run in self.sections[0].iter():
+            if _local(run.tag) != "run":
+                continue
+            el = next((e for e in run.iter() if _local(e.tag) == "pageNum"),
+                      None)
+            if el is None:
+                continue
+            spec = {
+                "pos": (el.get("pos") or "").upper(),
+                "format": (el.get("formatType") or "DIGIT").upper(),
+                "side_char": el.get("sideChar") or "",
+                "charpr": run.get("charPrIDRef") or "",
+            }
+            break
+        if spec is not None:
+            start = next((e for e in self.sections[0].iter()
+                          if _local(e.tag) == "startNum"), None)
+            vis = next((e for e in self.sections[0].iter()
+                        if _local(e.tag) == "visibility"), None)
+            spec["first_number"] = max(1, _iattr(start, "page") or 1)
+            spec["hide_first"] = bool(_iattr(vis, "hideFirstPageNum"))
+        self._page_num_spec = spec
+        return spec
+
+    def _render_page_number(self, draw, geo, page_number):
+        """Stamp this page's number where ``hp:pageNum`` says to put it."""
+        spec = self.page_number_spec()
+        if spec is None:
+            return
+        if spec["pos"] not in self.PAGE_NUM_POSITIONS:
+            self._skip(f"hp:pageNum@pos={spec['pos'] or 'MISSING'}",
+                       "only the BOTTOM_LEFT/CENTER/RIGHT positions have been "
+                       "measured against a Hancom reference; no number is "
+                       "drawn for the others rather than one guessed")
+            return
+        if spec["format"] != "DIGIT":
+            self._skip(f"hp:pageNum@formatType={spec['format']}",
+                       "only DIGIT numbering is implemented; the number is "
+                       "drawn in arabic digits")
+        if page_number == 1 and spec["hide_first"]:
+            return
+        number = spec["first_number"] + page_number - 1
+        side = spec["side_char"]
+        text = f"{side} {number} {side}" if side else str(number)
+        cid = spec["charpr"]
+        pieces = self._text_pieces(draw, cid, text)
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        colour = self._charpr(cid).get("color") or (0, 0, 0)
+        for piece in pieces:
+            piece["colour"] = colour
+        width = sum(p["advance"] for p in pieces)
+        glyph = next((p for p in pieces if p["kind"] == "glyph"), None)
+        if glyph is None:
+            return
+        ascent, descent = glyph["font"].getmetrics()
+        left = self.px(geo["margin"]["left"])
+        right = self.px(geo["width"] - geo["margin"]["right"])
+        if spec["pos"] == "BOTTOM_LEFT":
+            x = left
+        elif spec["pos"] == "BOTTOM_RIGHT":
+            x = right - width
+        else:
+            x = left + (right - left - width) / 2.0
+        bottom = self.px(geo["height"] - geo["margin"]["bottom"])
+        baseline = bottom - descent
+        x0 = x
+        for piece in pieces:
+            if piece["kind"] == "glyph":
+                self._draw_glyph_piece(draw, piece, x, baseline)
+            x += piece["advance"]
+        self.counts["page_numbers"] += 1
+        # A stamped number is a text line the reference PDF also extracts, so
+        # it belongs in the geometric comparison channel like any other line.
+        self.counts["text_lines"] += 1
+        self.line_boxes.append({
+            "page": self._page,
+            "mode": "pagenum",
+            "x0": round(x0, 3),
+            "y0": round(baseline - ascent, 3),
+            "x1": round(x0 + width, 3),
+            "y1": round(baseline + descent, 3),
+        })
+
     def render(self):
         geo = self.page_geometry()
         pages = self.paginate()
@@ -2634,6 +2958,7 @@ class OwnRenderer:
                 (geo["body_left"], geo["body_top"]),
                 geo["usable_width"],
             )
+            self._render_page_number(draw, geo, page_number)
             images.append(img)
         self._audit_unsupported()
         sidecar = {

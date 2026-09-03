@@ -21,6 +21,7 @@ the module skips when they or Pillow are absent.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -112,22 +113,208 @@ def test_sidecar_is_written_next_to_the_pages(gianmun_render):
 
 
 def test_skipped_elements_are_named_not_dropped(tmp_path):
-    """A form carrying an element this tier cannot draw must say so.
+    """Whatever this tier cannot draw must be named, with a reason and a count.
 
-    ``hp:equation`` is the element the slice was scoped around, but none of the
-    ten committed corpus forms contains one (verified by scanning every
-    ``Contents/section*.xml``), so the probe uses the same contract on the
-    element the corpus does carry: ``hp:pic``.  Both take the same code path —
-    ``_render_placeholder`` — so this pins the behaviour for equations too.
+    The element this probe used to hang on — ``hp:pic`` — is now drawn from
+    ``BinData``, so the contract is checked on whatever the form still cannot
+    render rather than on one named tag: every entry carries a non-empty
+    reason and a positive count, and nothing is dropped silently.
+    """
+    result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
+    report = result["report"]
+    assert report["elements_skipped"], "a form with unhandled elements said nothing"
+    for entry in report["elements_skipped"]:
+        assert entry["reason"], entry
+        assert entry["count"] >= 1
+
+
+def test_embedded_pictures_are_drawn_from_bindata(tmp_path):
+    """``hp:pic`` draws its embedded raster, not a placeholder box.
+
+    The corpus form carries pictures whose bytes are in ``BinData/``; the
+    manifest in ``Contents/content.hpf`` is what maps ``binaryItemIDRef`` to
+    the container entry.  Drawing them has to count as an image and drop
+    ``hp:pic`` out of ``elements_skipped``.
     """
     result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
     report = result["report"]
     skipped = {entry["element"] for entry in report["elements_skipped"]}
-    assert "hp:pic" in skipped, skipped
-    assert report["elements_rendered"]["placeholders"] >= 1
-    for entry in report["elements_skipped"]:
-        assert entry["reason"], entry
-        assert entry["count"] >= 1
+    assert "hp:pic" not in skipped, skipped
+    assert report["elements_rendered"]["images"] >= 1
+
+
+def test_binary_items_reads_the_opf_manifest(tmp_path):
+    """The id a picture cites is resolved through the manifest, not guessed.
+
+    The href in ``content.hpf`` and the id differ in case and extension often
+    enough that a stem guess is not sound; the stem fallback exists only for a
+    container that ships no manifest at all.
+    """
+    import zipfile as _zip
+
+    path = tmp_path / "manifest.hwpx"
+    with _zip.ZipFile(path, "w") as z:
+        z.writestr(
+            "Contents/content.hpf",
+            '<opf:package xmlns:opf="urn:x"><opf:manifest>'
+            '<opf:item id="image1" href="BinData/PICTURE1.BMP"/>'
+            "</opf:manifest></opf:package>")
+        z.writestr("BinData/PICTURE1.BMP", b"\x00")
+        z.writestr("BinData/loose9.png", b"\x00")
+    with _zip.ZipFile(path) as z:
+        items = own_render.binary_items(z, z.namelist())
+    assert items["image1"] == "BinData/PICTURE1.BMP"
+    assert items["loose9"] == "BinData/loose9.png"
+
+
+def test_an_undecodable_picture_falls_back_to_the_placeholder():
+    """Vector art (EMF/WMF) and corrupt bytes get a box and a named reason.
+
+    HWP embeds EMF as readily as PNG, and this tier does not rasterise vector
+    art.  The contract is that such a picture is still visible as a box and
+    still declared — never a silent hole.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    renderer.bin_items = {"image9": "BinData/image9.emf"}
+    renderer._bin_cache = {"image9": b"\x01\x00\x09\x00not-a-raster"}
+    renderer._image = renderer.Image.new("RGB", (400, 200), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(renderer._image)
+    pic = ET.fromstring(
+        '<hp:pic xmlns:hp="urn:x" xmlns:hc="urn:y">'
+        '<hc:img binaryItemIDRef="image9"/>'
+        '<hp:sz width="7200" height="3600"/></hp:pic>')
+    renderer._render_placeholder(draw, pic, "pic", (0, 0))
+    assert renderer.counts["images"] == 0
+    assert renderer.counts["placeholders"] == 1
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if e["element"] == "hp:pic"]
+    assert any("Pillow cannot" in r for r in reasons), reasons
+
+
+def test_a_clipped_picture_crops_by_the_declared_fraction(tmp_path):
+    """``hp:imgClip`` is a crop against ``hp:imgDim``, not against pixels.
+
+    A half-width clip on a two-colour source must leave only the kept half's
+    colour in the box, whatever the embedded file's own resolution is.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    source = renderer.Image.new("RGB", (40, 10), (255, 0, 0))
+    source.paste((0, 0, 255), (20, 0, 40, 10))
+    buf = io.BytesIO()
+    source.save(buf, format="PNG")
+    renderer.bin_items = {"i": "BinData/i.png"}
+    renderer._bin_cache = {"i": buf.getvalue()}
+    renderer._image = renderer.Image.new("RGB", (200, 100), (255, 255, 255))
+    pic = ET.fromstring(
+        '<hp:pic xmlns:hp="urn:x" xmlns:hc="urn:y">'
+        '<hc:img binaryItemIDRef="i"/>'
+        '<hp:imgDim dimwidth="4000" dimheight="1000"/>'
+        '<hp:imgClip left="0" right="2000" top="0" bottom="1000"/>'
+        '<hp:sz width="7200" height="3600"/></hp:pic>')
+    assert renderer._render_picture(pic, (0, 0), 7200, 3600)
+    assert renderer.counts["images"] == 1
+    box_w, box_h = renderer.px(7200), renderer.px(3600)
+    kept = renderer._image.crop((0, 0, box_w, box_h))
+    colours = {c for _n, c in kept.getcolors(maxcolors=1 << 16)}
+    assert all(c[0] > c[2] for c in colours), colours
+
+
+def _pagenum_renderer(pos, side="-", fmt="DIGIT", start=1, hide_first=0):
+    """A renderer whose section declares one ``hp:pageNum`` control.
+
+    No corpus form uses 쪽 번호 매기기, so the control is injected the way the
+    equation path is driven directly: the geometry under test is the page
+    box's, which the corpus form supplies for real.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    run = ET.fromstring(
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        f'<hp:pageNum pos="{pos}" formatType="{fmt}" sideChar="{side}"/>'
+        "</hp:ctrl></hp:run>")
+    section = renderer.sections[0]
+    section.append(run)
+    # The form already declares hp:startNum / hp:visibility; the renderer
+    # reads the first of each, so the test has to edit those rather than
+    # append rivals it would never see.
+    for tag, attr, value in (("startNum", "page", start),
+                             ("visibility", "hideFirstPageNum", hide_first)):
+        el = next((e for e in section.iter() if e.tag.rsplit("}", 1)[-1] == tag),
+                  None)
+        if el is None:
+            el = ET.SubElement(section, tag)
+        el.set(attr, str(value))
+    renderer._page_num_spec = own_render._UNSET
+    return renderer
+
+
+def test_a_page_number_is_stamped_on_every_page():
+    """``hp:pageNum`` is a control, not a footer: every page gets a number."""
+    renderer = _pagenum_renderer("BOTTOM_CENTER")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == sidecar["pages"]
+    assert sidecar["pages"] >= 1
+
+
+def test_a_bottom_page_number_sits_on_the_bottom_margin():
+    """Measured placement, not a guess.
+
+    Against a Hancom reference the number's line box has its BOTTOM EDGE on
+    ``page height - bottom margin`` and is centred in the body box.  Both are
+    asserted here in the renderer's own pixel units, so a change to either
+    rule is caught.
+    """
+    renderer = _pagenum_renderer("BOTTOM_CENTER")
+    _images, sidecar = renderer.render()
+    geo = renderer.page_geometry()
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "pagenum"]
+    assert boxes
+    bottom = renderer.px(geo["height"] - geo["margin"]["bottom"])
+    left = renderer.px(geo["margin"]["left"])
+    right = renderer.px(geo["width"] - geo["margin"]["right"])
+    for box in boxes:
+        assert abs(box["y1"] - bottom) <= 1, box
+        centre = (box["x0"] + box["x1"]) / 2.0
+        assert abs(centre - (left + right) / 2.0) <= 1, box
+
+
+def test_page_number_alignment_follows_pos():
+    """LEFT and RIGHT anchor on the body box's own edges."""
+    left_boxes = [b for b in _pagenum_renderer("BOTTOM_LEFT").render()[1]
+                  ["line_boxes"] if b["mode"] == "pagenum"]
+    right_boxes = [b for b in _pagenum_renderer("BOTTOM_RIGHT").render()[1]
+                   ["line_boxes"] if b["mode"] == "pagenum"]
+    renderer = _pagenum_renderer("BOTTOM_LEFT")
+    geo = renderer.page_geometry()
+    assert abs(left_boxes[0]["x0"] - renderer.px(geo["margin"]["left"])) <= 1
+    assert abs(right_boxes[0]["x1"]
+               - renderer.px(geo["width"] - geo["margin"]["right"])) <= 1
+
+
+def test_an_unmeasured_page_number_position_is_declared_not_guessed():
+    """A TOP_* or INSIDE_* number has never been measured; draw nothing."""
+    renderer = _pagenum_renderer("TOP_CENTER")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == 0
+    skipped = {e["element"] for e in sidecar["elements_skipped"]}
+    assert "hp:pageNum@pos=TOP_CENTER" in skipped, skipped
+
+
+def test_hide_first_page_number_is_honoured():
+    renderer = _pagenum_renderer("BOTTOM_CENTER", hide_first=1)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["page_numbers"] == sidecar["pages"] - 1
+
+
+def test_start_number_offsets_the_stamped_number():
+    """``hp:startNum@page`` renumbers; the count of stamps does not change."""
+    renderer = _pagenum_renderer("BOTTOM_CENTER", start=7)
+    assert renderer.page_number_spec()["first_number"] == 7
 
 
 def test_equation_reaches_the_placeholder_path(tmp_path):
@@ -1209,6 +1396,179 @@ def test_solve_tracks_matches_declared_total_even_when_underdetermined():
     widths = own_render.solve_tracks(3, [(0, 3, 300)], declared_total=300)
     assert widths == [100, 100, 100]
     assert sum(widths) == 300
+
+
+def _ink(image):
+    return sum(image.convert("L").histogram()[:160])
+
+
+def test_the_face_cache_is_keyed_by_what_the_lookup_asks_for():
+    """A shadowed loop variable filed every entry under the wrong key.
+
+    ``_face_for`` reads ``self._face_cache[(cid, slot, bold)]`` and used to
+    write ``self._face_cache["hangul"]``, so the cache could never hit and
+    every character re-ran a system font-index lookup.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    if renderer.font_index is None:
+        pytest.skip("no system font index on this machine")
+    cid = next(iter(renderer.defs["char_pr"]))
+    renderer._face_for(cid, "hangul", False)
+    assert renderer._face_cache, "nothing was cached at all"
+    assert all(isinstance(k, tuple) and len(k) == 3
+               for k in renderer._face_cache), list(renderer._face_cache)
+    before = dict(renderer._face_cache)
+    renderer._face_for(cid, "hangul", False)
+    assert list(renderer._face_cache) == list(before), "the cache missed"
+
+
+def test_a_bold_run_on_a_family_with_no_bold_cut_is_smeared():
+    """HWP fakes the weight; drawing regular glyphs loses the emphasis.
+
+    바탕 / Batang ships no bold cut, and it is the face a report-class
+    document is set in, so this is the ordinary case rather than an edge one.
+    The smear is horizontal — a vertical one would read as an outline — and
+    it must not change the advance, or a cached line stops fitting its box.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    font = renderer.fontbook.get(30, False, None)
+    piece = {"kind": "glyph", "text": "강", "font": font, "ratio": 100,
+             "size_px": 30, "offset_px": 0, "colour": (0, 0, 0),
+             "embolden": 0}
+    plain = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    renderer._image = plain
+    renderer._draw_glyph_piece(renderer.ImageDraw.Draw(plain), piece, 5, 45)
+    heavy = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    renderer._image = heavy
+    renderer._draw_glyph_piece(renderer.ImageDraw.Draw(heavy),
+                               {**piece, "embolden": 1}, 5, 45)
+    assert _ink(heavy) > _ink(plain), (_ink(heavy), _ink(plain))
+    # Horizontal only: the smeared glyph occupies no extra rows.
+    def rows(image):
+        grey = image.convert("L").load()
+        return {y for y in range(60) for x in range(120) if grey[x, y] < 160}
+    assert rows(heavy) == rows(plain)
+
+
+def test_embolden_is_asked_for_only_when_no_real_bold_cut_resolved():
+    """A family that does have a bold face is drawn with it, not smeared."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    cid = next(iter(renderer.defs["char_pr"]))
+    font = renderer.fontbook.get(30, False, None)
+    renderer.defs["char_pr"][cid] = {
+        **renderer.defs["char_pr"][cid], "bold": True}
+    renderer._synthetic_bold[(cid, "hangul", True)] = False
+    assert renderer._embolden_px(cid, "hangul", font) == 0
+    renderer._synthetic_bold[(cid, "hangul", True)] = True
+    assert renderer._embolden_px(cid, "hangul", font) >= 1
+    renderer.defs["char_pr"][cid] = {
+        **renderer.defs["char_pr"][cid], "bold": False}
+    assert renderer._embolden_px(cid, "hangul", font) == 0
+
+
+def _border_probe(btype, width_hwp, dpi=144):
+    """Draw one top border of ``btype`` and return its dark-pixel runs.
+
+    ``px`` at 144 dpi is ``hwpunit / 50``, so the geometry below puts the edge
+    at y=20 px across a 100 px span.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"]["probe"] = {
+        "top": {"type": btype, "width_hwp": width_hwp, "color": (0, 0, 0)},
+        "bottom": {"type": "NONE"}, "left": {"type": "NONE"},
+        "right": {"type": "NONE"},
+    }
+    image = renderer.Image.new("RGB", (120, 60), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    tc = ET.fromstring('<hp:tc xmlns:hp="urn:x" borderFillIDRef="probe"/>')
+    renderer._draw_cell_borders(draw, {"tc": tc}, 0, 1000, 5000, 2000)
+    grey = image.convert("L").load()
+    runs, y = [], 0
+    while y < 60:
+        if grey[50, y] < 160:
+            y0 = y
+            while y < 60 and grey[50, y] < 160:
+                y += 1
+            runs.append((y0, y - y0))
+        else:
+            y += 1
+    return renderer, runs
+
+
+def test_a_double_slim_border_is_two_strokes_not_one_fat_one():
+    """이중 실선: the declared width is the BAND, not the stroke.
+
+    Measured against a Hancom reference at 144 dpi — a 283.46 HWPUNIT border
+    (6 px) is drawn as two 2-px strokes with a 2-px gap, spanning those 6 px.
+    Stroking the band solid put three times the ink on every such edge.
+    """
+    renderer, runs = _border_probe("DOUBLE_SLIM", 283.46456692913387)
+    assert len(runs) == 2, runs
+    assert runs[0][1] == runs[1][1] == 2, runs
+    span = runs[1][0] + runs[1][1] - runs[0][0]
+    assert span == 6, runs
+    skipped = {e["element"] for e in renderer.skipped.values()}
+    assert not any("DOUBLE_SLIM" in s for s in skipped), skipped
+
+
+def test_a_double_border_too_narrow_to_resolve_stays_solid_and_declared():
+    """Below three pixels there is no room for two strokes and a gap."""
+    renderer, runs = _border_probe("DOUBLE_SLIM", 100.0)
+    assert len(runs) == 1, runs
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if "DOUBLE_SLIM" in e["element"]]
+    assert any("too narrow" in r for r in reasons), reasons
+
+
+def test_other_non_solid_border_types_are_still_declared_as_solid():
+    """DASH is in the corpus and is still stroked solid — say so."""
+    renderer, runs = _border_probe("DASH", 283.46456692913387)
+    assert len(runs) == 1, runs
+    reasons = [e["reason"] for e in renderer.skipped.values()
+               if "DASH" in e["element"]]
+    assert any("stroked as solid" in r for r in reasons), reasons
+
+
+def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
+    """Row 0 holds a one-line cell and a two-line cell; it must fit both.
+
+    Document order puts the short cell first.  Resolving the track from the
+    first constraint that covers it gives the row the short cell's height and
+    draws the tall cell's second line over the row below — which is what a
+    report-class table does and a one-line-per-row government form never
+    does.
+    """
+    heights = own_render.solve_tracks(
+        2, [(0, 1, 1182), (0, 1, 2622), (1, 1, 1182)])
+    assert heights == [2622, 1182]
+
+
+def test_a_track_takes_the_max_whichever_order_the_cells_arrive_in():
+    """The result cannot depend on the order the file lists its cells."""
+    forward = own_render.solve_tracks(1, [(0, 1, 900), (0, 1, 2400)])
+    backward = own_render.solve_tracks(1, [(0, 1, 2400), (0, 1, 900)])
+    assert forward == backward == [2400]
+
+
+def test_row_heights_sum_to_the_tables_own_declared_height(tmp_path):
+    """A synthetic two-column table whose rows differ in line count.
+
+    The check is the file's own internal agreement: solved rows must sum to
+    the table's declared hp:sz@height without the declared-total rescale
+    having to make up a shortfall, which is only true under the max reading.
+    """
+    rows = [(0, 1200), (1, 2400), (2, 1200)]
+    constraints = []
+    for row, tall in rows:
+        constraints.append((row, 1, 1200))   # the short cell, listed first
+        constraints.append((row, 1, tall))   # the tall cell, listed second
+    total = sum(tall for _row, tall in rows)
+    heights = own_render.solve_tracks(len(rows), constraints,
+                                      declared_total=total)
+    assert heights == [1200, 2400, 1200]
+    assert sum(heights) == total
 
 
 # ---------------------------------------------------------------- ink probe
