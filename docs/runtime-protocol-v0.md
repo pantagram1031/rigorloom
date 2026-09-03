@@ -1594,6 +1594,12 @@ candidate descriptors refuse with pathless `path_escape` before any file is
 opened. The same `candidate_artifact` resolver is used by read, chaining,
 comparison, verification, render preparation, and module checks.
 
+Equal artifact bytes are not enough to reuse a receipt. A verified read also
+requires the receipt's schema, containing `sessionId`/`runId`, exact source
+descriptor, `planId`/`planHash`, and approved approval record to agree with one
+another and with the containing session/run. A transplanted receipt refuses as
+`receipt_body_mismatch` without echoing the foreign identifiers.
+
 This is what makes an undo *derivable*: the value a reversal must restore is
 read off the chain through the runtime's own reader, never out of client
 memory.
