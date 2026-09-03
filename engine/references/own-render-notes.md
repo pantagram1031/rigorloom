@@ -595,6 +595,40 @@ Measured worth of justification, by ablation on the comparable forms
 (with it / without it, line-box IoU): moel-2025 0.4706/0.4668, jumin
 0.5700/0.5421, moel-2013 0.4397/0.4498, jeongbo unchanged. Net positive, kept.
 
+**The cached box is not always what JUSTIFY stretches to.** The line above —
+"`horzsize` stays the full column even for a centred line" — turned out to be
+a corpus-only reading. On a private report-class holdout (prose body text,
+485 paragraphs, 415 scored), 123 body paragraphs' interior JUSTIFY lines all
+stretched to a cached `hp:lineseg@horzsize` that was a document-wide-constant
+**853 HWPUNIT** short of the paragraph's own available width — verified
+against the reference PDF, whose measured line right-edges (`PyMuPDF`
+`get_text("words")`, grouped into lines) land on the *wider* figure
+(`avail_w_hwp`, the same box `--line-layout computed` already used), not the
+narrower cached one. Right-edge agreement (nearest reference line by
+y-position, matched within 0.5 em) measured **29/239 lines (12.1%)** before a
+fix and **208/239 (87.0%)** after, at 144 dpi. The remaining ~13% are mostly a
+crude line-matcher artifact (nearest-y matching against a multi-column or
+figure-adjacent reference line), not a residual alignment bug — see
+`docs/research/` for the run this measured.
+
+The fix is `_draw_line`'s `stretch_avail_hwp`: a box computed *separately*
+from the one used for `LEFT`/`CENTER`/`RIGHT` offset and for
+`line_boxes` bookkeeping, used only to size `JUSTIFY`/`DISTRIBUTE` slack, and
+only ever `max()`-widened against the cached `horzsize` — never narrowed. For
+a cached line, that box is `avail_w_hwp - horzpos - margin_right` (the same
+quantity `_line_box` computes for a freshly-broken line); for a computed
+line, `avail_hwp` already *is* that quantity, so nothing changes there. This
+also protects the opposite case, seen on several corpus forms (table cells
+whose cached box is *wider* than the cell `avail_w_hwp` this renderer
+computes — up to 689 HWPUNIT on moel-2013): `max()` leaves those untouched,
+which is why the ten-form regression floor's pass/blocked verdicts are
+byte-for-byte identical before and after (per-form `ssim_inked_mean` moves by
+≤0.0003 either direction). On the holdout: `text_line_iou_mean` 0.5349 →
+0.5389, `ssim_inked_mean` 0.1289 → 0.1295, page-11 `text_line_iou` (candidate
+lines) 0.6144 → 0.6188 — a real but modest aggregate move, because the two
+other named mechanisms on that page (equation glyphs not math-italic, the
+double-rule box border) are untouched by this slice.
+
 **Inline vs anchored objects.** `hp:pos@treatAsChar="1"` objects are laid out
 *inside* the line (they consume width and participate in alignment); anything
 else is placed from `@horzOffset`/`@vertOffset` against the frame
