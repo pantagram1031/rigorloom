@@ -2318,6 +2318,198 @@ def test_the_flow_pass_finds_the_two_pages_the_vertpos_heuristic_misses():
     assert report["abs_dy_hwpunit"]["median"] == 0.0
 
 
+def _kstartup_path():
+    return _need(os.path.join(
+        CORPUS, "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"))
+
+
+def _overlapping_line_box_pairs(line_boxes, page):
+    """Every pair of DIFFERENT-page-``page`` line boxes whose rectangles
+    intersect.  A run of nothing but whitespace is excluded upstream (
+    ``_draw_line`` no longer records a box for one — E2.7), so every box
+    reaching here drew visible ink; two overlapping is a real collision.
+    """
+    boxes = [b for b in line_boxes if b["page"] == page]
+    bad = []
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            if (a["x0"] < b["x1"] and b["x0"] < a["x1"]
+                    and a["y0"] < b["y1"] and b["y0"] < a["y1"]):
+                bad.append((a, b))
+    return bad
+
+
+def test_kstartup_page_six_no_longer_overflows_without_a_page_break():
+    """E2.7 — Q2 contributor 2 of docs/research/residual-advance-and-ink.md.
+
+    kstartup's largest anchored, ``pageBreak="CELL"`` table declares
+    ``hh:sz@height=70529`` HWPUNIT, but its own content (measured the same
+    way a row's own height already is, ``_table_tracks``) needs 96966 — a
+    stale declared height the fit test used to trust blindly, so the block
+    was placed as "fits" and drawn straight through the page bottom into
+    the next block's own content.  Split at the row boundary the content
+    itself calls for, the two pieces land on their own pages and Hancom's
+    own page count (22) is reproduced from the geometry, unchanged.
+    """
+    renderer = own_render.OwnRenderer(
+        _kstartup_path(), dpi=144,
+        block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    _images, sidecar = renderer.render()
+    assert sidecar["pages"] == 22
+    counters = sidecar["block_layout"]["flow_counters"]
+    assert counters["tables_split"] >= 1
+    bad = _overlapping_line_box_pairs(sidecar["line_boxes"], page=6)
+    assert bad == [], bad
+
+
+def test_kstartup_auto_mode_also_catches_the_same_cache_seeded_overflow():
+    """The safety net named in the task: ``auto`` reads the authoring
+    engine's cached page assignment and, on an unedited document, places
+    nothing itself (E2.5) — so the SAME anchored table, placed at the
+    cache's own seat, has to be caught here too, or the shipping default
+    still draws the overlap the computed flow pass above no longer does.
+    """
+    renderer = own_render.OwnRenderer(_kstartup_path(), dpi=144)
+    assert renderer.block_layout == own_render.BLOCK_LAYOUT_AUTO
+    _images, sidecar = renderer.render()
+    assert renderer.defs is not None  # cheap smoke: render actually ran
+    counters_touched = "hp:tbl (anchored, CELL-splittable)" in {
+        e["element"] for e in renderer.skipped.values()}
+    assert counters_touched, (
+        "fixture drifted: the auto/cache path never hit the anchor-overflow "
+        "safety net at all")
+    bad = []
+    pages_with_boxes = {b["page"] for b in sidecar["line_boxes"]}
+    for page in pages_with_boxes:
+        bad.extend(_overlapping_line_box_pairs(sidecar["line_boxes"], page))
+    # Two overlaps PRE-DATE this slice, confirmed unchanged by comparing this
+    # test's own before/after run against ``git stash`` of E2.7's diff, and
+    # neither is this slice's anchor-overflow mechanism:
+    #   - page 1: two identical "computed"-mode boxes, a duplicate-draw bug
+    #     this task's scope does not name;
+    #   - a huge, garbage ``hp:pos@vertOffset`` (already declared "limit 12"
+    #     — an ignored reserve, not a page-break decision) puts a handful of
+    #     boxes ~4.3 billion HWPUNIT down the sheet, so those pairs' own
+    #     coordinates identify them without guessing which page they land on
+    #     under whichever mode is being scored.
+    bad = [(a, b) for a, b in bad
+          if a["y0"] < 1_000_000 and a["page"] != 1]
+    assert bad == [], bad
+
+
+# ------------------------------------------------------- cell shading (E2.7)
+
+def test_border_fill_resolves_exactly_its_declared_facecolor_or_none():
+    """Q2 contributor 3 of docs/research/residual-advance-and-ink.md named a
+    candidate mechanism: a ``hh:borderFill`` whose cell fill resolution goes
+    wrong.  Traced to source with ``parse_header`` directly (the same
+    function every corpus form's ``Contents/header.xml`` goes through): a
+    synthetic ``hh:borderFill`` with a declared ``hc:winBrush@faceColor``
+    resolves to exactly that colour REGARDLESS of ``alpha`` (0 or 100, both
+    tried — the corpus's own 50 ``hc:winBrush`` entries carry ``alpha="0"``
+    uniformly, including ones this renderer already draws correctly, so it
+    is not a fill/no-fill switch this format uses and this renderer does not
+    read it as one); ``faceColor="none"`` and a borderFill with no
+    ``hc:fillBrush`` at all both resolve to no fill.  Cross-checked against
+    the corpus cell the research doc named: the label cells (수집·이용목적
+    등, ``hh:borderFill`` id 24/28/30, ``faceColor="#DFEAF5"``) render at
+    (223, 234, 245) against Hancom's own (222, 233, 245) at the SAME,
+    correctly-aligned position — a 1-of-255 rounding difference, not a
+    colour bug.
+    """
+    def fill_of(winbrush_attrs):
+        header = (
+            '<hh:head xmlns:hh="urn:x" xmlns:hc="urn:y">'
+            '<hh:borderFills itemCnt="1"><hh:borderFill id="probe" '
+            'threeD="0" shadow="0" centerLine="NONE" '
+            'breakCellSeparateLine="0">'
+            '<hh:slash type="NONE" Crooked="0" isCounter="0"/>'
+            '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
+            '<hh:leftBorder type="NONE" width="0.1 mm" color="#000000"/>'
+            '<hh:rightBorder type="NONE" width="0.1 mm" color="#000000"/>'
+            '<hh:topBorder type="NONE" width="0.1 mm" color="#000000"/>'
+            '<hh:bottomBorder type="NONE" width="0.1 mm" color="#000000"/>'
+            '<hh:diagonal type="NONE" width="0.1 mm" color="#000000"/>'
+            + ('<hc:fillBrush>' + winbrush_attrs + '</hc:fillBrush>'
+               if winbrush_attrs is not None else '')
+            + '</hh:borderFill></hh:borderFills></hh:head>')
+        return own_render.parse_header(
+            header.encode("utf-8"))["border_fill"]["probe"]["fill"]
+
+    assert fill_of(None) is None                     # no hc:fillBrush
+    assert fill_of('<hc:winBrush faceColor="none" hatchColor="#000000" '
+                   'alpha="0"/>') is None
+    for alpha in ("0", "100"):
+        assert fill_of(f'<hc:winBrush faceColor="#DFEAF5" '
+                       f'hatchColor="#000000" alpha="{alpha}"/>'
+                       ) == (0xDF, 0xEA, 0xF5)
+
+    renderer = own_render.OwnRenderer(_kstartup_path(), dpi=144)
+    # The corpus cell docs/research names: borderFillIDRef 24, #DFEAF5.
+    assert renderer.defs["border_fill"]["24"]["fill"] == (0xDF, 0xEA, 0xF5)
+    # A borderFill with no hc:fillBrush at all (id 52, the label's OWN
+    # wrapping paragraph's tc — a different cell, same document) fills
+    # nothing.
+    assert renderer.defs["border_fill"]["52"]["fill"] is None
+    # Every winBrush this document declares carries alpha="0", including
+    # ones already known to render correctly — the corpus-wide confirmation
+    # that alpha is not read as a fill/no-fill switch here.
+    import zipfile as _zipfile
+    with _zipfile.ZipFile(_kstartup_path()) as zf:
+        header_xml = zf.read("Contents/header.xml").decode("utf-8")
+    import re as _re
+    brushes = _re.findall(r"<hc:winBrush[^/]*/>", header_xml)
+    assert brushes, "fixture drifted: no hc:winBrush left in kstartup"
+    assert all('alpha="0"' in b for b in brushes), brushes
+
+
+def _one_cell_table(border_fill_id, border_fill_entry, dpi=96):
+    """Render a synthetic one-cell, one-row table whose only cell references
+    ``border_fill_id`` (registered in-memory as ``border_fill_entry``) — the
+    same in-memory-element pattern ``_border_probe`` uses for border
+    drawing, extended to a whole table so ``_render_table``'s own
+    fill/border/content pipeline runs end to end, with no ``.hwpx`` file
+    needed at all.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"][border_fill_id] = border_fill_entry
+    tbl = ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="1" colCnt="1">'
+        '<hp:sz width="8000" widthRelTo="ABSOLUTE" height="4000" '
+        'heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:tr><hp:tc borderFillIDRef="' + border_fill_id + '">'
+        '<hp:subList/>'
+        '<hp:cellAddr rowAddr="0" colAddr="0"/>'
+        '<hp:cellSpan rowSpan="1" colSpan="1"/>'
+        '<hp:cellSz width="8000" height="4000"/>'
+        '<hp:cellMargin left="0" right="0" top="0" bottom="0"/>'
+        '</hp:tc></hp:tr></hp:tbl>')
+    image = renderer.Image.new("RGB", (200, 100), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    renderer._render_table(draw, tbl, (0, 0))
+    return renderer, image
+
+
+def test_a_cell_with_no_fillbrush_draws_no_rectangle():
+    renderer, image = _one_cell_table("probe_none", {
+        "fill": None, "left": {"type": "NONE"}, "right": {"type": "NONE"},
+        "top": {"type": "NONE"}, "bottom": {"type": "NONE"},
+    })
+    # Interior of the cell, away from any border stroke.
+    assert image.getpixel((100, 50)) == (255, 255, 255)
+
+
+def test_a_cell_with_a_declared_facecolor_draws_exactly_that_colour():
+    renderer, image = _one_cell_table("probe_blue", {
+        "fill": (0xDF, 0xEA, 0xF5),
+        "left": {"type": "NONE"}, "right": {"type": "NONE"},
+        "top": {"type": "NONE"}, "bottom": {"type": "NONE"},
+    })
+    assert image.getpixel((100, 50)) == (0xDF, 0xEA, 0xF5)
+
+
 def test_cli_reports_flow_agreement():
     proc = subprocess.run(
         [sys.executable, os.path.join(ENGINE, "scripts", "own_render.py"),
