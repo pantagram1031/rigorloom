@@ -729,6 +729,110 @@ def test_the_default_separator_length_is_declared_as_a_reading():
         e["element"] for e in sidecar["elements_skipped"]}
 
 
+def test_an_endnote_is_set_at_the_end_of_the_section():
+    renderer = _note_renderer(kind="endNote", count=2)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 2
+    assert sidecar["elements_rendered"]["note_marks"] == 2
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    last = max(b["page"] for b in boxes)
+    assert last == sidecar["pages"], (last, sidecar["pages"])
+    body = [b for b in sidecar["line_boxes"]
+            if b["mode"] in ("lineseg", "computed") and b["page"] == last]
+    if body:
+        assert min(b["y0"] for b in boxes) >= max(b["y0"] for b in body)
+
+
+def test_endnotes_continue_onto_new_pages_at_a_note_boundary():
+    """Unlike a footnote, an endnote block is not bound to one page, so the
+    continuation the standard describes IS implemented — between notes."""
+    base = _note_renderer(kind="endNote", count=0)
+    _images, base_side = base.render()
+    many = _note_renderer(kind="endNote", count=4, reps=60)
+    _images, side = many.render()
+    assert side["pages"] > base_side["pages"]
+    assert side["elements_rendered"]["endnotes"] == 4
+    pages = {b["page"] for b in side["line_boxes"] if b["mode"] == "endnote"}
+    assert len(pages) > 1, pages
+
+
+def test_an_endnote_taller_than_one_page_is_declared_not_hidden():
+    renderer = _note_renderer(source=os.path.join(
+        CORPUS, "nrf-gyeolgwa-bogoseo-yangsik.hwpx"),
+        kind="endNote", count=1, reps=60)
+    _images, sidecar = renderer.render()
+    assert "hp:endNote taller than one page" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+
+
+def test_footnote_and_endnote_numbering_are_separate_sequences():
+    from xml.etree import ElementTree as ET
+
+    renderer = _note_renderer(kind="footNote", count=2)
+    host = own_render._kids(renderer.sections[0], "p")[1]
+    for n in range(2):
+        host.append(ET.fromstring(_note_xml("endNote", "e%d" % (n + 1))))
+    renderer._furniture = None
+    renderer._note_marks = {}
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in renderer.sections[0].iter()
+            if own_render._local(e.tag) == "p")}
+    scan = renderer._furniture_scan()
+    assert [e["number"] for e in scan["footnote"]] == [1, 2]
+    assert [e["number"] for e in scan["endnote"]] == [1, 2]
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["footnotes"] == 2
+    assert sidecar["elements_rendered"]["endnotes"] == 2
+    assert sidecar["elements_rendered"]["note_marks"] == 4
+
+
+def test_a_page_with_furniture_renders_deterministically():
+    """The furniture lane joins the determinism promise the rest of the
+    renderer already makes: same bytes in, same bytes out."""
+    def once():
+        renderer = _furniture_renderer(header="H", footer="F")
+        from xml.etree import ElementTree as ET
+        host = own_render._kids(renderer.sections[0], "p")[1]
+        host.append(ET.fromstring(_note_xml("footNote", "f " + NOTE_FILLER)))
+        host.append(ET.fromstring(_note_xml("endNote", "e " + NOTE_FILLER)))
+        renderer._furniture = None
+        renderer._note_marks = {}
+        renderer.paragraph_index = {
+            id(el): index
+            for index, el in enumerate(
+                e for e in renderer.sections[0].iter()
+                if own_render._local(e.tag) == "p")}
+        images, sidecar = renderer.render()
+        blobs = []
+        for image in images:
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            blobs.append(buffer.getvalue())
+        return blobs, sidecar
+
+    first_images, first_side = once()
+    second_images, second_side = once()
+    assert first_images == second_images
+    assert first_side["elements_rendered"] == second_side["elements_rendered"]
+    assert first_side["line_boxes"] == second_side["line_boxes"]
+    assert first_side["elements_rendered"]["footnotes"] == 1
+    assert first_side["elements_rendered"]["endnotes"] == 1
+
+
+def test_every_line_box_says_which_furniture_drew_it():
+    renderer = _furniture_renderer(header="H", footer="F")
+    _images, sidecar = renderer.render()
+    modes = {b["mode"] for b in sidecar["line_boxes"]}
+    assert {"header", "footer"} <= modes, modes
+    notes = _note_renderer(kind="endNote", count=1)
+    _images, side = notes.render()
+    assert "endnote" in {b["mode"] for b in side["line_boxes"]}
+
+
 def test_equation_reaches_the_placeholder_path(tmp_path):
     """No corpus form has an equation, so drive the path directly.
 
