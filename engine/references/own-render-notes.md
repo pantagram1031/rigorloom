@@ -833,6 +833,185 @@ defect E2.1 named and left open. What it still does not get is limits 16-18:
 no repeated header on a split table, no text wrapping beside an anchored
 object, and a `keepWithNext` chain that gives up rather than looping.
 
+## Headers, footers, notes (E2.6)
+
+`hp:header` and `hp:footer` are controls, exactly like `hp:pageNum`: they sit
+in an `hp:ctrl` inside a run of a body paragraph and carry their own
+`hp:subList`, not children of `hp:secPr`. `hp:footNote` and `hp:endNote` are
+controls too, and their position in the run stream IS the reference position,
+so a raised, reduced numeral is drawn there and the note body is drawn
+elsewhere. `_furniture_scan` walks the top-level blocks once for all four at
+once and stops at each, so a header's own paragraphs are never rescanned for
+a note.
+
+### Honoured
+
+- **Header / footer.** Drawn in the areas `hh:margin@header` / `@footer`
+  declare — `[top, top + header]` and `[height - bottom - footer,
+  height - bottom]` — from the top of the area, per `@applyPageType`
+  (`BOTH` / `EVEN` / `ODD`) and `hp:visibility@hideFirstHeader` /
+  `@hideFirstFooter`.
+- **Footnote.** Collected per page in flow order, set bottom-anchored inside
+  the body box above the footer area, with the `hp:footNotePr` separator
+  line, `@aboveLine` / `@belowLine` / `@betweenNotes` spacing, and
+  `hp:autoNumFormat` prefix/suffix numbering. Under `--block-layout computed`
+  the flow pass subtracts the block's own height from `usable_height` on the
+  page its block starts on, *during* the placing sweep (one bounded retry —
+  `NOTE_FLOW_MAX_PASSES` governs the reserve-settle loop, not this retry —
+  when the reserve itself pushes the block to the next page). Under the
+  shipping `auto` policy nothing can be reserved, so a collision with the
+  cached layout is detected and named per render
+  (`note_collisions`, `"hp:footNote block over body text"`).
+- **Endnote.** Collected in document order, set after the last page's inked
+  body text, with the `hp:endNotePr` separator and spacing. Unlike a
+  footnote, an endnote block is not bound to one page, so continuation IS
+  implemented here — at a note boundary: a note that does not fit the room
+  left starts the next page whole.
+- **Numbering.** `DIGIT` format only; `CONTINUOUS` starts at 1 (every corpus
+  form's `@newNum` is a writer-internal id, not a start number — see
+  `test_a_continuous_numberings_newnum_is_not_a_start_number`); a restart
+  type (e.g. `ON_SECTION`) uses `@newNum` as the start. Footnotes and
+  endnotes are separate numbering sequences.
+- **Determinism.** A page carrying a header, a footer, a footnote and an
+  endnote renders to identical bytes twice
+  (`test_a_page_with_furniture_renders_deterministically`).
+- **Line-box provenance.** Every line box now carries which piece of
+  furniture drew it in its `mode` field (`header` / `footer` / `footnote` /
+  `endnote`, alongside `lineseg` / `computed`), so a reference-PDF comparison
+  can include or exclude furniture.
+
+### Declared-skipped, not honoured
+
+- `hp:masterPage` — neither read nor drawn.
+- A header or footer taller than its declared `hh:margin` area is drawn at
+  full height into the body box, not clipped and not grown into; the body
+  box is NOT shortened by the overrun, so such content and the first body
+  line can collide.
+- Note continuation across a page boundary (a single note split mid-body) is
+  not implemented; a footnote that does not fit its reserved block is
+  DROPPED and named, never drawn outside its box.
+- `hp:footNotePr/hp:placement@place` — only the bottom-of-body placement is
+  drawn; `EACH_COLUMN` and beneath-text are read and not acted on, because
+  this tier is single-column.
+- `hp:endNotePr/hp:placement@place` — `END_OF_DOCUMENT` and `END_OF_SECTION`
+  are the same thing here, because only `section0` is laid out.
+- `hp:noteLine@length` non-positive (every corpus form: `-1`) is read as "the
+  default", which KS X 6101 does not publish; 5&nbsp;cm is drawn and named as
+  this renderer's reading (`NOTE_LINE_DEFAULT_HWP`).
+- The reference mark's own character-cell width/height
+  (`NOTE_MARK_RELSZ` = 65%, `NOTE_MARK_RAISE` = 0.35 em) is this renderer's
+  reading of how `hp:lineseg@textpos` counts a note control, not a
+  measurement.
+- A single endnote taller than the body box is set from the top of its own
+  page and allowed to overflow — the same answer this tier already gives a
+  block taller than a page.
+
+### Corpus coverage: none of the four is exercised
+
+`grep`-equivalent scan of every `Contents/section*.xml` inside the ten
+corpus `.hwpx` files (`tests/corpus/forms/converted/*.hwpx`) for
+`hp:header`, `hp:footer`, `hp:footNote`, `hp:endNote`:
+
+| form | header | footer | footNote | endNote |
+| --- | --- | --- | --- | --- |
+| admrul-gajokdolbom-hyuga-sinchengseo | – | – | – | – |
+| gianmun-byeolji-1ho | – | – | – | – |
+| gianmun-byeolji-2ho | – | – | – | – |
+| **jeongbo-gonggae-cheongguseo** | **1 (empty)** | – | – | – |
+| jumin-deungchobon-sinchengseo | – | – | – | – |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | – | – | – | – |
+| moel-pyojun-geunrogyeyakseo-2013 | – | – | – | – |
+| moel-pyojun-geunrogyeyakseo-2025 | – | – | – | – |
+| nrf-gyeolgwa-bogoseo-yangsik | – | – | – | – |
+| saeopja-deungnok-sinchengseo | – | – | – | – |
+
+`jeongbo` is the one form with an `hp:header`, and its `hp:subList` carries
+paragraphs with no characters at all — an empty header, asserted by
+`test_the_corpus_carries_exactly_one_header_and_no_footer_or_note`. No corpus
+form and no private report-class holdout carries a footer, a footnote or an
+endnote. **Every geometry in this lane is therefore pinned by synthetic
+fixtures and by KS X 6101, not measured against a Hancom reference render**
+— the sidecar's `page_furniture.evidence` says so on every render.
+
+### Before / after, measured
+
+Because the one corpus header that now draws is empty, the prediction is that
+nothing moves. Re-rendered `tests/corpus/forms/converted/*.hwpx` against
+their `tests/corpus/forms/render/*.pdf` at 144 dpi, `7b04653` (pre-E2.6,
+scratch worktree) vs this branch (post-E2.6, all three commits):
+
+| form | ssim | ssim_inked | line-box IoU | pair rate | PNG sha256 |
+| --- | --- | --- | --- | --- | --- |
+| admrul-gajokdolbom-hyuga-sinchengseo | unchanged | unchanged | unchanged | unchanged | identical |
+| gianmun-byeolji-1ho | unchanged | unchanged | unchanged | unchanged | identical |
+| gianmun-byeolji-2ho | unchanged | unchanged | unchanged | unchanged | identical |
+| **jeongbo-gonggae-cheongguseo** | **unchanged** | **unchanged** | **unchanged** | **unchanged** | **identical** |
+| jumin-deungchobon-sinchengseo | unchanged | unchanged | unchanged | unchanged | identical |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | unchanged | unchanged | unchanged | unchanged | identical |
+| moel-pyojun-geunrogyeyakseo-2013 | unchanged | unchanged | unchanged | unchanged | identical |
+| moel-pyojun-geunrogyeyakseo-2025 | unchanged | unchanged | unchanged | unchanged | identical |
+| nrf-gyeolgwa-bogoseo-yangsik | unchanged | unchanged | unchanged | unchanged | identical |
+| saeopja-deungnok-sinchengseo | unchanged | unchanged | unchanged | unchanged | identical |
+
+All ten forms, including jeongbo, score exactly the same `ssim_mean`,
+`ssim_inked_mean`, `text_line_iou_mean` and `text_line_pair_rate_mean` to
+every decimal place `render_scoreboard.py` carries, and every page PNG
+(51 pages total) hashes identical before and after. The three-commit slice
+moved zero pixels on the public corpus; what it moved is jeongbo's sidecar
+(`paragraphs` 77→78, `runs` 104→105, `elements_rendered.headers` 0→1,
+`hp:header` leaving `elements_skipped`) and the four counters
+(`headers`/`footers`/`footnotes`/`endnotes`) now present in every sidecar.
+
+### What synthetic fixtures cover, since the corpus does not
+
+`_note_renderer` / `_furniture_renderer` (`engine/tests/test_own_render.py`,
+~line 260 on) build a minimal `hp:header` / `hp:footer` / `hp:footNote` /
+`hp:endNote` directly into a corpus form's XML tree, so the following are
+asserted rather than only claimed:
+
+- **Inside the declared area.** A header's and a footer's ink lands in
+  `[top, top+header]` / `[height-bottom-footer, height-bottom]`
+  (`test_a_header_and_a_footer_land_in_the_areas_the_margins_declare`,
+  `test_the_header_area_moves_with_the_declared_header_margin`); a
+  footnote block's ink never exceeds the body floor
+  (`test_a_footnote_is_drawn_at_the_bottom_of_the_body_box`).
+- **Body height reduced.** Under `--block-layout computed` the per-page
+  reserve equals the note block's own measured height, exactly
+  (`test_the_flow_pass_shortens_the_page_by_exactly_the_footnote_block`);
+  growing `hp:footNotePr/hp:noteSpacing@aboveLine` grows the reserve by the
+  same delta (`test_the_separator_spacing_comes_from_footnotepr`).
+- **No overflow.** A footnote that does not fit its reserve is dropped and
+  named, and no line box lands past the body floor
+  (`test_a_footnote_that_does_not_fit_is_dropped_and_named_not_overflowed`);
+  an endnote taller than the body box is set and named, not hidden
+  (`test_an_endnote_taller_than_one_page_is_declared_not_hidden`); the
+  `auto` policy's inability to reserve is detected and named, not silently
+  overdrawn (`test_the_cached_page_assignment_cannot_reserve_and_says_so`).
+- **Numbering.** `hp:autoNumFormat` prefix/suffix is honoured
+  (`test_note_numbering_follows_autonumformat`); an unimplemented format is
+  declared, not guessed (`test_an_unimplemented_numbering_format_is_declared_not_guessed`);
+  `CONTINUOUS`'s `@newNum` is not mistaken for a start number, and a restart
+  type's is (`test_a_continuous_numberings_newnum_is_not_a_start_number`);
+  footnotes and endnotes number independently
+  (`test_footnote_and_endnote_numbering_are_separate_sequences`).
+- **Continuation and determinism.** Endnotes continue onto a new page at a
+  note boundary (`test_endnotes_continue_onto_new_pages_at_a_note_boundary`);
+  a page carrying all four furniture kinds renders byte-identically twice
+  (`test_a_page_with_furniture_renders_deterministically`); every line box
+  names the furniture that drew it
+  (`test_every_line_box_says_which_furniture_drew_it`).
+
+### Not proven
+
+No claim here is checked against a Hancom reference render: nothing in
+`tests/corpus/forms/render/*.pdf` and nothing in the private report-class
+holdout carries a footer, a footnote, or a non-empty header, so the areas,
+the separator default, the reserve arithmetic and the reference-mark cell are
+all geometry asserted against this renderer's *own* measurements, not against
+what Hancom actually draws. Whether a real Hancom header/footer/note
+document agrees with any of this is open until such a document — or a
+regenerated 1:1 reference PDF for one — enters the corpus.
+
 ## Named fidelity limits
 
 Each of these is reported in the sidecar's `elements_skipped` at render time,
@@ -905,12 +1084,14 @@ not only here.
    to the paragraph's container.
 8. **Only `section0` is laid out.** No corpus form has more, but the sidecar
    says so when one does.
-9. **Headers, footers, footnotes, endnotes and master pages are not drawn
-   — but `hp:pageNum` is.** 쪽 번호 매기기 is a
-   control, not a footer paragraph, and is stamped on every page at a
-   measured position; see *Report-class documents*. `BOTTOM_LEFT`,
-   `BOTTOM_CENTER` and `BOTTOM_RIGHT` only — every other `pos` is declared
-   and nothing is drawn for it.
+9. **Headers, footers, footnotes and endnotes ARE drawn (E2.6); master pages
+   are not.** See *Headers, footers, notes (E2.6)* for what is honoured, what
+   is declared-skipped, and why none of it is measured against a Hancom
+   reference render. `hp:pageNum` — 쪽 번호 매기기 — is a control, not a footer
+   paragraph, and is stamped on every page at a measured position; see
+   *Report-class documents*. `BOTTOM_LEFT`, `BOTTOM_CENTER` and
+   `BOTTOM_RIGHT` only — every other `pos` is declared and nothing is drawn
+   for it.
 10. **Row heights are approximate where the content extent is.** Eight of 81
     corpus tables miss their declared height by more than 2% before the
     residual is redistributed; the redistribution keeps the outer box exact but
