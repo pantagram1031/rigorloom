@@ -774,6 +774,55 @@ kstartup (0.2542 → 0.5921); it is worse on `saeopja` (0.5562 → 0.4706, where
 the flow splits a table the cache kept whole) and on `moel-2025`
 (0.5167 → 0.4803), and unchanged on the other four.
 
+### One holdout document, which never entered the decision
+
+Both rules above were fixed on the ten public corpus forms, so they were then
+checked against a document outside that set: the same private report-class
+document *One holdout document* (E2.1) used — 18 pages of prose, figures,
+equations and tables. It is not in this repo and nothing from it is quoted;
+only the aggregate below leaves the machine.
+
+- **The adjacent-pair advance relation holds on 225 of 225 pairs, exactly.**
+  The half-margin and the anchored-object reserve were derived from
+  government forms and transfer to a report-class document without a single
+  miss. That is the strongest evidence in this slice that the block-stacking
+  model is a rule and not a corpus fit.
+- **Page assignment: 189 of 243 blocks (0.778)**, and the page *count* comes
+  out exactly right — 18 computed against 18 cached.
+- **Vertical position drifts: median `|dy|` 17821 HWPUNIT (356 px at 144 dpi),
+  signed median +3600 — the flow pass places content *lower*.** With the
+  advance relation exact, the drift cannot be the advance: every one of the 54
+  misses is a block one page late, and everything on a page whose break landed
+  differently sits at a different offset.
+
+### Where the page break is still wrong, measured and NOT tuned
+
+The flow pass breaks a page the moment a line's box no longer fits inside
+`usable_height`. The authoring engine is looser than that. Measured on the
+cached layout, the deepest line box on a page, as a fraction of the usable
+box, ignoring the trailing spacing:
+
+| document | median fill | max fill |
+| --- | --- | --- |
+| jeongbo | 0.9996 | 0.9996 |
+| saeopja | 0.9902 | 1.0172 |
+| kstartup | 0.9875 | — (the wild-`vertOffset` anchor, limit 12) |
+| moel-2013 | 0.9806 | 1.0680 |
+| nrf | 0.8097 | 1.0251 |
+| holdout (report-class) | 0.9961 | 1.0080 |
+
+Four documents put a line box **past** the bottom of the usable box and keep
+it on the page anyway. A strict fit test therefore breaks one line early
+wherever that happened, and that is what the holdout's 54 late blocks are.
+
+The obvious move — a tolerance on the fit test — is deliberately **not**
+taken. A tolerance chosen to make these ten forms agree is a corpus fit, not a
+rule, and the corpus is the training set. What the residual needs is the same
+treatment the space cell got: a measurement of what Hancom actually does at a
+page bottom, off the reference renders, and then a rule. Until then this is a
+named, unexplained, one-sided residual, and the numbers above are what it
+costs.
+
 ### What a reflowed document still does not get
 
 Measured on the edited-document fixture (`moel-2025`, one paragraph
@@ -927,6 +976,15 @@ not only here.
     declares `keepWithNext`, so the rule is implemented and **not exercised**
     by the corpus — it is honoured on the strength of the spec, and that is
     stated rather than hidden.
+19. **The flow pass breaks a page one line early where the authoring engine
+    overran the usable box.** Four corpus documents keep a line box past the
+    bottom of `usable_height` (max fill 1.068 on moel-2013), and the flow
+    pass's strict fit test does not. On the private report-class holdout this
+    is the whole of the residual: the adjacent-pair advance relation is exact
+    on 225 of 225 pairs, and yet 54 of 243 blocks land one page late. No
+    tolerance has been added, on purpose — see *Where the page break is still
+    wrong*. Unexplained, one-sided, and the next thing to measure off a
+    reference render.
 
 ## Report-class documents
 

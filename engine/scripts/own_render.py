@@ -1724,6 +1724,7 @@ class OwnRenderer:
             "tables_split": 0,
             "tables_moved_whole": 0,
             "anchored_blocks_moved": 0,
+            "anchored_extents_ignored": 0,
             "blocks_taller_than_page": 0,
         }
         placements = []
@@ -1787,11 +1788,21 @@ class OwnRenderer:
         split at a row boundary is two records carrying a row range.
         """
         rows = block["rows"]
-        reserve = max(0, block["anchor_extent"] - block["height"])
+        # A reserve taller than the page cannot be reserved — there is no page
+        # to reserve it on.  kstartup declares one: an anchored object at a
+        # vertOffset that puts its bottom 60 493 pages down the sheet (named
+        # limit 12), and consuming that as flow height would be nonsense
+        # dressed up as arithmetic.  Ignored, counted, and the object is still
+        # drawn where its offset says.
+        anchor_extent = block["anchor_extent"]
+        if anchor_extent > usable:
+            counters["anchored_extents_ignored"] += 1
+            anchor_extent = 0
+        reserve = max(0, anchor_extent - block["height"])
         if not rows:
-            return [self._flow_record(block, page, top,
-                                      block["anchor_extent"], (0, 0))]
-        total = max(block["height"], block["anchor_extent"])
+            return [self._flow_record(block, page, top, anchor_extent,
+                                      (0, 0))]
+        total = max(block["height"], anchor_extent)
         if total > usable:
             counters["blocks_taller_than_page"] += 1
         # An anchored object cannot be split and does not flow, so a block
@@ -1862,7 +1873,7 @@ class OwnRenderer:
         if reserve and not out:
             # The block never split, so its anchored object's extent is the
             # room the next block starts after.
-            seg_height = max(seg_height, block["anchor_extent"])
+            seg_height = max(seg_height, anchor_extent)
         if seg_height or not out:
             out.append(self._flow_record(block, page, seg_top, seg_height,
                                          (seg_first, len(rows))))
