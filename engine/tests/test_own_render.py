@@ -1560,6 +1560,212 @@ def test_the_computed_breaker_is_deterministic_too(tmp_path):
             == second["report"]["line_boxes"])
 
 
+# ------------------------------------------------------------- block flow (E2.5)
+
+REFLOW_FORM = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2025.hwpx")
+REFLOW_PARAGRAPH = 2
+# Long enough that the edited paragraph alone outgrows the room left on its
+# page: this is the edit the whole slice exists for, and a shorter one would
+# only exercise the intra-paragraph relayout E2.1 already covers.
+REFLOW_TEXT = ("추가로 입력한 문장을 여기에 아주 길게 붙여넣어서 이 문단이 "
+               "캐시된 줄 상자보다 훨씬 길어지게 만든다. ") * 40
+
+
+@pytest.fixture(scope="module")
+def reflow_renders(tmp_path_factory):
+    """The same form, before and after one paragraph is lengthened."""
+    out = tmp_path_factory.mktemp("reflow")
+    base = own_render.render_to_dir(_need(REFLOW_FORM), out / "base", dpi=96)
+    edited_path = _edited_copy(_need(REFLOW_FORM), out / "edited.hwpx",
+                               REFLOW_PARAGRAPH, REFLOW_TEXT)
+    edited = own_render.render_to_dir(edited_path, out / "edited", dpi=96)
+    return base, edited
+
+
+def test_an_unedited_document_is_never_reflowed(reflow_renders):
+    """The mode discipline, stated as a property of the sidecar.
+
+    Nothing is relaid out, so nothing is re-placed: every block keeps the seat
+    the authoring engine's cache gave it and every page says so.  This is what
+    makes the byte-identity of an unedited render a consequence rather than a
+    coincidence.
+    """
+    base, _edited = reflow_renders
+    block = base["report"]["block_layout"]
+    assert block["policy"] == own_render.BLOCK_LAYOUT_AUTO
+    assert block["reflow_triggered"] is False
+    assert block["pages_reflowed"] == 0
+    assert block["blocks_placement"]["flowed"] == 0
+    assert block["blocks_placement"]["cached"] == len(block["blocks"])
+    assert set(block["page_reflowed"].values()) == {False}
+
+
+def test_every_corpus_form_renders_unreflowed_and_declares_it():
+    """No corpus form is stale, so no corpus form may reach the flow pass."""
+    import glob
+
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(path, dpi=96)
+        assert renderer.flow_plan() == (None, None), os.path.basename(path)
+
+
+def test_an_edit_pushes_the_following_paragraph_onto_the_next_page(
+        reflow_renders):
+    """The rule E2.5 exists for: what grows moves everything after it."""
+    base, edited = reflow_renders
+    before = {b["block"]: b["page"]
+              for b in base["report"]["block_layout"]["blocks"]}
+    after = {}
+    for b in edited["report"]["block_layout"]["blocks"]:
+        after.setdefault(b["block"], b["page"])
+    following = [n for n in sorted(before)
+                 if n is not None and n > REFLOW_PARAGRAPH and n in after]
+    assert following, "fixture drifted: nothing follows the edited paragraph"
+    assert after[following[0]] > before[following[0]], (
+        "the paragraph after the edited one did not move to a later page")
+    # And nothing ABOVE the edit moved, which is the other half of the rule.
+    for n in sorted(before):
+        if n is None or n >= REFLOW_PARAGRAPH:
+            continue
+        assert after[n] == before[n], f"block {n} moved above the edit"
+
+
+def test_the_page_count_grows_by_exactly_what_the_flow_computed(
+        reflow_renders):
+    base, edited = reflow_renders
+    block = edited["report"]["block_layout"]
+    assert block["reflow_triggered"] is True
+    assert block["pages"] == len(edited["pngs"])
+    assert block["pages"] > base["report"]["block_layout"]["pages"]
+    assert block["pages"] == max(int(k) for k in block["page_reflowed"]) + 1
+    assert len(edited["pngs"]) == edited["report"]["pages"]
+
+
+def test_no_line_box_overflows_a_page_after_the_reflow(reflow_renders):
+    """A relaid-out paragraph used to be drawn past the bottom of the body
+    box; after the flow pass no drawn line may leave it."""
+    _base, edited = reflow_renders
+    report = edited["report"]
+    geo = report["page_geometry_hwpunit"]
+    dpi = report["dpi"]
+    scale = dpi / own_render.HWPUNIT_PER_INCH
+    top = geo["margin"]["top"] * scale
+    bottom = ((geo["height"] - geo["margin"]["bottom"]
+               - geo["margin"]["footer"]) * scale)
+    for box in report["line_boxes"]:
+        if box["mode"] == "pagenum":
+            continue
+        assert box["y0"] >= top - 1.0, box
+        assert box["y1"] <= bottom + 1.0, box
+
+
+def test_the_sidecar_declares_every_block_cached_or_flowed(reflow_renders):
+    _base, edited = reflow_renders
+    block = edited["report"]["block_layout"]
+    assert block["first_flowed_block"] == REFLOW_PARAGRAPH
+    assert {b["placement"] for b in block["blocks"]} <= {"cached", "flowed"}
+    assert block["blocks_placement"]["flowed"] > 0
+    assert block["blocks_placement"]["cached"] > 0
+    assert (block["blocks_placement"]["cached"]
+            + block["blocks_placement"]["flowed"]) == len(block["blocks"])
+    assert block["pages_reflowed"] > 0
+    assert block["flow_counters"] is not None
+    for name in ("keep_lines_moved", "widow_orphan_moved",
+                 "keep_with_next_moved", "tables_split",
+                 "tables_moved_whole", "blocks_taller_than_page"):
+        assert name in block["flow_counters"], name
+
+
+def test_the_flow_pass_is_deterministic(tmp_path):
+    edited = _edited_copy(_need(REFLOW_FORM), tmp_path / "edited.hwpx",
+                          REFLOW_PARAGRAPH, REFLOW_TEXT)
+    first = own_render.render_to_dir(edited, tmp_path / "r1", dpi=96)
+    second = own_render.render_to_dir(edited, tmp_path / "r2", dpi=96)
+    assert len(first["pngs"]) == len(second["pngs"])
+    for left, right in zip(first["pngs"], second["pngs"]):
+        with open(left, "rb") as fh:
+            a = fh.read()
+        with open(right, "rb") as fh:
+            b = fh.read()
+        assert a == b, "the flow pass is not deterministic"
+    assert (first["report"]["block_layout"]["blocks"]
+            == second["report"]["block_layout"]["blocks"])
+
+
+def test_a_table_only_splits_across_a_page_when_it_says_it_may():
+    """hp:tbl@pageBreak is the whole permission, and it is checked, not
+    assumed: the corpus declares CELL on 62 tables and NONE on 19."""
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(CORPUS, "saeopja-deungnok-sinchengseo.hwpx")),
+        dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    draw = renderer._scratch_draw()
+    seen = {"CELL": 0, "other": 0}
+    for element in renderer.sections[0].iter():
+        if own_render._local(element.tag) != "tbl":
+            continue
+        splittable, ys = renderer._table_split_rows(draw, element)
+        declared = (element.get("pageBreak") or "").upper()
+        assert splittable == (declared == "CELL"), declared
+        seen["CELL" if declared == "CELL" else "other"] += 1
+        if not splittable:
+            # Room for every row but the last, and it still refuses to split.
+            assert renderer._split_table_row(draw, element, ys[-2]) is None
+    assert seen["CELL"] and seen["other"], "fixture drifted"
+
+
+def test_the_flow_pass_agrees_with_the_authoring_engine_on_the_corpus():
+    """The honest measure of the flow pass, the way lineseg_agreement is the
+    honest measure of the breaker.  A regression floor, not a fidelity bar:
+    these are the numbers measured on 2026-09, and the point of pinning them
+    is that a change that moves them has to say so."""
+    floor = {
+        "admrul-gajokdolbom-hyuga-sinchengseo": 15,
+        "gianmun-byeolji-1ho": 3,
+        "gianmun-byeolji-2ho": 3,
+        "jeongbo-gonggae-cheongguseo": 1,
+        "jumin-deungchobon-sinchengseo": 3,
+        "moel-pyojun-geunrogyeyakseo-2013": 154,
+        "moel-pyojun-geunrogyeyakseo-2025": 187,
+        "nrf-gyeolgwa-bogoseo-yangsik": 51,
+        "saeopja-deungnok-sinchengseo": 5,
+    }
+    for stem, expected in sorted(floor.items()):
+        report = own_render.flow_agreement(
+            _need(os.path.join(CORPUS, stem + ".hwpx")), dpi=144)
+        hits, compared = report["page_assignment_agreement"]
+        assert hits >= expected, (stem, hits, compared, expected)
+        assert report["abs_dy_hwpunit"]["median"] == 0.0, (
+            stem, report["abs_dy_hwpunit"])
+
+
+def test_the_flow_pass_finds_the_two_pages_the_vertpos_heuristic_misses():
+    """kstartup is the corpus form whose cached layout ``paginate`` reads
+    wrong: it merges pages the authoring engine did break, because the
+    paragraph after a full-page ANCHORED table does not restart at vertpos 0.
+    Hancom's own reference render of this form is 22 pages; ``paginate``
+    reads 20; the flow pass, from the geometry alone, computes 22."""
+    report = own_render.flow_agreement(
+        _need(os.path.join(
+            CORPUS, "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx")),
+        dpi=144)
+    assert report["pages_cached"] == 20
+    assert report["pages_computed"] == 22
+    # And the disagreement is a clean offset, not scatter: the flow puts every
+    # block at the cached vertical position, on a page two later.
+    assert report["abs_dy_hwpunit"]["median"] == 0.0
+
+
+def test_cli_reports_flow_agreement():
+    proc = subprocess.run(
+        [sys.executable, os.path.join(ENGINE, "scripts", "own_render.py"),
+         _need(GIANMUN), "--flow-agreement", "--dpi", "96"],
+        capture_output=True, text=True, encoding="utf-8", timeout=300)
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["block_layout"] == own_render.BLOCK_LAYOUT_COMPUTED
+    assert payload["page_assignment_agreement"][1] > 0
+
+
 # ---------------------------------------------------------------- geometry
 
 def test_solve_tracks_closes_an_underdetermined_grid():
