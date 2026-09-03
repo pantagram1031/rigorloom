@@ -1426,6 +1426,18 @@ class OwnRenderer:
         # it draws on the page it is being drawn on.
         self._placements = {}
         self._table_splits = {}
+        # Tables whose row heights must be measured from their own content
+        # rather than compressed to fit hh:sz@height -- set only for a table
+        # this render has decided to split across a page boundary because its
+        # content needs more room than its declared height says (E2.7 anchor
+        # overflow fix); every other table keeps the existing compress-to-
+        # declared behaviour, unchanged.
+        self._table_natural_height = set()
+        # Anchored-table row ranges still to draw, consumed in order as the
+        # cache/auto path re-encounters the same paragraph on the page this
+        # renderer inserted for the remainder -- see
+        # ``_split_anchor_overflow`` and ``_render_floating``.
+        self._auto_anchor_splits = {}
         self._flow_report = None
         self._scratch_draw_cache = None
         # >0 while a measurement pass runs (a table row asking how tall its
@@ -1722,6 +1734,80 @@ class OwnRenderer:
             pages.append(current)
         return pages
 
+    def _paginate_with_anchor_overflow_fix(self, geo):
+        """``paginate``'s cached page groups, with the one safety net E2.7
+        adds: an anchored, CELL-splittable table whose own CONTENT (not the
+        possibly-stale declared height ``_anchor_table_geometry`` exists to
+        second-guess) overflows the page the cache seats it on is moved or
+        split the SAME WAY the computed flow pass handles it
+        (``_split_anchor_overflow``) — even though nothing in the document
+        was edited and the flow pass itself never runs under ``auto``.
+
+        Without this, ``auto`` — the shipping default, and the ONLY path an
+        unedited document takes — draws the overflow this slice exists to
+        fix regardless of whatever the flow pass does under ``computed``,
+        because ``auto`` never consults the flow pass at all (E2.5's whole
+        point: nothing is placed until some paragraph has to be relaid out).
+
+        A no-op for the entire corpus outside kstartup's one overflowing
+        table: every other cell's content already fits what its own
+        cached page assignment gives it.
+        """
+        usable = max(1, geo["usable_height"])
+        draw = self._scratch_draw()
+        raw_pages = self.paginate()
+        out = []
+        for page_paras in raw_pages:
+            current = []
+            for para in page_paras:
+                cut = self._auto_anchor_overflow_cut(draw, para, usable)
+                if cut is None:
+                    current.append(para)
+                    continue
+                # This paragraph's own anchored table overflows the seat the
+                # cache gave it: it stays the last thing on the page it was
+                # on, and starts the next page as the first thing there too
+                # (its second row-range picked up by ``_render_floating``'s
+                # queue on that second encounter) — everything after it
+                # naturally continues on the new page.
+                current.append(para)
+                out.append(current)
+                current = [para]
+            out.append(current)
+        return out
+
+    def _auto_anchor_overflow_cut(self, draw, para, usable):
+        """The row-boundary cut ``para``'s own anchored table needs to split
+        at, if its cached seat overflows — or ``None``.  Side effect on a
+        cut: registers the two row ranges on ``self._auto_anchor_splits``
+        (a queue ``_render_floating`` consumes, first encounter then
+        second) and flags the table for natural-height drawing, mirroring
+        exactly what ``_split_anchor_overflow`` does for the computed flow
+        pass.
+        """
+        info = self._anchor_table_geometry(draw, para)
+        if info is None:
+            return None
+        tbl_el, offset, ys = info
+        top = _iattr(para.linesegs[0], "vertpos") if para.linesegs else 0
+        room = usable - top
+        if offset + ys[-1] <= room:
+            return None
+        cut = self._row_cut_for_room(ys, 0, max(0, room - offset))
+        if not cut:
+            return None
+        self._skip(
+            "hp:tbl (anchored, CELL-splittable)",
+            "the cached page assignment seated this table where its own "
+            "content overflows the usable box; split at a row boundary the "
+            "same way the computed flow pass would, instead of drawing the "
+            "overflow")
+        self._mark_natural_height(tbl_el)
+        queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
+        queue.append((0, cut))
+        queue.append((cut, len(ys) - 1))
+        return cut
+
     # -- block flow (E2.5) -----------------------------------------------
     # ``paginate`` above READS the page assignment the authoring engine left
     # in the cache.  Everything below COMPUTES one: it stacks top-level blocks
@@ -1854,6 +1940,130 @@ class OwnRenderer:
                 bottom = offset + height
             extent = max(extent, bottom)
         return extent
+
+    def _anchor_table_geometry(self, draw, para):
+        """``(table, vertOffset, content_ys)`` for the one kind of anchored
+        table this render will recompute the height of, or ``None``.
+
+        ``hh:sz@height`` on an anchored table is a cached value like every
+        other cached extent this renderer reads elsewhere: usually right,
+        occasionally stale.  Measured across the corpus's six anchored,
+        ``TOP_AND_BOTTOM``-or-similar, ``pageBreak="CELL"`` tables: five
+        match their own content within 0.5%, and kstartup's largest needs
+        37% more room than it declares (docs/research/
+        residual-advance-and-ink.md, Q2 contributor 2).  That gap is
+        invisible to a fit test built on the declared height, so the block
+        drew 26 000 HWPUNIT past the usable box with nothing to catch it —
+        this recomputes the table's own row geometry from its CONTENT
+        (``_table_tracks(natural_rows=True)``, the same measurement a
+        row's own cell height is solved from) so ``_place_block`` can see
+        the table's real footprint before deciding whether it fits.
+
+        Restricted to ``vertRelTo=PARA`` (every corpus instance): a
+        page/paper-relative anchor's offset is not measured from the flow
+        cursor at all, so a wild one (kstartup's own limit 12) is left to
+        the existing declared-and-unmeasured handling rather than guessed
+        at here.
+        """
+        for char_index, name, el, _charpr in para.objects:
+            if name != "tbl":
+                continue
+            record = para.object_at.get(char_index)
+            if record is None or not record[3]:
+                continue  # inline: _flowing_table already covers it
+            wrap = (el.get("textWrap") or "").upper()
+            if wrap not in self.FLOW_RESERVING_WRAPS:
+                continue
+            if (el.get("pageBreak") or "").upper() != TABLE_SPLIT_AT_ROWS:
+                continue
+            pos = _kid(el, "pos")
+            vrel = ((pos.get("vertRelTo") or "PARA").upper()
+                    if pos is not None else "PARA")
+            if vrel not in ("PARA", "PARAGRAPH"):
+                continue
+            offset = _iattr(pos, "vertOffset") if pos is not None else 0
+            self._quiet += 1
+            try:
+                _xs, ys, cells = self._table_tracks(draw, el,
+                                                     natural_rows=True)
+            finally:
+                self._quiet -= 1
+            if not cells or len(ys) < 3:
+                continue
+            return el, offset, ys
+        return None
+
+    def _mark_natural_height(self, tbl_el):
+        """Flag ``tbl_el`` AND every table nested inside it for
+        content-driven (uncompressed) row heights.
+
+        A table split because its content overflowed a page is, from here
+        down, being drawn from its real content rather than its cached
+        declared size — the same reasoning ``_table_tracks`` documents for
+        the outer table applies just as much to a table nested inside one
+        of its cells: compressing a NESTED table to ITS OWN stale declared
+        height while the paragraph that follows it keeps the cache's
+        (correct, uncompressed) position is the identical bug one level
+        deeper, and the corpus scan behind this fix found one (kstartup's
+        row 2, first inline table, 2% short of its own content).  A no-op
+        everywhere this table has no nested tables, which is everywhere
+        outside kstartup's one split.
+        """
+        self._table_natural_height.add(id(tbl_el))
+        for el in tbl_el.iter():
+            if el is not tbl_el and _local(el.tag) == "tbl":
+                self._table_natural_height.add(id(el))
+
+    @staticmethod
+    def _row_cut_for_room(ys, start, room):
+        """Largest row boundary at/after ``start`` whose height above
+        ``ys[start]`` still fits ``room`` — or ``start`` when not even the
+        next row fits.  Same rule ``_split_table_row`` uses for an inline
+        table, generalised to a boundary that need not be zero.
+        """
+        cut = start
+        for row_index in range(start + 1, len(ys) - 1):
+            if ys[row_index] - ys[start] <= room:
+                cut = row_index
+            else:
+                break
+        return cut
+
+    def _split_anchor_overflow(self, block, page, top, usable, counters,
+                               tbl_el, offset, ys):
+        """The move-or-split answer for an anchored table whose CONTENT
+        overflows the page it was placed on, or ``None``.
+
+        The same answer an inline flowing table already gets: split at the
+        last row boundary that fits the room left on this page, and start
+        the rest at the top of the next one.  Only one split is attempted —
+        the one anchor this exists to fix needs exactly one — so a
+        remainder that still would not fit an entirely fresh page is left
+        to the existing "block taller than a page" handling (the object is
+        still drawn, in full, at its declared offset) rather than looping.
+        """
+        cap = self._usable_on(page, usable)
+        room = max(0, cap - top - offset)
+        cut = self._row_cut_for_room(ys, 0, room)
+        if cut == 0:
+            return None
+        self._mark_natural_height(tbl_el)
+        counters["tables_split"] += 1
+        # The paragraph itself is a one-slot placeholder for the anchored
+        # object (its own "line" is a single empty box) — ``rows`` restricts
+        # each record to ITS half of that: the placeholder line stays with
+        # the first record, the continuation draws no paragraph line of its
+        # own at all.  The table's two row ranges below are what actually
+        # carry the content; see ``_render_floating``.
+        first = self._flow_record(
+            block, page, top, offset + ys[cut], (0, 1), kind="table",
+            split={"table": id(tbl_el), "row_start": 0, "row_end": cut})
+        page += 1
+        rest = self._flow_record(
+            block, page, 0, ys[-1] - ys[cut], (1, 1), kind="table",
+            split={"table": id(tbl_el), "row_start": cut,
+                   "row_end": len(ys) - 1})
+        return [first, rest]
 
     def _flow_blocks(self, draw, column_hwp):
         """Every top-level ``hp:p`` of section0, measured and ready to place."""
@@ -2092,7 +2302,22 @@ class OwnRenderer:
         # dressed up as arithmetic.  Ignored, counted, and the object is still
         # drawn where its offset says.
         anchor_extent = block["anchor_extent"]
-        if anchor_extent > usable:
+        # A CELL-splittable anchored table's declared height can itself be
+        # stale (see _anchor_table_geometry) — the fit test below has to see
+        # what the table actually needs, not just what hh:sz@height cached,
+        # or an overflow this large never gets a chance to move or split.
+        # A wild vertOffset (limit 12, above) is a different failure —  the
+        # position itself is nonsensical, not the content — so it is left to
+        # the ignored-reserve handling below exactly as before, rather than
+        # treated as "content needs a second page".
+        anchor_geo = self._anchor_table_geometry(draw, block["para"])
+        if anchor_geo is not None:
+            _tbl_el, _offset, _ys = anchor_geo
+            if _offset > usable:
+                anchor_geo = None
+            else:
+                anchor_extent = max(anchor_extent, _offset + _ys[-1])
+        if anchor_extent > usable and anchor_geo is None:
             counters["anchored_extents_ignored"] += 1
             anchor_extent = 0
         reserve = max(0, anchor_extent - block["height"])
@@ -2103,13 +2328,24 @@ class OwnRenderer:
         cap = self._usable_on(page, usable)
         if total > cap:
             counters["blocks_taller_than_page"] += 1
-        # An anchored object cannot be split and does not flow, so a block
-        # that reserves room for one moves whole or not at all.
+        # An anchored object does not flow, so a block that reserves room for
+        # one moves whole when a fresh page is enough for it...
+        moved_whole = False
         if (reserve and top > 0 and top + total > cap
                 and total <= self._usable_on(page + 1, usable)):
             counters["anchored_blocks_moved"] += 1
             page, top = page + 1, 0
             cap = self._usable_on(page, usable)
+            moved_whole = True
+        # ...and splits at a row boundary — the same answer an inline
+        # flowing table already gets — only when even a fresh page would
+        # not be enough, and only when it declares itself splittable.
+        if anchor_geo is not None and not moved_whole and top + total > cap:
+            _tbl_el, _offset, _ys = anchor_geo
+            split = self._split_anchor_overflow(
+                block, page, top, usable, counters, _tbl_el, _offset, _ys)
+            if split is not None:
+                return split
         # Would this block split at all?  Only then do the two 문단 보호 rules
         # have anything to say, and only when moving it can actually help —
         # a block taller than a page splits wherever it is put.
@@ -3161,7 +3397,16 @@ class OwnRenderer:
                 continue
             font = piece["font"]
             self._draw_glyph_piece(draw, piece, cursor, baseline_px)
-            drew_text = True
+            # A run of nothing but whitespace draws no visible ink at all, so
+            # it must not inflate the box below: "every text line box drawn"
+            # (the sidecar's own words for this list) has to mean drew INK,
+            # or a blank filler line can report a phantom collision with
+            # whatever real content sits at the same height (E2.7: kstartup
+            # row 2's own blank spacer paragraph, found chasing the page-6
+            # overflow fix — see docs/research/residual-advance-and-ink.md,
+            # Q2 contributor 2).
+            if piece["text"].strip():
+                drew_text = True
             seg_ascent, seg_descent = font.getmetrics()
             shift = piece["offset_px"]
             ascent = max(ascent, seg_ascent + shift)
@@ -3357,8 +3602,17 @@ class OwnRenderer:
             cached_top = (_iattr(para.linesegs[0], "vertpos")
                           if para.linesegs else 0)
             para_origin = (ox, oy + record["top"] - cached_top)
+            split = record.get("split")
+            # An anchored table's own split (its object is not part of the
+            # char stream, so the drawing-side `_table_splits`/finally block
+            # below never sees it) is drawn from `_render_floating` on BOTH
+            # halves — the whole table on the first record, only its own
+            # split object's row range on a continuation.
             if first_record:
-                self._render_floating(draw, para, para_origin)
+                self._render_floating(draw, para, para_origin, split=split)
+            elif split is not None:
+                self._render_floating(draw, para, para_origin, split=split,
+                                      continuation=True)
             if not para.chars:
                 continue
             index = self.paragraph_index.get(id(para.el))
@@ -3372,7 +3626,6 @@ class OwnRenderer:
                     self._layout_reasons[reason] = (
                         self._layout_reasons.get(reason, 0) + 1)
                 self._record_layout(index, para, mode, reason, lines)
-            split = record.get("split")
             if split is not None:
                 self._table_splits[split["table"]] = (split["row_start"],
                                                       split["row_end"])
@@ -3400,19 +3653,48 @@ class OwnRenderer:
                 break
         return chosen or (para.linesegs[0] if para.linesegs else None)
 
-    def _render_floating(self, draw, para, origin_hwp):
+    def _render_floating(self, draw, para, origin_hwp, split=None,
+                         continuation=False):
         """Place ``treatAsChar="0"`` objects from their own anchor offsets.
 
         ``hp:pos`` names the frame each offset is measured against.  PARA and
         COLUMN both resolve to the container the paragraph lives in (this tier
         does not implement multi-column text), PAGE/PAPER to the sheet origin.
         Text does not flow around these objects — that is recorded, not faked.
+
+        ``split`` is set when one of this paragraph's anchored tables was too
+        tall for one page and was split at a row boundary (E2.7): it names
+        which table and which half-open row range belongs on THIS call.
+        ``continuation`` restricts the call to drawing only that one table's
+        remaining rows — everything else this paragraph anchors was already
+        drawn on an earlier page and must not repeat.
+
+        When ``split`` is not given (every call from the ``auto``/cache path,
+        ``_render_paragraphs``), an anchored table matching a pending entry
+        in ``self._auto_anchor_splits`` — queued by
+        ``_paginate_with_anchor_overflow_fix`` — draws that entry's row
+        range instead of the whole table: the SAME paragraph is encountered
+        twice, once per page the cache split it onto, and the queue hands
+        back its first range on the first encounter and its second on the
+        second.  Empty for every document outside kstartup's one overflow.
         """
         ox, oy = origin_hwp
         for char_index, name, el, _charpr in para.objects:
             record = para.object_at.get(char_index)
             if record is None or not record[3]:
                 continue
+            auto_range = None
+            if split is None and name == "tbl":
+                queue = self._auto_anchor_splits.get(id(el))
+                if queue:
+                    auto_range = queue.pop(0)
+                    if not queue:
+                        del self._auto_anchor_splits[id(el)]
+            is_split_target = ((split is not None and name == "tbl"
+                               and id(el) == split["table"])
+                              or auto_range is not None)
+            if continuation and not is_split_target:
+                continue  # drawn on an earlier page already
             pos = _kid(el, "pos")
             seg = self._object_line(para, char_index)
             para_top = oy + (_iattr(seg, "vertpos") if seg is not None else 0)
@@ -3430,7 +3712,15 @@ class OwnRenderer:
                        f"vertRelTo={vrel}) placed at its declared offset; "
                        "text wrap around it is not computed")
             if name == "tbl":
-                self._render_table(draw, el, (x, y))
+                if is_split_target:
+                    row_range = (auto_range if auto_range is not None
+                                else (split["row_start"], split["row_end"]))
+                    self._table_splits[id(el)] = row_range
+                try:
+                    self._render_table(draw, el, (x, y))
+                finally:
+                    if is_split_target:
+                        self._table_splits.pop(id(el), None)
             else:
                 self._render_placeholder(draw, el, name, (x, y))
 
@@ -4086,6 +4376,46 @@ class OwnRenderer:
         self.counts["placeholders"] += 1
 
     # -- tables ----------------------------------------------------------
+    @staticmethod
+    def _restart_segments(paras, usable):
+        """Split a stacked paragraph list wherever its cached ``vertpos``
+        restarts — the same backward-jump rule ``paginate`` uses for
+        top-level pages, generalised to any container.
+
+        Every corpus paragraph list this renderer measures is one segment.
+        Exactly one table cell in the whole corpus (kstartup's largest
+        anchored table, row 2: docs/research/residual-advance-and-ink.md,
+        Q2 contributor 2) is two — the authoring engine rendered that
+        cell's own content across a page break ("○ 사업비 사용 계획" ending
+        one page, "○ 성과목표 및 기대효과" starting fresh on the next), and
+        its cached ``vertpos`` genuinely restarts to record that, exactly
+        as it would between two top-level paragraphs on different pages.
+        Treating the whole list as one monotonic block — what this method
+        replaces — silently took the LAST segment's own extent as the
+        cell's total height, understating it by the first segment's entire
+        height; drawing every paragraph from one fixed origin then overprints
+        the first segment with the second.
+        """
+        segments = []
+        current = []
+        prev_first = -1
+        prev_bottom = -1
+        for para in paras:
+            if para.linesegs:
+                first = _iattr(para.linesegs[0], "vertpos")
+                last = para.linesegs[-1]
+                bottom = _iattr(last, "vertpos") + _iattr(last, "vertsize")
+                restart = (first < prev_first
+                          or (prev_bottom - first) > usable // 4)
+                if restart and current:
+                    segments.append(current)
+                    current = []
+                prev_first, prev_bottom = first, bottom
+            current.append(para)
+        if current or not segments:
+            segments.append(current)
+        return segments
+
     def _paragraph_block_extent(self, draw, paras, avail_w_hwp):
         """How tall a cell's paragraphs are, in the layout each will get.
 
@@ -4094,30 +4424,102 @@ class OwnRenderer:
         contributes the extent of the lines it will actually draw, so an
         edited cell grows its row instead of overflowing it.  Measurement
         only: nothing is drawn and nothing is counted.
+
+        Segmented by ``_restart_segments`` and SUMMED, not maxed, across
+        segments: within one segment ``vertpos`` is monotonic and the
+        deepest line box already is the segment's total, but two segments
+        stack one after the other and have to be added, not compared.
         """
         self._quiet += 1
         try:
-            extent = 0
-            for para in paras:
-                cached = para.extent_hwp()
-                index = self.paragraph_index.get(id(para.el))
-                mode, _reason = self.line_layout_mode(para, avail_w_hwp, index)
-                if mode == "computed" and para.chars:
-                    lines = self.compute_lines(draw, para, avail_w_hwp)
-                    top = (_iattr(para.linesegs[0], "vertpos")
-                           if para.linesegs else 0)
-                    cached = top + self._computed_extent(lines)
-                extent = max(extent, cached)
-            return extent
+            usable = max(1, self.page_geometry()["usable_height"])
+            total = 0
+            for segment in self._restart_segments(paras, usable):
+                extent = 0
+                for para in segment:
+                    cached = para.extent_hwp()
+                    index = self.paragraph_index.get(id(para.el))
+                    mode, _reason = self.line_layout_mode(
+                        para, avail_w_hwp, index)
+                    if mode == "computed" and para.chars:
+                        lines = self.compute_lines(draw, para, avail_w_hwp)
+                        top = (_iattr(para.linesegs[0], "vertpos")
+                              if para.linesegs else 0)
+                        cached = top + self._computed_extent(lines)
+                    extent = max(extent, cached)
+                total += extent
+            return total
         finally:
             self._quiet -= 1
 
-    def _table_tracks(self, draw, tbl):
+    def _expand_segmented_rows(self, cells, rows, cols):
+        """``(rows, cells)`` with a full-width row's cell split one-per-
+        segment when its own content restarts (``_restart_segments``).
+
+        A row occupied by exactly one cell spanning every column is, for
+        every purpose below this point, indistinguishable from a table with
+        one extra row per segment: solving row heights, deciding a page
+        split, and drawing all already work at row granularity, so turning
+        "one row whose content secretly needs two" into "two rows" here
+        means nothing downstream has to learn a second, finer unit at all.
+        A no-op for the entire corpus outside kstartup's one segmented cell
+        (docs/research/residual-advance-and-ink.md, Q2 contributor 2): every
+        other row has one segment and comes back with the same single cell,
+        same row number, unchanged.
+        """
+        usable = max(1, self.page_geometry()["usable_height"])
+        by_row = {}
+        for cell in cells:
+            by_row.setdefault(cell["row"], []).append(cell)
+        expanded = []
+        shift = 0
+        for row in sorted(by_row):
+            row_cells = by_row[row]
+            solo = (len(row_cells) == 1 and row_cells[0]["rspan"] == 1
+                   and row_cells[0]["col"] == 0
+                   and row_cells[0]["cspan"] >= cols)
+            segments = (self._restart_segments(row_cells[0]["paras"], usable)
+                       if solo else [None])
+            if solo and len(segments) > 1:
+                for seg_index, seg_paras in enumerate(segments):
+                    piece = dict(row_cells[0])
+                    piece["paras"] = seg_paras
+                    piece["row"] = row + shift + seg_index
+                    # The declared height belongs to the row as a whole; only
+                    # the first segment keeps it; the compress-to-declared
+                    # step downstream would otherwise apply it twice.
+                    if seg_index:
+                        piece["declared_height"] = 0
+                    expanded.append(piece)
+                shift += len(segments) - 1
+            else:
+                for cell in row_cells:
+                    cell = dict(cell)
+                    cell["row"] = row + shift
+                    expanded.append(cell)
+        return rows + shift, expanded
+
+    def _table_tracks(self, draw, tbl, natural_rows=False):
+        """``(xs, ys, cells)`` -- column/row boundaries and cell records.
+
+        ``natural_rows`` skips the final compress-to-``hh:sz@height`` step on
+        the ROW axis only (columns are unaffected).  Only set for a table
+        this render has already decided to split across a page boundary
+        (``self._table_natural_height``, populated by
+        ``_split_anchor_overflow``): compressing a table's rows to fit a
+        declared height that its own content does not fit in is exactly the
+        bug that overflow is being split to fix, so the two pages a split
+        table draws on have to add up to what the content actually needs,
+        not to the stale declared total.  Every other call -- the entire
+        corpus outside this one table -- passes ``natural_rows=False`` and
+        is unaffected, byte for byte.
+        """
         rows = _iattr(tbl, "rowCnt", 0)
         cols = _iattr(tbl, "colCnt", 0)
         sz = _kid(tbl, "sz")
         decl_w = _iattr(sz, "width") if sz is not None else None
-        decl_h = _iattr(sz, "height") if sz is not None else None
+        decl_h = None if natural_rows else (
+            _iattr(sz, "height") if sz is not None else None)
         col_cons, row_cons, cells = [], [], []
         for tr in _kids(tbl, "tr"):
             for tc in _kids(tr, "tc"):
@@ -4150,6 +4552,8 @@ class OwnRenderer:
                     },
                     "paras": paras,
                 })
+        if natural_rows:
+            rows, cells = self._expand_segmented_rows(cells, rows, cols)
         widths = solve_tracks(cols, col_cons, decl_w)
         # Columns first, then content extents, then rows: a cell's content
         # height depends on the width it gets, and its width does not depend
@@ -4182,7 +4586,8 @@ class OwnRenderer:
     def _render_table(self, draw, tbl, origin_hwp):
         ox, oy = origin_hwp
         self.counts["tables"] += 1
-        xs, ys, cells = self._table_tracks(draw, tbl)
+        xs, ys, cells = self._table_tracks(
+            draw, tbl, natural_rows=id(tbl) in self._table_natural_height)
         if not cells:
             return
         # E2.5: a table the flow pass split at a row boundary draws only the
@@ -4500,18 +4905,28 @@ class OwnRenderer:
     )
 
     def _block_layout_report(self, placements, counters, page_count,
-                             first_flowed, page_records):
+                             first_flowed, page_records, cache_pages=None):
         """Which engine decided where each block sits, and on which page.
 
         The per-block list is the point, exactly as it is for line layout: a
         reader has to be able to tell, without re-running anything, which
         blocks on a page are where the authoring engine put them and which
         this renderer's flow pass placed.
+
+        ``cache_pages`` is the actual page list the ``auto`` path drew
+        (``paginate``'s groups, corrected by
+        ``_paginate_with_anchor_overflow_fix`` when that fired) — passed so
+        this report's own per-block page numbers agree with what was
+        actually drawn rather than re-deriving a fresh, uncorrected
+        ``paginate()`` that would silently disagree whenever the correction
+        ran.  Falls back to a fresh ``paginate()`` for any other caller.
         """
         blocks = []
         pages = {}
         if page_records is None:
-            for page_number, page in enumerate(self.paginate()):
+            for page_number, page in enumerate(
+                    cache_pages if cache_pages is not None
+                    else self.paginate()):
                 pages[page_number] = False
                 for para in page:
                     blocks.append({
@@ -5590,7 +6005,7 @@ class OwnRenderer:
             else:
                 page_records = None
                 if plan is None:
-                    pages = self.paginate()
+                    pages = self._paginate_with_anchor_overflow_fix(geo)
                     counters = None
                     placements = None
                 else:
@@ -5619,7 +6034,7 @@ class OwnRenderer:
                     section_images.append(img)
             self._flow_report = self._block_layout_report(
                 placements, counters, pages_for_report, first_flowed,
-                page_records)
+                page_records, cache_pages=pages)
             block_layout_reports.append(self._flow_report)
             page_of_block = self._page_of_block(
                 placements, pages, col_count=col_count,
