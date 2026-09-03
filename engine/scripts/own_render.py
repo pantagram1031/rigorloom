@@ -3341,13 +3341,27 @@ class OwnRenderer:
                                             int(round(y - ascent))), mask)
 
     def _draw_line(self, draw, items, x_hwp, line_top_hwp, baseline_hwp,
-                   align, avail_hwp, last_line=True):
+                   align, avail_hwp, last_line=True, stretch_avail_hwp=None):
         """Draw one line box: text pieces and inline objects, in order.
 
         The cached ``lineseg`` gives the box (``horzpos``/``horzsize``) but not
         the alignment offset inside it — ``horzpos`` stays 0 even for a centred
         line — so the offset is computed here from the measured content width,
         which now includes character typography.
+
+        ``stretch_avail_hwp`` is the box a ``JUSTIFY``/``DISTRIBUTE`` line's
+        slack is measured against, and it is deliberately a SEPARATE box from
+        ``avail_hwp`` (which still governs ``CENTER``/``RIGHT`` offset and
+        everything else): on a private report-class holdout, a cached
+        ``hp:lineseg@horzsize`` for an interior body-text line measured a
+        consistent 853 HWPUNIT (~0.6 em at this document's body size) short of
+        the paragraph's own available width — verified against the reference
+        PDF, whose text right-edges land on the full available width, not on
+        the narrower cached box. ``None`` (the default, and what every
+        computed-mode line passes) means "same as ``avail_hwp``" — this only
+        widens the box a cached line stretches into, never narrows one, so a
+        line whose cached ``horzsize`` already reaches (or exceeds) its
+        container is untouched.
         """
         if not items:
             return
@@ -3365,8 +3379,11 @@ class OwnRenderer:
                 piece["underline_colour"] = cp.get("underline_color")
         total = sum(p["advance"] for p in pieces)
         avail_px = self.pxf(avail_hwp)
+        stretch_avail_px = (self.pxf(stretch_avail_hwp)
+                            if stretch_avail_hwp is not None else avail_px)
+        stretch_avail_px = max(avail_px, stretch_avail_px)
         slots = self._elastic_slots(pieces) if stretch else []
-        extra = self._justify_extra(align, avail_px, total, len(slots),
+        extra = self._justify_extra(align, stretch_avail_px, total, len(slots),
                                     last_line)
         if extra:
             self.applied[f"hh:align@{align}"] = (
@@ -3556,6 +3573,7 @@ class OwnRenderer:
         if rows is not None and first < len(para.linesegs):
             oy -= _iattr(para.linesegs[first], "vertpos")
         self._line_mode = "lineseg"
+        margin_right = para.para_pr.get("margin_right", 0) or 0
         for i, seg in enumerate(para.linesegs):
             if not (first <= i < last):
                 continue
@@ -3566,6 +3584,13 @@ class OwnRenderer:
                 continue
             horzpos = _iattr(seg, "horzpos")
             horzsize = _iattr(seg, "horzsize") or avail_w_hwp
+            # The cached box, not the paragraph's true available width: see
+            # _draw_line's stretch_avail_hwp docstring.  This is only ever a
+            # WIDER box than horzsize (never narrower — max() below, and
+            # _draw_line takes max() again against avail_px), so a line whose
+            # cached horzsize already reaches its container is unaffected.
+            stretch_hwp = max(horzsize,
+                              avail_w_hwp - horzpos - margin_right)
             baseline = _iattr(seg, "baseline")
             vertpos = _iattr(seg, "vertpos")
             self._draw_line(
@@ -3577,6 +3602,7 @@ class OwnRenderer:
                 para.align,
                 horzsize,
                 last_line=(i == len(para.linesegs) - 1),
+                stretch_avail_hwp=stretch_hwp,
             )
 
     # -- drawing a page the flow pass placed (E2.5) -----------------------
