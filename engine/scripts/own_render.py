@@ -87,6 +87,7 @@ from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_io import utf8_stdio  # noqa: E402
+import hwpeqn_parse  # noqa: E402
 
 RENDERER_ID = "rigorloom-own"
 RENDERER_VERSION = "0.1.0"
@@ -1074,6 +1075,91 @@ def own_paragraphs(container):
 
 
 # --------------------------------------------------------------------------
+# Equation layout boxes
+# --------------------------------------------------------------------------
+# The parser (``hwpeqn_parse``) is metric-free on purpose; this is where the
+# tree meets font metrics.  Every box is addressed from its OWN baseline, so a
+# subtree can be laid out, measured against the declared ``hp:sz``, and only
+# then positioned on the page — which is what makes "the declared extent is
+# the ground truth, scale-to-fit is a declared fallback" implementable rather
+# than aspirational.
+
+# Sub/superscripts, and the floor below which a script stops shrinking (a
+# 3 px face rasterises to mush and the equation reads worse, not smaller).
+_EQ_SCRIPT_SCALE = 0.72
+_EQ_MIN_SCRIPT_PX = 6.0
+# HWP draws the large operators visibly bigger than the surrounding text, and
+# an integral sign bigger again — measured off the reference render, where the
+# integral spans a whole fraction while the sigma spans about half of one.
+_EQ_BIGOP_SCALE = 1.35
+_EQ_INTEGRAL_SCALE = 1.9
+_EQ_INTEGRALS = frozenset("∫∬∭∮∯∰")
+# Binary operators and relations get air on both sides; ordinary punctuation
+# (comma, parenthesis) does not.  This is the one piece of spacing HwpEqn
+# leaves to the engine rather than spelling out with ` and ~.
+_EQ_SPACED_OPS = frozenset("=+−<>±∓×÷∪∩∈∉⊂⊃⊆⊇≤≥≠≈≡∼≃∝→←↔⇒⇐⇔↦")
+# The maths axis — the height a fraction bar and a fence centre on — as a
+# fraction of the base size.  0.28 em is this renderer's calibration against
+# the corpus of Hancom-written equations, declared, not read from KS X 6101.
+_EQ_AXIS = 0.28
+# The NOMINAL character cell a token occupies for STACKING purposes, in em.
+# Not the font's own ascent/descent, and the difference matters: a face's
+# metrics carry line-leading that a maths layout must not stack (measured on
+# the report corpus, the font-metric reading makes every fraction ~12% taller
+# than the extent Hancom recorded in hp:sz, so every equation would then be
+# scaled down to fit a box it should have filled).  Ink that overshoots this
+# cell is not clipped — the drawn extent is measured separately, by
+# ``_eq_bounds``, and it is that extent the hp:sz fit is decided on.
+_EQ_ASC = 0.78
+_EQ_DESC = 0.22
+# A fence never grows past this multiple of the base size: past it a
+# parenthesis stops reading as a parenthesis and starts reading as a bracket
+# drawn by mistake.
+_EQ_FENCE_MAX_SCALE = 6.0
+
+
+def _eq_word_head(node):
+    """The operator-name atom an item is built on, through its scripts.
+
+    ``min_{s,m}`` is a word with a limit hung off it, and the word still needs
+    air after it; the limit does not change that.
+    """
+    while isinstance(node, hwpeqn_parse.Script):
+        node = node.base
+    if isinstance(node, hwpeqn_parse.Atom) and node.style == "func":
+        return node
+    return None
+
+
+class _EqBox:
+    """One laid-out piece of an equation, in device pixels.
+
+    ``asc`` and ``desc`` are distances from this box's baseline, both
+    positive.  Children, rules and strokes are placed in the same local frame:
+    x grows right from the box origin, y grows DOWN from the baseline, so a
+    numerator sits at a negative ``dy``.  Nothing here knows where the box
+    lands on the page.
+    """
+
+    __slots__ = ("w", "asc", "desc", "text", "font", "children", "rules",
+                 "strokes")
+
+    def __init__(self, w=0.0, asc=0.0, desc=0.0, text=None, font=None):
+        self.w = float(w)
+        self.asc = float(asc)
+        self.desc = float(desc)
+        self.text = text
+        self.font = font
+        self.children = []      # (dx, dy_of_child_baseline, box)
+        self.rules = []         # (x0, y0, x1, y1) filled rectangles
+        self.strokes = []       # ([(x, y), ...], width) polylines
+
+    @property
+    def h(self):
+        return self.asc + self.desc
+
+
+# --------------------------------------------------------------------------
 # Renderer
 # --------------------------------------------------------------------------
 
@@ -1120,7 +1206,16 @@ class OwnRenderer:
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
-                       "images": 0, "page_numbers": 0}
+                       "images": 0, "page_numbers": 0, "equations": 0}
+        # Equation bookkeeping.  ``eq_constructs`` is what the HwpEqn parser
+        # laid out, by construct; ``eq_unsupported`` is what it could not and
+        # drew as raw token text; ``eq_scaled`` records every scale-to-fit
+        # fallback.  All three are emitted, because "we render equations now"
+        # is unfalsifiable without saying which constructs that covers.
+        self.eq_constructs = {}
+        self.eq_unsupported = {}
+        self.eq_scaled = []
+        self._eq_face = None
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -2427,6 +2522,521 @@ class OwnRenderer:
         self.counts["images"] += 1
         return True
 
+    # -- equations -------------------------------------------------------
+    def _equation_face(self, face_name):
+        """The installed face an ``hp:equation@font`` names.
+
+        Resolved through the same ``SystemFontIndex`` and declared through the
+        same ``face_resolution`` record as every text face, under the slot
+        ``equation``: a maths face that is not installed has to be visible in
+        the sidecar for exactly the reason a missing 바탕 is — the advances
+        are then this machine's, not the authoring engine's.
+        """
+        key = ("equation", face_name or "")
+        hit = self._face_cache.get(key)
+        if hit is not None:
+            hit[1]["characters"] += 1
+            return hit[0]
+        entry = (self.font_index.lookup(face_name)
+                 if (self.font_index is not None and face_name) else None)
+        chosen = None
+        if entry is not None:
+            chosen = entry["regular"] or entry["bold"]
+        record = self._declare_face(face_name or None, "equation",
+                                    entry if chosen else None, False)
+        self._face_cache[key] = (chosen, record)
+        return chosen
+
+    def _eq_font(self, size_px, bold=False):
+        return self.fontbook.get(max(1, int(round(size_px))), bold,
+                                 self._eq_face)
+
+    def _eq_glyph(self, text, size_px, bold=False):
+        """A leaf box on the NOMINAL character cell, not the glyph's ink.
+
+        Deliberate: stacking (a fraction, a limit) has to put two baselines a
+        constant apart whatever characters happen to be on them, or the same
+        equation typeset twice with different letters would come out different
+        heights.  Ink extents are used where the ink is the thing being sized
+        — a fence, an accent mark — and, once, for the whole equation, where
+        the drawn extent is compared against the declared ``hp:sz``.
+        """
+        font = self._eq_font(size_px, bold)
+        width = float(font.getlength(text)) if text else 0.0
+        return _EqBox(width, size_px * _EQ_ASC, size_px * _EQ_DESC, text, font)
+
+    def _eq_ink(self, text, size_px, bold=False):
+        """A leaf box whose ascent/descent are the drawn glyph's ink bounds."""
+        font = self._eq_font(size_px, bold)
+        ascent, _descent = font.getmetrics()
+        box = font.getbbox(text)
+        return _EqBox(float(font.getlength(text)),
+                      ascent - box[1], box[3] - ascent, text, font)
+
+    def _eq_tight(self, text, size_px, nominal, bold=False):
+        """A big glyph advanced on its INK width, not the face's advance.
+
+        A fence or an integral rasterised three sizes up carries three sizes'
+        worth of side bearing with it, and the equation then reads as though
+        somebody hit the space bar: measured against the reference render, an
+        integral sign advanced on its own metrics leaves a visible hole before
+        its limit.  The glyph is drawn inside a box the width of the ink plus
+        a fixed sliver, which is what HWP appears to do.
+        """
+        glyph = self._eq_ink(text, size_px, bold)
+        bb = glyph.font.getbbox(text)
+        pad = nominal * 0.06
+        box = _EqBox(max(1.0, bb[2] - bb[0]) + 2 * pad, glyph.asc, glyph.desc)
+        box.children.append((pad - bb[0], 0.0, glyph))
+        return box
+
+    def _eq_bracket(self, ch, size_px, asc, desc):
+        """A fence glyph grown to the height of what it encloses.
+
+        Sizing is by font size, not by stretching a raster: the bracket is
+        re-rasterised at whatever size makes its own ink as tall as the body,
+        capped, so it stays a glyph rather than a smeared one.
+        """
+        if not ch:
+            return _EqBox()
+        need = max(1.0, asc + desc)
+        probe = self._eq_font(size_px)
+        pb = probe.getbbox(ch)
+        natural = max(1.0, float(pb[3] - pb[1]))
+        scale = min(_EQ_FENCE_MAX_SCALE, max(1.0, need / natural))
+        return self._eq_tight(ch, size_px * scale, size_px)
+
+    def _eq_layout(self, node, size, bold=False):
+        """Lay one parse node out.  Pure: it never draws and never declares."""
+        kind = node.kind
+        if kind == "row":
+            box = _EqBox()
+            pad = size * 0.16
+            items = node.items
+            x = 0.0
+            for index, item in enumerate(items):
+                child = self._eq_layout(item, size, bold)
+                atom = item if isinstance(item, hwpeqn_parse.Atom) else None
+                spaced = (atom is not None and atom.style == "op"
+                          and atom.text in _EQ_SPACED_OPS)
+                # An operator NAME (arg, min, exp) is a word: it needs air
+                # after it or "arg min max" sets as "argminmax", which is what
+                # the reference render shows this renderer must not do.
+                trailing = _eq_word_head(item) is not None
+                if spaced and index:
+                    x += pad
+                box.children.append((x, 0.0, child))
+                x += child.w
+                if (spaced or trailing) and index + 1 < len(items):
+                    x += pad
+                box.asc = max(box.asc, child.asc)
+                box.desc = max(box.desc, child.desc)
+            box.w = x
+            return box
+
+        if kind == "atom":
+            if node.style == "bigop":
+                scale = (_EQ_INTEGRAL_SCALE if node.text in _EQ_INTEGRALS
+                         else _EQ_BIGOP_SCALE)
+                return self._eq_tight(node.text, size * scale, size, bold)
+            return self._eq_glyph(node.text, size, bold)
+
+        if kind == "raw":
+            return self._eq_glyph(node.text, size, bold)
+
+        if kind == "space":
+            return _EqBox(node.em * size, 0.0, 0.0)
+
+        if kind == "styled":
+            return self._eq_layout(node.base, size,
+                                   bold or node.style == "bold")
+
+        if kind == "frac":
+            num = self._eq_layout(node.num, size, bold)
+            den = self._eq_layout(node.den, size, bold)
+            rule = max(1.0, round(size / 14.0))
+            axis = -_EQ_AXIS * size
+            gap = max(1.0, size * 0.14)
+            pad = size * 0.12
+            width = max(num.w, den.w) + 2 * pad
+            num_dy = axis - rule / 2.0 - gap - num.desc
+            den_dy = axis + rule / 2.0 + gap + den.asc
+            box = _EqBox(width, num.asc - num_dy, den_dy + den.desc)
+            box.children.append(((width - num.w) / 2.0, num_dy, num))
+            box.children.append(((width - den.w) / 2.0, den_dy, den))
+            if node.rule:
+                box.rules.append((pad * 0.4, axis - rule / 2.0,
+                                  width - pad * 0.4, axis + rule / 2.0))
+            return box
+
+        if kind == "script":
+            base = self._eq_layout(node.base, size, bold)
+            small = max(_EQ_MIN_SCRIPT_PX, size * _EQ_SCRIPT_SCALE)
+            sub = self._eq_layout(node.sub, small, bold) if node.sub else None
+            sup = self._eq_layout(node.sup, small, bold) if node.sup else None
+            gap = size * 0.10
+            if node.limits:
+                width = max(base.w, sub.w if sub else 0.0,
+                            sup.w if sup else 0.0)
+                box = _EqBox(width, base.asc, base.desc)
+                box.children.append(((width - base.w) / 2.0, 0.0, base))
+                if sup is not None:
+                    dy = -(base.asc + gap + sup.desc)
+                    box.children.append(((width - sup.w) / 2.0, dy, sup))
+                    box.asc = max(box.asc, sup.asc - dy)
+                if sub is not None:
+                    dy = base.desc + gap + sub.asc
+                    box.children.append(((width - sub.w) / 2.0, dy, sub))
+                    box.desc = max(box.desc, dy + sub.desc)
+                return box
+            box = _EqBox(base.w, base.asc, base.desc)
+            box.children.append((0.0, 0.0, base))
+            width = base.w
+            if sup is not None:
+                dy = -max(0.45 * size, base.asc - 0.30 * small)
+                box.children.append((base.w, dy, sup))
+                box.asc = max(box.asc, sup.asc - dy)
+                width = max(width, base.w + sup.w)
+            if sub is not None:
+                dy = max(0.22 * size, base.desc - 0.10 * small)
+                box.children.append((base.w, dy, sub))
+                box.desc = max(box.desc, dy + sub.desc)
+                width = max(width, base.w + sub.w)
+            box.w = width
+            return box
+
+        if kind == "radical":
+            rad = self._eq_layout(node.radicand, size, bold)
+            rule = max(1.0, round(size / 16.0))
+            gap = max(1.0, size * 0.12)
+            hook = size * 0.55
+            index = (self._eq_layout(node.index,
+                                     max(_EQ_MIN_SCRIPT_PX, size * 0.55), bold)
+                     if node.index else None)
+            lead = hook if index is None else max(hook, index.w + hook * 0.5)
+            width = lead + rad.w + size * 0.12
+            box = _EqBox(width, rad.asc + gap + rule, rad.desc)
+            box.children.append((lead, 0.0, rad))
+            top = -box.asc + rule / 2.0
+            bottom = box.desc
+            mid = top + (bottom - top) * 0.55
+            box.strokes.append(([
+                (lead - hook, mid),
+                (lead - hook * 0.62, mid + (bottom - mid) * 0.35),
+                (lead - hook * 0.38, bottom),
+                (lead - hook * 0.10, top),
+                (width, top),
+            ], rule))
+            if index is not None:
+                dy = mid - index.desc
+                box.children.append((0.0, dy, index))
+                box.asc = max(box.asc, index.asc - dy)
+            return box
+
+        if kind == "fence":
+            body = self._eq_layout(node.body, size, bold)
+            left = self._eq_bracket(node.left, size, body.asc, body.desc)
+            right = self._eq_bracket(node.right, size, body.asc, body.desc)
+            centre = (body.desc - body.asc) / 2.0
+            box = _EqBox(0.0, body.asc, body.desc)
+            x = 0.0
+            for part in (left, body, right):
+                if part is body:
+                    box.children.append((x, 0.0, body))
+                    x += body.w
+                    continue
+                if part.w <= 0.0:
+                    continue
+                dy = centre + (part.asc - part.desc) / 2.0
+                box.children.append((x, dy, part))
+                x += part.w
+                box.asc = max(box.asc, part.asc - dy)
+                box.desc = max(box.desc, dy + part.desc)
+            box.w = x
+            return box
+
+        if kind == "accent":
+            base = self._eq_layout(node.base, size, bold)
+            gap = max(1.0, size * 0.06)
+            rule = max(1.0, round(size / 16.0))
+            box = _EqBox(base.w, base.asc, base.desc)
+            box.children.append((0.0, 0.0, base))
+            if node.below:
+                y = base.desc + gap
+                box.rules.append((0.0, y, base.w, y + rule))
+                box.desc = max(box.desc, y + rule)
+                return box
+            glyph = hwpeqn_parse.ACCENT_GLYPH.get(node.mark)
+            if glyph is None:
+                y = -(base.asc + gap + rule)
+                box.rules.append((0.0, y, base.w, y + rule))
+                box.asc = max(box.asc, -y)
+                return box
+            mark = self._eq_ink(glyph, size * 0.9, bold)
+            dy = -(base.asc + gap) + mark.desc
+            box.children.append(((base.w - mark.w) / 2.0, dy, mark))
+            box.asc = max(box.asc, mark.asc - dy)
+            return box
+
+        if kind == "grid":
+            gap_x = size * 0.6
+            gap_y = size * 0.35
+            cells = [[self._eq_layout(cell, size, bold) for cell in row]
+                     for row in node.rows]
+            cols = max((len(row) for row in cells), default=0)
+            widths = [0.0] * cols
+            for row in cells:
+                for index, cell in enumerate(row):
+                    widths[index] = max(widths[index], cell.w)
+            bands = [(max((c.asc for c in row), default=0.0),
+                      max((c.desc for c in row), default=0.0))
+                     for row in cells]
+            total = (sum(a + d for a, d in bands)
+                     + gap_y * max(0, len(bands) - 1))
+            inner = _EqBox(sum(widths) + gap_x * max(0, cols - 1))
+            y = -_EQ_AXIS * size - total / 2.0
+            for row, (asc, desc) in zip(cells, bands):
+                base_y = y + asc
+                x = 0.0
+                for index, cell in enumerate(row):
+                    if node.align == "c":
+                        dx = x + (widths[index] - cell.w) / 2.0
+                    elif node.align == "r":
+                        dx = x + widths[index] - cell.w
+                    else:
+                        dx = x
+                    inner.children.append((dx, base_y, cell))
+                    inner.asc = max(inner.asc, cell.asc - base_y)
+                    inner.desc = max(inner.desc, base_y + cell.desc)
+                    x += widths[index] + gap_x
+                y += asc + desc + gap_y
+            if not (node.left or node.right):
+                return inner
+            left = self._eq_bracket(node.left, size, inner.asc, inner.desc)
+            right = self._eq_bracket(node.right, size, inner.asc, inner.desc)
+            centre = (inner.desc - inner.asc) / 2.0
+            box = _EqBox(0.0, inner.asc, inner.desc)
+            x = 0.0
+            for part in (left, inner, right):
+                if part is inner:
+                    box.children.append((x, 0.0, inner))
+                    x += inner.w
+                    continue
+                if part.w <= 0.0:
+                    continue
+                dy = centre + (part.asc - part.desc) / 2.0
+                box.children.append((x, dy, part))
+                x += part.w
+                box.asc = max(box.asc, part.asc - dy)
+                box.desc = max(box.desc, dy + part.desc)
+            box.w = x
+            return box
+
+        # Unreachable for any node hwpeqn_parse builds; a new node kind that
+        # forgets a case here draws nothing rather than crashing a render.
+        return _EqBox()
+
+    def _eq_bounds(self, box, x=0.0, baseline=0.0, acc=None):
+        """The rectangle this subtree actually inks, in the root's frame.
+
+        The nominal boxes decide where things stack; this decides how big the
+        equation IS.  They differ — a parenthesis grown to fence a fraction
+        overshoots its cell, an accent sits above one — and the ``hp:sz`` fit
+        has to be judged on the ink, or an equation could be declared to fit
+        and still draw outside its box.
+        """
+        if acc is None:
+            acc = [None, None, None, None]
+
+        def widen(x0, y0, x1, y1):
+            if acc[0] is None:
+                acc[0], acc[1], acc[2], acc[3] = x0, y0, x1, y1
+                return
+            acc[0] = min(acc[0], x0)
+            acc[1] = min(acc[1], y0)
+            acc[2] = max(acc[2], x1)
+            acc[3] = max(acc[3], y1)
+
+        if box.text and box.font is not None:
+            ascent, _descent = box.font.getmetrics()
+            bb = box.font.getbbox(box.text)
+            widen(x + bb[0], baseline - ascent + bb[1],
+                  x + bb[2], baseline - ascent + bb[3])
+        for x0, y0, x1, y1 in box.rules:
+            widen(x + x0, baseline + y0, x + x1, baseline + y1)
+        for points, width in box.strokes:
+            half = max(1.0, width) / 2.0
+            for px, py in points:
+                widen(x + px - half, baseline + py - half,
+                      x + px + half, baseline + py + half)
+        for dx, dy, child in box.children:
+            self._eq_bounds(child, x + dx, baseline + dy, acc)
+        if acc[0] is None:
+            return (x, baseline, x + box.w, baseline)
+        return tuple(acc)
+
+    def _eq_bands(self, box, x=0.0, baseline=0.0, acc=None):
+        """The equation's drawn glyphs, grouped into one band per baseline.
+
+        A PDF text extractor reads a stacked equation as several text lines —
+        a numerator line, a denominator line — not as one object, so recording
+        the whole equation as a single ``line_boxes`` entry would pair one
+        candidate box against three reference lines and score the geometry as
+        wrong when it is right.  Grouping by baseline is what makes the line
+        channel compare like with like.  Rules and strokes are deliberately
+        excluded: a fraction bar is not a text line.
+        """
+        if acc is None:
+            acc = []
+        if box.text and box.font is not None:
+            ascent, _descent = box.font.getmetrics()
+            bb = box.font.getbbox(box.text)
+            if bb[2] > bb[0] and bb[3] > bb[1]:
+                acc.append((baseline, x + bb[0], baseline - ascent + bb[1],
+                            x + bb[2], baseline - ascent + bb[3]))
+        for dx, dy, child in box.children:
+            self._eq_bands(child, x + dx, baseline + dy, acc)
+        return acc
+
+    @staticmethod
+    def _eq_merge_bands(bands, tolerance):
+        """Merge glyph rectangles whose baselines agree within ``tolerance``."""
+        merged = []
+        for baseline, x0, y0, x1, y1 in sorted(bands):
+            if merged and abs(baseline - merged[-1][0]) <= tolerance:
+                row = merged[-1]
+                merged[-1] = (row[0], min(row[1], x0), min(row[2], y0),
+                              max(row[3], x1), max(row[4], y1))
+                continue
+            merged.append((baseline, x0, y0, x1, y1))
+        return merged
+
+    def _eq_draw(self, draw, box, x, baseline):
+        if box.text and box.font is not None:
+            draw.text((x, baseline), box.text, font=box.font, fill=255,
+                      anchor="ls")
+        for x0, y0, x1, y1 in box.rules:
+            draw.rectangle([x + x0, baseline + y0, x + x1, baseline + y1],
+                           fill=255)
+        for points, width in box.strokes:
+            draw.line([(x + px, baseline + py) for px, py in points],
+                      fill=255, width=max(1, int(round(width))))
+        for dx, dy, child in box.children:
+            self._eq_draw(draw, child, x + dx, baseline + dy)
+
+    def _render_equation(self, el, origin_hwp, w_hwp, h_hwp):
+        """Draw an ``hp:equation``'s script inside its declared ``hp:sz``.
+
+        The declared extent is the ground truth for the object box — it is
+        what the authoring engine measured the equation to be, and it is what
+        the paragraph's line box was sized around.  So the layout happens
+        INSIDE that box: if this renderer's metrics make the equation bigger
+        than the file says it is, the equation is scaled down to fit and the
+        scaling is declared (``hp:equation@equation_scaled``).  It is never
+        allowed to overflow, because an equation that spills is worse than a
+        placeholder — it draws over the text around it.
+
+        Returns True when it drew; False sends the caller back to the
+        placeholder box, which is what an equation with no script gets.
+        """
+        if self._image is None:
+            return False
+        script_el = _kid(el, "script")
+        script = "".join(script_el.itertext()) if script_el is not None else ""
+        if not script.strip():
+            self._skip("hp:equation",
+                       "the equation carries no hp:script to lay out; "
+                       "placeholder box drawn")
+            return False
+        try:
+            tree, info = hwpeqn_parse.parse(script)
+        except RecursionError:
+            self._skip("hp:equation",
+                       "the hp:script nests deeper than the parser's "
+                       "recursion budget; placeholder box drawn")
+            return False
+
+        self._eq_face = self._equation_face(el.get("font"))
+        size = max(2.0, self.pxf(_iattr(el, "baseUnit") or 1000))
+        ox, oy = origin_hwp
+        bx0, by0 = self.px(ox), self.px(oy)
+        bx1, by1 = self.px(ox + w_hwp), self.px(oy + h_hwp)
+        box_w, box_h = max(1, bx1 - bx0), max(1, by1 - by0)
+
+        laid = self._eq_layout(tree, size)
+        x0, y0, x1, y1 = self._eq_bounds(laid)
+        scale = 1.0
+        if (x1 - x0) > box_w or (y1 - y0) > box_h:
+            fit = min(box_w / (x1 - x0) if x1 > x0 else 1.0,
+                      box_h / (y1 - y0) if y1 > y0 else 1.0)
+            scale = fit
+            laid = self._eq_layout(tree, max(2.0, size * fit))
+            x0, y0, x1, y1 = self._eq_bounds(laid)
+
+        ink_w = max(1, int(math.ceil(x1 - x0)) + 2)
+        ink_h = max(1, int(math.ceil(y1 - y0)) + 2)
+        mask = self.Image.new("L", (ink_w, ink_h), 0)
+        baseline_in_mask = 1.0 - y0
+        self._eq_draw(self.ImageDraw.Draw(mask), laid, 1.0 - x0,
+                      baseline_in_mask)
+        bands = self._eq_merge_bands(self._eq_bands(laid), size * 0.25)
+        shrink = 1.0
+        if ink_w > box_w or ink_h > box_h:
+            # Rounding, or a face whose metrics simply will not fit: the
+            # promise is that the box is never overflowed, so the last
+            # reduction is on the raster.  LANCZOS is pinned for the same
+            # reason it is in _render_picture.
+            shrink = min(box_w / ink_w, box_h / ink_h)
+            ink_w = max(1, int(ink_w * shrink))
+            ink_h = max(1, int(ink_h * shrink))
+            mask = mask.resize((ink_w, ink_h), self.Image.Resampling.LANCZOS)
+            baseline_in_mask *= shrink
+            scale *= shrink
+
+        # ``baseLine`` is a percentage of the declared height at which the
+        # equation's own baseline sits — the file's answer to "where in this
+        # box does the maths sit against the surrounding text".
+        percent = _iattr(el, "baseLine")
+        fraction = (percent / 100.0) if 0 < percent < 100 else BASELINE_RATIO
+        top = int(round(by0 + box_h * fraction - baseline_in_mask))
+        top = max(by0, min(top, by1 - ink_h))
+        left = bx0 + max(0, (box_w - ink_w) // 2)
+        colour = _colour(el.get("textColor")) or (0, 0, 0)
+        self._image.paste(self.Image.new("RGB", (ink_w, ink_h), colour),
+                          (left, top), mask)
+
+        for name, count in info["constructs"].items():
+            self.eq_constructs[name] = self.eq_constructs.get(name, 0) + count
+        for name, count in info["unsupported"].items():
+            self.eq_unsupported[name] = self.eq_unsupported.get(name, 0) + count
+            for _ in range(count):
+                self._skip(
+                    f"hp:equation@script[{name}]",
+                    "HwpEqn construct has no layout in this tier; its own "
+                    "token text is drawn inside the equation box")
+        self._skip("hp:equation",
+                   "laid out from its hp:script inside the declared hp:sz "
+                   "extent; italic variable shaping is not applied, because "
+                   "the format names a family and this renderer resolves "
+                   "regular and bold cuts only")
+        if scale < 1.0:
+            self.eq_scaled.append(round(scale, 4))
+            self._skip("hp:equation@equation_scaled",
+                       "this renderer's metrics laid the equation out larger "
+                       "than its declared hp:sz; it was scaled to fit rather "
+                       "than allowed to overflow the box")
+        self.counts["equations"] += 1
+        for _baseline, gx0, gy0, gx1, gy1 in bands:
+            self.line_boxes.append({
+                "page": self._page,
+                "mode": "equation",
+                "x0": round(left + (gx0 + 1.0 - x0) * shrink, 3),
+                "y0": round(top + (gy0 + 1.0 - y0) * shrink, 3),
+                "x1": round(left + (gx1 + 1.0 - x0) * shrink, 3),
+                "y1": round(top + (gy1 + 1.0 - y0) * shrink, 3),
+            })
+        return True
+
     def _render_placeholder(self, draw, el, name, origin_hwp):
         """An honest box where art would be, never a silent hole."""
         ox, oy = origin_hwp
@@ -2435,6 +3045,9 @@ class OwnRenderer:
         h = _iattr(sz, "height") if sz is not None else 0
         extent_known = bool(w and h)
         if name == "pic" and extent_known and self._render_picture(
+                el, origin_hwp, w, h):
+            return
+        if name == "equation" and extent_known and self._render_equation(
                 el, origin_hwp, w, h):
             return
         if not extent_known:
@@ -2660,7 +3273,7 @@ class OwnRenderer:
     def _audit_unsupported(self):
         """Name every element local-name this tier has no handler for."""
         handled = (STRUCTURAL_TAGS | set(PLACEHOLDER_LABELS)
-                   | {"linesegarray", "lineseg"})
+                   | {"linesegarray", "lineseg", "script"})
         seen = {}
         for root in self.sections:
             for el in root.iter():
@@ -2674,6 +3287,42 @@ class OwnRenderer:
             self.skipped[(f"hp:{name}",
                           "element has no handler in this tier; nothing drawn"
                           )]["count"] = count
+
+    def _equation_report(self):
+        """What the equation lane laid out, and what it could not.
+
+        The honesty rule applied to a whole new element: "equations are
+        rendered" is not a claim a sidecar can carry on its own, because the
+        HwpEqn vocabulary is large and this tier covers part of it.  So the
+        constructs that WERE laid out are counted alongside the ones that were
+        not, and every unsupported construct is separately named in
+        ``elements_skipped``.
+        """
+        return {
+            "parser": hwpeqn_parse.PARSER_VERSION,
+            "laid_out": self.counts["equations"],
+            "constructs": dict(sorted(self.eq_constructs.items())),
+            "unsupported_constructs": dict(sorted(self.eq_unsupported.items())),
+            "scaled_to_fit": len(self.eq_scaled),
+            "scale_factors": sorted(self.eq_scaled),
+            "sizing_rule": (
+                "hp:sz is the ground truth for the object box: the equation "
+                "is laid out inside it, and where this renderer's metrics do "
+                "not fit, it is scaled down and the scaling is declared. The "
+                "declared extent is never overflowed."
+            ),
+            "over_binding": hwpeqn_parse.OVER_BINDING,
+            "not_applied": [
+                "italic variable shaping — OWPML names a family and this "
+                "renderer resolves regular and bold cuts only",
+                "hp:equation@lineMode / @textWrap — the equation is drawn at "
+                "the object box the paragraph already reserved for it; no "
+                "text is re-wrapped around it",
+                "integral limits are set to the right of the sign, sums and "
+                "the lim/max/min family stack theirs above and below; that "
+                "split is this renderer's reading, not a published rule",
+            ],
+        }
 
     def _font_report(self):
         """Per declared face: resolved against the system, or substituted.
@@ -3003,6 +3652,7 @@ class OwnRenderer:
                     "it"
                 ),
             },
+            "equations": self._equation_report(),
             "line_layout": self._line_layout_report(),
             "line_boxes": list(self.line_boxes),
             "line_boxes_meaning": (
