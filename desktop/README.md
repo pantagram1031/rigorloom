@@ -1242,6 +1242,17 @@ fails, because it says whether the failure is in the shell or underneath it. It
 is also what caught the `Authorization: Bearer` defect above, by reading the
 credential reference back out of the adapter instead of trusting the write.
 
+**Epoch 0 integration note — the harness no longer depends on an untracked
+`modules/enabled.yaml`.** A clean archive run reached every document/agent
+assertion and then reported 36 pass / 2 fail because the final pack checks read
+the checkout's absent enablement file. `task_pack_checks` now asks the registry
+what it discovered, writes an explicit all-modules enablement file under the
+round trip's disposable root, and points the registry at that file. It never
+reads or changes checkout-local enablement. The regression test
+`tests/test_agent_roundtrip_harness.py` pins the pack-check and
+checkout-nonmutation properties; the complete post-fix round trip recorded
+39/39, exit 0.
+
 Screenshots — `screenshots/`: the thirteen from Phase 4, plus `composer`,
 `provider-settings`, `toolbar-text`, `toolbar-page`, `task-packs`. None are
 staged. `composer.png` photographs a plan a real Agent Host process proposed
