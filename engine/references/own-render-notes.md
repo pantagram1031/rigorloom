@@ -1157,15 +1157,29 @@ not only here.
     declares `keepWithNext`, so the rule is implemented and **not exercised**
     by the corpus — it is honoured on the strength of the spec, and that is
     stated rather than hidden.
-19. **The flow pass breaks a page one line early where the authoring engine
-    overran the usable box.** Four corpus documents keep a line box past the
-    bottom of `usable_height` (max fill 1.068 on moel-2013), and the flow
-    pass's strict fit test does not. On the private report-class holdout this
-    is the whole of the residual: the adjacent-pair advance relation is exact
-    on 225 of 225 pairs, and yet 54 of 243 blocks land one page late. No
-    tolerance has been added, on purpose — see *Where the page break is still
-    wrong*. Unexplained, one-sided, and the next thing to measure off a
-    reference render.
+19. **The flow pass's row-fit test now allows a line's descender to cross the
+    margin (measured, not tuned).** Was: the strict test broke a page the
+    moment a line's box (`vertpos + vertsize`) no longer fit inside
+    `usable_height`, one line earlier than four corpus documents keep a line
+    box past that bound (max fill 1.068 on moel-2013) and Hancom's own
+    reference render still draws it (`docs/research/line-fit-rule.md`, ink
+    34–42pt past the declared bottom margin on the two reliable-reference
+    overfull pages). Now: a row fits if `vertpos + baseline <= usable_height`
+    (`baseline` = the cached `hp:lineseg@baseline`, or
+    `round(0.85 * textheight)` where absent) — `baseline <= vertsize` always,
+    so the change is strictly more permissive. Measured against the 51 corpus
+    pages: 47/51 satisfied the old predicate, 50/51 satisfy the new one, and
+    the 47 that already fit keep fitting (zero regression; the auto-mode
+    corpus render is byte-identical, sha256-verified over all 51 PNGs). The
+    one page the new predicate does not resolve is `nrf`'s empty trailing
+    paragraph, whose `vertpos` is already past `usable_height` before any
+    box-portion is added — no box-portion rule rescues that. On the private
+    report-class holdout, page count stays 18/18 exact and the late-block
+    count drops from **54 of 243 to 7 of 243**; 5 blocks that used to agree
+    now land one page early instead (231/243 agree overall, up from 189/243).
+    No tolerance was added — this is the measured typographic constant
+    already used elsewhere in this renderer (`BASELINE_RATIO`), not a value
+    chosen to make the corpus agree.
 
 ## Report-class documents
 
