@@ -4210,7 +4210,15 @@ class OwnRenderer:
                 "byte-identical."
             ),
             "reflow_triggered": page_records is not None,
-            "first_flowed_block": first_flowed,
+            # Two different countings, and both are needed: the flow works in
+            # TOP-LEVEL document order, while relayout_paragraphs and every
+            # line_layout record name a paragraph by its position among ALL
+            # hp:p of section0, nested cells included.
+            "first_flowed_position": first_flowed,
+            "first_flowed_block": min(
+                (b["block"] for b in blocks
+                 if b["placement"] == "flowed" and b["block"] is not None),
+                default=None),
             "pages": page_count,
             "pages_reflowed": sum(1 for v in pages.values() if v),
             "page_reflowed": {str(k): v for k, v in sorted(pages.items())},

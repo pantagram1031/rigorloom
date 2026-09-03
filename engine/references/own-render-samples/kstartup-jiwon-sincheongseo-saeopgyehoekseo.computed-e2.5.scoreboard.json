@@ -1,0 +1,1132 @@
+{
+  "caveats": [
+    "every number here depends on which fonts this machine has installed; see fonts.faces for what resolved and what was substituted",
+    "changed_channel_ratio is render_cert's raster channel verbatim and carries no threshold here — see thresholds.rationale",
+    "the reference raster is scaled to the candidate's pixel grid, never the reverse"
+  ],
+  "document": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+  "document_class": "grant",
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 1418,
+    "cells": 366,
+    "equations": 0,
+    "images": 0,
+    "page_numbers": 0,
+    "paragraphs": 793,
+    "placeholders": 5,
+    "runs": 1047,
+    "tables": 42,
+    "text_lines": 463
+  },
+  "fidelity_target": {
+    "ink_delta_abs_max": 0.002,
+    "note": "not evaluated. The gap to it is the honest measure of how far tier 3 is from Hancom, and the largest remaining term is sub-pixel glyph registration, not any single unimplemented element.",
+    "page_count_exact": true,
+    "ssim_inked_min": 0.7,
+    "ssim_min": 0.95,
+    "text_line_iou_mean_min": 0.8,
+    "text_line_pair_rate_min": 0.95
+  },
+  "fonts": {
+    "characters_on_a_resolved_face": 7898,
+    "characters_on_a_substituted_face": 520,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 89,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 51,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 12,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 105,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 19,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 32,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 2361,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 567,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": false,
+        "characters": 260,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": true,
+        "characters": 59,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 1821,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 350,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 554,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 117,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 53,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": true,
+        "characters": 10,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 13,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 608,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 322,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 26,
+        "declared": "한양신명조",
+        "face_index": 0,
+        "file": "H2MJSM.TTF",
+        "installed_family": "HY신명조",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 37,
+        "declared": "한양신명조",
+        "face_index": 0,
+        "file": "H2MJSM.TTF",
+        "installed_family": "HY신명조",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 142,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 4,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 236,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 8,
+        "declared": "함초롬바탕",
+        "face_index": 0,
+        "file": "HANBatangB.ttf",
+        "installed_family": "함초롬바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "함초롬바탕",
+        "face_index": 0,
+        "file": "HANBatangB.ttf",
+        "installed_family": "함초롬바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "HCI Poppy",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 17,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 66,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 4,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 10,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 2,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 13,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 384,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 3,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgunbd.ttf"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 0.938228,
+    "system_font_files_scanned": 457
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "measured against a Hancom reference render; the grade stays own-uncertified because the thresholds below are PROPOSED and not operator-ratified, and because pipeline/scripts/render_cert.py — the certification path — cannot score this renderer until it emits a PDF text layer.",
+  "label": "computed-e2.5",
+  "line_layout": "auto",
+  "line_layout_meaning": "which engine laid out the line boxes being scored. auto: the document's own cached hp:lineseg wherever it still describes the text, so this column measures everything EXCEPT the line breaker. computed: every line broken by this renderer, so this column is the honest measure OF the line breaker.",
+  "line_layout_paragraphs": {
+    "computed": 4,
+    "lineseg": 453
+  },
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": [
+    {
+      "changed_channel_ratio": 0.156100318,
+      "ink": {
+        "candidate": 0.046105,
+        "delta": -0.001186,
+        "reference": 0.047292
+      },
+      "page": 1,
+      "scored": true,
+      "ssim": 0.771491,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.287418,
+      "ssim_inked_blocks": 9959,
+      "text_line_iou": {
+        "candidate_lines": 60,
+        "mean": 0.601965,
+        "median": 0.607098,
+        "pair_rate": 1.0,
+        "pairs": 56,
+        "reference_lines": 56,
+        "unpaired_candidate": 4,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.085951279,
+      "ink": {
+        "candidate": 0.05399,
+        "delta": 0.006175,
+        "reference": 0.047815
+      },
+      "page": 2,
+      "scored": true,
+      "ssim": 0.774514,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.176399,
+      "ssim_inked_blocks": 8487,
+      "text_line_iou": {
+        "candidate_lines": 35,
+        "mean": 0.657727,
+        "median": 0.706163,
+        "pair_rate": 1.0,
+        "pairs": 34,
+        "reference_lines": 34,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.070939808,
+      "ink": {
+        "candidate": 0.026818,
+        "delta": -0.000291,
+        "reference": 0.027109
+      },
+      "page": 3,
+      "scored": true,
+      "ssim": 0.857513,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.203174,
+      "ssim_inked_blocks": 5551,
+      "text_line_iou": {
+        "candidate_lines": 20,
+        "mean": 0.59936,
+        "median": 0.573362,
+        "pair_rate": 1.0,
+        "pairs": 20,
+        "reference_lines": 20,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.051584429,
+      "ink": {
+        "candidate": 0.014937,
+        "delta": 0.000692,
+        "reference": 0.014245
+      },
+      "page": 4,
+      "scored": true,
+      "ssim": 0.920968,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.250296,
+      "ssim_inked_blocks": 3275,
+      "text_line_iou": {
+        "candidate_lines": 10,
+        "mean": 0.599145,
+        "median": 0.595028,
+        "pair_rate": 1.0,
+        "pairs": 10,
+        "reference_lines": 10,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.061988236,
+      "ink": {
+        "candidate": 0.017521,
+        "delta": 0.000513,
+        "reference": 0.017008
+      },
+      "page": 5,
+      "scored": true,
+      "ssim": 0.890182,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.235406,
+      "ssim_inked_blocks": 4461,
+      "text_line_iou": {
+        "candidate_lines": 11,
+        "mean": 0.56417,
+        "median": 0.581386,
+        "pair_rate": 1.0,
+        "pairs": 10,
+        "reference_lines": 10,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.24679654,
+      "ink": {
+        "candidate": 0.045594,
+        "delta": 0.009746,
+        "reference": 0.035848
+      },
+      "page": 6,
+      "scored": true,
+      "ssim": 0.6074,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.182724,
+      "ssim_inked_blocks": 14922,
+      "text_line_iou": {
+        "candidate_lines": 103,
+        "mean": 0.060961,
+        "median": 0.0,
+        "pair_rate": 0.988372,
+        "pairs": 85,
+        "reference_lines": 86,
+        "unpaired_candidate": 18,
+        "unpaired_reference": 1
+      }
+    },
+    {
+      "changed_channel_ratio": 0.043656302,
+      "ink": {
+        "candidate": 0.0,
+        "delta": -0.01262,
+        "reference": 0.01262
+      },
+      "page": 7,
+      "scored": true,
+      "ssim": 0.919222,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.161428,
+      "ssim_inked_blocks": 2988,
+      "text_line_iou": {
+        "candidate_lines": 0,
+        "mean": null,
+        "median": null,
+        "pair_rate": 0.0,
+        "pairs": 0,
+        "reference_lines": 14,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 14
+      }
+    },
+    {
+      "changed_channel_ratio": 0.039233948,
+      "ink": {
+        "candidate": 0.006148,
+        "delta": 0.001158,
+        "reference": 0.00499
+      },
+      "page": 8,
+      "scored": true,
+      "ssim": 0.965526,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.464802,
+      "ssim_inked_blocks": 2002,
+      "text_line_iou": {
+        "candidate_lines": 2,
+        "mean": 0.667234,
+        "median": 0.667234,
+        "pair_rate": 1.0,
+        "pairs": 1,
+        "reference_lines": 1,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.057528322,
+      "ink": {
+        "candidate": 0.013607,
+        "delta": -0.000558,
+        "reference": 0.014165
+      },
+      "page": 9,
+      "scored": true,
+      "ssim": 0.910157,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.189989,
+      "ssim_inked_blocks": 3447,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.512725,
+        "median": 0.490465,
+        "pair_rate": 1.0,
+        "pairs": 4,
+        "reference_lines": 4,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.050832384,
+      "ink": {
+        "candidate": 0.012391,
+        "delta": -0.00182,
+        "reference": 0.014211
+      },
+      "page": 10,
+      "scored": true,
+      "ssim": 0.927563,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.224028,
+      "ssim_inked_blocks": 2901,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.664578,
+        "median": 0.646959,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.051369203,
+      "ink": {
+        "candidate": 0.012868,
+        "delta": -0.002005,
+        "reference": 0.014873
+      },
+      "page": 11,
+      "scored": true,
+      "ssim": 0.928261,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.266874,
+      "ssim_inked_blocks": 3041,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.666882,
+        "median": 0.64858,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.052339132,
+      "ink": {
+        "candidate": 0.0152,
+        "delta": -0.00195,
+        "reference": 0.01715
+      },
+      "page": 12,
+      "scored": true,
+      "ssim": 0.924798,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.176575,
+      "ssim_inked_blocks": 2837,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.668484,
+        "median": 0.644978,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.038688155,
+      "ink": {
+        "candidate": 0.019289,
+        "delta": -0.001108,
+        "reference": 0.020397
+      },
+      "page": 13,
+      "scored": true,
+      "ssim": 0.892822,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.150903,
+      "ssim_inked_blocks": 3920,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.660531,
+        "median": 0.644115,
+        "pair_rate": 1.0,
+        "pairs": 5,
+        "reference_lines": 5,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.039452997,
+      "ink": {
+        "candidate": 0.020089,
+        "delta": -0.00153,
+        "reference": 0.021618
+      },
+      "page": 14,
+      "scored": true,
+      "ssim": 0.891446,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.120371,
+      "ssim_inked_blocks": 3832,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.65884,
+        "median": 0.641818,
+        "pair_rate": 1.0,
+        "pairs": 5,
+        "reference_lines": 5,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.052787866,
+      "ink": {
+        "candidate": 0.014044,
+        "delta": -0.002141,
+        "reference": 0.016185
+      },
+      "page": 15,
+      "scored": true,
+      "ssim": 0.923761,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.18857,
+      "ssim_inked_blocks": 2919,
+      "text_line_iou": {
+        "candidate_lines": 4,
+        "mean": 0.683621,
+        "median": 0.64869,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.145857224,
+      "ink": {
+        "candidate": 0.040256,
+        "delta": -0.00459,
+        "reference": 0.044845
+      },
+      "page": 16,
+      "scored": true,
+      "ssim": 0.775826,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.244677,
+      "ssim_inked_blocks": 9216,
+      "text_line_iou": {
+        "candidate_lines": 30,
+        "mean": 0.599947,
+        "median": 0.583026,
+        "pair_rate": 0.967742,
+        "pairs": 30,
+        "reference_lines": 31,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 1
+      }
+    },
+    {
+      "changed_channel_ratio": 0.188605921,
+      "ink": {
+        "candidate": 0.033254,
+        "delta": 0.000721,
+        "reference": 0.032533
+      },
+      "page": 17,
+      "scored": true,
+      "ssim": 0.823221,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.463013,
+      "ssim_inked_blocks": 10219,
+      "text_line_iou": {
+        "candidate_lines": 31,
+        "mean": 0.787148,
+        "median": 0.804297,
+        "pair_rate": 1.0,
+        "pairs": 30,
+        "reference_lines": 30,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.166996403,
+      "ink": {
+        "candidate": 0.043083,
+        "delta": 0.005608,
+        "reference": 0.037475
+      },
+      "page": 18,
+      "scored": true,
+      "ssim": 0.765521,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.233828,
+      "ssim_inked_blocks": 9499,
+      "text_line_iou": {
+        "candidate_lines": 26,
+        "mean": 0.819849,
+        "median": 0.835848,
+        "pair_rate": 1.0,
+        "pairs": 26,
+        "reference_lines": 26,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.059922565,
+      "ink": {
+        "candidate": 0.023359,
+        "delta": 0.0038,
+        "reference": 0.019559
+      },
+      "page": 19,
+      "scored": true,
+      "ssim": 0.878093,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.213868,
+      "ssim_inked_blocks": 4806,
+      "text_line_iou": {
+        "candidate_lines": 22,
+        "mean": 0.854511,
+        "median": 0.927253,
+        "pair_rate": 1.0,
+        "pairs": 22,
+        "reference_lines": 22,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.099455836,
+      "ink": {
+        "candidate": 0.0,
+        "delta": -0.062056,
+        "reference": 0.062056
+      },
+      "page": 20,
+      "scored": true,
+      "ssim": 0.704109,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.038778,
+      "ssim_inked_blocks": 9549,
+      "text_line_iou": {
+        "candidate_lines": 34,
+        "mean": 0.0,
+        "median": 0.0,
+        "pair_rate": 0.030303,
+        "pairs": 1,
+        "reference_lines": 33,
+        "unpaired_candidate": 33,
+        "unpaired_reference": 32
+      }
+    },
+    {
+      "changed_channel_ratio": 0.097223635,
+      "ink": {
+        "candidate": 0.049637,
+        "delta": 0.008244,
+        "reference": 0.041393
+      },
+      "page": 21,
+      "scored": true,
+      "ssim": 0.804096,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.070916,
+      "ssim_inked_blocks": 6538,
+      "text_line_iou": {
+        "candidate_lines": 19,
+        "mean": 0.668726,
+        "median": 0.744538,
+        "pair_rate": 0.818182,
+        "pairs": 18,
+        "reference_lines": 22,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 4
+      }
+    },
+    {
+      "changed_channel_ratio": 0.149377124,
+      "ink": {
+        "candidate": 0.040136,
+        "delta": -0.016015,
+        "reference": 0.056151
+      },
+      "page": 22,
+      "scored": true,
+      "ssim": 0.70231,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.123751,
+      "ssim_inked_blocks": 10548,
+      "text_line_iou": {
+        "candidate_lines": 32,
+        "mean": 0.438683,
+        "median": 0.421461,
+        "pair_rate": 0.882353,
+        "pairs": 30,
+        "reference_lines": 34,
+        "unpaired_candidate": 2,
+        "unpaired_reference": 4
+      }
+    }
+  ],
+  "reference_geometry_scale": {
+    "comparable": true,
+    "declared_median_pt": 12.0,
+    "method": "glyph-weighted median of reference PDF span sizes over glyph-weighted median of declared hh:charPr@height x hh:ratio",
+    "reference_median_pt": 12.0,
+    "scale": 1.0,
+    "tolerance": 0.05
+  },
+  "reference_pdf": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.pdf",
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "scoreboard_version": "2",
+  "ssim_variant": "block-8x8 non-overlapping, C1=6.502500000000001, C2=58.522499999999994, L=255.0; in-repo implementation because scikit-image is not installed in this environment",
+  "summary": {
+    "changed_channel_ratio_mean": 0.091213074,
+    "ink_delta_abs_max": 0.062056,
+    "page_count": {
+      "candidate": 22,
+      "exact": true,
+      "reference": 22
+    },
+    "pages_scored": 22,
+    "ssim_inked_mean": 0.212172,
+    "ssim_inked_min": 0.038778,
+    "ssim_mean": 0.843582,
+    "ssim_min": 0.6074,
+    "text_line_iou_mean": 0.592147,
+    "text_line_pair_rate_mean": 0.894861
+  },
+  "thresholds": {
+    "ink_delta_abs_max": 0.05,
+    "kind": "regression_floor",
+    "page_count_exact": true,
+    "ratified": false,
+    "rationale": "measured worst-of-seven on the comparable corpus forms at 144 dpi: ssim_min 0.4867 (jumin), ssim_inked_min -0.0224 (saeopja), text_line_iou_mean 0.2470 (kstartup), text_line_pair_rate 0.4490 (admrul), ink_delta_abs_max 0.0375 (kstartup). Each bound is set below (or above, for the max) that worst value with a little headroom. raster changed_channel_ratio carries NO threshold: a font-substituting renderer cannot reach a meaningful one, and a gate nobody can pass is not a gate.",
+    "ssim_inked_min": -0.1,
+    "ssim_min": 0.4,
+    "text_line_iou_mean_min": 0.2,
+    "text_line_pair_rate_min": 0.4
+  },
+  "verdict": {
+    "blocked": false,
+    "blocked_reason": null,
+    "checks": [
+      {
+        "bound": true,
+        "check": "page_count_exact",
+        "pass": true,
+        "value": true
+      },
+      {
+        "bound": 0.4,
+        "check": "ssim_min",
+        "pass": true,
+        "value": 0.6074
+      },
+      {
+        "bound": -0.1,
+        "check": "ssim_inked_min",
+        "pass": true,
+        "value": 0.038778
+      },
+      {
+        "bound": 0.2,
+        "check": "text_line_iou_mean",
+        "pass": true,
+        "value": 0.592147
+      },
+      {
+        "bound": 0.4,
+        "check": "text_line_pair_rate_mean",
+        "pass": true,
+        "value": 0.894861
+      },
+      {
+        "bound": 0.05,
+        "check": "ink_delta_abs_max",
+        "pass": false,
+        "value": 0.062056
+      }
+    ],
+    "note": "a passing verdict against UNRATIFIED thresholds promotes nothing; the grade stays own-uncertified",
+    "pass": false,
+    "ratified": false
+  }
+}

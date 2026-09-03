@@ -527,7 +527,8 @@ def _median(values):
 
 def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
                out_dir=None, stem=None,
-               line_layout=own_render.LINE_LAYOUT_AUTO):
+               line_layout=own_render.LINE_LAYOUT_AUTO,
+               block_layout=own_render.BLOCK_LAYOUT_AUTO):
     """Render the form and score it against its Hancom reference PDF."""
     Image, _ = _require_pillow()
     hwpx_path = Path(hwpx_path)
@@ -538,7 +539,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
         raise ValueError(f"not a file: {reference_pdf}")
 
     renderer = own_render.OwnRenderer(hwpx_path, dpi=dpi,
-                                      line_layout=line_layout)
+                                      line_layout=line_layout,
+                                      block_layout=block_layout)
     images, sidecar = renderer.render()
     if out_dir is not None:
         out_dir = Path(out_dir)
@@ -767,6 +769,13 @@ def build_parser():
         "--line-layout", choices=list(own_render.LINE_LAYOUT_MODES),
         default=own_render.LINE_LAYOUT_AUTO,
         help="auto (default) scores the render as it ships; computed scores it with every paragraph relaid out by the own line breaker")
+    parser.add_argument(
+        "--block-layout", choices=list(own_render.BLOCK_LAYOUT_MODES),
+        default=own_render.BLOCK_LAYOUT_AUTO,
+        help="auto (default) scores the render as it ships, with every block "
+             "on the seat the cached hp:lineseg@vertpos gave it; computed "
+             "scores it with the E2.5 flow pass placing every block, which "
+             "is the channel that grades the flow pass against Hancom")
     parser.add_argument("--corpus", action="store_true",
                         help="score every corpus form that has a reference PDF")
     parser.add_argument("--save-pages", action="store_true",
@@ -785,7 +794,8 @@ def main(argv=None):
                 report = score_form(
                     hwpx, pdf, dpi=args.dpi, label=args.label,
                     out_dir=args.out if args.save_pages else None,
-                    line_layout=args.line_layout)
+                    line_layout=args.line_layout,
+                    block_layout=args.block_layout)
                 report["document_class"] = family
                 write_scoreboard(report, args.out, hwpx.stem, args.label)
                 reports.append({
@@ -809,7 +819,8 @@ def main(argv=None):
         report = score_form(args.input, args.reference, dpi=args.dpi,
                             label=args.label,
                             out_dir=args.out if args.save_pages else None,
-                            line_layout=args.line_layout)
+                            line_layout=args.line_layout,
+                            block_layout=args.block_layout)
         path = write_scoreboard(report, args.out, Path(args.input).stem,
                                 args.label)
         print(json.dumps({"scoreboard": str(path), "report": report},
