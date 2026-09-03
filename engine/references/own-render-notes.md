@@ -329,66 +329,154 @@ and counted, not scored as a failure.
 
 144 dpi, on a machine with Hancom Office's faces installed:
 
-| form | paras | line count | break sequence | multi-line | multi-line count | break positions |
+| form | paras | line count | break sequence | multi-line | multi-line count | break positions (was) |
 | --- | --- | --- | --- | --- | --- | --- |
-| admrul | 22 | 22 | 21 | 2 | 2 | 1 / 2 |
-| gianmun-1ho | 32 | 32 | 31 | 1 | 1 | 0 / 2 |
-| gianmun-2ho | 20 | 19 | 19 | 2 | 1 | 1 / 2 |
-| jeongbo | 58 | 58 | 52 | 6 | 6 | 1 / 7 |
-| jumin | 133 | 132 | 113 | 27 | 26 | 9 / 36 |
-| kstartup | 453 | 435 | 416 | 29 | 26 | 12 / 44 |
-| moel-2013 | 263 | 254 | 234 | 34 | 25 | 7 / 49 |
-| moel-2025 | 314 | 304 | 283 | 37 | 27 | 6 / 47 |
-| nrf | 89 | 89 | 87 | 3 | 3 | 1 / 3 |
-| saeopja | 764 | 758 | 747 | 17 | 14 | 5 / 24 |
-| **total** | **2148** | **2103** (0.979) | **2003** (0.932) | **158** | **131** (0.829) | **43 / 216** (0.199) |
+| admrul | 22 | 22 | 21 | 2 | 2 | 1 / 2 (1) |
+| gianmun-1ho | 32 | 32 | 31 | 1 | 1 | 0 / 2 (0) |
+| gianmun-2ho | 20 | 19 | 19 | 2 | 1 | 1 / 2 (1) |
+| jeongbo | 58 | 58 | 53 | 6 | 6 | 2 / 7 (1) |
+| jumin | 133 | 133 | 117 | 27 | 27 | 14 / 36 (9) |
+| kstartup | 453 | 434 | 415 | 29 | 26 | 13 / 44 (12) |
+| moel-2013 | 263 | 242 | 222 | 34 | 26 | 10 / 49 (7) |
+| moel-2025 | 314 | 296 | 271 | 37 | 27 | 7 / 47 (6) |
+| nrf | 89 | 89 | 87 | 3 | 3 | 1 / 3 (1) |
+| saeopja | 764 | 758 | 749 | 17 | 14 | 9 / 24 (5) |
+| **total** | **2148** | **2083** (0.970) | **1985** (0.924) | **158** | **133** (0.842) | **58 / 216** (0.269) (43) |
+
+The bracketed column is what the same run measured before the space became a
+half-width cell (*The space is a half-width cell*, below).  The two paragraph
+columns moved the other way — 2103 → 2083 and 2003 → 1985 — and that is not
+netted out here: a wider space pushes a handful of paragraphs the authoring
+engine kept on one line onto two.  The break column is the one that tests the
+breaker, and the raster scoreboard moved with it, not against it.
 
 Twelve further paragraphs carry no usable cache and are excluded.
 
-Read honestly, the headline number is the last column and it is **0.199**. The
+Read honestly, the headline number is the last column and it is **0.269**. The
 first two columns are high because a corpus of government forms is
 overwhelmingly single-line paragraphs — 2148 paragraphs, only 158 of which
 break at all — and a paragraph that cannot break cannot disagree. The multi-line
 subset is where the breaker is actually tested, and there it reproduces the
-authoring engine's exact line sequence on 31 of 158.
+authoring engine's exact line sequence on 35 of 158 (31 before this slice).
 
-### Where it fails, and why — this is an advance-width gap, not a rule gap
+### Where it fails, and why — this was an advance-width gap, not a rule gap
 
 Restarting the breaker at each line start the authoring engine chose and asking
 only where it puts the *next* break (`conditional_breaks`, error propagation
-removed): **45 of 216 exact, 29 too early, 142 too late.**
+removed): **53 of 216 exact, 82 too early, 81 too late** — against **45 exact,
+29 early, 142 late** before the space became a half-width cell.
 
-`late` dominating by five to one is the diagnosis. `cached_line_fill` — how
-full the authoring engine's own line is when this renderer measures it — has a
-median of **0.92**: the breaker thinks there was still a tenth of the box free
-where the authoring engine had already closed the line, so it keeps fitting the
-next word on. The breaking *rules* put the break at a permitted position; the
-*advance widths* say the wrong position is permitted.
+`late` dominating by five to one *was* the diagnosis, and it is gone: the
+residual is now two-sided within one decision of even, which is what a
+corrected systematic bias looks like. `cached_line_fill` — how full the
+authoring engine's own line is when this renderer measures it — moves from a
+median of **0.92** to **0.97**, and moves toward 1.0 on all ten forms:
 
-Two things localise the gap further. Both were measured with a probe harness
-that takes each line's box straight from its own cached `horzsize` instead of
-re-deriving it from the margins, which scores **49/216** as its baseline
-rather than the 45/216 above; the difference is the first-line box model, not
-the breaking, and the deltas below are what matter.
+| form | fill median, hmtx space | fill median, half cell |
+| --- | --- | --- |
+| admrul | 0.974 | 1.031 |
+| gianmun-1ho | 0.965 | 1.005 |
+| gianmun-2ho | 0.943 | 0.987 |
+| jeongbo | 0.967 | 1.008 |
+| jumin | 0.935 | 0.978 |
+| kstartup | 0.924 | 0.966 |
+| moel-2013 | 0.820 | 0.892 |
+| moel-2025 | 0.849 | 0.907 |
+| nrf | 0.936 | 0.982 |
+| saeopja | 0.969 | 0.983 |
 
-- Splitting by face resolution: on lines where every declared face resolved,
-  per-break accuracy is 38/156 and the fill median 0.925; where at least one
-  face was substituted, 11/60 and 0.894. Substitution makes it worse but is
-  **not** the main term — 0.925 is still a long way from 1.0.
-- Sweeping the space advance: replacing the resolved face's space advance with
-  a fixed fraction of the em moves per-break accuracy 49 → 60 → **69** → 52 →
-  40 for 0.35 / 0.4 / 0.45 / 0.5 / 0.55 em (font advance itself: 49). The
-  deficit is concentrated in the space character. **0.45 em is not adopted**:
-  no reading of the standard justifies that number, the curve is a fit rather
-  than a discovery, and tuning it against the corpus would turn the measuring
-  stick into a training set.
+Eight of the ten now sit inside 2% of 1.0. The two `moel` forms do not, and
+they are the two worst break-agreement forms; whatever is left there is a
+*second*, smaller term and is not the space. Those two are also the forms whose
+declared 한양 faces this machine resolves worst, which is the first thing to
+check and is not yet proven to be the cause.
 
-One further variant was tested and rejected: making `hh:spacing` open no gap
-adjacent to a space (자간 as strictly letter-spacing) raises per-break accuracy
-from 49/216 to 59/216. It is not adopted because it would also change
-intra-line *drawing*, which E2.3 pinned against the Hancom reference, and 10
-breaks out of 216 is not enough evidence to move a measured model. It is the
-first thing to try next.
+### The space is a half-width cell
+
+The deficit was concentrated in the space character, and the way it was settled
+was **not** another sweep against the corpus: the ten Hancom reference PDFs
+were read for the advances Hancom itself drew, which is black-box evidence of
+the same kind the `hh:spacing` rule already rests on.
+
+Method (`test_the_reference_pdfs_advance_a_space_by_half_the_character_cell`).
+For every horizontal text span in every reference PDF, a glyph's advance is the
+distance to the *next* glyph's origin, divided by the span's declared size.
+Only spans whose every Hangul cell measures exactly 1.000 em are sampled, so no
+`hh:ratio`, no 공백 축소 and no justification stretch is acting on the sample.
+That leaves 1296 space advances:
+
+| face | n | p10 | median | p90 | the face's own `hmtx` space |
+| --- | --- | --- | --- | --- | --- |
+| MalgunGothic | 432 | 0.4500 | 0.5000 | 0.5060 | 0.352 |
+| Dotum | 420 | 0.4923 | 0.4940 | 0.5068 | 0.334 |
+| Batang | 205 | 0.4960 | 0.5000 | 0.5000 | 0.333 |
+| DotumChe | 146 | 0.4933 | 0.4933 | 0.5067 | 0.500 (monospaced) |
+| MalgunGothicBold | 25 | 0.4930 | 0.5000 | 0.5040 | 0.352 |
+| H2hdrM | 10 | 0.5000 | 0.5000 | 0.5000 | 0.333 |
+
+1222 of the 1296 land in [0.49, 0.51]; the residual spread is the PDF's own
+text-positioning quantisation. **Five faces whose `hmtx` space advances differ
+from one another all render a space at the same 0.50 em, and the one face that
+already advances a space by 0.50 em is the monospaced one.** 0.5 is therefore a
+property of HWP's cell model, not of any face: the space is the half-width
+counterpart of the full-width cell `is_full_width` already states, and
+`SPACE_CELL_FRACTION` carries the measurement. `hh:ratio` scales the half cell
+exactly as it scales the full one.
+
+Once the space is a half cell, the per-class advance error against the same
+PDFs — this renderer's advance for a glyph, against Hancom's median advance for
+that same glyph on that same face, weighted by how often it was drawn — is:
+
+| class | distinct glyphs | n | error before | error after |
+| --- | --- | --- | --- | --- |
+| hangul | 465 | 2009 | −0.0000 em | −0.0000 em |
+| space | 6 | 1238 | **−0.1373 em** | **+0.0028 em** |
+| digit | 32 | 164 | −0.0021 em | −0.0021 em |
+| latin | 19 | 39 | +0.0063 em | +0.0063 em |
+| ascii punctuation | 37 | 275 | +0.0036 em | +0.0036 em |
+| fullwidth / CJK punctuation | 2 | 2 | −0.0120 em | −0.0120 em |
+| other | 15 | 53 | +0.0016 em | +0.0016 em |
+
+The space was the only class out by more than 0.007 em, and it was out by
+twenty times that. `test_no_glyph_class_is_measured_more_than_a_hundredth_of_
+an_em_out` pins the bound. Faces this machine has not got installed are
+skipped rather than substituted — a substitute would measure the substitution.
+
+**Scope, and what is not proven.** Every reference render in this corpus is a
+Korean form. Whether HWP takes a Latin-face space from `hmtx` in a document
+with no Hangul in it at all is *not* measured here; the rule is applied
+uniformly and declared in the sidecar (`half_width_space_cell` in `applied`).
+
+### What was measured and rejected
+
+- **0.45 em for the space** — the fit the previous slice found. Re-run against
+  the corpus it is still the peak: 0.40 / 0.45 / 0.48 / 0.50 / 0.52 / 0.55 em
+  score 57 / **69** / 62 / 58 / 51 / 47 break positions of 216. It buys 11 more
+  than the measured 0.50 and is **not adopted**, because the reference PDFs say
+  0.50 on every face and the corpus break positions are the measuring stick,
+  not the training set. That 0.45 outscores the truth is itself information: it
+  is absorbing some *other* residual, which is where the next slice should
+  look.
+- **Integer HWPUNIT per glyph instead of float accumulation.** Rounding every
+  advance and every letter-spacing gap to whole HWPUNIT before accumulating
+  changes **nothing at all**: 58/216, 53/216 conditional, 2083 line counts —
+  every number identical. The quantum is 0.001 em at 10 pt, an order of
+  magnitude below the residual per-class error, so it cannot be the term.
+  Rejected as unmeasurable rather than as wrong.
+- **`hh:ratio` not applied to the space cell.** 58/216 break positions either
+  way, one line count and one sequence *worse* without it. Kept, because the
+  full-width cell rule scales by `hh:ratio` and the half cell should not be a
+  special case for the sake of nothing.
+- **`hh:spacing` opening no gap adjacent to a space** (자간 as strictly
+  letter-spacing). This was named as "the first thing to try next" when it
+  bought +10 break positions against the old space model. Tried: against the
+  half cell it now *costs* 13 — 58 → 45 break positions, 53 → 41 conditional,
+  2083 → 2025 line counts. It was compensating for the space bug. Rejected,
+  and the E2.3 drawing pin that made it doubtful is intact.
+- **Which face Hancom takes a space from** (the Hangul face for Hangul runs,
+  the Latin face for Latin runs) — the question does not arise. The half cell
+  consults no face at all, which is why six faces with four different `hmtx`
+  space advances all render at 0.50.
 
 ### Incremental relayout, and what it does not do
 
@@ -572,12 +660,14 @@ not only here.
     form also draws line boxes at `y0` ≈ 85.9 million px on page 18, from an
     anchored object at a wild declared `vertOffset`; identical in both line
     layout modes, so it is this same defect and not the breaker's.
-13. **The line breaker agrees with the authoring engine on 43 of the corpus's
-    216 break positions** (*Line breaking from metrics*, above). It is used
-    only where the cached layout cannot be, which on an unedited document is
-    nowhere — but it is what an edited paragraph gets, and 0.199 is what that
-    is worth today. The residual is an advance-width gap concentrated in the
-    space character, not a gap in the breaking rules.
+13. **The line breaker agrees with the authoring engine on 58 of the corpus's
+    216 break positions** (*Line breaking from metrics*, above; 43 before the
+    space became a half-width cell). It is used only where the cached layout
+    cannot be, which on an unedited document is nowhere — but it is what an
+    edited paragraph gets, and 0.269 is what that is worth today. The old
+    residual — an advance-width gap concentrated in the space character — is
+    measured and closed; what is left is two-sided (82 early, 81 late) and
+    concentrated in the two `moel` forms, and is not yet explained.
 14. **Block layout is not implemented, so relayout does not reflow the page.**
     A relaid-out paragraph shifts the paragraphs after it in its own container
     and grows its table row, and nothing else: it still starts where the cache
@@ -945,6 +1035,36 @@ so what dominates now is sub-pixel glyph registration *inside* lines that are
 already in the right place at the right size — not any single unimplemented
 element.
 
+### The half-width space cell, on the same scoreboard
+
+The break-position number is one channel; the raster is the independent one,
+and it moved the same way. Same scoreboard build, same machine, the only
+difference being whether a space is the face's `hmtx` advance or the half cell:
+
+| form | `ssim_inked` | line IoU | `ssim` |
+| --- | --- | --- | --- |
+| admrul | 0.3048 → 0.3218 | 0.4845 → 0.4840 | 0.8859 → 0.8913 |
+| jeongbo | 0.0354 → 0.0388 | 0.4385 → 0.4551 | 0.6176 → 0.6203 |
+| jumin | 0.0825 → 0.0826 | 0.5741 → 0.5892 | 0.6377 → 0.6416 |
+| kstartup | 0.2210 → 0.2313 | 0.2460 → 0.2542 | 0.8080 → 0.8112 |
+| moel-2013 | 0.0441 → 0.0695 | 0.4469 → 0.4674 | 0.7655 → 0.7746 |
+| moel-2025 | 0.1467 → 0.1810 | 0.4929 → 0.5167 | 0.7530 → 0.7637 |
+| saeopja | 0.0187 → 0.0179 | 0.5393 → 0.5562 | 0.6439 → 0.6447 |
+| gianmun-1ho | 0.1007 → 0.1005 | — | 0.8810 → 0.8811 |
+| gianmun-2ho | 0.0338 → 0.0332 | — | 0.8769 → 0.8771 |
+| nrf | 0.3713 → 0.3691 | — | 0.7573 → 0.7561 |
+
+Means over all ten: `ssim` 0.7627 → 0.7662, `ssim_inked` 0.1359 → 0.1446,
+line-box IoU 0.3281 → 0.3386, `changed_channel_ratio` 0.1291 → 0.1283. Every
+form keeps its verdict against the regression floor, `kstartup` included (it
+was already failing `page_count_exact`, for the pagination reason at limit 12,
+and still is). Pair rate is flat to four decimals except `kstartup`, −0.0016.
+
+The two `moel` forms move most on `ssim_inked` (+0.025, +0.034), which is where
+the corpus's spaced Hangul prose is. `nrf` and `saeopja` lose a thousandth of
+`ssim_inked`; those are the three reduced-reference and the sparsest forms, and
+the movement is inside the noise the reduction itself introduces.
+
 ### Thresholds are a regression floor, not a fidelity bar
 
 Every bound in `PROPOSED_THRESHOLDS` sits just below the worst measurement of
@@ -963,15 +1083,17 @@ false` on both; the grade stays `own-uncertified` on every class.
 1b. ~~**Render `hp:equation`.**~~ Done — see *Equations* above. What it left
    open is italic variable shaping, which is now the largest visual difference
    on the equation pages and needs per-cut face resolution, not equation work.
-2. **Close the advance-width gap the breaker exposed.** A cached line measures
-   a median 0.92 of its own box by this renderer's advances, and the deficit is
-   concentrated in the space character. This is now the largest single term in
-   *both* open measurements: it is why the breaker matches only 43 of 216 break
-   positions, and it is the same quantity `ssim_inked` is measuring inside a
-   line. Two candidate mechanisms are named and rejected as unproven in *Line
-   breaking from metrics*; the way to settle it is a reference PDF measurement
-   of what Hancom actually advances for a space in a Korean face, not another
-   sweep against the corpus.
+2. ~~**Close the advance-width gap the breaker exposed.**~~ Largely done, by
+   the reference-PDF measurement this item asked for: the space is a
+   half-width cell, not the face's `hmtx` advance (*The space is a half-width
+   cell*). A cached line now measures a median 0.97 of its own box, 43 → 58
+   break positions, and the raster scoreboard moved with it. **What is left**
+   is the second, smaller term the same measurement exposes: `moel-2013` and
+   `moel-2025` still fill only 0.89 / 0.91 and hold most of the remaining
+   disagreement, and 0.45 em outscoring the measured 0.50 on break positions
+   (69 vs 58) says something else is still being absorbed there. Those two
+   forms are also the ones whose declared 한양 faces resolve worst on this
+   machine — first thing to check, not yet proven.
 3. Vector PDF text output — unlocks `render_cert`'s word-anchor channel and
    with it the actual certificate.
 4. Sub-pixel glyph registration: see item 2, of which this is the intra-line

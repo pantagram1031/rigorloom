@@ -431,6 +431,189 @@ def test_spacing_widens_a_run_by_the_declared_percentage(typo_probe):
     assert wide / em == pytest.approx(5.5, rel=1e-3)
 
 
+# ------------------------------------- the space is a half-width cell (E2.2)
+
+RENDER_REFS = os.path.join(ROOT, "tests", "corpus", "forms", "render")
+
+
+def _reference_pdfs():
+    """Every Hancom reference render, or a skip naming what is missing."""
+    try:
+        import fitz  # noqa: F401
+    except ImportError:
+        pytest.skip("PyMuPDF is not installed; the reference PDFs cannot be "
+                    "read, so the per-class advance measurement cannot run")
+    if not os.path.isdir(RENDER_REFS):
+        pytest.skip(f"reference renders missing: {RENDER_REFS}")
+    paths = sorted(os.path.join(RENDER_REFS, n)
+                   for n in os.listdir(RENDER_REFS) if n.endswith(".pdf"))
+    if not paths:
+        pytest.skip(f"no reference PDF under {RENDER_REFS}")
+    return paths
+
+
+def _unstretched_span_advances(paths):
+    """``{(face, char): [advance/em, ...]}`` from the reference PDFs.
+
+    Only spans whose every Hangul cell measures exactly 1.000 em are sampled,
+    which is what makes the numbers comparable to a bare font advance: on such
+    a span no ``hh:ratio``, no 공백 축소 and no justification stretch is acting.
+    The advance of a glyph is the distance to the NEXT glyph's origin, so the
+    last glyph of a span is never sampled.
+    """
+    import fitz
+    import collections
+    out = collections.defaultdict(list)
+    for path in paths:
+        with fitz.open(path) as doc:
+            for page in doc:
+                for block in page.get_text("rawdict").get("blocks", []):
+                    if block.get("type") != 0:
+                        continue
+                    for line in block["lines"]:
+                        if abs(line["dir"][0] - 1.0) > 1e-6:
+                            continue      # not a horizontal run
+                        for span in line["spans"]:
+                            face, size = span["font"], span["size"]
+                            if size <= 0:
+                                continue
+                            glyphs = span["chars"]
+                            pairs, hangul = [], []
+                            for i in range(len(glyphs) - 1):
+                                a, b = glyphs[i], glyphs[i + 1]
+                                adv = (b["origin"][0] - a["origin"][0]) / size
+                                if adv <= 0:
+                                    continue
+                                pairs.append((a["c"], adv))
+                                if 0xAC00 <= ord(a["c"]) <= 0xD7A3:
+                                    hangul.append(adv)
+                            if not hangul:
+                                continue
+                            if any(abs(h - 1.0) >= 0.004 for h in hangul):
+                                continue
+                            for ch, adv in pairs:
+                                out[(face, ch)].append(adv)
+    return out
+
+
+def _glyph_class(ch):
+    code = ord(ch)
+    if ch in own_render.HALF_WIDTH_CELL_CHARS:
+        return "space"
+    if 0xAC00 <= code <= 0xD7A3:
+        return "hangul"
+    if 48 <= code <= 57:
+        return "digit"
+    if (65 <= code <= 90) or (97 <= code <= 122):
+        return "latin"
+    if code < 128:
+        return "ascii-punct"
+    return "other"
+
+
+def test_a_space_advances_by_half_the_character_cell(typo_probe):
+    """The rule itself, in the renderer's own units.
+
+    A space is half the declared character size — not the advance the face's
+    ``hmtx`` gives U+0020, and not half of some measured glyph.  Stated
+    against the full-width cell the same charPr gives a Hangul syllable, so
+    the test says *half of what* rather than repeating a constant.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__cell__", height=1000)
+    em = 10.0 * 144 / 72.0
+    full = renderer._measure(draw, "가", cid)
+    space = renderer._measure(draw, " ", cid)
+    assert full == pytest.approx(em, rel=1e-3), "fixture: 가 is not a full cell"
+    assert space == pytest.approx(em / 2.0, rel=1e-9)
+    # ...and it does not depend on the face, which is the whole claim.
+    assert space == pytest.approx(
+        renderer._half_cell_px(cid, 100, 100), rel=1e-9)
+
+
+def test_the_space_cell_scales_with_ratio_like_a_full_cell(typo_probe):
+    """``hh:ratio`` scales the half cell exactly as it scales the full one."""
+    renderer, _image, draw = typo_probe
+    plain = _synthetic_charpr(renderer, "__c100__", height=1000)
+    narrow = _synthetic_charpr(renderer, "__c70__", height=1000, ratio=70)
+    assert (renderer._measure(draw, " ", narrow)
+            == pytest.approx(0.7 * renderer._measure(draw, " ", plain),
+                             rel=1e-9))
+
+
+def test_the_reference_pdfs_advance_a_space_by_half_the_character_cell():
+    """Where ``SPACE_CELL_FRACTION`` comes from: Hancom's own renders.
+
+    Black box: the ten reference PDFs are read for the advances they actually
+    drew.  Five of the faces the corpus uses have ``hmtx`` space advances
+    between 0.333 and 0.352 em and one (the monospaced DotumChe) has 0.5; all
+    six render a space at 0.50 em, so 0.5 is a property of HWP's cell model
+    rather than of any face.
+    """
+    samples = _unstretched_span_advances(_reference_pdfs())
+    spaces = [v for (_face, ch), vals in samples.items()
+              if ch in own_render.HALF_WIDTH_CELL_CHARS for v in vals]
+    assert len(spaces) >= 1000, len(spaces)
+    inside = sum(1 for v in spaces if 0.49 <= v <= 0.51)
+    assert inside / len(spaces) > 0.9, (
+        f"{inside} of {len(spaces)} space advances within 0.01 em of 0.50")
+    spaces.sort()
+    assert spaces[len(spaces) // 2] == pytest.approx(
+        own_render.SPACE_CELL_FRACTION, abs=0.01)
+
+
+def test_no_glyph_class_is_measured_more_than_a_hundredth_of_an_em_out():
+    """The per-class advance error against the reference PDFs, as a gate.
+
+    For every (face, character) the reference PDFs drew, this renderer's
+    advance is compared to the PDF's median advance for that same glyph on
+    that same face, and the signed errors are aggregated by class.  Before the
+    half-width space cell the ``space`` row was -0.1373 em and every other row
+    was already inside 0.007; the bound below is therefore a regression gate
+    on the space rule, not a fresh fit.
+
+    Faces the machine does not have installed are skipped, not substituted —
+    a substitute's advances would measure the substitution, not the renderer.
+    """
+    samples = _unstretched_span_advances(_reference_pdfs())
+    index = own_render.SystemFontIndex.shared()
+    Image, ImageDraw, ImageFont = own_render._require_pillow()
+    draw = ImageDraw.Draw(Image.new("L", (8, 8)))
+    unit, fonts = 2048, {}
+
+    def face(family):
+        if family not in fonts:
+            entry = index.lookup(family)
+            if entry is None:
+                fonts[family] = None
+            else:
+                path, sub = entry["regular"] or entry["bold"]
+                kwargs = {"index": sub} if sub else {}
+                kwargs["layout_engine"] = ImageFont.Layout.BASIC
+                fonts[family] = ImageFont.truetype(path, unit, **kwargs)
+        return fonts[family]
+
+    totals = {}
+    for (family, ch), vals in samples.items():
+        if ch in own_render.HALF_WIDTH_CELL_CHARS:
+            ours = own_render.SPACE_CELL_FRACTION
+        else:
+            font = face(family)
+            if font is None:
+                continue
+            ours = draw.textlength(ch, font=font) / unit
+        vals = sorted(vals)
+        reference = vals[len(vals) // 2]
+        bucket = totals.setdefault(_glyph_class(ch), [0.0, 0])
+        bucket[0] += (ours - reference) * len(vals)
+        bucket[1] += len(vals)
+    if not totals:
+        pytest.skip("no reference face is installed on this machine")
+    assert totals["space"][1] >= 1000, totals["space"]
+    worst = {c: t[0] / t[1] for c, t in totals.items()}
+    assert all(abs(e) <= 0.01 for e in worst.values()), worst
+
+
 def test_negative_spacing_narrows_a_run(typo_probe):
     renderer, _image, draw = typo_probe
     plain = _synthetic_charpr(renderer, "__p2__", height=1200)
@@ -973,13 +1156,13 @@ LINESEG_AGREEMENT = {
     "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 21, 2, 2, 2, 1),
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 19, 19, 2, 1, 2, 1),
-    "jeongbo-gonggae-cheongguseo": (58, 58, 52, 6, 6, 7, 1),
-    "jumin-deungchobon-sinchengseo": (133, 132, 113, 27, 26, 36, 9),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 435, 416, 29, 26, 44, 12),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 254, 234, 34, 25, 49, 7),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 283, 37, 27, 47, 6),
+    "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
+    "jumin-deungchobon-sinchengseo": (133, 133, 117, 27, 27, 36, 14),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 434, 415, 29, 26, 44, 13),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 242, 222, 34, 26, 49, 10),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 296, 271, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 747, 17, 14, 24, 5),
+    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
 }
 
 
@@ -1029,11 +1212,22 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
                 a["break_positions_cached"], a["break_positions_matched"])):
             totals[index] += value
     # 2148 paragraphs carry a usable cache; the breaker reproduces the
-    # authoring engine's line COUNT on 2103 of them and its exact break
-    # SEQUENCE on 2003.  Restricted to the 158 paragraphs that actually break
-    # (the rest cannot disagree), it reproduces the line count on 131 and 43
+    # authoring engine's line COUNT on 2083 of them and its exact break
+    # SEQUENCE on 1985.  Restricted to the 158 paragraphs that actually break
+    # (the rest cannot disagree), it reproduces the line count on 133 and 58
     # of the 216 individual break positions.
-    assert totals == [2148, 2103, 2003, 158, 131, 216, 43], totals
+    #
+    # The break-position column moved 43 -> 58 when the space stopped being
+    # measured from the resolved face's hmtx and became the half-width cell
+    # the reference PDFs show it to be (``SPACE_CELL_FRACTION``).  The two
+    # paragraph-level columns moved the other way, 2103 -> 2083 and
+    # 2003 -> 1985, and that is not hidden here: widening every space pushes
+    # a handful of paragraphs that the authoring engine kept on one line onto
+    # two.  The break column is the one this measures — a paragraph that
+    # cannot break cannot disagree — and the scoreboard against the Hancom
+    # rasters moved with it (ssim +0.0035, ssim_inked +0.0087, line-box IoU
+    # +0.0105, means over the corpus), which the paragraph columns cannot say.
+    assert totals == [2148, 2083, 1985, 158, 133, 216, 58], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():

@@ -167,6 +167,42 @@ LINE_END_PROHIBITED = frozenset(
 BREAK_AFTER_ALWAYS = frozenset("-–—/")
 SPACE_CHARS = frozenset(" \t 　")
 
+# The space is a HALF-WIDTH CELL in HWP's metric model: it advances by exactly
+# half the declared character size (times hh:ratio), NOT by the advance the
+# resolved face's own hmtx table gives U+0020.  This is the half-width
+# counterpart of the full-width cell rule ``is_full_width`` already states, and
+# it was MEASURED off Hancom's own reference renders, not fitted to the break
+# positions it improves.
+#
+# The measurement (reproduced by ``test_the_reference_pdfs_advance_a_space_by_
+# half_the_character_cell``): over the ten reference PDFs, restricted to text
+# spans whose every Hangul cell measures exactly 1.000 em -- so no hh:ratio,
+# no 공백 축소 and no justification stretch is acting on that span -- the space
+# advance is 0.50 em on every face the corpus uses:
+#
+#   face              n     p10      median   p90      the face's own hmtx
+#   MalgunGothic      432   0.4500   0.5000   0.5060   0.352
+#   Dotum             420   0.4923   0.4940   0.5068   0.334
+#   Batang            205   0.4960   0.5000   0.5000   0.333
+#   DotumChe          146   0.4933   0.4933   0.5067   0.500 (monospaced)
+#   MalgunGothicBold   25   0.4930   0.5000   0.5040   0.352
+#   H2hdrM             10   0.5000   0.5000   0.5000   0.333
+#
+# 1222 of the 1296 samples land in [0.49, 0.51]; the residual spread is the
+# PDF's own text-positioning quantisation.  Five faces whose hmtx space
+# advances differ from one another all render a space at the same 0.50 em, and
+# the single face that already advances a space by 0.50 em is the monospaced
+# one -- so 0.5 is a property of HWP's cell model, not of any face.
+#
+# Scope: measured on Korean forms.  No reference render in this corpus is a
+# Latin-only document, so whether HWP takes a Latin-face space from hmtx in a
+# document containing no Hangul at all is NOT PROVEN here.  The rule is applied
+# uniformly and declared in the sidecar.
+SPACE_CELL_FRACTION = 0.5
+# The characters the rule governs.  U+3000 is a *full*-width cell and is
+# advanced as one already; U+0009 is resolved against tab stops, not measured.
+HALF_WIDTH_CELL_CHARS = frozenset("\u0020\u00a0")
+
 # HWP's default tab interval when hh:tabPr declares no explicit stop.  THIS IS
 # THIS RENDERER'S CHOICE, not the standard's: 8 corpus tabPr definitions carry
 # no <hh:tab> child at all, and the format does not carry the interval, so a
@@ -1269,6 +1305,15 @@ class OwnRenderer:
             "is assigned to a slot",
             "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no "
             "trailing gap), measured against the Hancom reference render",
+            "a space (U+0020, U+00A0) advances by HALF the declared character "
+            "size times hh:ratio -- the half-width counterpart of HWP's "
+            "full-width cell -- and NOT by the resolved face's own hmtx "
+            "advance for U+0020; measured off the Hancom reference renders, "
+            "where six faces with hmtx space advances from 0.333 to 0.500 em "
+            "all draw a space at 0.50 em. Counted in applied as "
+            "half_width_space_cell. Every reference render measured is a "
+            "Korean form, so the rule is NOT verified for a document "
+            "containing no Hangul at all",
             "hh:align JUSTIFY stretches every line of a paragraph except its "
             "last; DISTRIBUTE stretches every line; neither ever shrinks a "
             "line that already overruns its box",
@@ -1607,7 +1652,11 @@ class OwnRenderer:
             metrics = self._typography(cid, ch)
             self._note_typography(*metrics)
             ratio, spacing, rel_sz, offset = metrics
-            neutral = metrics == NEUTRAL_TYPOGRAPHY
+            # A space is a half-width cell, so it can never share a piece with
+            # the text around it: its advance comes from the declared
+            # character size, not from the face Pillow would measure it with.
+            neutral = (metrics == NEUTRAL_TYPOGRAPHY
+                       and ch not in HALF_WIDTH_CELL_CHARS)
             key = (metrics, slot)
             # A slot change is a face change (hh:fontRef is per slot), so it
             # ends the run even when the metrics are identical.
@@ -1621,6 +1670,13 @@ class OwnRenderer:
                 continue
             run.append(ch)
             flush()
+            if ch in HALF_WIDTH_CELL_CHARS:
+                # ``flush`` measured it with the face; overwrite that with the
+                # cell width HWP actually advances by.  See
+                # ``SPACE_CELL_FRACTION``.
+                pieces[-1]["advance"] = self._half_cell_px(cid, rel_sz, ratio)
+                self.applied["half_width_space_cell"] = (
+                    self.applied.get("half_width_space_cell", 0) + 1)
             if spacing:
                 pieces.append({
                     "kind": "gap",
@@ -1641,6 +1697,18 @@ class OwnRenderer:
         while pieces and pieces[-1]["kind"] == "gap":
             pieces.pop()
         return sum(p["advance"] for p in pieces)
+
+    def _half_cell_px(self, cid, rel_sz, ratio):
+        """A space's advance in pixels: half the declared character cell.
+
+        The full-width cell is ``declared size x hh:ratio``
+        (``_cached_lower_bound_hwp`` states the same rule in HWPUNIT); the
+        space is half of it.  The resolved face is not consulted at all --
+        that is the whole point, and ``SPACE_CELL_FRACTION`` carries the
+        measurement it rests on.
+        """
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        return (pt * self.dpi / 72.0 * ratio / 100.0 * SPACE_CELL_FRACTION)
 
     def _spacing_px(self, cid, rel_sz, spacing):
         """``hh:spacing`` in pixels: a percent of the *character size*.
