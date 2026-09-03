@@ -1688,6 +1688,329 @@ def test_every_corpus_form_renders(tmp_path, name):
     assert report["elements_rendered"]["text_lines"] >= 1
 
 
+# ------------------------------------------------------------- equations
+# No corpus form carries an hp:equation — every one of them is a blank
+# government form — so the fixtures here are synthesised: a corpus form, plus
+# equations whose scripts come from the repo's own LaTeX-to-HwpEqn converter
+# (``engine/scripts/eqn.py``), so the thing under test is fed exactly what the
+# authoring lane produces rather than hand-written HwpEqn.
+
+sys.path.insert(0, os.path.join(ENGINE, "scripts"))
+import eqn as eqn_tool  # noqa: E402
+import hwpeqn_parse  # noqa: E402
+
+EQUATION_FORM = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2025.hwpx")
+EQUATION_PARAGRAPH = 2
+
+
+def _hwpeqn(latex):
+    """The repo's own converter, refusing to hand a test a warning-carrying
+    script: a fixture that is already wrong proves nothing about the reader."""
+    script, warnings = eqn_tool.latex_to_hwpeqn(latex)
+    assert not warnings, (latex, warnings)
+    return script
+
+
+def _form_with_equations(source, target, specs,
+                         paragraph_index=EQUATION_PARAGRAPH):
+    """A corpus form with ``hp:equation`` runs appended to one paragraph.
+
+    ``specs`` is ``[(hwpeqn_script, sz_width, sz_height)]`` in HWPUNIT.  The
+    attributes are the ones a Hancom-written equation carries — ``baseUnit``
+    (the base size), ``baseLine`` (where in the box the equation's baseline
+    sits), ``font``, ``treatAsChar`` — because those are the ones the renderer
+    reads.  Written with ElementTree, which rewrites namespace prefixes; the
+    renderer reads by local name, so that is invisible to it (same reasoning
+    as ``_edited_copy``).
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(source) as archive:
+        names = archive.namelist()
+        payload = {name: archive.read(name) for name in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    ns = root.tag.split("}")[0] + "}" if "}" in root.tag else ""
+    seen = 0
+    host = None
+    for element in root.iter():
+        if own_render._local(element.tag) != "p":
+            continue
+        if seen == paragraph_index:
+            host = element
+        seen += 1
+    assert host is not None, "fixture drifted: no such paragraph"
+    charpr = "0"
+    for run in host:
+        if own_render._local(run.tag) == "run":
+            charpr = run.get("charPrIDRef") or charpr
+    for script, width, height in specs:
+        run = ET.SubElement(host, ns + "run", {"charPrIDRef": charpr})
+        equation = ET.SubElement(run, ns + "equation", {
+            "version": "Equation Version 60",
+            "baseLine": "69",
+            "textColor": "#000000",
+            "baseUnit": "1000",
+            "lineMode": "CHAR",
+            "font": "HancomEQN",
+        })
+        ET.SubElement(equation, ns + "sz", {
+            "width": str(width), "widthRelTo": "ABSOLUTE",
+            "height": str(height), "heightRelTo": "ABSOLUTE"})
+        ET.SubElement(equation, ns + "pos", {
+            "treatAsChar": "1", "vertRelTo": "PARA", "horzRelTo": "PARA",
+            "vertOffset": "0", "horzOffset": "0"})
+        ET.SubElement(equation, ns + "script").text = script
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, payload[name])
+    return str(target)
+
+
+ROOMY_SPECS = [
+    (_hwpeqn(r"\frac{a+b}{c}"), 9000, 4200),
+    (_hwpeqn(r"\sqrt{x^{2}+y^{2}}"), 11000, 3600),
+    (_hwpeqn(r"\sum_{i=1}^{n} i^{2}"), 9000, 5200),
+    (_hwpeqn(r"\int_{0}^{1} f(x) dx"), 11000, 4200),
+    (_hwpeqn(r"\alpha \le \beta \times \Gamma"), 12000, 2600),
+    ("left ( {1} over {2} right )", 6000, 4200),
+]
+
+
+@pytest.fixture(scope="module")
+def equation_render(tmp_path_factory):
+    out = tmp_path_factory.mktemp("equations")
+    path = _form_with_equations(_need(EQUATION_FORM),
+                                out / "equations.hwpx", ROOMY_SPECS)
+    return own_render.render_to_dir(path, out / "render", dpi=144)
+
+
+# -- parser mechanics, one test per construct ---------------------------
+
+def test_over_binds_the_preceding_primary_not_the_whole_row():
+    tree, info = hwpeqn_parse.parse("x = {a+b} over {c}")
+    assert info["constructs"]["over"] == 1
+    items = tree.items
+    assert isinstance(items[-1], hwpeqn_parse.Frac)
+    # ``x`` and ``=`` stayed OUTSIDE the numerator.  Under the other reading
+    # of ``over`` the whole left-hand side would have been swallowed.
+    assert [type(i).__name__ for i in items[:2]] == ["Row", "Atom"]
+
+
+def test_a_sub_and_a_sup_on_one_base_make_one_script_node():
+    tree, _info = hwpeqn_parse.parse("W_{e}^{(s)}")
+    node = tree.items[0]
+    assert isinstance(node, hwpeqn_parse.Script)
+    assert node.sub is not None and node.sup is not None
+    assert isinstance(node.base, hwpeqn_parse.Row)
+
+
+def test_limits_stack_for_sums_and_sit_to_the_right_for_integrals():
+    """Measured off the reference render, not assumed from the symbol."""
+    assert hwpeqn_parse.parse("sum_{x}")[0].items[0].limits is True
+    assert hwpeqn_parse.parse("int_{e}")[0].items[0].limits is False
+    assert hwpeqn_parse.parse("min_{s}")[0].items[0].limits is False
+
+
+def test_sqrt_and_root_of_build_the_same_node_with_and_without_an_index():
+    plain, _ = hwpeqn_parse.parse("sqrt{x}")
+    indexed, info = hwpeqn_parse.parse("root {3} of {x}")
+    assert isinstance(plain.items[0], hwpeqn_parse.Radical)
+    assert plain.items[0].index is None
+    assert isinstance(indexed.items[0], hwpeqn_parse.Radical)
+    assert indexed.items[0].index is not None
+    assert info["constructs"]["root"] == 1
+
+
+def test_a_fence_pairs_its_delimiters_and_an_unpaired_one_is_declared():
+    paired, info = hwpeqn_parse.parse("left ( x right )")
+    node = paired.items[0]
+    assert isinstance(node, hwpeqn_parse.Fence)
+    assert (node.left, node.right) == ("(", ")")
+    assert not info["unsupported"]
+    _open, open_info = hwpeqn_parse.parse("left ( x")
+    assert open_info["unsupported"] == {"left-without-right": 1}
+
+
+def test_a_matrix_keeps_its_rows_and_columns():
+    tree, info = hwpeqn_parse.parse("pmatrix{a & b # c & d}")
+    grid = tree.items[0]
+    assert isinstance(grid, hwpeqn_parse.Grid)
+    assert [len(row) for row in grid.rows] == [2, 2]
+    assert (grid.left, grid.right) == ("(", ")")
+    assert info["constructs"]["grid:pmatrix"] == 1
+
+
+def test_an_unknown_word_is_a_run_of_variables_not_one_token():
+    """``v_{sn}`` is v with two letters under it, exactly as HwpEqn sets it."""
+    tree, _info = hwpeqn_parse.parse("sn")
+    row = tree.items[0]
+    assert [atom.text for atom in row.items] == ["s", "n"]
+
+
+def test_greek_operators_and_quoted_literals_reach_their_own_styles():
+    tree, info = hwpeqn_parse.parse('mu leq 3 ` "m"')
+    styles = [(node.style, node.text) for node in tree.items
+              if isinstance(node, hwpeqn_parse.Atom)]
+    assert ("sym", "μ") in styles
+    assert ("sym", "≤") in styles
+    assert ("text", "m") in styles
+    assert any(isinstance(n, hwpeqn_parse.Space) for n in tree.items)
+    assert info["constructs"]["literal"] == 1
+
+
+def test_an_unsupported_construct_keeps_its_own_token_text():
+    tree, info = hwpeqn_parse.parse("size 12 {x}")
+    assert info["unsupported"] == {"size": 1}
+    raw = tree.items[0]
+    assert isinstance(raw, hwpeqn_parse.Raw)
+    assert raw.text == "size"
+
+
+# -- the renderer ------------------------------------------------------
+
+def test_equations_are_drawn_rather_than_boxed(equation_render):
+    report = equation_render["report"]
+    assert report["elements_rendered"]["equations"] == len(ROOMY_SPECS)
+    assert report["elements_rendered"]["placeholders"] == 0
+    laid = report["equations"]
+    assert laid["laid_out"] == len(ROOMY_SPECS)
+    assert laid["unsupported_constructs"] == {}
+    # Every construct the fixture exercises came back named.
+    for construct in ("over", "sqrt", "fence", "bigop:sum", "bigop:int",
+                      "greek", "symbol", "subscript", "superscript"):
+        assert construct in laid["constructs"], construct
+
+
+def test_hp_script_is_no_longer_reported_as_an_unhandled_element(
+        equation_render):
+    skipped = {entry["element"] for entry
+               in equation_render["report"]["elements_skipped"]}
+    assert "hp:script" not in skipped
+    assert "hp:equation" in skipped, "the lane still has to declare itself"
+
+
+def test_every_equation_stays_inside_its_declared_hp_sz(equation_render):
+    """The promise of this lane, checked on the render's own record."""
+    placements = equation_render["report"]["equations"]["placements"]
+    assert len(placements) == len(ROOMY_SPECS)
+    for place in placements:
+        bx0, by0, bx1, by1 = place["box_px"]
+        ix0, iy0, ix1, iy1 = place["ink_px"]
+        assert bx0 <= ix0 <= ix1 <= bx1, place
+        assert by0 <= iy0 <= iy1 <= by1, place
+
+
+def test_a_roomy_equation_is_not_scaled(equation_render):
+    """Scale-to-fit is a FALLBACK.  A box the equation fits must not fire it."""
+    report = equation_render["report"]
+    assert report["equations"]["scaled_to_fit"] == 0
+    assert report["equations"]["scale_factors"] == []
+    assert all(place["scale"] == 1.0
+               for place in report["equations"]["placements"])
+
+
+def test_an_equation_larger_than_its_box_is_scaled_and_declared(tmp_path):
+    """A box far too small for the equation: it shrinks, and it says so."""
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "tight.hwpx",
+        [(_hwpeqn(r"\frac{a+b+c+d+e}{f+g+h+i+j}"), 2400, 900)])
+    report = own_render.render_to_dir(path, tmp_path / "render",
+                                      dpi=144)["report"]
+    equations = report["equations"]
+    assert equations["laid_out"] == 1
+    assert equations["scaled_to_fit"] == 1
+    assert 0 < equations["scale_factors"][0] < 1
+    place = equations["placements"][0]
+    assert place["scale"] < 1.0
+    bx0, by0, bx1, by1 = place["box_px"]
+    ix0, iy0, ix1, iy1 = place["ink_px"]
+    assert bx0 <= ix0 <= ix1 <= bx1 and by0 <= iy0 <= iy1 <= by1
+    declared = {entry["element"] for entry in report["elements_skipped"]}
+    assert "hp:equation@equation_scaled" in declared
+
+
+def test_an_unsupported_construct_is_declared_per_construct(tmp_path):
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "unsupported.hwpx",
+        [("size 12 {x} + binom {n} {k}", 12000, 3000)])
+    report = own_render.render_to_dir(path, tmp_path / "render",
+                                      dpi=144)["report"]
+    assert report["equations"]["unsupported_constructs"] == {"size": 1,
+                                                             "binom": 1}
+    declared = {entry["element"]: entry
+                for entry in report["elements_skipped"]}
+    assert "hp:equation@script[size]" in declared
+    assert "hp:equation@script[binom]" in declared
+    # The equation is still drawn: an unsupported construct costs its own
+    # token text, not the whole equation.
+    assert report["equations"]["laid_out"] == 1
+
+
+def test_an_equation_with_no_script_falls_back_to_the_placeholder(tmp_path):
+    path = _form_with_equations(_need(EQUATION_FORM), tmp_path / "empty.hwpx",
+                                [("   ", 9000, 3000)])
+    report = own_render.render_to_dir(path, tmp_path / "render",
+                                      dpi=144)["report"]
+    assert report["equations"]["laid_out"] == 0
+    assert report["elements_rendered"]["placeholders"] == 1
+    reasons = [entry["reason"] for entry in report["elements_skipped"]
+               if entry["element"] == "hp:equation"]
+    assert any("no hp:script" in reason for reason in reasons)
+
+
+def test_the_maths_face_is_resolved_or_substituted_and_named(equation_render):
+    """A maths face is a face: it goes through the same declaration path."""
+    faces = [face for face in equation_render["report"]["fonts"]["faces"]
+             if face["slot"] == "equation"]
+    assert faces, "the equation face was never declared"
+    face = faces[0]
+    assert face["declared"] == "HancomEQN"
+    assert face["characters"] == len(ROOMY_SPECS)
+    if face["resolved"]:
+        assert face["file"]
+    else:
+        assert face["substituted_with"]
+
+
+def test_a_stacked_equation_records_one_line_box_per_baseline(
+        equation_render):
+    """A PDF text extractor reads a fraction as two lines; so does this."""
+    boxes = [box for box in equation_render["report"]["line_boxes"]
+             if box["mode"] == "equation"]
+    assert len(boxes) > len(ROOMY_SPECS), (
+        "a stacked equation has to contribute more than one line box")
+    placements = equation_render["report"]["equations"]["placements"]
+    assert sum(place["baselines"] for place in placements) == len(boxes)
+    assert any(place["baselines"] >= 2 for place in placements)
+
+
+def test_a_form_with_no_equation_reports_an_empty_equation_lane(
+        gianmun_render):
+    """The lane must not invent work on a document that has none."""
+    equations = gianmun_render["report"]["equations"]
+    assert equations["laid_out"] == 0
+    assert equations["constructs"] == {}
+    assert equations["placements"] == []
+    assert gianmun_render["report"]["elements_rendered"]["equations"] == 0
+
+
+def test_two_equation_renders_are_byte_identical(tmp_path):
+    """Determinism has to survive the new lane, mask compositing included."""
+    path = _form_with_equations(_need(EQUATION_FORM), tmp_path / "det.hwpx",
+                                ROOMY_SPECS)
+    first = own_render.render_to_dir(path, tmp_path / "a", dpi=144)
+    second = own_render.render_to_dir(path, tmp_path / "b", dpi=144)
+    assert len(first["pngs"]) == len(second["pngs"])
+    for left, right in zip(first["pngs"], second["pngs"]):
+        with open(left, "rb") as handle:
+            a = handle.read()
+        with open(right, "rb") as handle:
+            b = handle.read()
+        assert a == b, "identical input produced different PNG bytes"
+
+
 # ---------------------------------------------------------------- CLI
 
 def test_version_flag_prints_one_line():
