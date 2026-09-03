@@ -127,6 +127,12 @@ has not been pushed.
   registry-absence contract. Use the release-train acceptance requirements and
   actual #176/#184 protocol/tests for Epoch 0; do not edit #153 or claim its C3
   passed.
+- **E0-D2 accepted:** #176/#184's Runtime protocol implementation section,
+  `rt_codes.py`, and authority/MCP tests agree on registry absence plus
+  `unknown_method`/`knownOnHostEntry`, while two earlier design paragraphs still
+  named `authority_denied`. The integration branch aligns those paragraphs and
+  the transport-code inventory to the already implemented contract. No Runtime
+  behavior, authority surface, or test expectation changes.
 - Fix only integration, packaging/installer, false-reporting harness, or
   accepted-preview-flow defects.
 - Do not change renderer, writer, layout, font metrics, line breaking,
