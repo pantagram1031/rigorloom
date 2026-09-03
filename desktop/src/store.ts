@@ -25,6 +25,7 @@ import type {
   AppliedCandidate,
   ApprovalRecord,
   Candidate,
+  CandidateCompare,
   Capabilities,
   CredentialStatus,
   Finding,
@@ -91,12 +92,8 @@ export type Phase = "idle" | "starting" | "ready" | "failed";
  * which: that difference is the whole product claim, and hiding it would make
  * the claim unverifiable by the person doing the approving.
  */
-export interface QueuedOp {
+interface QueuedOpBase {
   opId: string;
-  kind: "fill_cell";
-  table: number;
-  row: number;
-  col: number;
   text: string;
   /** Declared when the seat's preflight demands it (T30). */
   charPr?: string;
@@ -104,6 +101,51 @@ export interface QueuedOp {
   origin: "user" | "agent";
   /** Who proposed it, when that is an agent. */
   proposer?: string;
+}
+
+/** A value going into an empty cell. `fill-cells`, via `plan/propose`. */
+export interface QueuedFillOp extends QueuedOpBase {
+  kind: "fill_cell";
+  table: number;
+  row: number;
+  col: number;
+  /**
+   * Write into a cell that is not empty (`preedit --overwrite`).
+   *
+   * Off for an ordinary fill, and that default is a guard worth keeping: a
+   * seat with something already in it is a seat somebody may have filled on
+   * purpose, and preedit refuses rather than clobbering it. A 되돌리기 제안
+   * sets it, because the cell it is restoring is occupied BY the edit being
+   * reversed — the one case where overwriting is precisely the intent.
+   */
+  overwrite?: boolean;
+}
+
+/**
+ * A paragraph line rewritten. `set-runs`, via the SAME `plan/propose`.
+ *
+ * There is no `replace_paragraph_text` operation and this shell did not invent
+ * one: `set_run` replaces one run at `(atPara, run)` and preserves its
+ * `charPrIDRef` (engine/scripts/preedit.py:2464). What that costs is the check
+ * in `beginParagraphEdit` — a run is not a line, and the two coincide only
+ * where a paragraph holds exactly one run. Where they do not, no caret is
+ * placed at all.
+ *
+ * `run` is the index the run inventory returned, never a count this shell kept.
+ */
+export interface QueuedRunOp extends QueuedOpBase {
+  kind: "set_run";
+  atPara: number;
+  run: number;
+}
+
+export type QueuedOp = QueuedFillOp | QueuedRunOp;
+
+/** Where a queued op points, as one string. Cells and runs both have one. */
+export function opTargetId(op: QueuedOp): string {
+  return op.kind === "fill_cell"
+    ? cellKey(op.table, op.row, op.col)
+    : `p:${op.atPara}#${op.run}`;
 }
 
 /**
@@ -125,6 +167,22 @@ export interface Draft {
   error: RuntimeError | null;
   /** Set when the user edited or removed an agent's op: the plan is now ours. */
   rewrittenFromAgent: boolean;
+  /**
+   * The candidate this queue chains onto, or null for the source (§15.2).
+   *
+   * Set from the head of the chain whenever there is one, so a second edit
+   * after an apply lands on TOP of the first rather than beside it. Before
+   * this existed the second candidate quietly did not contain the first edit.
+   */
+  baseRunId: string | null;
+  /**
+   * The candidate this queue undoes, when it is a 되돌리기 제안.
+   *
+   * A queue carrying this is still an ordinary queue: same review, same
+   * approval, same apply. The only difference is what the receipt will record
+   * and what gets proven afterwards.
+   */
+  reverses: string | null;
 }
 
 /**
@@ -141,18 +199,45 @@ export interface LastCommit {
   composed: boolean;
 }
 
-/** The cell currently open for typing. A real `<input>` lives here. */
-export interface InlineEdit {
-  table: number;
-  row: number;
-  col: number;
-  /** The seat's text before this edit, for the queue's before → after. */
+interface InlineEditBase {
+  /** The target's text before this edit, for the queue's before → after. */
   before: string;
   /** Present when the seat's preflight says a charPr must be declared. */
   charPr?: string;
   /** Whether this is replacing an op already in the queue. */
   opId: string | null;
 }
+
+/** The cell currently open for typing. A real `<input>` lives here. */
+export interface InlineCellEdit extends InlineEditBase {
+  kind: "cell";
+  table: number;
+  row: number;
+  col: number;
+}
+
+/**
+ * The paragraph line currently open for typing, with a caret in it.
+ *
+ * `caret` is a character offset the runtime's own `charX` resolved from where
+ * the click landed. `null` means the line carried no per-character boxes and
+ * the click SNAPPED to the start — a state the status bar has to say out loud,
+ * which is the only reason this is a nullable number rather than a 0.
+ *
+ * `spanIndex` is carried so the overlay can mount the field in the rectangle
+ * the runtime placed for that exact line, and `sizePt` so the field can be set
+ * at the size the render drew it at rather than at the chrome's size.
+ */
+export interface InlineRunEdit extends InlineEditBase {
+  kind: "run";
+  atPara: number;
+  run: number;
+  caret: number | null;
+  spanIndex: number;
+  sizePt?: number;
+}
+
+export type InlineEdit = InlineCellEdit | InlineRunEdit;
 
 export type ApprovalPhase = "idle" | "requesting" | "pending" | "resolving" | "resolved";
 
@@ -232,6 +317,59 @@ export interface WorkspaceState {
   /** Set by the editor when a real `compositionend` fires. */
   sawComposition: boolean;
   draft: Draft;
+
+  // --- undo, in two tiers that are never blurred together (E1.4) -----------
+  /**
+   * Ops taken out of the QUEUE, newest last. The pre-approval undo's redo.
+   *
+   * This tier is exact and cheap because nothing has happened yet: an op in
+   * the queue is not in any candidate, so removing it IS the undo and there is
+   * no document to reconcile. It is labelled 대기열에서 제거 in the UI and
+   * never 문서 되돌리기 — conflating the two would be telling a person their
+   * document changed back when nothing ever changed.
+   *
+   * Cleared whenever the queue is bound to a different document or emptied
+   * into a candidate: a redo that re-enqueued an op against other bytes would
+   * be a different edit wearing the same label.
+   */
+  redoStack: QueuedOp[];
+  /**
+   * The candidate the shell treats as the document's current state.
+   *
+   * SHELL STATE, and it has to be: the runtime records parents but not a head
+   * (§15.7), because a chain can fork. So this is a selection, made explicit
+   * in the 기록 panel rather than drifting silently — and it is what a new
+   * edit chains onto and what an export writes.
+   */
+  head: string | null;
+  /** Which candidate the 기록 panel is showing, read-only. Never moves `head`. */
+  historySelected: string | null;
+  /**
+   * Addresses each candidate's chain changed, as `c:t:r:c` / `p:N` keys (E1.2).
+   *
+   * Store state rather than a module memo, and that is not a style choice: the
+   * page's echo is rendered through `useWorkspace`, so a cache the store cannot
+   * see would fill in after the last re-render and the marks would never
+   * appear. Keyed on the head run; absent means "not read yet", which the page
+   * says out loud rather than drawing an unmarked page and looking clean.
+   */
+  changedByRun: Record<string, string[]>;
+  /** Phase of a 되돌리기 제안 while it reads the chain and proposes. */
+  undoPhase: Phase;
+  undoError: RuntimeError | null;
+  /**
+   * `candidate/compare` for the reversal that was just applied.
+   *
+   * The runtime's answer, held verbatim. `regionsEqual` is the claim an undo
+   * has to make good; `artifactEqual` is reported beside it and is normally
+   * false, because restoring text is not restoring bytes.
+   */
+  inverseProof: {
+    runId: string;
+    reversedRunId: string;
+    compare: CandidateCompare;
+  } | null;
+
   approval: ApprovalRecord | null;
   approvalPhase: ApprovalPhase;
   approvalError: RuntimeError | null;
@@ -448,6 +586,8 @@ export const EMPTY_DRAFT: Draft = {
   phase: "idle",
   error: null,
   rewrittenFromAgent: false,
+  baseRunId: null,
+  reverses: null,
 };
 
 const initial: WorkspaceState = {
@@ -483,6 +623,13 @@ const initial: WorkspaceState = {
   lastCommit: null,
   sawComposition: false,
   draft: EMPTY_DRAFT,
+  redoStack: [],
+  head: null,
+  historySelected: null,
+  changedByRun: {},
+  undoPhase: "idle",
+  undoError: null,
+  inverseProof: null,
   approval: null,
   approvalPhase: "idle",
   approvalError: null,
@@ -864,6 +1011,68 @@ export function canRequestApproval(s: WorkspaceState): boolean {
   );
 }
 
+// --- the candidate chain, read side (E1.4) ------------------------------------
+
+/**
+ * The candidates of the active session in LINEAGE order, roots first.
+ *
+ * `candidate/list` already sorts by `createdUtc`, which is the order they were
+ * published in. This walks the `base` links on top of that so a child never
+ * precedes its parent even if two runs share a stamp, and so a fork is visible
+ * as two children of one parent rather than being flattened into a line.
+ *
+ * A row whose base is not in the list is treated as a root and SAID to be one
+ * by the panel, rather than being dropped: a candidate whose parent's receipt
+ * has gone is still a candidate, and hiding it would hide the loss.
+ */
+export function lineage(rows: Candidate[]): Candidate[] {
+  const byId = new Map<string, Candidate>();
+  for (const row of rows) if (row.runId) byId.set(row.runId, row);
+  const children = new Map<string | null, Candidate[]>();
+  for (const row of rows) {
+    const parent = row.base?.runId ?? null;
+    const key = parent !== null && byId.has(parent) ? parent : null;
+    const bucket = children.get(key) ?? [];
+    bucket.push(row);
+    children.set(key, bucket);
+  }
+  const out: Candidate[] = [];
+  const walk = (key: string | null) => {
+    for (const row of children.get(key) ?? []) {
+      out.push(row);
+      if (row.runId) walk(row.runId);
+    }
+  };
+  walk(null);
+  // Anything a cycle in the data would have stranded. Cannot happen with
+  // runtime-written receipts; appended rather than silently lost if it does.
+  for (const row of rows) if (!out.includes(row)) out.push(row);
+  return out;
+}
+
+/** The candidate a reversal names, when this one is a reversal. */
+export function reversedBy(rows: Candidate[], runId: string): Candidate | null {
+  return rows.find((row) => row.reverses?.runId === runId) ?? null;
+}
+
+/**
+ * Which candidate the shell is standing on: the explicit head, or the newest.
+ *
+ * The runtime has no head (§15.7) and this does not pretend otherwise — it is
+ * a shell decision with a stated default, and the 기록 panel shows which row
+ * carries it.
+ */
+export function headCandidate(s: WorkspaceState): Candidate | null {
+  const rows = activeCandidates(s);
+  if (rows.length === 0) return null;
+  if (s.head) {
+    const chosen = rows.find((row) => row.runId === s.head);
+    if (chosen) return chosen;
+  }
+  const ordered = lineage(rows);
+  return ordered[ordered.length - 1] ?? null;
+}
+
 /** A stable key for a cell, shared by the queue, the tree and the centre. */
 export function cellKey(table: number, row: number, col: number): string {
   return `c:${table}:${row}:${col}`;
@@ -875,9 +1084,26 @@ export function queuedOpAt(
   table: number,
   row: number,
   col: number,
-): QueuedOp | null {
+): QueuedFillOp | null {
   return (
-    s.draft.ops.find((op) => op.table === table && op.row === row && op.col === col) ?? null
+    s.draft.ops.find(
+      (op): op is QueuedFillOp =>
+        op.kind === "fill_cell" && op.table === table && op.row === row && op.col === col,
+    ) ?? null
+  );
+}
+
+/** The queued op sitting on a given paragraph run, if any. */
+export function queuedRunOpAt(
+  s: WorkspaceState,
+  atPara: number,
+  run: number,
+): QueuedRunOp | null {
+  return (
+    s.draft.ops.find(
+      (op): op is QueuedRunOp =>
+        op.kind === "set_run" && op.atPara === atPara && op.run === run,
+    ) ?? null
   );
 }
 
@@ -909,14 +1135,30 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // state product direction §4 names as shared, so they belong in the
     // signature the smoke asserts across a view switch. An edit in progress is
     // here too: a half-typed value must survive Ctrl+2 and come back.
-    draftOps: s.draft.ops.map((op) => `${cellKey(op.table, op.row, op.col)}=${op.text}`),
+    draftOps: s.draft.ops.map((op) => `${opTargetId(op)}=${op.text}`),
     draftPlan: s.draft.plan?.opsHash ?? null,
     draftVerdict: s.draft.validation?.verdict ?? null,
+    // A half-typed value survives Ctrl+2 and comes back — including the caret
+    // offset, because a caret that came back at the front of the line would be
+    // a different edit in all but name.
     inlineEdit: s.inlineEdit
-      ? cellKey(s.inlineEdit.table, s.inlineEdit.row, s.inlineEdit.col)
+      ? s.inlineEdit.kind === "cell"
+        ? cellKey(s.inlineEdit.table, s.inlineEdit.row, s.inlineEdit.col)
+        : `p:${s.inlineEdit.atPara}#${s.inlineEdit.run}@${s.inlineEdit.caret ?? "start"}`
       : null,
     approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
     applied: s.applied?.candidate.sha256 ?? null,
+    // E1.4. Undo is Workspace state like every other kind: a 되돌리기 제안
+    // half-reviewed in Document view must be the same proposal in Agent view,
+    // and a redo stack that emptied on Ctrl+2 would be a second history.
+    draftBase: s.draft.baseRunId,
+    draftReverses: s.draft.reverses,
+    redoStack: s.redoStack.map((op) => `${opTargetId(op)}=${op.text}`),
+    head: s.head,
+    historySelected: s.historySelected,
+    inverseProof: s.inverseProof
+      ? `${s.inverseProof.runId}:${s.inverseProof.compare.regionsEqual}`
+      : null,
     verdict: s.candidateVerdict?.report.acceptance ?? null,
     receiptOpen: s.receiptOpen,
     events: s.events.length,

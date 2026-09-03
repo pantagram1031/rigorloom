@@ -224,6 +224,18 @@ export interface PlanOp {
   params: Record<string, unknown>;
 }
 
+/**
+ * A point in the candidate chain: which run, and the digest it carries (§15).
+ *
+ * `null` where a plan or a receipt names none, which is the ROOT of a chain —
+ * built from the session source. Absent and null are the same fact here and
+ * the runtime always writes the key, so the UI does not have to tell them apart.
+ */
+export interface CandidateRef {
+  runId: string;
+  sha256: string;
+}
+
 export interface OperationPlan {
   schema: string;
   planId: string;
@@ -232,7 +244,12 @@ export interface OperationPlan {
   opsHash: string;
   sessionId: string;
   backend: string;
+  /** The digest of whatever this plan is computed against: source, or `base`. */
   boundSha256: string;
+  /** The candidate these ops chain onto, or null for the session source (§15.2). */
+  base: CandidateRef | null;
+  /** The candidate this plan undoes. A recorded CLAIM, proven after apply. */
+  reverses: CandidateRef | null;
   createdUtc: string;
   proposer: string;
   implVersion: string;
@@ -328,6 +345,10 @@ export interface Receipt {
   bodySha256: string;
   source: { name: string; sha256: string; bytes: number };
   candidate: ArtifactRef;
+  /** The candidate this one was built ON, or null at the root of the chain. */
+  base: CandidateRef | null;
+  /** The candidate this one reverses, when its plan declared one. */
+  reverses: CandidateRef | null;
   approval: ApprovalRecord;
   steps: Array<{
     opId: string;
@@ -346,9 +367,43 @@ export interface AppliedCandidate {
   sessionId: string;
   planId: string;
   candidate: ArtifactRef;
+  base: CandidateRef | null;
+  reverses: CandidateRef | null;
   checks: VerificationReport;
   receipt: string;
   canonical: boolean;
+}
+
+/**
+ * `candidate/compare` (§15.4). Where a reversal stops being a claim.
+ *
+ * Two equalities, and they are not the same fact. `regionsEqual` is the one an
+ * undo has to satisfy: the addresses hold identical text, re-read by the
+ * runtime from bytes each receipt re-verified. `artifactEqual` compares whole
+ * files and is normally FALSE between an edit and its inverse, because the
+ * engine rewrites and rezips the package — so the UI reports it and must never
+ * draw it as a failed undo.
+ *
+ * `equal: null` on a row means neither profile returned that address: the
+ * comparison did not happen, which is not a match.
+ */
+export interface CandidateCompare {
+  sessionId: string;
+  left: { kind: string; runId?: string; sha256: string };
+  right: { kind: string; runId?: string; sha256: string };
+  artifactEqual: boolean;
+  regions: Array<{
+    address: string;
+    left: string | null;
+    right: string | null;
+    equal: boolean | null;
+  }>;
+  regionsCompared: number;
+  /** `null` when nothing was compared. Never read a null as a pass. */
+  regionsEqual: boolean | null;
+  regionsUnreadable: string[];
+  normalizer: string;
+  note: string;
 }
 
 // --- rendering (protocol §11.1) ----------------------------------------------
@@ -436,6 +491,23 @@ export interface GeometrySpan {
   address: GeometryAddress | null;
   confidence: "unique" | "ambiguous" | "unmapped" | string;
   candidates?: GeometryAddress[];
+  /**
+   * Where each character of `text` begins, as a fraction of the page width,
+   * plus the last right edge — so `charX.length === text.length + 1`. Same
+   * coordinate system as `rect`, so one pixel width scales both.
+   *
+   * ABSENT where the render did not resolve one box per character in order.
+   * A caret offset derived from anything else would be a cursor standing where
+   * the glyph is not, so a click on such a line snaps to its start and the
+   * status bar says so. Never interpolate this.
+   */
+  charX?: number[];
+  /**
+   * The point size the render declares for this line, where every span in it
+   * declares the same one. Absent for a line set in two sizes at once — one of
+   * them would be a pick.
+   */
+  sizePt?: number;
 }
 
 /**
@@ -478,6 +550,14 @@ export interface GeometryResult {
   seats?: GeometrySeat[];
   seatDerivations?: Record<string, number>;
   mapping?: GeometryMapping;
+  /** Whether sub-line offsets were emitted for this page, and for how much of it. */
+  charOffsets?: {
+    state: "read" | "page_too_dense" | "unavailable" | string;
+    reason?: string | null;
+    lines?: number;
+    of?: number;
+    chars?: number;
+  };
   cache?: { hit: boolean; key: string };
   /** Present when NOT available — the SAME closed reason set `render` uses. */
   unavailable?: {
@@ -499,7 +579,7 @@ export interface GeometryResult {
  * listed and nothing is chosen until a person chooses it.
  */
 export interface OverlayPick {
-  kind: "seat" | "unique" | "ambiguous" | "not_editable";
+  kind: "seat" | "unique" | "ambiguous" | "not_editable" | "caret" | "no_caret";
   /** What the status bar prints. Already Korean, already final. */
   label: string;
   /** The span or seat this came from, so the drawn overlay can mark itself. */
@@ -515,11 +595,22 @@ export interface OverlayPick {
    * Absent for a span pick, which has no derivation: it has text.
    */
   derivation?: GeometrySeat["derivation"];
+  /**
+   * The character offset a caret landed on, or `null` where the line carried
+   * no per-character boxes and the click snapped to its front. Present only
+   * for `kind: "caret"`, and the null is load-bearing: a measured 0 and a
+   * fallback 0 look identical on screen and are different facts.
+   */
+  caret?: number | null;
+  /** Why no caret was placed. Present only for `kind: "no_caret"`. */
+  refusal?: "no_address" | "multi_run" | "run_text_differs" | "no_inventory" | string;
 }
 
 export interface PrepareResult {
   sessionId: string;
   prepared: boolean;
+  /** Which candidate was converted, or null/absent for the session source. */
+  runId?: string | null;
   reason?: string;
   pdf?: {
     path: string;
@@ -572,6 +663,13 @@ export interface TextRun {
   charpr?: string;
   color_anomaly?: boolean;
   color_value?: string;
+  /**
+   * §14, for a run rather than a seat. The face this run's charPr resolves to
+   * in the document's own header, or `null` where the document declares none.
+   * A caret standing in this run is the only way the toolbar can name a face
+   * for a paragraph; before this it could print the integer and nothing else.
+   */
+  charpr_face?: TypefaceByLang | null;
 }
 
 /** A region's full text. Cells carry `table` + `addr`; paragraphs `at_para`. */
@@ -607,11 +705,28 @@ export interface Recent {
   openedUtc: string;
 }
 
-/** A row of `candidate/list`. Only runs whose receipt landed appear. */
+/**
+ * A row of `candidate/list`. Only runs whose receipt landed appear (§15.5).
+ *
+ * The lineage fields come straight out of the receipt on disk, so a history
+ * view is one call. `verified` is always `false` here and it is not a defect:
+ * the listing does not re-hash the artifact, and `receipt/read` is the read
+ * that does — with `candidate_hash_mismatch` as its refusal. A row that
+ * claimed verification it had not done would be the worst kind of lie in a
+ * panel whose whole job is provenance.
+ */
 export interface Candidate {
   runId?: string;
   receipt?: string;
   sha256?: string;
+  bytes?: number;
+  createdUtc?: string;
+  planId?: string;
+  base?: CandidateRef | null;
+  reverses?: CandidateRef | null;
+  acceptance?: boolean | null;
+  opKinds?: string[];
+  verified?: boolean;
   [key: string]: unknown;
 }
 

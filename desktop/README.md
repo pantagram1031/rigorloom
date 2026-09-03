@@ -703,9 +703,15 @@ unique on that same page — and gap 19 stands.
 
 Still true, and still the interesting number: **0 unique SPANS map to an
 editable cell.** Matching is by text and an empty seat has no text, so the text
-half of the mapping reaches labels and only labels. Every clickable target on
-the page today came from the border scan. 400 of 473 corpus fill regions still
-get no seat and §12.6 lists the causes one by one.
+half of the mapping reaches labels and only labels, and every *seat* on a page
+came from the border scan. 400 of 473 corpus fill regions still get no seat and
+§12.6 lists the causes one by one.
+
+What that number stopped meaning is "the text half of the mapping is wasted".
+It reaches **365 paragraph addresses across the corpus**, and 314 of those are
+now caret targets — see 지면 커서 below. The seats are where a form is *blank*;
+the paragraph lines are where it already says something, and both are places a
+person types.
 
 The legend under the raster prints the runtime's own counts (확정 / 후보 / 대응
 없음 / 자리) and, where there is nothing to click, still says so and points at
@@ -741,6 +747,100 @@ A seat pick also carries **how the rectangle was found** — `표10 (2,1) · 그
 a seat is the one overlay class a person types into. Leaving that in a tooltip
 means it is never read. `data-derivation` on the same element carries the raw
 `cell_borders` / `matched_text` / `interpolated` for the harness.
+
+### 지면 커서 — typing in a line, not only in a seat
+
+A seat is an empty cell. A form is mostly not empty cells, so for the life of
+the overlay the marquee interaction reached **73 places across the whole
+corpus** and every one of them was blank. The other half of "editing on the
+page" is the body text: click a uniquely-mapped paragraph line and a real caret
+stands in it, in a field mounted in that line's own rect, at the size the render
+drew it, at the character the pointer landed on.
+
+**The offset is measured or it is absent.** `document/pageGeometry` now carries
+`spans[].charX` — one normalized x per character of the line's text, read out of
+the same PDF every rect comes from (§12.2). The click's x, as a fraction of the
+page, is compared against those boundaries and the nearest one wins, which is
+why clicking the right half of a character puts the caret after it. Nothing is
+interpolated from a line's width and its character count: a proportional face
+makes that wrong by a character or more mid-line, and a cursor standing where
+the glyph is not is the same fabrication as a rectangle in the wrong place.
+Where a line carries no boxes the caret goes to the front and **the app says
+so** — `caret: null` rather than `caret: 0`, 줄 앞 rather than 0번째 글자 앞 in
+the status bar, and a dotted rather than solid hover rule on the line itself, so
+the limitation is visible before the click rather than after it.
+
+**One mutation path, two op kinds, no new route.** Typing goes through the same
+`commitEdit` → `setQueue` → `plan/propose` → `plan/validate` → review queue →
+approval → apply → receipt a seat fill goes through. What differs is the
+operation kind, and it is one the Runtime already had: `set_run` at
+`(atPara, run)`, which preserves the run's `charPrIDRef`
+(`engine/scripts/preedit.py:2464`). No `replace_paragraph_text` was invented on
+either side of the wire. The queue holds both kinds, the tree draws both as
+`before → after`, and an edit typed on the page shows up in 본문 보기 exactly
+as one typed in the tree does.
+
+**The check the shell has to make itself, and the refusals it produces.** A line
+is not a run. The two coincide only where the paragraph holds exactly one run
+whose text IS the line, and `beginParagraphEdit` asks `document/readRegion`
+rather than assuming it from the fact that the text matched. The refusals are a
+closed set with a sentence each — `multi_run`, `run_text_differs`,
+`no_inventory`, `no_address` — because a person who clicks visibly mapped text
+and gets silence concludes the feature is broken, when the honest answer is that
+this paragraph has no single run to address.
+
+**What that is worth, measured on the corpus** (ten forms, 51 real
+Hancom-rendered pages, before any of it was written):
+
+| | |
+| --- | ---: |
+| uniquely-mapped spans | 376 |
+| …that are paragraph addresses | 365 |
+| …that are cell addresses | 11 |
+| paragraph lines holding exactly one run — a caret target | **314** |
+| paragraph lines holding several runs — refused by name | 51 |
+| paragraph lines whose run text disagreed with the line | 0 |
+| empty seats the border scan places (unchanged) | 73 |
+| **places on a page a person can type, before → after** | **73 → 387** |
+
+And the offsets themselves: **2,591 of 2,591 lines** resolve one box per
+character, in order, none degenerate. 2,508 also carry a single `sizePt`; the 83
+that do not are set in two sizes at once, so they carry none — reporting one of
+them would be a pick.
+
+**Vocabulary, kept apart on purpose.** A seat is an empty box inviting a value
+and keeps its faint fill tint with a baseline rule. A caret target already *has*
+its text, so tinting it would repaint the body of the form: it gets the
+text-selection vocabulary instead — an I-beam and a hairline under the line on
+hover. Ambiguity keeps the warning palette and still refuses to resolve itself.
+Inert mapped text still gets nothing at all.
+
+**The 입력 indicator finally has something true to say.** It read 삽입/수정 없음
+for the life of this product and that was honest — there was no character-level
+caret, editing happened per seat, and an indicator claiming 삽입 would have been
+inventing one. There is a caret now, so it reads 삽입 while one is open. It never
+reads 수정: nothing in this build overwrites, and offering a mode that does not
+exist is the same fabrication as a font name nobody declared.
+
+### 글꼴 over a caret, and whose size it is
+
+The toolbar names the face the **run** is set in, from
+`document/readRegion` → `runs[].charpr_face` (§14's fourth field, added with
+this slice). A run's charPr appears in neither publisher `faceIndex` read
+before — the document-level shapes and the fill seats — so above a caret the
+strip could print the integer and nothing else.
+
+크기 is the one control where two different facts meet, and they are never
+merged. `summary.baselineCharPr.height_pt` is what the document's **header**
+declares for the body shape. `spans[].sizePt` is what the **renderer** drew the
+caret's line at. §14.1 is explicit that a run's charPr carries no point size of
+its own, so with a caret open the honest number is the render's — and it is
+labelled 지면에서 잰 값, with `data-source="render"` for the harness, because a
+measured size presented as a declared one is a fabrication in the one control
+this application must not fabricate in.
+
+Changing either is a later slice and a `preedit` question, not a protocol one:
+setting a face means a charPr the document does not have (§14.1).
 
 ## 작업 팩 — the panel that stopped being 준비 중
 
@@ -847,6 +947,138 @@ publishes — the two document-level shapes plus every region's `charPrFace` and
 `charPrSuggestedFace` — so every pair on screen is one the runtime stated. A
 graph cell whose charPr appears in neither publisher gets no name, which is
 correct: nothing on the wire said what it is.
+
+
+---
+
+## 되돌리기 — two tiers, one of them provable
+
+E1.4 asked for undo whose inverse is *proven*, never a client-side shadow of
+the document that can drift from the runtime. The first thing that turned up
+on the way there was that the thing the plan assumed already existed did not.
+
+### The defect underneath: two applies made two siblings
+
+`plan/apply` chained every operation from `session.source`. So the second
+apply in a session did not produce the next version of the document — it
+produced a second first version. Open a form, fill a cell, approve, apply; fill
+another cell, approve, apply; export. The exported candidate carries the second
+edit and not the first, silently, with a valid receipt binding valid bytes.
+
+Nothing in the receipt chain ordered plans, because nothing recorded a parent.
+There was, therefore, no chain for an undo to be the inverse *of*.
+
+The fix is one field with consequences: `plan/propose` takes a `baseRunId`, the
+plan binds that candidate's digest, `plan/apply` chains onto that candidate's
+bytes, and the receipt records `base`. Everything else follows — validation
+profiles the base (the second edit of a paragraph addresses runs the first edit
+produced), and a candidate-based plan can never be `plan_stale` because a
+published candidate is immutable. Protocol §15 has the whole shape.
+
+### Tier one: an edit in the queue
+
+An op in the review queue is not in any candidate, so **removing it IS the
+undo**. No runtime call, no document, nothing to reconcile. The only thing this
+tier owes anyone is its label: the control says **대기열에서 제거**, and the
+toast says 문서는 처음부터 바뀐 적이 없습니다. Calling it 문서 되돌리기 would
+tell someone their file changed back when the file never changed.
+
+다시 넣기 re-enqueues the op OBJECT that was removed, not a reconstruction of
+it from a remembered address and a remembered string. That is what makes the
+redo exact rather than merely similar — the smoke asserts the target, the
+value, the `before`, and that the re-proposed plan has the identical `opsHash`.
+
+The stack is cleared on apply and on a document switch, and gap 31 says why.
+
+### Tier two: an applied candidate
+
+An applied candidate is immutable and receipted, so undoing one cannot mean
+changing it and must not mean deleting it. It means proposing the **inverse**
+as a new plan, which travels the same review → approve → apply path as
+anything else and produces one MORE candidate with one more receipt.
+
+Three rules, each of them a way a shortcut would lie:
+
+1. **The previous value is READ, never remembered.** It comes from
+   `document/readRegion` against the candidate the edit was made ON — the
+   parent named in the receipt, or the source at the root of the chain. Every
+   `readRegion` answer now states its `subject`, so a caller that asked for a
+   candidate and silently got the source cannot mistake one for the other. An
+   address the runtime did not return is a refusal (`previous_value_unreadable`),
+   never an empty string: an inverse that guessed blank would WRITE a blank
+   over something unknown.
+2. **What cannot be inverted is refused by name.** `fill_cell` and `set_run`
+   are invertible. `delete_guides` is not, and a candidate containing one gets
+   `not_invertible` with the kinds listed — not a button that would produce a
+   partial undo (gap 29).
+3. **It is a PROPOSAL.** It lands in the queue labelled 되돌리기 제안, chained
+   onto the HEAD rather than onto the candidate being reversed — undoing an
+   older edit must not throw away the newer ones on top of it — and a person
+   approves it exactly as they approved the edit.
+
+### The proof
+
+`candidate/compare` is a new agent-safe read (§15.4). Given the reversal and
+the document it claims to have restored, it re-reads BOTH from bytes their
+receipts re-verified and reports, per address, whether the text is equal.
+
+It is in the runtime and not in the shell for one reason: a client comparing
+two strings it had already fetched would be comparing its own memory and
+calling it proof.
+
+Two equalities, printed apart because they are different facts:
+
+| | what it means | measured on the corpus form |
+| --- | --- | --- |
+| `regionsEqual` | the addresses hold identical text | **true** — this is the undo |
+| `artifactEqual` | the two files are the same bytes | **false**, and expected |
+
+`artifactEqual: false` is not a failed undo and the panel says so out loud:
+`preedit` rewrites XML and rezips the package, so member order and zip metadata
+move even when every character is restored. A UI that drew that as a defect
+would be inventing one.
+
+### 기록
+
+The right column's second panel, under the queue. Lineage order (parents before
+children, forks visible as forks), each row showing the candidate it was built
+on, which rows are reversals of which, and which one is the head.
+
+The head is a **choice**, and it is marked. The runtime keeps none (§15.7) —
+a chain can fork and it will publish both branches — so pretending otherwise
+would be the shell deciding what the file IS without saying so. Selecting a row
+opens it read-only; it does not move the head, does not re-render the page as
+that candidate, and does not change what an export writes. Export names its run
+on the row itself.
+
+---
+
+## 후보본과 다름 — the layout echo, honestly (E1.2)
+
+After an apply the page view is still showing a raster of the SOURCE. E1.2 asks
+for the candidate. On this machine the candidate cannot be drawn: `renderPrepare`
+answers `needs_hancom` from the frozen sidecar (P1), and would answer `com_busy`
+on a machine with pyhwpx while the operator's own Hancom is open.
+
+So the page does the honest thing rather than the impressive one:
+
+- the source raster stays, under a banner reading **후보본과 다름 — 이 그림은
+  원본 기준**, naming the candidate it is not showing;
+- the addresses the receipts say changed are marked on the overlay — dashed, in
+  the warning palette, deliberately not filled, because there is no content to
+  show, only a statement that what is drawn underneath is out of date;
+- **다시 그리기** calls `renderPrepare` on the candidate (`runId` is new, §15.6)
+  and prints whatever the runtime answers — a candidate PDF, or the refusal.
+
+What it will not do is paint the edited text onto the raster. The overlay's
+rule is that every rectangle on the page came out of the renderer's own layout
+(§12.2); a glyph placed at a guessed position breaks that rule in the most
+convincing way available — a page that looks right and is not.
+
+Gap 32 records exactly what a real echo needs: close P1 and the existing
+`renderPrepare --runId` path produces one with no desktop change, or land
+E2.1's own line breaker and draw it at `own-uncertified` grade with the grade
+visible. Those are the two real echoes. There is no third.
 
 ---
 
@@ -1197,6 +1429,122 @@ in them reads 돋움체 / 본문은 한양중고딕.
   200 %-scaled display. Seat placement tolerances against other Hancom versions
   are untested, and §12.6 already records that.
 
+### The caret slice — typing in a line, and what the evidence found
+
+Reproduced from a clean build on the operator machine (Windows 11, one Hancom
+Office 13.0.0.2986 install, open throughout — the runtime never touched it).
+
+| step | result |
+| --- | --- |
+| `npx tsc --noEmit` | exit 0 |
+| `sidecar/build.ps1` (PyInstaller one-dir) | exit 0, 60 s |
+| `npm run build` (tsc + vite) | exit 0, 15 s |
+| `npx tauri build` (cargo release + NSIS) | exit 0, 421 s |
+| `scripts/smoke.ps1`, 11 phases | **396 checks, 0 failures** (was 360 at Phase 6) |
+| `scripts/ime.ps1 -Surface both` | **IME PASS**, 2 surfaces, real 두벌식 scan codes |
+| `scripts/screenshots.ps1 -Only page-caret-edit` | `page-caret-edit.png`, 2880×1704 |
+| `tests/test_runtime_geometry.py` | 86 passed |
+| `tests/test_runtime_typeface.py` | 14 passed |
+| every other `tests/test_runtime_*.py` | 257 passed, 0 failed |
+| `tests/test_agenthost_compile.py` | 34 passed |
+| `scripts/py_compile_sweep.py` | 125 files, 0 failures |
+| `privacy_scan.py` over `git archive HEAD` | **HARD=0**, WARN=43 (all pre-existing corpus fixtures) |
+
+**The sidecar's role check gained a leg.** `serve role: sub-line offsets on
+spans[].charX, unit normalized` — the frozen runtime is asked whether it
+extracts per-character boxes before the bundle is allowed to ship, because a
+bundle that does not would answer every click by snapping to the front of the
+line and would do it *silently*: the field opens, the caret sits at offset 0,
+and nothing on screen is wrong except the position.
+
+**What the smoke measured on the page it exercises** (page 6 of the seated
+corpus form, the page the runtime seats most heavily):
+
+- 86 lines, all 86 resolving per-character offsets, 634 characters.
+- 37 seats, all 37 editable — unchanged.
+- 10 uniquely-mapped paragraph lines, all 10 carrying offsets, all 10 drawn as
+  caret targets with `cursor: text` and none of them dressed as a fill seat.
+- A caret placed on the first one tried: `문단 182`, offset **5** into a
+  7-character line, with the browser's own `selectionStart` at 5.
+- A real `MouseEvent` at a second position in the same line: offset **6**, the
+  number `charX` names for that x. Two positions, two offsets — the check that
+  the overlay's `clientX` → page-fraction arithmetic is right and not
+  accidentally always zero.
+- A refusal, provoked on purpose: `문단 338` holds two runs, so **no caret was
+  placed**, `multi_run` reached the status bar, and the queue did not move.
+- The typed sentence became one `set_run` op at `(atPara 182, run 0)`, in the
+  same queue as a seat fill, and the plan the *runtime* returned named that
+  same paragraph and run.
+- 글꼴 read 맑은 고딕 for charPr 21, from the document's own header. 크기 read
+  `14.04pt` with `data-source="render"` — the size the PDF was drawn at, not a
+  declaration the header does not make.
+
+**IME, on the page surface, by test rather than by construction.** Phase 6
+recorded the page field as "shared by construction, not by test", and
+construction is not evidence when the field is mounted in an absolutely-
+positioned overlay over a raster with its selection set programmatically.
+`ime.ps1 -Surface page` stages a rendered session, walks pages and lines until
+the runtime places a caret, and drives 두벌식 **scan codes** — not injected
+Unicode, which would bypass the IME and prove nothing — into it:
+
+    editor open at p:2
+    caret at character 12, page 1
+    [PASS] the IME composed into the shipped editor
+    [PASS] Enter committed the composed value into the plan queue
+    [PASS] the field saw real composition events, not injected characters
+    [PASS] the composed value queued a set_run op
+
+#### Six defects this evidence found
+
+1. **The caret worked; everything around it did not.** The first full run was
+   377/15. Every one of the 15 failures was in the code around the caret, and
+   the caret itself was right on its first real page.
+2. **A renamed testid broke a Phase 4 check.** `queued-0-1-2` became
+   `queued-c:0:1:2` when the queued-value component learned a second op kind,
+   and "the document itself shows the pending value in place" failed while the
+   value was on screen the whole time. The cell spelling is restored.
+3. **The harness was impatient, and it read as the feature being wrong.** The
+   check driving a real `MouseEvent` waited 300 ms; behind that click is
+   `document/readRegion`, which runs `form_inspect` as a child process. It
+   reported `caret none`, which looks exactly like the component computing the
+   wrong offset. Twelve downstream checks were failing on the empty caret that
+   left behind rather than on themselves.
+4. **`runOp!.opId` threw and killed the phase**, so eight checks never ran and
+   the harness reported a TypeError where it should have reported eight results
+   naming the cause.
+5. **`ime.ps1` lost its UTF-8 BOM when it was rewritten**, and PowerShell 5.1
+   read its Korean strings as ANSI and failed to parse the file at
+   `[ValidateSet(...)]` — an error pointing 180 lines away from the cause.
+   Every other script in `scripts/` carries a BOM; this one now does again.
+6. **A PowerShell function emits everything it does not consume.** `$failed +=
+   Invoke-Surface $which` collected stray objects and then tried to add an
+   array to an integer — *after* the seat surface had already printed three
+   `[PASS]` lines. `build-clean.ps1` carries a note about the same trap. The
+   counter is script-scoped now.
+
+And one found by reading rather than by running, which is worth saying because
+the harness could not have caught it: an ambiguous span's candidate list very
+often holds one anchor and one cell (§12.4), and choosing the anchor half
+answered 값을 넣는 자리가 아닙니다 — correct until a paragraph line became
+somewhere a person types. The smoke's ambiguous click asserts that nothing is
+queued and then dismisses, so it never chose a candidate at all.
+
+#### What this evidence does not cover
+
+- **One page of one form.** The caret checks run on whichever page the runtime
+  seats most heavily, which is page 6 of one corpus form. The corpus-wide
+  numbers (314 of 365) come from the runtime tests and an offline measurement,
+  not from the app.
+- **A wrapped paragraph.** Every corpus body paragraph is a single rendered
+  line, so `run_text_differs` was never provoked by a real wrap — only
+  `multi_run` was. Gap 25.
+- **A filled document.** Every corpus render is a blank form (§12.6), so
+  whether a caret lands correctly on a page whose paragraphs already carry
+  user-entered text is untested here.
+- **A machine that can render.** This one cannot: `renderPrepare` answers
+  `needs_hancom` because the frozen sidecar carries no pyhwpx (packaging gap
+  P1), so every page in this evidence is the corpus's own staged Hancom render.
+
 ### 한글 오버레이 — the overlay slice
 
 ```powershell
@@ -1298,6 +1646,110 @@ Plus a layout defect the first capture exposed rather than a logic one: the
 legend under the page inherited `.raster-note`'s single-line flex row and
 squeezed its counts into a four-character column. It wraps now, and the counts
 never break.
+
+### 되돌리기 — the undo slice (E1.4 + E1.2)
+
+Reproduced on the operator machine (Windows 11, one Hancom Office install open
+throughout — the runtime never touched it). The runtime changed in this slice,
+so the sidecar rebuild is not optional and the privacy gate runs over a real
+`git archive` of HEAD rather than over the working tree.
+
+```powershell
+npx tsc --noEmit
+powershell -File desktop/sidecar/build.ps1     # runtime changed: MUST precede
+cd desktop; npx tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+python -m pytest tests/test_runtime_*.py tests/test_agenthost_compile.py -q
+python scripts/py_compile_sweep.py
+git archive HEAD | tar -x -C <scratch>; python pipeline/scripts/privacy_scan.py <scratch>
+```
+
+| step | result |
+| --- | --- |
+| `npx tsc --noEmit` | 0 |
+| `sidecar/build.ps1` | 0 · 69.2 MiB payload · `candidate/compare` advertised |
+| `npx tauri build` (release) | 0 · 3m 34s |
+| `scripts/smoke.ps1` | 0 · **455 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 · 25 images |
+| `pytest tests/test_runtime_*.py` | 0 · **413 passed**, 382 s |
+| `pytest tests/test_agenthost_compile.py` | 0 · 35 passed |
+| `scripts/py_compile_sweep.py` | 0 · 125 files, 0 failures |
+| `privacy_scan.py` over `git archive HEAD` | 0 · **HARD=0**, WARN=43 |
+
+Shell exe 8.51 MiB · NSIS installer 26.55 MiB.
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· `overlay` 80 · **`undo` 59** · `packs` 34 · `composer` 31 · `settings` 28 ·
+`chrome` 33 · `chrome-reattach` 5, plus the checks the driver makes from
+outside the app.
+
+#### How the inverse is proven, in the run
+
+Nothing below is the shell comparing two strings it was already holding.
+
+- The pre-edit value is **read**, not remembered: `document/readRegion` against
+  the parent named in the receipt, and the answer states its own `subject`
+  (`{"kind":"candidate","runId":"fc769a9ebc69…"}` in the run).
+- The chain is real. A second edit binds the FIRST candidate's bytes
+  (`f5fb2fa4d56d` vs `f5fb2fa4d56d`) and the chained candidate still carries
+  the first edit — the two-siblings defect, asserted in the UI.
+- The reversal is a proposal: it lands in the queue as 되돌리기 제안 declaring
+  `reverses.runId`, chained onto the HEAD, and applies as one MORE candidate.
+  All three candidates stay listed.
+- The proof comes from the runtime. `candidate/compare` reported
+  `regions: [{"address":"0:0,14","equal":true}]` — **`regionsEqual: true`** —
+  and `artifactEqual: false`, printed apart, because `preedit` rezips the
+  package and an undo restores the value, never the bytes.
+- Two independent re-reads agree: `readRegion` on the reversal returns the
+  pre-edit value, and the newer edit ON TOP of the reversed one survived.
+- The receipt records both `reverses` and `base`, so the claim outlives the
+  session.
+- 기록 draws the whole lineage (3 rows, head marked 현재, parents named), and
+  selecting an older candidate opens it read-only without moving the head.
+
+The E1.2 half runs against the staged rendered session: after an apply the page
+keeps the SOURCE raster under 후보본과 다름 — 이 그림은 원본 기준, names the
+candidate it is not showing, marks the changed address on the overlay
+(**1 rect for `c:10:2:1`**, page 6, 37 seated of 99 clean), refuses to paint the
+new text onto the raster, and 다시 그리기 lands on this machine's real answer:
+`needs_hancom — pyhwpx is not importable`.
+
+Screenshots — `screenshots/`: the twenty-three from the seat slice, plus
+`history-reversal` (기록 with a three-row chain, the middle row marked 되돌려짐
+and the head marked 되돌리기, over the runtime's own 되돌리기 확인됨 verdict and
+its 파일 전체 해시 일치: false line) and `page-candidate-differs` (the stale page
+naming candidate `a03fd55fbebd` and its four changed addresses). Neither is
+staged.
+
+### Three defects the undo evidence found
+
+1. **A render loop took the whole root down on every apply.** `layoutEcho` is
+   read through `useSyncExternalStore`, so its result has to be
+   reference-stable while nothing changes — and `s.changedByRun[head.runId] ??
+   []` allocated a fresh array every call. The identity check below it never
+   matched, every snapshot read produced a new object, and React gave up with
+   #185. The window where that default is taken is exactly the moment after an
+   apply, which is the moment the echo exists for. One shared `NO_CHANGES`
+   closes it; the comment above the function had already named the hazard.
+   It cost the `undo` phase seven checks and hung `open` outright.
+2. **The echo check was a coin flip.** With the loop gone it failed honestly:
+   the banner named one changed address and the overlay marked zero rectangles,
+   and the overlay was right — the form's first clean cell sits outside the
+   drawn page, so there was no rectangle to mark. The seat now comes from the
+   intersection of clean-per-`form_inspect` and seated-on-the-page-being-drawn,
+   and an empty intersection is reported rather than passed over.
+3. **The 기록 capture photographed a refusal and would have been captioned as a
+   reversal.** All captures share one runtime root, so by the time the history
+   shot ran, the session already held a candidate an earlier capture had
+   applied; re-writing the same two cells was refused (`backend_refused` — the
+   shell sets `overwrite` only on an inverse), `applied` stayed null, and the
+   reversal block never ran. The capture takes seats no earlier capture touches
+   now. The collision itself is still open for every capture after the first
+   apply: `screenshots.ps1` clears its app-data once per RUN, not once per
+   capture, while the captures are written as though they were independent. The
+   real fix is a root per capture, which is a harness change with a staging
+   step to move, not a product one.
 
 ### Four defects the Phase 5 evidence found
 
@@ -1719,6 +2171,157 @@ rest stand.
     passes none of them. The panel says so in 아직 없는 것. Recorded as §13.7
     already does; repeated here because it is the second thing a person asks
     after pressing 실행 once.
+
+### New with the caret
+
+23. **`set_run` replaces a whole run, so an offset positions the cursor and
+    nothing else.** The caret lands on a measured character, and then the
+    operation that carries the edit rewrites the entire run
+    (`engine/scripts/preedit.py:2464`). For the 314 corpus lines where the run
+    IS the line that is exactly right and invisible to the user. It stops being
+    invisible the moment a paragraph is long enough that a person expects to
+    edit a clause without the whole paragraph appearing in the review queue's
+    `before → after`. The queue is honest about it — it shows the whole run
+    changing, because the whole run does change — but it reads as a heavier
+    edit than the person made. *Suggested shape:* not a new operation. A
+    `set_run` whose `text` differs from `expect` only in a substring could
+    carry the substring bounds for the reviewer's benefit, the way
+    `--at-cell-expect` already carries an exact-byte precondition; the write
+    stays run-wide and only the presentation gets finer.
+
+24. **51 of 365 mapped paragraph lines refuse a caret, and the refusal costs a
+    round trip.** A line's run count is only knowable from
+    `document/readRegion`, so the overlay draws every uniquely-mapped paragraph
+    line as a caret target and finds out on click whether it is one. That is
+    the honest ordering — the alternative is asking for every paragraph's run
+    inventory on page load, which is 119 addresses on one corpus form — but it
+    means a person can click something that looks clickable and be told no.
+    The refusal names itself, which is the mitigation, not the fix.
+    *Suggested shape:* `document/pageGeometry` could carry `runCount` on a
+    span whose address is a paragraph, from the profile it already holds — the
+    span mapping knows the `at_para`, and `full_text` is the only thing missing.
+    Then the overlay draws the 51 as inert from the start.
+
+25. **A caret cannot cross a line.** Geometry is per line and `set_run` is per
+    run, so a paragraph that wraps onto several rendered lines maps each line
+    to the same run and the mapping refuses all of them
+    (`run_text_differs` — the line's text is a fragment of the run's). On the
+    corpus this is 0 lines, because these are forms and their body paragraphs
+    are single-line; it will not be 0 on a report. *Suggested shape:* this is
+    the E2 line-breaker's question, not the caret's. Until Rigorloom can break
+    lines itself it cannot know that three rendered lines are one paragraph
+    except by string containment, which is the guess §12.3 refuses.
+
+26. **The size over a caret is the renderer's, because the header has no
+    other.** §14.1 says a run's charPr carries an id and a name but no point
+    size. So 크기 above a caret shows `spans[].sizePt` — what the PDF was drawn
+    at — labelled 지면에서 잰 값 to keep it apart from the header's declared
+    baseline. It is a real measurement and it is not the document's own
+    declaration, and on a document with no render there is no size for a run at
+    all. *Suggested shape:* `charpr_faces` is a join the profile already does;
+    the same join could carry the charPr's `height` where the header declares
+    one, which would make the control's two sources agree about what they are.
+
+### New with undo (E1.4)
+
+27. **The runtime has no head, so the shell decides what the document IS.**
+    `plan/propose` records a `base` and the receipt keeps it, but nothing in
+    the runtime says which candidate a session is *on* — and a chain can fork,
+    because two plans may legally name the same base and the runtime will
+    publish both. So `head` is shell state. It is made visible rather than
+    hidden: 기록 marks the head row 현재, moving it is a click, and an export
+    always names the run it is writing. The cost is that two windows on one
+    root can hold two different heads and neither is wrong.
+    *Suggested shape:* not a `head` field — that would be the runtime deciding
+    a product question. A `candidate/list` that reported `children` per row
+    would let a client detect a fork and say so, which is the part a client
+    cannot derive cheaply today (it walks every `base` itself).
+
+28. **`reverses` is a recorded claim, not a checked one.** `plan/propose`
+    takes it and the receipt keeps it; nothing verifies at propose time that
+    the ops actually undo anything. Proving it there would mean executing
+    them, which is exactly what `plan/validate` may not do (§3.7). So the
+    proof is after the fact, from `candidate/compare`, and the UI is careful:
+    the queue says 되돌리기 제안 (a claim) and only the 기록 panel says
+    되돌리기 확인됨, and only after the runtime answered. A candidate whose
+    `reverses` is a lie is therefore possible and would be caught by its own
+    proof failing. *Suggested shape:* nothing to build. Worth a line in §15
+    saying the claim and the proof are separate on purpose.
+
+29. **Only `fill_cell` and `set_run` can be inverted.** The inverse of an
+    operation is "write the previous value", and the previous value is
+    readable only where the operation targets an address `readRegion` can
+    name. `delete_guides` deletes paragraphs chosen by colour or charPr id and
+    there is no address to read back, so a candidate containing one is refused
+    a 되돌리기 제안 by name (`not_invertible`) rather than being offered a
+    button that would produce a partial undo. *Suggested shape:* an inverse
+    for `delete_guides` needs the deleted paragraphs' content in the receipt,
+    which is a receipt-size question before it is an undo question.
+
+30. **A reversal's proof is byte-exact, so whitespace is a difference.**
+    `candidate/compare` reports `normalizer: "exact"`. There is no
+    `check_residue.normalize_text` on that path, so an inverse that restored
+    "가 나" as "가  나" would be reported as NOT equal. That is the right
+    direction to err for an undo, and it is stated in the UI rather than
+    quietly normalised away.
+
+31. **The redo stack is per queue and does not survive an apply.** Tier-one
+    redo re-enqueues the exact op object that was removed, which is what makes
+    it exact — and the moment the queue becomes a candidate that op is inside
+    a published document, so offering to re-enqueue it would put the same edit
+    in twice. The stack is therefore cleared on apply and on a document
+    switch. There is no cross-apply redo and there should not be one: redoing
+    an applied edit is proposing it again, which is what the editor already
+    does.
+
+### New with the layout echo (E1.2)
+
+32. **After an apply the page is the SOURCE's raster, and no honest redraw is
+    available on this machine.** `document/render` with a `runId` on an HWPX
+    candidate answers `needs_conversion`, and the conversion is
+    `renderPrepare`, which this build's frozen sidecar refuses `needs_hancom`
+    (P1) — and which would refuse `com_busy` on a machine that had pyhwpx
+    while the operator's own Hancom was open. So 페이지 보기 shows the source
+    raster with a 후보본과 다름 — 이 그림은 원본 기준 banner, marks the
+    addresses the receipts say changed, and offers 다시 그리기, which asks and
+    prints whatever comes back.
+
+    **What a real echo needs, precisely, so this is not left as a wish:**
+    either (a) a Hancom render of the candidate — which means closing P1, and
+    then the existing `renderPrepare --runId` path produces one and the echo
+    state disappears on its own with no desktop change; or (b) **E2.1's own
+    line breaker**, which is the only route that works on a machine with no
+    Hancom at all: Rigorloom lays the candidate out itself and draws it at
+    `own-uncertified` grade with the grade visible. Both are real echoes.
+    Neither of them is "draw the new text onto the old raster", which is the
+    one thing this build will not do — the overlay's rule (§12.2) is that
+    every rectangle on the page came out of the renderer's own layout, and a
+    glyph placed at a guessed position breaks it in the most convincing way
+    available.
+
+33. **The changed-region marking needs a plan read per candidate in the
+    chain.** The addresses come from the receipts' own plans, walked up the
+    `base` links, which is one `plan/get` per ancestor. Cheap for a chain of
+    three and not free for a chain of fifty; and until those reads land the
+    banner says the list is not read yet rather than marking nothing and
+    looking clean. *Suggested shape:* a receipt already carries `steps[]` with
+    each op's `kind` and `opId`; carrying the op's ADDRESS there too would make
+    this a zero-call derivation from data the receipt is already keeping.
+
+34. **본문 보기 has the same staleness the page has, and only the page says so.**
+    `document/inspect` and `document/readRegion` without a `runId` answer from
+    the SOURCE, and the tree, the paper column and a seat's `before` are all
+    drawn from that. So after an apply the centre column shows the document as
+    it was, exactly as the raster does — but the raster now carries a
+    후보본과 다름 banner and the text view carries nothing. On the corpus this
+    is invisible because a second edit goes into a different, still-empty seat;
+    it stops being invisible the moment somebody edits the same cell twice and
+    the queue's `before` quotes the pre-first-edit value.
+    *Suggested shape:* the runtime side already exists — `readRegion` takes a
+    `runId` (§15.3) and `document/inspect` could take one the same way, since
+    `load_profile` now accepts a subject. Then the centre re-reads against the
+    head and the whole class of staleness closes at once, page and text
+    together, instead of the page being honest alone.
 
 ## Packaging gaps
 

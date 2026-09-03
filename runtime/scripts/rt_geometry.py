@@ -76,6 +76,21 @@ CONFIDENCES = ("unique", "ambiguous", "unmapped")
 #: because a cache without a bound is a leak with a nice name.
 MAX_CACHE_ENTRIES = 64
 
+#: A character box may not start left of the one before it by more than this,
+#: nor end left of its own start. Beyond the tolerance the line's boxes are not
+#: a left-to-right run and no caret offset is derived from them.
+CHAR_EDGE_TOL = 0.05
+#: Above this many characters on one page, ``charX`` is dropped for the whole
+#: page rather than pushed through a 1 MiB frame. The corpus's densest page is
+#: 2,982 characters (moel-pyojun-geunrogyeyakseo-2013 page 7), so this is a
+#: bound on the pathological case, not on real forms. Reported, never silent.
+MAX_CHAR_EDGES_PER_PAGE = 20000
+
+#: Whether per-character x boundaries were emitted for this page. Closed set:
+#: a client that cannot place a caret mid-line has to say why, and "the page
+#: was too dense" and "the renderer resolved no boxes" are different facts.
+CHAR_OFFSET_STATES = ("read", "page_too_dense", "unavailable")
+
 #: A drawn rect is only believed to be a cell when it is not the whole page and
 #: not a hairline: sanity, not cleverness.
 MIN_SEAT_AREA_PT = 4.0
@@ -154,6 +169,21 @@ def geometry_capability() -> dict:
         "unit": GEOMETRY_UNIT,
         "origin": GEOMETRY_ORIGIN,
         "spanUnit": "line",
+        # A build either extracts per-character boxes or it does not, and a
+        # client that placed a caret mid-line against a build that does not
+        # would put the cursor where the character is not. Advertised, so the
+        # question is answerable before the first page is asked for.
+        "charOffsets": {
+            "emitted": True,
+            "field": "spans[].charX",
+            "unit": "normalized",
+            "note": ("one x per character of the line's own text plus the last "
+                     "right edge, read from the render; absent on any line "
+                     "whose boxes the renderer did not resolve one-per-"
+                     "character and left to right"),
+            "states": list(CHAR_OFFSET_STATES),
+            "maxCharsPerPage": MAX_CHAR_EDGES_PER_PAGE,
+        },
         "derivationMethods": list(DERIVATION_METHODS),
         "confidences": list(CONFIDENCES),
         "normalizer": ("pipeline/scripts/check_residue.py normalize_text — "
@@ -325,6 +355,67 @@ def drawn_cells(horizontal: list, vertical: list, width: float,
     return cells
 
 
+def char_edges(spans: list, text: str):
+    """Every character's left edge plus the last right edge, in POINTS.
+
+    ``None`` unless the renderer resolved exactly one box per character of the
+    line's own text and those boxes run left to right. That is the whole
+    contract: a caret offset computed from anything less would be a guess about
+    where a character starts, which is the same class of mistake as a
+    synthesized rect — a cursor placed where the glyph is not.
+
+    Measured on the corpus before it was written: across 51 real Hancom-
+    rendered pages and 2,591 lines, ``rawdict`` returns one box per character
+    on every line, none degenerate and none out of order. The guards are here
+    for the renders this repo has never seen, not for the ones it has.
+    """
+    boxes = []
+    for span in spans:
+        chars = span.get("chars")
+        if not isinstance(chars, list):
+            return None
+        for char in chars:
+            bbox = char.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                return None
+            try:
+                boxes.append((float(bbox[0]), float(bbox[2])))
+            except (TypeError, ValueError):
+                return None
+    if len(boxes) != len(text):
+        # A ligature, a surrogate pair, or a renderer that emits boxes this
+        # text does not account for. Offsets into `text` would not be offsets
+        # into these boxes, so there are none.
+        return None
+    edges: list[float] = []
+    for x0, x1 in boxes:
+        if x1 < x0 - CHAR_EDGE_TOL:
+            return None
+        if edges and x0 < edges[-1] - CHAR_EDGE_TOL:
+            return None
+        edges.append(x0)
+    edges.append(boxes[-1][1])
+    return edges
+
+
+def line_size(spans: list):
+    """The point size this line is set in, or ``None`` where the spans disagree.
+
+    A PyMuPDF line is split at every font run, so a line CAN carry two sizes.
+    Reporting one of them would be a pick, and this file does not pick — the
+    caller shows a size only where the render declares a single one.
+    """
+    sizes = set()
+    for span in spans:
+        value = span.get("size")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        sizes.add(round(float(value), 2))
+    if len(sizes) != 1:
+        return None
+    return sizes.pop()
+
+
 def extract_page(module, path: Path, page: int) -> dict:
     """Lines and drawn rects for one page, in POINTS. Mapping normalizes later."""
     try:
@@ -342,7 +433,13 @@ def extract_page(module, path: Path, page: int) -> dict:
         box = loaded.rect
         lines = []
         try:
-            payload = loaded.get_text("dict")
+            # ``rawdict``, not ``dict``, and the difference is one field: it
+            # carries a box per CHARACTER, which is what a caret needs to land
+            # anywhere but the start of a line. The line text it assembles was
+            # measured identical to ``dict``'s on all 51 corpus pages and all
+            # 2,591 lines before this was changed, so the mapping this feeds
+            # matches exactly what it matched before.
+            payload = loaded.get_text("rawdict")
         except Exception as exc:  # noqa: BLE001
             raise RpcError("render_failed", "the page text could not be read",
                            page=page,
@@ -350,12 +447,21 @@ def extract_page(module, path: Path, page: int) -> dict:
         for block in payload.get("blocks", []):
             for line in block.get("lines", []) or []:
                 spans = line.get("spans") or []
-                text = "".join(str(span.get("text") or "") for span in spans)
+                text = "".join(
+                    "".join(str(char.get("c") or "") for char in (span.get("chars") or []))
+                    for span in spans)
                 if not text.strip():
                     continue
-                lines.append({"text": text, "bbox": list(line.get("bbox") or
-                                                         (0, 0, 0, 0)),
-                              "spanCount": len(spans)})
+                entry = {"text": text,
+                         "bbox": list(line.get("bbox") or (0, 0, 0, 0)),
+                         "spanCount": len(spans)}
+                size = line_size(spans)
+                if size is not None:
+                    entry["sizePt"] = size
+                edges = char_edges(spans, text)
+                if edges is not None:
+                    entry["charEdges"] = edges
+                lines.append(entry)
         rects = []
         cells = []
         try:
@@ -377,6 +483,7 @@ def extract_page(module, path: Path, page: int) -> dict:
         return {"pageCount": int(count),
                 "widthPt": round(float(box.width), 2),
                 "heightPt": round(float(box.height), 2),
+                "chars": sum(len(line["text"]) for line in lines),
                 "lines": lines, "drawnRects": rects, "drawnCells": cells}
     finally:
         try:
@@ -424,20 +531,40 @@ def build_targets(profile: dict, normalize) -> tuple[dict, dict]:
     return targets, {"truncatedCells": truncated}
 
 
+def base_span(index: int, line: dict, width: float, height: float,
+              *, with_chars: bool) -> dict:
+    """One line, as the wire spells it, before anything is known about mapping.
+
+    Written once and used by BOTH the mapped and the unmapped paths: a page
+    with no form scan to match against still has real positions, and a client
+    that could place a caret on a mapped page but not on an unmapped one would
+    be reporting the mapping's absence as the renderer's.
+    """
+    span = {
+        "index": index,
+        "text": line["text"],
+        "rect": _norm_rect(line["bbox"], width, height),
+        "address": None,
+        "confidence": "unmapped",
+    }
+    if "sizePt" in line:
+        span["sizePt"] = line["sizePt"]
+    edges = line.get("charEdges")
+    if with_chars and edges and width > 0:
+        # Fractions of the page width, in the same coordinate system the rect
+        # is in, so a client multiplies by its pixel width and is done.
+        span["charX"] = [round(max(0.0, min(1.0, x / width)), 6) for x in edges]
+    return span
+
+
 def map_spans(lines: list, targets: dict, normalize, width: float,
-              height: float) -> list:
+              height: float, *, with_chars: bool = True) -> list:
     """One span per line, with a unique address, candidates, or nothing."""
     spans = []
     for index, line in enumerate(lines):
         key = normalize(line["text"])
         matches = targets.get(key) or []
-        span = {
-            "index": index,
-            "text": line["text"],
-            "rect": _norm_rect(line["bbox"], width, height),
-            "address": None,
-            "confidence": "unmapped",
-        }
+        span = base_span(index, line, width, height, with_chars=with_chars)
         if len(matches) == 1:
             span["address"] = matches[0]
             span["confidence"] = "unique"
@@ -874,6 +1001,11 @@ def page_geometry(session, *, page: int = 0, run_id=None,
             cache[cache_key] = extracted
 
     width, height = extracted["widthPt"], extracted["heightPt"]
+    # The density bound is a bound on the FRAME, not on the feature: a page
+    # dense enough to threaten it loses its caret offsets and says so, rather
+    # than losing the whole answer or being silently truncated.
+    page_chars = int(extracted.get("chars") or 0)
+    with_chars = page_chars <= MAX_CHAR_EDGES_PER_PAGE
     normalize = normalizer()
     missing_profile = profile is None
     if missing_profile:
@@ -881,9 +1013,7 @@ def page_geometry(session, *, page: int = 0, run_id=None,
     if normalize is None:
         # Positions are still real; only the mapping is missing, and saying so
         # beats inventing a second whitespace rule to keep going.
-        spans = [{"index": index, "text": line["text"],
-                  "rect": _norm_rect(line["bbox"], width, height),
-                  "address": None, "confidence": "unmapped"}
+        spans = [base_span(index, line, width, height, with_chars=with_chars)
                  for index, line in enumerate(extracted["lines"])]
         mapping = {"state": "unavailable",
                    "reason": ("this session has no form scan to map onto "
@@ -897,7 +1027,8 @@ def page_geometry(session, *, page: int = 0, run_id=None,
         absences: dict = {}
     else:
         targets, excluded = build_targets(profile, normalize)
-        spans = map_spans(extracted["lines"], targets, normalize, width, height)
+        spans = map_spans(extracted["lines"], targets, normalize, width, height,
+                          with_chars=with_chars)
         seats, absences = derive_seats(
             profile, spans, extracted["drawnRects"], width, height,
             cells=extracted.get("drawnCells"), lines=extracted["lines"],
@@ -922,6 +1053,24 @@ def page_geometry(session, *, page: int = 0, run_id=None,
         "unit": GEOMETRY_UNIT,
         "origin": GEOMETRY_ORIGIN,
         "spanUnit": "line",
+        # SUB-LINE ADDRESSING, and its honest absence. A span is still a line
+        # (`spanUnit`), but a line now carries where each of its characters
+        # begins, so a click resolves to an offset within it instead of to its
+        # start. Where a line's boxes could not be resolved the field is simply
+        # absent from that span and the counts below say how many — a client
+        # that snaps such a click to the line start must be able to SAY it
+        # snapped, and it can only say so if it is told.
+        "charOffsets": {
+            "state": "read" if with_chars else "page_too_dense",
+            "reason": (None if with_chars else
+                       f"this page carries {page_chars} characters, past the "
+                       f"{MAX_CHAR_EDGES_PER_PAGE} bound this answer holds to; "
+                       "positions are unaffected, sub-line offsets are not "
+                       "emitted"),
+            "lines": sum(1 for span in spans if "charX" in span),
+            "of": len(spans),
+            "chars": page_chars,
+        },
         "spans": spans,
         "seats": seats,
         "seatDerivations": {

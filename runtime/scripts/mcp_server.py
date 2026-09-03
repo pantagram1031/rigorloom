@@ -114,7 +114,9 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "document/readRegion": {
         "description": "Exact text and run records for named cells or "
                        "paragraphs. Opt-in and bounded: it refuses rather than "
-                       "truncating when the result is too large.",
+                       "truncating when the result is too large. Each run "
+                       "carries the typeface its charPr resolves to, or null "
+                       "where the document declares none.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -133,14 +135,19 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     },
                     "description": "each entry is {table,row,col} or {atPara}",
                 },
+                "runId": {"type": "string",
+                          "description": "read the text out of a published "
+                                         "candidate instead of the session "
+                                         "source; the answer states which "
+                                         "document it came from"},
             },
             "required": ["sessionId", "regions"],
         },
     },
     "plan/propose": {
         "description": "Build an OperationPlan against the session's current "
-                       "bytes. Proposing does not edit anything; a host must "
-                       "approve and apply it.",
+                       "bytes, or onto a published candidate. Proposing does "
+                       "not edit anything; a host must approve and apply it.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -153,6 +160,22 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "items": {"type": "object"},
                     "description": "typed operations, e.g. {\"kind\":\"fill_cell\","
                                    "\"table\":0,\"row\":5,\"col\":1,\"text\":\"…\"}",
+                },
+                "baseRunId": {
+                    "type": "string",
+                    "description": "chain these ops onto a published candidate "
+                                   "rather than the session source; without it "
+                                   "the plan starts from the source and the "
+                                   "candidate it produces does not carry "
+                                   "earlier edits",
+                },
+                "reverses": {
+                    "type": "object",
+                    "properties": {"runId": {"type": "string"}},
+                    "required": ["runId"],
+                    "description": "declare that this plan undoes that "
+                                   "candidate; recorded in the receipt and "
+                                   "checkable afterwards with candidate/compare",
                 },
                 "proposer": {"type": "string"},
             },
@@ -189,10 +212,55 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "candidate/list": {
-        "description": "Published candidates for a session. A run without a "
-                       "receipt is not listed.",
+        "description": "Published candidates for a session, oldest first, each "
+                       "with its lineage: the candidate it was built on "
+                       "(base), the candidate it reverses if any, its digest "
+                       "and its acceptance. A run without a receipt is not "
+                       "listed. Digests are read from the receipt without "
+                       "re-hashing the artifact — receipt/read is the "
+                       "verifying read, and every row says verified: false.",
         "inputSchema": {"type": "object", "properties": dict(_SESSION),
                         "required": ["sessionId"]},
+    },
+    "candidate/compare": {
+        "description": "Compare a published candidate against another "
+                       "candidate or the session source, at named addresses. "
+                       "This is how a reversal is PROVEN: both sides are "
+                       "re-read from bytes verified against their receipts, "
+                       "and each address reports whether the text is equal. "
+                       "artifactEqual compares whole-file digests and is "
+                       "normally false between an edit and its inverse, "
+                       "because the engine rewrites and rezips the package.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **_SESSION,
+                "runId": {"type": "string",
+                          "description": "the candidate being checked"},
+                "against": {
+                    "type": "object",
+                    "properties": {"runId": {"type": "string"},
+                                   "source": {"type": "boolean"}},
+                    "description": "{runId} for another candidate, or "
+                                   "{source: true}; defaults to the source",
+                },
+                "regions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "table": {"type": "integer"},
+                            "row": {"type": "integer"},
+                            "col": {"type": "integer"},
+                            "atPara": {"type": "integer"},
+                        },
+                    },
+                    "description": "addresses to compare; omit for digests only",
+                },
+            },
+            "required": ["sessionId", "runId"],
+        },
     },
     "document/render": {
         "description": "A page image of the document, when one is possible. "
@@ -223,7 +291,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
                        "top-left. A span maps to one address, to several "
                        "candidates when the text is genuinely ambiguous, or to "
                        "none. Empty fill seats carry a rect and the method it "
-                       "was derived by.",
+                       "was derived by. A span also carries where each of its "
+                       "characters begins (charX), where the render resolved "
+                       "one box per character of the line's text; absent where "
+                       "it did not.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -362,12 +433,15 @@ class McpAdapter:
                                          arguments.get("include"))
         if method == "document/readRegion":
             return core.document_read_region(arguments.get("sessionId"),
-                                             arguments.get("regions"))
+                                             arguments.get("regions"),
+                                             run_id=arguments.get("runId"))
         if method == "plan/propose":
             return core.plan_propose(arguments.get("sessionId"),
                                      arguments.get("backend"),
                                      arguments.get("ops"),
-                                     arguments.get("proposer") or CLIENT)
+                                     arguments.get("proposer") or CLIENT,
+                                     base_run_id=arguments.get("baseRunId"),
+                                     reverses=arguments.get("reverses"))
         if method == "plan/validate":
             return core.plan_validate(arguments.get("planId"))
         if method == "plan/get":
@@ -379,6 +453,11 @@ class McpAdapter:
             return core.approval_get(arguments.get("approvalId"))
         if method == "candidate/list":
             return core.candidate_list(arguments.get("sessionId"))
+        if method == "candidate/compare":
+            return core.candidate_compare(arguments.get("sessionId"),
+                                          arguments.get("runId"),
+                                          against=arguments.get("against"),
+                                          regions=arguments.get("regions"))
         if method == "receipt/read":
             return core.receipt_read(arguments.get("sessionId"),
                                      arguments.get("runId"))

@@ -61,6 +61,7 @@
 import { useEffect, useRef } from "react";
 
 import {
+  addressIsCaretTarget,
   addressIsEditable,
   addressLabel,
   cancelEdit,
@@ -70,7 +71,7 @@ import {
   commitEdit,
   dismissOverlayPick,
 } from "../actions";
-import { useWorkspace } from "../store";
+import { useWorkspace, type InlineRunEdit } from "../store";
 import type { GeometryResult, GeometrySeat, GeometrySpan, NormRect } from "../types";
 import { SeatEditor } from "./SeatEditor";
 import { Tag } from "./Tag";
@@ -104,10 +105,13 @@ const DERIVATION_NOTE: Record<string, string> = {
 function SeatOverlay({
   seat,
   picked,
+  stale,
   editing,
 }: {
   seat: GeometrySeat;
   picked: boolean;
+  /** The candidate changed this address and this raster predates it (E1.2). */
+  stale: boolean;
   /** The open inline edit, when it is THIS seat's. Null otherwise. */
   editing: { before: string } | null;
 }) {
@@ -148,15 +152,17 @@ function SeatOverlay({
         `ov-${seat.derivation}`,
         editable ? "ov-editable" : "ov-inert",
         picked ? "ov-picked" : "",
+        stale ? "ov-stale" : "",
       ].join(" ")}
       style={place(seat.rect)}
       data-testid="overlay-seat"
       data-derivation={seat.derivation}
       data-editable={editable ? "true" : "false"}
+      data-stale={stale ? "true" : undefined}
       data-address={`${seat.table}-${seat.row}-${seat.col}`}
       title={`표${seat.table} (${seat.row},${seat.col})\n${
         DERIVATION_NOTE[seat.derivation] ?? "런타임이 이 자리를 어떻게 잡았는지 알 수 없습니다."
-      }`}
+      }${stale ? "\n후보본과 다름 — 이 그림은 원본 기준입니다" : ""}`}
       aria-label={
         editable
           ? `표${seat.table} ${seat.row}행 ${seat.col}열 — 빈 자리, 눌러서 값 넣기`
@@ -170,7 +176,19 @@ function SeatOverlay({
   );
 }
 
-function SpanOverlay({ span, picked }: { span: GeometrySpan; picked: boolean }) {
+function SpanOverlay({
+  span,
+  picked,
+  stale,
+  editing,
+}: {
+  span: GeometrySpan;
+  picked: boolean;
+  /** The candidate changed this address and this raster predates it (E1.2). */
+  stale: boolean;
+  /** The open caret edit, when it is THIS line's. Null otherwise. */
+  editing: InlineRunEdit | null;
+}) {
   // Unmapped text gets NOTHING. It is on the page, it is readable, and this
   // shell has no address for it — so it gets no affordance rather than a
   // hopeful one.
@@ -178,31 +196,81 @@ function SpanOverlay({ span, picked }: { span: GeometrySpan; picked: boolean }) 
 
   const ambiguous = span.confidence === "ambiguous";
   const editable = !ambiguous && addressIsEditable(span.address);
+  // A CARET TARGET is not the same thing as an editable seat, and conflating
+  // them was the first mistake this branch could have made. A seat is an empty
+  // cell that takes a value; a caret target is a line of body text a person
+  // can stand in and retype. `addressIsCaretTarget` is a shape check only —
+  // whether a paragraph line CAN be typed in is answered by the runtime's run
+  // inventory at click time, not by anything visible here (§12.7).
+  const caretTarget = !ambiguous && !editable && addressIsCaretTarget(span.address);
   const count = span.candidates?.length ?? 0;
+
+  // TYPING HAPPENS IN THE LINE THE RUNTIME MEASURED. Same component as the
+  // seat, same IME path, same commit — mounted in the line's own rect and set
+  // at the size the render drew it, so the field sits over the text it
+  // replaces rather than beside it.
+  if (editing) {
+    return (
+      <div
+        className="ov ov-span ov-caret ov-editing"
+        style={place(span.rect)}
+        data-testid="overlay-caret-editing"
+        data-span-index={span.index}
+        data-caret={editing.caret ?? "start"}
+      >
+        <SeatEditor
+          className="seat-input ov-caret-input"
+          value={editing.before}
+          caret={editing.caret}
+          style={editing.sizePt ? { fontSize: `${editing.sizePt}pt` } : undefined}
+          onCommit={(next) => void commitEdit(next)}
+          onCancel={cancelEdit}
+        />
+      </div>
+    );
+  }
 
   return (
     <button
       type="button"
       className={[
         "ov ov-span",
-        ambiguous ? "ov-ambiguous" : editable ? "ov-editable" : "ov-inert",
+        ambiguous ? "ov-ambiguous" : editable ? "ov-editable" : caretTarget ? "ov-caret" : "ov-inert",
         picked ? "ov-picked" : "",
+        stale ? "ov-stale" : "",
       ].join(" ")}
       style={place(span.rect)}
       data-testid={ambiguous ? "overlay-ambiguous" : "overlay-span"}
       data-confidence={span.confidence}
+      data-stale={stale ? "true" : undefined}
       data-editable={editable ? "true" : "false"}
+      data-caret-target={caretTarget ? "true" : "false"}
+      data-has-offsets={span.charX ? "true" : "false"}
       data-span-index={span.index}
       title={
         ambiguous
           ? `“${span.text}” — 같은 글자를 가진 주소가 ${count}개입니다. 어느 것인지 런타임은 고르지 않습니다.`
-          : span.address
-            ? `${addressLabel(span.address)}${editable ? "" : " — 값을 넣는 자리가 아닙니다"}`
-            : ""
+          : caretTarget
+            ? `${addressLabel(span.address!)} — 눌러서 이 줄에 커서를 놓습니다${
+                span.charX ? "" : "\n이 줄은 글자별 위치가 없어 줄 앞으로 붙습니다."
+              }`
+            : span.address
+              ? `${addressLabel(span.address)}${editable ? "" : " — 값을 넣는 자리가 아닙니다"}`
+              : ""
       }
       onClick={(e) => {
         e.stopPropagation();
-        clickOverlaySpan(span);
+        // WHERE in the line, as a fraction of the PAGE — the units `charX` is
+        // in, so nothing here converts coordinates. The overlay layer is
+        // exactly the raster's box, which is what makes this arithmetic one
+        // division rather than a scale factor kept in step by hand.
+        const layer = e.currentTarget.closest<HTMLElement>('[data-testid="page-overlay"]');
+        const width = layer?.getBoundingClientRect().width ?? 0;
+        const fraction =
+          width > 0
+            ? (e.clientX - layer!.getBoundingClientRect().left) / width
+            : undefined;
+        void clickOverlaySpan(span, fraction);
       }}
     >
       {ambiguous ? <span className="ov-badge">{count}</span> : null}
@@ -253,6 +321,12 @@ function CandidateChooser() {
       <ul className="ov-candidates">
         {candidates.map((candidate, index) => {
           const editable = addressIsEditable(candidate);
+          // §12.4: a label is routinely registered twice, once as an anchor
+          // and once as the cell it sits in, so this list very often holds one
+          // of each. Both are now somewhere a person can type, and the row
+          // says WHICH kind of typing rather than marking the paragraph half
+          // 값 자리 아님 — which was right until the caret existed.
+          const caretRow = !editable && addressIsCaretTarget(candidate);
           return (
             <li key={`${addressLabel(candidate)}-${index}`}>
               <button
@@ -260,13 +334,20 @@ function CandidateChooser() {
                 className="ov-candidate"
                 data-testid="overlay-candidate"
                 data-editable={editable ? "true" : "false"}
-                onClick={() => chooseCandidate(candidate)}
+                data-caret-target={caretRow ? "true" : "false"}
+                onClick={() => void chooseCandidate(candidate)}
               >
                 <span className="mono">{addressLabel(candidate)}</span>
                 {candidate.classification ? (
                   <span className="dim tiny">{candidate.classification}</span>
                 ) : null}
-                {editable ? null : <Tag tone="none">값 자리 아님</Tag>}
+                {editable ? null : caretRow ? (
+                  <Tag tone="none" title="이 문단 줄에 커서를 놓습니다. 줄 앞에서 시작합니다.">
+                    문단 줄
+                  </Tag>
+                ) : (
+                  <Tag tone="none">값 자리 아님</Tag>
+                )}
               </button>
             </li>
           );
@@ -337,23 +418,47 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
  * is not asked anything. `geometryFetches` in the store is the proof of that,
  * and the smoke reads it across a zoom sweep.
  */
-export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
+export function PageOverlay({
+  geometry,
+  stale = [],
+}: {
+  geometry: GeometryResult;
+  /**
+   * Addresses the candidate changed and this raster therefore does not show
+   * (E1.2), as `c:t:r:c` / `p:N` keys.
+   *
+   * They come from the RUNTIME's receipts — the ops that actually ran, walked
+   * up the base chain — not from anything this shell inferred about the page.
+   * A marked rectangle says "what is drawn here is out of date"; it never says
+   * what the new text is, because this component draws the renderer's layout
+   * and the renderer has not drawn the new text.
+   */
+  stale?: string[];
+}) {
   const pick = useWorkspace((s) => s.overlayPick);
   // Read here rather than in the seat, so the store is subscribed to ONCE for
   // a page that can carry dozens of seats.
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const spans = geometry.spans ?? [];
   const seats = geometry.seats ?? [];
+  const staleKeys = new Set(stale);
 
   return (
-    <div className="ov-layer" data-testid="page-overlay" data-page={geometry.page ?? 0}>
+    <div
+      className="ov-layer"
+      data-testid="page-overlay"
+      data-page={geometry.page ?? 0}
+      data-stale={staleKeys.size > 0 ? String(staleKeys.size) : undefined}
+    >
       {seats.map((seat) => (
         <SeatOverlay
           key={`seat-${seat.table}-${seat.row}-${seat.col}`}
           seat={seat}
           picked={pick?.targetId === `seat-${seat.table}-${seat.row}-${seat.col}`}
+          stale={staleKeys.has(`c:${seat.table}:${seat.row}:${seat.col}`)}
           editing={
             inlineEdit &&
+            inlineEdit.kind === "cell" &&
             inlineEdit.table === seat.table &&
             inlineEdit.row === seat.row &&
             inlineEdit.col === seat.col
@@ -367,11 +472,28 @@ export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
           key={`span-${span.index}`}
           span={span}
           picked={pick?.targetId === `span-${span.index}`}
+          stale={staleKeys.has(spanStaleKey(span))}
+          editing={
+            inlineEdit && inlineEdit.kind === "run" && inlineEdit.spanIndex === span.index
+              ? inlineEdit
+              : null
+          }
         />
       ))}
       <CandidateChooser />
     </div>
   );
+}
+
+/** A span's address as the echo spells it, or a key nothing can match. */
+function spanStaleKey(span: GeometrySpan): string {
+  const address = span.address;
+  if (!address) return "";
+  if (address.atPara != null) return `p:${address.atPara}`;
+  if (address.table != null && address.row != null && address.col != null) {
+    return `c:${address.table}:${address.row}:${address.col}`;
+  }
+  return "";
 }
 
 export { GeometryLegend };
