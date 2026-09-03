@@ -447,6 +447,37 @@ Korean form. Whether HWP takes a Latin-face space from `hmtx` in a document
 with no Hangul in it at all is *not* measured here; the rule is applied
 uniformly and declared in the sidecar (`half_width_space_cell` in `applied`).
 
+### One holdout document, which never entered the decision
+
+The ten corpus forms are the measuring stick, and the reference PDFs the rule
+was read off are the same ten documents. That is a real circularity risk even
+though the rule was read off glyph advances rather than off break positions, so
+it was checked against a document outside the set: a private report-class
+`.hwpx` (Batang body text, 415 scored paragraphs, 260 cached break positions)
+that has never been part of this corpus. Only aggregates are recorded here; the
+document itself stays local and is not quoted.
+
+Its own Hancom PDF, measured the same way: 467 space advances on spans whose
+Hangul cells are exactly 1.000 em, median **0.4933**, p10 0.4933, p90 0.5067,
+against Batang's `hmtx` space advance of 0.333. The rule reproduces on a face
+and a document class the corpus does not cover.
+
+| | hmtx space | half cell |
+| --- | --- | --- |
+| break positions | 37 / 260 | **71 / 260** |
+| conditional exact / early / late | 63 / 39 / 158 | **108** / 115 / 37 |
+| paragraph line count exact | 400 / 415 | **407 / 415** |
+| paragraph sequence exact | 336 / 415 | **349 / 415** |
+| multi-line count exact | 68 / 83 | **75 / 83** |
+| `cached_line_fill` median | 0.9382 | **0.9801** |
+
+Every channel improves here, including the two paragraph columns that went the
+other way on the corpus — a report is mostly multi-line prose, which is exactly
+the case the corpus of forms barely exercises. The residual has flipped sign
+(115 early against 37 late) rather than shrinking to nothing, which says the
+same thing the corpus does: something smaller is still unaccounted for, and it
+is no longer the space.
+
 ### What was measured and rejected
 
 - **0.45 em for the space** — the fit the previous slice found. Re-run against
