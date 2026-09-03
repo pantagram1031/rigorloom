@@ -1080,10 +1080,38 @@ not only here.
    and `DECIMAL` stops are advanced as `LEFT`.
 6. **Text does not wrap around anchored objects.** They are drawn at their
    declared offset, over whatever is there.
-7. **Multi-column text (`hp:colPr`) is ignored** — PARA and COLUMN both resolve
-   to the paragraph's container.
-8. **Only `section0` is laid out.** No corpus form has more, but the sidecar
-   says so when one does.
+7. **Multi-column text (`hp:colPr`) is honoured for equal-width columns
+   (E2.7); unequal widths and vertical text are declared, not guessed.**
+   `colCount>1` with `sameSz="true"` fills column 1 top-to-bottom, then
+   column 2, and so on, then the page — the flow pass models a column as a
+   narrower virtual page (`flow`'s *Columns*), so this reuses the same
+   overflow mechanism a page break already has, not a second one.
+   `sameSz="false"` (per-column `hp:colSz`) and a non-`HORIZONTAL`
+   `hp:secPr@textDirection` both render as a single column instead, named in
+   `elements_skipped`. `hp:colPr/hp:colLine` (the column separator) is drawn
+   when declared. **No corpus form declares `colCount>1`**, so this is pinned
+   entirely by synthetic fixtures built from a corpus form's own section
+   (`engine/tests/test_own_render.py::_column_fixture`), not measured against
+   any reference render. A footnote's reserve is computed per COLUMN rather
+   than per page when both are present — declared, and untested: no fixture
+   combines the two.
+8. **Every section is laid out, in `content.hpf` spine order (E2.7).**
+   `spine_section_order` reads the OPF manifest+spine, falling back to a
+   numeric filename sort (`section10` after `section2`, not before it as a
+   string sort would put it) when the manifest carries no usable spine —
+   which is every corpus form measured, since none has more than one
+   section. Each section supplies its own `hp:pagePr` (size, margins,
+   header/footer heights), its own `hp:startNum@page` page-number
+   restart-or-continue, and its own `hp:colPr`; a section always starts a new
+   page. Declared, not measured: footnote/endnote `CONTINUOUS` numbering
+   restarts at 1 in every section rather than carrying on from the last, and
+   a section with real columns is ALWAYS placed by the computed flow pass
+   (never seeded from the cache) — so an unedited multi-column section does
+   NOT render byte-identical the way every single-column section on this
+   corpus still does. Pinned by synthetic fixtures
+   (`engine/tests/test_own_render.py`, spine-order/geometry/page-numbering
+   tests); the private report-class holdout (E2.1's) has exactly one section
+   and `colCount=1`, so it exercises neither path.
 9. **Headers, footers, footnotes and endnotes ARE drawn (E2.6); master pages
    are not.** See *Headers, footers, notes (E2.6)* for what is honoured, what
    is declared-skipped, and why none of it is measured against a Hancom
