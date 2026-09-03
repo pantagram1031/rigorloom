@@ -1148,7 +1148,11 @@ not only here.
     question, and it needs the other nine forms' reference renders to answer.
     The same form also draws line boxes at `y0` ≈ 85.9 million px on page 18,
     from an anchored object at a wild declared `vertOffset`; identical in both
-    line layout modes, so it is a separate defect and still open.
+    line layout modes, so it is a separate defect and still open. A third,
+    distinct mechanism — the same anchored table's `hh:sz@height` itself
+    understating what its own content needs, drawing straight through a page
+    bottom with no break at all — is a different bug again and is fixed; see
+    *Anchor overflow*, below.
 13. **The line breaker agrees with the authoring engine on 58 of the corpus's
     216 break positions** (*Line breaking from metrics*, above; 43 before the
     space became a half-width cell). It is used only where the cached layout
@@ -1596,6 +1600,117 @@ The two `moel` forms move most on `ssim_inked` (+0.025, +0.034), which is where
 the corpus's spaced Hangul prose is. `nrf` and `saeopja` lose a thousandth of
 `ssim_inked`; those are the three reduced-reference and the sparsest forms, and
 the movement is inside the noise the reduction itself introduces.
+
+## Anchor overflow: a table split at the row its own content calls for (E2.7)
+
+`docs/research/residual-advance-and-ink.md`'s Q2 named two new kstartup
+mechanisms, distinct from limit 12's cache-vs-flow disagreement and wild
+`vertOffset`: a block overflowing a page with no break at all (page 6), and
+a candidate cell-shading bug. The first is fixed here; the second was
+investigated and not reproduced.
+
+### The declared height was stale, not the fit test
+
+kstartup's largest anchored (`treatAsChar="0"`), `pageBreak="CELL"` table
+declares `hh:sz@height=70529` HWPUNIT — just under the page's 71000 usable
+height, so both the flow pass and (via `_anchor_table_geometry`'s new
+content-based check) the `auto`/cache path used to call it a fit. Measured
+from its own content (`_table_tracks`, the same measurement a row's own
+`cellSz` height is already solved from — this renderer's own comment there:
+"HWP grows a row to fit its content and leaves the stored value behind"),
+it needs **96966** — 37% more. Every other anchored, `pageBreak="CELL"`
+table in the ten-form corpus (five more in kstartup, one in `nrf`) matches
+its own content within 0.5%; this is the one exception, and the mechanism
+generalises: a corpus scan found it nowhere else.
+
+One further wrinkle, found chasing the residual overlap the first fix left
+behind: one of that table's own rows turned out to be **two** rows Hancom
+itself rendered across a page break — `○ 사업비 사용 계획`'s own content
+ending one page, `○ 성과목표 및 기대효과` starting fresh on the next — and
+recorded that the same way `paginate` records a top-level page break: the
+row's own paragraph list's cached `vertpos` restarts to 0 partway through.
+`_restart_segments` finds that boundary (the identical backward-jump rule
+`paginate` already uses, one level deeper), `_paragraph_block_extent` sums
+segments instead of taking one flat max across them, and
+`_expand_segmented_rows` turns the row into two synthetic ones inside
+`_table_tracks` before any row height is solved — so every mechanism below
+that point (the split decision, the drawing) sees an ordinary row boundary
+and needed no second unit built for it.
+
+### The fix, in both block-layout policies
+
+- **`computed`.** `_anchor_table_geometry` recomputes an anchored,
+  CELL-splittable table's row heights from content (`_table_tracks` with
+  the new `natural_rows=True`, which skips the compress-to-declared-height
+  step on the row axis only). `_place_block` uses the larger of declared
+  and content-measured extent for its fit test, and when even that
+  overflows, `_split_anchor_overflow` gives the SAME move-or-split answer
+  an inline flowing table already got: move whole to a fresh page when
+  that is enough, else split at the last row boundary that fits — here,
+  after row 1, giving the "사업비" segment 27455 HWPUNIT (fits the current
+  page) and "성과목표" 69511 (fits a fresh one) instead of the whole
+  96966 crammed into 71000. `_render_floating` threads the row range
+  through both halves: the first page gets rows `[0, cut)`, a continuation
+  page gets `[cut, end)`, and `_render_table` draws each using
+  `natural_rows` (recursively marked on every table nested inside the
+  split one too — `_mark_natural_height` — since compressing a NESTED
+  table to ITS OWN stale declared height while the paragraph after it
+  keeps the cache's correct, uncompressed position is the identical bug
+  one level deeper; the corpus scan behind this fix found exactly one such
+  case, 2% short).
+- **`auto`.** The shipping default never runs the flow pass on an unedited
+  document (E2.5's whole point), so the same overflow was reachable
+  through `paginate`'s cached-page path too, and had to be caught there:
+  `_paginate_with_anchor_overflow_fix` applies the identical
+  move-or-split decision to `paginate`'s own groups, and
+  `_render_floating`'s `_auto_anchor_splits` queue hands back each row
+  range as the paragraph is encountered the second time, on the page the
+  split inserted. `_block_layout_report` was updated to report the
+  corrected page list rather than re-deriving an uncorrected one.
+- **Whitespace line boxes.** `_draw_line` no longer records a line box (or
+  counts one) for a run of nothing but spaces — it draws no visible ink at
+  all, so its font-ascent/descent box overlapping real content at the same
+  height is not the "line box" the sidecar's own words mean, and was
+  producing a phantom collision report against kstartup's own blank
+  spacer paragraphs once the real overlap above was gone.
+
+### Scored
+
+| | `ssim` | `ssim_inked` | line-box IoU | pair rate | `ink_delta_abs_max` |
+| --- | --- | --- | --- | --- | --- |
+| before | 0.6074 | 0.03291 | 0.5544 | 0.8877 | 0.055634 |
+| after | 0.6238 | 0.03291 | 0.5585 | 0.9326 | 0.055634 |
+
+Page count stays exact (22) in both. `ink_delta_abs_max` does not move: it
+was already, and remains, page 22's — the pre-existing block-position-drift
+bug (limit 12's first sub-issue) content, not page 6's. Page 6 itself drops
+out of the worst-8-pages list entirely; every other channel that samples the
+whole document (`ssim`, pair rate) moves the right direction because a page
+that used to draw two blocks' worth of ink on top of itself now draws one.
+All nine other corpus forms render byte-identical (sha256, `auto` and
+`computed`) before and after — the new code paths are gated behind content
+overflowing its own declared height, which nothing else in the corpus does.
+
+### Cell shading — investigated, not reproduced
+
+The research doc's third finding named a candidate mechanism: a
+`hh:borderFill`/`hh:winBrush` resolution bug filling the "동의서" tables'
+label cells (수집·이용목적 등) light blue where Hancom draws white. Traced
+to source: every `hc:winBrush` in kstartup (50 distinct `hh:borderFill`
+entries) carries `alpha="0"` uniformly, including ones already known to
+render correctly (`faceColor="#FFFFFF"`, `faceColor="none"`) — so `alpha`
+is not a fill/no-fill switch this format uses, and this renderer does not
+read it as one. The named cells (`hh:borderFill` id 24/28/30,
+`faceColor="#DFEAF5"`) were rendered directly and sampled against a fresh
+render of the reference PDF's own page 22, at the SAME, correctly-aligned
+position: candidate (223, 234, 245) against reference (222, 233, 245) — a
+1-of-255 rounding difference, not a colour bug. The most likely explanation
+is that the research measurement compared candidate's page 21 (where this
+table sits before limit 12's block-drift bug is fixed) against reference's
+page 22 at MISALIGNED grid coordinates, not a real fill-resolution defect.
+No code change was made; `test_border_fill_resolves_exactly_its_declared_
+facecolor_or_none` and the two synthetic-cell tests pin the mechanism that
+is actually in the code.
 
 ### Thresholds are a regression floor, not a fidelity bar
 
