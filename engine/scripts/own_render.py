@@ -1215,6 +1215,11 @@ class OwnRenderer:
         self.eq_constructs = {}
         self.eq_unsupported = {}
         self.eq_scaled = []
+        # One record per equation drawn: the declared box and the rectangle
+        # actually inked, both in device pixels.  This is what makes "the
+        # declared extent is never overflowed" checkable from the output
+        # rather than a claim in a docstring.
+        self.eq_placements = []
         self._eq_face = None
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
@@ -3026,6 +3031,13 @@ class OwnRenderer:
                        "than its declared hp:sz; it was scaled to fit rather "
                        "than allowed to overflow the box")
         self.counts["equations"] += 1
+        self.eq_placements.append({
+            "page": self._page,
+            "box_px": [bx0, by0, bx1, by1],
+            "ink_px": [left, top, left + ink_w, top + ink_h],
+            "scale": round(scale, 4),
+            "baselines": len(bands),
+        })
         for _baseline, gx0, gy0, gx1, gy1 in bands:
             self.line_boxes.append({
                 "page": self._page,
@@ -3305,6 +3317,14 @@ class OwnRenderer:
             "unsupported_constructs": dict(sorted(self.eq_unsupported.items())),
             "scaled_to_fit": len(self.eq_scaled),
             "scale_factors": sorted(self.eq_scaled),
+            "placements": list(self.eq_placements),
+            "placements_meaning": (
+                "per equation: the declared hp:sz box and the rectangle "
+                "actually inked, both in device pixels at this render's dpi. "
+                "ink_px is contained in box_px for every entry, by "
+                "construction — that containment is the promise this lane "
+                "makes, and it is checkable here rather than asserted."
+            ),
             "sizing_rule": (
                 "hp:sz is the ground truth for the object box: the equation "
                 "is laid out inside it, and where this renderer's metrics do "
