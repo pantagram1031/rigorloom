@@ -33,6 +33,8 @@ ten forms rather than two:
 | --- | --- |
 | `e2.1-line-breaking.scoreboard-summary.json` | before / after / computed, every form, every scored channel, with the comparable-form means |
 | `e2.1-lineseg-agreement.json` | the line breaker measured against each document's own cached `hp:lineseg`, per form and summed |
+| `e2.5-flow-agreement.json` | the block flow pass measured against each document's own cached page assignment and `vertpos`, per form and summed |
+| `kstartup-…{before,computed}-e2.5.scoreboard.json` | the one corpus form the flow pass changes, scored against its Hancom reference PDF with the cached pagination and with the flow pass |
 
 The embedded preview is there so a human can judge the gap at a glance. It is
 a comparison aid, not a measurement — the measurement is the scoreboard
@@ -65,6 +67,10 @@ mistaken for a page. Resulting page counts: gianmun-1ho/2ho, admrul, jeongbo 1;
 jumin 3; nrf 4; moel-2013 7, moel-2025 7; saeopja 6; kstartup 20.
 `@pageBreak` is deliberately **not** consulted — on this corpus it also appears
 on paragraphs whose `vertpos` does not restart, so honouring it invents pages.
+This is the *cache-reading* pagination, and on kstartup it is measurably wrong
+(20 pages against the reference's 22); *Block layout and page reflow (E2.5)*
+below is the pass that computes a page assignment instead of reading one, and
+says what each is worth.
 
 **Line layout — the file's own cache where it still describes the text, this
 renderer's own breaker where it does not.**
@@ -518,11 +524,11 @@ paragraph will actually get, so an edited cell grows its row instead of
 overflowing it. Cell content is vertically centred against the same measured
 block, not against the cached one.
 
-That is the whole of the incremental relayout in this slice. It is **not**
-E2.5: nothing reflows onto another page, no paragraph moves between pages, and
-a relaid-out paragraph still *starts* where the cached layout put it — this
-slice re-derives line breaking inside a paragraph, not the block stacking that
-decides where a paragraph begins.
+That was the whole of the incremental relayout in E2.1, and it was explicitly
+not E2.5: nothing reflowed onto another page and a relaid-out paragraph still
+*started* where the cached layout put it. **E2.5 closes that** — see *Block
+layout and page reflow* below. Inside a table cell the paragraph-shift model
+above is still what runs; the flow pass owns the section body.
 
 ### A measured defect this slice found and fixed
 
@@ -595,6 +601,188 @@ else is placed from `@horzOffset`/`@vertOffset` against the frame
 `@horzRelTo`/`@vertRelTo` names. Getting this wrong is visible: gianmun's
 발신명의 box sat at the left margin instead of centred, and the 직인 box sat on
 top of it, until inline objects joined the line.
+
+## Block layout and page reflow (E2.5)
+
+`paginate()` *reads* the page assignment the authoring engine left in the
+cached `vertpos`. `OwnRenderer.flow()` *computes* one: it stacks every
+top-level block down the column from its own measured height and decides,
+itself, where a page ends. The two are deliberately separate, because the only
+honest way to grade a flow pass without a reference render is to run it on an
+**unedited** document and ask how far it lands from the cache — which is what
+`--flow-agreement` does, and what the table below reports.
+
+### Two policies, and why an unedited render is byte-identical
+
+- **`auto`** (default, and what ships). Nothing is placed by the flow pass
+  until some paragraph has to be relaid out. `flow_plan()` returns `None` on a
+  document where no paragraph is stale and none is named in
+  `relayout_paragraphs`, and `render()` then takes exactly the path it took
+  before E2.5. Measured, not asserted: all ten corpus forms, 51 pages, render
+  to **byte-identical PNGs** before and after this slice, and the seven
+  comparable scoreboards are unchanged to every decimal place they carry.
+- **`computed`** (`--block-layout computed`). The flow pass places every block
+  from the top of the document. This is how the flow pass is *measured*.
+
+When a paragraph *is* relaid out, the flow pass is seeded at that block's own
+cached page and cached top and takes over from there: **nothing above an edit
+moves, everything after it is re-placed.** The sidecar's `block_layout` says
+so per block (`placement: cached | flowed`) and per page (`page_reflowed`),
+alongside `first_flowed_block` and the `flow_counters` below.
+
+### The inter-paragraph advance is a half, and that was measured
+
+Where the next top-level paragraph starts:
+
+```
+next.first.vertpos == prev.last.vertpos + prev.last.vertsize
+                    + prev.last.spacing
+                    + (prev.margin_next + next.margin_prev) / 2
+```
+
+Every corpus `hh:margin/hh:prev` carries `unit="HWPUNIT"` (771 of 774), and
+yet the advance the authoring engine actually leaves is **half** the declared
+value from each side — 200/600/1000/2000 declared against 100/300/500/1000 laid
+out. Taken at face value the relation holds on 334 of the 539 adjacent
+top-level pairs the corpus has; halving each side it holds on **534**. The
+halving is therefore this renderer's *measured reading of the unit*, recorded
+as such in `PARA_MARGIN_SCALE`, and it is not something KS X 6101 publishes.
+
+### An anchored object reserves its extent, and that was the whole of kstartup
+
+An **anchored** (`treatAsChar="0"`) object whose `@textWrap` is
+`TOP_AND_BOTTOM` — 80 of the corpus's 81 tables — reserves its own declared
+extent in the flow: the next block starts below it, not beside it. kstartup
+anchors a full-page table to a paragraph whose own line box is 1600 HWPUNIT
+tall, and the authoring engine starts the next paragraph **68032** HWPUNIT
+further down. Before this rule the flow pass put 49 of that form's 165 blocks
+on the right page and nrf 6 of 53; with it, nrf goes to 51 of 53 and the
+adjacent-pair relation above holds on 142 of kstartup's 145 pairs.
+
+This is *not* text wrapping around the object, which this tier still does not
+do (limit 17). It is the conservative reading, and no corpus form carries a
+small floated object that would distinguish the two.
+
+### What the flow pass honours
+
+Read and acted on: page height with the top/bottom margin (`hp:pagePr`),
+`hp:p@pageBreak` and `hh:breakSetting@pageBreakBefore`, `hp:p@columnBreak`
+(**as a page break** — every corpus `hp:colPr` declares `colCount="1"`, so
+there is no second column to break into and the sidecar says that rather than
+dropping the instruction), `@keepLines`, `@widowOrphan`, `@keepWithNext`,
+`hp:tbl@pageBreak`, `hh:margin/hh:prev` and `/hh:next`, and the anchored-object
+reserve above.
+
+Three of those are implemented and **not exercised by this corpus**, which is
+worth saying plainly: all 774 corpus `breakSetting` carry `keepLines="0"`,
+`keepWithNext="0"` and `pageBreakBefore="0"`, and the 3 that carry
+`widowOrphan="1"` sit on paragraphs that never split. They are honoured on the
+strength of the spec, and the counters in `block_layout.flow_counters` are the
+channel that will say when one first fires.
+
+Parsed and **not** acted on, named in every sidecar: multi-column text,
+`hp:tbl@repeatHeader` on a split table, text wrap around an anchored object, a
+block taller than one page (placed and allowed to overflow, because no rule
+can make it fit), headers/footers/notes taking room in the flow, and any
+section past `section0`.
+
+**Table splitting.** A table is split at a row boundary **only** when it
+declares `hp:tbl@pageBreak="CELL"` (셀 단위로 나눔). `NONE` (나누지 않음) and
+`TABLE` (표 단위로 나눔) both move the whole table to the next page. The corpus
+declares CELL on 62 tables and NONE on 19; `TABLE` never appears and is
+grouped with `NONE`. A split leaves two placement records carrying the row
+range each page draws, and `_render_table` draws exactly that range with the
+row origin pulled back — the continuation page does **not** repeat the header
+row.
+
+### How well the flow pass agrees with the engine that wrote the file
+
+`python own_render.py FORM.hwpx --flow-agreement` reproduces every number
+below; the committed run is
+`engine/references/own-render-samples/e2.5-flow-agreement.json`. Line layout
+stays `auto`, so a disagreement here is the **block** model's and not the line
+breaker's. `dy` is HWPUNIT from the top of the body box, the same origin
+`hp:lineseg@vertpos` uses.
+
+| form | blocks | page agreement | median \|dy\| | p90 | max | pages computed / cached |
+| --- | --- | --- | --- | --- | --- | --- |
+| admrul-gajokdolbom-hyuga-sinchengseo | 15 | 15 / 15 (1.000) | 0 | 0 | 0 | 1 / 1 |
+| gianmun-byeolji-1ho | 3 | 3 / 3 (1.000) | 0 | 0 | 0 | 1 / 1 |
+| gianmun-byeolji-2ho | 3 | 3 / 3 (1.000) | 0 | 0 | 0 | 1 / 1 |
+| jeongbo-gonggae-cheongguseo | 1 | 1 / 1 (1.000) | 0 | 0 | 0 | 1 / 1 |
+| jumin-deungchobon-sinchengseo | 3 | 3 / 3 (1.000) | 0 | 0 | 0 | 3 / 3 |
+| kstartup-jiwon-sincheongseo-saeopgyehoekseo | 165 | 46 / 165 (0.279) | 0 | 0 | 69785 | **22 / 20** |
+| moel-pyojun-geunrogyeyakseo-2013 | 154 | 154 / 154 (1.000) | 0 | 0 | 0 | 7 / 7 |
+| moel-pyojun-geunrogyeyakseo-2025 | 187 | 187 / 187 (1.000) | 0 | 0 | 1000 | 7 / 7 |
+| nrf-gyeolgwa-bogoseo-yangsik | 53 | 51 / 53 (0.962) | 0 | 5120 | 71630 | 4 / 4 |
+| saeopja-deungnok-sinchengseo | 6 | 5 / 6 (0.833) | 0 | 72538 | 72538 | 6 / 6 |
+| **total** | **590** | **468 / 590** (0.7932) | **0** | | | |
+
+Read honestly: **0.793**, and the median `|dy|` is 0 on every one of the ten
+forms — where the flow pass puts a block on the right page, it puts it at
+exactly the cached vertical position. 117 of the 122 misses are one form.
+
+### kstartup is the form where the CACHE is wrong, not the flow pass
+
+kstartup's 0.279 is not a flow-pass failure and reporting it as one would be
+dishonest. The disagreement is a **constant two-page offset from block
+position 48 onward, with `dy = 0` on 111 of the 117 blocks in it** — the flow
+pass puts every block at the cached vertical position, two pages later. It
+does that because `paginate` merges two pages the authoring engine did break:
+the paragraph after a full-page anchored table does not restart at
+`vertpos = 0`, so the backwards-jump heuristic never fires there.
+
+Which of the two is right is settled by the reference PDF, not by either of
+them. Scored against Hancom's own render of the same form
+(`kstartup-….{before,computed}-e2.5.scoreboard.json`):
+
+| | pages | `page_count_exact` | line-box IoU | pair rate | `ssim` | `ssim_inked` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `auto` (what ships) | 20 | **false** | 0.2542 | 0.7988 | 0.8112 | 0.2313 |
+| `computed` (flow pass) | **22** | **true** | **0.5921** | **0.8949** | 0.8436 | 0.2122 |
+| Hancom reference | 22 | — | — | — | — | — |
+
+The flow pass computes the reference's page count from the geometry alone, and
+line-box IoU more than doubles. `ink_delta_abs_max` moves the other way
+(0.0375 → 0.0621 against a 0.05 bound) and is now the only floor check the
+form fails, where before it failed `page_count_exact` instead.
+
+It is **not** switched on by default, because `auto` is defined as "keep the
+cache until something is edited" and that definition is exactly what makes an
+unedited render byte-identical. Whether `auto` should prefer the flow pass
+*when the two disagree* is a policy question, and answering it for all ten
+forms needs the reference renders the first item of *Remaining order of work*
+is about.
+
+### The scoreboard, before / after / computed
+
+Means over the seven comparable forms (the three reduced references are
+excluded — see *Three of the ten reference PDFs are not 1:1 renders*):
+
+| | `ssim` | `ssim_inked` | line-box IoU | pair rate |
+| --- | --- | --- | --- | --- |
+| before (E2.4) | 0.7354 | 0.1347 | 0.4747 | 0.8012 |
+| after (`auto`, what ships) | 0.7354 | 0.1347 | 0.4747 | 0.8012 |
+| `computed` (the flow pass) | 0.7355 | 0.1282 | **0.5055** | **0.8135** |
+
+The shipping row is not "close to" unchanged, it *is* unchanged — the same
+statement as the byte-identity, measured a second way. The honest measure of
+the flow pass is the third row: placing every block ourselves *gains* 0.031 of
+line-box IoU and 0.012 of pair rate against the authoring engine's own cached
+positions, and costs 0.006 of `ssim_inked`. Per form it is dominated by
+kstartup (0.2542 → 0.5921); it is worse on `saeopja` (0.5562 → 0.4706, where
+the flow splits a table the cache kept whole) and on `moel-2025`
+(0.5167 → 0.4803), and unchanged on the other four.
+
+### What a reflowed document still does not get
+
+Measured on the edited-document fixture (`moel-2025`, one paragraph
+lengthened until it outgrows its page): 7 pages become 9, the paragraph after
+the edit moves from page 1 to page 2, nothing above the edit moves, and **no
+line box leaves the body box on any page** — the last of which is the specific
+defect E2.1 named and left open. What it still does not get is limits 16-18:
+no repeated header on a split table, no text wrapping beside an anchored
+object, and a `keepWithNext` chain that gives up rather than looping.
 
 ## Named fidelity limits
 
@@ -684,13 +872,25 @@ not only here.
     fonts or a different FreeType build will differ — and since face resolution
     now reads the machine's font directory, *which* faces are installed is a
     first-class input, not a footnote.
-12. **`kstartup-jiwon-sincheongseo-saeopgyehoekseo` paginates wrong.** It is
-    the one comparable form whose rendered page count does not match its
-    Hancom reference, so it fails the regression floor's `page_count_exact`
-    check today. A pagination defect, not a typography one; unfixed. The same
-    form also draws line boxes at `y0` ≈ 85.9 million px on page 18, from an
-    anchored object at a wild declared `vertOffset`; identical in both line
-    layout modes, so it is this same defect and not the breaker's.
+12. **`kstartup-jiwon-sincheongseo-saeopgyehoekseo` paginates wrong under
+    `auto` — and E2.5 says why, and computes it right.** The shipping path
+    reads the page assignment out of the cached `vertpos`, and on this form
+    that heuristic is wrong: the paragraph after a full-page **anchored**
+    table does not restart at `vertpos=0`, so `paginate` merges pages the
+    authoring engine did break. It reads 20 pages where the Hancom reference
+    has 22, and one candidate page carries the content of three. Run with
+    `--block-layout computed` the flow pass computes **22** from the geometry
+    alone and the scoreboard moves with it (`text_line_iou_mean` 0.2542 →
+    0.5921, pair rate 0.799 → 0.895, `page_count_exact` false → **true**;
+    only `ink_delta_abs_max` 0.0621 against a 0.05 bound still fails the
+    floor). It is not switched on by default because `auto` is defined as
+    "keep the cache until something is edited" and that definition is what
+    makes an unedited render byte-identical. Deciding whether `auto` should
+    prefer the flow pass **when the two disagree** is the next slice's
+    question, and it needs the other nine forms' reference renders to answer.
+    The same form also draws line boxes at `y0` ≈ 85.9 million px on page 18,
+    from an anchored object at a wild declared `vertOffset`; identical in both
+    line layout modes, so it is a separate defect and still open.
 13. **The line breaker agrees with the authoring engine on 58 of the corpus's
     216 break positions** (*Line breaking from metrics*, above; 43 before the
     space became a half-width cell). It is used only where the cached layout
@@ -699,14 +899,34 @@ not only here.
     residual — an advance-width gap concentrated in the space character — is
     measured and closed; what is left is two-sided (82 early, 81 late) and
     concentrated in the two `moel` forms, and is not yet explained.
-14. **Block layout is not implemented, so relayout does not reflow the page.**
-    A relaid-out paragraph shifts the paragraphs after it in its own container
-    and grows its table row, and nothing else: it still starts where the cache
-    put it, nothing moves between pages, and a paragraph that grows past the
-    bottom of the body box is drawn there anyway. That is E2.5's work.
+14. **The flow pass agrees with the authoring engine on 468 of the corpus's
+    590 top-level blocks** (*Block layout and page reflow*, below), with a
+    median `|dy|` of 0 on all ten forms. 117 of the 122 misses are kstartup,
+    where the disagreement is a constant two-page offset and the flow pass is
+    the one that matches Hancom. It is used only where the cached layout
+    cannot be, which on an unedited document is nowhere — but it is what
+    everything after an edit gets.
 15. **The staleness detector is sound but incomplete.** It cannot see an edit
     that leaves every line still fitting; `relayout_paragraphs` is the channel
     an editor must use instead. See *Which engine laid out which paragraph*.
+16. **A split table does not repeat its header row.** `hp:tbl@repeatHeader` is
+    set on all 81 corpus tables and is parsed, counted and skipped: the
+    continuation page starts at the row the split cut at. Declared in every
+    sidecar that splits a table.
+17. **Text still does not wrap *around* an anchored object; the flow reserves
+    its whole extent instead.** That is what makes the kstartup number above
+    right, and it is also why a small floated picture with `textWrap=SQUARE`
+    would push text below itself rather than beside it. No corpus form has
+    one, so the two readings are not distinguishable on this corpus and the
+    conservative one is taken.
+18. **`keepWithNext` is resolved by one backward pass, not to a fixed point.**
+    A chain of blocks that between them exceed a page cannot be satisfied at
+    all; after `KEEP_WITH_NEXT_MAX_CHAIN` moves the flow gives up, leaves the
+    block where it fell, and counts it in
+    `block_layout.flow_counters.keep_with_next_given_up`. No corpus form
+    declares `keepWithNext`, so the rule is implemented and **not exercised**
+    by the corpus — it is honoured on the strength of the spec, and that is
+    stated rather than hidden.
 
 ## Report-class documents
 
@@ -1129,12 +1349,15 @@ false` on both; the grade stays `own-uncertified` on every class.
    with it the actual certificate.
 4. Sub-pixel glyph registration: see item 2, of which this is the intra-line
    half.
-5. **Block layout (E2.5).** Paragraph stacking, page reflow and a table row
-   that can push its table onto the next page — without them a relaid-out
-   paragraph is correct only inside its own container.
+5. ~~**Block layout (E2.5).**~~ Done — see *Block layout and page reflow*.
+   What it leaves open is the `auto` policy question named in limit 12: on
+   kstartup the flow pass and the cached-`vertpos` heuristic disagree, and the
+   flow pass is right. Answering that for all ten forms needs the reference
+   renders item 1 is about.
 6. A vendored font with known metrics, so cross-machine determinism becomes
    claimable and the scoreboard stops depending on which faces this machine has.
-7. `kstartup` pagination (limit 12).
+7. `kstartup` pagination (limit 12) — now diagnosed and computable; what is
+   left is the policy decision, not the mechanism.
 8. Italic (and other non-regular) cuts in `SystemFontIndex`, which is what
    equations and emphasised prose both now wait on.
 9. Only then ask `render_cert` for a per-document-class grade. Until it
