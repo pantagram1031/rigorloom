@@ -222,7 +222,7 @@ def drive(root: Path) -> int:
           json.dumps(body.get("approval")))
 
     credential_checks(root)
-    task_pack_checks()
+    task_pack_checks(root)
     return report()
 
 
@@ -316,18 +316,41 @@ def credential_checks(root: Path) -> None:
           code != 0 and "apiKey" in out, f"exit {code}")
 
 
-def task_pack_checks() -> None:
-    """The 작업 팩 list is the module registry's own answer, not a second parser."""
-    code, out, err = run([str(REGISTRY), "--modules-root", str(REPO / "modules"),
-                          "--pyproject", str(REPO / "pyproject.toml"), "list"])
+def task_pack_checks(root: Path) -> None:
+    """Read 작업 팩 through the registry with private, explicit enablement.
+
+    A clean checkout intentionally has no ``modules/enabled.yaml``.  The
+    round-trip still needs to exercise enabled contributions, so it derives the
+    set from the registry's own discovery result and writes the enablement file
+    under its disposable scratch root.  It never reads or mutates checkout-local
+    enablement.
+    """
+    registry = [str(REGISTRY), "--modules-root", str(REPO / "modules"),
+                "--pyproject", str(REPO / "pyproject.toml")]
+    code, out, err = run([*registry, "list"])
     check("the module registry lists the installed packs", code == 0, err[-300:])
     try:
-        summary = json.loads(out)
+        discovered_summary = json.loads(out)
     except json.JSONDecodeError:
         check("the registry emitted JSON", False, out[-300:])
         return
+    discovered = sorted(discovered_summary.get("discovered") or [])
     check("six distribution modules are declared",
-          len(summary.get("discovered") or []) >= 6, summary.get("discovered"))
+          len(discovered) >= 6, discovered)
+
+    enabled_file = root / "modules-enabled.yaml"
+    enabled_file.write_text(
+        "schema: rigorloom-enabled-modules/v1\nenabled:\n" +
+        "".join(f"  - {name}\n" for name in discovered),
+        encoding="utf-8", newline="\n")
+    code, out, err = run([*registry, "--enabled-file", str(enabled_file), "list"])
+    check("the private enablement resolves through the registry", code == 0,
+          err[-300:])
+    try:
+        summary = json.loads(out)
+    except json.JSONDecodeError:
+        check("the enabled registry emitted JSON", False, out[-300:])
+        return
     check("report declares its dependency on style",
           "style" in ((summary.get("requires_modules") or {}).get("report") or []),
           (summary.get("requires_modules") or {}).get("report"))

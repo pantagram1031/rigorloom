@@ -154,14 +154,34 @@ Completed for this epoch:
   verification: complete.
 - C1 reduced integration snapshot: complete at `21c5823…`; no product fix was
   invented and PR #153 was removed from branch ancestry.
+- C1 authority-contract documentation fix: focused Runtime authority + MCP
+  tests 39 passed, exit 0.
+- C2 baseline on exact pre-harness-fix HEAD `b12c0d0…`, from git archive
+  `3DA5AB8B…` under `private/epoch-0/b12c0d0/`:
+  - archive privacy: exit 0, HARD=0, WARN=43;
+  - compile sweep: exit 0, 125 files, 0 failures;
+  - core-only full suite: exit 0, 3,431 passed / 1,199 skipped / 63 subtests,
+    1,292.63 s (`pytest-core.xml`);
+  - all-modules full suite: exit 0, 4,484 passed / 146 skipped / 81 subtests,
+    1,698.20 s (`pytest-all.xml`); all six discovered modules enabled and
+    `report -> style` resolved;
+  - Runtime focused suite: exit 0, 413 passed, 467.99 s
+    (`pytest-runtime.xml`);
+  - Agent Host focused suite: exit 0, 168 passed, 90.25 s
+    (`pytest-agenthost.xml`).
+- `desktop/scripts/agent_roundtrip.py` first clean core-only invocation: exit 1,
+  36 passed / 2 failed. The document/agent/authority/candidate/receipt path
+  passed; pack checks falsely depended on absent untracked enablement.
+- E0-H1 harness fix: red test failed 1/1 before the fix; after the fix the test
+  passes 1/1 and the round trip passes 39/39, exit 0, using only a private
+  scratch enablement file. Final full matrices must be rerun on the post-fix
+  HEAD before C2 is complete.
 
-Not yet run on an Epoch 0 integrated HEAD:
+Not yet complete on the final Epoch 0 HEAD:
 
-- core-only and all-modules full Python suites with skip reasons;
-- archive privacy scan, Python compile sweep, Runtime/CLI/MCP parity, Agent
-  Host suites;
 - sidecar freeze, npm/TypeScript, Rust release tests, Tauri build, Desktop
   smoke, undo/lineage, Korean IME;
+- final core-only/all-modules/archive-privacy/compile re-run after E0-H1;
 - installed-user flow, external Codex MCP, hostile-document, Runtime-kill and
   recovery acceptance;
 - compliance/provenance pack generation for the actual Epoch 0 installer.
@@ -200,10 +220,12 @@ tree and installer.
 
 ## Next executable actions
 
-1. Commit E0-D1 and the C1 snapshot record.
-2. Run the fresh C2 matrix, retaining commands, exits, counts, durations, and
-   skip reasons under `private/epoch-0/`.
-3. Build the sidecar and installer only after the core/module/privacy/compile
-   gates pass.
-4. Keep foreground smoke/IME/install acceptance deferred while the operator is
+1. Commit E0-H1 and its regression/evidence record.
+2. Build the sidecar and installer after the baseline core/module/privacy/
+   compile gates above.
+3. Run the remaining C2 package/Desktop gates, then rerun the full Python and
+   archive gates once more on the final tracked HEAD.
+4. Implement the bounded C5 hostile-document/hard-kill evidence harness without
+   changing the authority protocol or renderer/writer code.
+5. Keep foreground smoke/IME/install acceptance deferred while the operator is
    using the shared desktop; continue headless security and compliance work.
