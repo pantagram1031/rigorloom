@@ -174,6 +174,32 @@ provides:
         assert rows["dummy_probe"]["wants"] == ["baseline"]
         assert rows["plain_probe"]["wants"] == []
 
+    def test_a_checker_can_declare_what_its_positional_argument_is(self, tmp_path):
+        """``checkers[].subject`` — the other half of ``wants``.
+
+        A runner holding a document and a runner holding a workspace both read
+        the same registry; without this key neither can tell which checkers it
+        may invoke, and the only alternatives are a per-module name list in core
+        (rule 1) or invoking the checker wrongly and reading the wreckage as a
+        finding. ``None`` when omitted, so undeclared reads as undeclared rather
+        than as a default that would send a document to a workspace checker.
+        """
+        make_module(tmp_path, "throwaway", manifest=f"""\
+schema: rigorloom-module/v1
+name: throwaway
+requires: {{ rigorloom: ">=0.1" }}
+provides:
+  checkers:
+    - {{ name: dummy_probe, script: scripts/check_dummy.py, subject: document }}
+    - {{ name: plain_probe, script: scripts/dummy_cli.py, subject: workspace }}
+    - {{ name: mute_probe, script: scripts/dummy_cli.py }}
+""")
+        write_enabled(tmp_path, ["throwaway"])
+        rows = {row["name"]: row for row in registry_for(tmp_path).enabled_checkers()}
+        assert rows["dummy_probe"]["subject"] == "document"
+        assert rows["plain_probe"]["subject"] == "workspace"
+        assert rows["mute_probe"]["subject"] is None
+
     def test_second_module_joins_without_touching_the_first(self, tmp_path):
         make_module(tmp_path, "throwaway")
         second = tmp_path / "extra"
@@ -586,6 +612,12 @@ class TestLoudValidation:
          "provides:\n  checkers:\n"
          "    - { name: p, script: s.py, needs: [baseline] }\n",
          "unknown keys"),
+        # checkers[].subject is a CLOSED vocabulary too
+        ("schema: rigorloom-module/v1\nname: badmod\n"
+         'requires: { rigorloom: ">=0.1" }\n'
+         "provides:\n  checkers:\n"
+         "    - { name: p, script: s.py, subject: vibes }\n",
+         "must be one of"),
     ])
     def test_invalid_manifest_is_loud_and_names_the_module(
         self, tmp_path, mutation, fragment,

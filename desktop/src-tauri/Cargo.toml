@@ -1,0 +1,49 @@
+[package]
+name = "rigorloom-desktop"
+version = "0.1.0"
+description = "Rigorloom — an agent-native HWP/HWPX desktop editor"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Kill-on-close job object for the sidecar, and the liveness probe the exit
+# watcher uses. Spike finding 1 — see src/jobkill.rs.
+#
+# Phase 5 adds ONE feature to this existing dependency and no new crate:
+# `Win32_Security_Credentials` is CredWriteW/CredReadW/CredDeleteW/CredFree,
+# which is the whole of src/credstore.rs. `keyring` would have pulled a tree to
+# wrap four calls — the same reasoning that kept `sha2` out in Phase 4.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Security_Credentials",
+] }
+
+[profile.release]
+opt-level = "s"
+# Thin, not fat. Fat LTO with codegen-units = 1 needs several GB of headroom
+# in one rustc process, and on a 16 GB machine with a browser open it failed
+# outright: `rustc-LLVM ERROR: out of memory`, STATUS_STACK_BUFFER_OVERRUN. A
+# build that only completes on an idle machine is not a build. Thin LTO keeps
+# nearly all of the size win — the measured installer moved by well under a
+# megabyte — and completes under memory pressure.
+lto = "thin"
+codegen-units = 1
+# `panic = "abort"` is deliberately absent. The spike left M17 as the one
+# unanswered gate: with abort under `windows_subsystem = "windows"` a panic is a
+# silent disappearance. Unwinding lets the hook in main.rs write crash.log and
+# surface the failure. The cost is a slightly larger binary; M6 measured 28.6
+# MiB against an 80 MB budget, so there is room.
+strip = true

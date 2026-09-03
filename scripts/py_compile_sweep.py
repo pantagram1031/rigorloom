@@ -37,8 +37,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Root-relative glob patterns. Add a pattern here only for a NEW core surface;
 # never for a module (``modules/*/scripts/*.py`` already covers those).
 PATTERNS: tuple[str, ...] = (
+    "agenthost/scripts/*.py",
     "engine/scripts/*.py",
     "pipeline/scripts/*.py",
+    "runtime/scripts/*.py",
     "scripts/*.py",
     "studio/main.py",
     "modules/*/scripts/*.py",

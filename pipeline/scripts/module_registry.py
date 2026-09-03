@@ -57,6 +57,13 @@ _STATE_POLICIES = (
 # runner can supply them instead of every caller having to know (v0.17 G3).
 # ``baseline`` = the blank/unfilled form the artifact was produced from.
 _CHECKER_WANTS = ("baseline",)
+# Closed vocabulary of what a checker's POSITIONAL argument is. Without it a
+# runner holding a document cannot tell a checker it may invoke from one it may
+# not, and the only alternatives are a per-module name list in core (rule 1) or
+# running the checker wrong and reading the wreckage as a finding. Omitted =
+# undeclared, and a runner must then skip the checker with a reason rather than
+# guess (runtime `module/check`; docs/runtime-protocol-v0.md §13).
+_CHECKER_SUBJECTS = ("document", "workspace")
 _PROVIDES_KEYS = (
     "checkers", "cli", "pack_types", "run_modes", "gate_kinds",
     "studio_panels", "skill", "playbooks", "preflight",
@@ -430,7 +437,7 @@ def validate_declaration(module: str, payload: Any) -> dict[str, Any]:
         out["checkers"] = _require_entry_list(
             module, provides["checkers"], "checkers",
             {"name": _CHECKER_NAME_RE, "script": None},
-            optional={"wants": "wants"})
+            optional={"wants": "wants", "subject": _CHECKER_SUBJECTS})
     if "cli" in provides:
         out["cli"] = _require_entry_list(
             module, provides["cli"], "cli",
@@ -692,15 +699,19 @@ class ModuleRegistry:
         return rows
 
     def enabled_checkers(self) -> list[dict[str, Any]]:
-        """[{name, script(abs path), wants, module}] across all enabled modules.
+        """[{name, script(abs path), wants, subject, module}] across enabled modules.
 
-        ``wants`` is always present (``[]`` when the declaration omits it), so a
-        runner can branch on the declared needs without knowing which modules
-        bothered to declare any. See ``modules/README.md`` (checkers row).
+        ``wants`` is always present (``[]`` when the declaration omits it) and
+        so is ``subject`` (``None`` when omitted), so a runner can branch on the
+        declaration without knowing which modules bothered to write one — and
+        an undeclared subject reads as undeclared rather than as a default that
+        would send a document to a workspace checker. See ``modules/README.md``
+        (checkers row).
         """
         rows = self._entries("checkers", ("script",))
         for row in rows:
             row.setdefault("wants", [])
+            row.setdefault("subject", None)
         return rows
 
     def enabled_cli(self) -> list[dict[str, Any]]:
@@ -768,6 +779,13 @@ class ModuleRegistry:
             "schema": "rigorloom-module-registry/v1",
             "version": self.version,
             "modules_root": str(self.modules_root),
+            # WHICH file the enablement was read from. Not decoration: the
+            # Runtime can be pointed at a different one through
+            # RIGORLOOM_MODULES_ENABLED, and a caller that shows both the
+            # registry's list and the Runtime's runnability needs to be able to
+            # tell "we disagree" from "we read different files".
+            "enabled_file": str(self.enabled_file),
+            "enabled_file_present": self.enabled_file.is_file(),
             "discovered": sorted(discovered),
             "enabled": [spec.name for spec in enabled],
             "requires_modules": {
@@ -834,6 +852,15 @@ def main(argv: list[str] | None = None) -> int:
                     "Not the v0.12 stage-contract catalog — that is compose.py.")
     parser.add_argument("--modules-root", default=str(DEFAULT_MODULES_ROOT))
     parser.add_argument("--pyproject", default=str(DEFAULT_PYPROJECT))
+    # Enablement can live outside the modules root, and the Runtime already
+    # supports that (RIGORLOOM_MODULES_ENABLED, rt_module.registry_facts). A
+    # caller that reads the registry through this CLI and runs checkers through
+    # the Runtime must be able to point BOTH at the same file, or the two
+    # answer different questions about the same installation. Defaults to
+    # <modules-root>/enabled.yaml, unchanged.
+    parser.add_argument(
+        "--enabled-file", default=None,
+        help="enablement file (default: <modules-root>/enabled.yaml)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="JSON summary of discovered/enabled modules")
     enable = sub.add_parser(
@@ -846,7 +873,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--names", nargs="+", metavar="NAME")
     args = parser.parse_args(argv)
 
-    registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject)
+    registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject,
+                              enabled_file=args.enabled_file)
     try:
         if args.command == "write-enabled":
             if args.all_modules:
@@ -855,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
                 names = []
             else:
                 names = args.names
+            # write-enabled always writes the modules root's own file: it is an
+            # install-time act on the installation, not on a caller's override.
             target = write_enabled(args.modules_root, names)
             registry = ModuleRegistry(args.modules_root, pyproject=args.pyproject)
             payload = registry.summary()

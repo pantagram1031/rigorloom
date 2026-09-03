@@ -318,6 +318,39 @@ Studio has two modes (`studio/main.py`):
   `build-bundle`, `build-hwpx`), each guarded by a per-run `X-Studio-Token`
   CSRF header.
 
+## Rigorloom desktop
+
+A Tauri 2 shell over the same Runtime, shipped with the Runtime frozen as a
+packaged Python sidecar: open a HWPX, inspect it, edit a cell, watch the
+operation land in a review queue, approve it as a human, apply it to a
+candidate, verify, and export the candidate with its receipt. An AI agent is a
+first-class user of that same path with strictly less authority — it proposes
+into the same queue, and `approval/resolve` and `plan/apply` are absent from
+its registry, so it cannot approve its own work.
+
+Build steps, the packaging constraints, the evidence each slice produced and
+the numbered gap lists are in [`desktop/README.md`](desktop/README.md); the
+architecture is in
+[`docs/desktop-architecture.md`](docs/desktop-architecture.md) and the wire
+protocol in [`docs/runtime-protocol-v0.md`](docs/runtime-protocol-v0.md).
+
+**Nothing here is trusted for being ours.** A render backend is not
+submission-grade because it produced a plausible page; it is graded, and the
+grade travels with the artifact. `proof_grade` is `hancom` when Hancom itself
+rendered the proof, `certified` when
+[`pipeline/scripts/render_cert.py`](pipeline/scripts/render_cert.py) has
+ratified that renderer against the operator's immutable reference corpus, and
+`advisory` otherwise — and `submission_preflight` reads the grade rather than
+the picture. An uncertified renderer stays uncertified until the certification
+harness says otherwise, one written in this repository included.
+[`docs/support-matrix.md`](docs/support-matrix.md) is the scoreboard: one row
+per capability, and its generator refuses a `supported` row whose evidence
+pointers do not resolve.
+
+The longer-range plan for the desktop is `docs/plans/hangul-editor-endgame.md`,
+which lands with its own branch — this tree carries the program's measured
+state, not its roadmap.
+
 ## Safety model
 
 - Human gates cannot be approved by an agent in supervised mode.
