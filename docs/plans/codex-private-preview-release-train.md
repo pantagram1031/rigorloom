@@ -145,6 +145,12 @@ has not been pushed.
   a Windows kill-on-close Job (POSIX uses a process group for managed cleanup).
   The claim remains deliberately narrow: brokered/deliberately escaped
   processes and resource/filesystem/network isolation are not established.
+- **E0-S3 fixed:** C5 transplanted a valid receipt onto an equal-byte candidate
+  in another session. Before the fix `receipt/read` accepted it because only
+  the artifact digest was checked. Receipt reads now cross-bind the containing
+  session/run, exact source descriptor, plan identity/hash, and approved
+  approval record. `bodySha256` remains explicitly integrity, not
+  authentication.
 - Fix only integration, packaging/installer, false-reporting harness, or
   accepted-preview-flow defects.
 - Do not change renderer, writer, layout, font metrics, line breaking,
@@ -214,14 +220,33 @@ Completed for this epoch:
   candidates after restart. The subsequent retry used a new run id. Orphan
   cleanup is not yet implemented and must remain a recorded storage-hygiene
   limitation rather than be described as a canonical candidate.
+- E0-S3 stale-receipt identity at `f9fb6d8…`: the cross-session equal-byte
+  transplant failed before the fix and then passed its refusal regression;
+  apply/lineage/module-check focused suite 65 passed, exit 0.
+- Private C5 hostile/credential/stale report
+  `private/epoch-0/c5/adversarial-20260904-033314/summary.json`, SHA-256
+  `BB2D41930D12B9023A425AF34C979A58C205359A7F61136BD3ABE620350DD132`,
+  exact code HEAD `f9fb6d8e703bb55a98f5a3793dad8487c87aaf3a`:
+  - a synthetic HWPX carried exact instructions to read an unrelated file,
+    use network, self-approve, self-apply, export arbitrarily, and relabel proof;
+    the simulated compromised provider observed the exact text through
+    `document/readRegion`, but all six requested actions were refused at the
+    compile gate, none compiled or reached Runtime, no plan/approval/candidate/
+    export appeared, and source plus unrelated-file bytes were unchanged;
+  - a fake credential reached only the Authorization header of a loopback fake
+    HTTP server and was absent from request body, provider profile, and event
+    log. No real credential or external network was used;
+  - changed session bytes made validation stale, approval refused
+    `plan_stale`, and no candidate appeared; equal-byte cross-session receipt
+    reuse refused `receipt_body_mismatch`, and candidate byte drift refused
+    `candidate_hash_mismatch`.
 
 Not yet complete on the final Epoch 0 HEAD:
 
 - sidecar freeze, npm/TypeScript, Rust release tests, Tauri build, Desktop
   smoke, undo/lineage, Korean IME on the final post-security-fix HEAD;
 - final core-only/all-modules/archive-privacy/compile re-run after E0-H1;
-- installed-user flow, external Codex MCP, hostile-document, credential, and
-  stale-plan/receipt adversarial acceptance;
+- installed-user flow and external Codex MCP acceptance;
 - compliance/provenance pack generation for the actual Epoch 0 installer.
 
 Known acceptance constraints:
@@ -258,10 +283,9 @@ tree and installer.
 
 ## Next executable actions
 
-1. Implement the bounded C5 hostile-document, credential-sentinel, and stale
-   plan/receipt harnesses without changing the authority protocol or
-   renderer/writer code.
-2. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
+1. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
    Runtime, Agent Host, and package gates on the final tracked HEAD.
+2. Generate the C6 compliance/provenance pack against the actual final
+   installer contents; keep it private and do not claim legal clearance.
 3. Keep foreground smoke/IME/install acceptance deferred while the operator is
    using the shared desktop; continue headless security and compliance work.
