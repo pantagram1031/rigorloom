@@ -46,7 +46,11 @@ from rt_codes import (  # noqa: E402
     SUPPORTED_BACKENDS,
     RpcError,
 )
-from rt_engine import EngineTools, child_python_facts  # noqa: E402
+from rt_engine import (  # noqa: E402
+    EngineTools,
+    child_python_facts,
+    process_containment_facts,
+)
 from rt_plan import (  # noqa: E402
     COM_OP_KINDS,
     DEFERRED_REFUSALS,
@@ -197,6 +201,7 @@ class RuntimeCore:
             "geometry": geometry_capability(),
             "modules": module_capability(self.tools.root),
             "childPython": child_python_facts(),
+            "processCleanup": process_containment_facts(),
             "deferredRefusals": list(DEFERRED_REFUSALS),
             "unavailable": {
                 "renderProbe": ("not run unless capabilities/list is called "

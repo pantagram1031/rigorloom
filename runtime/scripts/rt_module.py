@@ -59,7 +59,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_codes import CHILD_TIMEOUT_SECONDS, RpcError  # noqa: E402
-from rt_engine import child_python, run_child  # noqa: E402
+from rt_engine import (  # noqa: E402
+    child_python,
+    process_containment_facts,
+    run_child,
+)
 
 #: Where the distribution modules live, and which of them are enabled. Both
 #: default to the checkout; the overrides exist because a packaged host installs
@@ -200,6 +204,7 @@ def module_capability(engine_root: Path, environ: dict | None = None) -> dict:
             "to it is a scratch copy, and a module can only be reached at all "
             "if the operator enabled it in enabled.yaml"),
         "containment": "not_established",
+        "processCleanup": process_containment_facts(),
         "limits": {
             "defaultTimeoutSeconds": DEFAULT_CHECK_TIMEOUT_SECONDS,
             "minTimeoutSeconds": MIN_CHECK_TIMEOUT_SECONDS,
@@ -524,8 +529,9 @@ def _run_one(entry: dict, *, subject_copy: Path, baseline_copy: Path | None,
     if result.timed_out:
         return _row(entry, state="unavailable", reason="timed_out",
                     detail=(f"the checker was killed after {timeout:g}s; the "
-                            "direct child is gone, descendants are not "
-                            "contained by this build"),
+                            "ordinary child tree was cleaned by the platform "
+                            "process policy; brokered or deliberately escaped "
+                            "processes remain outside the claim"),
                     **common)
     parsed = _parse_verdict(result.text)
     if result.returncode == 2:
@@ -680,6 +686,7 @@ def run_module_checks(session, *, engine_root: Path, module: str,
             "perCheckerSeconds": seconds,
             "worstCaseSeconds": round(seconds * max(len(rows), 1), 3),
             "containment": "not_established",
+            "processCleanup": process_containment_facts(),
         },
         "evidence": {
             "class": "structural_only",

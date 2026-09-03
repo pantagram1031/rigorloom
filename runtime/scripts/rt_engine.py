@@ -21,19 +21,20 @@ SUBPROCESS, NOT IMPORT — recorded choice, with reasons:
   3. their contract is already a process contract — one JSON object on stdout
      and an exit code in {0, 2, 3} (pipeline/scripts/checker_base.py:13-16).
 
-HONEST LIMITATION, stated rather than hidden: this slice bounds a child's wall
-clock and its captured output, and kills the direct child on timeout. It does
-NOT establish descendant containment — there is no process group or Windows
-Job here. ``pipeline/scripts/diagnostic_candidate_core.py:1128`` does that
-properly and records the residual gap as
-``DESCENDANT_CONTAINMENT = "not_established"``
-(pipeline/scripts/renderer_runtime_v2.py:56). Wiring the Runtime onto that
-primitive is Phase 2 work; claiming containment we did not implement would be
-worse than the gap.
+PROCESS CLEANUP, with the claim kept narrow: on Windows a child is created
+suspended, assigned to a kill-on-close Job, then resumed.  Therefore an
+ordinary child tree dies on timeout and when the Runtime itself is terminated.
+On POSIX it runs in a new process group which is killed on Runtime-managed
+timeout.  A process that escapes through a broker (or ``setsid`` on POSIX) is
+outside this claim, so generic descendant containment remains
+``not_established``.  The Windows primitive intentionally follows the existing
+repository implementation in
+``pipeline/scripts/diagnostic_candidate_core.py:944-1061``.
 """
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -59,6 +60,162 @@ _ENV_KEYS_WINDOWS = ("SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT",
                      "SYSTEMDRIVE", "WINDIR", "USERPROFILE", "APPDATA",
                      "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
 _ENV_KEYS_POSIX = ("HOME",)
+
+PROCESS_POLICY = (
+    "windows_job_kill_on_close_v1" if os.name == "nt"
+    else "posix_process_group_v1"
+)
+DESCENDANT_CONTAINMENT = "not_established"
+
+
+class _WindowsJob:
+    """One kill-on-close Job handle owned by the Runtime process."""
+
+    __slots__ = ("handle", "kernel")
+
+    def __init__(self, handle, kernel):
+        self.handle = handle
+        self.kernel = kernel
+
+    def terminate(self) -> None:
+        if self.handle:
+            self.kernel.TerminateJobObject(self.handle, 1)
+
+    def close(self) -> None:
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
+def _configure_windows_job(proc) -> _WindowsJob:
+    """Assign a suspended child to a kill-on-close Job, then resume it."""
+    import ctypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = ctypes.c_void_p
+    dword = ctypes.c_uint32
+    boolean = ctypes.c_int
+    kernel.CreateJobObjectW.argtypes = [handle, ctypes.c_wchar_p]
+    kernel.CreateJobObjectW.restype = handle
+    kernel.SetInformationJobObject.argtypes = [handle, ctypes.c_int,
+                                               ctypes.c_void_p, dword]
+    kernel.SetInformationJobObject.restype = boolean
+    kernel.AssignProcessToJobObject.argtypes = [handle, handle]
+    kernel.AssignProcessToJobObject.restype = boolean
+    kernel.TerminateJobObject.argtypes = [handle, dword]
+    kernel.TerminateJobObject.restype = boolean
+    kernel.CloseHandle.argtypes = [handle]
+    kernel.CloseHandle.restype = boolean
+    kernel.CreateToolhelp32Snapshot.argtypes = [dword, dword]
+    kernel.CreateToolhelp32Snapshot.restype = handle
+    kernel.Thread32First.argtypes = [handle, ctypes.c_void_p]
+    kernel.Thread32First.restype = boolean
+    kernel.Thread32Next.argtypes = [handle, ctypes.c_void_p]
+    kernel.Thread32Next.restype = boolean
+    kernel.OpenThread.argtypes = [dword, boolean, dword]
+    kernel.OpenThread.restype = handle
+    kernel.ResumeThread.argtypes = [handle]
+    kernel.ResumeThread.restype = dword
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError("CreateJobObjectW")
+
+    class BasicLimit(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [("ReadOperationCount", ctypes.c_ulonglong),
+                    ("WriteOperationCount", ctypes.c_ulonglong),
+                    ("OtherOperationCount", ctypes.c_ulonglong),
+                    ("ReadTransferCount", ctypes.c_ulonglong),
+                    ("WriteTransferCount", ctypes.c_ulonglong),
+                    ("OtherTransferCount", ctypes.c_ulonglong)]
+
+    class JobLimits(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", BasicLimit),
+                    ("IoInfo", IoCounters),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    limits = JobLimits()
+    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    limits.BasicLimitInformation.LimitFlags = 0x2000
+    if not kernel.SetInformationJobObject(
+            job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        kernel.CloseHandle(job)
+        raise OSError("SetInformationJobObject")
+    if not kernel.AssignProcessToJobObject(job, ctypes.c_void_p(proc._handle)):
+        kernel.CloseHandle(job)
+        raise OSError("AssignProcessToJobObject")
+
+    snapshot = kernel.CreateToolhelp32Snapshot(0x00000004, 0)
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        kernel.TerminateJobObject(job, 1)
+        kernel.CloseHandle(job)
+        raise OSError("CreateToolhelp32Snapshot")
+
+    class ThreadEntry(ctypes.Structure):
+        _fields_ = [("dwSize", ctypes.c_uint32),
+                    ("cntUsage", ctypes.c_uint32),
+                    ("th32ThreadID", ctypes.c_uint32),
+                    ("th32OwnerProcessID", ctypes.c_uint32),
+                    ("tpBasePri", ctypes.c_long),
+                    ("tpDeltaPri", ctypes.c_long),
+                    ("dwFlags", ctypes.c_uint32)]
+
+    entry = ThreadEntry()
+    entry.dwSize = ctypes.sizeof(entry)
+    found = None
+    first = kernel.Thread32First(snapshot, ctypes.byref(entry))
+    while first:
+        if entry.th32OwnerProcessID == proc.pid:
+            found = entry.th32ThreadID
+            break
+        if not kernel.Thread32Next(snapshot, ctypes.byref(entry)):
+            break
+    kernel.CloseHandle(snapshot)
+    if found is None:
+        kernel.TerminateJobObject(job, 1)
+        kernel.CloseHandle(job)
+        raise OSError("primary thread unavailable")
+    thread_handle = kernel.OpenThread(0x0002, False, found)
+    if not thread_handle:
+        kernel.TerminateJobObject(job, 1)
+        kernel.CloseHandle(job)
+        raise OSError("OpenThread")
+    try:
+        if kernel.ResumeThread(thread_handle) == 0xFFFFFFFF:
+            kernel.TerminateJobObject(job, 1)
+            kernel.CloseHandle(job)
+            raise OSError("ResumeThread")
+    finally:
+        kernel.CloseHandle(thread_handle)
+    return _WindowsJob(job, kernel)
+
+
+def process_containment_facts() -> dict:
+    """Precise claim: cleanup policy is known; universal containment is not."""
+    return {
+        "processPolicy": PROCESS_POLICY,
+        "ordinaryDescendantCleanup": "established",
+        "descendantContainment": DESCENDANT_CONTAINMENT,
+        "limitation": (
+            "brokered processes and deliberate boundary escape are outside "
+            "the claim; POSIX parent-death cleanup is not established"
+        ),
+    }
 
 
 def child_python(environ: dict | None = None) -> str:
@@ -145,7 +302,9 @@ class ChildResult:
 def run_child(argv: list[str], *, cwd: Path | None = None,
               timeout: float = CHILD_TIMEOUT_SECONDS,
               max_output: int = MAX_CHILD_OUTPUT_BYTES) -> ChildResult:
-    """One bounded child. stdin is closed; stdout and stderr are drained apart."""
+    """One bounded child with platform process-tree cleanup."""
+    proc = None
+    job = None
     try:
         proc = subprocess.Popen(
             argv,
@@ -154,8 +313,23 @@ def run_child(argv: list[str], *, cwd: Path | None = None,
             stderr=subprocess.PIPE,
             cwd=str(cwd) if cwd is not None else None,
             env=child_env(),
+            start_new_session=(os.name != "nt"),
+            creationflags=(
+                (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                 | 0x00000004) if os.name == "nt" else 0
+            ),
         )
-    except (OSError, ValueError) as exc:
+        if os.name == "nt":
+            job = _configure_windows_job(proc)
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if job is not None:
+            job.close()
         raise RpcError("capability_unavailable",
                        f"could not start {Path(argv[1]).name if len(argv) > 1 else argv[0]}",
                        detail=str(exc)) from exc
@@ -193,14 +367,34 @@ def run_child(argv: list[str], *, cwd: Path | None = None,
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
-        try:
-            proc.kill()
-        except OSError:
-            pass
+        if job is not None:
+            try:
+                job.terminate()
+            except (OSError, AttributeError):
+                pass
+        elif os.name != "nt":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        else:
+            try:
+                proc.kill()
+            except OSError:
+                pass
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             pass
+    finally:
+        # Normal direct-child exit can still leave an inherited descendant.
+        # Closing a kill-on-close Job removes that ordinary remainder, and if
+        # the Runtime itself dies the OS performs this same close for us.
+        if job is not None:
+            job.close()
     for thread in threads:
         thread.join(timeout=10)
 

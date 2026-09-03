@@ -988,6 +988,23 @@ there rather than twenty seconds into the first inspect. An unset or blank
 value is not an override. `capabilities.childPython` reports the path, the
 source (`override` or `sys.executable`) and the variable name.
 
+### 11.3a Child process cleanup
+
+Every engine/checker child uses one platform-specific cleanup boundary. On
+Windows the Runtime creates the child suspended, assigns it to a
+kill-on-close Job, then resumes it. This closes the parent-death race: an
+external Runtime termination closes the Job handle and removes its ordinary
+child tree. POSIX uses a new process group for Runtime-managed timeout and
+normal cleanup. `capabilities.processCleanup.processPolicy` names the exact
+policy and `ordinaryDescendantCleanup` is `established`.
+
+This is deliberately not described as a sandbox or universal descendant
+containment. A brokered process or deliberate boundary escape remains outside
+the claim, POSIX parent-death cleanup is not established, and none of this
+provides memory, CPU, process-count, filesystem, or network isolation.
+Accordingly `processCleanup.descendantContainment` and
+`capabilities.unavailable.descendantContainment` remain `not_established`.
+
 ### 11.4 `workspace/list` — withdrawn, not deferred
 
 The desktop foundation asked whether a Workspace is a runtime object or a
@@ -1346,11 +1363,12 @@ checker would put the only quality signal on the far side of the gate it is
 supposed to inform.
 
 **Residual, not glossed.** A child is bounded (wall clock, captured output,
-environment allowlist) and killed on timeout; it is not *contained* — no
-process group, no Windows Job, the same gap `rt_engine` records and
-`capabilities.unavailable.descendantContainment` reports. A checker that writes
-to an absolute path outside its cwd is not stopped by anything here. It is only
-kept away from the session's own bytes.
+environment allowlist) and its ordinary process tree is cleaned by the policy
+in §11.3a. This remains process cleanup, not a sandbox: a checker that writes
+to an absolute path outside its cwd is not stopped, and brokered or deliberately
+escaped processes are outside the claim. The scratch-copy rule keeps the
+checker away from the session's own bytes; it does not grant filesystem or
+network isolation.
 
 ### 13.2 What may be run: a declaration, never an inference
 
