@@ -1,0 +1,1457 @@
+{
+ "_note": "Recorded from a real Runtime v0 session against tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx. Regenerate with desktop/scripts/record-fixture.py.",
+ "capabilities": {
+  "backends": {
+   "com": {
+    "opKinds": [
+     "collapse_empty_paragraphs",
+     "delete_blank_after",
+     "delete_blank_before",
+     "delete_ctrls",
+     "edit_equation",
+     "find_delete",
+     "goto_text",
+     "insert_blank_before",
+     "insert_equation",
+     "insert_hyperlink",
+     "insert_picture",
+     "insert_table",
+     "insert_text",
+     "move",
+     "page_binding",
+     "page_break_before",
+     "put_field",
+     "replace_all",
+     "set_cell",
+     "set_char_color",
+     "set_line_spacing",
+     "set_para_align"
+    ],
+    "reason": "declared by the protocol; not executed by this build",
+    "state": "unavailable"
+   },
+   "preedit": {
+    "notImplemented": [
+     "normalize_clones"
+    ],
+    "opKinds": [
+     "delete_guides",
+     "fill_cell",
+     "replace_at_cell",
+     "set_run"
+    ],
+    "reason": null,
+    "state": "available"
+   },
+   "xml": {
+    "opKinds": [
+     "goto_text",
+     "insert_blank_before",
+     "insert_equation",
+     "insert_picture",
+     "insert_table",
+     "insert_text",
+     "page_binding",
+     "replace_all",
+     "set_line_spacing"
+    ],
+    "reason": "declared by the protocol; not executed by this build",
+    "state": "unavailable"
+   }
+  },
+  "deferredRefusals": [
+   "replace_key_ambiguous",
+   "at_cell_expect_mismatch",
+   "xml_wellformedness"
+  ],
+  "entry": "host",
+  "implVersion": "0.1.0",
+  "knownBackends": [
+   "preedit",
+   "xml",
+   "com"
+  ],
+  "limits": {
+   "maxFrameBytes": 1048576,
+   "maxRegionBytes": 262144,
+   "maxSourceBytes": 268435456
+  },
+  "methods": [
+   "approval/get",
+   "approval/request",
+   "approval/resolve",
+   "candidate/list",
+   "capabilities/list",
+   "document/inspect",
+   "document/readRegion",
+   "initialize",
+   "plan/apply",
+   "plan/get",
+   "plan/propose",
+   "plan/validate",
+   "receipt/read",
+   "session/list",
+   "workspace/openPath"
+  ],
+  "protocolVersion": "0",
+  "supportedBackends": [
+   "preedit"
+  ],
+  "tools": {
+   "check_residue": {
+    "path": "pipeline/scripts/check_residue.py",
+    "reason": null,
+    "state": "available"
+   },
+   "form_inspect": {
+    "path": "engine/scripts/form_inspect.py",
+    "reason": null,
+    "state": "available"
+   },
+   "preedit": {
+    "path": "engine/scripts/preedit.py",
+    "reason": null,
+    "state": "available"
+   }
+  },
+  "unavailable": {
+   "descendantContainment": "not_established",
+   "renderProbe": "not wired in this slice; no renderer capability is reported and none is claimed"
+  }
+ },
+ "inspect": {
+  "documentHash": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+  "graph": {
+   "documentHash": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+   "paragraphs": [
+    {
+     "at_para": 3,
+     "para_idx": 2,
+     "section": "Contents/section0.xml",
+     "text": "행 정 기 관 명"
+    },
+    {
+     "at_para": 5,
+     "para_idx": 4,
+     "section": "Contents/section0.xml",
+     "text": "수신"
+    },
+    {
+     "at_para": 6,
+     "para_idx": 5,
+     "section": "Contents/section0.xml",
+     "text": "(경유)"
+    },
+    {
+     "at_para": 7,
+     "para_idx": 6,
+     "section": "Contents/section0.xml",
+     "text": "제목"
+    },
+    {
+     "at_para": 29,
+     "para_idx": 27,
+     "section": "Contents/section0.xml",
+     "text": "직인"
+    },
+    {
+     "at_para": 31,
+     "para_idx": 28,
+     "section": "Contents/section0.xml",
+     "text": "발신명의"
+    },
+    {
+     "at_para": 36,
+     "para_idx": 33,
+     "section": "Contents/section0.xml",
+     "text": "기안자  직위(직급) 서명"
+    },
+    {
+     "at_para": 37,
+     "para_idx": 34,
+     "section": "Contents/section0.xml",
+     "text": "검토자  직위(직급) 서명"
+    },
+    {
+     "at_para": 38,
+     "para_idx": 35,
+     "section": "Contents/section0.xml",
+     "text": "결재권자  직위(직급) 서명"
+    },
+    {
+     "at_para": 39,
+     "para_idx": 36,
+     "section": "Contents/section0.xml",
+     "text": "협조자"
+    },
+    {
+     "at_para": 47,
+     "para_idx": 44,
+     "section": "Contents/section0.xml",
+     "text": "시행"
+    },
+    {
+     "at_para": 48,
+     "para_idx": 45,
+     "section": "Contents/section0.xml",
+     "text": "처리과명-연도별 일련번호(시행일)"
+    },
+    {
+     "at_para": 49,
+     "para_idx": 46,
+     "section": "Contents/section0.xml",
+     "text": "접수"
+    },
+    {
+     "at_para": 50,
+     "para_idx": 47,
+     "section": "Contents/section0.xml",
+     "text": "처리과명-연도별 일련번호(접수일)"
+    },
+    {
+     "at_para": 51,
+     "para_idx": 48,
+     "section": "Contents/section0.xml",
+     "text": "우"
+    },
+    {
+     "at_para": 52,
+     "para_idx": 49,
+     "section": "Contents/section0.xml",
+     "text": "도로명주소"
+    },
+    {
+     "at_para": 53,
+     "para_idx": 50,
+     "section": "Contents/section0.xml",
+     "text": "/"
+    },
+    {
+     "at_para": 54,
+     "para_idx": 51,
+     "section": "Contents/section0.xml",
+     "text": "홈페이지 주소"
+    },
+    {
+     "at_para": 55,
+     "para_idx": 52,
+     "section": "Contents/section0.xml",
+     "text": "전화번호(   )"
+    },
+    {
+     "at_para": 56,
+     "para_idx": 53,
+     "section": "Contents/section0.xml",
+     "text": "팩스번호(   )"
+    },
+    {
+     "at_para": 57,
+     "para_idx": 54,
+     "section": "Contents/section0.xml",
+     "text": "/"
+    },
+    {
+     "at_para": 58,
+     "para_idx": 55,
+     "section": "Contents/section0.xml",
+     "text": "공무원의 전자우편주소"
+    },
+    {
+     "at_para": 59,
+     "para_idx": 56,
+     "section": "Contents/section0.xml",
+     "text": "/"
+    },
+    {
+     "at_para": 60,
+     "para_idx": 57,
+     "section": "Contents/section0.xml",
+     "text": "공개 구분"
+    },
+    {
+     "at_para": 61,
+     "para_idx": 58,
+     "section": "Contents/section0.xml",
+     "text": "210㎜×297㎜(백상지 80g/㎡)"
+    },
+    {
+     "at_para": 62,
+     "para_idx": 59,
+     "section": "Contents/section0.xml",
+     "text": "비고(이 난은 서식에 포함하지 아니한다)"
+    }
+   ],
+   "sessionId": "d89c0a61e35441bb9b8f5d20f08ac391",
+   "tables": [
+    {
+     "cells": [
+      {
+       "addr": {
+        "col": 0,
+        "row": 0
+       },
+       "classification": "guide",
+       "textPreview": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별",
+       "truncated": true
+      },
+      {
+       "addr": {
+        "col": 14,
+        "row": 0
+       },
+       "charPr": "11",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 1
+       },
+       "classification": "static",
+       "textPreview": "행 정 기 관 명수신(경유)제목 ",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 2
+       },
+       "charPr": "14",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": true,
+       "textPreview": " ",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 3
+       },
+       "classification": "spacer",
+       "spacerPattern": "full_width_band",
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 4
+       },
+       "classification": "static",
+       "textPreview": "기안자  직위(직급) 서명",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 3,
+        "row": 4
+       },
+       "classification": "static",
+       "textPreview": " 검토자  직위(직급) 서명",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 9,
+        "row": 4
+       },
+       "classification": "static",
+       "textPreview": " 결재권자  직위(직급) 서명",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 5
+       },
+       "classification": "static",
+       "textPreview": "협조자",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 1,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 2,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 4,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 5,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 8,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 10,
+        "row": 5
+       },
+       "charPr": "18",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 13,
+        "row": 5
+       },
+       "charPr": "19",
+       "charPrSuggested": "23",
+       "classification": "fill_target",
+       "colorAnomaly": false,
+       "scriptAnomaly": false,
+       "textPreview": "",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 6
+       },
+       "classification": "static",
+       "textPreview": "시행",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 1,
+        "row": 6
+       },
+       "classification": "static",
+       "textPreview": " 처리과명-연도별 일련번호(시행일)",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 5,
+        "row": 6
+       },
+       "classification": "static",
+       "textPreview": "접수",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 8,
+        "row": 6
+       },
+       "classification": "static",
+       "textPreview": "    처리과명-연도별 일련번호(접수일)",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 7
+       },
+       "classification": "static",
+       "textPreview": "우",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 1,
+        "row": 7
+       },
+       "classification": "static",
+       "textPreview": "도로명주소",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 6,
+        "row": 7
+       },
+       "classification": "static",
+       "textPreview": "/",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 7,
+        "row": 7
+       },
+       "classification": "static",
+       "textPreview": "홈페이지 주소",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "전화번호(   )",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 2,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "팩스번호(   )",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 6,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "/",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 7,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "공무원의 전자우편주소",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 11,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "/",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 12,
+        "row": 8
+       },
+       "classification": "static",
+       "textPreview": "공개 구분",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 9
+       },
+       "classification": "static",
+       "textPreview": "210㎜×297㎜(백상지 80g/㎡)",
+       "truncated": false
+      },
+      {
+       "addr": {
+        "col": 0,
+        "row": 10
+       },
+       "classification": "static",
+       "textPreview": "비고(이 난은 서식에 포함하지 아니한다) - 문서를 작",
+       "truncated": true
+      }
+     ],
+     "index": 0
+    },
+    {
+     "cells": [
+      {
+       "addr": {
+        "col": 0,
+        "row": 0
+       },
+       "classification": "guide",
+       "textPreview": "직인",
+       "truncated": false
+      }
+     ],
+     "index": 1
+    },
+    {
+     "cells": [
+      {
+       "addr": {
+        "col": 0,
+        "row": 0
+       },
+       "classification": "static",
+       "textPreview": "발신명의",
+       "truncated": false
+      }
+     ],
+     "index": 2
+    }
+   ]
+  },
+  "regions": {
+   "documentHash": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+   "regions": [
+    {
+     "charPr": "11",
+     "charPrSuggested": "23",
+     "col": 14,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 0,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "14",
+     "charPrSuggested": "23",
+     "col": 0,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 2,
+     "scriptAnomaly": true,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 1,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 2,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 4,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 5,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 8,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "18",
+     "charPrSuggested": "23",
+     "col": 10,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    },
+    {
+     "charPr": "19",
+     "charPrSuggested": "23",
+     "col": 13,
+     "colorAnomaly": false,
+     "kind": "cell",
+     "row": 5,
+     "scriptAnomaly": false,
+     "table": 0
+    }
+   ],
+   "sessionId": "d89c0a61e35441bb9b8f5d20f08ac391"
+  },
+  "sessionId": "d89c0a61e35441bb9b8f5d20f08ac391",
+  "summary": {
+   "anchors": [
+    "행 정 기 관 명",
+    "수신",
+    "(경유)",
+    "제목",
+    "직인",
+    "발신명의",
+    "기안자  직위(직급) 서명",
+    "검토자  직위(직급) 서명",
+    "결재권자  직위(직급) 서명",
+    "협조자",
+    "시행",
+    "처리과명-연도별 일련번호(시행일)",
+    "접수",
+    "처리과명-연도별 일련번호(접수일)",
+    "우",
+    "도로명주소",
+    "/",
+    "홈페이지 주소",
+    "전화번호(   )",
+    "팩스번호(   )",
+    "/",
+    "공무원의 전자우편주소",
+    "/",
+    "공개 구분",
+    "210㎜×297㎜(백상지 80g/㎡)",
+    "비고(이 난은 서식에 포함하지 아니한다)"
+   ],
+   "baselineCharPr": {
+    "height_pt": 10.0,
+    "id": "23",
+    "signature": {
+     "offset": {
+      "hangul": "0",
+      "hanja": "0",
+      "japanese": "0",
+      "latin": "0",
+      "other": "0",
+      "symbol": "0",
+      "user": "0"
+     },
+     "ratio": {
+      "hangul": "100",
+      "hanja": "100",
+      "japanese": "100",
+      "latin": "100",
+      "other": "100",
+      "symbol": "100",
+      "user": "100"
+     },
+     "relSz": {
+      "hangul": "100",
+      "hanja": "100",
+      "japanese": "100",
+      "latin": "100",
+      "other": "100",
+      "symbol": "100",
+      "user": "100"
+     },
+     "subscript": false,
+     "supscript": false
+    }
+   },
+   "blackCharPr": {
+    "color": "#000000",
+    "height_pt": 10.0,
+    "id": "23",
+    "same_height_as_baseline": true
+   },
+   "constraints": {
+    "base_pt": null,
+    "line_spacing_pct": null,
+    "max_pages": null,
+    "min_pages": null
+   },
+   "documentHash": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+   "fillTargetCount": 9,
+   "formatHints": {
+    "citation_example": null,
+    "has_eq_placeholder": true,
+    "table_count": 3
+   },
+   "pageMetrics": {
+    "assumptions": {
+     "base_pt": 10,
+     "chars_per_line_formula": "floor(usable_width / (base_pt*100)) — Korean full-width 가정",
+     "line_height_hwpunit": 1600.0,
+     "line_spacing_pct": 160,
+     "usable_height_formula": "height - top - bottom - header - footer",
+     "usable_width_formula": "width - left - right"
+    },
+    "chars_per_line": 48,
+    "height": 84188,
+    "lines_per_page": 47,
+    "margin": {
+     "bottom": 2835,
+     "footer": 0,
+     "gutter": 0,
+     "header": 0,
+     "left": 5669,
+     "right": 5669,
+     "top": 5669
+    },
+    "usable_height": 75684,
+    "usable_width": 48190,
+    "width": 59528
+   },
+   "removalTargets": [
+    {
+     "confidence": "medium",
+     "para_idx": 0
+    }
+   ],
+   "scriptAnomalyTargets": [
+    {
+     "addr": {
+      "col": 0,
+      "row": 2
+     },
+     "charpr": "14",
+     "charpr_suggested": "23",
+     "differing": [
+      "ratio"
+     ],
+     "table": 0
+    }
+   ],
+   "sessionId": "d89c0a61e35441bb9b8f5d20f08ac391",
+   "spacerCells": [
+    {
+     "addr": {
+      "col": 0,
+      "row": 3
+     },
+     "pattern": "full_width_band",
+     "table": 0
+    }
+   ]
+  }
+ },
+ "regions": [
+  {
+   "addr": {
+    "col": 0,
+    "row": 0
+   },
+   "runs": [
+    {
+     "charpr": "9",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "■ "
+    },
+    {
+     "charpr": "26",
+     "color_anomaly": false,
+     "index": 1,
+     "text": "행정업무의 운영 및 혁신에 관한 규정 시행규칙"
+    },
+    {
+     "charpr": "10",
+     "color_anomaly": false,
+     "index": 2,
+     "text": " [별지 제1호서식] "
+    },
+    {
+     "charpr": "25",
+     "color_anomaly": true,
+     "color_value": "#0000FF",
+     "index": 3,
+     "text": "<개정 2016. 7. 11.>"
+    }
+   ],
+   "table": 0,
+   "text": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>",
+   "truncated_preview": true
+  },
+  {
+   "addr": {
+    "col": 14,
+    "row": 0
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 1
+   },
+   "runs": [
+    {
+     "charpr": "12",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "행 정 기 관 명"
+    },
+    {
+     "charpr": "14",
+     "color_anomaly": false,
+     "index": 1,
+     "text": "수신"
+    },
+    {
+     "charpr": "14",
+     "color_anomaly": false,
+     "index": 2,
+     "text": "(경유)"
+    },
+    {
+     "charpr": "14",
+     "color_anomaly": false,
+     "index": 3,
+     "text": "제목 "
+    }
+   ],
+   "table": 0,
+   "text": "행 정 기 관 명수신(경유)제목 ",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 2
+   },
+   "runs": [
+    {
+     "charpr": "14",
+     "color_anomaly": false,
+     "index": 0,
+     "text": " "
+    }
+   ],
+   "table": 0,
+   "text": " ",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 3
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 4
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "기안자  직위(직급) 서명"
+    }
+   ],
+   "table": 0,
+   "text": "기안자  직위(직급) 서명",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 3,
+    "row": 4
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": " 검토자  직위(직급) 서명"
+    }
+   ],
+   "table": 0,
+   "text": " 검토자  직위(직급) 서명",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 9,
+    "row": 4
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": " 결재권자  직위(직급) 서명"
+    }
+   ],
+   "table": 0,
+   "text": " 결재권자  직위(직급) 서명",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 5
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "협조자"
+    }
+   ],
+   "table": 0,
+   "text": "협조자",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 1,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 2,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 4,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 5,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 8,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 10,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 13,
+    "row": 5
+   },
+   "runs": [],
+   "table": 0,
+   "text": "",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 6
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "시행"
+    }
+   ],
+   "table": 0,
+   "text": "시행",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 1,
+    "row": 6
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": " 처리과명-연도별 일련번호(시행일)"
+    }
+   ],
+   "table": 0,
+   "text": " 처리과명-연도별 일련번호(시행일)",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 5,
+    "row": 6
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "접수"
+    }
+   ],
+   "table": 0,
+   "text": "접수",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 8,
+    "row": 6
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "    처리과명-연도별 일련번호(접수일)"
+    }
+   ],
+   "table": 0,
+   "text": "    처리과명-연도별 일련번호(접수일)",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 7
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "우"
+    }
+   ],
+   "table": 0,
+   "text": "우",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 1,
+    "row": 7
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "도로명주소"
+    }
+   ],
+   "table": 0,
+   "text": "도로명주소",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 6,
+    "row": 7
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "/"
+    }
+   ],
+   "table": 0,
+   "text": "/",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 7,
+    "row": 7
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "홈페이지 주소"
+    }
+   ],
+   "table": 0,
+   "text": "홈페이지 주소",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "전화번호(   )"
+    }
+   ],
+   "table": 0,
+   "text": "전화번호(   )",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 2,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "팩스번호(   )"
+    }
+   ],
+   "table": 0,
+   "text": "팩스번호(   )",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 6,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "/"
+    }
+   ],
+   "table": 0,
+   "text": "/",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 7,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "공무원의 전자우편주소"
+    }
+   ],
+   "table": 0,
+   "text": "공무원의 전자우편주소",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 11,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "/"
+    }
+   ],
+   "table": 0,
+   "text": "/",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 12,
+    "row": 8
+   },
+   "runs": [
+    {
+     "charpr": "18",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "공개 구분"
+    }
+   ],
+   "table": 0,
+   "text": "공개 구분",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 9
+   },
+   "runs": [
+    {
+     "charpr": "7",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "210㎜×297㎜(백상지 80g/㎡)"
+    }
+   ],
+   "table": 0,
+   "text": "210㎜×297㎜(백상지 80g/㎡)",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 10
+   },
+   "runs": [
+    {
+     "charpr": "22",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "비고(이 난은 서식에 포함하지 아니한다)"
+    },
+    {
+     "charpr": "22",
+     "color_anomaly": false,
+     "index": 1,
+     "text": " - "
+    },
+    {
+     "charpr": "23",
+     "color_anomaly": false,
+     "index": 2,
+     "text": "문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다."
+    }
+   ],
+   "table": 0,
+   "text": "비고(이 난은 서식에 포함하지 아니한다) - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다.",
+   "truncated_preview": true
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 0
+   },
+   "runs": [
+    {
+     "charpr": "16",
+     "color_anomaly": true,
+     "color_value": "#FF0000",
+     "index": 0,
+     "text": "직인"
+    }
+   ],
+   "table": 1,
+   "text": "직인",
+   "truncated_preview": false
+  },
+  {
+   "addr": {
+    "col": 0,
+    "row": 0
+   },
+   "runs": [
+    {
+     "charpr": "8",
+     "color_anomaly": false,
+     "index": 0,
+     "text": "발신명의"
+    }
+   ],
+   "table": 2,
+   "text": "발신명의",
+   "truncated_preview": false
+  }
+ ],
+ "source": {
+  "bytes": 30304,
+  "documentKind": "hwpx",
+  "name": "gianmun-byeolji-1ho.hwpx",
+  "sha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf"
+ }
+}
