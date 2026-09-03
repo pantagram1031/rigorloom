@@ -249,7 +249,7 @@ def _pagenum_renderer(pos, side="-", fmt="DIGIT", start=1, hide_first=0):
         if el is None:
             el = ET.SubElement(section, tag)
         el.set(attr, str(value))
-    renderer._page_num_spec = own_render._UNSET
+    renderer._page_num_spec_by_section = {}
     return renderer
 
 
@@ -372,7 +372,7 @@ def _furniture_renderer(source=None, header=None, footer=None,
         if text is None:
             continue
         host.append(ET.fromstring(_furniture_xml(kind, text, apply_type)))
-    renderer._furniture = None
+    renderer._furniture_by_section = {}
     renderer.paragraph_index = {
         id(el): index
         for index, el in enumerate(
@@ -476,7 +476,7 @@ def test_a_header_and_the_page_number_stamp_coexist():
         '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
         '<hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/>'
         "</hp:ctrl></hp:run>"))
-    renderer._page_num_spec = own_render._UNSET
+    renderer._page_num_spec_by_section = {}
     _images, sidecar = renderer.render()
     drawn = sidecar["elements_rendered"]
     assert drawn["headers"] == drawn["footers"] == sidecar["pages"]
@@ -576,7 +576,7 @@ def _note_renderer(source=None, kind="footNote", count=1, block=1, reps=1,
                          if own_render._local(e.tag) == child_tag)
             for key, value in attrs.items():
                 child.set(key, str(value))
-    renderer._furniture = None
+    renderer._furniture_by_section = {}
     renderer._note_marks = {}
     renderer.paragraph_index = {
         id(el): index
@@ -774,7 +774,7 @@ def test_footnote_and_endnote_numbering_are_separate_sequences():
     host = own_render._kids(renderer.sections[0], "p")[1]
     for n in range(2):
         host.append(ET.fromstring(_note_xml("endNote", "e%d" % (n + 1))))
-    renderer._furniture = None
+    renderer._furniture_by_section = {}
     renderer._note_marks = {}
     renderer.paragraph_index = {
         id(el): index
@@ -799,7 +799,7 @@ def test_a_page_with_furniture_renders_deterministically():
         host = own_render._kids(renderer.sections[0], "p")[1]
         host.append(ET.fromstring(_note_xml("footNote", "f " + NOTE_FILLER)))
         host.append(ET.fromstring(_note_xml("endNote", "e " + NOTE_FILLER)))
-        renderer._furniture = None
+        renderer._furniture_by_section = {}
         renderer._note_marks = {}
         renderer.paragraph_index = {
             id(el): index
@@ -3003,3 +3003,395 @@ def test_cli_rejects_a_missing_input(tmp_path):
          str(tmp_path / "nope.hwpx"), "--out-dir", str(tmp_path)],
         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert proc.returncode == 2
+
+
+# --------------------------------------------------- multiple sections (E2.7)
+#
+# No corpus form has more than one Contents/section*.xml and none declares
+# hp:colPr@colCount>1 (own-render-notes.md, limits 7-8 before this slice), so
+# every fixture below is synthetic.  Built by deep-copying a corpus form's
+# own section0 -- which keeps every charPrIDRef/paraPrIDRef valid against the
+# SAME header.xml -- and editing hp:pagePr/hp:startNum/hp:colPr in place, per
+# the same technique _edited_copy already uses for a single-section edit.
+
+def _multi_section_copy(source, target, section_specs, spine_order=None):
+    """``source`` turned into ``1 + len(section_specs)`` sections.
+
+    Each entry of ``section_specs`` is a dict of ``{"page_pr": {...},
+    "margin": {...}, "start_num": {...}, "col_pr": {...}, "col_line":
+    {...}}`` attribute overrides, applied to a deep copy of section0's own
+    root.  ``content.hpf``'s manifest and spine are extended to match, in
+    ``section_specs`` order unless ``spine_order`` (a list of item ids, e.g.
+    ``["header", "section1", "section0"]``) says otherwise.
+    """
+    import copy
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    OPF = "http://www.idpf.org/2007/opf/"
+    with zipfile.ZipFile(source) as archive:
+        names = archive.namelist()
+        payload = {name: archive.read(name) for name in names}
+    section0_root = ET.fromstring(payload["Contents/section0.xml"])
+    hpf_name = next(n for n in names if n.endswith("content.hpf"))
+    hpf_root = ET.fromstring(payload[hpf_name])
+    manifest = next(e for e in hpf_root.iter()
+                    if own_render._local(e.tag) == "manifest")
+    spine = next(e for e in hpf_root.iter()
+                if own_render._local(e.tag) == "spine")
+
+    new_names = []
+    for order, spec in enumerate(section_specs, start=1):
+        section_id = f"section{order}"
+        href = f"Contents/{section_id}.xml"
+        root = copy.deepcopy(section0_root)
+        page_pr = next(e for e in root.iter()
+                       if own_render._local(e.tag) == "pagePr")
+        margin = own_render._kid(page_pr, "margin")
+        for attr, value in spec.get("page_pr", {}).items():
+            page_pr.set(attr, str(value))
+        for attr, value in spec.get("margin", {}).items():
+            margin.set(attr, str(value))
+        start_num = next(e for e in root.iter()
+                         if own_render._local(e.tag) == "startNum")
+        for attr, value in spec.get("start_num", {}).items():
+            start_num.set(attr, str(value))
+        col_pr = next(e for e in root.iter()
+                     if own_render._local(e.tag) == "colPr")
+        for attr, value in spec.get("col_pr", {}).items():
+            col_pr.set(attr, str(value))
+        if "col_line" in spec:
+            line = ET.SubElement(
+                col_pr,
+                "{http://www.hancom.co.kr/hwpml/2011/paragraph}colLine")
+            for attr, value in spec["col_line"].items():
+                line.set(attr, str(value))
+        if "sec_pr" in spec:
+            sec_pr = next(e for e in root.iter()
+                         if own_render._local(e.tag) == "secPr")
+            for attr, value in spec["sec_pr"].items():
+                sec_pr.set(attr, str(value))
+        payload[href] = ET.tostring(root, encoding="utf-8")
+        new_names.append(href)
+        item = ET.SubElement(manifest, "{%s}item" % OPF)
+        item.set("id", section_id)
+        item.set("href", href)
+        item.set("media-type", "application/xml")
+        itemref = ET.SubElement(spine, "{%s}itemref" % OPF)
+        itemref.set("idref", section_id)
+        itemref.set("linear", "yes")
+    if spine_order is not None:
+        by_id = {el.get("idref"): el for el in list(spine)}
+        for el in list(spine):
+            spine.remove(el)
+        for section_id in spine_order:
+            spine.append(by_id[section_id])
+    payload[hpf_name] = ET.tostring(hpf_root, encoding="utf-8")
+
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in list(names) + new_names:
+            archive.writestr(name, payload[name])
+    return target
+
+
+def test_spine_order_is_honoured_over_filename_order(tmp_path):
+    """``section1`` sorts after ``section0`` by filename; spine says it is
+    read FIRST here, and ``spine_section_order`` has to agree.
+    """
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / "spine.hwpx",
+        [{"page_pr": {"width": 40000}}],
+        spine_order=["header", "section1", "section0"])
+    renderer = own_render.OwnRenderer(path, dpi=96)
+    assert renderer.section_names == ["Contents/section1.xml",
+                                      "Contents/section0.xml"]
+    _images, sidecar = renderer.render()
+    assert sidecar["sections"][0]["id"] == "Contents/section1.xml"
+    assert sidecar["sections"][0]["page_geometry_hwpunit"]["width"] == 40000
+    assert sidecar["sections"][1]["id"] == "Contents/section0.xml"
+
+
+def test_a_section_boundary_changes_page_geometry_and_starts_a_new_page(
+        tmp_path):
+    """Section 1's own hp:pagePr -- a different size AND different margins
+    -- takes over the moment section 0 ends; section 0's own pages are
+    untouched.
+    """
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / "two_sections.hwpx",
+        [{"page_pr": {"width": 39685, "height": 56095,
+                      "landscape": "NARROWLY"},
+          "margin": {"left": 2000, "right": 2000, "top": 2000,
+                    "bottom": 2000}}])
+    images, sidecar = own_render.OwnRenderer(path, dpi=96).render()
+    sections = sidecar["sections"]
+    assert len(sections) == 2
+    first_pages, second_pages = sections[0]["pages"], sections[1]["pages"]
+    assert second_pages[0] == first_pages[1] + 1, (
+        "section 1 has to start on a new page, not share section 0's last "
+        "one")
+    assert sidecar["pages"] == second_pages[1]
+    assert sections[0]["page_size_px"] != sections[1]["page_size_px"]
+    # The geometry actually used to draw is the SAME one reported: the
+    # second section's first page really is that size, in pixels.
+    boundary_image = images[second_pages[0] - 1]
+    assert list(boundary_image.size) == sections[1]["page_size_px"]
+    before_image = images[first_pages[1] - 1]
+    assert list(before_image.size) == sections[0]["page_size_px"]
+    assert sections[1]["page_geometry_hwpunit"]["margin"]["left"] == 2000
+    assert sections[0]["page_geometry_hwpunit"]["margin"]["left"] != 2000
+
+
+def test_page_numbering_restarts_only_when_the_section_declares_it(
+        tmp_path):
+    """``hp:startNum@page`` restarts THIS section; 0 (the schema default)
+    continues the running count from the section before it.
+    """
+    from xml.etree import ElementTree as ET
+
+    def with_pagenum(root, pos="BOTTOM_CENTER"):
+        run = ET.fromstring(
+            '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+            f'<hp:pageNum pos="{pos}" formatType="DIGIT" sideChar="-"/>'
+            "</hp:ctrl></hp:run>")
+        own_render._kids(root, "p")[0].append(run)
+
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / "restart.hwpx",
+        [{"start_num": {"page": 100}}])
+    renderer = own_render.OwnRenderer(path, dpi=96)
+    with_pagenum(renderer.sections[0])
+    with_pagenum(renderer.sections[1])
+    renderer._furniture_by_section = {}
+    renderer._page_num_spec_by_section = {}
+    _images, sidecar = renderer.render()
+    section0_pages = sidecar["sections"][0]["pages"]
+    section1_pages = sidecar["sections"][1]["pages"]
+    assert renderer._page_numbers_drawn[section0_pages[0]] == 1
+    assert renderer._page_numbers_drawn[section1_pages[0]] == 100
+
+
+def test_page_numbering_continues_when_the_section_does_not_restart(
+        tmp_path):
+    from xml.etree import ElementTree as ET
+
+    def with_pagenum(root):
+        run = ET.fromstring(
+            '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+            '<hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" '
+            'sideChar="-"/></hp:ctrl></hp:run>')
+        own_render._kids(root, "p")[0].append(run)
+
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / "continue.hwpx", [{}])
+    renderer = own_render.OwnRenderer(path, dpi=96)
+    with_pagenum(renderer.sections[0])
+    with_pagenum(renderer.sections[1])
+    renderer._furniture_by_section = {}
+    renderer._page_num_spec_by_section = {}
+    _images, sidecar = renderer.render()
+    section0_last = sidecar["sections"][0]["pages"][1]
+    section1_first = sidecar["sections"][1]["pages"][0]
+    assert renderer._page_numbers_drawn[section0_last] == 1
+    assert renderer._page_numbers_drawn[section1_first] == 2
+
+
+# -------------------------------------------------------- columns (E2.7)
+
+def _column_fixture(tmp_path, name, col_count=2, same_sz="true", gap=1000,
+                    col_line=None, section_extra=None, text_paragraphs=6,
+                    text="단을 채우기 위한 문단입니다. " * 6):
+    """A one-section document whose section0 declares ``hp:colPr``, plus
+    enough duplicated paragraphs that a real corpus form (one page) would
+    overflow a single column -- proving the fill/break, not just the parse.
+    """
+    import copy
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(_need(GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {name_: archive.read(name_) for name_ in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    col_pr = next(e for e in root.iter()
+                 if own_render._local(e.tag) == "colPr")
+    col_pr.set("colCount", str(col_count))
+    col_pr.set("sameSz", same_sz)
+    col_pr.set("sameGap", str(gap))
+    if col_line is not None:
+        line = ET.SubElement(
+            col_pr, "{http://www.hancom.co.kr/hwpml/2011/paragraph}colLine")
+        for attr, value in col_line.items():
+            line.set(attr, str(value))
+    if section_extra:
+        sec_pr = next(e for e in root.iter()
+                     if own_render._local(e.tag) == "secPr")
+        for attr, value in section_extra.items():
+            sec_pr.set(attr, str(value))
+    # A text-bearing paragraph, cloned from the form's own last paragraph
+    # (same charPrIDRef/paraPrIDRef, so it is valid against header.xml),
+    # with its cached hp:linesegarray stripped so this renderer's own
+    # breaker has to lay it out fresh against the column width.
+    template = own_render._kids(root, "p")[-1]
+    template = copy.deepcopy(template)
+    seg_array = own_render._kid(template, "linesegarray")
+    if seg_array is not None:
+        template.remove(seg_array)
+    run = own_render._kid(template, "run")
+    for child in list(run):
+        if own_render._local(child.tag) == "t":
+            run.remove(child)
+    t = ET.SubElement(run, "{http://www.hancom.co.kr/hwpml/2011/paragraph}t")
+    t.text = text
+    for _ in range(text_paragraphs):
+        root.append(copy.deepcopy(template))
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name_ in names:
+            archive.writestr(name_, payload[name_])
+    return target
+
+
+def test_equal_width_columns_fill_left_to_right_then_page(tmp_path):
+    """Column 1 fills top to bottom before column 2 starts, and a column
+    that fills advances the page rather than overflowing -- honoured via
+    the SAME mechanism a page break already uses (``flow``'s *Columns*).
+    """
+    path = _column_fixture(tmp_path, "columns.hwpx", col_count=3,
+                           text_paragraphs=24)
+    renderer = own_render.OwnRenderer(
+        path, dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    images, sidecar = renderer.render()
+    assert sidecar["sections"][0]["columns"]["count"] == 3
+    geo = sidecar["page_geometry_hwpunit"]
+    col_width = sidecar["sections"][0]["columns"]["column_width_hwpunit"]
+    gap = sidecar["sections"][0]["columns"]["gap_hwpunit"]
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "computed"]
+    assert boxes, "the synthetic paragraphs produced no line boxes at all"
+    left = renderer.px(geo["body_left"])
+    col1_right = renderer.px(geo["body_left"] + col_width)
+    col2_left = renderer.px(geo["body_left"] + col_width + gap)
+    col2_right = renderer.px(geo["body_left"] + 2 * col_width + gap)
+    col3_left = renderer.px(geo["body_left"] + 2 * (col_width + gap))
+    # Every drawn line sits inside SOME column's box, never straddling the
+    # gap between two -- which is what "measured against the column width,
+    # not the page width" (flow()) has to mean in pixels.
+    for box in boxes:
+        in_col1 = left - 2 <= box["x0"] and box["x1"] <= col1_right + 2
+        in_col2 = col2_left - 2 <= box["x0"] and box["x1"] <= col2_right + 2
+        in_col3 = col3_left - 2 <= box["x0"]
+        assert in_col1 or in_col2 or in_col3, box
+    # Page 1 mixes gianmun's own CACHED content (which already fills column
+    # 1 with its anchored table before this fixture's synthetic paragraphs
+    # get a turn) with this fixture's COMPUTED overflow -- so "does column 1
+    # carry computed ink on page 1" is not the fill-order claim to test.
+    # Page 2 is the clean one: entirely this fixture's own computed text,
+    # filling all three columns start to finish, top-to-bottom then left to
+    # right -- exactly what "fill column 1 before column 2" has to mean.
+    page2_boxes = [b for b in boxes if b["page"] == 2]
+    assert page2_boxes, "page 2 should be entirely this fixture's own text"
+    by_column = {
+        "col1": [b for b in page2_boxes if b["x0"] < col1_right],
+        "col2": [b for b in page2_boxes
+                if col2_left - 2 <= b["x0"] < col2_right],
+        "col3": [b for b in page2_boxes if b["x0"] >= col3_left - 2],
+    }
+    assert all(by_column.values()), (
+        "page 2 should carry ink in all three columns", by_column)
+    top = renderer.px(geo["body_top"])
+    for label, column_boxes in by_column.items():
+        assert min(b["y0"] for b in column_boxes) <= top + 3, (
+            f"{label} should start at the top of the column, not partway "
+            "down it")
+    counters = sidecar["block_layout"]["flow_counters"]
+    assert counters.get("column_breaks_as_page_breaks", 0) == 0, (
+        "a real multi-column section must never fall back to the "
+        "single-column 'column break as page break' path")
+    # No overflow: every line box's bottom stays inside the usable height.
+    usable_bottom = renderer.px(geo["body_top"] + geo["usable_height"])
+    assert all(b["y1"] <= usable_bottom + 2 for b in boxes)
+
+
+def test_a_column_break_advances_to_the_next_column_not_the_page(tmp_path):
+    """``hp:p@columnBreak`` moves to the next column of the SAME page when
+    one is still free -- not a whole page, which is what colCount=1 does.
+    """
+    path = _column_fixture(tmp_path, "colbreak.hwpx", col_count=2,
+                           text_paragraphs=1, text="짧은 문단")
+    import zipfile
+    from xml.etree import ElementTree as ET
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    last_p = own_render._kids(root, "p")[-1]
+    last_p.set("columnBreak", "1")
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for n in names:
+            archive.writestr(n, payload[n])
+    renderer = own_render.OwnRenderer(
+        path, dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    _images, sidecar = renderer.render()
+    assert sidecar["pages"] == 1, (
+        "one column break with a second column still free must not "
+        "spend a whole page")
+    counters = sidecar["block_layout"]["flow_counters"]
+    assert counters["column_breaks_honored"] >= 1
+    assert counters.get("column_breaks_as_page_breaks", 0) == 0
+
+
+def test_a_column_separator_line_is_drawn_between_columns(tmp_path):
+    path = _column_fixture(tmp_path, "colline.hwpx", col_count=2,
+                           col_line={"type": "SOLID", "width": "0.5 mm",
+                                    "color": "#FF0000"},
+                           text_paragraphs=12)
+    renderer = own_render.OwnRenderer(
+        path, dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    images, sidecar = renderer.render()
+    geo = sidecar["page_geometry_hwpunit"]
+    col_width = sidecar["sections"][0]["columns"]["column_width_hwpunit"]
+    gap = sidecar["sections"][0]["columns"]["gap_hwpunit"]
+    centre_x = renderer.px(geo["body_left"] + col_width + gap / 2.0)
+    img = images[0]
+    top_y = renderer.px(geo["body_top"]) + 5
+    found_red = any(
+        img.getpixel((x, top_y))[0] > 200
+        and img.getpixel((x, top_y))[1] < 80
+        for x in range(max(0, centre_x - 3), centre_x + 4))
+    assert found_red, "no red separator ink found near the column gap centre"
+
+
+def test_unequal_column_widths_are_declared_not_guessed(tmp_path):
+    path = _column_fixture(tmp_path, "unequal.hwpx", col_count=2,
+                           same_sz="false")
+    renderer = own_render.OwnRenderer(path, dpi=96)
+    spec = renderer.column_spec()
+    assert spec is None
+    _images, sidecar = renderer.render()
+    reasons = {e["reason"] for e in sidecar["elements_skipped"]}
+    assert any("unequal" in r for r in reasons)
+    assert sidecar["sections"][0]["columns"] is None
+    assert sidecar["pages"] >= 1
+
+
+def test_vertical_text_columns_are_declared_not_guessed(tmp_path):
+    path = _column_fixture(tmp_path, "vertical.hwpx", col_count=2,
+                           section_extra={"textDirection": "VERTICAL"})
+    renderer = own_render.OwnRenderer(path, dpi=96)
+    spec = renderer.column_spec()
+    assert spec is None
+    _images, sidecar = renderer.render()
+    reasons = {e["reason"] for e in sidecar["elements_skipped"]}
+    assert any("vertical text" in r for r in reasons)
+
+
+def test_a_single_column_document_is_unaffected_by_column_geometry(
+        gianmun_render):
+    """The corpus's own colCount=1 still takes the pre-E2.7 path exactly."""
+    report = gianmun_render["report"]
+    assert report["sections"][0]["columns"] is None
+    counters = report["block_layout"].get("flow_counters")
+    if counters is not None:
+        assert "column_breaks_honored" in counters
