@@ -139,6 +139,12 @@ has not been pushed.
   consumer shares that resolver. This is a preview security defect exposed by
   C5 receipt-tamper acceptance, not a renderer/writer or protocol-surface
   expansion.
+- **E0-S2 fixed:** C5 terminated the Runtime during inspect, apply, and the
+  post-apply residue check. Before the fix one ordinary child `cmd.exe`
+  survived each Runtime death. Engine and module-checker children now start in
+  a Windows kill-on-close Job (POSIX uses a process group for managed cleanup).
+  The claim remains deliberately narrow: brokered/deliberately escaped
+  processes and resource/filesystem/network isolation are not established.
 - Fix only integration, packaging/installer, false-reporting harness, or
   accepted-preview-flow defects.
 - Do not change renderer, writer, layout, font metrics, line breaking,
@@ -191,14 +197,31 @@ Completed for this epoch:
   both demonstrated receipt redirection before the fix; post-fix
   apply/lineage/module-check focused suite 64 passed, exit 0, and refusals do
   not echo the forged path.
+- E0-S2 Runtime child cleanup at `4a04d5d…`:
+  - committed parent-death regression: red before the fix (the late-write child
+    survived), then 2/2 passed after the fix;
+  - apply/module/transport/process focused suite: 81 passed, exit 0;
+  - private hard-kill harness report
+    `private/epoch-0/c5/runtime-kill-20260904-032232/summary.json`, SHA-256
+    `53534018F12BE698C810AD52842773558C3131E86F5E9CB916A394C74493FC44`:
+    inspect/apply/verification each had zero child survivors one second after
+    Runtime death, zero canonical candidates before recovery, unchanged source
+    bytes, and successful restart. Inspect reran successfully; apply and
+    verification scenarios retried the still-approved plan and each published
+    exactly one canonical candidate.
+- Incomplete publication remains fail-closed: the verification-kill case left
+  an artifact without a receipt on disk, and `candidate/list` exposed zero
+  candidates after restart. The subsequent retry used a new run id. Orphan
+  cleanup is not yet implemented and must remain a recorded storage-hygiene
+  limitation rather than be described as a canonical candidate.
 
 Not yet complete on the final Epoch 0 HEAD:
 
 - sidecar freeze, npm/TypeScript, Rust release tests, Tauri build, Desktop
   smoke, undo/lineage, Korean IME on the final post-security-fix HEAD;
 - final core-only/all-modules/archive-privacy/compile re-run after E0-H1;
-- installed-user flow, external Codex MCP, hostile-document, Runtime-kill and
-  recovery acceptance;
+- installed-user flow, external Codex MCP, hostile-document, credential, and
+  stale-plan/receipt adversarial acceptance;
 - compliance/provenance pack generation for the actual Epoch 0 installer.
 
 Known acceptance constraints:
@@ -235,10 +258,10 @@ tree and installer.
 
 ## Next executable actions
 
-1. Commit E0-S1 and its regression/evidence record.
-2. Implement the bounded C5 hostile-document/hard-kill evidence harness without
-   changing the authority protocol or renderer/writer code.
-3. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
+1. Implement the bounded C5 hostile-document, credential-sentinel, and stale
+   plan/receipt harnesses without changing the authority protocol or
+   renderer/writer code.
+2. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
    Runtime, Agent Host, and package gates on the final tracked HEAD.
-4. Keep foreground smoke/IME/install acceptance deferred while the operator is
+3. Keep foreground smoke/IME/install acceptance deferred while the operator is
    using the shared desktop; continue headless security and compliance work.
