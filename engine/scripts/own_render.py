@@ -217,6 +217,39 @@ LINE_LAYOUT_AUTO = "auto"
 LINE_LAYOUT_COMPUTED = "computed"
 LINE_LAYOUT_MODES = (LINE_LAYOUT_AUTO, LINE_LAYOUT_COMPUTED)
 
+# Block-layout (page flow) policy — E2.5.  ``auto`` keeps every block where
+# the authoring engine's cache put it until something is relaid out; from the
+# first relaid-out block onward, and for the whole document under
+# ``computed``, the flow pass below decides where each block starts and which
+# page it lands on.  ``computed`` is how the flow pass is MEASURED against the
+# authoring engine; it is not how a document is rendered most faithfully.
+BLOCK_LAYOUT_AUTO = "auto"
+BLOCK_LAYOUT_COMPUTED = "computed"
+BLOCK_LAYOUT_MODES = (BLOCK_LAYOUT_AUTO, BLOCK_LAYOUT_COMPUTED)
+
+# 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next), and the one number
+# in this slice that had to be MEASURED rather than read.  Every corpus
+# hh:prev carries unit="HWPUNIT" (771 of 774), yet the advance the authoring
+# engine actually leaves between two adjacent top-level paragraphs is HALF the
+# declared value from each side: 774 corpus paraPr, gaps of 200/600/1000/2000
+# declared against 100/300/500/1000 laid out, on every form that declares one.
+# Reading the declared value at face value scores 334 of 539 adjacent
+# top-level pairs; halving each side scores 534.  Declared as this renderer's
+# measured reading of the unit, not as something KS X 6101 publishes.
+PARA_MARGIN_SCALE = 0.5
+
+# hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
+# (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
+# "the whole table moves", the same as NONE.  Only ``CELL`` makes a table
+# splittable across a page boundary; anything else moves the table whole.
+TABLE_SPLIT_AT_ROWS = "CELL"
+
+# How far the flow pass will back a block up to satisfy ``keepWithNext``.
+# A chain longer than this is a document that cannot be satisfied at all, and
+# the flow pass gives up and places the block where it fell rather than
+# looping; every give-up is counted in the sidecar.
+KEEP_WITH_NEXT_MAX_CHAIN = 8
+
 # How far a cached line's *font-independent lower bound* width may exceed its
 # cached horzsize before the cache is judged stale.  The bound counts only
 # full-width cells (whose advance in HWP is exactly the declared character
@@ -632,6 +665,10 @@ def parse_header(header_xml: bytes) -> dict:
             "margin_left": _margin("left"),
             "margin_right": _margin("right"),
             "indent": _margin("intent"),
+            # 문단 위/아래 간격.  Block-level, so it is the flow pass that acts
+            # on them; see PARA_MARGIN_SCALE for the half that was measured.
+            "margin_prev": _margin("prev"),
+            "margin_next": _margin("next"),
         }
 
     tab_pr = {}
@@ -1201,7 +1238,8 @@ class _EqBox:
 
 class OwnRenderer:
     def __init__(self, hwpx_path, dpi=DEFAULT_DPI, repo_root=None,
-                 line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None):
+                 line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
+                 block_layout=BLOCK_LAYOUT_AUTO):
         self.path = Path(hwpx_path)
         self.dpi = int(dpi)
         if self.dpi <= 0:
@@ -1209,6 +1247,9 @@ class OwnRenderer:
         if line_layout not in LINE_LAYOUT_MODES:
             raise ValueError(
                 f"line_layout must be one of {sorted(LINE_LAYOUT_MODES)}")
+        if block_layout not in BLOCK_LAYOUT_MODES:
+            raise ValueError(
+                f"block_layout must be one of {sorted(BLOCK_LAYOUT_MODES)}")
         # ``auto``     — a paragraph keeps the authoring engine's cached
         #                hp:lineseg boxes unless they are provably stale, in
         #                which case this renderer's own breaker lays it out.
@@ -1224,6 +1265,12 @@ class OwnRenderer:
         # cache nor overflows a cached line cannot be detected from the file,
         # so the edit path must say so; this is that channel.
         self.relayout_paragraphs = set(relayout_paragraphs or ())
+        # ``auto``     — cached block positions until something is relaid out,
+        #                then the flow pass from that block onward.
+        # ``computed`` — the flow pass places every block from the top of the
+        #                document.  This is the mode that MEASURES the flow
+        #                pass against the authoring engine's own cache.
+        self.block_layout = block_layout
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
         self.fonts_meta = resolve_fonts(repo_root)
         self.fontbook = FontBook(self.fonts_meta)
@@ -1276,6 +1323,16 @@ class OwnRenderer:
         # paragraph's lines, and — where it was this renderer — why.
         self.layout_records = []
         self.paragraph_index = {}
+        # Block flow (E2.5).  ``_placements`` maps a top-level hp:p element to
+        # the page-relative HWPUNIT top the flow pass gave it; it is empty
+        # unless the flow pass actually ran and moved something, which is what
+        # keeps an unedited ``auto`` render byte-identical to the pre-E2.5
+        # renderer.  ``_table_splits`` maps a table element to the row range
+        # it draws on the page it is being drawn on.
+        self._placements = {}
+        self._table_splits = {}
+        self._flow_report = None
+        self._scratch_draw_cache = None
         # >0 while a measurement pass runs (a table row asking how tall its
         # content is).  Skips and forced-break counts are suppressed there so
         # the sidecar counts what was *drawn*, once, not what was measured.
@@ -1458,6 +1515,489 @@ class OwnRenderer:
         if current or not pages:
             pages.append(current)
         return pages
+
+    # -- block flow (E2.5) -----------------------------------------------
+    # ``paginate`` above READS the page assignment the authoring engine left
+    # in the cache.  Everything below COMPUTES one: it stacks top-level blocks
+    # down the column from their own measured heights and decides, itself,
+    # where a page ends.  The two are deliberately separate, because the only
+    # honest way to grade a flow pass without a reference render is to run it
+    # on an UNEDITED document and ask how far it lands from the cache
+    # ``paginate`` reads (``flow_agreement`` below).
+
+    def _scratch_draw(self):
+        """A draw handle for measurement only — the flow pass runs before any
+        page image exists, and every metric it needs is ``draw.textlength``."""
+        if self._scratch_draw_cache is None:
+            image = self.Image.new("RGB", (1, 1), (255, 255, 255))
+            self._scratch_draw_cache = self.ImageDraw.Draw(image)
+        return self._scratch_draw_cache
+
+    @staticmethod
+    def _flowing_table(para, start, end):
+        """The inline table on ``chars[start:end]``, if there is one.
+
+        Anchored (``treatAsChar="0"``) tables are excluded on purpose: they
+        are placed from their own ``hp:pos`` offsets, they do not consume a
+        line, and this tier does not reflow them independently of the
+        paragraph they are anchored to.
+        """
+        for char_index, name, el, _charpr in para.objects:
+            if name != "tbl" or not (start <= char_index < end):
+                continue
+            record = para.object_at.get(char_index)
+            if record is not None and record[3]:
+                continue
+            return el
+        return None
+
+    def _flow_lines(self, draw, para, column_hwp):
+        """``(mode, [{advance, extent, start, end, table}])`` for one block.
+
+        ``advance`` is what the next line starts after (``vertsize`` plus the
+        line's own trailing ``spacing``, the relation measured across all 219
+        corpus continuation lines); ``extent`` is what the line actually
+        occupies, which is what a page-bottom test has to use.
+        """
+        index = self.paragraph_index.get(id(para.el))
+        mode, _reason = self.line_layout_mode(para, column_hwp, index)
+        rows = []
+        if mode == LINE_LAYOUT_COMPUTED and para.chars:
+            for line in self.compute_lines(draw, para, column_hwp):
+                rows.append({
+                    "advance": line["vertsize"] + line["spacing"],
+                    "extent": line["vertsize"],
+                    "start": line["start"], "end": line["end"],
+                    "table": self._flowing_table(
+                        para, line["start"], line["end"]),
+                })
+            return mode, rows
+        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
+        for i, seg in enumerate(para.linesegs):
+            start = positions[i]
+            end = (positions[i + 1] if i + 1 < len(positions)
+                   else len(para.chars))
+            rows.append({
+                "advance": _iattr(seg, "vertsize") + _iattr(seg, "spacing"),
+                "extent": _iattr(seg, "vertsize"),
+                "start": start, "end": end,
+                "table": self._flowing_table(para, start, end),
+            })
+        return mode, rows
+
+    def _table_split_rows(self, draw, tbl):
+        """Cumulative row bottoms of ``tbl``, and whether it may be split.
+
+        A table is splittable at a row boundary only when it says so —
+        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔).  ``NONE`` (나누지 않음)
+        and ``TABLE`` (표 단위로 나눔) both mean the whole table moves.
+        """
+        splittable = (tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
+        self._quiet += 1
+        try:
+            _xs, ys, _cells = self._table_tracks(draw, tbl)
+        finally:
+            self._quiet -= 1
+        return splittable, ys
+
+    # hp:tbl/@textWrap — 본문과의 배치.  Only these reserve vertical room in
+    # the flow: TOP_AND_BOTTOM (위/아래 배치) puts the text below the object,
+    # and the three wrap modes put it beside an object this tier does not wrap
+    # around, so the safe reading — and the one the corpus confirms — is that
+    # the object's own extent is reserved.  BEHIND_TEXT and IN_FRONT_OF_TEXT
+    # take the text with them and reserve nothing.
+    FLOW_RESERVING_WRAPS = frozenset(
+        ("TOP_AND_BOTTOM", "SQUARE", "TIGHT", "THROUGH"))
+
+    def _anchor_extent(self, para, body_top):
+        """How far below a block's top its anchored objects reach.
+
+        Measured, and it is the single biggest term in the flow: kstartup
+        anchors a full-page table to a paragraph whose own line box is 1600
+        HWPUNIT tall, and the authoring engine starts the NEXT paragraph
+        68032 HWPUNIT further down.  Ignoring the object scores 49 of that
+        form's 165 top-level blocks on the right page; reserving its extent
+        scores 142 of 145 adjacent pairs exactly.
+        """
+        extent = 0
+        for char_index, _name, el, _charpr in para.objects:
+            record = para.object_at.get(char_index)
+            if record is None or not record[3]:
+                continue          # inline: it is already a line's height
+            wrap = (el.get("textWrap") or "").upper()
+            if wrap not in self.FLOW_RESERVING_WRAPS:
+                continue
+            pos = _kid(el, "pos")
+            size = _kid(el, "sz")
+            height = _iattr(size, "height") if size is not None else 0
+            offset = _iattr(pos, "vertOffset")
+            vrel = ((pos.get("vertRelTo") or "PARA").upper()
+                    if pos is not None else "PARA")
+            if vrel in ("PAGE", "PAPER"):
+                # A page-relative anchor is measured from the sheet, and the
+                # flow cursor is measured from the body box.
+                bottom = offset + height - body_top
+            else:
+                bottom = offset + height
+            extent = max(extent, bottom)
+        return extent
+
+    def _flow_blocks(self, draw, column_hwp):
+        """Every top-level ``hp:p`` of section0, measured and ready to place."""
+        blocks = []
+        body_top = self.page_geometry()["body_top"]
+        for el in _kids(self.sections[0], "p"):
+            para = Paragraph(el, self.defs["para_pr"])
+            mode, rows = self._flow_lines(draw, para, column_hwp)
+            pr = para.para_pr
+            blocks.append({
+                "anchor_extent": self._anchor_extent(para, body_top),
+                "index": self.paragraph_index.get(id(el)),
+                "para": para,
+                "mode": mode,
+                "rows": rows,
+                "height": sum(row["advance"] for row in rows),
+                "margin_prev": pr.get("margin_prev", 0),
+                "margin_next": pr.get("margin_next", 0),
+                # hp:p@pageBreak is the explicit 쪽 나누기 on this paragraph;
+                # hh:breakSetting@pageBreakBefore is the same instruction
+                # carried by the paragraph shape.  Either forces a page.
+                "page_break_before": bool(_iattr(el, "pageBreak")
+                                          or pr.get("page_break_before")),
+                "column_break": bool(_iattr(el, "columnBreak")),
+                "keep_with_next": bool(pr.get("keep_with_next")),
+                "keep_lines": bool(pr.get("keep_lines")),
+                "widow_orphan": bool(pr.get("widow_orphan")),
+                "cached_top": (_iattr(para.linesegs[0], "vertpos")
+                               if para.linesegs else None),
+            })
+        return blocks
+
+    def flow(self, draw=None, from_block=0, start_page=0, start_y=0):
+        """Place top-level blocks sequentially down the column.
+
+        Returns ``(placements, pages, counters)``.  A placement is
+        ``{block, paragraph, page, top, height, split}`` in page-relative
+        HWPUNIT, measured from the top of the body box exactly the way
+        ``hp:lineseg@vertpos`` is, so a placement is directly comparable to
+        the cache.
+
+        The rules honoured, and where each comes from:
+
+        * page height, top and bottom margin — ``hp:pagePr`` via
+          ``page_geometry``; a block starts a new page when its next line no
+          longer fits inside ``usable_height``.
+        * ``hp:p@pageBreak`` and ``hh:breakSetting@pageBreakBefore`` — an
+          explicit page before this block.
+        * ``hp:p@columnBreak`` — the corpus is single-column
+          (``hp:colPr@colCount=1`` on all 32), so a column break is a page
+          break here, and the sidecar says so rather than pretending columns
+          are implemented.
+        * ``@keepLines`` (문단 보호) — a paragraph that would split moves whole
+          to the next page instead, unless it is taller than a page.
+        * ``@widowOrphan`` (외톨이 줄 보호) — never one line of a multi-line
+          paragraph alone at a page edge; the split moves back a line.
+        * ``@keepWithNext`` (다음 문단과 함께) — this block starts on the page
+          its successor starts on, backed up at most
+          ``KEEP_WITH_NEXT_MAX_CHAIN`` blocks.
+        * ``hp:tbl@pageBreak`` — a table splits at a row boundary only when it
+          declares ``CELL``; otherwise the whole table moves.
+
+        What is NOT honoured, and is counted rather than faked: multi-column
+        text, ``hp:tbl@repeatHeader`` (a split table does not repeat its
+        header row), text wrap around an anchored object, and any block that
+        is taller than a page, which is placed and allowed to overflow because
+        nothing else can be done with it.
+        """
+        draw = draw or self._scratch_draw()
+        geo = self.page_geometry()
+        usable = max(1, geo["usable_height"])
+        column = geo["usable_width"]
+        blocks = self._flow_blocks(draw, column)
+        counters = {
+            "explicit_page_breaks": 0,
+            "column_breaks_as_page_breaks": 0,
+            "keep_lines_moved": 0,
+            "widow_orphan_moved": 0,
+            "keep_with_next_moved": 0,
+            "keep_with_next_given_up": 0,
+            "tables_split": 0,
+            "tables_moved_whole": 0,
+            "anchored_blocks_moved": 0,
+            "blocks_taller_than_page": 0,
+        }
+        placements = []
+        page = start_page
+        y = start_y
+        prev_next_margin = 0
+        i = from_block
+        keep_chain = 0
+        while i < len(blocks):
+            block = blocks[i]
+            gap = int((prev_next_margin + block["margin_prev"])
+                      * PARA_MARGIN_SCALE)
+            forced = (block["page_break_before"] or block["column_break"])
+            if forced and (placements or y > 0):
+                if block["column_break"] and not block["page_break_before"]:
+                    counters["column_breaks_as_page_breaks"] += 1
+                    self._skip(
+                        "hp:p@columnBreak",
+                        "multi-column text is not implemented; a column break "
+                        "is honoured as a page break")
+                else:
+                    counters["explicit_page_breaks"] += 1
+                page += 1
+                y = 0
+                gap = 0
+            placed = self._place_block(draw, block, page, y + gap, usable,
+                                       counters)
+            # keepWithNext: a block may only end on the page its successor
+            # starts on.  Resolved after the successor is placed, by pushing
+            # THIS block forward; the loop below is what bounds the chain.
+            placements.extend(placed)
+            page = placed[-1]["page"]
+            y = placed[-1]["top"] + placed[-1]["height"]
+            prev_next_margin = block["margin_next"]
+            i += 1
+        placements, counters = self._apply_keep_with_next(
+            blocks, placements, counters, usable, from_block)
+        pages = self._flow_pages(placements, start_page)
+        return placements, pages, counters
+
+    def _flow_record(self, block, page, top, height, rows=(0, 0),
+                     kind="paragraph", split=None):
+        """One block's presence on one page.
+
+        ``rows`` is the half-open range of the block's own line boxes drawn
+        by this record, so a paragraph that straddles a page boundary leaves
+        two records and each draws only its own lines.  ``split`` carries the
+        table row range instead, when the record is one half of a table split
+        at a row boundary.
+        """
+        return {"block": block["index"], "paragraph": block["index"],
+                "page": page, "top": max(0, top), "height": height,
+                "rows": tuple(rows), "kind": kind, "split": split,
+                "para": block["para"], "mode": block["mode"]}
+
+    def _place_block(self, draw, block, page, top, usable, counters):
+        """Place one block's lines, breaking a page as they stop fitting.
+
+        A block leaves one placement record per page it appears on, so a
+        paragraph that straddles a page boundary is two records and a table
+        split at a row boundary is two records carrying a row range.
+        """
+        rows = block["rows"]
+        reserve = max(0, block["anchor_extent"] - block["height"])
+        if not rows:
+            return [self._flow_record(block, page, top,
+                                      block["anchor_extent"], (0, 0))]
+        total = max(block["height"], block["anchor_extent"])
+        if total > usable:
+            counters["blocks_taller_than_page"] += 1
+        # An anchored object cannot be split and does not flow, so a block
+        # that reserves room for one moves whole or not at all.
+        if (reserve and top > 0 and top + total > usable
+                and total <= usable):
+            counters["anchored_blocks_moved"] += 1
+            page, top = page + 1, 0
+        # Would this block split at all?  Only then do the two 문단 보호 rules
+        # have anything to say, and only when moving it can actually help —
+        # a block taller than a page splits wherever it is put.
+        fits = self._rows_that_fit(rows, top, usable)
+        if 0 < fits < len(rows) and block["height"] <= usable and top > 0:
+            if block["keep_lines"]:
+                counters["keep_lines_moved"] += 1
+                page, top = page + 1, 0
+            elif (block["widow_orphan"] and len(rows) > 1
+                  and (fits < 2 or len(rows) - fits < 2)):
+                # An orphan (one line left behind) or a widow (one line
+                # carried over) is resolved the only way that never invents a
+                # line: the whole paragraph moves on.
+                counters["widow_orphan_moved"] += 1
+                page, top = page + 1, 0
+
+        out = []
+        cursor = max(0, top)
+        seg_top = cursor
+        seg_height = 0
+        seg_first = 0
+        index = 0
+        while index < len(rows):
+            row = rows[index]
+            room = usable - cursor
+            if row["extent"] <= room or cursor == 0:
+                cursor += row["advance"]
+                seg_height += row["advance"]
+                index += 1
+                continue
+            split = (self._split_table_row(draw, row["table"], room)
+                     if row["table"] is not None else None)
+            if split is not None:
+                counters["tables_split"] += 1
+                out.append(self._flow_record(
+                    block, page, seg_top, seg_height + split["height"],
+                    (seg_first, index + 1), kind="table",
+                    split=split["first"]))
+                page += 1
+                tail = row["advance"] - split["height"]
+                out.append(self._flow_record(
+                    block, page, 0, tail, (index, index + 1), kind="table",
+                    split=split["rest"]))
+                cursor = tail
+                seg_top = tail
+                seg_height = 0
+                index += 1
+                seg_first = index
+                continue
+            if row["table"] is not None:
+                counters["tables_moved_whole"] += 1
+            if seg_height:
+                out.append(self._flow_record(block, page, seg_top, seg_height,
+                                             (seg_first, index)))
+            page += 1
+            cursor = 0
+            seg_top = 0
+            seg_height = 0
+            seg_first = index
+        if reserve and not out:
+            # The block never split, so its anchored object's extent is the
+            # room the next block starts after.
+            seg_height = max(seg_height, block["anchor_extent"])
+        if seg_height or not out:
+            out.append(self._flow_record(block, page, seg_top, seg_height,
+                                         (seg_first, len(rows))))
+        return out
+
+    @staticmethod
+    def _rows_that_fit(rows, top, usable):
+        """How many of ``rows`` fit below ``top`` before the page runs out."""
+        cursor = max(0, top)
+        count = 0
+        for row in rows:
+            if row["extent"] > usable - cursor and cursor > 0:
+                break
+            cursor += row["advance"]
+            count += 1
+        return count
+
+    def _split_table_row(self, draw, tbl, room):
+        """Split a table at the last row boundary that fits in ``room``.
+
+        ``None`` when the table does not declare itself splittable, or when no
+        row boundary fits — in both cases the whole table moves instead.
+        """
+        splittable, ys = self._table_split_rows(draw, tbl)
+        if not splittable or len(ys) < 3:
+            return None
+        cut = 0
+        for row_index in range(1, len(ys) - 1):
+            if ys[row_index] <= room:
+                cut = row_index
+            else:
+                break
+        if cut == 0:
+            return None
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
+        return {
+            "height": ys[cut],
+            "first": {"table": id(tbl), "row_start": 0, "row_end": cut},
+            "rest": {"table": id(tbl), "row_start": cut,
+                     "row_end": len(ys) - 1},
+        }
+
+    def _apply_keep_with_next(self, blocks, placements, counters, usable,
+                              from_block):
+        """Push a ``keepWithNext`` block onto its successor's page.
+
+        Bounded, and deliberately not iterated to a fixed point: a chain of
+        blocks that between them exceed a page can never be satisfied, and the
+        honest answer there is to give up and say so, not to loop.
+        """
+        by_block = {}
+        for record in placements:
+            by_block.setdefault(record["block"], []).append(record)
+        moved = 0
+        for offset in range(len(blocks) - 1, from_block - 1, -1):
+            block = blocks[offset]
+            if not block["keep_with_next"]:
+                continue
+            here = by_block.get(block["index"])
+            nxt = by_block.get(blocks[offset + 1]["index"]) if \
+                offset + 1 < len(blocks) else None
+            if not here or not nxt:
+                continue
+            if here[-1]["page"] == nxt[0]["page"]:
+                continue
+            if moved >= KEEP_WITH_NEXT_MAX_CHAIN or block["height"] > usable:
+                counters["keep_with_next_given_up"] += 1
+                self._skip(
+                    "hh:breakSetting@keepWithNext",
+                    "the paragraph and its successor cannot share a page; "
+                    "the request is recorded and the block is left where the "
+                    "flow put it")
+                continue
+            shift_to = nxt[0]["page"]
+            delta = 0
+            for record in here:
+                record["page"] = shift_to
+                record["top"] = delta
+                delta += record["height"]
+            for record in nxt:
+                record["top"] += delta
+            counters["keep_with_next_moved"] += 1
+            moved += 1
+        placements.sort(key=lambda r: (r["page"], r["top"], r["block"]))
+        return placements, counters
+
+    @staticmethod
+    def _flow_pages(placements, start_page):
+        last = max((r["page"] for r in placements), default=start_page)
+        return list(range(start_page, last + 1))
+
+    def flow_plan(self):
+        """The placement plan this render will draw, or ``None``.
+
+        ``None`` is the whole point of the ``auto`` policy: on an unedited
+        document nothing is relaid out, so nothing needs re-placing, and the
+        renderer takes exactly the path it took before E2.5 — which is what
+        makes "unedited output is byte-identical" a property rather than a
+        hope.
+        """
+        draw = self._scratch_draw()
+        column = self.page_geometry()["usable_width"]
+        if self.block_layout == BLOCK_LAYOUT_COMPUTED:
+            return self.flow(draw), 0
+        first = None
+        for order, el in enumerate(_kids(self.sections[0], "p")):
+            para = Paragraph(el, self.defs["para_pr"])
+            index = self.paragraph_index.get(id(el))
+            mode, _reason = self.line_layout_mode(para, column, index)
+            if mode == LINE_LAYOUT_COMPUTED and para.chars:
+                first = order
+                break
+        if first is None:
+            return None, None
+        # Everything BEFORE the first relaid-out block keeps the cache; the
+        # flow pass is seeded at that block's own cached page and cached top,
+        # so an edit never moves anything above itself.
+        cached_pages = self.paginate()
+        seed_page, seed_top = self._cached_seat(cached_pages, first)
+        return self.flow(draw, from_block=first, start_page=seed_page,
+                         start_y=seed_top), first
+
+    def _cached_seat(self, cached_pages, order):
+        """``(page, top)`` the cache gives the ``order``-th top-level block."""
+        seen = 0
+        for page_number, page in enumerate(cached_pages):
+            for para in page:
+                if seen == order:
+                    top = (_iattr(para.linesegs[0], "vertpos")
+                           if para.linesegs else 0)
+                    return page_number, top
+                seen += 1
+        return 0, 0
 
     # -- text ------------------------------------------------------------
     def _charpr(self, cid):
@@ -2407,20 +2947,26 @@ class OwnRenderer:
         record["height_delta_hwpunit"] = self._extent_delta(para, lines or [])
         self.layout_records.append(record)
 
-    def _render_computed_lines(self, draw, para, origin_hwp, lines):
+    def _render_computed_lines(self, draw, para, origin_hwp, lines,
+                               rows=None):
         """Draw the lines this renderer's own breaker produced.
 
-        The paragraph's *origin* still comes from the cached layout where one
-        exists: this slice re-derives line breaking inside a paragraph, not
-        the block stacking that decides where a paragraph starts.  A paragraph
-        with no cache at all starts at the container's flow position, exactly
-        as before.
+        The paragraph's *origin* comes from the cached layout unless the flow
+        pass placed it (E2.5): ``_render_flow_page`` passes an origin already
+        corrected for the flowed top, and ``rows`` restricts the draw to the
+        half-open line range this page carries, so a paragraph that straddles
+        a page boundary draws each half on its own page.
         """
         ox, oy = origin_hwp
-        if para.linesegs:
+        if para.linesegs and rows is None:
             oy += _iattr(para.linesegs[0], "vertpos")
+        first, last = rows if rows is not None else (0, len(lines))
+        if rows is not None and first < len(lines):
+            oy -= lines[first]["vertpos"]
         self._line_mode = "computed"
         for index, line in enumerate(lines):
+            if not (first <= index < last):
+                continue
             chunk = para.chars[line["start"]:line["end"]]
             if not chunk:
                 continue
@@ -2435,11 +2981,17 @@ class OwnRenderer:
                 last_line=(index == len(lines) - 1),
             )
 
-    def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp):
+    def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp,
+                             rows=None):
         ox, oy = origin_hwp
         positions = [_iattr(s, "textpos") for s in para.linesegs]
+        first, last = rows if rows is not None else (0, len(para.linesegs))
+        if rows is not None and first < len(para.linesegs):
+            oy -= _iattr(para.linesegs[first], "vertpos")
         self._line_mode = "lineseg"
         for i, seg in enumerate(para.linesegs):
+            if not (first <= i < last):
+                continue
             start = positions[i]
             end = positions[i + 1] if i + 1 < len(positions) else len(para.chars)
             chunk = para.chars[start:end]
@@ -2459,6 +3011,61 @@ class OwnRenderer:
                 horzsize,
                 last_line=(i == len(para.linesegs) - 1),
             )
+
+    # -- drawing a page the flow pass placed (E2.5) -----------------------
+    def _render_flow_page(self, draw, records, origin_hwp, avail_w_hwp):
+        """Draw one page's worth of flow placements.
+
+        Deliberately a separate path from ``_render_paragraphs``: that method
+        still owns table cells and the pre-E2.5 body path, and an unedited
+        ``auto`` render never reaches this one at all.
+        """
+        ox, oy = origin_hwp
+        for record in records:
+            para = record["para"]
+            first_record = record.get("first_of_block", True)
+            if first_record:
+                self.counts["paragraphs"] += 1
+                self.counts["runs"] += len(_kids(para.el, "run"))
+                if para.tabs:
+                    self._skip("hp:tab",
+                               "hp:tab elements inside a run are not placed "
+                               "in the character stream, so the line they sit "
+                               "on is measured without them")
+            cached_top = (_iattr(para.linesegs[0], "vertpos")
+                          if para.linesegs else 0)
+            para_origin = (ox, oy + record["top"] - cached_top)
+            if first_record:
+                self._render_floating(draw, para, para_origin)
+            if not para.chars:
+                continue
+            index = self.paragraph_index.get(id(para.el))
+            mode, reason = self.line_layout_mode(para, avail_w_hwp, index)
+            lines = None
+            if mode == LINE_LAYOUT_COMPUTED:
+                lines = self.compute_lines(draw, para, avail_w_hwp)
+            if first_record:
+                self._layout_counts[mode] += 1
+                if mode == LINE_LAYOUT_COMPUTED:
+                    self._layout_reasons[reason] = (
+                        self._layout_reasons.get(reason, 0) + 1)
+                self._record_layout(index, para, mode, reason, lines)
+            split = record.get("split")
+            if split is not None:
+                self._table_splits[split["table"]] = (split["row_start"],
+                                                      split["row_end"])
+            try:
+                if mode == LINE_LAYOUT_COMPUTED:
+                    self._render_computed_lines(
+                        draw, para, (ox, oy + record["top"]), lines,
+                        rows=record["rows"])
+                else:
+                    self._render_cached_lines(
+                        draw, para, (ox, oy + record["top"]), avail_w_hwp,
+                        rows=record["rows"])
+            finally:
+                if split is not None:
+                    self._table_splits.pop(split["table"], None)
 
     # -- anchored (non-inline) objects -----------------------------------
     def _object_line(self, para, char_index):
@@ -3256,13 +3863,25 @@ class OwnRenderer:
         xs, ys, cells = self._table_tracks(draw, tbl)
         if not cells:
             return
+        # E2.5: a table the flow pass split at a row boundary draws only the
+        # rows this page carries, with the row origin pulled back to the top
+        # of the range.  ``None`` — every render that is not a split — takes
+        # exactly the path this method took before E2.5.
+        split = self._table_splits.get(id(tbl))
+        row_from, row_to = split if split is not None else (0, None)
+        if split is not None:
+            oy -= ys[min(row_from, len(ys) - 1)]
         rects = []
         for cell in cells:
+            if split is not None and not (row_from <= cell["row"] < row_to):
+                continue
             self.counts["cells"] += 1
             c0 = min(cell["col"], len(xs) - 1)
             c1 = min(cell["col"] + cell["cspan"], len(xs) - 1)
             r0 = min(cell["row"], len(ys) - 1)
             r1 = min(cell["row"] + cell["rspan"], len(ys) - 1)
+            if split is not None:
+                r1 = max(r0, min(r1, row_to))
             rects.append((cell, ox + xs[c0], oy + ys[r0],
                           ox + xs[c1], oy + ys[r1]))
 
@@ -3492,6 +4111,127 @@ class OwnRenderer:
         "hp:tab elements inside a run are not placed in the character stream",
     )
 
+    BLOCK_HONORED = (
+        "hp:pagePr/hh:margin — page height, top and bottom margin bound every "
+        "page; a block starts a new page when its next line no longer fits",
+        "hp:p@pageBreak and hh:breakSetting@pageBreakBefore — an explicit "
+        "page before the block",
+        "hp:p@columnBreak — honoured as a PAGE break: every corpus "
+        "hp:colPr declares colCount=1, so this tier has no second column to "
+        "break into and says so rather than dropping the instruction",
+        "hh:breakSetting@keepLines (문단 보호) — a paragraph that would split "
+        "moves whole to the next page, unless it is taller than a page",
+        "hh:breakSetting@widowOrphan (외톨이 줄 보호) — never one line of a "
+        "multi-line paragraph alone at a page edge; the paragraph moves whole",
+        "hh:breakSetting@keepWithNext (다음 문단과 함께) — the block is pushed "
+        f"onto its successor's page, at most {KEEP_WITH_NEXT_MAX_CHAIN} "
+        "blocks deep, after which the request is recorded and abandoned",
+        "hp:tbl@pageBreak — a table is split at a row boundary ONLY when it "
+        "declares CELL (셀 단위로 나눔); NONE and TABLE both move the whole "
+        "table to the next page",
+        "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), each at "
+        f"{PARA_MARGIN_SCALE:g} of its declared value — see the constant, "
+        "which records why that halving is a measurement and not a reading "
+        "of the schema",
+        "hp:tbl@textWrap=TOP_AND_BOTTOM / SQUARE / TIGHT / THROUGH on an "
+        "ANCHORED object — the object's declared extent is reserved in the "
+        "flow, so the next block starts below it",
+    )
+    BLOCK_NOT_HONORED = (
+        "multi-column text — hp:colPr@colCount > 1 is not laid out; a column "
+        "break becomes a page break",
+        "hp:tbl@repeatHeader — a table split across a page boundary does not "
+        "repeat its header row on the continuation page",
+        "text wrap AROUND an anchored object — the object's full extent is "
+        "reserved instead, so text never sits beside it",
+        "a block taller than one page is placed and allowed to overflow, "
+        "because no rule can make it fit; counted in "
+        "flow_counters.blocks_taller_than_page",
+        "headers, footers, footnotes and endnotes take no room in the flow, "
+        "because this tier does not draw them at all",
+        "hp:secPr beyond section0 — a second section is not laid out, so it "
+        "cannot start a page either",
+    )
+
+    def _block_layout_report(self, placements, counters, page_count,
+                             first_flowed, page_records):
+        """Which engine decided where each block sits, and on which page.
+
+        The per-block list is the point, exactly as it is for line layout: a
+        reader has to be able to tell, without re-running anything, which
+        blocks on a page are where the authoring engine put them and which
+        this renderer's flow pass placed.
+        """
+        blocks = []
+        pages = {}
+        if page_records is None:
+            for page_number, page in enumerate(self.paginate()):
+                pages[page_number] = False
+                for para in page:
+                    blocks.append({
+                        "block": self.paragraph_index.get(id(para.el)),
+                        "page": page_number,
+                        "vertpos_hwpunit": (
+                            _iattr(para.linesegs[0], "vertpos")
+                            if para.linesegs else 0),
+                        "kind": "paragraph",
+                        "placement": "cached",
+                    })
+        else:
+            for page_number in sorted(page_records):
+                reflowed = False
+                for record in page_records[page_number]:
+                    entry = {
+                        "block": record["block"],
+                        "page": page_number,
+                        "vertpos_hwpunit": record["top"],
+                        "kind": record.get("kind", "paragraph"),
+                        "placement": record["placement"],
+                    }
+                    if record.get("split") is not None:
+                        entry["table_rows"] = [record["split"]["row_start"],
+                                               record["split"]["row_end"]]
+                    if record["placement"] == "flowed":
+                        reflowed = True
+                    blocks.append(entry)
+                pages[page_number] = reflowed
+        blocks.sort(key=lambda b: (b["page"], b["vertpos_hwpunit"],
+                                   b["block"] if b["block"] is not None else -1))
+        return {
+            "policy": self.block_layout,
+            "policy_meaning": (
+                "auto: every block keeps the seat the authoring engine's "
+                "cached hp:lineseg@vertpos gave it until some paragraph has "
+                "to be relaid out; from that block onward, and for the whole "
+                "document under computed, this renderer's flow pass places "
+                "each block from its own measured height. An unedited "
+                "document under auto therefore takes exactly the path it "
+                "took before E2.5, which is what makes its output "
+                "byte-identical."
+            ),
+            "reflow_triggered": page_records is not None,
+            "first_flowed_block": first_flowed,
+            "pages": page_count,
+            "pages_reflowed": sum(1 for v in pages.values() if v),
+            "page_reflowed": {str(k): v for k, v in sorted(pages.items())},
+            "blocks": blocks,
+            "blocks_placement": {
+                "cached": sum(1 for b in blocks if b["placement"] == "cached"),
+                "flowed": sum(1 for b in blocks if b["placement"] == "flowed"),
+            },
+            "flow_counters": counters,
+            "para_margin_scale": PARA_MARGIN_SCALE,
+            "measured_against_the_authoring_engine": (
+                "own_render.py --flow-agreement runs this same pass over an "
+                "UNEDITED document and reports how often it puts a block on "
+                "the page the cache says, and how far from the cached "
+                "vertpos. That number, not this sidecar, is what the flow "
+                "pass is worth; see engine/references/own-render-notes.md."
+            ),
+            "block_honored": list(self.BLOCK_HONORED),
+            "block_not_honored": list(self.BLOCK_NOT_HONORED),
+        }
+
     def _line_layout_report(self):
         """Which engine laid out each paragraph's lines, and on what evidence.
 
@@ -3679,9 +4419,53 @@ class OwnRenderer:
             "y1": round(baseline + descent, 3),
         })
 
+    def _flow_page_records(self, placements, first_flowed):
+        """``{page number -> [record]}``, cached head and flowed tail merged.
+
+        Blocks before the first relaid-out one keep the seat the cache gave
+        them; from that block on, every record comes from the flow pass.  A
+        cached block is turned into a record of the same shape so one drawing
+        path serves both, and ``placement`` says which it is.
+        """
+        pages = {}
+        flat = [(page_number, para)
+                for page_number, page in enumerate(self.paginate())
+                for para in page]
+        for order, (page_number, para) in enumerate(flat):
+            if first_flowed is not None and order >= first_flowed:
+                break
+            top = (_iattr(para.linesegs[0], "vertpos")
+                   if para.linesegs else 0)
+            pages.setdefault(page_number, []).append({
+                "block": self.paragraph_index.get(id(para.el)),
+                "page": page_number, "top": top, "rows": None,
+                "split": None, "para": para, "placement": "cached",
+                "kind": "paragraph", "first_of_block": True,
+            })
+        seen_block = set()
+        for record in placements:
+            record = dict(record)
+            record["placement"] = "flowed"
+            record["first_of_block"] = record["block"] not in seen_block
+            seen_block.add(record["block"])
+            pages.setdefault(record["page"], []).append(record)
+        return pages
+
     def render(self):
         geo = self.page_geometry()
-        pages = self.paginate()
+        plan, first_flowed = self.flow_plan()
+        page_records = None
+        if plan is None:
+            pages = self.paginate()
+            counters = None
+            placements = None
+        else:
+            placements, _flow_pages, counters = plan
+            page_records = self._flow_page_records(placements, first_flowed)
+            pages = [page_records.get(n, [])
+                     for n in range(max(page_records) + 1)]
+        self._flow_report = self._block_layout_report(
+            placements, counters, len(pages), first_flowed, page_records)
         page_w = self.px(geo["width"])
         page_h = self.px(geo["height"])
         images = []
@@ -3690,11 +4474,18 @@ class OwnRenderer:
             img = self.Image.new("RGB", (page_w, page_h), (255, 255, 255))
             self._image = img
             draw = self.ImageDraw.Draw(img)
-            self._render_paragraphs(
-                draw, page_paras,
-                (geo["body_left"], geo["body_top"]),
-                geo["usable_width"],
-            )
+            if page_records is None:
+                self._render_paragraphs(
+                    draw, page_paras,
+                    (geo["body_left"], geo["body_top"]),
+                    geo["usable_width"],
+                )
+            else:
+                self._render_flow_page(
+                    draw, page_paras,
+                    (geo["body_left"], geo["body_top"]),
+                    geo["usable_width"],
+                )
             self._render_page_number(draw, geo, page_number)
             images.append(img)
         self._audit_unsupported()
@@ -3741,6 +4532,7 @@ class OwnRenderer:
                 ),
             },
             "equations": self._equation_report(),
+            "block_layout": self._flow_report,
             "line_layout": self._line_layout_report(),
             "line_boxes": list(self.line_boxes),
             "line_boxes_meaning": (
@@ -3972,15 +4764,115 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
     }
 
 
+def flow_agreement(hwpx_path, dpi=DEFAULT_DPI, line_layout=LINE_LAYOUT_AUTO):
+    """Measure the E2.5 flow pass against the engine that wrote the file.
+
+    The flow pass is run in ``computed`` mode over the document's **unedited**
+    text, and every top-level block's computed page and page-relative top are
+    compared to the ``hp:lineseg@vertpos`` the authoring engine cached and to
+    the page ``paginate`` reads out of it.  This is to block layout exactly
+    what ``lineseg_agreement`` is to line breaking: the only channel on which
+    a from-scratch flow pass can be graded without a reference render.
+
+    ``line_layout`` defaults to ``auto`` on purpose — with the cached line
+    boxes in place, a disagreement here is the BLOCK model's and not the line
+    breaker's.  Pass ``computed`` to see the two errors compounded.
+    """
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
+                           block_layout=BLOCK_LAYOUT_COMPUTED)
+    placements, pages, counters = renderer.flow()
+    cached_pages = renderer.paginate()
+    cached = []
+    for page_number, page in enumerate(cached_pages):
+        for para in page:
+            cached.append(
+                (page_number,
+                 _iattr(para.linesegs[0], "vertpos") if para.linesegs else None,
+                 bool(para.linesegs)))
+    first = {}
+    for record in placements:
+        first.setdefault(record["block"], record)
+    order = {}
+    seen = 0
+    for el in _kids(renderer.sections[0], "p"):
+        order[renderer.paragraph_index.get(id(el))] = seen
+        seen += 1
+
+    page_hits = 0
+    compared = 0
+    excluded = 0
+    deltas = []
+    page_deltas = {}
+    for block_index, record in sorted(first.items(),
+                                      key=lambda kv: order.get(kv[0], 0)):
+        position = order.get(block_index)
+        if position is None or position >= len(cached):
+            excluded += 1
+            continue
+        cached_page, cached_top, usable = cached[position]
+        if not usable:
+            excluded += 1
+            continue
+        compared += 1
+        if record["page"] == cached_page:
+            page_hits += 1
+        delta = record["top"] - cached_top
+        deltas.append(abs(delta))
+        page_deltas[block_index] = delta
+    deltas.sort()
+    median = (float(deltas[len(deltas) // 2]) if deltas else 0.0)
+    return {
+        "document": Path(hwpx_path).name,
+        "dpi": dpi,
+        "line_layout": line_layout,
+        "block_layout": BLOCK_LAYOUT_COMPUTED,
+        "top_level_blocks": len(order),
+        "compared": compared,
+        "excluded_no_cache": excluded,
+        "page_assignment_agreement": (page_hits, compared),
+        "page_assignment_rate": (round(page_hits / compared, 4)
+                                 if compared else None),
+        "abs_dy_hwpunit": {
+            "median": median,
+            "p90": (float(deltas[int(len(deltas) * 0.9)]) if deltas else 0.0),
+            "max": (float(deltas[-1]) if deltas else 0.0),
+            "exact": sum(1 for d in deltas if d == 0),
+        },
+        "abs_dy_px": {
+            "median": round(median * dpi / HWPUNIT_PER_INCH, 3),
+            "max": (round(deltas[-1] * dpi / HWPUNIT_PER_INCH, 3)
+                    if deltas else 0.0),
+        },
+        "pages_computed": len(pages),
+        "pages_cached": len(cached_pages),
+        "flow_counters": counters,
+        "meaning": (
+            "the flow pass placed every top-level block of this UNEDITED "
+            "document from its own measured heights, and each block's "
+            "computed page and page-relative top (HWPUNIT, from the top of "
+            "the body box, the same origin hp:lineseg@vertpos uses) is "
+            "compared to what the authoring engine cached. "
+            "page_assignment_agreement is the share of blocks the flow pass "
+            "puts on the same page; abs_dy is how far it puts them from the "
+            "cached vertical position. pages_cached is what paginate() reads "
+            "out of the cache, which is itself a heuristic and not ground "
+            "truth — where the two disagree, only a reference render settles "
+            "which is right."
+        ),
+    }
+
+
 def save_png(image, path):
     """Write a PNG with no timestamp chunk and a pinned compression level."""
     image.save(path, format="PNG", optimize=False, compress_level=6)
 
 
 def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
-                  line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None):
+                  line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
+                  block_layout=BLOCK_LAYOUT_AUTO):
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
-                           relayout_paragraphs=relayout_paragraphs)
+                           relayout_paragraphs=relayout_paragraphs,
+                           block_layout=block_layout)
     images, sidecar = renderer.render()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3999,7 +4891,8 @@ def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
 
 
 def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
-                  line_layout=LINE_LAYOUT_AUTO):
+                  line_layout=LINE_LAYOUT_AUTO,
+                  block_layout=BLOCK_LAYOUT_AUTO):
     """Raster PDF, for the ``[binary, {in}, {out}]`` argv render_cert expects.
 
     The pages carry no text layer, so ``render_cert``'s unique-word anchor
@@ -4007,7 +4900,8 @@ def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
     can.  A vector text backend is the prerequisite for full certification;
     see engine/references/own-render-notes.md.
     """
-    renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout)
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
+                           block_layout=block_layout)
     images, sidecar = renderer.render()
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -4034,6 +4928,11 @@ def build_parser():
         help="do not render: measure this renderer's line breaker "
              "against the document's own cached hp:lineseg layout and "
              "print the report as JSON")
+    parser.add_argument(
+        "--flow-agreement", action="store_true",
+        help="do not render: run the E2.5 block flow pass over the "
+             "document's UNEDITED text and measure its page assignment and "
+             "vertical positions against the authoring engine's own cache")
     parser.add_argument("--stem", help="override the output filename stem")
     parser.add_argument(
         "--line-layout", choices=list(LINE_LAYOUT_MODES),
@@ -4042,6 +4941,14 @@ def build_parser():
              "boxes unless they are provably stale. computed: lay every "
              "paragraph out with this renderer's own line breaker, which "
              "is how the breaker itself is measured.")
+    parser.add_argument(
+        "--block-layout", choices=list(BLOCK_LAYOUT_MODES),
+        default=BLOCK_LAYOUT_AUTO,
+        help="auto (default): every block keeps the seat the cached "
+             "hp:lineseg@vertpos gave it until a paragraph has to be relaid "
+             "out, and the flow pass takes over from there. computed: the "
+             "flow pass places every block from the top of the document, "
+             "which is how the flow pass itself is measured.")
     return parser
 
 
@@ -4054,6 +4961,20 @@ def main(argv=None):
     if not args.input:
         print("own_render: an input .hwpx is required", file=sys.stderr)
         return 2
+    if args.flow_agreement:
+        try:
+            report = flow_agreement(args.input, dpi=args.dpi,
+                                    line_layout=args.line_layout)
+        except RendererUnavailable as exc:
+            print(f"own_render: unavailable - {exc}", file=sys.stderr)
+            return 3
+        except (ValueError, OSError, zipfile.BadZipFile,
+                ET.ParseError) as exc:
+            print(f"own_render: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2,
+                         sort_keys=True))
+        return 0
     if args.lineseg_agreement:
         try:
             report = lineseg_agreement(args.input, dpi=args.dpi)
@@ -4070,12 +4991,14 @@ def main(argv=None):
     try:
         if args.output:
             result = render_to_pdf(args.input, args.output, dpi=args.dpi,
-                                   line_layout=args.line_layout)
+                                   line_layout=args.line_layout,
+                                   block_layout=args.block_layout)
         else:
             out_dir = args.out_dir or Path(args.input).with_suffix("").name + "-render"
             result = render_to_dir(args.input, out_dir, dpi=args.dpi,
                                    stem=args.stem,
-                                   line_layout=args.line_layout)
+                                   line_layout=args.line_layout,
+                                   block_layout=args.block_layout)
     except RendererUnavailable as exc:
         print(f"own_render: unavailable — {exc}", file=sys.stderr)
         return 3
