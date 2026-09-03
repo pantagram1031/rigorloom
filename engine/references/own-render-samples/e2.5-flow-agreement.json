@@ -20,6 +20,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 0,
@@ -59,6 +60,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 0,
@@ -98,6 +100,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 0,
@@ -137,6 +140,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 1,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 0,
@@ -176,6 +180,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 2,
@@ -199,10 +204,10 @@
     },
     {
       "abs_dy_hwpunit": {
-        "exact": 158,
+        "exact": 128,
         "max": 69785.0,
         "median": 0.0,
-        "p90": 0.0
+        "p90": 8640.0
       },
       "abs_dy_px": {
         "max": 1395.7,
@@ -215,13 +220,14 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 2,
-        "blocks_taller_than_page": 1,
+        "anchored_extents_ignored": 1,
+        "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 4,
         "keep_lines_moved": 0,
         "keep_with_next_given_up": 0,
         "keep_with_next_moved": 0,
-        "tables_moved_whole": 6,
+        "tables_moved_whole": 5,
         "tables_split": 0,
         "widow_orphan_moved": 0
       },
@@ -254,6 +260,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 2,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 2,
@@ -293,6 +300,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 5,
@@ -332,6 +340,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 0,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 2,
@@ -371,6 +380,7 @@
       "excluded_no_cache": 0,
       "flow_counters": {
         "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
         "blocks_taller_than_page": 5,
         "column_breaks_as_page_breaks": 0,
         "explicit_page_breaks": 2,
