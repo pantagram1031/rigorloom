@@ -173,8 +173,29 @@ def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
     drift. A path built by hand would skip that check silently.
     """
     receipt = read_receipt(session, run_id)
-    path = session.candidates_dir / run_id / str(receipt["candidate"]["path"])
+    path = _candidate_path(session, run_id, receipt["candidate"])
     return path, receipt
+
+
+def _candidate_path(session, run_id: str, candidate: dict) -> Path:
+    """Return the one leaf this Runtime can publish, never a receipt-chosen path.
+
+    ``bodySha256`` detects accidental drift; it is not authentication. A local
+    writer can recompute it, so a receipt path must not become filesystem
+    authority. ``apply_plan`` always publishes exactly ``artifact<suffix>`` in
+    the run directory. Every reader requires that canonical spelling and never
+    echoes a forged path in the refusal.
+    """
+    if not isinstance(candidate, dict):
+        raise RpcError("receipt_body_mismatch",
+                       "receipt candidate descriptor is not an object",
+                       runId=run_id)
+    expected = f"artifact{session.source.suffix or '.bin'}"
+    if candidate.get("path") != expected:
+        raise RpcError("path_escape",
+                       "receipt candidate path is not the canonical run artifact",
+                       runId=run_id)
+    return session.candidates_dir / run_id / expected
 
 
 def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
@@ -378,11 +399,11 @@ def read_receipt(session, run_id: str) -> dict:
         raise RpcError("receipt_body_mismatch",
                        "the receipt body does not match its own hash",
                        runId=run_id, declared=declared, recomputed=recomputed)
-    candidate = payload.get("candidate") or {}
-    artifact = run_dir / str(candidate.get("path") or "")
+    candidate = payload.get("candidate")
+    artifact = _candidate_path(session, run_id, candidate)
     if not artifact.is_file():
         raise RpcError("artifact_missing", "the bound candidate is gone",
-                       runId=run_id, path=candidate.get("path"))
+                       runId=run_id, path=artifact.name)
     actual_sha, actual_bytes = sha256_file(artifact)
     if actual_sha != candidate.get("sha256") or actual_bytes != candidate.get("bytes"):
         raise RpcError("candidate_hash_mismatch",

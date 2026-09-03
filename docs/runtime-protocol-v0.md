@@ -1568,6 +1568,14 @@ Every answer — source or candidate — now carries `subject: {kind, sha256,
 runId?}`. A caller that asked for a candidate and silently got the source would
 draw the wrong "before" and call it proof.
 
+The receipt's `bodySha256` is an integrity check, not authentication and not
+path authority. A candidate read accepts only the canonical
+`artifact<source suffix>` leaf that `plan/apply` can publish inside the named
+run directory. Absolute paths, traversal, alternate leaves, and malformed
+candidate descriptors refuse with pathless `path_escape` before any file is
+opened. The same `candidate_artifact` resolver is used by read, chaining,
+comparison, verification, render preparation, and module checks.
+
 This is what makes an undo *derivable*: the value a reversal must restore is
 read off the chain through the runtime's own reader, never out of client
 memory.

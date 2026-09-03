@@ -67,6 +67,14 @@ the session, and records the SHA-256. Every op reads one file and writes
 another. `tests/test_runtime_session.py` pins byte identity of the original
 across a full apply.
 
+**A receipt path is not filesystem authority.** `bodySha256` detects drift but
+is not authentication: a local writer can recompute it. Every candidate reader
+therefore accepts only the canonical leaf the Runtime itself publishes —
+`artifact<source suffix>` under that run directory — and refuses any absolute,
+traversal, alternate-leaf, or malformed candidate path as pathless
+`path_escape`. Receipt read, candidate chaining/comparison/verification,
+rendering, and module checks share that resolver.
+
 **One domain layer.** `rt_core` holds every operation; the front ends own only
 framing, arguments and envelopes. `tests/test_runtime_parity.py` measures that
 against a real corpus document: the same document and the same op proposed
