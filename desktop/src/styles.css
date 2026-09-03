@@ -2001,6 +2001,49 @@ body.dragging .drop {
   border-style: dashed;
 }
 
+/* A CARET TARGET: a paragraph line a person can stand in and retype.
+   Deliberately quieter than a seat, and in a different key. A seat is an empty
+   box inviting a value and gets a fill tint; a line already HAS its text, and
+   tinting the body of a form would repaint the page. So this is an I-beam
+   cursor and a hairline under the line on hover — the text-selection
+   vocabulary rather than the form-field one, because that is what it is.
+
+   Drawn as an affordance and not as a promise: whether a caret can be placed
+   depends on the paragraph holding exactly one run, and the runtime is asked
+   only at click time (§12.7). A line that refuses says so in the status bar. */
+.ov-caret {
+  cursor: text;
+}
+
+.ov-caret:hover,
+.ov-caret:focus-visible {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-bottom-color: var(--accent-line);
+}
+
+/* A line with no per-character boxes still takes a caret — at its front. The
+   dotted rule says the position INSIDE it is not measurable, before the click
+   rather than after it. */
+.ov-caret[data-has-offsets="false"]:hover {
+  border-bottom-style: dotted;
+}
+
+/* The field standing in a line. It sits over the text it replaces, at the size
+   the render drew that line at, so what is typed lands where the text is. */
+.ov-caret-input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 1px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--fg);
+  line-height: 1;
+}
+
+.ov-caret-input:focus { outline: none; }
+
 /* Mapped, but not a seat the editor will open. No affordance at all — it takes
    a click to find out what it is, and it says so rather than opening nothing. */
 .ov-inert { cursor: default; }
@@ -2845,4 +2888,81 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   .turn,
   .pack-detail { animation: none; }
   .turn .pulse { animation: none; opacity: 0.8; }
+}
+
+/* ── 기록, and the two states undo introduces ─────────────────────────────
+   The history panel is a list of provenance, so it is set in the same quiet
+   register as the queue rather than being given a chrome of its own: the only
+   thing that gets emphasis is the row the shell is standing on. */
+
+.history-rows {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.history-row {
+  border-left: 2px solid var(--line);
+  padding: var(--s1) 0 var(--s1) var(--s3);
+}
+
+/* The head is the one row that says what the document IS. A left rule in the
+   ok palette, not a fill: a filled row would read as "selected", and being the
+   head and being selected are different facts this panel keeps apart. */
+.history-row.head { border-left-color: var(--ok); }
+.history-row.selected { background: var(--bg-sunken); }
+
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex-wrap: wrap;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg);
+}
+
+.history-facts {
+  margin: 2px 0 0;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.history-detail {
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px dashed var(--line);
+}
+
+/* A region the candidate changed and this raster predates. Dashed, in the
+   warning palette, and deliberately NOT filled: a fill would read as content,
+   and there is no content here to show — only a statement that what is drawn
+   underneath is out of date. */
+.ov-stale {
+  outline: 1.5px dashed var(--warn);
+  outline-offset: 1px;
+  background: var(--warn-soft);
+}
+
+.ov-layer[data-stale] .ov-stale::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 5px,
+    var(--warn-soft) 5px 10px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-detail { animation: none; }
 }

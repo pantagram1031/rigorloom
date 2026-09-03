@@ -150,8 +150,21 @@ def _classify_foreign_kind(kind: str) -> str | None:
 
 
 def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
-               bound_sha256: str) -> OperationPlan:
-    """Create a plan. Refuses an unservable backend or op kind before anything else."""
+               bound_sha256: str, base: dict | None = None,
+               reverses: dict | None = None) -> OperationPlan:
+    """Create a plan. Refuses an unservable backend or op kind before anything else.
+
+    ``base`` is the published candidate these ops are chained onto, or ``None``
+    for the session source. ``bound_sha256`` is that subject's digest either
+    way, so a plan on a candidate binds the candidate's bytes and ``opsHash``
+    separates two identical edits made at different points in the chain — the
+    Phase 2 parity property survives unchanged because the subject is still one
+    digest.
+
+    ``reverses`` names the candidate this plan undoes, when it undoes one. The
+    runtime records the claim; it does not derive it. What makes the claim
+    checkable is ``candidate/compare`` after the apply, not this field.
+    """
     if backend not in SUPPORTED_BACKENDS:
         known = backend in KNOWN_BACKENDS
         raise RpcError(
@@ -216,6 +229,8 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         "sessionId": session_id,
         "backend": backend,
         "boundSha256": bound_sha256,
+        "base": dict(base) if base else None,
+        "reverses": dict(reverses) if reverses else None,
         "createdUtc": now_utc(),
         "proposer": proposer,
         "implVersion": IMPL_VERSION,

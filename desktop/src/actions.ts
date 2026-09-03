@@ -16,6 +16,7 @@ import {
   canRequestApproval,
   composerBlocker,
   getState,
+  headCandidate,
   locateSelection,
   patchTurn,
   providerConfigFields,
@@ -24,10 +25,13 @@ import {
   setSelection,
   setView,
   showToast,
+  queuedOpAt,
+  queuedRunOpAt,
   type Draft,
   type QueuedOp,
 } from "./store";
 import type {
+  AppliedCandidate,
   EditableRegion,
   Finding,
   GeometryAddress,
@@ -35,11 +39,13 @@ import type {
   GeometrySpan,
   InspectResult,
   OperationPlan,
+  PlanOp,
   PlanValidation,
   ProviderSettings,
   Recent,
   RegionText,
   RuntimeError,
+  TextRun,
   Turn,
   VerificationReport,
 } from "./types";
@@ -343,12 +349,11 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     showToast("이 칸은 값을 넣는 자리가 아닙니다", 1600);
     return false;
   }
-  const queued = state.draft.ops.find(
-    (op) => op.table === table && op.row === row && op.col === col,
-  );
+  const queued = queuedOpAt(state, table, row, col);
   setState({
     selection: { kind: "cell", table, row, col },
     inlineEdit: {
+      kind: "cell",
       table,
       row,
       col,
@@ -358,6 +363,138 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     },
   });
   return true;
+}
+
+/**
+ * Why a click on a mapped paragraph line could NOT put a caret in it.
+ *
+ * A closed set, because every one of these is a real answer the runtime gave
+ * and the status bar prints a different sentence for each. "Nothing happened"
+ * is the one outcome not allowed here: a person who clicks visibly mapped text
+ * and gets silence concludes the feature is broken, when the honest answer is
+ * that this paragraph has no single run to address.
+ */
+export type CaretRefusal = "no_address" | "multi_run" | "run_text_differs" | "no_inventory";
+
+const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
+  no_address: "이 줄에는 문단 주소가 없습니다",
+  multi_run:
+    "이 문단은 글 덩어리가 여럿입니다. 어느 덩어리를 고칠지 런타임이 고르지 않으므로 여기에는 커서를 놓지 않습니다",
+  run_text_differs:
+    "이 줄과 문단의 글 덩어리가 서로 다릅니다. 한 문단이 여러 줄로 접힌 자리라, 줄만 골라 고칠 방법이 없습니다",
+  no_inventory: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
+};
+
+export function caretRefusalText(reason: CaretRefusal): string {
+  return CARET_REFUSAL_TEXT[reason];
+}
+
+/**
+ * The mapping's own normalizer, as far as a shell can honestly go.
+ *
+ * `pipeline/scripts/check_residue.normalize_text` is Python and lives on the
+ * other side of the wire; it cannot be imported here. So this comparison is
+ * deliberately the WEAKEST one that is still safe — collapse whitespace runs,
+ * trim — which is a strict subset of what the gate does. A pair this rejects
+ * the gate would reject too. A pair this accepts the gate might have accepted
+ * for reasons of its own, and the consequence of that direction is only that a
+ * caret is refused where it could have been placed, which is the direction
+ * this application errs in on purpose.
+ */
+function looselySameText(a: string, b: string): boolean {
+  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Where in a line a click landed, from the runtime's own character boxes.
+ *
+ * `null` where the line carried none — the caller SNAPS to the start and says
+ * so. Nothing is interpolated from the line's width and its character count: a
+ * proportional face makes that wrong by a character or more mid-line, and
+ * being wrong about where the cursor is is the failure this feature exists to
+ * avoid. `fraction` is a fraction of the PAGE width, the same units `charX`
+ * and `rect` are in, so the caller never converts anything.
+ */
+export function caretOffsetAt(span: GeometrySpan, fraction: number): number | null {
+  const xs = span.charX;
+  if (!xs || xs.length < 2) return null;
+  // The nearest boundary, so clicking the right half of a character puts the
+  // caret after it — what every text editor does.
+  let best = 0;
+  let bestGap = Infinity;
+  for (let i = 0; i < xs.length; i += 1) {
+    const gap = Math.abs(xs[i] - fraction);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  return Math.min(best, span.text.length);
+}
+
+/**
+ * Put a caret in a paragraph line, or refuse and say which refusal it is.
+ *
+ * THE CHECK THIS SHELL MUST MAKE ITSELF (§12.7). There is no
+ * `replace_paragraph_text` operation and none was invented: what writes a
+ * paragraph line is `set_run`, which addresses `(atPara, run)` and preserves
+ * the run's charPrIDRef. A line is not a run. The two coincide only where the
+ * paragraph holds exactly one run whose text IS the line — and the RUNTIME is
+ * asked whether that holds, through `document/readRegion`, rather than this
+ * shell inferring it from the fact that the text matched.
+ *
+ * Measured on the corpus before it was written: of 365 uniquely-mapped
+ * paragraph lines across 51 real pages, 314 hold exactly one run and 51 do
+ * not. The 51 are refused here, by name, with no caret placed.
+ */
+export async function beginParagraphEdit(
+  span: GeometrySpan,
+  fraction?: number,
+): Promise<CaretRefusal | null> {
+  const sessionId = getState().activeSessionId;
+  const address = span.address;
+  if (!sessionId || !address || address.atPara == null) return "no_address";
+  const atPara = address.atPara;
+
+  let runs: TextRun[] = [];
+  try {
+    const answer = await rt.readRegion(sessionId, [{ atPara }]);
+    const region = answer.regions.find((r) => r.at_para === atPara);
+    runs = region?.runs ?? [];
+    if (region) {
+      // Kept beside the cell texts the tree loaded, so the toolbar over this
+      // caret can name the run's face (§14) without a second call.
+      const existing = getState().texts[sessionId] ?? [];
+      setState({
+        texts: {
+          ...getState().texts,
+          [sessionId]: [...existing.filter((r) => r.at_para !== atPara), region],
+        },
+      });
+    }
+  } catch {
+    return "no_inventory";
+  }
+  if (runs.length === 0) return "no_inventory";
+  if (runs.length > 1) return "multi_run";
+  const run = runs[0];
+  if (!looselySameText(run.text ?? "", span.text)) return "run_text_differs";
+
+  const queued = queuedRunOpAt(getState(), atPara, run.index);
+  setState({
+    selection: { kind: "paragraph", atPara },
+    inlineEdit: {
+      kind: "run",
+      atPara,
+      run: run.index,
+      before: queued?.before ?? run.text ?? "",
+      opId: queued?.opId ?? null,
+      caret: fraction === undefined ? null : caretOffsetAt(span, fraction),
+      spanIndex: span.index,
+      sizePt: span.sizePt,
+    },
+  });
+  return null;
 }
 
 export function cancelEdit(): void {
@@ -381,17 +518,34 @@ export async function commitEdit(value: string): Promise<void> {
     return;
   }
   const ops = getState().draft.ops.filter((op) => op.opId !== edit.opId);
-  const next: QueuedOp = {
-    opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
-    kind: "fill_cell",
-    table: edit.table,
-    row: edit.row,
-    col: edit.col,
-    text: trimmed,
-    charPr: edit.charPr,
-    before: edit.before,
-    origin: "user",
-  };
+  // ONE QUEUE, ONE PLAN PATH, TWO OP KINDS. A value typed into a seat and a
+  // sentence typed into a paragraph differ by exactly the operation kind the
+  // runtime's own registry names for each. Everything past this line —
+  // `setQueue`, `plan/propose`, `plan/validate`, the review queue, approval,
+  // apply, the receipt — is the same code for both, which is what makes the
+  // caret a new surface rather than a second mutation route.
+  const next: QueuedOp =
+    edit.kind === "cell"
+      ? {
+          opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+          kind: "fill_cell",
+          table: edit.table,
+          row: edit.row,
+          col: edit.col,
+          text: trimmed,
+          charPr: edit.charPr,
+          before: edit.before,
+          origin: "user",
+        }
+      : {
+          opId: edit.opId ?? `op-p${edit.atPara}r${edit.run}`,
+          kind: "set_run",
+          atPara: edit.atPara,
+          run: edit.run,
+          text: trimmed,
+          before: edit.before,
+          origin: "user",
+        };
   await setQueue([...ops, next]);
 }
 
@@ -415,7 +569,10 @@ export async function declareSuggestedCharPr(opId: string): Promise<void> {
   const sessionId = state.activeSessionId;
   const inspect = sessionId ? (state.inspects[sessionId] ?? null) : null;
   const ops = state.draft.ops.map((op) => {
-    if (op.opId !== opId) return op;
+    // T30 is a fill seat's preflight, and `set_run` preserves the run's own
+    // charPrIDRef rather than declaring one — so there is nothing here for a
+    // run op to declare, and it is left exactly as it is.
+    if (op.opId !== opId || op.kind !== "fill_cell") return op;
     const seat = seatAt(inspect, op.table, op.row, op.col);
     // The value is the engine's own `charpr_suggested`, never a shell guess.
     return seat?.charPrSuggested ? { ...op, charPr: seat.charPrSuggested } : op;
@@ -429,6 +586,48 @@ export async function removeOp(opId: string): Promise<void> {
     getState().draft.ops.filter((op) => op.opId !== opId),
     { rewritten },
   );
+}
+
+// --- undo, tier one: the queue (E1.4) ----------------------------------------
+//
+// AN EDIT IN THE QUEUE IS NOT IN ANY DOCUMENT. Nothing has been approved and
+// nothing has been applied, so taking the op out of the queue IS the undo:
+// exact, instant, and involving no runtime mutation at all. The only thing this
+// tier owes the user is honest labelling — it is 대기열에서 제거, never
+// 문서 되돌리기, because telling someone their document changed back when the
+// document never changed is the exact species of lie this application exists
+// not to tell.
+
+/** Take an op out of the queue and keep it, so 다시 하기 can put it back. */
+export async function undoQueuedOp(opId: string): Promise<boolean> {
+  const op = getState().draft.ops.find((x) => x.opId === opId);
+  if (!op) return false;
+  const rewritten = didRewriteAgent(opId);
+  setState({ redoStack: [...getState().redoStack, op] });
+  await setQueue(
+    getState().draft.ops.filter((x) => x.opId !== opId),
+    { rewritten },
+  );
+  showToast("대기열에서 뺐습니다. 문서는 처음부터 바뀐 적이 없습니다.", 2000);
+  return true;
+}
+
+/**
+ * Put the last removed op back — the same target, the same value.
+ *
+ * Exactness is the whole claim of this tier, so the op object itself is
+ * re-enqueued rather than rebuilt from fields: an op reconstructed from a
+ * remembered address and a remembered string would be a new edit that happened
+ * to look the same, and `before` would drift the first time it was wrong.
+ */
+export async function redoQueuedOp(): Promise<boolean> {
+  const stack = getState().redoStack;
+  const op = stack[stack.length - 1];
+  if (!op) return false;
+  setState({ redoStack: stack.slice(0, -1) });
+  const ops = getState().draft.ops.filter((x) => x.opId !== op.opId);
+  await setQueue([...ops, op]);
+  return true;
 }
 
 /** Was the op being changed one an agent proposed? */
@@ -460,11 +659,22 @@ export async function clearQueue(): Promise<void> {
  */
 async function setQueue(
   ops: QueuedOp[],
-  options: { rewritten?: boolean } = {},
+  options: { rewritten?: boolean; baseRunId?: string | null; reverses?: string | null } = {},
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
   const rewritten = state.draft.rewrittenFromAgent || options.rewritten === true;
+  // THE CHAIN. A queue built while a candidate exists chains onto it, so a
+  // second edit lands on top of the first rather than beside it — before
+  // lineage existed the second candidate silently did not contain the first
+  // edit. The head is a shell decision (the runtime keeps no head, §15.7) and
+  // it is shown in 기록; an explicit option wins over it, which is how a
+  // 되돌리기 제안 names the exact candidate it is chaining onto.
+  const baseRunId =
+    options.baseRunId !== undefined
+      ? options.baseRunId
+      : (state.draft.baseRunId ?? headCandidate(state)?.runId ?? null);
+  const reverses = options.reverses !== undefined ? options.reverses : state.draft.reverses;
 
   setState({
     approval: null,
@@ -486,21 +696,39 @@ async function setQueue(
       phase: "starting",
       error: null,
       rewrittenFromAgent: rewritten,
+      baseRunId,
+      reverses,
     },
   });
 
   try {
     const plan = await rt.proposePlan(
       sessionId,
-      ops.map((op) => ({
-        opId: op.opId,
-        kind: op.kind,
-        table: op.table,
-        row: op.row,
-        col: op.col,
-        text: op.text,
-        ...(op.charPr ? { charPr: op.charPr } : {}),
-      })),
+      // Each kind carries exactly the fields its own op declares and no
+      // others: `plan/propose` refuses an op that carries a field its kind
+      // does not define (`unknown_field`, rt_plan.py:196), which is the check
+      // that would catch a shell sending a cell's triple with a run's address.
+      ops.map((op) =>
+        op.kind === "fill_cell"
+          ? {
+              opId: op.opId,
+              kind: op.kind,
+              table: op.table,
+              row: op.row,
+              col: op.col,
+              text: op.text,
+              ...(op.charPr ? { charPr: op.charPr } : {}),
+              ...(op.overwrite ? { overwrite: true } : {}),
+            }
+          : {
+              opId: op.opId,
+              kind: op.kind,
+              atPara: op.atPara,
+              run: op.run,
+              text: op.text,
+            },
+      ),
+      { baseRunId, reverses },
     );
     const validation = await rt.validatePlan(plan.planId);
     setState({
@@ -513,6 +741,8 @@ async function setQueue(
         phase: "ready",
         error: null,
         rewrittenFromAgent: rewritten,
+        baseRunId,
+        reverses,
       },
     });
   } catch (e) {
@@ -529,6 +759,8 @@ async function setQueue(
         phase: "failed",
         error: rt.asRuntimeError(e),
         rewrittenFromAgent: rewritten,
+        baseRunId,
+        reverses,
       },
     });
   }
@@ -539,6 +771,246 @@ export async function reproposeDraft(): Promise<void> {
   const ops = getState().draft.ops;
   if (ops.length === 0) return;
   await setQueue(ops);
+}
+
+// --- undo, tier two: an applied candidate (E1.4) -----------------------------
+//
+// AN APPLIED CANDIDATE IS IMMUTABLE AND RECEIPTED, so undoing one cannot mean
+// changing it and must not mean deleting it. It means proposing the INVERSE as
+// a new plan, chained onto the current head, which then travels the same review
+// → approve → apply path as anything else and produces one more candidate with
+// one more receipt. History only ever grows.
+//
+// Three rules this function keeps, and each one is a way a shortcut would lie:
+//
+// 1. **The previous value is READ, never remembered.** It comes from
+//    `document/readRegion` against the candidate the edit was made ON — the
+//    parent named in the receipt, or the source at the root of the chain. A
+//    `before` string the queue happened to still hold would be a client's
+//    memory of the document, and the whole point is that it is the document.
+// 2. **What cannot be inverted is refused by name.** `fill_cell` and `set_run`
+//    are invertible because their previous value is readable. Nothing else is,
+//    and a plan carrying one is not offered a 되돌리기 제안 at all.
+// 3. **It is a PROPOSAL.** It lands in the queue, is labelled 되돌리기 제안,
+//    and a person approves it exactly as they approved the edit. Nothing here
+//    writes.
+
+/** Op kinds this shell can build an inverse for, and why only these. */
+const INVERTIBLE_KINDS = new Set(["fill_cell", "set_run"]);
+
+/** The address an op targets, in the shape `readRegion` takes. */
+function opAddress(op: PlanOp): Record<string, number> | null {
+  const p = op.params;
+  if (op.kind === "fill_cell") {
+    return {
+      table: Number(p.table ?? 0),
+      row: Number(p.row),
+      col: Number(p.col),
+    };
+  }
+  if (op.kind === "set_run") return { atPara: Number(p.atPara) };
+  return null;
+}
+
+/**
+ * Propose the inverse of an applied candidate. Reads the chain; writes nothing.
+ *
+ * Returns the number of ops queued, or throws nothing — the refusal lands in
+ * `undoError` where the panel can print it, because "this cannot be undone" is
+ * an answer a person needs to see rather than a silent dead button.
+ */
+export async function proposeUndoOf(runId: string): Promise<number> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return 0;
+  setState({ undoPhase: "starting", undoError: null });
+  try {
+    const receipt = state.receipts[runId] ?? (await rt.readReceipt(sessionId, runId));
+    const plan = await rt.getPlan(receipt.planId);
+
+    const uninvertible = plan.ops.filter((op) => !INVERTIBLE_KINDS.has(op.kind));
+    if (uninvertible.length > 0) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "not_invertible",
+          message:
+            `이 후보본에는 되돌릴 방법이 없는 작업이 있습니다: ` +
+            `${uninvertible.map((op) => op.kind).join(", ")}. ` +
+            `되돌리기는 이전 값을 읽어올 수 있는 작업(fill_cell, set_run)에만 만들 수 있습니다.`,
+          data: { kinds: uninvertible.map((op) => op.kind) },
+        },
+      });
+      return 0;
+    }
+
+    // The document this candidate was made FROM. `base` is null at the root of
+    // the chain, and then the previous value is the session source's.
+    const parentRunId = receipt.base?.runId ?? null;
+    const addresses = plan.ops
+      .map((op) => ({ op, address: opAddress(op) }))
+      .filter((row): row is { op: PlanOp; address: Record<string, number> } =>
+        row.address !== null,
+      );
+    if (addresses.length === 0) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "not_invertible",
+          message: "이 계획의 작업들이 주소를 갖고 있지 않아 이전 값을 읽을 수 없습니다.",
+        },
+      });
+      return 0;
+    }
+
+    const answer = await rt.readRegion(
+      sessionId,
+      addresses.map((row) => row.address),
+      parentRunId,
+    );
+
+    const ops: QueuedOp[] = [];
+    for (const { op, address } of addresses) {
+      const previous = regionTextAt(answer.regions, address);
+      if (previous === null) {
+        // The runtime did not return this address in the parent. That is not
+        // an empty string and it must not be filled in as one: the inverse
+        // would then WRITE a blank over something unknown.
+        setState({
+          undoPhase: "failed",
+          undoError: {
+            code: "previous_value_unreadable",
+            message:
+              "되돌릴 이전 값을 런타임이 돌려주지 못한 자리가 있습니다. " +
+              "빈 값으로 짐작해서 덮어쓰지 않습니다.",
+            data: { address, subject: answer.subject },
+          },
+        });
+        return 0;
+      }
+      ops.push(
+        op.kind === "fill_cell"
+          ? {
+              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+              kind: "fill_cell",
+              table: Number(op.params.table ?? 0),
+              row: Number(op.params.row),
+              col: Number(op.params.col),
+              text: previous,
+              // The seat is not empty any more — the edit filled it — so the
+              // inverse has to say so. Without this preedit refuses to write
+              // into an occupied cell, which is the correct default and the
+              // wrong one here.
+              overwrite: true,
+              before: String(op.params.text ?? ""),
+              origin: "user",
+            }
+          : {
+              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+              kind: "set_run",
+              atPara: Number(op.params.atPara),
+              run: Number(op.params.run),
+              text: previous,
+              before: String(op.params.text ?? ""),
+              origin: "user",
+            },
+      );
+    }
+
+    // Chained onto the HEAD, not onto the candidate being reversed: undoing an
+    // older edit must not throw away the newer ones on top of it.
+    await setQueue(ops, {
+      baseRunId: headCandidate(getState())?.runId ?? null,
+      reverses: runId,
+    });
+    setState({ undoPhase: "ready", undoError: null, inverseProof: null });
+    showToast("되돌리기를 제안했습니다. 승인해야 후보본이 하나 더 생깁니다.", 2600);
+    return ops.length;
+  } catch (e) {
+    setState({ undoPhase: "failed", undoError: rt.asRuntimeError(e) });
+    return 0;
+  }
+}
+
+/** The text the runtime returned for one address, or null if it returned none. */
+function regionTextAt(
+  regions: RegionText[],
+  address: Record<string, number>,
+): string | null {
+  const match =
+    address.atPara !== undefined
+      ? regions.find((r) => r.at_para === address.atPara)
+      : regions.find(
+          (r) =>
+            (r.table ?? 0) === address.table &&
+            r.addr?.row === address.row &&
+            r.addr?.col === address.col,
+        );
+  return match?.text ?? null;
+}
+
+/**
+ * Ask the runtime whether the reversal that was just applied IS the inverse.
+ *
+ * Not computed here on purpose. `candidate/compare` re-reads both documents
+ * from bytes their receipts re-verified, at the addresses the reversal
+ * touched, and reports equality; a shell comparing two strings it had already
+ * fetched would be comparing its own memory and calling it proof.
+ */
+export async function verifyReversal(
+  runId: string,
+  reversedRunId: string,
+): Promise<boolean> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return false;
+  try {
+    const receipt =
+      getState().receipts[reversedRunId] ??
+      (await rt.readReceipt(sessionId, reversedRunId));
+    const reversedPlan = await rt.getPlan(receipt.planId);
+    const regions = reversedPlan.ops
+      .map(opAddress)
+      .filter((a): a is Record<string, number> => a !== null);
+    // Compare against the document the reversed edit was made FROM: that is
+    // the state the undo claims to have restored.
+    const against = receipt.base?.runId
+      ? ({ runId: receipt.base.runId } as const)
+      : ({ source: true } as const);
+    const compare = await rt.compareCandidate(sessionId, runId, against, regions);
+    setState({ inverseProof: { runId, reversedRunId, compare } });
+    return compare.regionsEqual === true;
+  } catch (e) {
+    setState({ undoError: rt.asRuntimeError(e) });
+    return false;
+  }
+}
+
+/** Show an older candidate in the 기록 panel. Read-only; never moves the head. */
+export function selectHistory(runId: string | null): void {
+  setState({ historySelected: runId });
+  if (runId && !getState().receipts[runId]) void loadReceipt(runId);
+}
+
+/**
+ * Make a candidate the one the shell stands on.
+ *
+ * Explicit, because the runtime has no head and a silent one would be the
+ * shell deciding what the file IS without saying so. Moving it re-bases a
+ * pending queue, which is why it re-proposes rather than leaving a plan bound
+ * to bytes the user has just navigated away from.
+ */
+export async function setHead(runId: string | null): Promise<void> {
+  setState({ head: runId, applied: null });
+  if (runId) {
+    await loadReceipt(runId);
+    const receipt = getState().receipts[runId];
+    if (receipt) {
+      setState({ candidateVerdict: { runId, report: receipt.checks } });
+    }
+  }
+  if (getState().draft.ops.length > 0) {
+    await setQueue(getState().draft.ops, { baseRunId: runId });
+  }
 }
 
 // --- approval ------------------------------------------------------------------
@@ -601,6 +1073,7 @@ export async function applyApproved(): Promise<void> {
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   if (!plan || !approval || !sessionId) return;
+  const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
   try {
     const applied = await rt.applyPlan(plan.planId, approval.approvalId, APPLY_TAG);
@@ -611,11 +1084,24 @@ export async function applyApproved(): Promise<void> {
       // invite a second apply of an already-applied plan, which the runtime
       // would refuse anyway (`approval_already_resolved`).
       draft: EMPTY_DRAFT,
+      // The redo stack belonged to that queue. Offering to re-enqueue an op
+      // that is now inside a published candidate would put the same edit in
+      // twice, so it goes with the queue it came from.
+      redoStack: [],
       approvalPhase: "idle",
       approval: null,
       candidateVerdict: { runId: applied.runId, report: applied.checks },
+      // The new candidate is what the document now is, so the next edit chains
+      // onto it. Explicit rather than implicit; the 기록 panel shows it.
+      head: applied.runId,
+      historySelected: applied.runId,
+      inverseProof: null,
     });
     await loadCandidates(sessionId);
+    // A reversal is not finished when it is applied — it is finished when the
+    // runtime says the value came back. Asked here, straight after, so the
+    // claim and its proof arrive together rather than the claim standing alone.
+    if (reversed) await verifyReversal(applied.runId, reversed);
     showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
   } catch (e) {
     const error = rt.asRuntimeError(e);
@@ -703,6 +1189,37 @@ export function openReceipt(runId: string | null): void {
 // --- export -----------------------------------------------------------------------
 
 /**
+ * An `AppliedCandidate`-shaped record for a run this session did not apply.
+ *
+ * Built from the RECEIPT, which is the verifying read: `receipt/read` re-hashes
+ * the artifact against its binding before it returns, so exporting an older
+ * candidate from the 기록 panel goes through the same check as exporting the
+ * one just made. Null when the receipt refuses — and a refusal to export is
+ * the right outcome for bytes that drifted.
+ */
+async function candidateRefFor(
+  sessionId: string,
+  runId: string | null,
+): Promise<AppliedCandidate | null> {
+  if (!runId) return null;
+  const held = getState().receipts[runId];
+  const receipt = held ?? (await rt.readReceipt(sessionId, runId).catch(() => null));
+  if (!receipt) return null;
+  if (!held) setState({ receipts: { ...getState().receipts, [runId]: receipt } });
+  return {
+    runId,
+    sessionId,
+    planId: receipt.planId,
+    candidate: receipt.candidate,
+    base: receipt.base,
+    reverses: receipt.reverses,
+    checks: receipt.checks,
+    receipt: `${runId}/receipt.json`,
+    canonical: true,
+  };
+}
+
+/**
  * Save the candidate and its receipt where the user chooses.
  *
  * `artifact/exportTo` is GAP (§11.5), so the copy is the shell's own work,
@@ -711,11 +1228,27 @@ export function openReceipt(runId: string | null): void {
  * with no account of where it came from, which is the thing this program
  * exists not to produce.
  */
-export async function exportApplied(destination?: string): Promise<boolean> {
+export async function exportApplied(
+  destination?: string,
+  runId?: string,
+): Promise<boolean> {
   const state = getState();
   const sessionId = state.activeSessionId;
-  const applied = state.applied;
-  if (!sessionId || !applied) return false;
+  // WHICH CANDIDATE LEAVES IS ALWAYS NAMED. `runId` is the 기록 panel's
+  // explicit choice; otherwise it is the one this session just applied, and
+  // otherwise the head. History does not silently decide what gets written to
+  // the operator's disk — the receipt that travels says which run it is.
+  const chosen =
+    runId ??
+    state.applied?.runId ??
+    headCandidate(state)?.runId ??
+    null;
+  if (!sessionId || !chosen) return false;
+  const applied =
+    state.applied && state.applied.runId === chosen
+      ? state.applied
+      : await candidateRefFor(sessionId, chosen);
+  if (!applied) return false;
 
   let target = destination;
   if (!target) {
@@ -798,14 +1331,22 @@ const RENDER_DPI = 110;
  * image for this document" is an answer the UI has to draw, and the reason
  * comes from a closed set. So the unavailable state is stored, not thrown.
  */
-export async function renderCurrentPage(page?: number): Promise<void> {
+export async function renderCurrentPage(
+  page?: number,
+  runId?: string | null,
+): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return;
   const wanted = (page ?? state.page) - 1;
   setState({ renderPhase: "starting", renderError: null });
   try {
-    const render = await rt.renderPage(sessionId, Math.max(0, wanted), RENDER_DPI);
+    const render = await rt.renderPage(
+      sessionId,
+      Math.max(0, wanted),
+      RENDER_DPI,
+      runId ?? null,
+    );
     setState({ render, renderPhase: "ready", page: Math.max(0, wanted) + 1 });
   } catch (e) {
     setState({ renderPhase: "failed", renderError: rt.asRuntimeError(e) });
@@ -889,6 +1430,21 @@ export async function loadGeometry(page?: number): Promise<void> {
   })();
   geometryInFlight.set(key, call);
   return call;
+}
+
+/**
+ * Could this address hold a caret? A SHAPE check, and deliberately only that.
+ *
+ * True for a paragraph address carrying an `atPara`, which is the only thing
+ * `set_run` can address. It is NOT a promise that the caret will be placed:
+ * whether the paragraph holds exactly one run is a question only
+ * `document/readRegion` can answer, and `beginParagraphEdit` asks it at click
+ * time rather than this function guessing. The distinction matters because 51
+ * of the corpus's 365 mapped paragraph lines look exactly like the 314 that
+ * work, right up until the runtime answers.
+ */
+export function addressIsCaretTarget(address: GeometryAddress | null | undefined): boolean {
+  return !!address && address.kind === "anchor" && address.atPara != null;
 }
 
 /** Is this address a seat the editor will actually open? Runtime's answer. */
@@ -979,8 +1535,23 @@ export function derivationLabel(derivation: string): string {
   }
 }
 
-/** A click on a mapped line of text. */
-export function clickOverlaySpan(span: GeometrySpan): void {
+/**
+ * A click on a mapped line of text. Five honest outcomes, and never a sixth.
+ *
+ * Ambiguous asks. A mapped CELL opens the seat editor, as it always did. A
+ * mapped PARAGRAPH is the new one: it asks the runtime for the line's run
+ * inventory and either puts a caret in the line or names the reason it cannot
+ * (§12.7). Anything else says it is not a place to type.
+ *
+ * `fraction` is where along the page width the pointer landed. It is passed
+ * straight to `charX` — no scaling, no assumption about zoom — and where the
+ * line carries no character boxes, `caret` comes back null and the status bar
+ * says the click snapped to the front of the line.
+ */
+export async function clickOverlaySpan(
+  span: GeometrySpan,
+  fraction?: number,
+): Promise<void> {
   const id = `span-${span.index}`;
   if (span.confidence === "ambiguous") {
     // T41, surfaced. `engine/scripts/preedit.py:221`: one unscoped key
@@ -1001,6 +1572,46 @@ export function clickOverlaySpan(span: GeometrySpan): void {
   }
   const address = span.address;
   if (!address) return; // unmapped: not clickable, and nothing to say
+
+  // A PARAGRAPH LINE. The caret path, and the runtime decides whether there is
+  // one — this shell asks and prints the answer, whichever way it comes back.
+  if (addressIsCaretTarget(address)) {
+    const refusal = await beginParagraphEdit(span, fraction);
+    if (refusal) {
+      setState({
+        overlayPick: {
+          kind: "no_caret",
+          targetId: id,
+          address,
+          refusal,
+          label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+        },
+      });
+      setSelection({ kind: "paragraph", atPara: address.atPara! });
+      return;
+    }
+    const edit = getState().inlineEdit;
+    const snapped = edit?.kind === "run" && edit.caret === null;
+    setState({
+      overlayPick: {
+        kind: "caret",
+        targetId: id,
+        address,
+        // The offset is stated, and so is its absence. "커서를 줄 앞에 놓음"
+        // is not a nicety: it is the difference between a measured position
+        // and a fallback, and a user who is not told cannot know which they
+        // are looking at.
+        caret: edit?.kind === "run" ? edit.caret : null,
+        label:
+          `${addressLabel(address)}` +
+          (snapped
+            ? " · 글자별 위치가 없어 줄 앞에 커서를 놓음"
+            : ` · ${(edit?.kind === "run" ? edit.caret : 0) ?? 0}번째 글자 앞`),
+      },
+    });
+    return;
+  }
+
   if (!addressIsEditable(address)) {
     setState({
       overlayPick: {
@@ -1029,8 +1640,48 @@ export function clickOverlaySpan(span: GeometrySpan): void {
  * seat, exactly as a direct click on an unambiguous one would, and the value
  * still has to be typed and still has to be approved.
  */
-export function chooseCandidate(address: GeometryAddress): void {
+export async function chooseCandidate(address: GeometryAddress): Promise<void> {
   const pick = getState().overlayPick;
+
+  // A PARAGRAPH CANDIDATE IS A CARET, NOT A DEAD END. §12.4: a form label is
+  // routinely registered twice in the target set, once as an `anchor_record`
+  // and once as the table cell it sits in — so an ambiguous span's candidate
+  // list very often holds exactly one anchor and one cell. Before the caret
+  // existed, choosing the anchor half correctly said 값을 넣는 자리가
+  // 아닙니다; it is now the wrong sentence, because a paragraph IS somewhere a
+  // person types.
+  //
+  // The caret goes to the START of the line here, and says so, because a
+  // choice made from a list carried no pointer position to resolve an offset
+  // from. That is the same honest `caret: null` a line with no character boxes
+  // gets — a fallback, labelled as one.
+  if (addressIsCaretTarget(address)) {
+    const span = (getState().geometry?.spans ?? []).find(
+      (s) => `span-${s.index}` === pick?.targetId,
+    );
+    const refusal = span
+      ? await beginParagraphEdit({ ...span, address, confidence: "unique" })
+      : "no_address";
+    setState({
+      overlayPick: refusal
+        ? {
+            kind: "no_caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            refusal,
+            label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+          }
+        : {
+            kind: "caret",
+            targetId: pick?.targetId ?? "candidate",
+            address,
+            caret: null,
+            label: `${addressLabel(address)} — 사용자가 고름 · 줄 앞에 커서를 놓음`,
+          },
+    });
+    return;
+  }
+
   if (!addressIsEditable(address)) {
     setState({
       overlayPick: {
@@ -1067,22 +1718,141 @@ export function dismissOverlayPick(): void {
  * ran and did not produce a PDF, which is what a broken COM registration looks
  * like from here).
  */
-export async function preparePages(): Promise<void> {
+export async function preparePages(runId?: string | null): Promise<void> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return;
   setState({ preparePhase: "starting", prepareError: null, prepareNote: null });
   try {
-    const result = await rt.renderPrepare(sessionId);
+    const result = await rt.renderPrepare(sessionId, runId ?? null);
     setState({
       preparePhase: "ready",
       prepareNote: result.prepared
-        ? `PDF를 만들었습니다 · ${result.pdf?.sha256.slice(0, 12)}`
+        ? `${runId ? "후보본" : "원본"} PDF를 만들었습니다 · ${result.pdf?.sha256.slice(0, 12)}`
         : (result.reason ?? "이미 준비되어 있습니다"),
     });
-    await renderCurrentPage(1);
+    await renderCurrentPage(1, runId ?? null);
   } catch (e) {
     setState({ preparePhase: "failed", prepareError: rt.asRuntimeError(e) });
   }
+}
+
+/**
+ * E1.2, honestly: is the page on screen the document as it now stands?
+ *
+ * After an apply the raster is still the SOURCE's — a candidate has no raster
+ * until somebody converts it, and on a machine without a reachable Hancom
+ * nobody can. So the answer is a STATE, not a redraw: the page says
+ * 후보본과 다름, marks the regions the runtime says changed, and offers
+ * 다시 그리기, which asks the runtime and shows whatever it answers.
+ *
+ * What this deliberately does NOT do is draw the edited text onto the raster.
+ * That would be this shell inventing a layout and presenting it as the
+ * renderer's — the same rule the overlay keeps (§12.2), and the reason a
+ * refusal is on screen instead of a picture.
+ */
+export interface LayoutEcho {
+  /** The candidate the page ought to be showing. */
+  runId: string;
+  /** What the raster actually came from. */
+  rendered: { kind: string; runId?: string; sha256?: string };
+  /** Addresses the candidate's plan touched, as overlay-comparable keys. */
+  changed: string[];
+}
+
+/** One shared empty value, for the same `Object.is` reason `NO_CANDIDATES` is. */
+const NO_ECHO: LayoutEcho | null = null;
+let echoCache: LayoutEcho | null = NO_ECHO;
+
+/**
+ * The empty address list, shared.
+ *
+ * `changedByRun` holds no entry until `loadChangedAddresses` has walked the
+ * chain, and that window is exactly the moment after an apply — so this
+ * default is taken on the renders that matter most. A fresh `[]` there fails
+ * the identity check below, rebuilds the echo on every call, and turns
+ * `useSyncExternalStore` into the unbounded render loop React reports as
+ * #185. The comment on `layoutEcho` said so; the `?? []` did it anyway.
+ */
+const NO_CHANGES: string[] = [];
+
+/**
+ * The echo state, or null when the page IS the document on screen.
+ *
+ * Returns a stable reference while nothing changes: this is read through
+ * `useWorkspace`, which compares snapshots with `Object.is`, and a fresh
+ * object every call is the render loop that took the whole root down once
+ * already (see `draftStaleness`).
+ */
+export function layoutEcho(s: ReturnType<typeof getState>): LayoutEcho | null {
+  const head = headCandidate(s);
+  if (!head?.runId || !s.render?.available) return (echoCache = null);
+  const rendered = s.render.source ?? { kind: "unknown" };
+  // The raster already IS this candidate's. Nothing to say.
+  if (rendered.runId === head.runId) return (echoCache = null);
+  const changed = s.changedByRun[head.runId] ?? NO_CHANGES;
+  const cached = echoCache;
+  if (
+    cached &&
+    cached.runId === head.runId &&
+    cached.rendered.kind === rendered.kind &&
+    cached.rendered.runId === rendered.runId &&
+    cached.changed === changed
+  ) {
+    return cached;
+  }
+  echoCache = { runId: head.runId, rendered, changed };
+  return echoCache;
+}
+
+/**
+ * Read the plans behind a candidate's chain and record which addresses changed.
+ *
+ * The keys come from the RECEIPTS' own plans — the ops that actually ran —
+ * walked back up the `base` links, so a chain of three edits marks all three.
+ * Nothing here is inferred from the page.
+ *
+ * The result goes into the STORE and not into a module memo, and that is a
+ * defect this was written around rather than a preference: the echo renders
+ * through `useWorkspace`, the last store write in this walk is the receipt
+ * read, and a cache filled after it would never reach a render. An ancestor
+ * whose plan the runtime cannot hand back stops the walk, and the page then
+ * says the list is unread rather than marking a shorter one and looking
+ * complete.
+ */
+export async function loadChangedAddresses(runId: string): Promise<number> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return 0;
+  if (getState().changedByRun[runId]) return getState().changedByRun[runId].length;
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = runId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const current: string = cursor;
+    const receipt = getState().receipts[current] ?? (await loadReceiptQuiet(current));
+    if (!receipt) break;
+    let plan: OperationPlan;
+    try {
+      plan = await rt.getPlan(receipt.planId);
+    } catch {
+      break;
+    }
+    for (const op of plan.ops) {
+      const key =
+        op.kind === "set_run"
+          ? `p:${Number(op.params.atPara)}`
+          : `c:${Number(op.params.table ?? 0)}:${Number(op.params.row)}:${Number(op.params.col)}`;
+      if (!keys.includes(key)) keys.push(key);
+    }
+    cursor = receipt.base?.runId ?? null;
+  }
+  setState({ changedByRun: { ...getState().changedByRun, [runId]: keys } });
+  return keys.length;
+}
+
+async function loadReceiptQuiet(runId: string) {
+  const ok = await loadReceipt(runId);
+  return ok ? getState().receipts[runId] : null;
 }
 
 // --- events -------------------------------------------------------------------------
@@ -1787,6 +2557,12 @@ async function adoptAgentPlan(
     phase: "ready",
     error: null,
     rewrittenFromAgent: false,
+    // The runtime's own copy of the plan is authoritative about its lineage
+    // too: whether the agent chained onto a candidate is the agent's decision
+    // to have made, and the queue reflects what the plan actually says rather
+    // than re-deriving it from this shell's head.
+    baseRunId: authoritative.base?.runId ?? null,
+    reverses: authoritative.reverses?.runId ?? null,
   };
   setState({
     draft,

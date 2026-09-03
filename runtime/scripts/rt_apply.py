@@ -18,6 +18,24 @@ Three properties this module owes the rest of the system:
    carries ``unavailable`` as a first-class state and ``acceptance`` is false
    whenever a required check did not run — the rule ``visual_verify`` states at
    pipeline/scripts/visual_verify.py:42-47 ("acceptance is not nothing failed").
+
+E1.4 ADDS A FOURTH, AND IT CLOSES A REAL DEFECT.
+
+Until this slice every apply started from ``session.source``, so two applies in
+a row produced two SIBLINGS of the source rather than a chain: the second
+candidate silently did not contain the first edit, and exporting it lost work
+the user had already approved. There was no lineage to walk and therefore
+nothing an undo could be the inverse OF.
+
+4. **A candidate names its parent.** A plan may declare a ``base`` — a
+   published candidate of the same session — and then the ops are chained onto
+   THAT artifact and the receipt records ``base: {runId, sha256}``. A plan with
+   no base still starts from the source and records ``base: null``, which is
+   the root of the chain. A plan may additionally declare ``reverses``, the
+   candidate whose effect it undoes; that too lands in the receipt, so "which
+   candidate reverses which" is a runtime fact rather than something a client
+   remembered. Nothing is ever deleted or rewritten: history is append-only and
+   an undo is one more candidate.
 """
 from __future__ import annotations
 
@@ -146,13 +164,39 @@ def verification_report(tools, source_profile: Path, candidate: Path) -> dict:
     }
 
 
+def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
+    """(path, receipt) for a published candidate, verified before it is handed out.
+
+    Every caller that wants to READ a candidate — profile it, chain onto it,
+    compare it — goes through here rather than composing a path, because
+    ``read_receipt`` re-hashes the artifact against its binding and refuses on
+    drift. A path built by hand would skip that check silently.
+    """
+    receipt = read_receipt(session, run_id)
+    path = session.candidates_dir / run_id / str(receipt["candidate"]["path"])
+    return path, receipt
+
+
 def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
-    """Run the plan, publish the candidate, return the CandidateArtifact."""
+    """Run the plan, publish the candidate, return the CandidateArtifact.
+
+    The first step reads the plan's BASE — a published candidate when the plan
+    declared one, the session source otherwise — and every later step chains
+    through ``work/``. The source is never an output either way.
+    """
     ops = plan.payload["ops"]
+    base = plan.payload.get("base") or None
     run_id = uuid.uuid4().hex
     run_dir = session.candidates_dir / run_id
     work_dir = session.work_dir / run_id
     suffix = session.source.suffix or ".bin"
+
+    if base is None:
+        origin = session.source
+    else:
+        # Re-verified here even though plan/propose already read it: an apply
+        # may happen long after the proposal, and the check costs one hash.
+        origin, _ = candidate_artifact(session, str(base["runId"]))
 
     def tick():
         if checkpoint is not None:
@@ -166,7 +210,7 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
                        detail=str(exc)) from exc
 
     steps: list[dict] = []
-    current = session.source
+    current = origin
     try:
         for index, op in enumerate(ops):
             tick()
@@ -219,6 +263,15 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
                 "sha256": candidate_sha,
                 "bytes": candidate_bytes,
             },
+            # THE LINEAGE. `null` is the root of the chain — this candidate was
+            # built from the session source — and anything else names the exact
+            # candidate its ops were chained onto.
+            "base": dict(base) if base else None,
+            # Which candidate this one undoes, when the plan declared one. Never
+            # inferred from the ops: a client says what it is reversing and the
+            # runtime records the claim beside the bytes that back it.
+            "reverses": (dict(plan.payload["reverses"])
+                         if plan.payload.get("reverses") else None),
             "approval": approval.public(),
             "steps": steps,
             "checks": checks,
@@ -240,6 +293,8 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
         "sessionId": session.id,
         "planId": plan.id,
         "candidate": receipt["candidate"],
+        "base": receipt["base"],
+        "reverses": receipt["reverses"],
         "checks": checks,
         "receipt": f"{run_id}/{RECEIPT_NAME}",
         "canonical": True,
@@ -247,17 +302,47 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
 
 
 def list_candidates(session) -> list[dict]:
-    """Only runs whose receipt landed. A bare artifact is not a candidate."""
+    """Only runs whose receipt landed. A bare artifact is not a candidate.
+
+    Each row carries the lineage fields — ``base``, ``reverses``, the candidate
+    digest and the creation stamp — read out of the receipt on disk, so a
+    history view is one call rather than one call per candidate. This read does
+    NOT re-hash the artifact: that is ``receipt/read``'s job and its refusal
+    (``candidate_hash_mismatch``) is the one that matters, so ``verified:
+    false`` is stated on every row rather than implied. Ordered by
+    ``createdUtc``, with the run id breaking ties, because a directory listing
+    is alphabetical by a random hex id and that is not history.
+    """
     rows = []
     if not session.candidates_dir.is_dir():
         return rows
     for run_dir in sorted(session.candidates_dir.iterdir()):
         if not run_dir.is_dir():
             continue
-        if not (run_dir / RECEIPT_NAME).is_file():
+        receipt_path = run_dir / RECEIPT_NAME
+        if not receipt_path.is_file():
             continue
-        rows.append({"runId": run_dir.name,
-                     "receipt": f"{run_dir.name}/{RECEIPT_NAME}"})
+        row = {"runId": run_dir.name,
+               "receipt": f"{run_dir.name}/{RECEIPT_NAME}",
+               "verified": False}
+        try:
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None
+        if isinstance(payload, dict):
+            candidate = payload.get("candidate") or {}
+            row.update({
+                "sha256": candidate.get("sha256"),
+                "bytes": candidate.get("bytes"),
+                "createdUtc": payload.get("createdUtc"),
+                "planId": payload.get("planId"),
+                "base": payload.get("base"),
+                "reverses": payload.get("reverses"),
+                "acceptance": (payload.get("checks") or {}).get("acceptance"),
+                "opKinds": [step.get("kind") for step in payload.get("steps") or []],
+            })
+        rows.append(row)
+    rows.sort(key=lambda row: (str(row.get("createdUtc") or ""), row["runId"]))
     return rows
 
 

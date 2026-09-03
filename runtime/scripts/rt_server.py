@@ -129,6 +129,7 @@ class RuntimeServer:
             "approval/request": self._m_approval_request,
             "approval/get": self._m_approval_get,
             "candidate/list": self._m_candidate_list,
+            "candidate/compare": self._m_candidate_compare,
             "receipt/read": self._m_receipt_read,
             "document/render": self._m_document_render,
             "document/pageGeometry": self._m_document_page_geometry,
@@ -395,30 +396,41 @@ class RuntimeServer:
             raise RpcError("invalid_params", "include must be an array")
         return self.core.document_inspect(params["sessionId"], include)
 
+    def _normalised_regions(self, regions):
+        if not isinstance(regions, list):
+            return regions
+        return [
+            _object(entry, {"table", "row", "col", "atPara"},
+                    where=f"regions[{index}]",
+                    policy=self.unknown_field_policy)
+            if isinstance(entry, dict) else entry
+            for index, entry in enumerate(regions)
+        ]
+
     def _m_document_read_region(self, params: dict, _id) -> dict:
-        params = _object(params, {"sessionId", "regions"},
+        params = _object(params, {"sessionId", "regions", "runId"},
                          required=("sessionId", "regions"),
                          where="document/readRegion.params",
                          policy=self.unknown_field_policy)
-        regions = params["regions"]
-        if isinstance(regions, list):
-            regions = [
-                _object(entry, {"table", "row", "col", "atPara"},
-                        where=f"regions[{index}]",
-                        policy=self.unknown_field_policy)
-                if isinstance(entry, dict) else entry
-                for index, entry in enumerate(regions)
-            ]
-        return self.core.document_read_region(params["sessionId"], regions)
+        return self.core.document_read_region(
+            params["sessionId"], self._normalised_regions(params["regions"]),
+            run_id=params.get("runId"))
 
     def _m_plan_propose(self, params: dict, _id) -> dict:
-        params = _object(params, {"sessionId", "backend", "ops", "proposer"},
+        params = _object(params, {"sessionId", "backend", "ops", "proposer",
+                                  "baseRunId", "reverses"},
                          required=("sessionId", "backend", "ops"),
                          where="plan/propose.params",
                          policy=self.unknown_field_policy)
+        reverses = params.get("reverses")
+        if reverses is not None:
+            reverses = _object(reverses, {"runId"}, required=("runId",),
+                               where="plan/propose.params.reverses",
+                               policy=self.unknown_field_policy)
         return self.core.plan_propose(
             params["sessionId"], _text(params["backend"], "backend"),
-            params["ops"], params.get("proposer") or f"{self.entry}-client")
+            params["ops"], params.get("proposer") or f"{self.entry}-client",
+            base_run_id=params.get("baseRunId"), reverses=reverses)
 
     def _m_plan_validate(self, params: dict, _id) -> dict:
         params = _object(params, {"planId"}, required=("planId",),
@@ -469,6 +481,22 @@ class RuntimeServer:
                          where="candidate/list.params",
                          policy=self.unknown_field_policy)
         return self.core.candidate_list(params["sessionId"])
+
+    def _m_candidate_compare(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "runId", "against", "regions"},
+                         required=("sessionId", "runId"),
+                         where="candidate/compare.params",
+                         policy=self.unknown_field_policy)
+        against = params.get("against")
+        if against is not None:
+            against = _object(against, {"runId", "source"},
+                              where="candidate/compare.params.against",
+                              policy=self.unknown_field_policy)
+        regions = params.get("regions")
+        if regions is not None:
+            regions = self._normalised_regions(regions)
+        return self.core.candidate_compare(params["sessionId"], params["runId"],
+                                           against=against, regions=regions)
 
     def _m_receipt_read(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "runId"},
@@ -625,12 +653,13 @@ class RuntimeServer:
         return interval
 
     def _m_document_render_prepare(self, params: dict, _id) -> dict:
-        params = _object(params, {"sessionId", "timeoutSeconds"},
+        params = _object(params, {"sessionId", "runId", "timeoutSeconds"},
                          required=("sessionId",),
                          where="document/renderPrepare.params",
                          policy=self.unknown_field_policy)
         return self.core.document_render_prepare(
-            params["sessionId"], timeout=params.get("timeoutSeconds"))
+            params["sessionId"], run_id=params.get("runId"),
+            timeout=params.get("timeoutSeconds"))
 
     def _m_document_page_geometry(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "page", "runId"},

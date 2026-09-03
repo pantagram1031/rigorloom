@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_apply import (  # noqa: E402
     apply_plan,
+    candidate_artifact,
     list_candidates,
     read_receipt,
     verification_report,
@@ -79,6 +80,7 @@ from rt_session import (  # noqa: E402
     editable_regions,
     full_text_spec,
     load_profile,
+    region_runs_with_faces,
 )
 
 #: Every method an agent connection may reach, ``initialize`` included.
@@ -94,6 +96,7 @@ AGENT_METHODS: tuple[str, ...] = (
     "approval/request",
     "approval/get",
     "candidate/list",
+    "candidate/compare",
     "receipt/read",
     "document/render",
     "document/pageGeometry",
@@ -124,6 +127,31 @@ METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
                             + HOST_ONLY_METHODS)
 
 INCLUDE_SECTIONS = ("summary", "graph", "regions")
+
+
+def _text_by_spec(profile: dict) -> dict:
+    """{--full-text spec: text} out of a profile's opt-in ``full_text`` block.
+
+    Keyed on the same spelling ``full_text_spec`` produces, so a comparison
+    keeps the caller's own addresses and never has to re-derive them. An entry
+    the profile did not return is simply absent — see ``candidate_compare`` on
+    why absent must not read as equal.
+    """
+    out: dict[str, str] = {}
+    for entry in profile.get("full_text", []) or []:
+        try:
+            if "at_para" in entry:
+                key = f"PARA:{int(entry['at_para'])}"
+            else:
+                addr = entry.get("addr") or {}
+                key = (f"{int(entry.get('table', 0))}:"
+                       f"{int(addr['row'])},{int(addr['col'])}")
+        except (TypeError, ValueError, KeyError):
+            continue
+        text = entry.get("text")
+        if isinstance(text, str):
+            out[key] = text
+    return out
 
 
 class RuntimeCore:
@@ -225,8 +253,8 @@ class RuntimeCore:
             out["regions"] = editable_regions(profile, session)
         return out
 
-    def document_read_region(self, session_id, regions) -> dict:
-        session = self.store.get(session_id)
+    @staticmethod
+    def _region_specs(regions) -> list[str]:
         if not isinstance(regions, list) or not regions:
             raise RpcError("invalid_params", "regions must be a non-empty array")
         specs: list[str] = []
@@ -243,26 +271,107 @@ class RuntimeCore:
                                f"regions[{index}] is not an address: {exc}") from exc
             if spec not in specs:
                 specs.append(spec)
-        profile = load_profile(self.tools, session, tag=f"region-{len(specs)}",
-                               full_text=specs)
+        return specs
+
+    def document_read_region(self, session_id, regions, run_id=None) -> dict:
+        """Exact text for named addresses, in the source or in a candidate.
+
+        ``runId`` is what makes an undo derivable rather than remembered: the
+        value a reversal must restore is read out of the candidate the edit was
+        made ON, through the runtime's own reader, not out of whatever a client
+        happened to keep in memory. The candidate is resolved through its
+        receipt, so its bytes were re-verified before anything read them.
+        """
+        session = self.store.get(session_id)
+        specs = self._region_specs(regions)
+        subject = None
+        subject_facts = {"kind": "session_source",
+                         "sha256": session.meta["sourceSha256"]}
+        tag = f"region-{len(specs)}"
+        if run_id is not None:
+            subject, receipt = candidate_artifact(session, self._bare_run_id(run_id))
+            subject_facts = {"kind": "candidate", "runId": run_id,
+                             "sha256": receipt["candidate"]["sha256"]}
+            tag = f"region-{run_id[:12]}-{len(specs)}"
+        profile = load_profile(self.tools, session, tag=tag,
+                               full_text=specs, subject=subject)
         return bound_region_result({
             "sessionId": session.id,
             "documentHash": profile.get("form_hash"),
-            "regions": profile.get("full_text", []),
+            # WHICH DOCUMENT ANSWERED. A caller that asked for a candidate and
+            # silently got the source would draw the wrong "before" and call it
+            # proof, so the subject is stated on every answer, source included.
+            "subject": subject_facts,
+            # Each run carries the face its charPr resolves to (§14), joined
+            # from the header the profile already read. A caret standing in a
+            # run can then be told what it is set in instead of being handed
+            # an integer.
+            "regions": region_runs_with_faces(profile),
         })
 
+    @staticmethod
+    def _bare_run_id(run_id) -> str:
+        if (not isinstance(run_id, str) or not run_id
+                or "/" in run_id or "\\" in run_id):
+            raise RpcError("invalid_params", "runId must be a bare identifier",
+                           runId=run_id)
+        return run_id
+
     # -- plans --------------------------------------------------------------
-    def plan_propose(self, session_id, backend, ops, proposer) -> dict:
+    def plan_subject(self, session, plan) -> tuple:
+        """(path or None, digest) for the document a plan is computed against.
+
+        ``None`` means the session source, which is what ``load_profile`` and
+        ``apply_plan`` both default to — so the base-less path is byte-for-byte
+        the path this build had before lineage existed.
+        """
+        base = plan.payload.get("base") or None
+        if base is None:
+            return None, session.current_source_sha256()
+        path, receipt = candidate_artifact(session, str(base["runId"]))
+        return path, receipt["candidate"]["sha256"]
+
+    def plan_propose(self, session_id, backend, ops, proposer,
+                     base_run_id=None, reverses=None) -> dict:
+        """Build a plan against the session source, or onto a published candidate.
+
+        ``baseRunId`` is the chain. Without it every apply starts from the
+        source, which made two consecutive applies two siblings rather than a
+        history — the second one silently missing the first one's edit. With
+        it, a plan binds the candidate's digest and the apply chains onto its
+        bytes.
+
+        ``reverses`` is a claim, recorded next to the bytes that will back it:
+        this plan undoes that candidate. It is checked afterwards with
+        ``candidate/compare``, never taken on trust here.
+        """
         session = self.store.get(session_id)
         if not isinstance(backend, str) or not backend:
             raise RpcError("invalid_params", "backend must be a non-empty string")
+        base = None
+        bound = session.current_source_sha256()
+        if base_run_id is not None:
+            _, base_receipt = candidate_artifact(session,
+                                                 self._bare_run_id(base_run_id))
+            base = {"runId": base_run_id,
+                    "sha256": base_receipt["candidate"]["sha256"]}
+            bound = base["sha256"]
+        reversal = None
+        if reverses is not None:
+            reversal_id = reverses.get("runId") if isinstance(reverses, dict) else reverses
+            _, reversed_receipt = candidate_artifact(session,
+                                                     self._bare_run_id(reversal_id))
+            reversal = {"runId": reversal_id,
+                        "sha256": reversed_receipt["candidate"]["sha256"]}
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
-                          proposer=proposer,
-                          bound_sha256=session.current_source_sha256())
+                          proposer=proposer, bound_sha256=bound,
+                          base=base, reverses=reversal)
         self.save_plan(plan)
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
-                     proposer=proposer, ops=len(plan.payload["ops"]))
+                     proposer=proposer, ops=len(plan.payload["ops"]),
+                     baseRunId=(base or {}).get("runId"),
+                     reversesRunId=(reversal or {}).get("runId"))
         return {"plan": plan.public()}
 
     def plan(self, plan_id) -> OperationPlan:
@@ -276,21 +385,32 @@ class RuntimeCore:
         self.store.save_record("plans", plan.id, plan.payload)
 
     def validated(self, plan: OperationPlan) -> dict:
+        """Validate against the plan's OWN subject — source, or its base candidate.
+
+        A plan chained onto a candidate must be checked against that
+        candidate's cell classifications and run inventory, not the source's:
+        the second edit of a paragraph addresses runs the first edit produced.
+        And `current_sha256` is that subject's digest, so a candidate-based
+        plan is never stale — a published candidate is immutable, which is the
+        honest reason rather than an exemption.
+        """
         session = self.store.get(plan.payload["sessionId"])
-        base = load_profile(self.tools, session, tag="base")
+        subject, current = self.plan_subject(session, plan)
+        tag = "base" if subject is None else f"cand-{plan.payload['base']['runId'][:12]}"
+        base = load_profile(self.tools, session, tag=tag, subject=subject)
         profile = base
         specs = safe_full_text_specs(wanted_full_text(plan), base)
         if specs:
             try:
                 profile = load_profile(self.tools, session,
-                                       tag=f"plan-{plan.id[:12]}", full_text=specs)
+                                       tag=f"plan-{plan.id[:12]}", full_text=specs,
+                                       subject=subject)
             except RpcError:
                 # A paragraph address out of range makes form_inspect exit 2.
                 # Degrade to the base profile; the validator then reports
                 # run_inventory_unavailable rather than assuming clean.
                 profile = base
-        return validate_plan(plan, profile=profile,
-                             current_sha256=session.current_source_sha256())
+        return validate_plan(plan, profile=profile, current_sha256=current)
 
     def plan_validate(self, plan_id) -> dict:
         plan = self.plan(plan_id)
@@ -399,19 +519,33 @@ class RuntimeCore:
                            dpi=DEFAULT_RENDER_DPI if dpi is None else dpi,
                            run_id=run_id, inline=inline)
 
-    def document_render_prepare(self, session_id, *,
+    def document_render_prepare(self, session_id, *, run_id=None,
                                 timeout: float | None = None) -> dict:
-        """HOST ONLY. Convert the session copy to a PDF so render can raster it."""
+        """HOST ONLY. Convert the session copy — or a candidate — to a PDF.
+
+        ``runId`` is what E1.2's 다시 그리기 needs: after an apply the page on
+        screen is still the SOURCE's raster, and the only honest way to show
+        the candidate is to render the candidate. Whether this machine can is a
+        separate question, and the refusal (``needs_hancom`` / ``com_busy``) is
+        the answer it gives here exactly as it does for the source.
+        """
         from rt_convert import prepare_pdf
 
         session = self.store.get(session_id)
         session.ensure_dirs()
-        result = prepare_pdf(session, self.tools, timeout=timeout)
+        candidate = None
+        if run_id is not None:
+            path, receipt = candidate_artifact(session, self._bare_run_id(run_id))
+            candidate = {"runId": run_id, "path": path,
+                         "sha256": receipt["candidate"]["sha256"]}
+        result = prepare_pdf(session, self.tools, timeout=timeout,
+                             candidate=candidate)
         if result.get("prepared"):
             append_event(session, "pdf.prepared",
                          sha256=result["pdf"]["sha256"],
                          bytes=result["pdf"]["bytes"],
-                         producedBy=result["pdf"]["producedBy"])
+                         producedBy=result["pdf"]["producedBy"],
+                         runId=run_id)
         return result
 
     def document_page_geometry(self, session_id, *, page: int = 0,
@@ -482,6 +616,97 @@ class RuntimeCore:
     def receipt_read(self, session_id, run_id) -> dict:
         session = self.store.get(session_id)
         return {"receipt": read_receipt(session, run_id)}
+
+    def candidate_compare(self, session_id, run_id, against=None,
+                          regions=None) -> dict:
+        """Compare two documents of this session at named addresses. Read-only.
+
+        THIS IS WHERE AN UNDO IS PROVEN, and it is here rather than in a client
+        because a client comparing two strings it fetched is comparing its own
+        memory. Both sides are re-read through ``form_inspect`` from bytes that
+        ``read_receipt`` re-verified against their binding, and the answer says
+        per address whether the text is equal.
+
+        ``against`` is ``{"runId": …}`` for another candidate or
+        ``{"source": true}`` for the session copy; it defaults to the source.
+
+        Two levels of equality, kept apart because they are different facts:
+
+          * ``regionsEqual`` — the addresses asked about hold identical text.
+            That is what "the undo restored the value" means, and it is what an
+            inverse must satisfy.
+          * ``artifactEqual`` — the two documents are the same bytes. An edit
+            and its inverse WILL usually not reach this: preedit rewrites XML
+            and rezips, so whitespace, member order and zip metadata move even
+            when every character of text is restored. It is reported rather
+            than hidden, and a ``false`` here beside a ``true`` above is the
+            normal, honest outcome — never presented as a failure of the undo.
+        """
+        session = self.store.get(session_id)
+        left_path, left_receipt = candidate_artifact(session,
+                                                     self._bare_run_id(run_id))
+        left_facts = {"kind": "candidate", "runId": run_id,
+                      "sha256": left_receipt["candidate"]["sha256"]}
+
+        if against is not None and not isinstance(against, dict):
+            raise RpcError("invalid_params", "against must be an object")
+        against = against or {"source": True}
+        if against.get("runId") is not None:
+            other = self._bare_run_id(against["runId"])
+            right_path, right_receipt = candidate_artifact(session, other)
+            right_facts = {"kind": "candidate", "runId": other,
+                           "sha256": right_receipt["candidate"]["sha256"]}
+        elif against.get("source") is True:
+            right_path = None
+            right_facts = {"kind": "session_source",
+                           "sha256": session.meta["sourceSha256"]}
+        else:
+            raise RpcError("invalid_params",
+                           "against must name a runId or set source: true",
+                           against=against)
+
+        rows: list[dict] = []
+        if regions is not None:
+            specs = self._region_specs(regions)
+            left = load_profile(self.tools, session,
+                                tag=f"cmp-l-{run_id[:12]}", full_text=specs,
+                                subject=left_path)
+            right = load_profile(self.tools, session,
+                                 tag=f"cmp-r-{run_id[:12]}", full_text=specs,
+                                 subject=right_path)
+            left_text = _text_by_spec(left)
+            right_text = _text_by_spec(right)
+            for spec in specs:
+                # ABSENT is not EMPTY. A cell the profile did not return is
+                # `null` here and `equal` is null with it — the comparison did
+                # not happen, and a caller must not read that as a match.
+                a = left_text.get(spec)
+                b = right_text.get(spec)
+                rows.append({
+                    "address": spec,
+                    "left": a,
+                    "right": b,
+                    "equal": None if (a is None or b is None) else a == b,
+                })
+
+        compared = [row for row in rows if row["equal"] is not None]
+        return {
+            "sessionId": session.id,
+            "left": left_facts,
+            "right": right_facts,
+            "artifactEqual": left_facts["sha256"] == right_facts["sha256"],
+            "regions": rows,
+            "regionsCompared": len(compared),
+            "regionsEqual": (bool(compared) and all(row["equal"] for row in compared)
+                             if rows else None),
+            "regionsUnreadable": [row["address"] for row in rows
+                                  if row["equal"] is None],
+            "normalizer": "exact",
+            "note": ("region text is compared byte-exact as form_inspect returns "
+                     "it; artifactEqual compares whole-file digests and is "
+                     "normally false between an edit and its inverse because "
+                     "preedit rewrites and rezips the package"),
+        }
 
     def candidate_verify(self, session_id, run_id) -> dict:
         """Re-run the offline checks against a published candidate.

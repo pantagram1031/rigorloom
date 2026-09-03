@@ -28,6 +28,8 @@ import {
   openPath,
   openReceipt,
   preparePages,
+  proposeUndoOf,
+  redoQueuedOp,
   removeOp,
   renderCurrentPage,
   reopenExported,
@@ -37,9 +39,12 @@ import {
   runAgentProposal,
   runCheck,
   seatAt,
+  selectHistory,
+  undoQueuedOp,
 } from "./actions";
 import * as rt from "./runtime";
 import {
+  activeCandidates,
   activeInspect,
   activeText,
   canRequestApproval,
@@ -52,8 +57,10 @@ import {
   setState,
   setView,
   sharedStateSignature,
+  type QueuedFillOp,
+  type QueuedRunOp,
 } from "./store";
-import type { EditableRegion, GeometryMapping, HostEvent } from "./types";
+import type { EditableRegion, GeometryMapping, GeometrySpan, HostEvent } from "./types";
 
 interface SmokeConfig {
   phase: string | null;
@@ -159,6 +166,21 @@ async function waitFor(
 
 function hasHangul(text: string): boolean {
   return /[가-힣]/.test(text);
+}
+
+/**
+ * The queue's cell ops, narrowed. The queue now holds two kinds — `fill_cell`
+ * from a seat and `set_run` from a caret in a paragraph line — and a check
+ * that reached for `.row` on whatever happened to be first would be reading a
+ * field the other kind does not have.
+ */
+function fillOps(): QueuedFillOp[] {
+  return getState().draft.ops.filter((op): op is QueuedFillOp => op.kind === "fill_cell");
+}
+
+/** The queue's paragraph-run ops, narrowed for the same reason. */
+function runOps(): QueuedRunOp[] {
+  return getState().draft.ops.filter((op): op is QueuedRunOp => op.kind === "set_run");
 }
 
 /** Read the launcher's intent before anything renders. */
@@ -522,11 +544,12 @@ async function phaseEdit(config: SmokeConfig) {
   await settled(120);
   check("committing an edit queues one op", getState().draft.ops.length === 1,
     JSON.stringify(getState().draft.ops.map((o) => o.text)));
+  const firstFill = fillOps()[0];
   check("the queued op carries the seat's address",
-    getState().draft.ops[0]?.table === clean.table &&
-      getState().draft.ops[0]?.row === clean.row &&
-      getState().draft.ops[0]?.col === clean.col,
-    `${getState().draft.ops[0]?.table}/${getState().draft.ops[0]?.row}/${getState().draft.ops[0]?.col}`);
+    firstFill?.table === clean.table &&
+      firstFill?.row === clean.row &&
+      firstFill?.col === clean.col,
+    `${firstFill?.table}/${firstFill?.row}/${firstFill?.col}`);
   check("the queued op records what was there before",
     getState().draft.ops[0]?.before !== undefined,
     JSON.stringify(getState().draft.ops[0]?.before));
@@ -599,7 +622,7 @@ async function phaseEdit(config: SmokeConfig) {
     check("the refusal carries the charPr the engine itself suggests",
       typeof anomaly?.charPrSuggested === "string" && String(anomaly.charPrSuggested).length > 0,
       String(anomaly?.charPrSuggested));
-    const flaggedOp = getState().draft.ops.find(
+    const flaggedOp = fillOps().find(
       (o) => o.table === flagged.table && o.row === flagged.row && o.col === flagged.col,
     );
     if (flaggedOp) {
@@ -831,6 +854,398 @@ async function phaseEdit(config: SmokeConfig) {
   setView("document");
   await settled(240);
   checkAlive("the editing loop");
+}
+
+/**
+ * E1.4 — undo in two tiers, and the proof that the second one is an inverse.
+ *
+ * This phase is written around the property the slice exists for: **the inverse
+ * is proven by the runtime, not asserted by the shell**. Nothing here compares
+ * two strings the app was holding. The pre-edit value is read back through
+ * `document/readRegion` on the chain, and after the reversal is applied
+ * `candidate/compare` re-reads both documents from receipt-verified bytes and
+ * says whether the address came back.
+ *
+ * It also pins the defect that made all of this necessary: two applies in a row
+ * used to produce two siblings of the source, the second silently missing the
+ * first edit. The chain check below is that regression test in the UI.
+ */
+async function phaseUndo(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const sessionId = await openPath(config.corpus);
+  check("undo phase opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(200);
+
+  const inspect = activeInspect(getState());
+  if (!inspect) {
+    check("inspect returned in the undo phase", false, String(getState().inspectError?.code));
+    return;
+  }
+  const seats = inspect.regions.regions.filter(
+    (r): r is EditableRegion & { table: number; row: number; col: number } =>
+      r.kind === "cell" && r.table !== undefined && r.row !== undefined && r.col !== undefined,
+  );
+  const clean = seats.filter((r) => r.scriptAnomaly !== true && r.colorAnomaly !== true);
+  const first = clean[0];
+  const second = clean[1];
+  check("two clean fill seats exist for the chain check", !!first && !!second,
+    `${clean.length} clean of ${seats.length}`);
+  if (!first || !second) return;
+
+  // --- 1. TIER ONE: the queue. Removing IS the undo, and it is labelled so ---
+  const VALUE = "되돌리기 검사 001";
+  beginEdit(first.table, first.row, first.col);
+  await commitEdit(VALUE);
+  await settled(160);
+  check("an edit queued before any undo", getState().draft.ops.length === 1,
+    JSON.stringify(getState().draft.ops.map((o) => o.text)));
+  const queuedOpId = getState().draft.ops[0]?.opId;
+  const queuedBefore = getState().draft.ops[0]?.before;
+  const planBefore = getState().draft.plan?.opsHash;
+
+  checkDom("the queue's undo control says 대기열에서 제거, not 되돌리기",
+    domText('[data-testid="review-queue"]').includes("대기열에서 제거") &&
+      !domText('[data-testid="review-queue"]').includes("문서 되돌리기"),
+    domText('[data-testid="review-queue"]').slice(0, 200));
+
+  await undoQueuedOp(queuedOpId);
+  await settled(200);
+  check("queue undo empties the queue", getState().draft.ops.length === 0,
+    `${getState().draft.ops.length} left`);
+  check("queue undo produced NO candidate", activeCandidates(getState()).length === 0,
+    `${activeCandidates(getState()).length} candidates`);
+  check("the removed op is on the redo stack", getState().redoStack.length === 1,
+    `${getState().redoStack.length}`);
+  checkDom("다시 넣기 is offered", !!document.querySelector('[data-testid="queue-redo"]'),
+    domText('[data-testid="review-queue-empty"]').slice(0, 120));
+
+  await redoQueuedOp();
+  await settled(240);
+  const redone = fillOps()[0];
+  check("queue redo restores the SAME target and the SAME value",
+    getState().draft.ops.length === 1 &&
+      redone?.table === first.table && redone?.row === first.row &&
+      redone?.col === first.col && redone?.text === VALUE &&
+      redone?.before === queuedBefore,
+    JSON.stringify({ t: redone?.table, r: redone?.row, c: redone?.col,
+      text: redone?.text, before: redone?.before }));
+  check("redo re-proposed an identical plan intent",
+    getState().draft.plan?.opsHash === planBefore,
+    `${getState().draft.plan?.opsHash?.slice(0, 12)} vs ${planBefore?.slice(0, 12)}`);
+  check("the redo stack is empty again", getState().redoStack.length === 0,
+    `${getState().redoStack.length}`);
+
+  // --- 2. apply it, so there is something a post-apply undo can reverse ------
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const editRun = getState().applied?.runId;
+  check("the edit applied and produced a candidate", !!editRun,
+    editRun ?? JSON.stringify(getState().applyError));
+  if (!editRun) return;
+  check("the first candidate is a root of the chain",
+    getState().applied?.base === null, JSON.stringify(getState().applied?.base));
+  check("the head moved to the new candidate", getState().head === editRun,
+    String(getState().head));
+
+  // --- 3. THE DEFECT: a second edit must CHAIN, not start over --------------
+  beginEdit(second.table, second.row, second.col);
+  await commitEdit("되돌리기 검사 002");
+  await settled(240);
+  check("a second edit chains onto the first candidate",
+    getState().draft.plan?.base?.runId === editRun,
+    JSON.stringify(getState().draft.plan?.base));
+  check("and therefore binds the candidate's bytes, not the source's",
+    getState().draft.plan?.boundSha256 === getState().applied?.candidate.sha256,
+    `${getState().draft.plan?.boundSha256?.slice(0, 12)} vs ` +
+      `${getState().applied?.candidate.sha256.slice(0, 12)}`);
+  checkDom("the queue says which candidate it is chaining onto",
+    domText('[data-testid="queue-base"]').includes(editRun.slice(0, 12)),
+    domText('[data-testid="queue-base"]').slice(0, 160));
+
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const chainRun = getState().applied?.runId;
+  check("the chained edit applied", !!chainRun, chainRun ?? JSON.stringify(getState().applyError));
+  if (!chainRun) return;
+
+  // The whole point, read out of the RUNTIME rather than out of the store: the
+  // second candidate carries BOTH edits.
+  const chained = await rt.readRegion(
+    sessionId,
+    [{ table: first.table, row: first.row, col: first.col },
+     { table: second.table, row: second.row, col: second.col }],
+    chainRun,
+  );
+  const firstText = chained.regions.find(
+    (r) => r.addr?.row === first.row && r.addr?.col === first.col)?.text;
+  check("the chained candidate still carries the FIRST edit", firstText === VALUE,
+    `${JSON.stringify(firstText)} vs ${JSON.stringify(VALUE)}`);
+  check("readRegion said which document answered",
+    chained.subject.kind === "candidate" && chained.subject.runId === chainRun,
+    JSON.stringify(chained.subject));
+
+  // --- 4. TIER TWO: undo the first edit, on top of the chain ----------------
+  const queued = await proposeUndoOf(editRun);
+  await settled(300);
+  check("되돌리기 제안 queued the inverse", queued === 1 && getState().draft.ops.length === 1,
+    `${queued} ops · ${JSON.stringify(getState().undoError)}`);
+  check("the inverse restores the value READ from the chain, not remembered",
+    fillOps()[0]?.text === queuedBefore,
+    `${JSON.stringify(fillOps()[0]?.text)} vs ${JSON.stringify(queuedBefore)}`);
+  check("the proposal declares what it reverses",
+    getState().draft.plan?.reverses?.runId === editRun,
+    JSON.stringify(getState().draft.plan?.reverses));
+  check("and chains onto the HEAD, so the newer edit is not thrown away",
+    getState().draft.plan?.base?.runId === chainRun,
+    JSON.stringify(getState().draft.plan?.base));
+  checkDom("the UI calls it 되돌리기 제안 and says nothing is deleted",
+    !!document.querySelector('[data-testid="queue-reversal"]') &&
+      domText('[data-testid="queue-reversal"]').includes("되돌리기 제안") &&
+      domText('[data-testid="queue-reversal"]').includes("지워지지 않습니다"),
+    domText('[data-testid="queue-reversal"]').slice(0, 200));
+  check("nothing has been applied by the proposal itself",
+    getState().applied?.runId === chainRun, String(getState().applied?.runId));
+
+  // Same gate as any other plan.
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const undoRun = getState().applied?.runId;
+  check("the reversal applied as one MORE candidate", !!undoRun && undoRun !== editRun,
+    undoRun ?? JSON.stringify(getState().applyError));
+  if (!undoRun) return;
+  check("nothing was deleted: all three candidates are still listed",
+    activeCandidates(getState()).length === 3,
+    activeCandidates(getState()).map((c) => c.runId?.slice(0, 8)).join(","));
+
+  // --- 5. THE PROOF, from the runtime ---------------------------------------
+  const proof = getState().inverseProof;
+  check("the shell asked the runtime to prove the inverse", !!proof,
+    JSON.stringify(getState().undoError));
+  check("the proof is about the candidate that was just applied",
+    proof?.runId === undoRun && proof?.reversedRunId === editRun,
+    `${proof?.runId} / ${proof?.reversedRunId}`);
+  check("the runtime compared at least one address",
+    (proof?.compare.regionsCompared ?? 0) >= 1,
+    JSON.stringify(proof?.compare.regions.map((r) => [r.address, r.equal])));
+  check("PROVEN: the address equals its pre-edit value",
+    proof?.compare.regionsEqual === true,
+    JSON.stringify(proof?.compare.regions));
+  // Independent of the shell's own proof: ask the runtime again, directly.
+  const after = await rt.readRegion(
+    sessionId, [{ table: first.table, row: first.row, col: first.col }], undoRun);
+  check("and readRegion on the reversal agrees",
+    after.regions[0]?.text === queuedBefore,
+    `${JSON.stringify(after.regions[0]?.text)} vs ${JSON.stringify(queuedBefore)}`);
+  check("the newer edit SURVIVED the undo of the older one",
+    (await rt.readRegion(sessionId,
+      [{ table: second.table, row: second.row, col: second.col }], undoRun))
+      .regions[0]?.text === "되돌리기 검사 002",
+    "the reversal chained onto the head rather than replacing it");
+  check("RECORDED: bytes are not restored, only text",
+    proof?.compare.artifactEqual === false,
+    `artifactEqual=${proof?.compare.artifactEqual} — preedit rewrites and rezips, ` +
+      `so an inverse restores the value and never the package`);
+
+  // The receipt is where the claim lives permanently.
+  const receipt = await rt.readReceipt(sessionId, undoRun);
+  check("the receipt records which candidate this one reverses",
+    receipt.reverses?.runId === editRun, JSON.stringify(receipt.reverses));
+  check("the receipt records the candidate it was built on",
+    receipt.base?.runId === chainRun, JSON.stringify(receipt.base));
+
+  // --- 6. the 기록 panel -----------------------------------------------------
+  await settled(300);
+  checkDom("기록 lists the whole lineage",
+    document.querySelectorAll('[data-testid^="history-"][data-depth]').length === 3,
+    `${document.querySelectorAll('[data-testid^="history-"][data-depth]').length} rows`);
+  checkDom("기록 marks the head",
+    domText(`[data-testid="history-${undoRun}"]`).includes("현재"),
+    domText(`[data-testid="history-${undoRun}"]`).slice(0, 160));
+  checkDom("기록 marks the reversal and what it reversed",
+    domText(`[data-testid="history-${undoRun}"]`).includes("되돌리기") &&
+      domText(`[data-testid="history-${editRun}"]`).includes("되돌려짐"),
+    `${domText(`[data-testid="history-${editRun}"]`).slice(0, 160)}`);
+  checkDom("기록 states each row's parent",
+    domText(`[data-testid="history-facts-${chainRun}"]`).includes(editRun.slice(0, 12)) &&
+      domText(`[data-testid="history-facts-${editRun}"]`).includes("원본에서 바로"),
+    domText(`[data-testid="history-facts-${chainRun}"]`).slice(0, 160));
+  checkDom("the proof is on screen with BOTH equalities apart",
+    domText('[data-testid="inverse-proof"]').includes("되돌리기 확인됨") &&
+      domText('[data-testid="inverse-proof-bytes"]').includes("false"),
+    domText('[data-testid="inverse-proof"]').slice(0, 220));
+
+  // Selecting an older candidate SHOWS it and does not move the head.
+  selectHistory(editRun);
+  await settled(240);
+  checkDom("selecting an older candidate opens it read-only",
+    !!document.querySelector(`[data-testid="history-detail-${editRun}"]`),
+    domText(`[data-testid="history-${editRun}"]`).slice(0, 120));
+  check("and does NOT silently move the head", getState().head === undoRun,
+    String(getState().head));
+  checkDom("export from that row names its own run",
+    !!document.querySelector(`[data-testid="history-export-${editRun}"]`),
+    domText(`[data-testid="history-detail-${editRun}"]`).slice(0, 200));
+  selectHistory(null);
+  await settled(160);
+
+  await echoChecks();
+  checkAlive("the undo phase");
+}
+
+/**
+ * E1.2 — the page shows the source while the document is a candidate. Say so.
+ *
+ * Needs a document that HAS a raster, which on this machine means the staged
+ * session (the corpus's own Hancom render; `renderPrepare` refuses live here).
+ * Then: apply an edit, and assert that the page does not quietly go on
+ * presenting the old picture as the document.
+ *
+ * The 다시 그리기 assertion is deliberately not "it redraws". On this machine
+ * it cannot, and the check is that the refusal is a designed state carrying the
+ * runtime's own words — whichever of `needs_hancom` / `com_busy` this machine
+ * gives today.
+ */
+async function echoChecks() {
+  const stagedId = (await rt.smokeConfig()).stagedSession;
+  if (!stagedId) {
+    check("the harness staged a rendered session for the layout-echo check", false,
+      "RIGORLOOM_SMOKE_STAGED is empty — the E1.2 half of this phase did not run");
+    return;
+  }
+  const { loadGeometry, selectSession } = await import("./actions");
+  await selectSession(stagedId);
+  await settled(400);
+  setCenterMode("page");
+
+  // Find a page the runtime actually seats, the same way the overlay phase
+  // does — a page number written down today is a page number wrong tomorrow.
+  let seatPage = 1;
+  let bestSeats = -1;
+  for (let p = 1; p <= 8; p += 1) {
+    await loadGeometry(p);
+    await settled(80);
+    const probe = getState().geometry;
+    if (!probe?.available) break;
+    const found = (probe.seats ?? []).length;
+    if (found > bestSeats) {
+      bestSeats = found;
+      seatPage = p;
+    }
+    if ((probe.pageCount ?? 1) <= p) break;
+  }
+  await renderCurrentPage(seatPage);
+  await settled(400);
+  await loadGeometry(seatPage);
+  await settled(300);
+  check("the staged session has a raster to compare against",
+    getState().render?.available === true,
+    JSON.stringify(getState().render?.unavailable ?? "available"));
+  if (getState().render?.available !== true) return;
+
+  checkDom("with no candidate yet, the page claims nothing about being stale",
+    !document.querySelector('[data-testid="layout-echo"]'),
+    domText('[data-testid="page-preview"]').slice(0, 120));
+
+  // The edit has to land on an address the DRAWN page can mark, or this check
+  // is a coin flip: a form's first clean cell may sit on page 3 while the
+  // raster is page 1, and an overlay that marked nothing would then be right.
+  // So the seat is chosen from the intersection — clean per the runtime's own
+  // inspect, AND seated by the runtime on the page being rendered.
+  const inspect = activeInspect(getState());
+  const onPage = new Set(
+    (getState().geometry?.seats ?? []).map((g) => `${g.table}:${g.row}:${g.col}`),
+  );
+  const clean = (inspect?.regions.regions ?? []).filter(
+    (r): r is EditableRegion & { table: number; row: number; col: number } =>
+      r.kind === "cell" && r.table !== undefined && r.row !== undefined &&
+      r.col !== undefined && r.scriptAnomaly !== true && r.colorAnomaly !== true,
+  );
+  const seat = clean.find((r) => onPage.has(`${r.table}:${r.row}:${r.col}`));
+  check("a clean seat exists on the page being drawn", !!seat,
+    `page ${seatPage}: ${onPage.size} seated \u00b7 ${clean.length} clean`);
+  if (!seat) return;
+
+  beginEdit(seat.table, seat.row, seat.col);
+  await commitEdit("지면 반향 검사");
+  await settled(300);
+  if (getState().draft.validation?.ok !== true) {
+    check("the staged form's edit validated", false,
+      JSON.stringify(getState().draft.validation?.hard ?? getState().draft.error));
+    return;
+  }
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const echoRun = getState().applied?.runId;
+  check("the staged edit applied", !!echoRun,
+    echoRun ?? JSON.stringify(getState().applyError));
+  if (!echoRun) return;
+  // The banner needs the head; the MARKS need one plan read per ancestor. Wait
+  // for the reads rather than sleeping past them — a fixed sleep here would
+  // make this check a race that passes on a fast machine.
+  await waitFor(() => (getState().changedByRun[echoRun] ?? []).length > 0, 20000);
+  await settled(400);
+
+  checkDom("the page now says 후보본과 다름 — 이 그림은 원본 기준",
+    domText('[data-testid="layout-echo"]').includes("후보본과 다름") &&
+      domText('[data-testid="layout-echo"]').includes("이 그림은 원본 기준"),
+    domText('[data-testid="layout-echo"]').slice(0, 200));
+  checkDom("it names the candidate the page is NOT showing",
+    domText('[data-testid="layout-echo"]').includes(echoRun.slice(0, 12)),
+    domText('[data-testid="layout-echo"]').slice(0, 160));
+  checkDom("the changed address is marked on the overlay, not painted over",
+    document.querySelectorAll('[data-stale="true"]').length >= 1 &&
+      domText('[data-testid="layout-echo-changed"]').includes(
+        `c:${seat.table}:${seat.row}:${seat.col}`),
+    `${document.querySelectorAll('[data-stale="true"]').length} marked · ` +
+      domText('[data-testid="layout-echo-changed"]').slice(0, 160));
+  checkDom("the edited TEXT is not drawn onto the raster",
+    !domText('[data-testid="page-overlay"]').includes("지면 반향 검사"),
+    "an overlay that printed the new value would be a fabricated layout");
+  checkDom("다시 그리기 is offered",
+    !!document.querySelector('[data-testid="echo-redraw"]'),
+    domText('[data-testid="layout-echo"]').slice(-160));
+
+  // Press it, and record whatever this machine honestly answers.
+  await preparePages(echoRun);
+  await settled(400);
+  const prepareError = getState().prepareError;
+  const prepareNote = getState().prepareNote;
+  check("다시 그리기 reached the runtime and got a real answer",
+    !!prepareError || !!prepareNote,
+    prepareError ? `${prepareError.code}: ${prepareError.message}` : String(prepareNote));
+  if (prepareError) {
+    check("RECORDED: this machine's honest answer for a candidate render",
+      ["needs_hancom", "com_busy", "convert_failed", "not_convertible"].includes(
+        prepareError.code),
+      `${prepareError.code} — ${prepareError.message}`);
+    checkDom("the refusal is drawn as a designed state with the runtime's words",
+      !!document.querySelector('[data-testid="prepare-refusal"]') &&
+        domText('[data-testid="prepare-detail"]').length > 0,
+      domText('[data-testid="prepare-refusal"]').slice(0, 200));
+    checkDom("and no page was fabricated in its place",
+      !!document.querySelector('[data-testid="page-raster"]') &&
+        !!document.querySelector('[data-testid="layout-echo"]'),
+      "the source raster stays, still labelled out of date");
+  } else {
+    check("RECORDED: this machine produced a candidate PDF", true, String(prepareNote));
+    checkDom("and the echo state is gone because the page IS the candidate now",
+      !document.querySelector('[data-testid="layout-echo"]'),
+      domText('[data-testid="page-preview"]').slice(0, 160));
+  }
+  setCenterMode("text");
+  await settled(160);
 }
 
 /**
@@ -1368,7 +1783,8 @@ async function phaseOverlay(config: SmokeConfig) {
 
     target?.click();
     await settled(240);
-    const edit = getState().inlineEdit;
+    const opened = getState().inlineEdit;
+    const edit = opened?.kind === "cell" ? opened : null;
     checkDom("clicking an editable target opened the SAME inline editor the tree uses",
       !!document.querySelector('[data-testid="seat-input"]'), String(edit?.table));
     // ON the page, not beside it. The first run of this branch found the
@@ -1393,7 +1809,7 @@ async function phaseOverlay(config: SmokeConfig) {
 
     await commitEdit("지면에서 입력");
     await settled(400);
-    const op = getState().draft.ops.find((o) => o.text === "지면에서 입력");
+    const op = fillOps().find((o) => o.text === "지면에서 입력");
     check("the overlay edit landed in the same review queue as a tree edit",
       !!op && op.kind === "fill_cell" && op.origin === "user", JSON.stringify(op ?? null));
     check("the queued op targets the seat that was clicked",
@@ -1417,9 +1833,365 @@ async function phaseOverlay(config: SmokeConfig) {
       `${getState().draft.ops.length} ops queued`);
   }
 
+  // --- THE CARET, on a real paragraph line -----------------------------------
+  //
+  // The other half of "editing on the page", and until this slice the missing
+  // half: a seat is an empty cell, and a form is mostly not empty cells. A
+  // uniquely-mapped PARAGRAPH line is body text a person stands in and
+  // retypes, and it reaches the same queue through `set_run` — an operation
+  // the runtime already had. Nothing new was added to the registry for it.
+  //
+  // The refusal is asserted as hard as the success. A paragraph of several
+  // runs looks identical on the page to one with a single run, and the
+  // difference is knowable only by asking the runtime: corpus-wide, 314 of 365
+  // mapped paragraph lines hold one run and 51 do not.
+  await caretChecks(g.spans ?? []);
+
   setCenterMode("text");
   await settled();
   checkAlive("the overlay phase");
+}
+
+/**
+ * Everything the caret has to be true about, on whatever this page really has.
+ *
+ * Split out because `phaseOverlay` is already long, and because the shot phase
+ * needs the same "find a line that actually takes a caret" walk — a page's
+ * first mapped paragraph is very often one of the 51 that refuse, and a
+ * harness that clicked the first one and reported "no caret" would be
+ * measuring its own choice of line rather than the feature.
+ */
+async function caretChecks(spans: GeometrySpan[]) {
+  const { addressIsCaretTarget, caretOffsetAt, clickOverlaySpan } = await import("./actions");
+  const caretSpans = spans.filter(
+    (s) => s.confidence === "unique" && addressIsCaretTarget(s.address),
+  );
+  const withOffsets = caretSpans.filter((s) => !!s.charX);
+
+  const geometry = getState().geometry;
+  check("the runtime says whether it read sub-line offsets for this page",
+    geometry?.charOffsets?.state === "read" ||
+      geometry?.charOffsets?.state === "page_too_dense",
+    `${geometry?.charOffsets?.state} — ${geometry?.charOffsets?.lines}/${geometry?.charOffsets?.of} lines, ${geometry?.charOffsets?.chars} chars`);
+  check("every span carrying offsets carries one x per character plus the end",
+    spans.every((s) => !s.charX || s.charX.length === s.text.length + 1),
+    `${spans.filter((s) => s.charX && s.charX.length !== s.text.length + 1).length} spans disagree`);
+  check("offsets are fractions of the page, in the same system as the rects",
+    spans.every((s) => !s.charX || (s.charX[0] >= 0 && s.charX[s.charX.length - 1] <= 1)),
+    `${withOffsets.length} of ${spans.length} spans carry offsets`);
+
+  // The measurement this half of the phase exists to take.
+  check("MEASURED: how many lines on this page can hold a caret",
+    true,
+    `${caretSpans.length} uniquely-mapped paragraph lines · ${withOffsets.length} of them ` +
+      `with per-character offsets · out of ${spans.length} spans`);
+
+  if (caretSpans.length === 0) {
+    check("this page had a mapped paragraph line to click", false,
+      "no unique paragraph address on this page — the caret path was not exercised here");
+    return;
+  }
+
+  checkDom("a caret target is drawn as one, and is not dressed as a fill seat",
+    document.querySelectorAll('.ov[data-caret-target="true"]').length === caretSpans.length,
+    `${document.querySelectorAll('.ov[data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
+  const firstTarget = document.querySelector<HTMLElement>('.ov[data-caret-target="true"]');
+  if (firstTarget) {
+    checkDom("and it says it is text, not a button",
+      window.getComputedStyle(firstTarget).cursor === "text",
+      window.getComputedStyle(firstTarget).cursor);
+  }
+
+  // WALK until one takes a caret. Every refusal on the way is recorded,
+  // because a refusal that went unrecorded would let this phase pass on a page
+  // where the caret never worked.
+  //
+  // BOUNDED, and the bound is a real cost rather than caution: each attempt is
+  // a `document/readRegion`, which runs `form_inspect` as a child process
+  // against the session copy. A page of this corpus form carries dozens of
+  // mapped paragraph lines and walking all of them would spend the harness's
+  // whole 180-second budget asking the same question.
+  const CARET_ATTEMPTS = 6;
+  let placed: GeometrySpan | null = null;
+  const refusals: string[] = [];
+  for (const span of caretSpans.slice(0, CARET_ATTEMPTS)) {
+    // Click at a fraction inside the line rather than at its left edge, so the
+    // offset that comes back is one the runtime resolved rather than a zero
+    // that would have been right by accident.
+    const rect = span.rect;
+    const midway = rect[0] + (rect[2] - rect[0]) * 0.6;
+    await clickOverlaySpan(span, midway);
+    await settled(160);
+    const pick = getState().overlayPick;
+    if (pick?.kind === "caret") {
+      placed = span;
+      break;
+    }
+    if (pick?.kind === "no_caret") refusals.push(`${pick.refusal}`);
+  }
+
+  if (!placed) {
+    check("some line on this page took a caret", false,
+      `the first ${Math.min(CARET_ATTEMPTS, caretSpans.length)} of ${caretSpans.length} ` +
+        `mapped paragraph lines all refused: ${refusals.join(", ")}`);
+    return;
+  }
+  const took = placed;
+  check("a caret was placed within the attempts this phase allows itself",
+    true,
+    `${refusals.length} refusal(s) before one took: ${refusals.join(", ") || "none"}`);
+
+  // THE REFUSAL, DELIBERATELY PROVOKED.
+  //
+  // The walk above often succeeds on its FIRST attempt — it did on this
+  // machine — and "every refusal named itself" over an empty list passes
+  // without proving anything. So the longest mapped lines on the page are
+  // tried on purpose: a long line is the one most likely to carry several
+  // runs, which is exactly what `set_run` cannot address. If none of them
+  // refuses, that is said rather than papered over.
+  const provoke = caretSpans
+    .filter((s) => s !== took)
+    .sort((a, b) => b.text.length - a.text.length)
+    .slice(0, 3);
+  const queuedBeforeProbe = getState().draft.ops.length;
+  for (const span of provoke) {
+    if (getState().inlineEdit) cancelEdit();
+    await settled(120);
+    await clickOverlaySpan(span, span.rect[0] + (span.rect[2] - span.rect[0]) * 0.5);
+    await settled(200);
+    const pick = getState().overlayPick;
+    if (pick?.kind === "no_caret") {
+      refusals.push(`${pick.refusal}`);
+      check("a line the runtime will not address places NO caret and says why",
+        getState().inlineEdit === null &&
+          ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(
+            `${pick.refusal}`,
+          ),
+        `${pick.refusal} — ${pick.label}`);
+      checkDom("the refusal reaches the status bar rather than silence",
+        document
+          .querySelector('[data-testid="status-overlay-pick"]')
+          ?.getAttribute("data-refusal") === `${pick.refusal}` &&
+          domText('[data-testid="status-overlay-pick"]').length > 0,
+        domText('[data-testid="status-overlay-pick"]'));
+      check("and a refused click queued nothing at all",
+        getState().draft.ops.length === queuedBeforeProbe,
+        `${queuedBeforeProbe} → ${getState().draft.ops.length} ops`);
+      break;
+    }
+  }
+  check("every line that refused a caret named WHICH refusal, from the closed set",
+    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address"].includes(r)),
+    refusals.length
+      ? refusals.join(", ")
+      : `no line among the ${provoke.length + Math.min(CARET_ATTEMPTS, caretSpans.length)} tried on this page refused`);
+
+  // Back onto the line that took the caret, for everything below.
+  if (getState().inlineEdit) cancelEdit();
+  await settled(150);
+  await clickOverlaySpan(took, took.rect[0] + (took.rect[2] - took.rect[0]) * 0.6);
+  await settled(250);
+
+  const edit = getState().inlineEdit;
+  const runEdit = edit?.kind === "run" ? edit : null;
+  check("clicking a mapped paragraph line put a real caret in it",
+    !!runEdit, JSON.stringify(getState().overlayPick ?? null));
+  checkDom("the field is IN the line the runtime measured, not beside the page",
+    !!document.querySelector('[data-testid="overlay-caret-editing"] [data-testid="seat-input"]'),
+    document
+      .querySelector('[data-testid="seat-input"]')
+      ?.closest("[data-testid]")
+      ?.getAttribute("data-testid") ?? "nowhere");
+  check("the caret opened on the paragraph the SPAN carries, not a neighbour",
+    !!runEdit && runEdit.atPara === took.address?.atPara,
+    `${runEdit?.atPara} vs ${took.address?.atPara}`);
+  check("the field holds the run's own text, read from document/readRegion",
+    !!runEdit && runEdit.before.trim().length > 0 &&
+      runEdit.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
+    `${JSON.stringify(runEdit?.before ?? null)} vs ${JSON.stringify(took.text)}`);
+
+  // THE OFFSET. Measured, or honestly absent — never a plausible-looking zero.
+  const expected = took.charX
+    ? caretOffsetAt(took, took.rect[0] + (took.rect[2] - took.rect[0]) * 0.6)
+    : null;
+  check("the caret offset is the one the runtime's own character boxes resolve",
+    !!runEdit && runEdit.caret === expected,
+    `caret ${runEdit?.caret} vs charX-derived ${expected} (${took.charX ? "offsets present" : "no offsets on this line"})`);
+  if (took.charX) {
+    check("and a click past the line's start did not silently snap to zero",
+      (runEdit?.caret ?? 0) > 0,
+      `offset ${runEdit?.caret} into a line of ${took.text.length} characters`);
+  }
+  const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+  checkDom("the browser caret sits where the runtime said, not at the front",
+    !!field && field.selectionStart === (runEdit?.caret ?? 0),
+    `selectionStart ${field?.selectionStart} vs ${runEdit?.caret}`);
+
+  // THE COMPONENT'S OWN ARITHMETIC, through a real pointer position.
+  //
+  // Everything above reached `clickOverlaySpan` directly with a fraction the
+  // harness computed, which exercises the offset logic and NOT the conversion
+  // from a pointer's `clientX` to that fraction. That conversion is the one
+  // piece of coordinate maths left in the overlay, and getting it wrong would
+  // put the caret in the right line at the wrong character — a failure that
+  // looks like working software. So this dispatches a MouseEvent carrying a
+  // real `clientX` at a known place inside the line's box and asks whether the
+  // offset that comes back is the one the runtime's own boxes resolve there.
+  if (took.charX) {
+    cancelEdit();
+    await settled(200);
+    const layer = document.querySelector<HTMLElement>('[data-testid="page-overlay"]');
+    const button = document.querySelector<HTMLElement>(
+      `.ov[data-span-index="${took.index}"]`,
+    );
+    const box = layer?.getBoundingClientRect();
+    if (layer && button && box && box.width > 0) {
+      const wantedFraction = took.rect[0] + (took.rect[2] - took.rect[0]) * 0.75;
+      button.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          clientX: box.left + box.width * wantedFraction,
+          clientY: box.top + box.height * ((took.rect[1] + took.rect[3]) / 2),
+        }),
+      );
+      // POLL, do not sleep. A DOM click cannot be awaited, and the handler
+      // behind it asks `document/readRegion` — which runs `form_inspect` as a
+      // child process and takes seconds, not milliseconds. The first run of
+      // this check waited 300ms and reported "caret none", which read exactly
+      // like the component's arithmetic being wrong when it was the harness
+      // being impatient.
+      await waitFor(() => getState().inlineEdit?.kind === "run", 12000);
+      const viaPointer = getState().inlineEdit;
+      const wanted = caretOffsetAt(took, wantedFraction);
+      check("a real pointer position resolves to the offset its x actually names",
+        viaPointer?.kind === "run" && viaPointer.caret === wanted,
+        `pointer at ${wantedFraction.toFixed(4)} of the page → caret ${
+          viaPointer?.kind === "run" ? viaPointer.caret : "none"
+        }, charX says ${wanted}`);
+      check("and two different pointer positions in one line give two offsets",
+        viaPointer?.kind === "run" && viaPointer.caret !== runEdit?.caret,
+        `0.60 → ${runEdit?.caret} · 0.75 → ${viaPointer?.kind === "run" ? viaPointer.caret : "none"}`);
+    } else {
+      check("the overlay layer had a measurable box to resolve a pointer in", false,
+        `layer ${!!layer} button ${!!button} width ${box?.width}`);
+    }
+  }
+
+  checkDom("the status bar prints the offset, or says it snapped to the line start",
+    domText('[data-testid="status-overlay-pick"]').includes(
+      runEdit?.caret === null ? "줄 앞" : "번째 글자 앞",
+    ),
+    domText('[data-testid="status-overlay-pick"]'));
+  checkDom("위치 says paragraph, chunk and offset — not a cell address",
+    domText('[data-testid="status-where"]').includes("문단") &&
+      domText('[data-testid="status-where"]').includes("덩어리"),
+    domText('[data-testid="status-where"]'));
+  // The insert/overwrite indicator was 삽입/수정 없음 for the life of this
+  // product, and it was true: there was no character-level caret. There is one
+  // now, so it says 삽입 — and never 수정, because nothing here overwrites.
+  checkDom("the 입력 indicator finally has something true to say",
+    domText('[data-testid="verification-bar"]').includes("삽입") &&
+      !domText('[data-testid="verification-bar"]').includes("삽입/수정 없음"),
+    domText('[data-testid="verification-bar"]').slice(0, 200));
+
+  // 글꼴, over a caret. §14's fourth field, and the reason it was added.
+  const faceCell = document.querySelector('[data-testid="typeface-name"]');
+  check("the toolbar names the face this RUN is set in, from the document's header",
+    (faceCell?.getAttribute("data-face") ?? "").length > 0,
+    `${faceCell?.getAttribute("data-face")} · ${domText('[data-testid="tool-charpr"]')}`);
+  const sizeCell = document.querySelector('[data-testid="size-value"]');
+  check("and the size is labelled as the RENDER's, not as a declared one",
+    sizeCell?.getAttribute("data-source") === (took.sizePt ? "render" : "baseline"),
+    `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${took.sizePt}`);
+
+  // TYPE. The same commit path a seat uses, into the same queue.
+  const TYPED = "지면에서 고쳐 쓴 문장";
+  const queuedBeforeCaret = getState().draft.ops.length;
+  await commitEdit(TYPED);
+  await settled(500);
+  const runOp = runOps().find((o) => o.text === TYPED);
+  check("typing into a paragraph line landed in the SAME review queue",
+    !!runOp && runOp.origin === "user", JSON.stringify(runOp ?? null));
+  check("and it queued a set_run op — the operation the runtime already had",
+    runOp?.kind === "set_run", runOp?.kind ?? "none");
+  check("the queued op names the paragraph and the run, not a cell",
+    !!runOp && runOp.atPara === took.address?.atPara,
+    `atPara ${runOp?.atPara} run ${runOp?.run} vs span atPara ${took.address?.atPara}`);
+  check("it records what the line said before, for the queue's before → after",
+    !!runOp && runOp.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
+    JSON.stringify(runOp?.before ?? null));
+  check("the caret produced ONE op, not a second path's duplicate",
+    getState().draft.ops.length === queuedBeforeCaret + 1,
+    `${queuedBeforeCaret} → ${getState().draft.ops.length} ops`);
+
+  // AND IT REACHES THE WIRE. A queue row and a plan op that disagreed about
+  // the address would be an approval bound to a paragraph nobody chose.
+  const plan = getState().draft.plan;
+  check("one plan path: the queue rebuilt a plan over the caret's op",
+    !!plan?.planId,
+    plan?.planId ?? JSON.stringify(getState().draft.error ?? "no plan"));
+  const plannedRuns = (plan?.ops ?? [])
+    .filter((o) => o.kind === "set_run")
+    .map((o) => {
+      const p = o.params as Record<string, unknown>;
+      return `${p.atPara}#${p.run}=${p.text}`;
+    });
+  check("and the plan the RUNTIME returned names that paragraph and run",
+    plannedRuns.includes(`${runOp?.atPara}#${runOp?.run}=${TYPED}`),
+    `${plannedRuns.join(", ") || "no set_run ops in the plan"}`);
+  const validation = getState().draft.validation;
+  check("plan/validate accepted the paragraph op against the run inventory",
+    !!validation &&
+      !(validation.hard ?? []).some((f) => f.at === `ops[${runOp?.opId}]`),
+    `${validation?.verdict} · ${JSON.stringify((validation?.hard ?? []).map((f) => f.code))}`);
+
+  // The review queue shows it whichever surface it came from. This is the
+  // "one queue" claim, read off the DOM rather than off the store.
+  checkDom("the review queue draws the paragraph op in the run's own vocabulary",
+    !!document.querySelector('[data-testid="queue-op-p' + runOp?.atPara + '-r' + runOp?.run + '"]') &&
+      domText('.queue-op[data-kind="set_run"]').includes("문단"),
+    domText('.queue-op[data-kind="set_run"]').slice(0, 120) || "no set_run row in the queue");
+
+  // AND THE TREE — where it can. 본문 보기 renders a paragraph as a node of its
+  // own ONLY when its text appears in no table cell (README gap 9: `at_para`
+  // and `row,col#run` name the same runs and the runtime maps neither onto the
+  // other, so the centre separates them by string). A caret in a paragraph
+  // that lives inside a cell therefore has nowhere in the tree to draw its
+  // proposal, and this reports which case it met rather than asserting the one
+  // it would prefer.
+  setCenterMode("text");
+  await settled(300);
+  const looseNode = document.querySelector(`[data-testid="doc-para-${runOp?.atPara}"]`);
+  if (looseNode) {
+    checkDom("the paragraph edit shows in 본문 보기 as well, as a proposal",
+      domText('[data-testid="view-document"]').includes(TYPED),
+      `${document.querySelectorAll('.queued[data-kind="set_run"]').length} queued run rows`);
+  } else {
+    check("MEASURED: this paragraph lives inside a table cell, so the tree has no node for it",
+      true,
+      `at_para ${runOp?.atPara} is not one of 본문 보기's loose paragraphs — README gap 9 ` +
+        `(at_para and row,col#run are unmapped), so the proposal is visible on the page and ` +
+        `in the review queue, and not in the tree`);
+  }
+  setCenterMode("page");
+  await settled(200);
+
+  // Guarded, and the guard is not defensive style. The first run of this
+  // phase reached here with `runOp` undefined — the commit above had produced
+  // nothing because an earlier step had left no caret open — and the bare
+  // `runOp!.opId` threw a TypeError that killed the whole phase, so eight
+  // downstream checks never ran and the harness reported a crash instead of
+  // the eight results that would have named the cause.
+  if (runOp) {
+    await removeOp(runOp.opId);
+    await settled(300);
+    check("and it can be taken back out of the queue like any other op",
+      !runOps().some((o) => o.text === TYPED), `${getState().draft.ops.length} ops left`);
+  } else {
+    check("and it can be taken back out of the queue like any other op", false,
+      "no set_run op reached the queue, so there was nothing to remove");
+  }
 }
 
 /**
@@ -1495,12 +2267,156 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   // substitution at all, which is a refusal, and photographing the refusal is
   // the point: a screenshot of a feature working on a machine where it does not
   // work is the exact thing this harness exists not to produce.
-  if (stop === "overlay" || stop === "overlay-live" || stop === "overlay-seat") {
+  if (
+    stop === "overlay" ||
+    stop === "overlay-live" ||
+    stop === "overlay-seat" ||
+    stop === "overlay-caret" ||
+    stop === "layout-echo"
+  ) {
     const { loadGeometry, selectSession } = await import("./actions");
     const staged = (await rt.smokeConfig()).stagedSession;
     if (stop !== "overlay-live" && staged) {
       await selectSession(staged);
       await settled(300);
+    }
+
+    // E1.2 — a page holding the SOURCE's raster while the document has moved
+    // on. Reached by running the loop, never by staging a flag: the candidate
+    // in the shot is a candidate on disk, and the 후보본과 다름 banner is
+    // drawn off the runtime's own receipt lineage.
+    if (stop === "layout-echo") {
+      setCenterMode("page");
+      let echoPage = 1;
+      let best = -1;
+      for (let p = 1; p <= 8; p += 1) {
+        await loadGeometry(p);
+        await settled(100);
+        const probe = getState().geometry;
+        if (!probe?.available) break;
+        const found = (probe.seats ?? []).length;
+        if (found > best) {
+          best = found;
+          echoPage = p;
+        }
+        if ((probe.pageCount ?? 1) <= p) break;
+      }
+      await renderCurrentPage(echoPage);
+      await settled(400);
+      await loadGeometry(echoPage);
+      await settled(300);
+      const echoInspect = activeInspect(getState());
+      const echoSeat = (echoInspect?.regions.regions ?? []).find(
+        (r): r is EditableRegion & { table: number; row: number; col: number } =>
+          r.kind === "cell" && r.table !== undefined && r.row !== undefined &&
+          r.col !== undefined && r.scriptAnomaly !== true && r.colorAnomaly !== true,
+      );
+      if (echoSeat) {
+        beginEdit(echoSeat.table, echoSeat.row, echoSeat.col);
+        await commitEdit("지면 반향");
+        await settled(400);
+        await requestApprovalForDraft();
+        await settled(300);
+        await resolveApprovalDecision("approved", "host-operator");
+        for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+          await settled(500);
+        }
+        const shotRun = getState().applied?.runId;
+        if (shotRun) {
+          await waitFor(
+            () => (getState().changedByRun[shotRun] ?? []).length > 0, 20000);
+        }
+        await settled(800);
+      }
+      await ready(`shot-${stop}`);
+      return;
+    }
+
+    // THE CARET SHOT, and the IME's page-surface target.
+    //
+    // Two callers again, and the same split the seat shot has: the screenshot
+    // wants the line caught mid-edit with text in it, and `ime.ps1` needs the
+    // field left exactly as the runtime handed it so the only thing that ends
+    // up in it is what real scan codes typed.
+    //
+    // The line is FOUND, never written down. Most mapped paragraph lines on a
+    // corpus page are one of the 51 corpus-wide that hold several runs and
+    // refuse a caret, so a shot aimed at "the first mapped line" would
+    // photograph a refusal about half the time and call it a caret. This walks
+    // pages and lines until the runtime actually places one.
+    if (stop === "overlay-caret") {
+      const { addressIsCaretTarget, clickOverlaySpan } = await import("./actions");
+      const imeEmpty = (await rt.smokeConfig()).imeEmpty === true;
+      setCenterMode("page");
+      let found: { page: number; span: GeometrySpan } | null = null;
+      for (let p = 1; p <= 8 && !found; p += 1) {
+        await loadGeometry(p);
+        await settled(120);
+        const probe = getState().geometry;
+        if (!probe?.available) break;
+        await renderCurrentPage(p);
+        await settled(300);
+        await loadGeometry(p);
+        await settled(300);
+        // Bounded per page, for the reason `caretChecks` is bounded: each
+        // attempt runs `form_inspect` as a child, and a shot that spent two
+        // minutes asking would time out before it photographed anything.
+        for (const span of (getState().geometry?.spans ?? [])
+          .filter((s) => s.confidence === "unique" && addressIsCaretTarget(s.address) && !!s.charX)
+          .slice(0, 8)) {
+          await clickOverlaySpan(span, span.rect[0] + (span.rect[2] - span.rect[0]) * 0.6);
+          await settled(180);
+          if (getState().inlineEdit?.kind === "run") {
+            found = { page: p, span };
+            break;
+          }
+        }
+        if ((probe.pageCount ?? 1) <= p) break;
+      }
+      await settled(200);
+      const caretField = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+      if (caretField && !imeEmpty) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(caretField, "지면 위에서 고쳐 쓴 문장");
+        caretField.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (caretField && imeEmpty) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(caretField, "");
+        caretField.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await settled(250);
+      const open = getState().inlineEdit;
+      await rt.smokeReady({
+        view: `shot-${stop}`,
+        editorOpen: !!document.querySelector(
+          '[data-testid="overlay-caret-editing"] [data-testid="seat-input"]',
+        ),
+        selection: selectionId(getState().selection),
+        caret: open?.kind === "run" ? open.caret : null,
+        page: found?.page ?? null,
+        devicePixelRatio: window.devicePixelRatio,
+        cssViewport: `${window.innerWidth}x${window.innerHeight}`,
+      });
+      if (imeEmpty) {
+        // Wait for real scan codes, then report what the app COMMITTED — the
+        // value that would become a `set_run` op, not a keystroke count.
+        for (let i = 0; i < 240 && getState().lastCommit === null; i += 1) {
+          await settled(250);
+        }
+        const commit = getState().lastCommit;
+        const queuedRun = runOps().find(
+          (op) => open?.kind === "run" && op.atPara === open.atPara && op.run === open.run,
+        );
+        await rt.smokeFinal({
+          value: commit?.value ?? null,
+          composed: commit?.composed ?? false,
+          queued: queuedRun?.text ?? null,
+          kind: queuedRun?.kind ?? null,
+          planned:
+            getState().draft.plan?.ops.map((op) => (op.params as { text?: string }).text) ?? [],
+        });
+      }
+      return;
     }
     // THE MARQUEE SHOT. A real seat on a real page, opened into the real inline
     // editor with a value part-typed into it — the interaction the product is
@@ -1727,7 +2643,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
         await settled(250);
       }
       const commit = getState().lastCommit;
-      const queuedOp = getState().draft.ops.find(
+      const queuedOp = fillOps().find(
         (op) => op.table === first.table && op.row === first.row && op.col === first.col,
       );
       await rt.smokeFinal({
@@ -1742,12 +2658,24 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   }
 
   // Every other stop needs a queue.
-  beginEdit(first.table, first.row, first.col);
-  await commitEdit("정보공개 청구서 검토본");
+  //
+  // ALL captures share one runtime root, so a corpus opened by a later capture
+  // is the SAME session an earlier one already applied a candidate to. Writing
+  // the same two cells again is then refused — the head has them filled, and
+  // the shell sets `overwrite` only on an inverse — which leaves `applied`
+  // null and every stop after the first apply photographing a refusal. The
+  // history capture is the one that cannot survive that, because it needs a
+  // candidate of its own to reverse, so it takes seats no earlier capture
+  // touches. The values it writes are its own too, for the same reason.
+  const chainShot = stop === "history";
+  const seatA = chainShot ? (clean[2] ?? first) : first;
+  const seatB = chainShot ? clean[3] : clean[1];
+  beginEdit(seatA.table, seatA.row, seatA.col);
+  await commitEdit(chainShot ? "되돌리기 촬영본" : "정보공개 청구서 검토본");
   await settled(200);
-  if (clean[1]) {
-    beginEdit(clean[1].table, clean[1].row, clean[1].col);
-    await commitEdit("2026-09-01");
+  if (seatB) {
+    beginEdit(seatB.table, seatB.row, seatB.col);
+    await commitEdit(chainShot ? "2026-09-03" : "2026-09-01");
     await settled(200);
   }
   // A refused op, so the queue screenshot shows a real verdict rather than a
@@ -1782,6 +2710,29 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   if (stop === "receipt" && getState().applied) {
     openReceipt(getState().applied!.runId);
     await settled(400);
+  }
+
+  // E1.4 — 기록, with a real reversal in it. Every row in this shot is a
+  // candidate on disk: the edit above, then the inverse of it, proposed by
+  // reading the previous value off the chain, approved by the same gate, and
+  // proven afterwards by the runtime's own candidate/compare. Nothing here is
+  // arranged — if the reversal failed to apply, the shot photographs that.
+  if (stop === "history" && getState().applied) {
+    const edited = getState().applied!.runId;
+    const { proposeUndoOf, selectHistory } = await import("./actions");
+    const queued = await proposeUndoOf(edited);
+    await settled(500);
+    if (queued > 0) {
+      await requestApprovalForDraft();
+      await settled(300);
+      await resolveApprovalDecision("approved", "host-operator");
+      for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+        await settled(500);
+      }
+      await settled(900);
+    }
+    selectHistory(edited);
+    await settled(500);
   }
   await ready(`shot-${stop}`);
 }
@@ -2094,16 +3045,26 @@ export async function runSmoke(): Promise<void> {
   }
 
   let finished = false;
+  // 180 s is the budget every phase has had, and it is deliberately tight:
+  // a phase that needs longer is usually a phase that is waiting on something
+  // it should be asserting about. `undo` is the exception and it is a measured
+  // one — it drives FOUR real applies (edit, chain, reversal, and the staged
+  // session's echo edit), each spawning preedit and check_residue children,
+  // plus two form_inspect runs for candidate/compare and an eight-page geometry
+  // scan. Giving it the default would make the watchdog a coin flip on machine
+  // load rather than a budget.
+  const budgetMs = config.phase === "undo" ? 480_000 : 180_000;
   const watchdog = setTimeout(() => {
     if (finished) return;
-    check("smoke finished within its own budget", false, "180s watchdog fired");
+    check("smoke finished within its own budget", false,
+      `${Math.round(budgetMs / 1000)}s watchdog fired`);
     void rt.smokeFinish({
       phase: config.phase,
       passed: checks.filter((c) => c.ok).length,
       failed: checks.filter((c) => !c.ok).length,
       checks,
     });
-  }, 180_000);
+  }, budgetMs);
 
   try {
     if (config.phase === "open") await phaseOpen(config);
@@ -2111,6 +3072,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "edit") await phaseEdit(config);
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
+    else if (config.phase === "undo") await phaseUndo(config);
     else if (config.phase === "overlay") await phaseOverlay(config);
     else if (config.phase === "packs") await phasePacks(config);
     else if (config.phase === "composer") await phaseComposer(config);

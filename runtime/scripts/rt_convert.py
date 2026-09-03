@@ -180,8 +180,20 @@ def run_convert(tools, source: Path, target: Path, *,
     }
 
 
-def prepare_pdf(session, tools, *, timeout: float | None = None) -> dict:
-    """Convert the session copy to a PDF and register it on the session."""
+def prepare_pdf(session, tools, *, timeout: float | None = None,
+                candidate: dict | None = None) -> dict:
+    """Convert the session copy — or one published candidate — to a PDF.
+
+    Rule 1 of this module is unchanged and is why ``candidate`` is a resolved
+    record rather than a path: the subject is either ``<session>/source/…`` or
+    an artifact under ``<session>/candidates/<runId>/`` that ``read_receipt``
+    already re-verified. Nothing a client sent is ever opened.
+
+    Each subject gets its OWN prepared PDF, bound to that subject's digest, so
+    a candidate's page can never be served for the source or the other way
+    round — the same binding ``existing_pdf`` has always enforced, keyed per
+    run instead of once per session.
+    """
     if timeout is None:
         timeout = CONVERT_TIMEOUT_SECONDS
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
@@ -192,17 +204,25 @@ def prepare_pdf(session, tools, *, timeout: float | None = None) -> dict:
                        f"and {MAX_CONVERT_TIMEOUT}", timeoutSeconds=timeout,
                        min=MIN_CONVERT_TIMEOUT, max=MAX_CONVERT_TIMEOUT)
 
-    source = session.source
+    if candidate is None:
+        source = session.source
+        subject_sha = session.meta["sourceSha256"]
+        run_id = None
+    else:
+        source = candidate["path"]
+        subject_sha = candidate["sha256"]
+        run_id = candidate["runId"]
+
     if source.suffix.lower() not in CONVERTIBLE_SUFFIXES:
         raise RpcError("not_convertible",
                        f"a {source.suffix or 'extensionless'} source is not "
                        "something the converter takes",
-                       suffix=source.suffix,
+                       suffix=source.suffix, runId=run_id,
                        convertibleFrom=list(CONVERTIBLE_SUFFIXES))
 
-    existing = existing_pdf(session)
+    existing = existing_pdf(session, run_id=run_id)
     if existing is not None:
-        return {"sessionId": session.id, "prepared": False,
+        return {"sessionId": session.id, "prepared": False, "runId": run_id,
                 "reason": "already prepared for these bytes",
                 "pdf": existing}
 
@@ -210,7 +230,8 @@ def prepare_pdf(session, tools, *, timeout: float | None = None) -> dict:
     if hancom["state"] != "yes":
         raise RpcError("needs_hancom",
                        "this machine cannot produce a PDF: " + hancom["reason"],
-                       hancom=hancom, capability=prepare_capability())
+                       hancom=hancom, runId=run_id,
+                       capability=prepare_capability())
 
     busy = running_hancom_processes()
     if busy["state"] != "no":
@@ -220,36 +241,40 @@ def prepare_pdf(session, tools, *, timeout: float | None = None) -> dict:
                        "close it and try again — the Runtime will not "
                        "terminate somebody else's session",
                        processes=busy["processes"], state=busy["state"],
-                       reason=busy["reason"])
+                       runId=run_id, reason=busy["reason"])
 
     derived = session.dir / DERIVED_DIRNAME
     derived.mkdir(parents=True, exist_ok=True)
-    target = derived / DERIVED_PDF_NAME
+    name = DERIVED_PDF_NAME if run_id is None else f"candidate-{run_id}.pdf"
+    target = derived / name
     outcome = run_convert(tools, source, target, timeout=float(timeout))
 
     if outcome["timedOut"]:
         raise RpcError("convert_failed",
                        f"the conversion did not finish within {timeout}s",
-                       timedOut=True, timeoutSeconds=timeout, **_tail(outcome))
+                       timedOut=True, timeoutSeconds=timeout, runId=run_id,
+                       **_tail(outcome))
     if outcome["exitCode"] != 0 or not target.is_file():
         raise RpcError("convert_failed",
                        f"the converter exited {outcome['exitCode']} and left no "
-                       "usable PDF", timedOut=False, **_tail(outcome))
+                       "usable PDF", timedOut=False, runId=run_id,
+                       **_tail(outcome))
 
     digest, size = sha256_file(target)
     record = {
-        "path": f"{DERIVED_DIRNAME}/{DERIVED_PDF_NAME}",
+        "path": f"{DERIVED_DIRNAME}/{name}",
         "sha256": digest,
         "bytes": size,
         "producedBy": "engine/scripts/com_backend.py convert",
         "producedUtc": now_utc(),
         # Bound to the bytes it came from, so a derived PDF can never be served
-        # for a source it does not describe.
-        "sourceSha256": session.meta["sourceSha256"],
+        # for a document it does not describe — source or candidate.
+        "sourceSha256": subject_sha,
+        "runId": run_id,
     }
-    _write_meta(session, record)
+    _write_meta(session, record, run_id=run_id)
     return {"sessionId": session.id, "prepared": True, "pdf": record,
-            "convert": {"exitCode": outcome["exitCode"]}}
+            "runId": run_id, "convert": {"exitCode": outcome["exitCode"]}}
 
 
 def _tail(outcome: dict) -> dict:
@@ -258,28 +283,45 @@ def _tail(outcome: dict) -> dict:
             "stderr": outcome["stderr"][-1200:]}
 
 
-def _write_meta(session, record: dict) -> None:
+def _write_meta(session, record: dict, *, run_id: str | None = None) -> None:
     import json
 
-    session.meta["derivedPdf"] = record
+    if run_id is None:
+        session.meta["derivedPdf"] = record
+    else:
+        # A separate map, so a candidate's PDF can never be picked up as the
+        # source's. `derivedPdf` keeps meaning exactly what it always meant.
+        by_run = session.meta.get("derivedPdfByRun")
+        if not isinstance(by_run, dict):
+            by_run = {}
+        by_run[run_id] = record
+        session.meta["derivedPdfByRun"] = by_run
     atomic_write_bytes(
         session.meta_path,
         json.dumps(session.meta, ensure_ascii=False, indent=2,
                    sort_keys=True, allow_nan=False).encode("utf-8"))
 
 
-def existing_pdf(session) -> dict | None:
+def existing_pdf(session, *, run_id: str | None = None,
+                 expect_sha256: str | None = None) -> dict | None:
     """A prepared PDF for THESE bytes, or nothing.
 
     The binding check is not ceremony: a session's source cannot change under
     the Runtime, but a root is a directory on a disk that other things can
     touch, and serving a PDF of some other document as this document's pages
-    would be the worst possible failure of a viewer.
+    would be the worst possible failure of a viewer. A candidate's PDF is bound
+    the same way, to the candidate's digest.
     """
-    record = (session.meta or {}).get("derivedPdf")
+    if run_id is None:
+        record = (session.meta or {}).get("derivedPdf")
+        expected = expect_sha256 or session.meta.get("sourceSha256")
+    else:
+        by_run = (session.meta or {}).get("derivedPdfByRun")
+        record = by_run.get(run_id) if isinstance(by_run, dict) else None
+        expected = expect_sha256
     if not isinstance(record, dict):
         return None
-    if record.get("sourceSha256") != session.meta.get("sourceSha256"):
+    if expected is not None and record.get("sourceSha256") != expected:
         return None
     path = session.dir / str(record.get("path") or "")
     if not path.is_file():

@@ -529,10 +529,19 @@ def _profile_path(session: Session, tag: str) -> Path:
 
 
 def load_profile(tools, session: Session, *, tag: str = "base",
-                 full_text: list[str] | None = None) -> dict:
-    """Run form_inspect against the session copy and return its profile object."""
+                 full_text: list[str] | None = None,
+                 subject: Path | None = None) -> dict:
+    """Run form_inspect against a document of this session; return the profile.
+
+    ``subject`` defaults to the session copy. The only other legal subject is a
+    PUBLISHED CANDIDATE inside this session's ``candidates/`` tree, and callers
+    resolve one through ``rt_apply.candidate_artifact`` — which reads the
+    receipt first, so the bytes were re-verified against their binding before
+    anything profiled them. No path from a client ever reaches this argument.
+    """
     out = _profile_path(session, tag)
-    tools.profile(session.source, out, full_text=full_text)
+    tools.profile(session.source if subject is None else subject, out,
+                  full_text=full_text)
     try:
         return json.loads(out.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -550,6 +559,42 @@ def charpr_faces(profile: dict) -> dict:
     """
     faces = profile.get("charpr_faces")
     return faces if isinstance(faces, dict) else {}
+
+
+def region_runs_with_faces(profile: dict) -> list:
+    """``full_text`` regions, each run carrying the face its charPr resolves to.
+
+    The SAME join §14 already publishes for a fill seat's shape
+    (``regions[].charPrFace``), applied to the run inventory a caller asks for
+    by address. Without it a paragraph run reaches a client as an integer, and
+    an editor with a caret standing in that run can only print the integer —
+    exactly the state gap 16 closed for seats and left open here.
+
+    Spelled ``charpr_face`` because the object it joins is the engine's, and
+    every other key on a run (``charpr``, ``color_anomaly``) is spelled that
+    way. One mixed vocabulary across two objects costs less than two
+    vocabularies inside one.
+
+    A run whose charPr resolves to nothing gets ``null``: the document did not
+    say. That absence is not ``summary.typefaces.state == "unavailable"``,
+    which means nothing looked, and the two stay apart here as everywhere else.
+    """
+    faces = charpr_faces(profile)
+    out = []
+    for entry in profile.get("full_text", []) or []:
+        if not isinstance(entry, dict):
+            out.append(entry)
+            continue
+        row = dict(entry)
+        runs = row.get("runs")
+        if isinstance(runs, list):
+            row["runs"] = [
+                dict(run, charpr_face=faces.get(str(run.get("charpr"))))
+                if isinstance(run, dict) else run
+                for run in runs
+            ]
+        out.append(row)
+    return out
 
 
 def _with_face(shape, faces: dict):

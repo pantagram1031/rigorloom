@@ -76,16 +76,25 @@ export function VerificationBar({
   const pageCount = useWorkspace((s) => s.render?.pageCount ?? 1);
   const selection = useWorkspace((s) => s.selection);
   const overlayPick = useWorkspace((s) => s.overlayPick);
+  const inlineEdit = useWorkspace((s) => s.inlineEdit);
+  const caret = inlineEdit?.kind === "run" ? inlineEdit : null;
 
   // The address, spelled the way the runtime addresses it. Never a line and
-  // column: this build has no caret and inventing one would be a lie about
-  // where the user is standing.
+  // column — the document has no such coordinate — but where a caret IS
+  // standing in a line, the character offset it stands at is a measured
+  // number and is printed. `null` there means the line carried no per-
+  // character boxes, so the offset says 줄 앞 rather than 0: a fallback
+  // dressed as a measurement is the failure this whole feature avoids.
   const where = !selection
     ? "선택 없음"
     : selection.kind === "cell"
       ? `표${selection.table} (${selection.row},${selection.col})`
       : selection.kind === "paragraph"
-        ? `문단 ${selection.atPara}`
+        ? caret
+          ? `문단 ${caret.atPara} · 덩어리 ${caret.run} · ${
+              caret.caret === null ? "줄 앞" : `${caret.caret}번째 글자 앞`
+            }`
+          : `문단 ${selection.atPara}`
         : `표${selection.table}`;
 
   const hash = inspect?.documentHash ?? session?.source.sha256 ?? null;
@@ -125,17 +134,43 @@ export function VerificationBar({
       <Fact
         k="위치"
         nonce={where}
-        title="고른 곳의 주소입니다. 이 편집기의 커서는 칸 단위입니다."
+        title={
+          caret
+            ? "고른 곳의 주소입니다. 지금은 지면의 한 줄 안에 글자 단위 커서가 있습니다."
+            : "고른 곳의 주소입니다. 커서가 놓인 줄이 없으면 칸 단위입니다."
+        }
         v={
           <span className="mono" data-testid="status-where">
             {where}
           </span>
         }
       />
+      {/* 삽입/수정, and it used to be neither.
+          The old copy read "이 빌드에는 글자 단위 커서가 없어" and it was
+          true: the only editor was a seat, opened whole and replaced whole.
+          With a caret standing in a paragraph line there IS a character-level
+          cursor, and it is in insert mode because the field is a real `<input>`
+          — so the indicator says so while one is open, and goes back to saying
+          there is none the moment it closes. It never says 수정: nothing in
+          this build overwrites, and an indicator offering a mode that does not
+          exist is the same fabrication as a font name nobody declared. */}
       <Fact
         k="입력"
-        title="한글의 삽입/수정 표시에 해당하는 자리입니다. 이 빌드에는 글자 단위 커서가 없어 둘 중 어느 상태도 아닙니다."
-        v={<Tag tone="none">삽입/수정 없음</Tag>}
+        nonce={caret ? `caret-${caret.atPara}-${caret.run}` : "none"}
+        title={
+          caret
+            ? "지면의 줄 안에 커서가 있습니다. 이 편집기는 삽입만 하며 덮어쓰기 모드는 없습니다."
+            : "한글의 삽입/수정 표시에 해당하는 자리입니다. 커서가 놓인 줄이 없으면 둘 중 어느 상태도 아닙니다."
+        }
+        v={
+          caret ? (
+            <Tag tone="fill" title="글자 단위 커서가 열려 있습니다">
+              삽입
+            </Tag>
+          ) : (
+            <Tag tone="none">삽입/수정 없음</Tag>
+          )
+        }
       />
       {/* What the last click ON THE PAGE resolved to. Only in 페이지 보기,
           because that is the only mode where a click has a rectangle to have
@@ -149,19 +184,32 @@ export function VerificationBar({
           title={
             overlayPick.kind === "ambiguous"
               ? "같은 글자를 가진 주소가 여럿입니다. 런타임도 이 앱도 그 중 하나를 고르지 않습니다."
-              : overlayPick.derivation
-                ? // The derivation belongs where the address is, not only in a
-                  // hover: a seat is the one overlay class a person types into,
-                  // and how its rectangle was found is how much to trust it.
-                  `지면에서 누른 곳이 가리키는 주소입니다. 이 자리의 위치는 ${overlayPick.derivation} 로 잡혔습니다.`
-                : "지면에서 누른 곳이 가리키는 주소입니다."
+              : overlayPick.kind === "caret"
+                ? overlayPick.caret === null
+                  ? "이 줄은 렌더러가 글자별 위치를 내주지 않아, 커서를 줄 앞에 놓았습니다. 누른 자리에 놓은 것이 아닙니다."
+                  : "누른 자리에 커서를 놓았습니다. 몇 번째 글자인지는 런타임이 지면에서 읽어 준 글자별 위치로 정해집니다."
+                : overlayPick.kind === "no_caret"
+                  ? "이 줄은 주소가 잡혔지만, 고쳐 쓸 글 덩어리를 하나로 특정할 수 없어 커서를 놓지 않았습니다."
+                  : overlayPick.derivation
+                    ? // The derivation belongs where the address is, not only
+                      // in a hover: a seat is one of two overlay classes a
+                      // person types into, and how its rectangle was found is
+                      // how much to trust it.
+                      `지면에서 누른 곳이 가리키는 주소입니다. 이 자리의 위치는 ${overlayPick.derivation} 로 잡혔습니다.`
+                    : "지면에서 누른 곳이 가리키는 주소입니다."
           }
           v={
             <span
-              className={overlayPick.kind === "ambiguous" ? "mono warnish" : "mono"}
+              className={
+                overlayPick.kind === "ambiguous" || overlayPick.kind === "no_caret"
+                  ? "mono warnish"
+                  : "mono"
+              }
               data-testid="status-overlay-pick"
               data-pick-kind={overlayPick.kind}
               data-derivation={overlayPick.derivation ?? ""}
+              data-caret={overlayPick.kind === "caret" ? (overlayPick.caret ?? "start") : ""}
+              data-refusal={overlayPick.refusal ?? ""}
             >
               {overlayPick.label}
             </span>
