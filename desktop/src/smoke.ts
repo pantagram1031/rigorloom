@@ -28,6 +28,8 @@ import {
   openPath,
   openReceipt,
   preparePages,
+  proposeUndoOf,
+  redoQueuedOp,
   removeOp,
   renderCurrentPage,
   reopenExported,
@@ -37,9 +39,12 @@ import {
   runAgentProposal,
   runCheck,
   seatAt,
+  selectHistory,
+  undoQueuedOp,
 } from "./actions";
 import * as rt from "./runtime";
 import {
+  activeCandidates,
   activeInspect,
   activeText,
   canRequestApproval,
@@ -849,6 +854,398 @@ async function phaseEdit(config: SmokeConfig) {
   setView("document");
   await settled(240);
   checkAlive("the editing loop");
+}
+
+/**
+ * E1.4 — undo in two tiers, and the proof that the second one is an inverse.
+ *
+ * This phase is written around the property the slice exists for: **the inverse
+ * is proven by the runtime, not asserted by the shell**. Nothing here compares
+ * two strings the app was holding. The pre-edit value is read back through
+ * `document/readRegion` on the chain, and after the reversal is applied
+ * `candidate/compare` re-reads both documents from receipt-verified bytes and
+ * says whether the address came back.
+ *
+ * It also pins the defect that made all of this necessary: two applies in a row
+ * used to produce two siblings of the source, the second silently missing the
+ * first edit. The chain check below is that regression test in the UI.
+ */
+async function phaseUndo(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const sessionId = await openPath(config.corpus);
+  check("undo phase opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(200);
+
+  const inspect = activeInspect(getState());
+  if (!inspect) {
+    check("inspect returned in the undo phase", false, String(getState().inspectError?.code));
+    return;
+  }
+  const seats = inspect.regions.regions.filter(
+    (r): r is EditableRegion & { table: number; row: number; col: number } =>
+      r.kind === "cell" && r.table !== undefined && r.row !== undefined && r.col !== undefined,
+  );
+  const clean = seats.filter((r) => r.scriptAnomaly !== true && r.colorAnomaly !== true);
+  const first = clean[0];
+  const second = clean[1];
+  check("two clean fill seats exist for the chain check", !!first && !!second,
+    `${clean.length} clean of ${seats.length}`);
+  if (!first || !second) return;
+
+  // --- 1. TIER ONE: the queue. Removing IS the undo, and it is labelled so ---
+  const VALUE = "되돌리기 검사 001";
+  beginEdit(first.table, first.row, first.col);
+  await commitEdit(VALUE);
+  await settled(160);
+  check("an edit queued before any undo", getState().draft.ops.length === 1,
+    JSON.stringify(getState().draft.ops.map((o) => o.text)));
+  const queuedOpId = getState().draft.ops[0]?.opId;
+  const queuedBefore = getState().draft.ops[0]?.before;
+  const planBefore = getState().draft.plan?.opsHash;
+
+  checkDom("the queue's undo control says 대기열에서 제거, not 되돌리기",
+    domText('[data-testid="review-queue"]').includes("대기열에서 제거") &&
+      !domText('[data-testid="review-queue"]').includes("문서 되돌리기"),
+    domText('[data-testid="review-queue"]').slice(0, 200));
+
+  await undoQueuedOp(queuedOpId);
+  await settled(200);
+  check("queue undo empties the queue", getState().draft.ops.length === 0,
+    `${getState().draft.ops.length} left`);
+  check("queue undo produced NO candidate", activeCandidates(getState()).length === 0,
+    `${activeCandidates(getState()).length} candidates`);
+  check("the removed op is on the redo stack", getState().redoStack.length === 1,
+    `${getState().redoStack.length}`);
+  checkDom("다시 넣기 is offered", !!document.querySelector('[data-testid="queue-redo"]'),
+    domText('[data-testid="review-queue-empty"]').slice(0, 120));
+
+  await redoQueuedOp();
+  await settled(240);
+  const redone = fillOps()[0];
+  check("queue redo restores the SAME target and the SAME value",
+    getState().draft.ops.length === 1 &&
+      redone?.table === first.table && redone?.row === first.row &&
+      redone?.col === first.col && redone?.text === VALUE &&
+      redone?.before === queuedBefore,
+    JSON.stringify({ t: redone?.table, r: redone?.row, c: redone?.col,
+      text: redone?.text, before: redone?.before }));
+  check("redo re-proposed an identical plan intent",
+    getState().draft.plan?.opsHash === planBefore,
+    `${getState().draft.plan?.opsHash?.slice(0, 12)} vs ${planBefore?.slice(0, 12)}`);
+  check("the redo stack is empty again", getState().redoStack.length === 0,
+    `${getState().redoStack.length}`);
+
+  // --- 2. apply it, so there is something a post-apply undo can reverse ------
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const editRun = getState().applied?.runId;
+  check("the edit applied and produced a candidate", !!editRun,
+    editRun ?? JSON.stringify(getState().applyError));
+  if (!editRun) return;
+  check("the first candidate is a root of the chain",
+    getState().applied?.base === null, JSON.stringify(getState().applied?.base));
+  check("the head moved to the new candidate", getState().head === editRun,
+    String(getState().head));
+
+  // --- 3. THE DEFECT: a second edit must CHAIN, not start over --------------
+  beginEdit(second.table, second.row, second.col);
+  await commitEdit("되돌리기 검사 002");
+  await settled(240);
+  check("a second edit chains onto the first candidate",
+    getState().draft.plan?.base?.runId === editRun,
+    JSON.stringify(getState().draft.plan?.base));
+  check("and therefore binds the candidate's bytes, not the source's",
+    getState().draft.plan?.boundSha256 === getState().applied?.candidate.sha256,
+    `${getState().draft.plan?.boundSha256?.slice(0, 12)} vs ` +
+      `${getState().applied?.candidate.sha256.slice(0, 12)}`);
+  checkDom("the queue says which candidate it is chaining onto",
+    domText('[data-testid="queue-base"]').includes(editRun.slice(0, 12)),
+    domText('[data-testid="queue-base"]').slice(0, 160));
+
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const chainRun = getState().applied?.runId;
+  check("the chained edit applied", !!chainRun, chainRun ?? JSON.stringify(getState().applyError));
+  if (!chainRun) return;
+
+  // The whole point, read out of the RUNTIME rather than out of the store: the
+  // second candidate carries BOTH edits.
+  const chained = await rt.readRegion(
+    sessionId,
+    [{ table: first.table, row: first.row, col: first.col },
+     { table: second.table, row: second.row, col: second.col }],
+    chainRun,
+  );
+  const firstText = chained.regions.find(
+    (r) => r.addr?.row === first.row && r.addr?.col === first.col)?.text;
+  check("the chained candidate still carries the FIRST edit", firstText === VALUE,
+    `${JSON.stringify(firstText)} vs ${JSON.stringify(VALUE)}`);
+  check("readRegion said which document answered",
+    chained.subject.kind === "candidate" && chained.subject.runId === chainRun,
+    JSON.stringify(chained.subject));
+
+  // --- 4. TIER TWO: undo the first edit, on top of the chain ----------------
+  const queued = await proposeUndoOf(editRun);
+  await settled(300);
+  check("되돌리기 제안 queued the inverse", queued === 1 && getState().draft.ops.length === 1,
+    `${queued} ops · ${JSON.stringify(getState().undoError)}`);
+  check("the inverse restores the value READ from the chain, not remembered",
+    fillOps()[0]?.text === queuedBefore,
+    `${JSON.stringify(fillOps()[0]?.text)} vs ${JSON.stringify(queuedBefore)}`);
+  check("the proposal declares what it reverses",
+    getState().draft.plan?.reverses?.runId === editRun,
+    JSON.stringify(getState().draft.plan?.reverses));
+  check("and chains onto the HEAD, so the newer edit is not thrown away",
+    getState().draft.plan?.base?.runId === chainRun,
+    JSON.stringify(getState().draft.plan?.base));
+  checkDom("the UI calls it 되돌리기 제안 and says nothing is deleted",
+    !!document.querySelector('[data-testid="queue-reversal"]') &&
+      domText('[data-testid="queue-reversal"]').includes("되돌리기 제안") &&
+      domText('[data-testid="queue-reversal"]').includes("지워지지 않습니다"),
+    domText('[data-testid="queue-reversal"]').slice(0, 200));
+  check("nothing has been applied by the proposal itself",
+    getState().applied?.runId === chainRun, String(getState().applied?.runId));
+
+  // Same gate as any other plan.
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const undoRun = getState().applied?.runId;
+  check("the reversal applied as one MORE candidate", !!undoRun && undoRun !== editRun,
+    undoRun ?? JSON.stringify(getState().applyError));
+  if (!undoRun) return;
+  check("nothing was deleted: all three candidates are still listed",
+    activeCandidates(getState()).length === 3,
+    activeCandidates(getState()).map((c) => c.runId?.slice(0, 8)).join(","));
+
+  // --- 5. THE PROOF, from the runtime ---------------------------------------
+  const proof = getState().inverseProof;
+  check("the shell asked the runtime to prove the inverse", !!proof,
+    JSON.stringify(getState().undoError));
+  check("the proof is about the candidate that was just applied",
+    proof?.runId === undoRun && proof?.reversedRunId === editRun,
+    `${proof?.runId} / ${proof?.reversedRunId}`);
+  check("the runtime compared at least one address",
+    (proof?.compare.regionsCompared ?? 0) >= 1,
+    JSON.stringify(proof?.compare.regions.map((r) => [r.address, r.equal])));
+  check("PROVEN: the address equals its pre-edit value",
+    proof?.compare.regionsEqual === true,
+    JSON.stringify(proof?.compare.regions));
+  // Independent of the shell's own proof: ask the runtime again, directly.
+  const after = await rt.readRegion(
+    sessionId, [{ table: first.table, row: first.row, col: first.col }], undoRun);
+  check("and readRegion on the reversal agrees",
+    after.regions[0]?.text === queuedBefore,
+    `${JSON.stringify(after.regions[0]?.text)} vs ${JSON.stringify(queuedBefore)}`);
+  check("the newer edit SURVIVED the undo of the older one",
+    (await rt.readRegion(sessionId,
+      [{ table: second.table, row: second.row, col: second.col }], undoRun))
+      .regions[0]?.text === "되돌리기 검사 002",
+    "the reversal chained onto the head rather than replacing it");
+  check("RECORDED: bytes are not restored, only text",
+    proof?.compare.artifactEqual === false,
+    `artifactEqual=${proof?.compare.artifactEqual} — preedit rewrites and rezips, ` +
+      `so an inverse restores the value and never the package`);
+
+  // The receipt is where the claim lives permanently.
+  const receipt = await rt.readReceipt(sessionId, undoRun);
+  check("the receipt records which candidate this one reverses",
+    receipt.reverses?.runId === editRun, JSON.stringify(receipt.reverses));
+  check("the receipt records the candidate it was built on",
+    receipt.base?.runId === chainRun, JSON.stringify(receipt.base));
+
+  // --- 6. the 기록 panel -----------------------------------------------------
+  await settled(300);
+  checkDom("기록 lists the whole lineage",
+    document.querySelectorAll('[data-testid^="history-"][data-depth]').length === 3,
+    `${document.querySelectorAll('[data-testid^="history-"][data-depth]').length} rows`);
+  checkDom("기록 marks the head",
+    domText(`[data-testid="history-${undoRun}"]`).includes("현재"),
+    domText(`[data-testid="history-${undoRun}"]`).slice(0, 160));
+  checkDom("기록 marks the reversal and what it reversed",
+    domText(`[data-testid="history-${undoRun}"]`).includes("되돌리기") &&
+      domText(`[data-testid="history-${editRun}"]`).includes("되돌려짐"),
+    `${domText(`[data-testid="history-${editRun}"]`).slice(0, 160)}`);
+  checkDom("기록 states each row's parent",
+    domText(`[data-testid="history-facts-${chainRun}"]`).includes(editRun.slice(0, 12)) &&
+      domText(`[data-testid="history-facts-${editRun}"]`).includes("원본에서 바로"),
+    domText(`[data-testid="history-facts-${chainRun}"]`).slice(0, 160));
+  checkDom("the proof is on screen with BOTH equalities apart",
+    domText('[data-testid="inverse-proof"]').includes("되돌리기 확인됨") &&
+      domText('[data-testid="inverse-proof-bytes"]').includes("false"),
+    domText('[data-testid="inverse-proof"]').slice(0, 220));
+
+  // Selecting an older candidate SHOWS it and does not move the head.
+  selectHistory(editRun);
+  await settled(240);
+  checkDom("selecting an older candidate opens it read-only",
+    !!document.querySelector(`[data-testid="history-detail-${editRun}"]`),
+    domText(`[data-testid="history-${editRun}"]`).slice(0, 120));
+  check("and does NOT silently move the head", getState().head === undoRun,
+    String(getState().head));
+  checkDom("export from that row names its own run",
+    !!document.querySelector(`[data-testid="history-export-${editRun}"]`),
+    domText(`[data-testid="history-detail-${editRun}"]`).slice(0, 200));
+  selectHistory(null);
+  await settled(160);
+
+  await echoChecks();
+  checkAlive("the undo phase");
+}
+
+/**
+ * E1.2 — the page shows the source while the document is a candidate. Say so.
+ *
+ * Needs a document that HAS a raster, which on this machine means the staged
+ * session (the corpus's own Hancom render; `renderPrepare` refuses live here).
+ * Then: apply an edit, and assert that the page does not quietly go on
+ * presenting the old picture as the document.
+ *
+ * The 다시 그리기 assertion is deliberately not "it redraws". On this machine
+ * it cannot, and the check is that the refusal is a designed state carrying the
+ * runtime's own words — whichever of `needs_hancom` / `com_busy` this machine
+ * gives today.
+ */
+async function echoChecks() {
+  const stagedId = (await rt.smokeConfig()).stagedSession;
+  if (!stagedId) {
+    check("the harness staged a rendered session for the layout-echo check", false,
+      "RIGORLOOM_SMOKE_STAGED is empty — the E1.2 half of this phase did not run");
+    return;
+  }
+  const { loadGeometry, selectSession } = await import("./actions");
+  await selectSession(stagedId);
+  await settled(400);
+  setCenterMode("page");
+
+  // Find a page the runtime actually seats, the same way the overlay phase
+  // does — a page number written down today is a page number wrong tomorrow.
+  let seatPage = 1;
+  let bestSeats = -1;
+  for (let p = 1; p <= 8; p += 1) {
+    await loadGeometry(p);
+    await settled(80);
+    const probe = getState().geometry;
+    if (!probe?.available) break;
+    const found = (probe.seats ?? []).length;
+    if (found > bestSeats) {
+      bestSeats = found;
+      seatPage = p;
+    }
+    if ((probe.pageCount ?? 1) <= p) break;
+  }
+  await renderCurrentPage(seatPage);
+  await settled(400);
+  await loadGeometry(seatPage);
+  await settled(300);
+  check("the staged session has a raster to compare against",
+    getState().render?.available === true,
+    JSON.stringify(getState().render?.unavailable ?? "available"));
+  if (getState().render?.available !== true) return;
+
+  checkDom("with no candidate yet, the page claims nothing about being stale",
+    !document.querySelector('[data-testid="layout-echo"]'),
+    domText('[data-testid="page-preview"]').slice(0, 120));
+
+  // The edit has to land on an address the DRAWN page can mark, or this check
+  // is a coin flip: a form's first clean cell may sit on page 3 while the
+  // raster is page 1, and an overlay that marked nothing would then be right.
+  // So the seat is chosen from the intersection — clean per the runtime's own
+  // inspect, AND seated by the runtime on the page being rendered.
+  const inspect = activeInspect(getState());
+  const onPage = new Set(
+    (getState().geometry?.seats ?? []).map((g) => `${g.table}:${g.row}:${g.col}`),
+  );
+  const clean = (inspect?.regions.regions ?? []).filter(
+    (r): r is EditableRegion & { table: number; row: number; col: number } =>
+      r.kind === "cell" && r.table !== undefined && r.row !== undefined &&
+      r.col !== undefined && r.scriptAnomaly !== true && r.colorAnomaly !== true,
+  );
+  const seat = clean.find((r) => onPage.has(`${r.table}:${r.row}:${r.col}`));
+  check("a clean seat exists on the page being drawn", !!seat,
+    `page ${seatPage}: ${onPage.size} seated \u00b7 ${clean.length} clean`);
+  if (!seat) return;
+
+  beginEdit(seat.table, seat.row, seat.col);
+  await commitEdit("지면 반향 검사");
+  await settled(300);
+  if (getState().draft.validation?.ok !== true) {
+    check("the staged form's edit validated", false,
+      JSON.stringify(getState().draft.validation?.hard ?? getState().draft.error));
+    return;
+  }
+  await requestApprovalForDraft();
+  await settled(200);
+  await resolveApprovalDecision("approved", "smoke-operator");
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  const echoRun = getState().applied?.runId;
+  check("the staged edit applied", !!echoRun,
+    echoRun ?? JSON.stringify(getState().applyError));
+  if (!echoRun) return;
+  // The banner needs the head; the MARKS need one plan read per ancestor. Wait
+  // for the reads rather than sleeping past them — a fixed sleep here would
+  // make this check a race that passes on a fast machine.
+  await waitFor(() => (getState().changedByRun[echoRun] ?? []).length > 0, 20000);
+  await settled(400);
+
+  checkDom("the page now says 후보본과 다름 — 이 그림은 원본 기준",
+    domText('[data-testid="layout-echo"]').includes("후보본과 다름") &&
+      domText('[data-testid="layout-echo"]').includes("이 그림은 원본 기준"),
+    domText('[data-testid="layout-echo"]').slice(0, 200));
+  checkDom("it names the candidate the page is NOT showing",
+    domText('[data-testid="layout-echo"]').includes(echoRun.slice(0, 12)),
+    domText('[data-testid="layout-echo"]').slice(0, 160));
+  checkDom("the changed address is marked on the overlay, not painted over",
+    document.querySelectorAll('[data-stale="true"]').length >= 1 &&
+      domText('[data-testid="layout-echo-changed"]').includes(
+        `c:${seat.table}:${seat.row}:${seat.col}`),
+    `${document.querySelectorAll('[data-stale="true"]').length} marked · ` +
+      domText('[data-testid="layout-echo-changed"]').slice(0, 160));
+  checkDom("the edited TEXT is not drawn onto the raster",
+    !domText('[data-testid="page-overlay"]').includes("지면 반향 검사"),
+    "an overlay that printed the new value would be a fabricated layout");
+  checkDom("다시 그리기 is offered",
+    !!document.querySelector('[data-testid="echo-redraw"]'),
+    domText('[data-testid="layout-echo"]').slice(-160));
+
+  // Press it, and record whatever this machine honestly answers.
+  await preparePages(echoRun);
+  await settled(400);
+  const prepareError = getState().prepareError;
+  const prepareNote = getState().prepareNote;
+  check("다시 그리기 reached the runtime and got a real answer",
+    !!prepareError || !!prepareNote,
+    prepareError ? `${prepareError.code}: ${prepareError.message}` : String(prepareNote));
+  if (prepareError) {
+    check("RECORDED: this machine's honest answer for a candidate render",
+      ["needs_hancom", "com_busy", "convert_failed", "not_convertible"].includes(
+        prepareError.code),
+      `${prepareError.code} — ${prepareError.message}`);
+    checkDom("the refusal is drawn as a designed state with the runtime's words",
+      !!document.querySelector('[data-testid="prepare-refusal"]') &&
+        domText('[data-testid="prepare-detail"]').length > 0,
+      domText('[data-testid="prepare-refusal"]').slice(0, 200));
+    checkDom("and no page was fabricated in its place",
+      !!document.querySelector('[data-testid="page-raster"]') &&
+        !!document.querySelector('[data-testid="layout-echo"]'),
+      "the source raster stays, still labelled out of date");
+  } else {
+    check("RECORDED: this machine produced a candidate PDF", true, String(prepareNote));
+    checkDom("and the echo state is gone because the page IS the candidate now",
+      !document.querySelector('[data-testid="layout-echo"]'),
+      domText('[data-testid="page-preview"]').slice(0, 160));
+  }
+  setCenterMode("text");
+  await settled(160);
 }
 
 /**
@@ -1874,13 +2271,65 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     stop === "overlay" ||
     stop === "overlay-live" ||
     stop === "overlay-seat" ||
-    stop === "overlay-caret"
+    stop === "overlay-caret" ||
+    stop === "layout-echo"
   ) {
     const { loadGeometry, selectSession } = await import("./actions");
     const staged = (await rt.smokeConfig()).stagedSession;
     if (stop !== "overlay-live" && staged) {
       await selectSession(staged);
       await settled(300);
+    }
+
+    // E1.2 — a page holding the SOURCE's raster while the document has moved
+    // on. Reached by running the loop, never by staging a flag: the candidate
+    // in the shot is a candidate on disk, and the 후보본과 다름 banner is
+    // drawn off the runtime's own receipt lineage.
+    if (stop === "layout-echo") {
+      setCenterMode("page");
+      let echoPage = 1;
+      let best = -1;
+      for (let p = 1; p <= 8; p += 1) {
+        await loadGeometry(p);
+        await settled(100);
+        const probe = getState().geometry;
+        if (!probe?.available) break;
+        const found = (probe.seats ?? []).length;
+        if (found > best) {
+          best = found;
+          echoPage = p;
+        }
+        if ((probe.pageCount ?? 1) <= p) break;
+      }
+      await renderCurrentPage(echoPage);
+      await settled(400);
+      await loadGeometry(echoPage);
+      await settled(300);
+      const echoInspect = activeInspect(getState());
+      const echoSeat = (echoInspect?.regions.regions ?? []).find(
+        (r): r is EditableRegion & { table: number; row: number; col: number } =>
+          r.kind === "cell" && r.table !== undefined && r.row !== undefined &&
+          r.col !== undefined && r.scriptAnomaly !== true && r.colorAnomaly !== true,
+      );
+      if (echoSeat) {
+        beginEdit(echoSeat.table, echoSeat.row, echoSeat.col);
+        await commitEdit("지면 반향");
+        await settled(400);
+        await requestApprovalForDraft();
+        await settled(300);
+        await resolveApprovalDecision("approved", "host-operator");
+        for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+          await settled(500);
+        }
+        const shotRun = getState().applied?.runId;
+        if (shotRun) {
+          await waitFor(
+            () => (getState().changedByRun[shotRun] ?? []).length > 0, 20000);
+        }
+        await settled(800);
+      }
+      await ready(`shot-${stop}`);
+      return;
     }
 
     // THE CARET SHOT, and the IME's page-surface target.
@@ -2209,12 +2658,24 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   }
 
   // Every other stop needs a queue.
-  beginEdit(first.table, first.row, first.col);
-  await commitEdit("정보공개 청구서 검토본");
+  //
+  // ALL captures share one runtime root, so a corpus opened by a later capture
+  // is the SAME session an earlier one already applied a candidate to. Writing
+  // the same two cells again is then refused — the head has them filled, and
+  // the shell sets `overwrite` only on an inverse — which leaves `applied`
+  // null and every stop after the first apply photographing a refusal. The
+  // history capture is the one that cannot survive that, because it needs a
+  // candidate of its own to reverse, so it takes seats no earlier capture
+  // touches. The values it writes are its own too, for the same reason.
+  const chainShot = stop === "history";
+  const seatA = chainShot ? (clean[2] ?? first) : first;
+  const seatB = chainShot ? clean[3] : clean[1];
+  beginEdit(seatA.table, seatA.row, seatA.col);
+  await commitEdit(chainShot ? "되돌리기 촬영본" : "정보공개 청구서 검토본");
   await settled(200);
-  if (clean[1]) {
-    beginEdit(clean[1].table, clean[1].row, clean[1].col);
-    await commitEdit("2026-09-01");
+  if (seatB) {
+    beginEdit(seatB.table, seatB.row, seatB.col);
+    await commitEdit(chainShot ? "2026-09-03" : "2026-09-01");
     await settled(200);
   }
   // A refused op, so the queue screenshot shows a real verdict rather than a
@@ -2249,6 +2710,29 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   if (stop === "receipt" && getState().applied) {
     openReceipt(getState().applied!.runId);
     await settled(400);
+  }
+
+  // E1.4 — 기록, with a real reversal in it. Every row in this shot is a
+  // candidate on disk: the edit above, then the inverse of it, proposed by
+  // reading the previous value off the chain, approved by the same gate, and
+  // proven afterwards by the runtime's own candidate/compare. Nothing here is
+  // arranged — if the reversal failed to apply, the shot photographs that.
+  if (stop === "history" && getState().applied) {
+    const edited = getState().applied!.runId;
+    const { proposeUndoOf, selectHistory } = await import("./actions");
+    const queued = await proposeUndoOf(edited);
+    await settled(500);
+    if (queued > 0) {
+      await requestApprovalForDraft();
+      await settled(300);
+      await resolveApprovalDecision("approved", "host-operator");
+      for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+        await settled(500);
+      }
+      await settled(900);
+    }
+    selectHistory(edited);
+    await settled(500);
   }
   await ready(`shot-${stop}`);
 }
@@ -2561,16 +3045,26 @@ export async function runSmoke(): Promise<void> {
   }
 
   let finished = false;
+  // 180 s is the budget every phase has had, and it is deliberately tight:
+  // a phase that needs longer is usually a phase that is waiting on something
+  // it should be asserting about. `undo` is the exception and it is a measured
+  // one — it drives FOUR real applies (edit, chain, reversal, and the staged
+  // session's echo edit), each spawning preedit and check_residue children,
+  // plus two form_inspect runs for candidate/compare and an eight-page geometry
+  // scan. Giving it the default would make the watchdog a coin flip on machine
+  // load rather than a budget.
+  const budgetMs = config.phase === "undo" ? 480_000 : 180_000;
   const watchdog = setTimeout(() => {
     if (finished) return;
-    check("smoke finished within its own budget", false, "180s watchdog fired");
+    check("smoke finished within its own budget", false,
+      `${Math.round(budgetMs / 1000)}s watchdog fired`);
     void rt.smokeFinish({
       phase: config.phase,
       passed: checks.filter((c) => c.ok).length,
       failed: checks.filter((c) => !c.ok).length,
       checks,
     });
-  }, 180_000);
+  }, budgetMs);
 
   try {
     if (config.phase === "open") await phaseOpen(config);
@@ -2578,6 +3072,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "edit") await phaseEdit(config);
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
+    else if (config.phase === "undo") await phaseUndo(config);
     else if (config.phase === "overlay") await phaseOverlay(config);
     else if (config.phase === "packs") await phasePacks(config);
     else if (config.phase === "composer") await phaseComposer(config);

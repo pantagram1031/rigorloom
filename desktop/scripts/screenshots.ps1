@@ -121,6 +121,10 @@ try {
         @{ phase = 'hold-shot-approval';      name = 'approval';             scale = 1.0 },
         @{ phase = 'hold-shot-verified';      name = 'candidate-verified';   scale = 1.0 },
         @{ phase = 'hold-shot-receipt';       name = 'receipt';              scale = 1.0 },
+        # E1.4. 기록 with a real reversal in it: an edit, its inverse, and the
+        # runtime's own 되돌리기 확인됨 verdict from candidate/compare. Every
+        # row is a candidate on disk; nothing is staged.
+        @{ phase = 'hold-shot-history';       name = 'history-reversal';     scale = 1.0 },
         @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
         # 한글 오버레이. The first is a real raster with the runtime's own rects
         # on it and the candidate chooser open over a real ambiguity; the second
@@ -140,6 +144,12 @@ try {
         # several runs and refuse, so a capture aimed at "the first mapped
         # line" would photograph a refusal and be captioned as a caret.
         @{ phase = 'hold-shot-overlay-caret'; name = 'page-caret-edit';      scale = 1.0;
+           corpus = $SeatedCorpus },
+        # E1.2. The page after an apply: the raster is still the SOURCE's,
+        # because this machine cannot convert a candidate, and the page says so
+        # rather than presenting the old picture as the document. The changed
+        # region is marked; the new text is NOT painted onto the raster.
+        @{ phase = 'hold-shot-layout-echo';   name = 'page-candidate-differs'; scale = 1.0;
            corpus = $SeatedCorpus },
         @{ phase = 'hold-shot-agent-proposal';name = 'agent-proposal';       scale = 1.0 },
         # Phase 5. Each one is reached by running the real thing: the composer

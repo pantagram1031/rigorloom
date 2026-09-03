@@ -27,13 +27,14 @@
 import {
   declareSuggestedCharPr,
   editOpValue,
-  removeOp,
+  redoQueuedOp,
   reproposeDraft,
   requestApprovalForDraft,
   resolveApprovalDecision,
   cancelApply,
   clearQueue,
   resolveRecovery,
+  undoQueuedOp,
 } from "../actions";
 import {
   canRequestApproval,
@@ -98,14 +99,18 @@ function OpRow({
             charPr {op.charPr}
           </Tag>
         ) : null}
+        {/* TIER ONE UNDO, and its label is the whole honesty of it. Nothing
+            has been approved or applied, so this removes a pending row and
+            changes no document — calling it 문서 되돌리기 would tell someone
+            their file changed back when it never changed at all. */}
         <button
           className="ghost dark-safe"
           data-testid={`queue-remove-${slug}`}
           disabled={locked}
-          title="이 작업을 대기열에서 뺍니다"
-          onClick={() => void removeOp(op.opId)}
+          title="이 작업을 대기열에서 뺍니다. 문서는 아직 아무것도 바뀌지 않았습니다."
+          onClick={() => void undoQueuedOp(op.opId)}
         >
-          빼기
+          대기열에서 제거
         </button>
       </div>
 
@@ -166,8 +171,23 @@ export function ReviewQueue() {
   const applyPhase = useWorkspace((s) => s.applyPhase);
   const applyError = useWorkspace((s) => s.applyError);
   const recovery = useWorkspace((s) => s.recovery);
+  const redoCount = useWorkspace((s) => s.redoStack.length);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
+
+  /** Put the last removed row back — the same target, the same value. */
+  const redo =
+    redoCount > 0 ? (
+      <button
+        className="ghost dark-safe"
+        data-testid="queue-redo"
+        disabled={locked}
+        title="방금 대기열에서 뺀 작업을 그대로 다시 넣습니다"
+        onClick={() => void redoQueuedOp()}
+      >
+        다시 넣기 {redoCount}
+      </button>
+    ) : null;
 
   if (draft.ops.length === 0) {
     return (
@@ -177,6 +197,7 @@ export function ReviewQueue() {
           비어 있습니다. 가운데 문서에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
           쌓입니다. 승인하기 전까지 문서는 아무것도 바뀌지 않습니다.
         </p>
+        {redo ? <div className="gate-actions">{redo}</div> : null}
       </div>
     );
   }
@@ -189,6 +210,34 @@ export function ReviewQueue() {
           {draft.ops.length}
         </span>
       </h3>
+
+      {/* TIER TWO UNDO, in the queue where every other proposal lives. An
+          applied candidate is immutable and receipted, so this is not an
+          edit of it — it is the inverse, proposed, waiting for the same
+          approval as anything else, and it will produce one MORE candidate. */}
+      {draft.reverses ? (
+        <div className="refusal" data-testid="queue-reversal">
+          <Tag tone="warn">되돌리기 제안</Tag>
+          <p className="prose">
+            후보본 <span className="mono">{draft.reverses.slice(0, 12)}</span> 이(가) 한 일을
+            되돌리는 계획입니다. 그 후보본은 지워지지 않습니다 — 승인하면 되돌린
+            결과가 담긴 후보본이 하나 더 생기고, 영수증에 무엇을 되돌렸는지가
+            적힙니다. 적용한 뒤에는 런타임이 값이 실제로 되돌아갔는지 다시 읽어
+            확인합니다.
+          </p>
+          {draft.baseRunId ? (
+            <p className="mono tiny">
+              이어 붙일 후보본 {draft.baseRunId.slice(0, 12)}
+            </p>
+          ) : null}
+        </div>
+      ) : draft.baseRunId ? (
+        <p className="prose tiny" data-testid="queue-base">
+          이 대기열은 후보본{" "}
+          <span className="mono">{draft.baseRunId.slice(0, 12)}</span> 위에 이어 붙습니다.
+          앞서 승인한 편집은 그대로 남습니다.
+        </p>
+      ) : null}
 
       {draft.rewrittenFromAgent ? (
         <p className="prose note-rewrite">
@@ -345,6 +394,7 @@ export function ReviewQueue() {
           >
             {approvalPhase === "requesting" ? "요청하는 중…" : "승인 요청"}
           </button>
+          {redo}
           <button className="ghost dark-safe" disabled={locked} onClick={() => void clearQueue()}>
             대기열 비우기
           </button>

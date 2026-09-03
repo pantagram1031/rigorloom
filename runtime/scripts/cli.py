@@ -171,6 +171,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--region", action="append", required=True,
                    metavar="T:R,C|R,C|para:N",
                    help="region address (repeatable)")
+    p.add_argument("--run", default=None,
+                   help="read from a published candidate instead of the source")
 
     p = sub.add_parser("render", help="a page image, or why there cannot be one")
     p.add_argument("--session", required=True)
@@ -197,6 +199,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="convert the session copy to a PDF so render can "
                             "raster it (host action; needs Hancom)")
     p.add_argument("--session", required=True)
+    p.add_argument("--run", default=None,
+                   help="convert a published candidate instead of the source")
     p.add_argument("--timeout", type=float, default=None,
                    help="seconds to allow the converter")
 
@@ -234,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="one op object as JSON (repeatable)")
     p.add_argument("--ops-file", default=None,
                    help='JSON array of ops, or an object with an "ops" array')
+    p.add_argument("--base-run", default=None,
+                   help="chain these ops onto a published candidate instead of "
+                        "the session source")
+    p.add_argument("--reverses-run", default=None,
+                   help="declare that this plan undoes that candidate; recorded "
+                        "in the receipt and checkable with compare")
     p.add_argument("--proposer", default=CLIENT)
 
     p = sub.add_parser("validate", help="validate a plan without executing it")
@@ -269,6 +279,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("candidates", help="published candidates for a session")
     p.add_argument("--session", required=True)
 
+    p = sub.add_parser("compare",
+                       help="compare a candidate with another candidate or the "
+                            "source at named addresses; how a reversal is proven")
+    p.add_argument("--session", required=True)
+    p.add_argument("--run", required=True, help="the candidate being checked")
+    p.add_argument("--against-run", default=None,
+                   help="another candidate; omit to compare against the source")
+    p.add_argument("--region", action="append", default=None,
+                   metavar="T:R,C|R,C|para:N",
+                   help="address to compare (repeatable); omit for digests only")
+    p.add_argument("--require-equal", action="store_true",
+                   help="exit 3 unless every compared address is equal")
+
     p = sub.add_parser("receipt", help="read a receipt; refuses on byte drift")
     p.add_argument("--session", required=True)
     p.add_argument("--run", required=True)
@@ -296,7 +319,8 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         return core.document_inspect(args.session, include), EXIT_OK
     if command == "read-region":
         regions = [_parse_region(spec) for spec in args.region]
-        return core.document_read_region(args.session, regions), EXIT_OK
+        return core.document_read_region(args.session, regions,
+                                         run_id=args.run), EXIT_OK
     if command == "render":
         result = core.document_render(args.session, page=args.page,
                                       dpi=args.dpi, run_id=args.run,
@@ -311,7 +335,7 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
             return result, EXIT_REFUSED
         return result, EXIT_OK
     if command == "render-prepare":
-        return core.document_render_prepare(args.session,
+        return core.document_render_prepare(args.session, run_id=args.run,
                                             timeout=args.timeout), EXIT_OK
     if command == "events":
         return core.event_poll(args.session, after=args.after,
@@ -329,8 +353,10 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
             return result, EXIT_REFUSED
         return result, EXIT_OK
     if command == "propose":
+        reverses = ({"runId": args.reverses_run} if args.reverses_run else None)
         return core.plan_propose(args.session, args.backend, _load_ops(args),
-                                 args.proposer), EXIT_OK
+                                 args.proposer, base_run_id=args.base_run,
+                                 reverses=reverses), EXIT_OK
     if command == "validate":
         return core.plan_validate(args.plan), EXIT_OK
     if command == "plan":
@@ -352,6 +378,18 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         return result, EXIT_OK
     if command == "candidates":
         return core.candidate_list(args.session), EXIT_OK
+    if command == "compare":
+        regions = ([_parse_region(spec) for spec in args.region]
+                   if args.region else None)
+        against = ({"runId": args.against_run} if args.against_run
+                   else {"source": True})
+        result = core.candidate_compare(args.session, args.run,
+                                        against=against, regions=regions)
+        # Fail closed on an unreadable address: "the comparison did not happen"
+        # is never "the values match".
+        if args.require_equal and result["regionsEqual"] is not True:
+            return result, EXIT_REFUSED
+        return result, EXIT_OK
     if command == "receipt":
         return core.receipt_read(args.session, args.run), EXIT_OK
     if command == "verify":

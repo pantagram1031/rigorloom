@@ -105,10 +105,13 @@ const DERIVATION_NOTE: Record<string, string> = {
 function SeatOverlay({
   seat,
   picked,
+  stale,
   editing,
 }: {
   seat: GeometrySeat;
   picked: boolean;
+  /** The candidate changed this address and this raster predates it (E1.2). */
+  stale: boolean;
   /** The open inline edit, when it is THIS seat's. Null otherwise. */
   editing: { before: string } | null;
 }) {
@@ -149,15 +152,17 @@ function SeatOverlay({
         `ov-${seat.derivation}`,
         editable ? "ov-editable" : "ov-inert",
         picked ? "ov-picked" : "",
+        stale ? "ov-stale" : "",
       ].join(" ")}
       style={place(seat.rect)}
       data-testid="overlay-seat"
       data-derivation={seat.derivation}
       data-editable={editable ? "true" : "false"}
+      data-stale={stale ? "true" : undefined}
       data-address={`${seat.table}-${seat.row}-${seat.col}`}
       title={`표${seat.table} (${seat.row},${seat.col})\n${
         DERIVATION_NOTE[seat.derivation] ?? "런타임이 이 자리를 어떻게 잡았는지 알 수 없습니다."
-      }`}
+      }${stale ? "\n후보본과 다름 — 이 그림은 원본 기준입니다" : ""}`}
       aria-label={
         editable
           ? `표${seat.table} ${seat.row}행 ${seat.col}열 — 빈 자리, 눌러서 값 넣기`
@@ -174,10 +179,13 @@ function SeatOverlay({
 function SpanOverlay({
   span,
   picked,
+  stale,
   editing,
 }: {
   span: GeometrySpan;
   picked: boolean;
+  /** The candidate changed this address and this raster predates it (E1.2). */
+  stale: boolean;
   /** The open caret edit, when it is THIS line's. Null otherwise. */
   editing: InlineRunEdit | null;
 }) {
@@ -229,10 +237,12 @@ function SpanOverlay({
         "ov ov-span",
         ambiguous ? "ov-ambiguous" : editable ? "ov-editable" : caretTarget ? "ov-caret" : "ov-inert",
         picked ? "ov-picked" : "",
+        stale ? "ov-stale" : "",
       ].join(" ")}
       style={place(span.rect)}
       data-testid={ambiguous ? "overlay-ambiguous" : "overlay-span"}
       data-confidence={span.confidence}
+      data-stale={stale ? "true" : undefined}
       data-editable={editable ? "true" : "false"}
       data-caret-target={caretTarget ? "true" : "false"}
       data-has-offsets={span.charX ? "true" : "false"}
@@ -408,21 +418,44 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
  * is not asked anything. `geometryFetches` in the store is the proof of that,
  * and the smoke reads it across a zoom sweep.
  */
-export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
+export function PageOverlay({
+  geometry,
+  stale = [],
+}: {
+  geometry: GeometryResult;
+  /**
+   * Addresses the candidate changed and this raster therefore does not show
+   * (E1.2), as `c:t:r:c` / `p:N` keys.
+   *
+   * They come from the RUNTIME's receipts — the ops that actually ran, walked
+   * up the base chain — not from anything this shell inferred about the page.
+   * A marked rectangle says "what is drawn here is out of date"; it never says
+   * what the new text is, because this component draws the renderer's layout
+   * and the renderer has not drawn the new text.
+   */
+  stale?: string[];
+}) {
   const pick = useWorkspace((s) => s.overlayPick);
   // Read here rather than in the seat, so the store is subscribed to ONCE for
   // a page that can carry dozens of seats.
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const spans = geometry.spans ?? [];
   const seats = geometry.seats ?? [];
+  const staleKeys = new Set(stale);
 
   return (
-    <div className="ov-layer" data-testid="page-overlay" data-page={geometry.page ?? 0}>
+    <div
+      className="ov-layer"
+      data-testid="page-overlay"
+      data-page={geometry.page ?? 0}
+      data-stale={staleKeys.size > 0 ? String(staleKeys.size) : undefined}
+    >
       {seats.map((seat) => (
         <SeatOverlay
           key={`seat-${seat.table}-${seat.row}-${seat.col}`}
           seat={seat}
           picked={pick?.targetId === `seat-${seat.table}-${seat.row}-${seat.col}`}
+          stale={staleKeys.has(`c:${seat.table}:${seat.row}:${seat.col}`)}
           editing={
             inlineEdit &&
             inlineEdit.kind === "cell" &&
@@ -439,6 +472,7 @@ export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
           key={`span-${span.index}`}
           span={span}
           picked={pick?.targetId === `span-${span.index}`}
+          stale={staleKeys.has(spanStaleKey(span))}
           editing={
             inlineEdit && inlineEdit.kind === "run" && inlineEdit.spanIndex === span.index
               ? inlineEdit
@@ -449,6 +483,17 @@ export function PageOverlay({ geometry }: { geometry: GeometryResult }) {
       <CandidateChooser />
     </div>
   );
+}
+
+/** A span's address as the echo spells it, or a key nothing can match. */
+function spanStaleKey(span: GeometrySpan): string {
+  const address = span.address;
+  if (!address) return "";
+  if (address.atPara != null) return `p:${address.atPara}`;
+  if (address.table != null && address.row != null && address.col != null) {
+    return `c:${address.table}:${address.row}:${address.col}`;
+  }
+  return "";
 }
 
 export { GeometryLegend };

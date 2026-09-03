@@ -948,6 +948,138 @@ publishes — the two document-level shapes plus every region's `charPrFace` and
 graph cell whose charPr appears in neither publisher gets no name, which is
 correct: nothing on the wire said what it is.
 
+
+---
+
+## 되돌리기 — two tiers, one of them provable
+
+E1.4 asked for undo whose inverse is *proven*, never a client-side shadow of
+the document that can drift from the runtime. The first thing that turned up
+on the way there was that the thing the plan assumed already existed did not.
+
+### The defect underneath: two applies made two siblings
+
+`plan/apply` chained every operation from `session.source`. So the second
+apply in a session did not produce the next version of the document — it
+produced a second first version. Open a form, fill a cell, approve, apply; fill
+another cell, approve, apply; export. The exported candidate carries the second
+edit and not the first, silently, with a valid receipt binding valid bytes.
+
+Nothing in the receipt chain ordered plans, because nothing recorded a parent.
+There was, therefore, no chain for an undo to be the inverse *of*.
+
+The fix is one field with consequences: `plan/propose` takes a `baseRunId`, the
+plan binds that candidate's digest, `plan/apply` chains onto that candidate's
+bytes, and the receipt records `base`. Everything else follows — validation
+profiles the base (the second edit of a paragraph addresses runs the first edit
+produced), and a candidate-based plan can never be `plan_stale` because a
+published candidate is immutable. Protocol §15 has the whole shape.
+
+### Tier one: an edit in the queue
+
+An op in the review queue is not in any candidate, so **removing it IS the
+undo**. No runtime call, no document, nothing to reconcile. The only thing this
+tier owes anyone is its label: the control says **대기열에서 제거**, and the
+toast says 문서는 처음부터 바뀐 적이 없습니다. Calling it 문서 되돌리기 would
+tell someone their file changed back when the file never changed.
+
+다시 넣기 re-enqueues the op OBJECT that was removed, not a reconstruction of
+it from a remembered address and a remembered string. That is what makes the
+redo exact rather than merely similar — the smoke asserts the target, the
+value, the `before`, and that the re-proposed plan has the identical `opsHash`.
+
+The stack is cleared on apply and on a document switch, and gap 31 says why.
+
+### Tier two: an applied candidate
+
+An applied candidate is immutable and receipted, so undoing one cannot mean
+changing it and must not mean deleting it. It means proposing the **inverse**
+as a new plan, which travels the same review → approve → apply path as
+anything else and produces one MORE candidate with one more receipt.
+
+Three rules, each of them a way a shortcut would lie:
+
+1. **The previous value is READ, never remembered.** It comes from
+   `document/readRegion` against the candidate the edit was made ON — the
+   parent named in the receipt, or the source at the root of the chain. Every
+   `readRegion` answer now states its `subject`, so a caller that asked for a
+   candidate and silently got the source cannot mistake one for the other. An
+   address the runtime did not return is a refusal (`previous_value_unreadable`),
+   never an empty string: an inverse that guessed blank would WRITE a blank
+   over something unknown.
+2. **What cannot be inverted is refused by name.** `fill_cell` and `set_run`
+   are invertible. `delete_guides` is not, and a candidate containing one gets
+   `not_invertible` with the kinds listed — not a button that would produce a
+   partial undo (gap 29).
+3. **It is a PROPOSAL.** It lands in the queue labelled 되돌리기 제안, chained
+   onto the HEAD rather than onto the candidate being reversed — undoing an
+   older edit must not throw away the newer ones on top of it — and a person
+   approves it exactly as they approved the edit.
+
+### The proof
+
+`candidate/compare` is a new agent-safe read (§15.4). Given the reversal and
+the document it claims to have restored, it re-reads BOTH from bytes their
+receipts re-verified and reports, per address, whether the text is equal.
+
+It is in the runtime and not in the shell for one reason: a client comparing
+two strings it had already fetched would be comparing its own memory and
+calling it proof.
+
+Two equalities, printed apart because they are different facts:
+
+| | what it means | measured on the corpus form |
+| --- | --- | --- |
+| `regionsEqual` | the addresses hold identical text | **true** — this is the undo |
+| `artifactEqual` | the two files are the same bytes | **false**, and expected |
+
+`artifactEqual: false` is not a failed undo and the panel says so out loud:
+`preedit` rewrites XML and rezips the package, so member order and zip metadata
+move even when every character is restored. A UI that drew that as a defect
+would be inventing one.
+
+### 기록
+
+The right column's second panel, under the queue. Lineage order (parents before
+children, forks visible as forks), each row showing the candidate it was built
+on, which rows are reversals of which, and which one is the head.
+
+The head is a **choice**, and it is marked. The runtime keeps none (§15.7) —
+a chain can fork and it will publish both branches — so pretending otherwise
+would be the shell deciding what the file IS without saying so. Selecting a row
+opens it read-only; it does not move the head, does not re-render the page as
+that candidate, and does not change what an export writes. Export names its run
+on the row itself.
+
+---
+
+## 후보본과 다름 — the layout echo, honestly (E1.2)
+
+After an apply the page view is still showing a raster of the SOURCE. E1.2 asks
+for the candidate. On this machine the candidate cannot be drawn: `renderPrepare`
+answers `needs_hancom` from the frozen sidecar (P1), and would answer `com_busy`
+on a machine with pyhwpx while the operator's own Hancom is open.
+
+So the page does the honest thing rather than the impressive one:
+
+- the source raster stays, under a banner reading **후보본과 다름 — 이 그림은
+  원본 기준**, naming the candidate it is not showing;
+- the addresses the receipts say changed are marked on the overlay — dashed, in
+  the warning palette, deliberately not filled, because there is no content to
+  show, only a statement that what is drawn underneath is out of date;
+- **다시 그리기** calls `renderPrepare` on the candidate (`runId` is new, §15.6)
+  and prints whatever the runtime answers — a candidate PDF, or the refusal.
+
+What it will not do is paint the edited text onto the raster. The overlay's
+rule is that every rectangle on the page came out of the renderer's own layout
+(§12.2); a glyph placed at a guessed position breaks that rule in the most
+convincing way available — a page that looks right and is not.
+
+Gap 32 records exactly what a real echo needs: close P1 and the existing
+`renderPrepare --runId` path produces one with no desktop change, or land
+E2.1's own line breaker and draw it at `own-uncertified` grade with the grade
+visible. Those are the two real echoes. There is no third.
+
 ---
 
 ## Evidence
@@ -1515,6 +1647,110 @@ legend under the page inherited `.raster-note`'s single-line flex row and
 squeezed its counts into a four-character column. It wraps now, and the counts
 never break.
 
+### 되돌리기 — the undo slice (E1.4 + E1.2)
+
+Reproduced on the operator machine (Windows 11, one Hancom Office install open
+throughout — the runtime never touched it). The runtime changed in this slice,
+so the sidecar rebuild is not optional and the privacy gate runs over a real
+`git archive` of HEAD rather than over the working tree.
+
+```powershell
+npx tsc --noEmit
+powershell -File desktop/sidecar/build.ps1     # runtime changed: MUST precede
+cd desktop; npx tauri build
+powershell -File desktop/scripts/smoke.ps1
+powershell -File desktop/scripts/screenshots.ps1
+python -m pytest tests/test_runtime_*.py tests/test_agenthost_compile.py -q
+python scripts/py_compile_sweep.py
+git archive HEAD | tar -x -C <scratch>; python pipeline/scripts/privacy_scan.py <scratch>
+```
+
+| step | result |
+| --- | --- |
+| `npx tsc --noEmit` | 0 |
+| `sidecar/build.ps1` | 0 · 69.2 MiB payload · `candidate/compare` advertised |
+| `npx tauri build` (release) | 0 · 3m 34s |
+| `scripts/smoke.ps1` | 0 · **455 checks, 0 failures** |
+| `scripts/screenshots.ps1` | 0 · 25 images |
+| `pytest tests/test_runtime_*.py` | 0 · **413 passed**, 382 s |
+| `pytest tests/test_agenthost_compile.py` | 0 · 35 passed |
+| `scripts/py_compile_sweep.py` | 0 · 125 files, 0 failures |
+| `privacy_scan.py` over `git archive HEAD` | 0 · **HARD=0**, WARN=43 |
+
+Shell exe 8.51 MiB · NSIS installer 26.55 MiB.
+
+Smoke, by phase: `open` 55 · `reattach` 10 · `edit` 83 · `agent` 21 · `page` 16
+· `overlay` 80 · **`undo` 59** · `packs` 34 · `composer` 31 · `settings` 28 ·
+`chrome` 33 · `chrome-reattach` 5, plus the checks the driver makes from
+outside the app.
+
+#### How the inverse is proven, in the run
+
+Nothing below is the shell comparing two strings it was already holding.
+
+- The pre-edit value is **read**, not remembered: `document/readRegion` against
+  the parent named in the receipt, and the answer states its own `subject`
+  (`{"kind":"candidate","runId":"fc769a9ebc69…"}` in the run).
+- The chain is real. A second edit binds the FIRST candidate's bytes
+  (`f5fb2fa4d56d` vs `f5fb2fa4d56d`) and the chained candidate still carries
+  the first edit — the two-siblings defect, asserted in the UI.
+- The reversal is a proposal: it lands in the queue as 되돌리기 제안 declaring
+  `reverses.runId`, chained onto the HEAD, and applies as one MORE candidate.
+  All three candidates stay listed.
+- The proof comes from the runtime. `candidate/compare` reported
+  `regions: [{"address":"0:0,14","equal":true}]` — **`regionsEqual: true`** —
+  and `artifactEqual: false`, printed apart, because `preedit` rezips the
+  package and an undo restores the value, never the bytes.
+- Two independent re-reads agree: `readRegion` on the reversal returns the
+  pre-edit value, and the newer edit ON TOP of the reversed one survived.
+- The receipt records both `reverses` and `base`, so the claim outlives the
+  session.
+- 기록 draws the whole lineage (3 rows, head marked 현재, parents named), and
+  selecting an older candidate opens it read-only without moving the head.
+
+The E1.2 half runs against the staged rendered session: after an apply the page
+keeps the SOURCE raster under 후보본과 다름 — 이 그림은 원본 기준, names the
+candidate it is not showing, marks the changed address on the overlay
+(**1 rect for `c:10:2:1`**, page 6, 37 seated of 99 clean), refuses to paint the
+new text onto the raster, and 다시 그리기 lands on this machine's real answer:
+`needs_hancom — pyhwpx is not importable`.
+
+Screenshots — `screenshots/`: the twenty-three from the seat slice, plus
+`history-reversal` (기록 with a three-row chain, the middle row marked 되돌려짐
+and the head marked 되돌리기, over the runtime's own 되돌리기 확인됨 verdict and
+its 파일 전체 해시 일치: false line) and `page-candidate-differs` (the stale page
+naming candidate `a03fd55fbebd` and its four changed addresses). Neither is
+staged.
+
+### Three defects the undo evidence found
+
+1. **A render loop took the whole root down on every apply.** `layoutEcho` is
+   read through `useSyncExternalStore`, so its result has to be
+   reference-stable while nothing changes — and `s.changedByRun[head.runId] ??
+   []` allocated a fresh array every call. The identity check below it never
+   matched, every snapshot read produced a new object, and React gave up with
+   #185. The window where that default is taken is exactly the moment after an
+   apply, which is the moment the echo exists for. One shared `NO_CHANGES`
+   closes it; the comment above the function had already named the hazard.
+   It cost the `undo` phase seven checks and hung `open` outright.
+2. **The echo check was a coin flip.** With the loop gone it failed honestly:
+   the banner named one changed address and the overlay marked zero rectangles,
+   and the overlay was right — the form's first clean cell sits outside the
+   drawn page, so there was no rectangle to mark. The seat now comes from the
+   intersection of clean-per-`form_inspect` and seated-on-the-page-being-drawn,
+   and an empty intersection is reported rather than passed over.
+3. **The 기록 capture photographed a refusal and would have been captioned as a
+   reversal.** All captures share one runtime root, so by the time the history
+   shot ran, the session already held a candidate an earlier capture had
+   applied; re-writing the same two cells was refused (`backend_refused` — the
+   shell sets `overwrite` only on an inverse), `applied` stayed null, and the
+   reversal block never ran. The capture takes seats no earlier capture touches
+   now. The collision itself is still open for every capture after the first
+   apply: `screenshots.ps1` clears its app-data once per RUN, not once per
+   capture, while the captures are written as though they were independent. The
+   real fix is a root per capture, which is a harness change with a staging
+   step to move, not a product one.
+
 ### Four defects the Phase 5 evidence found
 
 1. **The credential reference would have authenticated against nothing.**
@@ -1985,6 +2221,107 @@ rest stand.
     all. *Suggested shape:* `charpr_faces` is a join the profile already does;
     the same join could carry the charPr's `height` where the header declares
     one, which would make the control's two sources agree about what they are.
+
+### New with undo (E1.4)
+
+27. **The runtime has no head, so the shell decides what the document IS.**
+    `plan/propose` records a `base` and the receipt keeps it, but nothing in
+    the runtime says which candidate a session is *on* — and a chain can fork,
+    because two plans may legally name the same base and the runtime will
+    publish both. So `head` is shell state. It is made visible rather than
+    hidden: 기록 marks the head row 현재, moving it is a click, and an export
+    always names the run it is writing. The cost is that two windows on one
+    root can hold two different heads and neither is wrong.
+    *Suggested shape:* not a `head` field — that would be the runtime deciding
+    a product question. A `candidate/list` that reported `children` per row
+    would let a client detect a fork and say so, which is the part a client
+    cannot derive cheaply today (it walks every `base` itself).
+
+28. **`reverses` is a recorded claim, not a checked one.** `plan/propose`
+    takes it and the receipt keeps it; nothing verifies at propose time that
+    the ops actually undo anything. Proving it there would mean executing
+    them, which is exactly what `plan/validate` may not do (§3.7). So the
+    proof is after the fact, from `candidate/compare`, and the UI is careful:
+    the queue says 되돌리기 제안 (a claim) and only the 기록 panel says
+    되돌리기 확인됨, and only after the runtime answered. A candidate whose
+    `reverses` is a lie is therefore possible and would be caught by its own
+    proof failing. *Suggested shape:* nothing to build. Worth a line in §15
+    saying the claim and the proof are separate on purpose.
+
+29. **Only `fill_cell` and `set_run` can be inverted.** The inverse of an
+    operation is "write the previous value", and the previous value is
+    readable only where the operation targets an address `readRegion` can
+    name. `delete_guides` deletes paragraphs chosen by colour or charPr id and
+    there is no address to read back, so a candidate containing one is refused
+    a 되돌리기 제안 by name (`not_invertible`) rather than being offered a
+    button that would produce a partial undo. *Suggested shape:* an inverse
+    for `delete_guides` needs the deleted paragraphs' content in the receipt,
+    which is a receipt-size question before it is an undo question.
+
+30. **A reversal's proof is byte-exact, so whitespace is a difference.**
+    `candidate/compare` reports `normalizer: "exact"`. There is no
+    `check_residue.normalize_text` on that path, so an inverse that restored
+    "가 나" as "가  나" would be reported as NOT equal. That is the right
+    direction to err for an undo, and it is stated in the UI rather than
+    quietly normalised away.
+
+31. **The redo stack is per queue and does not survive an apply.** Tier-one
+    redo re-enqueues the exact op object that was removed, which is what makes
+    it exact — and the moment the queue becomes a candidate that op is inside
+    a published document, so offering to re-enqueue it would put the same edit
+    in twice. The stack is therefore cleared on apply and on a document
+    switch. There is no cross-apply redo and there should not be one: redoing
+    an applied edit is proposing it again, which is what the editor already
+    does.
+
+### New with the layout echo (E1.2)
+
+32. **After an apply the page is the SOURCE's raster, and no honest redraw is
+    available on this machine.** `document/render` with a `runId` on an HWPX
+    candidate answers `needs_conversion`, and the conversion is
+    `renderPrepare`, which this build's frozen sidecar refuses `needs_hancom`
+    (P1) — and which would refuse `com_busy` on a machine that had pyhwpx
+    while the operator's own Hancom was open. So 페이지 보기 shows the source
+    raster with a 후보본과 다름 — 이 그림은 원본 기준 banner, marks the
+    addresses the receipts say changed, and offers 다시 그리기, which asks and
+    prints whatever comes back.
+
+    **What a real echo needs, precisely, so this is not left as a wish:**
+    either (a) a Hancom render of the candidate — which means closing P1, and
+    then the existing `renderPrepare --runId` path produces one and the echo
+    state disappears on its own with no desktop change; or (b) **E2.1's own
+    line breaker**, which is the only route that works on a machine with no
+    Hancom at all: Rigorloom lays the candidate out itself and draws it at
+    `own-uncertified` grade with the grade visible. Both are real echoes.
+    Neither of them is "draw the new text onto the old raster", which is the
+    one thing this build will not do — the overlay's rule (§12.2) is that
+    every rectangle on the page came out of the renderer's own layout, and a
+    glyph placed at a guessed position breaks it in the most convincing way
+    available.
+
+33. **The changed-region marking needs a plan read per candidate in the
+    chain.** The addresses come from the receipts' own plans, walked up the
+    `base` links, which is one `plan/get` per ancestor. Cheap for a chain of
+    three and not free for a chain of fifty; and until those reads land the
+    banner says the list is not read yet rather than marking nothing and
+    looking clean. *Suggested shape:* a receipt already carries `steps[]` with
+    each op's `kind` and `opId`; carrying the op's ADDRESS there too would make
+    this a zero-call derivation from data the receipt is already keeping.
+
+34. **본문 보기 has the same staleness the page has, and only the page says so.**
+    `document/inspect` and `document/readRegion` without a `runId` answer from
+    the SOURCE, and the tree, the paper column and a seat's `before` are all
+    drawn from that. So after an apply the centre column shows the document as
+    it was, exactly as the raster does — but the raster now carries a
+    후보본과 다름 banner and the text view carries nothing. On the corpus this
+    is invisible because a second edit goes into a different, still-empty seat;
+    it stops being invisible the moment somebody edits the same cell twice and
+    the queue's `before` quotes the pre-first-edit value.
+    *Suggested shape:* the runtime side already exists — `readRegion` takes a
+    `runId` (§15.3) and `document/inspect` could take one the same way, since
+    `load_profile` now accepts a subject. Then the centre re-reads against the
+    head and the whole class of staleness closes at once, page and text
+    together, instead of the page being honest alone.
 
 ## Packaging gaps
 
