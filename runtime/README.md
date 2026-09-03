@@ -67,6 +67,15 @@ the session, and records the SHA-256. Every op reads one file and writes
 another. `tests/test_runtime_session.py` pins byte identity of the original
 across a full apply.
 
+**The Runtime owns ordinary child cleanup.** On Windows every engine/checker
+child starts suspended, enters a kill-on-close Job, and is then resumed. A
+Runtime hard kill therefore removes its ordinary child tree as well as a
+Runtime-managed timeout. POSIX uses a process group for managed cleanup.
+`capabilities.processCleanup` reports the exact policy. This is not a sandbox:
+brokered processes, deliberate boundary escape, and resource/filesystem/network
+isolation remain outside the claim, so broad descendant containment is still
+`not_established`.
+
 **A receipt path is not filesystem authority.** `bodySha256` detects drift but
 is not authentication: a local writer can recompute it. Every candidate reader
 therefore accepts only the canonical leaf the Runtime itself publishes —
@@ -352,9 +361,9 @@ checker that ran without one is `partial`, not clean.
 absent is skipped (`subject_undeclared`). Core never learns a module's name.
 
 Each checker is bounded by `timeoutSeconds` (default 120s, clamped to
-[1, 600]); a hung one is killed and the rest of the pack still runs. The kill
-reaches the direct child only — descendants are not contained, same as
-everywhere else here.
+[1, 600]); a hung one's ordinary child tree is cleaned by the platform process
+policy and the rest of the pack still runs. Brokered or deliberately escaped
+processes remain outside the claim.
 
 `RIGORLOOM_MODULES_ROOT` and `RIGORLOOM_MODULES_ENABLED` override where modules
 and enablement are read from; both default to this checkout, and
@@ -393,6 +402,8 @@ the host, so every child re-launches the application. A set-but-broken value is
 refused at `initialize` with `child_python_invalid` rather than surfacing as a
 mystery twenty seconds into the first document call.
 `capabilities.childPython` reports the path and where it came from.
+`capabilities.processCleanup` separately reports the platform policy and its
+explicitly limited claim.
 
 ## Mock agent
 

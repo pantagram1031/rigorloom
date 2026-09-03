@@ -10,6 +10,16 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **Epoch 0 Runtime child cleanup:** engine and module-checker children now
+  start inside a platform cleanup boundary. Windows uses a suspended launch
+  followed by a kill-on-close Job assignment, so an externally terminated
+  Runtime cannot leave its ordinary child tree running; POSIX uses a process
+  group for Runtime-managed cleanup. Capabilities report the exact process
+  policy while retaining the narrower `descendantContainment: not_established`
+  boundary for brokered/deliberately escaped processes and non-process sandbox
+  properties. A Windows parent-death regression test and private inspect/apply/
+  verification hard-kill harness prove the observed ordinary-child behavior.
+
 - **Epoch 0 candidate-path containment:** a locally rewritten candidate receipt
   could recompute its unkeyed `bodySha256` and replace `candidate.path` with an
   absolute or traversal path. `receipt/read` would then validate and expose
