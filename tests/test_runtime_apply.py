@@ -11,6 +11,7 @@ hook inside the shipped module would not be.
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 
 import pytest
@@ -310,6 +311,43 @@ def test_mutating_the_receipt_body_refuses_it(tmp_path):
 
         receipt_path.write_text(saved, encoding="utf-8")
         assert client.ok("receipt/read", {"sessionId": session, "runId": run_id})
+
+
+@pytest.mark.parametrize("path_kind", ["traversal", "absolute"])
+def test_a_rehashed_receipt_cannot_redirect_the_candidate_path(tmp_path, path_kind):
+    """The receipt hash is integrity, not authority to widen filesystem scope."""
+    source = _source(tmp_path)
+    with RuntimeClient(tmp_path / "root") as client:
+        session, plan, approval = drive(client, source, OPS_ONE)
+        run_id = client.ok("plan/apply", {
+            "planId": plan["planId"],
+            "approvalId": approval["approvalId"]})["candidate"]["runId"]
+        run_dir = (tmp_path / "root" / "sessions" / session / "candidates" /
+                   run_id)
+        receipt_path = run_dir / "receipt.json"
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+        if path_kind == "traversal":
+            outside = run_dir.parents[1] / "outside.hwpx"
+            declared_path = "../../outside.hwpx"
+        else:
+            outside = tmp_path / "absolute-outside.hwpx"
+            declared_path = str(outside)
+        shutil.copyfile(CORPUS_FORM, outside)
+
+        payload["candidate"]["path"] = declared_path
+        payload["candidate"]["sha256"] = _sha256(outside)
+        payload["candidate"]["bytes"] = outside.stat().st_size
+        payload["bodySha256"] = hashlib.sha256(
+            rt_apply.canonical_bytes(payload, omit=("bodySha256",))).hexdigest()
+        receipt_path.write_text(json.dumps(
+            payload, ensure_ascii=False, indent=2, sort_keys=True,
+            allow_nan=False), encoding="utf-8")
+
+        error = client.err("receipt/read", {
+            "sessionId": session, "runId": run_id})
+        assert error["code"] == "path_escape"
+        assert declared_path not in json.dumps(error, ensure_ascii=False)
 
 
 def test_a_receipt_with_a_duplicate_member_is_refused(tmp_path):

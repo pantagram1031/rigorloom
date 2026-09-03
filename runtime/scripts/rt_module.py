@@ -413,13 +413,12 @@ def _resolve_subject(session, run_id):
             "bytes": session.meta["sourceBytes"],
             "runId": None,
         }
-    from rt_apply import read_receipt  # noqa: PLC0415
+    from rt_apply import candidate_artifact  # noqa: PLC0415
 
-    # read_receipt re-verifies the candidate bytes against their binding, so a
-    # checker is never handed an artifact that drifted after publication.
-    receipt = read_receipt(session, run_id)
+    # candidate_artifact re-verifies the bytes and constrains the receipt's path
+    # to the canonical run leaf, so a checker cannot be redirected elsewhere.
+    path, receipt = candidate_artifact(session, run_id)
     candidate = receipt["candidate"]
-    path = session.candidates_dir / run_id / candidate["path"]
     return path, {
         "kind": "candidate",
         "name": candidate["path"],

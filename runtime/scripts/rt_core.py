@@ -720,8 +720,7 @@ class RuntimeCore:
         them (``rt_apply.read_receipt``).
         """
         session = self.store.get(session_id)
-        receipt = read_receipt(session, run_id)
-        artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
+        artifact, receipt = candidate_artifact(session, run_id)
         profile = session.profile_dir / f"verify-{run_id}-recheck.json"
         self.tools.profile(session.source, profile)
         checks = verification_report(self.tools, profile, artifact)

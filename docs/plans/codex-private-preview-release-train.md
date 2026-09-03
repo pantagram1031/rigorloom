@@ -133,6 +133,12 @@ has not been pushed.
   named `authority_denied`. The integration branch aligns those paragraphs and
   the transport-code inventory to the already implemented contract. No Runtime
   behavior, authority surface, or test expectation changes.
+- **E0-S1 fixed:** a receipt with a recomputed `bodySha256` could redirect
+  `candidate.path` outside its run directory. Candidate paths are now fixed to
+  the canonical leaf `plan/apply` emits, and every file-opening candidate
+  consumer shares that resolver. This is a preview security defect exposed by
+  C5 receipt-tamper acceptance, not a renderer/writer or protocol-surface
+  expansion.
 - Fix only integration, packaging/installer, false-reporting harness, or
   accepted-preview-flow defects.
 - Do not change renderer, writer, layout, font metrics, line breaking,
@@ -176,11 +182,20 @@ Completed for this epoch:
   passes 1/1 and the round trip passes 39/39, exit 0, using only a private
   scratch enablement file. Final full matrices must be rerun on the post-fix
   HEAD before C2 is complete.
+- Post-E0-H1 package baseline on `68e25f6…`: npm ci 72 packages exit 0;
+  TypeScript exit 0; sidecar freeze exit 0 (63.5 MiB, all role checks including
+  `candidate/compare`); Rust release 11/11 exit 0; Tauri/NSIS exit 0. The
+  private installer is 26,630,650 bytes, SHA-256 `F95B3AF5…`, unsigned. This
+  build predates E0-S1 and is regression evidence only; rebuild is required.
+- E0-S1 candidate-path containment: two red cases (traversal and absolute)
+  both demonstrated receipt redirection before the fix; post-fix
+  apply/lineage/module-check focused suite 64 passed, exit 0, and refusals do
+  not echo the forged path.
 
 Not yet complete on the final Epoch 0 HEAD:
 
 - sidecar freeze, npm/TypeScript, Rust release tests, Tauri build, Desktop
-  smoke, undo/lineage, Korean IME;
+  smoke, undo/lineage, Korean IME on the final post-security-fix HEAD;
 - final core-only/all-modules/archive-privacy/compile re-run after E0-H1;
 - installed-user flow, external Codex MCP, hostile-document, Runtime-kill and
   recovery acceptance;
@@ -220,12 +235,10 @@ tree and installer.
 
 ## Next executable actions
 
-1. Commit E0-H1 and its regression/evidence record.
-2. Build the sidecar and installer after the baseline core/module/privacy/
-   compile gates above.
-3. Run the remaining C2 package/Desktop gates, then rerun the full Python and
-   archive gates once more on the final tracked HEAD.
-4. Implement the bounded C5 hostile-document/hard-kill evidence harness without
+1. Commit E0-S1 and its regression/evidence record.
+2. Implement the bounded C5 hostile-document/hard-kill evidence harness without
    changing the authority protocol or renderer/writer code.
-5. Keep foreground smoke/IME/install acceptance deferred while the operator is
+3. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
+   Runtime, Agent Host, and package gates on the final tracked HEAD.
+4. Keep foreground smoke/IME/install acceptance deferred while the operator is
    using the shared desktop; continue headless security and compliance work.

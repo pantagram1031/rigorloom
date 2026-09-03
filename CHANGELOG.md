@@ -8,6 +8,19 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Fixed
+
+- **Epoch 0 candidate-path containment:** a locally rewritten candidate receipt
+  could recompute its unkeyed `bodySha256` and replace `candidate.path` with an
+  absolute or traversal path. `receipt/read` would then validate and expose
+  bytes outside the candidate run directory, and candidate comparison,
+  verification, render preparation, or module checks could follow the same
+  path. Every consumer now accepts only the canonical leaf emitted by
+  `plan/apply` (`artifact<source suffix>`) and refuses every other spelling as
+  pathless `path_escape`. Regression coverage for traversal and absolute paths
+  recomputes the receipt hash on purpose, proving the path rule rather than the
+  hash detects the attack.
+
 ### Added
 
 - **T126:** a cross-lane reproduction of the private-capture custody claims from
