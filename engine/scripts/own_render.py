@@ -1605,8 +1605,12 @@ class OwnRenderer:
 
         ``advance`` is what the next line starts after (``vertsize`` plus the
         line's own trailing ``spacing``, the relation measured across all 219
-        corpus continuation lines); ``extent`` is what the line actually
-        occupies, which is what a page-bottom test has to use.
+        corpus continuation lines); ``extent`` is what a page-bottom test has
+        to use for the row-fit check.  Measured (``docs/research/
+        line-fit-rule.md``): a page-bottom test that stops a line at
+        ``vertpos + vertsize`` refuses 3 of 47 corpus pages Hancom itself
+        renders past that point — the descender below ``baseline`` may cross
+        the margin, so ``extent`` here is ``baseline``, not ``vertsize``.
         """
         index = self.paragraph_index.get(id(para.el))
         mode, _reason = self.line_layout_mode(para, column_hwp, index)
@@ -1615,7 +1619,7 @@ class OwnRenderer:
             for line in self.compute_lines(draw, para, column_hwp):
                 rows.append({
                     "advance": line["vertsize"] + line["spacing"],
-                    "extent": line["vertsize"],
+                    "extent": line["baseline"],
                     "start": line["start"], "end": line["end"],
                     "table": self._flowing_table(
                         para, line["start"], line["end"]),
@@ -1626,9 +1630,12 @@ class OwnRenderer:
             start = positions[i]
             end = (positions[i + 1] if i + 1 < len(positions)
                    else len(para.chars))
+            vertsize = _iattr(seg, "vertsize")
+            baseline = _iattr(seg, "baseline") or int(round(
+                BASELINE_RATIO * vertsize))
             rows.append({
-                "advance": _iattr(seg, "vertsize") + _iattr(seg, "spacing"),
-                "extent": _iattr(seg, "vertsize"),
+                "advance": vertsize + _iattr(seg, "spacing"),
+                "extent": baseline,
                 "start": start, "end": end,
                 "table": self._flowing_table(para, start, end),
             })

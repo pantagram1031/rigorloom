@@ -2254,6 +2254,53 @@ def test_the_flow_pass_agrees_with_the_authoring_engine_on_the_corpus():
             stem, report["abs_dy_hwpunit"])
 
 
+def test_the_row_fit_predicate_matches_the_measured_line_fit_research():
+    """Pins ``docs/research/line-fit-rule.md``'s corpus measurement: of the
+    51 cached pages across the 10 public corpus forms, the deepest lineseg
+    on 47 clears ``vertpos + vertsize <= usable`` (the old, stricter test)
+    and 50 clear ``vertpos + baseline <= usable`` (the predicate the flow
+    pass's row-fit test now uses).  The one page baseline does not resolve
+    is ``nrf``'s empty trailing paragraph, whose ``vertpos`` is already past
+    ``usable`` before any box-portion is added — no box-portion rule can
+    rescue that, by design (see the research doc's ``nrf`` case)."""
+    import glob
+    total = old_fit = new_fit = 0
+    unresolved = []
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(_need(path), dpi=144)
+        usable = max(1, renderer.page_geometry()["usable_height"])
+        for page in renderer.paginate():
+            deepest = None
+            deepest_bottom = -1
+            for para in page:
+                for seg in para.linesegs:
+                    bottom = (own_render._iattr(seg, "vertpos")
+                              + own_render._iattr(seg, "vertsize"))
+                    if bottom > deepest_bottom:
+                        deepest_bottom, deepest = bottom, seg
+            if deepest is None:
+                continue
+            vertpos = own_render._iattr(deepest, "vertpos")
+            vertsize = own_render._iattr(deepest, "vertsize")
+            baseline = (own_render._iattr(deepest, "baseline")
+                        or int(round(own_render.BASELINE_RATIO * vertsize)))
+            total += 1
+            old_ok = vertpos + vertsize <= usable
+            new_ok = vertpos + baseline <= usable
+            old_fit += int(old_ok)
+            new_fit += int(new_ok)
+            if not new_ok:
+                unresolved.append((os.path.basename(path), old_ok, new_ok))
+    assert total == 51, total
+    assert old_fit == 47, old_fit
+    assert new_fit == 50, new_fit
+    # Baseline is strictly more permissive: it never turns a fitting page
+    # into an overfull one.
+    assert new_fit >= old_fit
+    assert [name for name, _old, _new in unresolved] == [
+        "nrf-gyeolgwa-bogoseo-yangsik.hwpx"], unresolved
+
+
 def test_the_flow_pass_finds_the_two_pages_the_vertpos_heuristic_misses():
     """kstartup is the corpus form whose cached layout ``paginate`` reads
     wrong: it merges pages the authoring engine did break, because the
