@@ -246,6 +246,30 @@ def hash_tree(root: Path) -> dict:
     return {"files": len(rows), "bytes": total, "treeSha256": _tree_digest(rows)}
 
 
+def list_members(root: Path) -> list[dict]:
+    """Every member of the copy: path, kind, and a file's size.
+
+    An agent cannot aim a workspace edit it cannot see the members of
+    (``workspace/listMembers``, §15.8's first gap). The walk mirrors
+    ``hash_tree``'s without hashing — listing a tree the copy already bounded
+    at ingress (§15.3) costs nothing extra to bound again here.
+    """
+    rows: list[dict] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        for entry in sorted(current.iterdir()):
+            relative = entry.relative_to(root).as_posix()
+            if entry.is_dir() and not entry.is_symlink():
+                rows.append({"path": relative, "kind": "directory"})
+                stack.append(entry)
+                continue
+            rows.append({"path": relative, "kind": "file",
+                        "bytes": entry.stat().st_size})
+    rows.sort(key=lambda row: row["path"])
+    return rows
+
+
 # --- the declared layout --------------------------------------------------------
 
 def _entry_rows(payload: dict) -> list[dict]:

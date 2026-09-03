@@ -1929,13 +1929,9 @@ below.
   is `workspace/openPath` → `document/openPath`, with `workspace/openPath`
   becoming the directory opener; that is a wire break for every client on this
   stack and belongs in a protocol version bump, not here.
-- **A workspace member cannot be READ over the wire.** The write ops need an
-  exact anchor and there is no agent-safe way to get one: `workspace/inspect`
-  says which parts are present, not what they say, and `document/readRegion` is
-  about a document's runs. So an agent can propose an edit it cannot aim, and
-  the fix loop's own test reads the member off the session copy to build its
-  anchors. This is the next thing this slice wants — a bounded
-  `workspace/readMember`, the same shape `document/readRegion` already has.
+- **A workspace member cannot be READ over the wire.** Closed in §15.9 —
+  `workspace/readMember` and `workspace/listMembers`. Recorded here rather than
+  deleted: the gap this slice found is the reason those two methods exist.
 - **The write ops move content, never membership.** No create, no delete, no
   rename (`WS_NOT_IMPLEMENTED` names all three). A finding that asks for a file
   that does not exist yet — a missing stage output — cannot be fixed here at
@@ -1962,3 +1958,63 @@ below.
   layouts are merged as a union with `required` ORed, and a declaration with
   more than 512 parts is truncated. Nothing validates the declared file against
   a schema; a malformed one is reported as a reason, never raised.
+
+### 15.9 `workspace/readMember` and `workspace/listMembers` — §15.8's first gap, closed
+
+```
+workspace/readMember  {sessionId, path, runId?}  -> one member's UTF-8 text (agent-safe)
+workspace/listMembers {sessionId, runId?}        -> every member: path, kind, bytes (agent-safe)
+```
+
+**Why the write ops alone were not enough.** `ws_replace_text` needs an anchor
+that occurs in the member EXACTLY ONCE (§15.6), and there was no agent-safe way
+to learn what a member says — `workspace/inspect` answers presence, not
+content, and §15.7's own fix-loop test built its anchor by reading the session
+copy directly, off the wire, because there was nothing else to read it with.
+An agent could propose an edit it could not aim.
+
+**One vocabulary for "can this path be touched", not two.** Both methods
+resolve a path through `rt_wsops.read_member` — the exact `_member` /
+`_read_member` pair a write op runs before it changes a byte — so a read
+refuses for the identical reasons a write would, by the identical names:
+`path_not_relative` (outside the tree, absolute, or a `..` component),
+`member_missing` (the build creates nothing, so an absent path is not
+"empty"), `member_not_text` (holds a NUL or is not valid UTF-8 — a
+`bundle/figures/*.png` refuses here exactly as it would refuse a
+`ws_replace_text`), `member_too_large` (over `MAX_MEMBER_BYTES`, the same 4
+MiB cap a write op reads under). These four reason-words already existed as
+`rt_wsops.WS_REFUSAL_CODES` — the write ops' own closed vocabulary — and are
+now also transport-level `RpcError` codes (`rt_codes.DOMAIN_CODES`), so a
+caller learns one rule in one place rather than a finding-shaped answer from
+one method and an error-shaped answer from another for the same fact.
+
+**Never the operator's path.** With no `runId` the root is the session's own
+copy — the same tree every other workspace method already addresses. With a
+`runId` it is a published candidate: `read_receipt` re-verifies the
+candidate's tree hash before a byte of it is read, exactly as
+`rt_module._resolve_subject` already does for `module/check` on a candidate,
+and a `runId` naming a document candidate (wrong `role`) or nothing at all is
+`artifact_missing` — the same code `module/check` already gives for the same
+mistake, not a new one invented for this method.
+
+**`workspace/listMembers` is the other half.** An agent cannot aim
+`workspace/readMember` at a path it cannot see, so listing every member — path,
+`kind` (`file` or `directory`), and a file's `bytes` — is not optional. The
+walk is `rt_workspace.list_members`, the same shape `hash_tree`'s walk already
+has minus the hashing, over a tree the ingress bound (§15.3) already bounded;
+listing it again costs nothing new to bound.
+
+**No new method changes what a write op refuses.** `read_only_paths` (§15.1)
+still governs writes only — reading `.pipeline/handoff.json` or `_saeteuk/` is
+not the Runtime editing anything, so neither method consults the read-only
+matcher. Reading is not writing, and the closed set of refusals above is
+closed BECAUSE it says nothing about that.
+
+**Measured:** `tests/test_runtime_workspace_read.py` — the happy path against
+the assembled fixture (§15.5), each of the four refusal codes individually
+against a workspace that has the shape which triggers it (a real oversized
+member for `member_too_large`, a real PNG for `member_not_text`), a read
+against a published candidate after the §15.7 fix-loop's own three-op plan
+applies (the session copy is unmoved; the candidate carries the edit), and the
+derived-surface and compile-gate assertions §15.6 already established for the
+write half, repeated for these two agent methods.

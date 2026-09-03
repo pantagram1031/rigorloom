@@ -136,6 +136,8 @@ class RuntimeServer:
             "module/list": self._m_module_list,
             "module/check": self._m_module_check,
             "workspace/inspect": self._m_workspace_inspect,
+            "workspace/readMember": self._m_workspace_read_member,
+            "workspace/listMembers": self._m_workspace_list_members,
         }
         # One roster (rt_core.AGENT_METHODS). Adding a handler without listing
         # it there — or the reverse — must be loud, because the MCP adapter
@@ -394,6 +396,22 @@ class RuntimeServer:
                          where="workspace/inspect.params",
                          policy=self.unknown_field_policy)
         return self.core.workspace_inspect(params["sessionId"])
+
+    def _m_workspace_read_member(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "path", "runId"},
+                         required=("sessionId", "path"),
+                         where="workspace/readMember.params",
+                         policy=self.unknown_field_policy)
+        return self.core.workspace_read_member(
+            params["sessionId"], params["path"], run_id=params.get("runId"))
+
+    def _m_workspace_list_members(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "runId"},
+                         required=("sessionId",),
+                         where="workspace/listMembers.params",
+                         policy=self.unknown_field_policy)
+        return self.core.workspace_list_members(
+            params["sessionId"], run_id=params.get("runId"))
 
     def _m_session_list(self, params: dict, _id) -> dict:
         _object(params, set(), where="session/list.params",

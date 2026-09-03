@@ -497,7 +497,32 @@ Measured, same fixture (`tests/test_runtime_workspace_ops.py`): the report
 module's checkers report **4 hard, 21 warn** on the session workspace and
 **0 hard, 21 warn** on the candidate a three-op plan produced. The four were
 `claim_source_missing`; none of them carried an `address`, so the ops were aimed
-by reading the member — see the gaps.
+by reading the member off the session copy directly — which is exactly the gap
+the next section closes.
+
+### Reading a workspace member
+
+`workspace/readMember` and `workspace/listMembers` are agent-safe and close
+the read gap the fix loop above had: an agent could propose `ws_replace_text`
+but had no wire method to learn what a member actually says, so it could not
+aim the anchor.
+
+```sh
+python runtime/scripts/cli.py --root $R list-members --session $SID
+python runtime/scripts/cli.py --root $R read-member --session $SID \
+    --path bundle/content.md
+python runtime/scripts/cli.py --root $R read-member --session $SID \
+    --path bundle/content.md --run $RUNID
+```
+
+`workspace/readMember` returns one member's UTF-8 text; `workspace/listMembers`
+returns every member's `{path, kind, bytes}`. Both take an optional `runId` to
+read a published candidate instead of the session copy — never the operator's
+directory either way. Both reuse the exact refusal words a write op already
+refuses with (`rt_wsops.WS_REFUSAL_CODES`, now also `RpcError` codes):
+`path_not_relative`, `member_missing`, `member_not_text`, `member_too_large` —
+one vocabulary for "can this path be touched," not a second one for reading.
+Design: `docs/runtime-protocol-v0.md` §15.9.
 
 ## Events
 
@@ -589,10 +614,6 @@ to provoke, and `expectationMet` says so.
   driving one root.
 - The MCP adapter implements the five methods above and no resources, prompts,
   sampling, completion or logging capabilities.
-- A workspace member cannot be READ over the wire. The write ops need an exact
-  anchor and no agent-safe method returns a member's bytes, so an agent can
-  propose an edit it cannot aim; the fix-loop test reads the session copy to
-  build its anchors.
 - The workspace ops move content, never membership: no create, no delete, no
   rename, so a finding that asks for a file which does not exist yet cannot be
   fixed through the wire at all.
