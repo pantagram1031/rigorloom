@@ -10,6 +10,13 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **Epoch 0 stale-receipt reuse:** a receipt and an independently published
+  candidate could have matching bytes while belonging to different sessions,
+  runs, plans, and approvals. Receipt reads now cross-bind the containing
+  session/run, exact source descriptor, plan identity/hash, and approved
+  approval record before exposing the candidate. A regression deliberately
+  transplants a valid receipt onto an equal-byte candidate in another session.
+
 - **Epoch 0 Runtime child cleanup:** engine and module-checker children now
   start inside a platform cleanup boundary. Windows uses a suspended launch
   followed by a kill-on-close Job assignment, so an externally terminated

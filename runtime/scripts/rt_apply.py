@@ -399,6 +399,31 @@ def read_receipt(session, run_id: str) -> dict:
         raise RpcError("receipt_body_mismatch",
                        "the receipt body does not match its own hash",
                        runId=run_id, declared=declared, recomputed=recomputed)
+    approval = payload.get("approval")
+    expected_source = {
+        "name": session.meta["sourceName"],
+        "sha256": session.meta["sourceSha256"],
+        "bytes": session.meta["sourceBytes"],
+    }
+    identity_ok = (
+        payload.get("schema") == RECEIPT_SCHEMA
+        and payload.get("runId") == run_id
+        and payload.get("sessionId") == session.id
+        and payload.get("source") == expected_source
+        and isinstance(approval, dict)
+        and payload.get("planId") == approval.get("planId")
+        and payload.get("planHash") == approval.get("planHash")
+        and approval.get("state") == "approved"
+        and approval.get("decision") == "approved"
+    )
+    if not identity_ok:
+        # Never echo a transplanted session/run/plan value: those identifiers
+        # may belong to a different private document. The requested run id is
+        # already known to the caller and is the only identity returned.
+        raise RpcError(
+            "receipt_body_mismatch",
+            "the receipt identity does not match its containing session/run",
+            runId=run_id)
     candidate = payload.get("candidate")
     artifact = _candidate_path(session, run_id, candidate)
     if not artifact.is_file():

@@ -83,6 +83,9 @@ therefore accepts only the canonical leaf the Runtime itself publishes —
 traversal, alternate-leaf, or malformed candidate path as pathless
 `path_escape`. Receipt read, candidate chaining/comparison/verification,
 rendering, and module checks share that resolver.
+The same read also binds `schema`, `sessionId`, `runId`, source descriptor,
+plan, and approved approval record to one another. Equal candidate bytes do not
+make a receipt from another session or run reusable.
 
 **One domain layer.** `rt_core` holds every operation; the front ends own only
 framing, arguments and envelopes. `tests/test_runtime_parity.py` measures that

@@ -313,6 +313,36 @@ def test_mutating_the_receipt_body_refuses_it(tmp_path):
         assert client.ok("receipt/read", {"sessionId": session, "runId": run_id})
 
 
+def test_a_receipt_cannot_be_reused_for_an_identical_candidate_in_another_session(
+        tmp_path):
+    """Artifact equality is not authority to transplant run/session identity."""
+    source = _source(tmp_path)
+    with RuntimeClient(tmp_path / "root") as client:
+        session_a, plan_a, approval_a = drive(client, source, OPS_ONE)
+        candidate_a = client.ok("plan/apply", {
+            "planId": plan_a["planId"],
+            "approvalId": approval_a["approvalId"]})["candidate"]
+        session_b, plan_b, approval_b = drive(client, source, OPS_ONE)
+        candidate_b = client.ok("plan/apply", {
+            "planId": plan_b["planId"],
+            "approvalId": approval_b["approvalId"]})["candidate"]
+        assert (candidate_a["candidate"]["sha256"]
+                == candidate_b["candidate"]["sha256"])
+
+        sessions = tmp_path / "root" / "sessions"
+        receipt_a = (sessions / session_a / "candidates" /
+                     candidate_a["runId"] / "receipt.json")
+        receipt_b = (sessions / session_b / "candidates" /
+                     candidate_b["runId"] / "receipt.json")
+        receipt_b.write_bytes(receipt_a.read_bytes())
+
+        error = client.err("receipt/read", {
+            "sessionId": session_b, "runId": candidate_b["runId"]})
+        assert error["code"] == "receipt_body_mismatch"
+        assert session_a not in json.dumps(error, ensure_ascii=False)
+        assert candidate_a["runId"] not in json.dumps(error, ensure_ascii=False)
+
+
 @pytest.mark.parametrize("path_kind", ["traversal", "absolute"])
 def test_a_rehashed_receipt_cannot_redirect_the_candidate_path(tmp_path, path_kind):
     """The receipt hash is integrity, not authority to widen filesystem scope."""
