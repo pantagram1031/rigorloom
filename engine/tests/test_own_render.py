@@ -317,6 +317,218 @@ def test_start_number_offsets_the_stamped_number():
     assert renderer.page_number_spec()["first_number"] == 7
 
 
+# ------------------------------------------------- headers and footers (E2.6)
+#
+# No corpus form carries an hp:footer, and the one that carries an hp:header
+# (jeongbo) carries an EMPTY one, so nothing here can be measured against a
+# Hancom reference render.  The fixtures below are synthetic, and what they
+# pin is geometry the format publishes: the areas hh:margin@header/@footer
+# declare, @applyPageType, and @hideFirstHeader/@hideFirstFooter.
+
+MULTIPAGE = os.path.join(CORPUS, "saeopja-deungnok-sinchengseo.hwpx")
+
+
+def _furniture_xml(kind, text, apply_type="BOTH", char_height=1000):
+    """One hp:header / hp:footer control, as HWP writes it: inside a run."""
+    return (
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        f'<hp:{kind} id="1" applyPageType="{apply_type}"><hp:subList>'
+        '<hp:p id="1" paraPrIDRef="0" styleIDRef="0">'
+        f'<hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run>'
+        '<hp:linesegarray>'
+        f'<hp:lineseg textpos="0" vertpos="0" vertsize="{char_height}" '
+        f'textheight="{char_height}" baseline="{int(char_height * 0.85)}" '
+        'spacing="0" horzpos="0" horzsize="40000" flags="0"/>'
+        '</hp:linesegarray></hp:p></hp:subList>'
+        f'</hp:{kind}></hp:ctrl></hp:run>')
+
+
+def _furniture_renderer(source=None, header=None, footer=None,
+                        header_margin=2000, footer_margin=2000,
+                        hide_first_header=0, hide_first_footer=0,
+                        apply_type="BOTH"):
+    """A corpus form with a header and/or footer control grafted onto it.
+
+    The control goes into the first TOP-LEVEL paragraph, which is where HWP
+    puts it and where ``_furniture_scan`` looks; the margins are edited on the
+    form's own ``hh:margin`` so the header/footer areas have a real height
+    (every corpus form declares header="0" footer="0").
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(source or GIANMUN), dpi=144)
+    section = renderer.sections[0]
+    margin = next(e for e in section.iter()
+                  if own_render._local(e.tag) == "margin"
+                  and e.get("header") is not None)
+    margin.set("header", str(header_margin))
+    margin.set("footer", str(footer_margin))
+    vis = next(e for e in section.iter()
+               if own_render._local(e.tag) == "visibility")
+    vis.set("hideFirstHeader", str(hide_first_header))
+    vis.set("hideFirstFooter", str(hide_first_footer))
+    host = own_render._kids(section, "p")[0]
+    for kind, text in (("header", header), ("footer", footer)):
+        if text is None:
+            continue
+        host.append(ET.fromstring(_furniture_xml(kind, text, apply_type)))
+    renderer._furniture = None
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in section.iter() if own_render._local(e.tag) == "p")
+    }
+    return renderer
+
+
+def test_the_corpus_carries_exactly_one_header_and_no_footer_or_note():
+    """The measurement this whole slice rests on, asserted rather than told.
+
+    If a form with a real header, footer or note is ever added, this test is
+    what says so — and the claim "no reference render exercises this lane"
+    has to be rewritten rather than quietly left standing.
+    """
+    import glob
+    import zipfile
+
+    found = {"header": [], "footer": [], "footNote": [], "endNote": []}
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        stem = os.path.basename(path)[:-5]
+        renderer = own_render.OwnRenderer(path, dpi=96)
+        scan = renderer._furniture_scan()
+        for tag, key in (("header", "header"), ("footer", "footer"),
+                         ("footNote", "footnote"), ("endNote", "endnote")):
+            if scan[key]:
+                found[tag].append((stem, len(scan[key])))
+        with zipfile.ZipFile(path) as archive:
+            assert any(n.endswith("section0.xml") for n in archive.namelist())
+    assert found["header"] == [("jeongbo-gonggae-cheongguseo", 1)], found
+    assert found["footer"] == [], found
+    assert found["footNote"] == [], found
+    assert found["endNote"] == [], found
+    # And that one header is empty: drawing it adds no ink, which is why the
+    # corpus renders stay byte-identical across this slice.
+    renderer = own_render.OwnRenderer(_need(PICTURE_FORM), dpi=96)
+    entry = renderer._furniture_scan()["header"][0]
+    paras = renderer._sublist_paragraphs(entry["el"])
+    assert paras and not any(p.chars for p in paras)
+
+
+def _extreme_box(sidecar, top):
+    boxes = [b for b in sidecar["line_boxes"] if b["page"] == 1]
+    return min(boxes, key=lambda b: b["y0"]) if top else max(
+        boxes, key=lambda b: b["y1"])
+
+
+def test_a_header_and_a_footer_land_in_the_areas_the_margins_declare():
+    """The two areas, pinned against each other so no font metric leaks in.
+
+    ``line_boxes`` are *ink* boxes -- the font ascent about the cached
+    baseline -- so asserting one against a margin would really be asserting
+    the fallback face's ascent.  The same text drawn in both areas has the
+    same ink box shape, so the DIFFERENCE between the two is pure geometry,
+    and that difference is exactly what ``hh:margin`` declares:
+    ``(height - bottom - footer) - top``.
+    """
+    text = "\ubc38\ub9ac\ub9d0"
+    head = _furniture_renderer(header=text)
+    _images, head_side = head.render()
+    foot = _furniture_renderer(footer=text)
+    _images, foot_side = foot.render()
+    geo = head.page_geometry()
+    m = geo["margin"]
+    head_box = _extreme_box(head_side, top=True)
+    foot_box = _extreme_box(foot_side, top=False)
+    expected = (head.px(geo["height"] - m["bottom"] - m["footer"])
+                - head.px(m["top"]))
+    assert abs((foot_box["y0"] - head_box["y0"]) - expected) <= 1, (
+        head_box, foot_box, expected)
+    # And each stays on its own side of the body box.
+    assert head_box["y1"] <= head.px(geo["body_top"]), head_box
+    assert foot_box["y0"] >= head.px(geo["body_top"]), foot_box
+    assert head_side["elements_rendered"]["headers"] == head_side["pages"]
+    assert foot_side["elements_rendered"]["footers"] == foot_side["pages"]
+    assert head_side["page_furniture"]["areas_hwpunit"]["header"] == [
+        m["top"], m["top"] + m["header"]]
+    assert foot_side["page_furniture"]["areas_hwpunit"]["footer"] == [
+        geo["height"] - m["bottom"] - m["footer"],
+        geo["height"] - m["bottom"]]
+
+
+def test_the_header_area_moves_with_the_declared_header_margin():
+    """A header is set from the TOP of its area, so growing ``@header``
+    leaves the header where it is and pushes the BODY down."""
+    small = _furniture_renderer(header="H", header_margin=2000)
+    _images, small_side = small.render()
+    big = _furniture_renderer(header="H", header_margin=6000)
+    _images, big_side = big.render()
+    assert (_extreme_box(small_side, top=True)["y0"]
+            == _extreme_box(big_side, top=True)["y0"])
+    assert (big.page_geometry()["body_top"]
+            - small.page_geometry()["body_top"]) == 4000
+
+
+def test_a_header_and_the_page_number_stamp_coexist():
+    """쪽 번호 is a control and the header is a container; both draw."""
+    renderer = _furniture_renderer(header="머리말", footer="꼬리말")
+    from xml.etree import ElementTree as ET
+    own_render._kids(renderer.sections[0], "p")[0].append(ET.fromstring(
+        '<hp:run xmlns:hp="urn:x" charPrIDRef="0"><hp:ctrl>'
+        '<hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/>'
+        "</hp:ctrl></hp:run>"))
+    renderer._page_num_spec = own_render._UNSET
+    _images, sidecar = renderer.render()
+    drawn = sidecar["elements_rendered"]
+    assert drawn["headers"] == drawn["footers"] == sidecar["pages"]
+    assert drawn["page_numbers"] == sidecar["pages"]
+    assert any(b["mode"] == "pagenum" for b in sidecar["line_boxes"])
+
+
+def test_apply_page_type_selects_odd_and_even_pages():
+    odd = _furniture_renderer(source=MULTIPAGE, header="홀", apply_type="ODD")
+    _images, sidecar = odd.render()
+    pages = sidecar["pages"]
+    assert pages > 1, "fixture drifted: need a multi-page form"
+    assert sidecar["elements_rendered"]["headers"] == len(
+        [n for n in range(1, pages + 1) if n % 2 == 1])
+    even = _furniture_renderer(source=MULTIPAGE, header="짝", apply_type="EVEN")
+    _images, sidecar = even.render()
+    assert sidecar["elements_rendered"]["headers"] == len(
+        [n for n in range(1, pages + 1) if n % 2 == 0])
+
+
+def test_an_unknown_apply_page_type_is_declared_not_guessed():
+    renderer = _furniture_renderer(header="?", apply_type="MASTER_ODD")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["headers"] == 0
+    assert "hp:header@applyPageType=MASTER_ODD" in {
+        e["element"] for e in sidecar["elements_skipped"]}
+
+
+def test_hide_first_header_and_footer_are_honoured():
+    renderer = _furniture_renderer(source=MULTIPAGE, header="h", footer="f",
+                                   hide_first_header=1, hide_first_footer=1)
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["headers"] == sidecar["pages"] - 1
+    assert sidecar["elements_rendered"]["footers"] == sidecar["pages"] - 1
+
+
+def test_a_header_taller_than_its_area_is_named_not_clipped():
+    renderer = _furniture_renderer(header="머리말", header_margin=100)
+    _images, sidecar = renderer.render()
+    skipped = {e["element"] for e in sidecar["elements_skipped"]}
+    assert "hp:header taller than hh:margin@header" in skipped, skipped
+    assert sidecar["elements_rendered"]["headers"] == sidecar["pages"]
+
+
+def test_the_furniture_lane_declares_that_no_reference_render_measures_it():
+    renderer = _furniture_renderer(header="머리말")
+    _images, sidecar = renderer.render()
+    evidence = sidecar["page_furniture"]["evidence"]
+    assert "NOT measured against any Hancom reference render" in evidence
+    assert any("NO Hancom reference render" in n for n in sidecar["notes"])
+
+
 def test_equation_reaches_the_placeholder_path(tmp_path):
     """No corpus form has an equation, so drive the path directly.
 
