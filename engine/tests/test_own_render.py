@@ -1164,6 +1164,54 @@ def test_negative_spacing_narrows_a_run(typo_probe):
     assert delta == pytest.approx(-4 * 0.07 * em, rel=1e-6)
 
 
+def test_the_spacing_gap_is_a_percent_of_the_characters_own_advance(typo_probe):
+    """자간 scales each character's OWN advance, not the character size.
+
+    MEASURED off the Hancom render of render-check-01 `F13`, which draws the
+    same string at spacing −15 / 0 / +30 — see
+    docs/research/line-and-character-metrics.md §3.  A full-width Hangul cell
+    advances by 1 em and so cannot separate the two readings (the test above
+    is exactly that case); the half-width space and Latin can, and the
+    reference says proportional:
+
+        span                     Hancom      ∝ advance   flat % of size
+        ``ABCdef`` at −15        31.077 pt   31.106      27.595
+        space (0.5 em) at +30     6.479 pt    6.500       8.000
+    """
+    renderer, _image, draw = typo_probe
+    px_per_pt = renderer.dpi / 72.0
+    em = 10.0 * px_per_pt
+
+    plain = _synthetic_charpr(renderer, "__g0__", height=1000)
+    tight = _synthetic_charpr(renderer, "__g-15__", height=1000, spacing=-15)
+    wide = _synthetic_charpr(renderer, "__g+30__", height=1000, spacing=30)
+
+    # (a) a half-width space scales with ITS advance (0.5 em), not with 1 em.
+    #     `_measure` drops the trailing gap, so measure a space plus a cell.
+    for cid, pct in ((tight, -0.15), (wide, 0.30)):
+        got = renderer._measure(draw, " 가", cid)
+        want = 0.5 * em * (1 + pct) + em          # space + its gap + the cell
+        assert got == pytest.approx(want, rel=1e-6), pct
+        flat = 0.5 * em + em * pct + em           # the rejected reading
+        assert got != pytest.approx(flat, rel=1e-3), pct
+
+    # (b) a Latin run scales by its own (narrower) advances.  Sum the
+    #     characters one at a time: a neutral run is measured as ONE Pillow
+    #     call and picks up kerning, a spaced run cannot, so the unkerned sum
+    #     is what the two readings have to be compared against.
+    latin = "ABCdef"
+    per_char = [renderer._measure(draw, ch, plain) for ch in latin]
+    total = sum(per_char)
+    gapped = total - per_char[-1]      # n-1 gaps: none after the last
+    assert gapped < len(latin) * em    # Latin really is narrower than a cell
+    for cid, pct in ((tight, -0.15), (wide, 0.30)):
+        got = renderer._measure(draw, latin, cid)
+        assert got == pytest.approx(total + pct * gapped, rel=1e-6), pct
+        # The flat reading would move it by a whole em per gap instead.
+        flat = total + pct * (len(latin) - 1) * em
+        assert got != pytest.approx(flat, rel=1e-3), pct
+
+
 def test_ratio_scales_the_advance_and_the_drawn_ink(typo_probe):
     """hh:ratio is a horizontal glyph scale: advance *and* ink must narrow."""
     renderer, image, draw = typo_probe
@@ -1197,6 +1245,159 @@ def test_ratio_scales_the_advance_and_the_drawn_ink(typo_probe):
     assert narrow_ink / wide_ink == pytest.approx(0.60, abs=0.03)
 
 
+def _metrics_paragraph(renderer, cid, text, line_type="PERCENT", value=160):
+    """A one-line paragraph carrying ``text`` under ``cid``, for ``_line_metrics``."""
+    from xml.etree import ElementTree as ET
+    pid = "__lm_%s_%s__" % (line_type, value)
+    renderer.defs["para_pr"][pid] = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": line_type, "line_spacing_value": value,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    }
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s"><hp:t>%s</hp:t></hp:run></hp:p>'
+           % (pid, cid, text))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+_PARA_PR_HEADER = """<?xml version="1.0" encoding="UTF-8"?>
+<hh:head xmlns:hh="urn:h" xmlns:hp="urn:p" xmlns:hc="urn:c">
+  <hh:paraPr id="switched">
+    <hh:align horizontal="LEFT" vertical="BASELINE"/>
+    <hp:switch>
+      <hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar">
+        <hh:margin><hc:intent value="1000" unit="HWPUNIT"/>
+          <hc:left value="2000" unit="HWPUNIT"/>
+          <hc:right value="500" unit="HWPUNIT"/>
+          <hc:prev value="600" unit="HWPUNIT"/>
+          <hc:next value="200" unit="HWPUNIT"/></hh:margin>
+        <hh:lineSpacing type="FIXED" value="2400" unit="HWPUNIT"/>
+      </hp:case>
+      <hp:default>
+        <hh:margin><hc:intent value="2000"/><hc:left value="4000"/>
+          <hc:right value="1000"/><hc:prev value="1200"/>
+          <hc:next value="400"/></hh:margin>
+        <hh:lineSpacing type="FIXED" value="4800"/>
+      </hp:default>
+    </hp:switch>
+  </hh:paraPr>
+  <hh:paraPr id="bare">
+    <hh:align horizontal="LEFT" vertical="BASELINE"/>
+    <hh:margin><hc:intent value="1000" unit="HWPUNIT"/>
+      <hc:left value="2000" unit="HWPUNIT"/>
+      <hc:right value="500" unit="HWPUNIT"/>
+      <hc:prev value="600" unit="HWPUNIT"/>
+      <hc:next value="200" unit="HWPUNIT"/></hh:margin>
+    <hh:lineSpacing type="FIXED" value="2400" unit="HWPUNIT"/>
+  </hh:paraPr>
+  <hh:paraPr id="pct">
+    <hp:switch>
+      <hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar">
+        <hh:margin><hc:prev value="0" unit="HWPUNIT"/></hh:margin>
+        <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
+      </hp:case>
+      <hp:default>
+        <hh:margin><hc:prev value="0"/></hh:margin>
+        <hh:lineSpacing type="PERCENT" value="160"/>
+      </hp:default>
+    </hp:switch>
+  </hh:paraPr>
+</hh:head>"""
+
+
+def test_a_switched_parapr_states_its_lengths_in_half_a_hwpunit():
+    """The MCE default branch is in half a HWPUNIT; the case branch is HWPUNIT.
+
+    MEASURED over the twelve corpus forms' 811 paraPr, every one of which
+    carries the switch: `default / case` is exactly 2.0 on every length that is
+    non-zero in both (intent 328, left 116, right 54, prev 143, next 11, and
+    the one FIXED lineSpacing), and exactly 1.0 on all 806 PERCENT
+    lineSpacing values — a percent is not a length.  A paraPr with NO switch
+    declares `unit="HWPUNIT"` outright and is read at face value: Hancom's own
+    render of render-check-01 leaves the declared 6.00 pt after a
+    `<hc:prev value="600" unit="HWPUNIT"/>`.  See
+    docs/research/line-and-character-metrics.md §6 and
+    `own_render._para_pr_geometry_source`.
+    """
+    defs = own_render.parse_header(_PARA_PR_HEADER.encode("utf-8"))
+    switched = defs["para_pr"]["switched"]
+    bare = defs["para_pr"]["bare"]
+    for field in ("indent", "margin_left", "margin_right", "margin_prev",
+                  "margin_next", "line_spacing_value"):
+        assert switched[field] == bare[field], field
+    assert switched["margin_prev"] == 600      # not the default branch's 1200
+    assert switched["indent"] == 1000
+    assert switched["line_spacing_value"] == 2400
+    # A PERCENT value is branch-invariant and must NOT be halved.
+    assert defs["para_pr"]["pct"]["line_spacing_value"] == 160
+
+
+@pytest.mark.parametrize("value,want_pt", [(130, 13.0), (160, 16.0),
+                                           (200, 20.0)])
+def test_percent_line_spacing_advances_by_the_declared_character_size(
+        typo_probe, value, want_pt):
+    """PERCENT is value/100 of the DECLARED size — the em, not the face.
+
+    MEASURED over 17 baseline-to-baseline steps in render-check-01's `F01`-`F09`
+    (docs/research/line-and-character-metrics.md §1): 130% -> 13.00 pt,
+    160% -> 16.00, 200% -> 20.00, FIXED 2400 -> 24.00, worst residual 0.091 pt
+    against the reference PDF's own 0.12 pt positioning grid.  Reading the
+    percent against the face's ascent+descent, or against a fixed 1.2 line,
+    misses by 2.1 to 12.0 pt.
+    """
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__lh10__", height=1000)
+    para = _metrics_paragraph(renderer, cid, "가나다", value=value)
+    textheight, vertsize, baseline, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert textheight == 1000
+    assert vertsize + spacing == pytest.approx(
+        want_pt * own_render.HWPUNIT_PER_PT, abs=1)
+    assert baseline == round(own_render.BASELINE_RATIO * textheight)
+
+
+def test_fixed_line_spacing_advances_by_the_declared_length(typo_probe):
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__lhf__", height=1000)
+    para = _metrics_paragraph(renderer, cid, "가나다", line_type="FIXED",
+                              value=2400)
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert vertsize + spacing == 2400          # 24.00 pt, measured 23.974
+
+
+def test_the_character_metrics_stay_out_of_the_line_height(typo_probe):
+    """relSz / ratio / offset must not change what a line advances by.
+
+    MEASURED (docs/research/line-and-character-metrics.md §2): render-check-01
+    `F15`'s second line is drawn entirely at relSz=140 on a 10 pt charPr, and
+    the gap from it to the next block is 22.906 pt — identical to three
+    decimals with `F13`'s and `F14`'s plain 10 pt lines.  A 14 pt line at this
+    paragraph's 160% would have advanced 22.40 pt instead of 16.00.
+    """
+    renderer, _image, _draw = typo_probe
+    plain = _synthetic_charpr(renderer, "__lh_p__", height=1000)
+    baseline_pitch = None
+    for name, metrics in (("plain", {}), ("relSz", {"relSz": 140}),
+                          ("ratio", {"ratio": 150}),
+                          ("offset", {"offset": 40})):
+        cid = plain if not metrics else _synthetic_charpr(
+            renderer, "__lh_%s__" % name, height=1000, **metrics)
+        para = _metrics_paragraph(renderer, cid, "가나다")
+        textheight, vertsize, _bl, spacing = renderer._line_metrics(
+            para, 0, len(para.chars))
+        assert textheight == 1000, name
+        if baseline_pitch is None:
+            baseline_pitch = vertsize + spacing
+        assert vertsize + spacing == baseline_pitch, name
+    assert baseline_pitch == 1600               # 10 pt x 160%, measured 15.95
+
+
 def test_relsz_scales_the_character_size(typo_probe):
     """hh:relSz is not exercised by any corpus form; drive it directly."""
     renderer, _image, draw = typo_probe
@@ -1207,36 +1408,160 @@ def test_relsz_scales_the_character_size(typo_probe):
         renderer._measure(draw, text, plain) * 0.5, rel=0.02)
 
 
-def test_offset_raises_the_baseline_and_the_line_box(typo_probe):
-    """hh:offset is not exercised by any corpus form; drive it directly."""
-    renderer, _image, draw = typo_probe
-    raised = _synthetic_charpr(renderer, "__up__", height=1000, offset=30)
-    piece = renderer._text_pieces(draw, raised, "가")[0]
-    size_px = piece["size_px"]
-    assert piece["offset_px"] == pytest.approx(size_px * 0.30)
+def _object_line_paragraph(renderer, cid, height, out_v, value=160,
+                           line_type="PERCENT", text=""):
+    """A one-line paragraph whose line carries ONE inline object.
 
+    ``height`` is the object's own ``hh:sz@height``; ``out_v`` is the
+    ``hp:outMargin`` declared on its top AND bottom.  ``text`` is optional
+    text sharing the line with it.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__ol_%s_%s__" % (line_type, value)
+    renderer.defs["para_pr"][pid] = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": line_type, "line_spacing_value": value,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    }
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s">'
+           '<hp:tbl rowCnt="1" colCnt="1">'
+           '<hp:sz width="20000" height="%d"/>'
+           '<hp:pos treatAsChar="1"/>'
+           '<hp:outMargin left="0" right="0" top="%d" bottom="%d"/>'
+           '</hp:tbl>'
+           '%s</hp:run></hp:p>'
+           % (pid, cid, height, out_v, out_v,
+              ("<hp:t>%s</hp:t>" % text) if text else ""))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_inline_objects_line_box_is_its_extent_plus_its_own_out_margin(
+        typo_probe):
+    """``hp:outMargin`` top+bottom grows the LINE, not just the object's seat.
+
+    MEASURED against the authoring engine's own cached ``hp:lineseg`` over the
+    79 object lines of the ten converted corpus forms:
+    ``textheight == hh:sz@height + outMargin@top + outMargin@bottom`` on
+    **79 of 79**, residual 0; the extent alone is exact on 16 of 79 and misses
+    by up to 566 HWPUNIT.  See docs/research/object-line-box.md §1.
+    """
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ol10__", height=1000)
+    for out_v in (0, 141, 283):
+        para = _object_line_paragraph(renderer, cid, 7200, out_v)
+        textheight, vertsize, baseline, _sp = renderer._line_metrics(
+            para, 0, len(para.chars))
+        assert textheight == 7200 + 2 * out_v, out_v
+        assert vertsize == textheight
+        assert baseline == round(own_render.BASELINE_RATIO * textheight)
+
+
+def test_an_object_lines_leading_comes_from_the_runs_character_size(
+        typo_probe):
+    """The percent leading is the TEXT's, not the object's.
+
+    MEASURED, same 79 cached object lines: ``spacing == round(charPr@height *
+    value/100) - charPr@height`` is exact on 66 and within 2 HWPUNIT
+    (0.02 pt) on 12 more; taking the leading off the object-sized line box —
+    what this renderer did — is exact on 4 and misses by up to 98266 HWPUNIT.
+    Independently: Hancom's own render of render-check-01 advances 80.73 pt
+    over its ``F27`` 72 pt table on a 160% / 10 pt paragraph, against the
+    80.82 this rule predicts and the 115.20 the old one did
+    (docs/research/object-line-box.md §2).
+    """
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ol10b__", height=1000)
+    para = _object_line_paragraph(renderer, cid, 7200, 141)
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert vertsize == 7482
+    assert spacing == 600                       # 10 pt x (160% - 100%)
+    assert vertsize + spacing == 8082           # measured 8073 off the PDF
+    # A text-only line of the same paragraph is untouched by the split.
+    plain = _metrics_paragraph(renderer, cid, "가나다")
+    th, vs, _b, sp = renderer._line_metrics(plain, 0, len(plain.chars))
+    assert (th, vs, sp) == (1000, 1000, 600)
+
+
+def test_the_largest_character_on_an_object_line_still_sets_its_leading(
+        typo_probe):
+    """Text sharing the line with an object contributes to the pitch.
+
+    The rule is "the leading is the largest DECLARED character size on the
+    line, object slots excluded", so a 14 pt word beside a 72 pt table leads
+    by 14 pt's worth and not by 10 pt's.  Directly measured on the corpus'
+    nine mixed object+text lines only as far as the 66/79 above; the
+    max-over-the-line half is the same rule text lines already obey.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__ol_s__", height=1000)
+    para = _object_line_paragraph(renderer, small, 7200, 0, text="가나")
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert (vertsize, spacing) == (7200, 600)
+    big = _synthetic_charpr(renderer, "__ol_b__", height=1400)
+    para = _object_line_paragraph(renderer, big, 7200, 0, text="가나")
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert (vertsize, spacing) == (7200, 840)
+
+
+def _ink_top(renderer, piece, baseline=300.0):
+    """Topmost inked row of ``piece`` drawn on its own canvas."""
     canvas = renderer.Image.new("RGB", (400, 400), (255, 255, 255))
     keep = renderer._image
     renderer._image = canvas
     try:
-        canvas_draw = renderer.ImageDraw.Draw(canvas)
         piece["colour"] = (0, 0, 0)
-        renderer._draw_glyph_piece(canvas_draw, piece, 20.0, 300.0)
-        top_raised = canvas.convert("L").point(
-            lambda v: 255 if v < 200 else 0).getbbox()[1]
-        flat = renderer._text_pieces(
-            canvas_draw, _synthetic_charpr(renderer, "__flat__",
-                                           height=1000), "가")[0]
-        canvas2 = renderer.Image.new("RGB", (400, 400), (255, 255, 255))
-        renderer._image = canvas2
-        flat["colour"] = (0, 0, 0)
-        renderer._draw_glyph_piece(renderer.ImageDraw.Draw(canvas2), flat,
-                                   20.0, 300.0)
-        top_flat = canvas2.convert("L").point(
-            lambda v: 255 if v < 200 else 0).getbbox()[1]
+        renderer._draw_glyph_piece(renderer.ImageDraw.Draw(canvas), piece,
+                                   20.0, baseline)
     finally:
         renderer._image = keep
-    assert top_flat - top_raised == pytest.approx(size_px * 0.30, abs=2)
+    return canvas.convert("L").point(
+        lambda v: 255 if v < 200 else 0).getbbox()[1]
+
+
+def test_a_positive_offset_lowers_the_glyph_by_the_declared_size(typo_probe):
+    """hh:offset: positive moves DOWN, and by a percent of the DECLARED size.
+
+    Both readings are measured off the Hancom render of render-check-01 —
+    docs/research/line-and-character-metrics.md §5.  ``F16``'s ``offset="40"``
+    run at 10 pt is drawn 3.962 pt BELOW the neutral baseline (declared +4.00);
+    ``F21``'s ``offset="35"`` run carries ``relSz="65"`` on a 10 pt charPr and
+    is drawn 3.482 pt below (35% of 10 pt = 3.50, not 35% of 6.5 = 2.275).
+    """
+    renderer, _image, draw = typo_probe
+    px_per_pt = renderer.dpi / 72.0
+
+    # (a) sign and magnitude at relSz 100.
+    down = _synthetic_charpr(renderer, "__down__", height=1000, offset=40)
+    piece = renderer._text_pieces(draw, down, "가")[0]
+    # offset_px is the RAISE, so a positive declaration gives a negative raise.
+    assert piece["offset_px"] == pytest.approx(-(10.0 * px_per_pt * 0.40))
+
+    up = _synthetic_charpr(renderer, "__up__", height=1000, offset=-40)
+    assert renderer._text_pieces(draw, up, "가")[0]["offset_px"] == (
+        pytest.approx(10.0 * px_per_pt * 0.40))
+
+    # (b) the reference size is the declared height, NOT the relSz-scaled one.
+    sup = _synthetic_charpr(renderer, "__sup__", height=1000, offset=35,
+                            relSz=65)
+    sup_piece = renderer._text_pieces(draw, sup, "가")[0]
+    assert sup_piece["offset_px"] == pytest.approx(-(10.0 * px_per_pt * 0.35))
+    assert sup_piece["offset_px"] != pytest.approx(
+        -(6.5 * px_per_pt * 0.35), abs=1.0)
+
+    # (c) the ink really moves down the page, by the same amount.
+    flat = _synthetic_charpr(renderer, "__flat__", height=1000)
+    flat_piece = renderer._text_pieces(draw, flat, "가")[0]
+    assert (_ink_top(renderer, piece) - _ink_top(renderer, flat_piece)
+            == pytest.approx(10.0 * px_per_pt * 0.40, abs=2))
 
 
 def test_the_slot_model_is_load_bearing_on_exactly_three_corpus_metrics():
@@ -2000,14 +2325,14 @@ LINESEG_AGREEMENT = {
     #        multiline_line_count_exact, cached_break_positions, matched)
     "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 21, 2, 2, 2, 1),
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
-    "gianmun-byeolji-2ho": (20, 19, 19, 2, 1, 2, 1),
+    "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
-    "jumin-deungchobon-sinchengseo": (133, 133, 117, 27, 27, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 435, 416, 29, 26, 44, 13),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 247, 227, 34, 28, 49, 12),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 284, 37, 27, 47, 12),
+    "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 450, 432, 29, 28, 44, 16),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 243, 223, 34, 27, 49, 12),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 301, 281, 37, 27, 47, 12),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
+    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 8),
 }
 
 
@@ -2057,9 +2382,9 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
                 a["break_positions_cached"], a["break_positions_matched"])):
             totals[index] += value
     # 2148 paragraphs carry a usable cache; the breaker reproduces the
-    # authoring engine's line COUNT on 2097 of them and its exact break
-    # SEQUENCE on 2004.  Restricted to the 158 paragraphs that actually break
-    # (the rest cannot disagree), it reproduces the line count on 135 and 65
+    # authoring engine's line COUNT on 2105 of them and its exact break
+    # SEQUENCE on 2014.  Restricted to the 158 paragraphs that actually break
+    # (the rest cannot disagree), it reproduces the line count on 136 and 68
     # of the 216 individual break positions.
     #
     # The break-position column moved 43 -> 58 when the space stopped being
@@ -2081,7 +2406,17 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # ``BundledFontMap`` — whose hmtx advances happen to agree with the
     # authoring engine's more often than Malgun's did. A machine WITH those
     # Hancom faces installed is unaffected: installed is still tried first.
-    assert totals == [2148, 2097, 2004, 158, 135, 216, 65], totals
+    #
+    # 2097 -> 2105, 2004 -> 2014, 135 -> 136, 65 -> 68 on the line-metrics
+    # slice, in which every column moved the same way. Two changes act here:
+    # `hh:spacing` became a percent of the character's own advance rather than
+    # a flat percent of the character size (measured, render-check-01 F13),
+    # which on its own costs 8 line counts because a negative 자간 no longer
+    # over-condenses Latin; and `hh:margin`'s left/right/intent stopped being
+    # read doubled out of the paraPr MCE switch's default branch (measured,
+    # `_para_pr_geometry_source`), which more than pays it back — kstartup
+    # alone goes 435 -> 450 / 416 -> 432 / 13 -> 16.
+    assert totals == [2148, 2105, 2014, 158, 136, 216, 68], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -3542,6 +3877,123 @@ def test_an_equation_larger_than_its_box_is_scaled_and_declared(tmp_path):
     assert "hp:equation@equation_scaled" in declared
 
 
+def _equation_element(renderer):
+    for section in renderer.sections:
+        for el in section.iter():
+            if own_render._local(el.tag) == "equation":
+                return el
+    raise AssertionError("fixture drifted: no hp:equation")
+
+
+def _equation_paragraph(renderer):
+    """The ``Paragraph`` the fixture hung its equation run on."""
+    seen = 0
+    for el in renderer.sections[0].iter():
+        if own_render._local(el.tag) != "p":
+            continue
+        if seen == EQUATION_PARAGRAPH:
+            return own_render.Paragraph(el, renderer.defs["para_pr"])
+        seen += 1
+    raise AssertionError("fixture drifted: no such paragraph")
+
+
+def _adopted_reserve(renderer, el, declared):
+    """``min(declared, max(nominal, ink))``, computed here, not asked for.
+
+    The rule under test, rebuilt from the layout primitives so the assertion
+    is against the RULE and not against whatever ``_equation_extent_height``
+    happens to return.
+    """
+    script = "".join(own_render._kid(el, "script").itertext())
+    tree, _info = hwpeqn_parse.parse(script)
+    renderer._eq_face = renderer._equation_face(el.get("font"), count=False)
+    size = max(2.0, own_render._iattr(el, "baseUnit")
+               * own_render.EQUATION_EXTENT_DPI
+               / own_render.HWPUNIT_PER_INCH)
+    laid = renderer._eq_layout(tree, size)
+    _x0, y0, _x1, y1 = renderer._eq_bounds(laid)
+    scale = (own_render.HWPUNIT_PER_INCH
+             / float(own_render.EQUATION_EXTENT_DPI))
+    return min(declared, int(round(max((laid.asc + laid.desc) * scale,
+                                       (y1 - y0) * scale))))
+
+
+def test_an_over_declared_equation_reserves_its_own_extent_not_hp_sz(tmp_path):
+    """The measured rule: Hancom sizes the slot to the equation, not to hp:sz.
+
+    ``render-check-01`` declares 2400 for ``a over b`` and Hancom reserves
+    2252; declares 2400 for a square root and reserves 1304.  Two equal
+    declared heights, two different reserves — so the slot cannot be a
+    function of the declared extent, and this fixture is the same shape:
+    a box declared far taller than the equation needs.
+    """
+    declared = 9000
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "roomy-slot.hwpx",
+        [("a over b", 9000, declared)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    el = _equation_element(renderer)
+    want = _adopted_reserve(renderer, el, declared)
+    assert want < declared, "fixture drifted: the box is not over-declared"
+    assert renderer._object_extent(el)[1] == want
+    # And the line the equation sits on takes that, not the declared box:
+    # _line_metrics adds the object's own vertical hp:outMargin to it.
+    para = _equation_paragraph(renderer)
+    textheight, _vertsize, _baseline, _spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    _l, top, _r, bottom = renderer._object_out_margin(el)
+    assert textheight == want + top + bottom
+
+
+def test_an_under_declared_equation_still_reserves_only_the_declared_box(
+        tmp_path):
+    """The clamp: the equation is drawn inside hp:sz, so that is the ceiling.
+
+    Byte-for-byte the old behaviour on this side of the clamp — which is why
+    a Hancom-authored document, whose declared extent already IS Hancom's own
+    measurement, mostly does not move.
+    """
+    declared = 900
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "tight-slot.hwpx",
+        [(_hwpeqn(r"\frac{a+b+c+d+e}{f+g+h+i+j}"), 2400, declared)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    el = _equation_element(renderer)
+    assert _adopted_reserve(renderer, el, declared) == declared
+    assert renderer._object_extent(el)[1] == declared
+
+
+def test_the_equation_reserve_does_not_move_with_the_render_resolution(
+        tmp_path):
+    """Pinned at ``EQUATION_EXTENT_DPI``, so pagination is not a dpi setting.
+
+    The layout itself is not resolution-free — ``fontbook`` rasterises at an
+    integer pixel size — which is exactly why the measurement resolution is
+    pinned instead of taken from ``--dpi``.
+    """
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "dpi.hwpx",
+        [("sum _{i=1} ^{n} i^{2} = {n(n+1)(2n+1)} over 6", 22000, 9000)])
+    reserved = set()
+    for dpi in (96, 144, 300, 600):
+        renderer = own_render.OwnRenderer(path, dpi=dpi)
+        reserved.add(renderer._object_extent(_equation_element(renderer))[1])
+    assert len(reserved) == 1, reserved
+
+
+def test_an_equation_with_no_script_keeps_the_declared_extent(tmp_path):
+    """Nothing to lay out, nothing to measure: the declared box stands.
+
+    It is also what such an equation is *drawn* as — a placeholder box at the
+    declared ``hp:sz`` — so the slot and the drawing still agree.
+    """
+    path = _form_with_equations(_need(EQUATION_FORM),
+                                tmp_path / "no-script.hwpx", [("   ", 9000,
+                                                               7000)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    assert renderer._object_extent(_equation_element(renderer))[1] == 7000
+
+
 def test_an_unsupported_construct_is_declared_per_construct(tmp_path):
     path = _form_with_equations(
         _need(EQUATION_FORM), tmp_path / "unsupported.hwpx",
@@ -4583,3 +5035,96 @@ def test_the_geometry_of_a_line_box_did_not_move(gianmun_render):
         assert set(box) >= {"page", "mode", "x0", "y0", "x1", "y1"}
         assert box["x0"] < box["x1"] and box["y0"] < box["y1"]
         assert round(box["x0"], 3) == box["x0"]
+
+
+# ------------------------------------------ endnote placement across sections
+#
+# MEASURED against Hancom on tests/corpus/render-check/render-check-01.hwpx
+# (docs/research/render-check-01.md note 1): the document's one hp:endNote is
+# authored in section 0 and every section declares
+# hp:endNotePr/hp:placement@place="END_OF_DOCUMENT".  Hancom's reference PDF
+# sets that note on page 9 of 9 -- section 2's only page -- under the last
+# inked body line (separator y=464.5 pt, note body y=470.5 pt, last body line
+# ending 456.3 pt).  Before this rule the renderer set it at the end of
+# section 0, where it did not fit under the F47 table that already overflows
+# the body box, and it took a page of its own: candidate 10 pages against the
+# reference's 9.  That page was the whole of the page-count gap.
+
+def _two_section_note_renderer(tmp_path, place, kind="endNote"):
+    """Two sections from one corpus form, with ONE note grafted into the
+    first, and @place set on every section's note properties."""
+    from xml.etree import ElementTree as ET
+
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / ("place-%s.hwpx" % place.lower()),
+        [{"page_pr": {}}])
+    renderer = own_render.OwnRenderer(str(path), dpi=144)
+    first = renderer.sections[0]
+    own_render._kids(first, "p")[1].append(ET.fromstring(
+        _note_xml(kind, "note1 " + NOTE_FILLER)))
+    tag = "footNotePr" if kind == "footNote" else "endNotePr"
+    for section in renderer.sections:
+        pr = next(e for e in section.iter()
+                  if own_render._local(e.tag) == tag)
+        placement = next(e for e in pr
+                         if own_render._local(e.tag) == "placement")
+        placement.set("place", place)
+    renderer._furniture_by_section = {}
+    renderer._note_marks = {}
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in first.iter() if own_render._local(e.tag) == "p")
+    }
+    return renderer
+
+
+def test_end_of_document_endnote_is_set_after_the_last_section(tmp_path):
+    renderer = _two_section_note_renderer(tmp_path, "END_OF_DOCUMENT")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    last_section = sidecar["sections"][-1]
+    assert min(b["page"] for b in boxes) >= last_section["pages"][0], (
+        [b["page"] for b in boxes], last_section["pages"])
+    assert max(b["page"] for b in boxes) == sidecar["pages"]
+
+
+def test_end_of_section_endnote_stays_in_its_own_section(tmp_path):
+    """The other half of the same rule: END_OF_SECTION is NOT deferred."""
+    renderer = _two_section_note_renderer(tmp_path, "END_OF_SECTION")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    first_section = sidecar["sections"][0]
+    assert max(b["page"] for b in boxes) <= first_section["pages"][1], (
+        [b["page"] for b in boxes], first_section["pages"])
+
+
+def test_a_deferred_endnote_costs_no_page_of_its_own(tmp_path):
+    """The page-count property the render-check gap was made of: a note that
+    would not fit at the end of its own section costs a page there and none
+    at the end of a document whose last page has room."""
+    deferred = _two_section_note_renderer(tmp_path, "END_OF_DOCUMENT")
+    _images, deferred_side = deferred.render()
+    own = _two_section_note_renderer(tmp_path, "END_OF_SECTION")
+    _images, own_side = own.render()
+    assert deferred_side["pages"] <= own_side["pages"], (
+        deferred_side["pages"], own_side["pages"])
+    assert (deferred_side["sections"][0]["pages"][1]
+            <= own_side["sections"][0]["pages"][1])
+
+
+def test_render_check_01_pages_match_the_reference_count():
+    """The measured outcome: 9 pages against Hancom's 9, and section 0 no
+    longer carries an endnote page of its own."""
+    path = os.path.join(ROOT, "tests", "corpus", "render-check",
+                        "render-check-01.hwpx")
+    images, sidecar = own_render.OwnRenderer(_need(path), dpi=96).render()
+    assert len(images) == 9, len(images)
+    assert sidecar["sections"][0]["pages"] == [1, 7], sidecar["sections"][0]
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes and min(b["page"] for b in boxes) == 9, [
+        b["page"] for b in boxes]

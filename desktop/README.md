@@ -1170,11 +1170,12 @@ document tool that glows looks like a marketing page.
 | `tsc --noEmit` | 0 |
 | sidecar build (all role checks) | 0 |
 | `npm run tauri build` | 0 |
-| `smoke.ps1` | **499 passed, 0 failed** across 14 phases |
-| new phases | `own` 40 · `own-reattach` 3 |
-| runtime suites + `tests/test_agenthost_compile.py` | 457 passed |
-| `py_compile` sweep | 0 |
-| privacy gate (`git archive HEAD` → `privacy_scan.py`) | HARD=0, WARN=45 (all pre-existing test fixtures) |
+| `smoke.ps1` | **551 passed, 0 failed** across 14 phases |
+| `own` phase | 91 passed · 9 seats (`own_cell` 9/9) · 5 of 30 spans caret-capable |
+| `own-reattach` phase | 3 passed |
+| `engine/tests` + `tests/test_runtime_geometry.py` | 1329 passed, 135 skipped (pre-existing fixture gaps) |
+| `py_compile` sweep | 0 (131 files) |
+| privacy gate (`git archive HEAD` → `privacy_scan.py`) | HARD=0, WARN=51 (all pre-existing test fixtures) |
 
 Screenshots: `page-own-render.png` (the badge, the open 무엇을 못 그렸나 list),
 `page-own-render-150pct.png`, `page-own-render-seat-edit.png` (gap 34's answer:
@@ -1240,6 +1241,29 @@ converter, never live. The staged overlay session grades `pdf` rather than
 `hancom` — correct, because a PDF a script staged is not one this machine's
 Hancom produced — which means the 한컴 렌더 badge text has never been
 photographed.
+
+**Renderer at #231.** The sidecar in this build carries
+`claude/engine-e2-converge-3` merged to its tip (#228: metrics from #218,
+object line box from #219, the F49 endnote-column doc from #222, equation
+extent from #223, and the endnote-placement rule from #228 itself) plus
+`claude/engine-e2-render-check-claim` (#231, a docs-only commit recording the
+render-check eval task in `pipeline/references/support-claims.yaml` /
+`docs/support-matrix.md` — no engine change, and it did not conflict with the
+desktop line). The measured outcome, on
+`tests/corpus/render-check/render-check-01.hwpx`: page count **9 against
+Hancom's reference 9, exact**, page agreement **51/51**, and the feature
+tally **3 match · 38 close · 8 differs · 2 unsupported** over the same 51
+features (`docs/research/render-check-01.md`). The endnote that used to cost
+a page of its own is now deferred to the end of the document under
+`END_OF_DOCUMENT` placement, which is what closed the 10-vs-9 page gap the
+prior slice's holdout could not see (that gap was invisible to a private
+document scored on `close`/`differs` counts alone — it took a page-count
+assertion against Hancom's own reference PDF to catch it). The merge into the
+desktop line touched one shared file, `engine/tests/test_own_render.py`: the
+desktop line's line-box sidecar tests (text/char_x/address/cell_boxes) and
+the renderer line's endnote-placement tests sit in disjoint sections of that
+file and were kept as a union. `engine/scripts/own_render.py` and
+`engine/references/own-render-notes.md` auto-merged cleanly.
 
 ### Phase 3 (commit `2f27d3e`), reproduced from a clean build
 

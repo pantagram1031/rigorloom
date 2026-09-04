@@ -220,6 +220,32 @@ claims:
       - eval:R1-nrf-profile
       - doc:evals/README.md#assert_json
 
+  - id: render-check-fidelity
+    capability: >-
+      Renderer self-check — own_render scored feature by feature against a
+      pinned Hancom reference (render-check-01, 51 labelled features)
+    status: partially
+    platforms: [Windows, macOS, Linux]
+    reason: >-
+      engine/scripts/render_check.py locates each of the 51 [Fnn] feature
+      blocks independently on both sides (own_render's block_layout sidecar
+      vs a text search of Hancom's pinned reference PDF) and grades each one
+      match/close/differs/unsupported, gated against the measured floor of
+      3 match, 38 close, 8 differs, 2 unsupported over 51 features
+      (docs/research/render-check-01.md, page 9) so a regression below that
+      floor is caught rather than described. It does not touch Hancom COM at
+      check time — the reference PDF was captured once and is committed read
+      only — so the check itself runs on any platform. What it is not: a
+      certification. The match/close/differs bounds were set against the
+      spread this one document produced, are explicitly not a ratified
+      regression gate, no second document has been scored with them, and
+      own_render's own grade for this run stays `own-uncertified`.
+    evidence:
+      - eval:render-check-01
+      - doc:docs/research/render-check-01.md#Result
+    covers:
+      - eval:render-check-01
+
   - id: eval-pack-published-record
     capability: A committed per-task record from a clean-bundle install
     status: partially
