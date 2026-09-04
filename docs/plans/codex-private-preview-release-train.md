@@ -278,6 +278,28 @@ C2 blocker on the same exact HEAD:
   or modify the newly exposed regression now. The all-modules gate is red and
   Epoch 0 is not packageable/acceptable until that boundary is lifted or the
   user gives separate direction.
+- Source-only C6 draft on exact source HEAD `020d0b8…` (private and gitignored):
+  - `private/epoch-0/020d0b8/compliance/source-inventory.json`, 129 npm / 242
+    Windows-target Cargo / 9 sidecar-build Python packages, SHA-256
+    `7550FE7D5E4C419134A0C7B8C91E8B5AF3EE6E6F18FA011BEA1B7F02C9839338`;
+  - `provenance-table.csv`, 57 item-level rows (32 corpus + 25 screenshots),
+    SHA-256
+    `2B389CB01109E437ECDC32E3245B732E2B496045BBF1CBF273D13F960C7FC683`;
+  - `licensing-audit-draft.md`, SHA-256
+    `AA38AA961B7AC12049F706DF2D7EBF04861CA28AC4E3C0B260C60C6628775FBC`;
+  - `THIRD_PARTY_NOTICES.draft.txt`, SHA-256
+    `A453A32859C3F5A39654C48EDEF9A845340079CDA8D6C106C0046D858F778EB8`.
+  The audit is not legal clearance and the notice is explicitly blocked/incomplete
+  until a green final installer is unpacked and reconciled.
+- C6 stop-ship draft findings: the exact Hancom public-format attribution is
+  absent from UI/manual/help/source; the bundled Pretendard font's OFL text was
+  absent from the prior regression installer; PyMuPDF/MuPDF requires an
+  AGPL-or-commercial decision and final notices; six non-law.go.kr corpus
+  sources have unverified KOGL terms; derived Hancom conversion/render outputs,
+  screenshots, and Rigorloom icon provenance need clarification. No tracked
+  Hancom binary/SDK/font/template/icon/clipart/dictionary/security module or
+  standalone local EULA was found, and no reverse-engineering implementation
+  was found. The Hancom inquiry is drafted but not sent.
 
 Not yet complete on the final Epoch 0 HEAD:
 
@@ -318,14 +340,18 @@ tree and installer.
   release, or GitHub metadata change requires the applicable user authority.
 - A live provider leg needs legitimate user credentials; otherwise it remains
   `NOT RUN` while fake-server and boundary tests continue.
+- The all-modules general regression run is red with adequate disk space. No
+  installer build, installed preview, or acceptance claim is allowed while it
+  remains red. Further investigation is paused by the user's no-security-work
+  instruction; ask for separate direction rather than assuming scope.
 
 ## Next executable actions
 
 1. Do not perform further security diagnosis or fixes. The all-modules failure
    is a release blocker awaiting user direction; do not build or present an
    installer from this red snapshot.
-2. Generate the non-security C6 compliance/provenance draft against the current
-   source tree; defer installer-content finalization until a passing build exists.
+2. The non-security source-only C6 draft is complete; defer installer-content
+   finalization until a passing build exists.
 3. After the blocker is separately authorized and resolved, rebuild sidecar/
    installer and rerun the full Python, archive privacy, compile, Runtime, Agent
    Host, and package gates on the then-final tracked HEAD.
