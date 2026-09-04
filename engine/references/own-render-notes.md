@@ -1917,8 +1917,16 @@ false` on both; the grade stays `own-uncertified` on every class.
    kstartup the flow pass and the cached-`vertpos` heuristic disagree, and the
    flow pass is right. Answering that for all ten forms needs the reference
    renders item 1 is about.
-6. A vendored font with known metrics, so cross-machine determinism becomes
-   claimable and the scoreboard stops depending on which faces this machine has.
+6. ~~**A vendored font with known metrics.**~~ Largely done for the plain
+   body serif/sans/monospace slot — see *Bundled Korean fallback faces
+   (family map)* below: `BundledFontMap` maps 바탕/함초롬바탕/휴먼명조/
+   신명조/한양신명조/궁서, 돋움/굴림/함초롬돋움/맑은 고딕/한양중고딕/HY견고딕
+   and 돋움체/굴림체 to three OFL Nanum families shipped in the repo, so
+   those specific declared names resolve to the same face everywhere. What
+   is left: everything NOT in that table (HCI Poppy, 한컴바탕, 신명 신문명조,
+   HY울릉도M, 필기, and any Latin/decorative face) still falls through to the
+   single machine-dependent system fallback, so the scoreboard is not fully
+   off the machine's installed faces yet — only closer.
 7. `kstartup` pagination (limit 12) — now diagnosed and computable; what is
    left is the policy decision, not the mechanism.
 8. ~~**Italic cuts in `SystemFontIndex`, for equations.**~~ Done — see
@@ -1963,3 +1971,69 @@ already carries; this is a gate-verification entry, not new work. The
 re-pin notes cite lives on `claude/engine-e3-hancom-accept`
 (commit `b8a87e1`), not yet merged into this branch — a known cross-branch
 reference, not a broken one; no test on this branch depends on that path.
+
+## Bundled Korean fallback faces (family map), 2026-09-04
+
+`BundledFontMap` (own_render.py) adds a third face-resolution tier between
+the installed system index and the single generic system fallback: a fixed
+table mapping 14 plain body serif/sans/monospace Hancom/HWP face names to
+three OFL Nanum families shipped in `engine/references/fonts/family-map/`
+(licences in `engine/references/fonts/LICENSES.md`). See *Fonts: resolved
+where installed, substituted where not* above (updated in place) and item 6
+of *Remaining order of work*.
+
+Resolution order: installed exact face -> `BundledFontMap` -> generic system
+fallback. Declared per face in the sidecar as `fonts.faces[].source`
+(`installed` | `bundled` | `system`) and `family_map` (the bundled family
+name, when `source == "bundled"`). `resolved_character_share` keeps its old
+meaning (installed + bundled); `installed_character_share` /
+`bundled_character_share` split it back apart, since a bundled hit is still
+not the exact declared face.
+
+**Corpus scoreboard, before -> after** (`render_scoreboard.py --corpus`,
+before = this commit's parent, after = this commit; measured on a machine
+without Hancom Office installed, so every improving form below was landing
+on the generic Malgun fallback before):
+
+| form | resolved share | ssim_mean | ssim_inked_mean | line IoU mean |
+|---|---|---|---|---|
+| admrul | 0.545 -> 0.624 | 0.8913 -> 0.8929 | 0.3218 -> 0.3265 | 0.5070 -> 0.5186 |
+| kstartup | 0.938 -> 0.984 | 0.8134 -> 0.8138 | 0.2218 -> 0.2223 | 0.2451 -> 0.2458 |
+| moel-2013 | 0.858 -> 0.993 | 0.7751 -> 0.7792 | 0.0698 -> 0.0733 | 0.4680 -> 0.4817 |
+| moel-2025 | 0.738 -> 0.968 | 0.7637 -> 0.7719 | 0.1808 -> 0.1905 | 0.5167 -> 0.5334 |
+| nrf | 0.572 -> 0.788 | 0.8673 -> 0.8676 | 0.3246 -> 0.3251 | 0.6597 -> 0.6235 |
+
+The other five corpus forms (gianmun-1ho, gianmun-2ho, jeongbo, jumin,
+saeopja) declare no face `_FAMILY_MAP_TABLE` maps that this machine's
+installed index does not already resolve, so their scoreboards are
+byte-identical before and after, exactly as the design intends: installed
+still wins, unconditionally. `nrf`'s line-IoU mean is the one number that
+moved the wrong way (0.6597 -> 0.6235) despite every other channel on that
+form improving — not investigated further here, reported as measured, not
+smoothed over.
+
+**Private holdout** (바람숲_corpus여백.hwpx/.pdf, `report-windpath-hanmadang`
+output v6; local only, not committed or quoted beyond aggregate numbers):
+`resolved_character_share` was already `1.0` (installed) before this
+change — every face this document declares is already installed on this
+machine — so `BundledFontMap` matched 0 characters and before/after are
+identical: `ssim_inked_mean` 0.129458, line-IoU mean 0.538851, text-line
+pair rate 0.904137, all unchanged. Visual read of page 1 (candidate PNG vs
+the operator's Hancom reference render): body-text weight and the serif/
+sans split match the reference closely; the one visible difference is a
+pre-existing line-count/pagination gap near the bottom of page 1 (unrelated
+to fonts — see *Close the advance-width gap the breaker exposed* above),
+present identically before and after. This holdout does not demonstrate the
+bundled tier's effect — it simply was not a case that needed it.
+
+**Not proven / left open:** a Hancom-installed machine was not available to
+re-run this corpus on, so "installed still wins" is verified by construction
+(`_face_for`'s order, and the priority unit test) and by the fact that faces
+already resolving on THIS machine did not change, not by a second machine's
+measurement. Declared names outside the 14-entry table (HCI Poppy, 한컴바탕,
+신명 신문명조, HY울릉도M, 필기, and any Latin/decorative face) are unaffected
+by this slice and still machine-dependent.
+
+Evidence: `pytest engine/tests/test_own_render.py -q` — 185 passed;
+`pytest engine/tests -q` — 1163 passed, 135 skipped, 0 failed;
+`python scripts/py_compile_sweep.py` — 103 files, 0 failures.
