@@ -425,7 +425,7 @@ def probe(*, include_private: bool = False) -> dict:
 
 def to_wsl_path(path: str) -> str:
     """Translate a Windows absolute path to its WSL /mnt/<drive> form, e.g.
-    'C:\\Users\\x\\a.hwpx' -> '/mnt/c/Users/x/a.hwpx'. Paths without a drive
+    'C:\\Users\\<user>\\a.hwpx' -> '/mnt/c/Users/x/a.hwpx'. Paths without a drive
     letter are left as-is (backslashes normalized to forward slashes)."""
     m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
     if not m:

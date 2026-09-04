@@ -38,7 +38,7 @@ COM_BACKEND = HERE / "com_backend.py"
 # path translation
 # ---------------------------------------------------------------------------
 def win_to_wsl_path(p):
-    """Translate a Windows path (C:\\Users\\x) to its WSL /mnt/c/Users/x form.
+    """Translate a Windows path (C:\\Users\\<user>\\...) to its WSL /mnt/c/Users/x form.
 
     Drive letter is lowercased; backslashes become forward slashes. Already-POSIX
     paths (starting with '/') pass through unchanged. Pure function — no I/O."""
