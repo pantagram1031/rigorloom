@@ -315,30 +315,66 @@
       "family": "gongmun",
       "path": "render/gianmun-byeolji-1ho.pdf",
       "format": "pdf",
-      "bytes": 52401,
-      "sha256": "355c2cded1aaaee8e10ae519bb068364c7ed8f0baa81408965f76da1c9c31ad2",
+      "bytes": 52412,
+      "sha256": "d3daccbcf70c57fd32d1879ca2b60aca766c6eae5b7164d6d0e2c65a6cb14a81",
       "kind": "xc1_render_pdf",
-      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-1ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-1ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed. Re-pinned 2026-09-04 (E2 refs-1:1 slice): the prior render carried a ~0.707 print reduction (settings.xml PrintInfo/PrintMethod=4, 2-up imposition, applied even to a single-page document). com_backend.py's existing PrintMethod-normalization staging (forces PrintMethod 0 on a temp copy before SaveAs PDF) now produces a true 1:1 render; PyMuPDF-verified glyph-height ratio 1.004 vs declared hh:charPr@height, page_count 1/1 document/pdf match. Full defect writeup: engine/references/own-render-notes.md and engine/references/render-1to1/NOTES.md.",
+      "provenance": {
+        "converter": "com_backend.py convert",
+        "hancom_version": "13.0.0.2986",
+        "source_print_method": 4,
+        "print_method_normalized_to": 0,
+        "pages_document": 1,
+        "pages_pdf": 1,
+        "created_utc": "2026-09-04T00:46:28Z",
+        "source_hwpx_sha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+        "geometry_scale_verified": 1.0,
+        "geometry_scale_method": "render_scoreboard.reference_geometry_scale (glyph-weighted median span size / declared hh:charPr@height x hh:ratio)"
+      }
     },
     {
       "slug": "gianmun-byeolji-2ho",
       "family": "gongmun",
       "path": "render/gianmun-byeolji-2ho.pdf",
       "format": "pdf",
-      "bytes": 41864,
-      "sha256": "000bb3605caba64f515458930fceb0aa69dd0b5e72e9aec0e10d28c7bc8f6cd9",
+      "bytes": 41909,
+      "sha256": "881eac14dae38acfef85aa39ab7c1e5625b96437e2915652017d54b7874d85b6",
       "kind": "xc1_render_pdf",
-      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-2ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+      "notes": "W6.1 XC-1 rendered PDF of converted/gianmun-byeolji-2ho.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed. Re-pinned 2026-09-04 (E2 refs-1:1 slice): the prior render carried a ~0.707 print reduction (settings.xml PrintInfo/PrintMethod=4, 2-up imposition, applied even to a single-page document). com_backend.py's existing PrintMethod-normalization staging (forces PrintMethod 0 on a temp copy before SaveAs PDF) now produces a true 1:1 render; PyMuPDF-verified glyph-height ratio 1.004 vs declared hh:charPr@height, page_count 1/1 document/pdf match. Full defect writeup: engine/references/own-render-notes.md and engine/references/render-1to1/NOTES.md.",
+      "provenance": {
+        "converter": "com_backend.py convert",
+        "hancom_version": "13.0.0.2986",
+        "source_print_method": 4,
+        "print_method_normalized_to": 0,
+        "pages_document": 1,
+        "pages_pdf": 1,
+        "created_utc": "2026-09-04T00:46:59Z",
+        "source_hwpx_sha256": "03bc49f20ec712c462c0efafa6747c4fc2d74abda29b66cb09f97f64afd8003e",
+        "geometry_scale_verified": 0.995,
+        "geometry_scale_method": "render_scoreboard.reference_geometry_scale (glyph-weighted median span size / declared hh:charPr@height x hh:ratio)"
+      }
     },
     {
       "slug": "nrf-gyeolgwa-bogoseo-yangsik",
       "family": "research",
       "path": "render/nrf-gyeolgwa-bogoseo-yangsik.pdf",
       "format": "pdf",
-      "bytes": 119085,
-      "sha256": "d8d59382117a4202a1c559a88d73e59cd91b85b1f69aa90dcc5a03b904625dcf",
+      "bytes": 119804,
+      "sha256": "e3cb08e04134f88aec9ebb68865232eee8b0976e005c6d8f1b4648dc7a78d1ba",
       "kind": "xc1_render_pdf",
-      "notes": "W6.1 XC-1 rendered PDF of converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+      "notes": "W6.1 XC-1 rendered PDF of converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed. Re-pinned 2026-09-04 (E2 refs-1:1 slice): the prior render carried a ~0.707 print reduction (settings.xml PrintInfo/PrintMethod=4, 2-up imposition) and had also lost the page-count-parity signal (2 landscape PDF pages instead of 4 portrait). com_backend.py's existing PrintMethod-normalization staging (forces PrintMethod 0 on a temp copy before SaveAs PDF) now produces a true 1:1 render; PyMuPDF-verified glyph-height ratio 1.003 vs declared hh:charPr@height, page_count 4/4 document/pdf match. Full defect writeup: engine/references/own-render-notes.md and engine/references/render-1to1/NOTES.md.",
+      "provenance": {
+        "converter": "com_backend.py convert",
+        "hancom_version": "13.0.0.2986",
+        "source_print_method": 4,
+        "print_method_normalized_to": 0,
+        "pages_document": 4,
+        "pages_pdf": 4,
+        "created_utc": "2026-09-04T00:47:36Z",
+        "source_hwpx_sha256": "776b8ae8acc78653dcd87ec60eac6275daaa5250dfa44a48636e39a3ddbce445",
+        "geometry_scale_verified": 1.003636,
+        "geometry_scale_method": "render_scoreboard.reference_geometry_scale (glyph-weighted median span size / declared hh:charPr@height x hh:ratio)"
+      }
     },
     {
       "slug": "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
