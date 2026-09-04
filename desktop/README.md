@@ -1177,7 +1177,10 @@ document tool that glows looks like a marketing page.
 | privacy gate (`git archive HEAD` → `privacy_scan.py`) | HARD=0, WARN=45 (all pre-existing test fixtures) |
 
 Screenshots: `page-own-render.png` (the badge, the open 무엇을 못 그렸나 list),
-`page-own-render-150pct.png`, `toolbar.png`.
+`page-own-render-150pct.png`, `page-own-render-seat-edit.png` (gap 34's answer:
+a seat open in the inline editor on a page no Hancom drew — 지면 출처 자체 렌더 ·
+미검증 in the status bar, `own_cell` as the derivation, and the legend's
+렌더러 대조 — 확인 5 · 불일치 0 · 미확인 4), `toolbar.png`.
 
 **Renderer at #215.** The sidecar in this build carries
 `claude/engine-e2-converge` merged to its tip (#215) — table/box registration,
