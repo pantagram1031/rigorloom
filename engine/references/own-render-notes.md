@@ -3163,3 +3163,182 @@ to be found before the cell rule can land without lowering
   attributed to the pre-existing over-measure on `moel`/`jumin` because those
   forms' fills were already over 1.0 before it, not because a tree with that
   over-measure removed was rendered.
+
+## The computed-vs-cache gap was an empty run — measured, 2026-09-05
+
+PR #244 made the layout policy document-wide: an untouched Hancom package is
+drawn from its cached `hp:lineseg`, and anything this repo wrote, edited or
+cannot identify is laid out `computed` for the whole document. Computed is
+therefore what every edited document now gets, and the price of it was the
+open question. On the corpus at 144 dpi it was 0.645754 → 0.588691
+`text_line_iou_mean` and 0.830919 → 0.816681 `ssim_mean`. This is where that
+0.057 went.
+
+### The instrument
+
+Both policies are rendered through `OwnRenderer.render()`, with the two
+paragraph draw paths (`_render_cached_lines`, `_render_computed_lines`)
+wrapped so every `line_boxes` record carries the paragraph that produced it.
+A paragraph is then classified by comparing its two lists of boxes:
+
+* **A** — a box's `x0`/`x1` moved, or the paragraph produced a different
+  number of lines: the breaker chose different break positions;
+* **B** — the same boxes, the same widths, a different `y0`: the line is in
+  the right place across the column and the wrong place down the page;
+* **C** — a box changed page.
+
+Paragraph identity is what makes the classes mean anything. Pairing boxes by
+proximity, which is what the scoreboard has to do against a PDF, cannot tell
+class A from class B at all: a line that moved 20 px down pairs with its
+neighbour and reads as a break error.
+
+### Where the computed layout diverges, before
+
+144 dpi, ten forms, every paragraph that drew a line under both policies:
+
+| form | agree | A break | B vertical | C page | A and B |
+| --- | --- | --- | --- | --- | --- |
+| `admrul` | 4 | 1 | **14** | 0 | 1 |
+| `gianmun-1ho` | 23 | 1 | 4 | 0 | 0 |
+| `gianmun-2ho` | 13 | 3 | 0 | 0 | 0 |
+| `jeongbo` | 43 | 12 | 0 | 0 | 0 |
+| `jumin` | 70 | 57 | 1 | 0 | 1 |
+| `kstartup` | 109 | 20 | 25 | **239** | 8 |
+| `moel-2013` | 198 | 35 | 23 | 0 | 1 |
+| `moel-2025` | 82 | 40 | **145** | 0 | 37 |
+| `nrf` | 33 | 9 | **42** | 0 | 2 |
+| `saeopja` | 628 | 55 | 22 | 0 | 52 |
+
+The counts do not rank the mechanisms; the IoU does. Sorted by what each form
+lost going from `cache` to `computed`: `admrul` −0.40016, `moel-2025`
+−0.22322, `nrf` −0.16632, `saeopja` −0.09131 — and `kstartup` **+0.37000**,
+the one form dominated by class C, whose extra page moves it *toward* the
+reference. Every form that lost is a form dominated by class B. The line
+breaker, which is what a reader expects to be at fault, is not where the
+corpus loses its ink.
+
+Class B is a constant per document, not a scatter. `admrul` moves 14 of its
+19 drifting paragraphs by exactly −20.00 px; `nrf` moves one run of
+paragraphs by −8.00 px and another by +102.40 px; `moel-2025` moves by
++29.76 px and then sheds 0.02 px per line after that. A constant offset
+shared by every paragraph below a point in the document is a **block
+height**, not a line box.
+
+### The mechanism
+
+`--flow-agreement` reads the flow pass against the cache with the line boxes
+held fixed, and `--flow-agreement --line-layout computed` reads the two
+errors compounded. On `admrul` the first is exact on 15 of 15 blocks and the
+second puts 13 of the 15 at exactly 1000 HWPUNIT — 10 pt, 20 px at 144 dpi —
+too high. So the block model is right and one block is measured 1000 HWPUNIT
+too short. `_flow_lines` measures a computed block as the sum of
+`vertsize + spacing` over its lines, and exactly one line in the whole corpus
+is off by more than 2 HWPUNIT:
+
+    admrul paragraph 1, the page's inline table
+      cached    vertsize 6618   spacing 2400
+      computed  vertsize 6618   spacing 1400
+
+The paragraph is one `hp:run` at 14 pt holding the table and a **second run
+at 24 pt whose `<hp:t>` is empty**. The line spacing is 200%, and 2400 is
+what 200% of 24 pt leaves over — not 200% of 14 pt, which is the 1400 this
+renderer computed. `_line_metrics` walked `para.chars`; an empty run puts no
+character there, so the 24 pt shape was invisible to it.
+
+**The rule.** `hh:charPr@height` is a property of the `hp:run`, not of the
+characters in it: `hp:run@charPrIDRef` applies to the run whether or not the
+run emits text, and the paragraph mark that ends the line is drawn in the
+shape the last run declares. So a run that puts no character on a line still
+declares that line's character height. `Paragraph` now records `empty_runs`
+as `[(char_index, charPrIDRef)]` and `_line_metrics` reads the ones whose
+position falls inside the line, the last line owning one that sits at the end
+of the character stream.
+
+Measured against the authoring engine's own cache over all 2370 cached lines
+of the ten forms, with the cached `textpos` boundaries fixing line identity:
+
+| reading | `vertsize` exact | `spacing` exact | both |
+| --- | --- | --- | --- |
+| only runs that put characters down | 2365 / 2370 | 1482 | 1481 |
+| the empty run joins the PITCH | 2365 | 1487 | 1482 |
+| the empty run joins the HEIGHT too | **2370 / 2370** | **1487** | **1487** |
+
+The third row is the one that ships. It is exact on every cached line in the
+corpus and there is no line the other two get right and it gets wrong. Every
+surviving `spacing` miss is within 2 HWPUNIT of the cache — 0.02 pt, 0.0004
+px at 144 dpi — on 883 lines, all of them `PERCENT`. That residual is a
+rounding difference in how the pitch is divided into `vertsize + spacing`,
+not a rule, and it is not chased here.
+
+### After
+
+Corpus scoreboard, 144 dpi, the policy pinned on both sides:
+
+| channel | computed, before | computed, after | `cache` |
+| --- | --- | --- | --- |
+| `text_line_iou_mean` | 0.588691 | **0.633897** | 0.645754 |
+| `ssim_mean` | 0.816681 | **0.824293** | 0.830919 |
+| `ssim_inked_mean` | 0.249020 | **0.277430** | 0.276175 |
+| `text_line_pair_rate_mean` | 0.847831 | 0.847831 | 0.836210 |
+
+The gap this slice set out to price closes from −0.05706 to −0.01186 on
+`text_line_iou_mean`, and `ssim_inked_mean` under computed layout is now
+*above* the cache's. Per form only `admrul` (+0.39449), `nrf` (+0.04648),
+`gianmun-1ho` (+0.01133) and `jumin` (+0.00011) move; `saeopja` moves
+−0.00036 and the other five are unchanged to five decimals. `admrul`'s
+scoreboard verdict goes back to `pass`, which computed layout had been
+failing. `--flow-agreement --line-layout computed` on `admrul` is now exact
+on 15 of 15 blocks.
+
+**Nothing on the cache path moved.** The ten forms' scoreboards are
+byte-identical before and after, per form and in aggregate, and `render_check`
+on `render-check-01` is byte-identical at 96 and 144 dpi: 9/9 pages exact,
+6 · 37 · 6 · 2 at 96 and 14 · 31 · 4 · 2 at 144. The line breaker is
+untouched by construction — `_line_metrics` runs after `compute_lines` has
+already chosen its spans — and the lineseg channel confirms it: 80/216 break
+positions matched, 77/216 per-decision exact, 2030/2148 paragraphs with an
+exact break sequence, the same numbers the resolution-independence slice
+left.
+
+### What is left, and it is not this
+
+Class B does not go to zero. After the fix it is 0 on `admrul`, 29 on `nrf`,
+145 on `moel-2025`, 25 on `kstartup`, 23 on `moel-2013` and 22 on `saeopja`,
+and the three surviving shapes are different mechanisms:
+
+* `moel-2025`'s +29.76 px is downstream of a class-A error — its paragraph 6
+  breaks into two computed lines where the cache has one — and the 0.02 px it
+  sheds per line after that is the ±1 HWPUNIT `spacing` rounding above,
+  accumulating down the column.
+* `nrf`'s +102.40 px starts at one paragraph and holds for the rest of the
+  document: another block measured short, not yet attributed.
+* `kstartup`'s 239 class-C paragraphs are its 21 → 22 page difference, and
+  that difference scores *better* than the cache.
+
+### Not proven
+
+- **One form carried the whole finding.** `admrul` is the only corpus
+  document whose empty run is a different size from the run beside it in a
+  way that costs 10 pt. The rule is right on all 2370 corpus lines, but 2365
+  of them were already right; the evidence that it is a RULE and not a patch
+  is the OWPML reading of `hp:run@charPrIDRef` plus admrul's cached `spacing`
+  being exactly 200% of the empty run's 24 pt.
+- **The pitch-only reading was not ruled out by a reference render.** Putting
+  the empty run into the height as well is what makes `vertsize` exact on the
+  last 5 lines, and those 5 are why the third row was chosen — but no
+  reference PDF was measured to confirm that a taller empty run grows the
+  DRAWN line box rather than only the pitch.
+- **The ±2 HWPUNIT spacing residual is unexplained.** 883 of 2370 lines,
+  every one `PERCENT`, every one within 2 HWPUNIT. Sub-pixel per line, but it
+  accumulates, and `moel-2025`'s 0.02 px per line is it showing up in the
+  render.
+- **`nrf`'s remaining 102.40 px was not diagnosed.** It is a block height by
+  the same constant-offset argument used above, but which block and why is
+  not measured.
+- **The classification is 144 dpi and this machine's font stack.** Class A in
+  particular is partly a font-substitution artefact — the corpus resolves
+  휴먼명조 and friends to bundled substitutes whose advances are not Hancom's
+  — and no attempt was made here to separate that from the breaking rules.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened; whether the same empty-run line exists in it, and what it
+  is worth there, is the operator's measurement to make.

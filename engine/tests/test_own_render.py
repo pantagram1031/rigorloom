@@ -1479,6 +1479,131 @@ def test_fixed_line_spacing_advances_by_the_declared_length(typo_probe):
     assert vertsize + spacing == 2400          # 24.00 pt, measured 23.974
 
 
+def _paragraph_with_a_trailing_empty_run(renderer, cid, text, empty_cid,
+                                         value=160):
+    """``text`` under ``cid``, then an ``<hp:t></hp:t>`` run under
+    ``empty_cid`` — the shape admrul's inline-table paragraph has."""
+    from xml.etree import ElementTree as ET
+    pid = "__lm_empty_%s__" % value
+    renderer.defs["para_pr"][pid] = dict(
+        renderer.defs["para_pr"].get("__lm_PERCENT_%s__" % value)
+        or {"align": "LEFT", "break_latin": "KEEP_WORD",
+            "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+            "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+            "page_break_before": 0, "condense": 0, "font_line_height": 0,
+            "snap_to_grid": 1, "tab_pr": None,
+            "line_spacing_type": "PERCENT", "line_spacing_value": value,
+            "line_spacing_unit": "HWPUNIT", "margin_left": 0,
+            "margin_right": 0, "indent": 0, "margin_prev": 0,
+            "margin_next": 0})
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s"><hp:t>%s</hp:t></hp:run>'
+           '<hp:run charPrIDRef="%s"><hp:t></hp:t></hp:run></hp:p>'
+           % (pid, cid, text, empty_cid))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_empty_run_still_declares_its_lines_character_height(typo_probe):
+    """A run that draws nothing still sizes the line it sits on.
+
+    ``<hp:run charPrIDRef="…"><hp:t></hp:t></hp:run>`` puts no glyph down,
+    but ``hh:charPr@height`` is a property of the RUN and the paragraph mark
+    is as tall as the shape the run declares.  MEASURED against the authoring
+    engine's own cached ``hp:lineseg`` over every line of the ten corpus
+    forms: reading the empty runs makes ``vertsize`` exact on all of them,
+    and moves no line the other way.  admrul is where it is worth 10 pt — its
+    inline table sits in a 14 pt run beside an empty 24 pt one, and the
+    cached 200% ``spacing`` of 2400 is a percentage of the 24, not the 14.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__er_small__", height=1000)
+    tall = _synthetic_charpr(renderer, "__er_tall__", height=2400)
+
+    alone = _metrics_paragraph(renderer, small, "가나다", value=160)
+    plain_height, plain_vs, _bl, plain_sp = renderer._line_metrics(
+        alone, 0, len(alone.chars))
+    assert plain_height == 1000
+    assert plain_vs + plain_sp == round(1000 * 160 / 100)
+
+    para = _paragraph_with_a_trailing_empty_run(renderer, small, "가나다",
+                                                tall, value=160)
+    height, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert para.empty_runs                     # the run is seen at all
+    assert height == 2400                      # the tall shape wins the box
+    assert vertsize + spacing == round(2400 * 160 / 100)
+
+
+def test_a_taller_empty_run_only_sizes_the_line_it_sits_on(typo_probe):
+    """The rule is per line, not per paragraph.
+
+    An empty run at the very end of the character stream belongs to the LAST
+    line; an earlier line must be measured without it, or a two-line
+    paragraph would get the tall pitch on both of its lines.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__er2_small__", height=1000)
+    tall = _synthetic_charpr(renderer, "__er2_tall__", height=2400)
+    para = _paragraph_with_a_trailing_empty_run(renderer, small, "가나다라",
+                                                tall, value=160)
+    cut = 2
+    first_height, _vs, _bl, _sp = renderer._line_metrics(para, 0, cut)
+    last_height, _vs2, _bl2, _sp2 = renderer._line_metrics(
+        para, cut, len(para.chars))
+    assert first_height == 1000
+    assert last_height == 2400
+
+
+def test_the_corpus_line_boxes_are_the_ones_the_authoring_engine_cached():
+    """Every cached ``hp:lineseg@vertsize`` of the corpus is reproduced.
+
+    The channel the empty-run rule was decided on.  Stated as "no line
+    disagrees" rather than as a count, so a corpus that grows a form cannot
+    make this test wrong for the wrong reason; the floor below keeps it from
+    passing over an empty scan.
+    """
+    import glob
+
+    scored = 0
+    misses = []
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(
+            path, dpi=144, layout_policy=own_render.LAYOUT_POLICY_CACHE)
+        renderer._quiet += 1
+        try:
+            for root in renderer.sections:
+                for element in root.iter():
+                    if own_render._local(element.tag) != "p":
+                        continue
+                    para = own_render.Paragraph(element,
+                                                renderer.defs["para_pr"])
+                    if not para.chars or not para.linesegs:
+                        continue
+                    positions = [own_render._iattr(seg, "textpos")
+                                 for seg in para.linesegs]
+                    if positions[-1] > len(para.chars):
+                        continue
+                    for i, seg in enumerate(para.linesegs):
+                        start = positions[i]
+                        end = (positions[i + 1] if i + 1 < len(positions)
+                               else len(para.chars))
+                        _th, vertsize, _bl, _sp = renderer._line_metrics(
+                            para, start, end)
+                        scored += 1
+                        cached = own_render._iattr(seg, "vertsize")
+                        if vertsize != cached:
+                            misses.append((os.path.basename(path),
+                                           renderer.paragraph_index.get(
+                                               id(element)), i,
+                                           cached, vertsize))
+        finally:
+            renderer._quiet -= 1
+    if not scored:
+        pytest.skip("corpus fixtures missing")
+    assert scored >= 1000, f"scan collapsed: only {scored} cached lines"
+    assert not misses, f"line box disagrees with the cache: {misses[:5]}"
+
+
 def test_the_character_metrics_stay_out_of_the_line_height(typo_probe):
     """relSz / ratio / offset must not change what a line advances by.
 
