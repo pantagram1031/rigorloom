@@ -281,6 +281,68 @@ def test_user_path_me_placeholder_is_exempt(tmp_path: Path):
     assert "user_profile_path" not in rules(payload)
 
 
+def test_windows_user_profile_path_json_escaped_is_hard(tmp_path: Path):
+    # JSON string-escaping doubles every backslash of a real Windows path, so
+    # a raw .json file (never JSON-decoded by the scanner) contains a doubled
+    # separator instead of a single one. Assembled at runtime so this source
+    # file itself never contains the literal doubled-backslash pattern.
+    hostile = (
+        '{"path": "C:' + ("\\" * 2) + "Users" + ("\\" * 2)
+        + "jsonperson" + ("\\" * 2) + 'AppData' + ("\\" * 2) + 'thing"}\n'
+    )
+    (tmp_path / "accept.json").write_text(hostile, encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "user_profile_path" in rules(payload)
+
+
+def test_windows_user_profile_path_forward_slash_is_hard(tmp_path: Path):
+    hostile = "loaded config from C:/Users/" + "slashperson/AppData/thing\n"
+    (tmp_path / "log2.txt").write_text(hostile, encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "user_profile_path" in rules(payload)
+
+
+def test_windows_user_profile_placeholder_exempt_in_all_spellings(tmp_path: Path):
+    # <user> / %userprofile% placeholders stay exempt no matter the separator
+    # spelling: single backslash, JSON-escaped doubled backslash, or forward
+    # slash.
+    content = (
+        r"a: C:\Users\<user>\AppData\thing" + "\n"
+        + "b: C:" + ("\\" * 2) + "Users" + ("\\" * 2) + "%userprofile%"
+        + ("\\" * 2) + "AppData" + ("\\" * 2) + "thing\n"
+        + r"c: C:/Users/<user>/AppData/thing" + "\n"
+        + r"d: C:/Users/%userprofile%/AppData/thing" + "\n"
+    )
+    (tmp_path / "log3.txt").write_text(content, encoding="utf-8")
+
+    payload, code = run(tmp_path)
+
+    assert code == 0
+    assert "user_profile_path" not in rules(payload)
+
+
+def test_large_file_with_json_escaped_user_path_is_hard(tmp_path: Path):
+    # Streaming (>1MiB) path must also catch the JSON-escaped doubled form,
+    # not just the single-backslash spelling.
+    body = (
+        (b"x" * (1024 * 1024)) + b"\nloaded from C:" + (b"\\" * 2) + b"Users"
+        + (b"\\" * 2) + b"streamperson" + (b"\\" * 2) + b"AppData" + (b"\\" * 2) + b"x\n"
+    )
+    (tmp_path / "big3.txt").write_bytes(body)
+
+    payload, code = run(tmp_path)
+
+    assert code == 3
+    assert "user_profile_path" in rules(payload)
+    assert "large_file" in rules(payload)
+
+
 def test_default_excludes_git_and_node_modules(tmp_path: Path):
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "secret.hwpx").write_bytes(b"junk")
