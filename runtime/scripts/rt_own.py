@@ -403,7 +403,21 @@ def line_boxes_for_page(sidecar: dict, page: int) -> list:
     The sidecar numbers pages from 1 (it is a human-facing report); the wire
     numbers them from 0. The conversion happens here, once.
     """
-    boxes = sidecar.get("line_boxes")
+    return _boxes_for_page(sidecar, "line_boxes", page)
+
+
+def cell_boxes_for_page(sidecar: dict, page: int) -> list:
+    """The 0-based ``page``'s drawn table-cell boxes, same convention.
+
+    Absent from any sidecar written before the renderer recorded them, which
+    is why this returns an empty list rather than raising: an older render is
+    a render with no seats, not a broken one.
+    """
+    return _boxes_for_page(sidecar, "cell_boxes", page)
+
+
+def _boxes_for_page(sidecar: dict, key: str, page: int) -> list:
+    boxes = sidecar.get(key)
     if not isinstance(boxes, list):
         return []
     return [box for box in boxes

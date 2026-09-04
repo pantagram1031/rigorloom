@@ -67,6 +67,7 @@ DERIVATION_METHODS = (
     "matched_text",   # the seat has text, and that text matched a span
     "cell_borders",   # a rule actually drawn on the page encloses the seat
     "interpolated",   # inferred from a matched label in the same table row
+    "own_cell",       # OUR renderer drew this box from this very cell (tier 3)
 )
 
 #: How sure the mapping is for one span.
@@ -191,15 +192,21 @@ def geometry_capability() -> dict:
                        "disagree about what the same string is"),
         "mappingSource": "the session's form scan (anchors and table cells)",
         # Which renderer's layout an answer can come from, and what each one
-        # costs. Advertised so a client knows before the first page that an
-        # own-rendered page has rects and no addresses.
+        # costs. Advertised so a client knows before the first page which of
+        # the two it is holding — the answers now have the same SHAPE, and a
+        # client that could not tell them apart would not know that a tier-3
+        # page's raster is uncertified.
         "sources": {
             "pdf": ("read out of a PDF's text objects: rects, text, addresses, "
                     "seats and per-character offsets"),
-            "own": ("read out of engine/scripts/own_render.py's line boxes: "
-                    "rects only. The sidecar carries where each line was drawn "
-                    "and not what it said, so no address is claimed and no "
-                    "caret offset is emitted"),
+            "own": ("read out of engine/scripts/own_render.py's sidecar: the "
+                    "same rects, text, addresses, seats and per-character "
+                    "offsets, mapped by the same form scan. The renderer also "
+                    "declares which paragraph or cell it drew each line from; "
+                    "that is cross-checked against the scan and can only "
+                    "confirm or demote, never stand alone (mapping.crossCheck "
+                    "counts both). Seats come from the cell boxes the renderer "
+                    "itself drew — derivation `own_cell`"),
         },
         "absenceReasons": list(ABSENCE_REASONS),
         "limits": {
@@ -956,10 +963,237 @@ def derive_seats(profile: dict, spans: list, drawn: list, width: float,
     return seats, absences
 
 
+# --- tier 3: the page OUR renderer drew ------------------------------------------
+#
+# The discipline here is deliberately the SAME discipline tier 1 holds to, and
+# the reason is worth writing down. Our renderer knows the address of every line
+# it drew — it drew it out of the tree — so it could simply declare one and be
+# believed. It is not believed. A renderer that mislays a paragraph index (an
+# off-by-one in a nested table, a section walked out of spine order) would then
+# hand a client an authoritative-looking address for the wrong cell, and an edit
+# applied there is a wrong edit with a receipt. So the form scan stays the
+# source of truth exactly as it is on a PDF-read page, and the renderer's own
+# address is a CROSS-CHECK that can only ever demote: agreement confirms,
+# disagreement makes the span ambiguous and shows both, and silence on either
+# side leaves the other's answer where it stood.
+
+def address_key(address) -> tuple | None:
+    """A comparable identity for an address, whichever side produced it.
+
+    ``anchor`` (the scan's word for a paragraph) and ``para`` (the renderer's)
+    are the SAME thing addressed the same way — a global 0-based hp:p index —
+    so they compare equal. A cell is its table and its row/column.
+    """
+    if not isinstance(address, dict):
+        return None
+    kind = address.get("kind")
+    if kind == "cell":
+        table, row, col = (address.get("table"), address.get("row"),
+                           address.get("col"))
+        if table is None or row is None or col is None:
+            return None
+        return ("cell", table, row, col)
+    if kind in ("anchor", "para"):
+        at_para = address.get("atPara")
+        if at_para is None:
+            return None
+        return ("para", at_para)
+    return None
+
+
+def addresses_agree(scanned, declared) -> bool:
+    """Whether the two sides name the same place in the document.
+
+    Not equality of the dicts, and not equality of ``address_key`` either,
+    because the two sides legitimately name the same place at DIFFERENT
+    granularities: the form scan calls a paragraph inside a table cell an
+    ``anchor`` at paragraph N, while the renderer — which drew it out of that
+    cell — calls it that cell AND paragraph N. Measured on the corpus before
+    this was written: 256 of 393 scan-unique lines "disagreed" purely on that,
+    with both sides carrying the identical ``atPara`` (nrf-gyeolgwa-bogoseo:
+    every one of its 22). Treating an identical paragraph number as a
+    contradiction would have thrown away two thirds of the agreement and
+    reported a numbering bug that does not exist.
+
+    A paragraph number equal on both sides is therefore agreement. Everything
+    else has to match on the full key.
+    """
+    key_a, key_b = address_key(scanned), address_key(declared)
+    if key_a is None or key_b is None:
+        return False
+    if key_a == key_b:
+        return True
+    at_a = scanned.get("atPara")
+    return at_a is not None and at_a == declared.get("atPara")
+
+
+def own_lines(boxes: list) -> tuple[list, list]:
+    """``(lines, declared)`` — the sidecar's boxes in the shape tier 1's own
+    mapping already speaks, plus the address each box declared.
+
+    Shaped rather than special-cased on purpose: ``base_span`` and
+    ``map_spans`` then run on a tier-3 page byte-for-byte the same code they
+    run on a tier-1 page, which is the only way "mapped exactly like tier 1"
+    can be a fact rather than an intention. ``char_x`` is in the sidecar's
+    device pixels, which is the same relationship ``charEdges`` has to a PDF's
+    points, so ``base_span`` normalizes both by dividing by the page width.
+    """
+    lines, declared = [], []
+    for box in boxes:
+        try:
+            bbox = (float(box["x0"]), float(box["y0"]),
+                    float(box["x1"]), float(box["y1"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        text = box.get("text")
+        line = {"text": text if isinstance(text, str) else "",
+                "bbox": list(bbox),
+                "lineMode": box.get("mode")}
+        size = box.get("size_pt")
+        if isinstance(size, (int, float)) and not isinstance(size, bool):
+            line["sizePt"] = float(size)
+        edges = box.get("char_x")
+        if (isinstance(edges, list) and line["text"]
+                and len(edges) == len(line["text"]) + 1
+                and all(isinstance(e, (int, float)) and not isinstance(e, bool)
+                        for e in edges)):
+            line["charEdges"] = [float(e) for e in edges]
+        lines.append(line)
+        declared.append(box.get("address"))
+    return lines, declared
+
+
+def cross_check_own(spans: list, declared: list) -> dict:
+    """Reconcile each span's scanned address with what the renderer declared.
+
+    Returns the counts the answer reports. The span is mutated in place:
+
+      * ``agree`` — both sides name the same address. ``unique`` stands, and
+        the span says both sides said so.
+      * ``disagree`` — the scan matched this line's text to one address and the
+        renderer drew it from another. NEITHER is chosen: the span becomes
+        ``ambiguous`` and carries both, so the chooser the Desktop already has
+        for a genuinely ambiguous line asks a person instead.
+      * ``amongCandidates`` / ``notAmongCandidates`` — the scan already refuses
+        to pick between several. It STILL refuses (T41): two witnesses landing
+        on one of N candidates is suggestive, not decisive, and a numbering
+        drift on the renderer's side would look exactly like agreement. What
+        the renderer named is marked on the span (``sidecarPick``, an index
+        into ``candidates``) so a person choosing can see it, and appended to
+        the list when it is not already there.
+      * ``scanOnly`` — the renderer declared nothing (a page number stamped
+        from a spec, a line from an older sidecar). The scan's answer stands
+        untouched, which is exactly tier 1.
+      * ``sidecarOnly`` — the scan matched nothing and the renderer knows. The
+        renderer's address is RECORDED on the span and NOT claimed: the span
+        stays ``unmapped`` and ``address`` stays null. Believing it here is
+        the one thing this function exists to refuse.
+    """
+    counts = {"declared": 0, "agree": 0, "disagree": 0, "amongCandidates": 0,
+              "notAmongCandidates": 0, "sidecarOnly": 0, "scanOnly": 0}
+    for span, address in zip(spans, declared):
+        key = address_key(address)
+        if key is None:
+            counts["scanOnly"] += 1
+            continue
+        counts["declared"] += 1
+        span["sidecarAddress"] = address
+        if span["confidence"] == "unique":
+            if addresses_agree(span.get("address"), address):
+                counts["agree"] += 1
+                span["addressBasis"] = "scan+sidecar"
+            else:
+                counts["disagree"] += 1
+                span["confidence"] = "ambiguous"
+                span["candidates"] = [span["address"], address]
+                span["address"] = None
+                span["addressBasis"] = "disagreement"
+        elif span["confidence"] == "ambiguous":
+            candidates = span.setdefault("candidates", [])
+            picked = next((i for i, c in enumerate(candidates)
+                           if addresses_agree(c, address)), None)
+            if picked is None:
+                candidates.append(address)
+                picked = len(candidates) - 1
+                counts["notAmongCandidates"] += 1
+                span["addressBasis"] = "disagreement"
+            else:
+                counts["amongCandidates"] += 1
+                span["addressBasis"] = "scan+sidecar"
+            span["sidecarPick"] = picked
+        else:
+            counts["sidecarOnly"] += 1
+            span["addressBasis"] = "sidecar_only"
+    return counts
+
+
+def derive_own_seats(profile: dict, spans: list, cell_boxes: list,
+                     width: float, height: float) -> tuple[list, dict]:
+    """Seats for the fill cells THIS page drew, from the boxes it drew them as.
+
+    No grid is rebuilt and no alignment is attempted, because neither is
+    needed: each box arrived carrying the ``hp:cellAddr`` it was drawn from.
+    That is a strictly stronger provenance than ``cell_borders`` (which walks a
+    reconstructed grid from a confirmed anchor) and it is reported under its
+    own name, ``own_cell``, so a client never has to guess which it is holding.
+
+    A fill cell this page did NOT draw is absent, counted under the same closed
+    reasons tier 1 uses: ``no_anchor_on_page`` when the table drew nothing here
+    at all, ``grid_gap`` when it drew other cells but not this one.
+    """
+    by_cell = _cell_span_index(spans)
+    drawn: dict = {}
+    tables_here: set = set()
+    for box in cell_boxes:
+        table, row, col = box.get("table"), box.get("row"), box.get("col")
+        if table is None or row is None or col is None:
+            continue
+        try:
+            rect = (float(box["x0"]), float(box["y0"]),
+                    float(box["x1"]), float(box["y1"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        tables_here.add(table)
+        drawn.setdefault((table, row, col), rect)
+
+    seats: list = []
+    absences: dict = {}
+    for table in profile.get("table_map") or []:
+        table_index = table.get("index")
+        for cell in table.get("cells") or []:
+            if cell.get("classification") != "fill_target":
+                continue
+            addr = cell.get("addr") or {}
+            row_index, col_index = addr.get("row"), addr.get("col")
+            key = (table_index, row_index, col_index)
+            rect = drawn.get(key)
+            if rect is None:
+                reason = ("no_anchor_on_page" if table_index not in tables_here
+                          else "grid_gap")
+                absences[reason] = absences.get(reason, 0) + 1
+                continue
+            seat = {"table": table_index, "row": row_index, "col": col_index,
+                    "rect": _norm_rect(rect, width, height)}
+            basis = {"drawnCell": [round(v, 2) for v in rect],
+                     "verifiedBy": "our own renderer drew this box from this "
+                                   "cell; the address is read, not "
+                                   "reconstructed"}
+            # Every seat here is `own_cell` — the rect is the CELL, never a
+            # text extent — but where the page's own scan also tied a line to
+            # this cell, that line is named, so a client can show what is
+            # already sitting in the seat it is about to edit.
+            own = by_cell.get(key)
+            if own is not None:
+                basis["spanIndex"] = own["index"]
+            seat.update({"derivation": "own_cell", "basis": basis})
+            seats.append(seat)
+    return seats, absences
+
+
 # --- the call ---------------------------------------------------------------------
 
 def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
-                      page: int, run_id) -> dict | None:
+                      page: int, run_id, profile: dict | None = None) -> dict | None:
     """Geometry for a page TIER 3 drew, out of the same sidecar the raster came
     from — or None when there is no tier-3 render to read.
 
@@ -970,22 +1204,24 @@ def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
         actually drew, in device pixels at the render's dpi, and dividing by the
         page's own pixel size gives exactly the normalized rect a PDF read
         gives. An overlay drawn from these sits on the text.
-      * The TEXT is not carried. The sidecar records where each line was drawn,
-        not what it said, so there is nothing to run the residue normalizer
-        against — which means no address, no seat, and no candidate list. That
-        is reported as ``mapping.state = "unavailable"`` with the reason, and
-        NOT worked around by re-reading the document and guessing which line is
-        which: a wrong address is the one failure this whole subsystem is built
-        to avoid.
-      * ``charOffsets`` is ``unavailable`` for the same reason. A caret cannot
-        be placed mid-line against a line whose characters were never measured
-        one by one, and saying so beats interpolating an average advance.
+      * The TEXT is now carried, and so is a per-character x, so this page is
+        mapped by the SAME ``map_spans`` a PDF-read page is mapped by, against
+        the same form scan, into the same unique/ambiguous/unmapped verdicts.
+        Where the sidecar also declares which paragraph or cell it drew a line
+        FROM, that is a cross-check and never a shortcut — see
+        ``cross_check_own``. An older sidecar that carries positions only still
+        answers here: its lines are textless, so they map to nothing and say so.
+      * Seats come from the cell rectangles the renderer itself drew
+        (``own_cell``), which is why this page can seat a fill cell that shows
+        no text at all.
+      * ``charOffsets`` is ``read`` for every line whose characters were all
+        measured, and the count says how many of the page's lines that was.
 
     ``geometrySource: "own"`` is on the answer so a client can say which of the
     two it is looking at, and the smoke asserts the badge and the geometry agree.
     """
-    from rt_own import (OWN_GRADE, any_own_for, line_boxes_for_page,
-                        read_sidecar, sidecar_page_size)
+    from rt_own import (OWN_GRADE, any_own_for, cell_boxes_for_page,
+                        line_boxes_for_page, read_sidecar, sidecar_page_size)
 
     subject_sha = subject_facts.get("sha256")
     if not isinstance(subject_sha, str) or not subject_sha:
@@ -1010,26 +1246,53 @@ def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
     width_px, height_px = size
     dpi = int(record.get("dpi") or DEFAULT_RENDER_DPI)
 
-    spans = []
-    for index, box in enumerate(line_boxes_for_page(sidecar, page)):
-        try:
-            rect = _norm_rect((box["x0"], box["y0"], box["x1"], box["y1"]),
-                              float(width_px), float(height_px))
-        except (KeyError, TypeError, ValueError):
-            continue
-        spans.append({
-            "index": index,
-            # Empty, not omitted, and not invented. A client that prints span
-            # text gets nothing to print rather than something to mistrust.
-            "text": "",
-            "rect": rect,
-            "address": None,
-            "confidence": "unmapped",
-            # WHICH line breaker placed this box. `lineseg` is the authoring
-            # engine's own cached layout, `computed` is our breaker's; they are
-            # not equally trustworthy and the sidecar already distinguishes them.
-            "lineMode": box.get("mode"),
-        })
+    width, height = float(width_px), float(height_px)
+    lines, declared = own_lines(line_boxes_for_page(sidecar, page))
+    page_chars = sum(len(line["text"]) for line in lines)
+    with_chars = page_chars <= MAX_CHAR_EDGES_PER_PAGE
+    normalize = normalizer()
+    if profile is None or normalize is None:
+        spans = [base_span(index, line, width, height, with_chars=with_chars)
+                 for index, line in enumerate(lines)]
+        checks = {"agree": 0, "disagree": 0, "declared": 0,
+                  "scanOnly": len(spans), "sidecarOnly": 0}
+        seats: list = []
+        absences: dict = {}
+        mapping = {
+            "state": "unavailable",
+            "reason": ("this session has no form scan to map our renderer's "
+                       "lines onto — the rectangles and the text are real, no "
+                       "address is claimed"
+                       if profile is None else
+                       "pipeline/scripts/check_residue.py is not importable, "
+                       "so no normalizer is available and nothing is matched"),
+            "crossCheck": checks,
+        }
+    else:
+        targets, excluded = build_targets(profile, normalize)
+        spans = map_spans(lines, targets, normalize, width, height,
+                          with_chars=with_chars)
+        checks = cross_check_own(spans, declared)
+        seats, absences = derive_own_seats(
+            profile, spans, cell_boxes_for_page(sidecar, page), width, height)
+        mapping = {
+            "state": "ran",
+            "normalizer": "pipeline/scripts/check_residue.normalize_text",
+            "targets": sum(len(rows) for rows in targets.values()),
+            "excluded": excluded,
+            "unique": sum(1 for s in spans if s["confidence"] == "unique"),
+            "ambiguous": sum(1 for s in spans if s["confidence"] == "ambiguous"),
+            "unmapped": sum(1 for s in spans if s["confidence"] == "unmapped"),
+            # What the renderer's own answer did to the scan's, counted so a
+            # drift between the two shows up as a NUMBER on every page rather
+            # than as a wrong address nobody notices.
+            "crossCheck": checks,
+        }
+    for span, line in zip(spans, lines):
+        # WHICH line breaker placed this box. `lineseg` is the authoring
+        # engine's own cached layout, `computed` is our breaker's; they are
+        # not equally trustworthy and the sidecar already distinguishes them.
+        span["lineMode"] = line.get("lineMode")
 
     return {
         "sessionId": session.id,
@@ -1050,28 +1313,26 @@ def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
         "grade": OWN_GRADE,
         "tier": 3,
         "charOffsets": {
-            "state": "unavailable",
-            "reason": ("this page was drawn by our own renderer, whose line "
-                       "boxes record where each LINE was drawn and not where "
-                       "each character was; a caret placed from an averaged "
-                       "advance would be a guess wearing a measurement's "
-                       "authority"),
-            "lines": 0,
+            "state": "read" if with_chars else "page_too_dense",
+            "reason": (None if with_chars else
+                       f"this page carries {page_chars} characters, past the "
+                       f"{MAX_CHAR_EDGES_PER_PAGE} bound this answer holds to; "
+                       "positions are unaffected, sub-line offsets are not "
+                       "emitted"),
+            "lines": sum(1 for span in spans if "charX" in span),
             "of": len(spans),
-            "chars": 0,
+            "chars": page_chars,
         },
         "spans": spans,
-        "seats": [],
-        "seatDerivations": {method: 0 for method in DERIVATION_METHODS},
-        "seatAbsences": {reason: 0 for reason in ABSENCE_REASONS},
-        "drawnCells": 0,
-        "mapping": {
-            "state": "unavailable",
-            "reason": ("our own renderer's sidecar carries line POSITIONS and "
-                       "not line TEXT, so there is nothing to match against "
-                       "the form scan. The rectangles are real; no address on "
-                       "this page is claimed"),
+        "seats": seats,
+        "seatDerivations": {
+            method: sum(1 for seat in seats if seat["derivation"] == method)
+            for method in DERIVATION_METHODS
         },
+        "seatAbsences": {reason: absences.get(reason, 0)
+                         for reason in ABSENCE_REASONS},
+        "drawnCells": len(cell_boxes_for_page(sidecar, page)),
+        "mapping": mapping,
         "cache": {"hit": True, "key": f"own:{subject_sha[:16]}:{page}"},
     }
 
@@ -1093,7 +1354,7 @@ def page_geometry(session, *, page: int = 0, run_id=None,
             # is already showing. Only from cache — see own_page_geometry.
             own = own_page_geometry(session, tools, subject=path,
                                     subject_facts=facts, page=page,
-                                    run_id=run_id)
+                                    run_id=run_id, profile=profile)
             if own is not None:
                 return own
 

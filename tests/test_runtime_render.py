@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import importlib.util
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from _runtime_client import CORPUS_FORM, RuntimeClient, run_cli, runtime_scripts
 runtime_scripts_on_path()
 
 import rt_codes  # noqa: E402
+import rt_geometry  # noqa: E402
 import rt_render  # noqa: E402
 from rt_core import RuntimeCore  # noqa: E402
 
@@ -478,8 +480,16 @@ def test_a_render_is_bound_to_the_bytes_it_was_drawn_from(core, tmp_path):
 
 
 @needs_pillow
-def test_geometry_on_an_own_rendered_page_has_rects_and_claims_no_addresses(
+def test_geometry_on_an_own_rendered_page_maps_and_seats_like_a_pdf_read(
         core, tmp_path):
+    """Gap 34, closed. The page we drew ourselves is an EDITABLE page.
+
+    It used to be the honest opposite: real rectangles, no text, therefore no
+    address, no seat and no caret. The sidecar carries the line's text, its
+    per-character x and the cell or paragraph it was drawn from now, so this
+    page runs through the same form scan a PDF-read page runs through and
+    reaches the same three verdicts.
+    """
     session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
     core.document_render(session, dpi=96)
     geometry = core.document_page_geometry(session, page=0)
@@ -488,16 +498,65 @@ def test_geometry_on_an_own_rendered_page_has_rects_and_claims_no_addresses(
     assert geometry["grade"] == "own-uncertified"
     assert len(geometry["spans"]) > 0
     for span in geometry["spans"]:
-        # real rectangles...
         assert 0.0 <= span["rect"][0] <= span["rect"][2] <= 1.0
         assert 0.0 <= span["rect"][1] <= span["rect"][3] <= 1.0
-        # ...and not one invented address
-        assert span["address"] is None
-        assert span["confidence"] == "unmapped"
-        assert "charX" not in span
-    assert geometry["seats"] == []
+        assert span["confidence"] in rt_geometry.CONFIDENCES
+        # An address is claimed only where the mapping reached one, exactly as
+        # on tier 1: `unmapped` still means null, no matter what the renderer
+        # says it drew.
+        if span["confidence"] != "unique":
+            assert span["address"] is None
+        if "charX" in span:
+            assert len(span["charX"]) == len(span["text"]) + 1
+            assert span["charX"] == sorted(span["charX"])
+
+    mapping = geometry["mapping"]
+    assert mapping["state"] == "ran"
+    assert mapping["unique"] > 0, "the corpus form has label lines that match"
+    assert geometry["charOffsets"]["state"] == "read"
+    assert geometry["charOffsets"]["lines"] == len(geometry["spans"])
+
+    # The cross-check, and the fact it is a check and not a shortcut.
+    checks = mapping["crossCheck"]
+    assert checks["declared"] == len(geometry["spans"])
+    assert checks["disagree"] == 0
+    assert checks["agree"] == mapping["unique"]
+    for span in geometry["spans"]:
+        if span["confidence"] == "unique":
+            assert span["addressBasis"] == "scan+sidecar"
+        elif span["confidence"] == "unmapped":
+            # The renderer knows and is not believed on its own.
+            assert span["addressBasis"] == "sidecar_only"
+            assert span["sidecarAddress"] is not None
+            assert span["address"] is None
+
+    # Seats, from the cell boxes the renderer drew, on a form whose fill cells
+    # are empty — the whole point of `own_cell`.
+    seats = geometry["seats"]
+    assert len(seats) > 0
+    assert geometry["seatDerivations"]["own_cell"] == len(seats)
+    assert geometry["drawnCells"] > 0
+    for seat in seats:
+        assert 0.0 <= seat["rect"][0] < seat["rect"][2] <= 1.0
+        assert 0.0 <= seat["rect"][1] < seat["rect"][3] <= 1.0
+        assert seat["basis"]["drawnCell"]
+
+
+@needs_pillow
+def test_an_own_rendered_page_with_no_form_scan_claims_nothing(core, tmp_path):
+    """The mapping's absence is still reported as an absence, not filled in."""
+    session = core.open_path(str(_hwpx(tmp_path)))["sessionId"]
+    core.document_render(session, dpi=96)
+    handle = core.store.get(session)
+    path, _kind, facts = rt_geometry.resolve_artifact(handle, None)
+    geometry = rt_geometry.own_page_geometry(
+        handle, None, subject=Path(path), subject_facts=facts, page=0,
+        run_id=None, profile=None)
     assert geometry["mapping"]["state"] == "unavailable"
-    assert geometry["charOffsets"]["state"] == "unavailable"
+    assert geometry["seats"] == []
+    assert all(span["address"] is None for span in geometry["spans"])
+    # The positions and the text are still real: only the mapping is missing.
+    assert any(span["text"] for span in geometry["spans"])
 
 
 def test_geometry_never_starts_a_render_of_its_own(core, tmp_path):

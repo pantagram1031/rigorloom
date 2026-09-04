@@ -1223,3 +1223,235 @@ def test_the_real_renders_resolve_every_line_to_its_characters():
     # 83 lines are set in two sizes at once, so they carry no single size --
     # which is the honest answer, and the reason the field is optional.
     assert sized == 2508, sized
+
+
+# --- tier 3: the page OUR renderer drew ---------------------------------------
+#
+# Same mapping, same three verdicts, one extra witness. The witness is the
+# renderer's own record of which paragraph or cell it drew a line from, and
+# every test below is about what that witness is and is not allowed to do.
+
+def _own_box(text, box, address=None, *, page=1, mode="lineseg", chars=True):
+    """One sidecar line box, in the renderer's own device pixels."""
+    x0, y0, x1, y1 = box
+    entry = {"page": page, "mode": mode,
+             "x0": x0, "y0": y0, "x1": x1, "y1": y1, "text": text}
+    if chars and text:
+        step = (x1 - x0) / len(text)
+        entry["char_x"] = [round(x0 + i * step, 3)
+                           for i in range(len(text) + 1)]
+    if address is not None:
+        entry["address"] = address
+    return entry
+
+
+def _own_profile(cells, anchors=(), table=0):
+    """cells: [(row, col, text, classification)]; anchors: [(atPara, text)]."""
+    return {
+        "anchor_records": [{"at_para": at_para, "text": text}
+                           for at_para, text in anchors],
+        "table_map": [{"index": table, "cells": [
+            {"addr": {"row": row, "col": col}, "text_preview": text,
+             "classification": classification}
+            for row, col, text, classification in cells]}],
+    }
+
+
+def _mapped_own(boxes, profile, width=600.0, height=800.0):
+    lines, declared = rt_geometry.own_lines(boxes)
+    targets, _excluded = rt_geometry.build_targets(profile, _norm())
+    spans = rt_geometry.map_spans(lines, targets, _norm(), width, height)
+    checks = rt_geometry.cross_check_own(spans, declared)
+    return spans, checks
+
+
+def test_own_lines_speak_the_shape_the_pdf_mapping_already_speaks():
+    """The tier-3 boxes are RESHAPED, not mapped by a second implementation.
+
+    If this ever diverges, "mapped exactly like tier 1" stops being a fact.
+    """
+    boxes = [_own_box("성명", (100.0, 50.0, 160.0, 70.0),
+                      {"kind": "cell", "table": 0, "row": 5, "col": 0})]
+    boxes[0]["size_pt"] = 10.5
+    lines, declared = rt_geometry.own_lines(boxes)
+    assert lines[0]["text"] == "성명"
+    assert lines[0]["bbox"] == [100.0, 50.0, 160.0, 70.0]
+    assert lines[0]["sizePt"] == 10.5
+    assert len(lines[0]["charEdges"]) == 3
+    assert declared[0]["kind"] == "cell"
+    span = rt_geometry.base_span(0, lines[0], 600.0, 800.0, with_chars=True)
+    # normalized the same way a PDF line is: divided by the page's own width
+    assert span["charX"][0] == round(100.0 / 600.0, 6)
+
+
+def test_a_box_with_no_text_is_a_position_and_nothing_more():
+    """An older sidecar, a stamped page number, an equation band."""
+    lines, declared = rt_geometry.own_lines(
+        [{"page": 1, "mode": "pagenum", "x0": 1.0, "y0": 2.0,
+          "x1": 3.0, "y1": 4.0}])
+    assert lines[0]["text"] == ""
+    assert "charEdges" not in lines[0]
+    assert declared == [None]
+
+
+def test_a_char_x_that_does_not_count_the_characters_is_dropped():
+    box = _own_box("성명", (100.0, 50.0, 160.0, 70.0))
+    box["char_x"] = [100.0, 130.0]           # two edges for two characters
+    lines, _declared = rt_geometry.own_lines([box])
+    assert "charEdges" not in lines[0]
+
+
+def test_the_scan_and_the_renderer_agreeing_is_what_makes_a_span_unique():
+    profile = _own_profile([(5, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("성명", (100.0, 50.0, 160.0, 70.0),
+                  {"kind": "cell", "table": 0, "row": 5, "col": 0})], profile)
+    assert spans[0]["confidence"] == "unique"
+    assert spans[0]["addressBasis"] == "scan+sidecar"
+    assert checks["agree"] == 1 and checks["disagree"] == 0
+
+
+def test_the_scan_and_the_renderer_disagreeing_makes_it_ambiguous():
+    """NEITHER side wins. The span carries both and a person decides."""
+    profile = _own_profile([(5, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("성명", (100.0, 50.0, 160.0, 70.0),
+                  {"kind": "cell", "table": 0, "row": 9, "col": 3})], profile)
+    assert spans[0]["confidence"] == "ambiguous"
+    assert spans[0]["address"] is None
+    assert len(spans[0]["candidates"]) == 2
+    assert {c["col"] for c in spans[0]["candidates"]} == {0, 3}
+    assert checks["disagree"] == 1 and checks["agree"] == 0
+
+
+def test_a_paragraph_the_scan_calls_an_anchor_and_we_call_a_cell_agrees():
+    """The two sides name the same place at different granularities.
+
+    Measured on the corpus: 256 of 393 scan-unique lines differed only in
+    this, with an identical atPara on both sides. Calling that a contradiction
+    would report a numbering bug that does not exist.
+    """
+    profile = _own_profile([], anchors=[(12, "제목")])
+    spans, checks = _mapped_own(
+        [_own_box("제목", (100.0, 50.0, 160.0, 70.0),
+                  {"kind": "cell", "table": 0, "row": 1, "col": 0,
+                   "atPara": 12})], profile)
+    assert spans[0]["confidence"] == "unique"
+    assert spans[0]["address"]["kind"] == "anchor"
+    assert checks["agree"] == 1
+
+
+def test_the_same_text_twice_stays_ambiguous_even_when_we_know_which():
+    """T41 does not lapse because a second witness turned up.
+
+    The renderer's pick is MARKED so the chooser can show it, and is still
+    not applied: a numbering drift on the renderer's side would look exactly
+    like this.
+    """
+    profile = _own_profile([(5, 0, "성명", "static"),
+                            (9, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("성명", (100.0, 50.0, 160.0, 70.0),
+                  {"kind": "cell", "table": 0, "row": 9, "col": 0})], profile)
+    assert spans[0]["confidence"] == "ambiguous"
+    assert spans[0]["address"] is None
+    assert spans[0]["candidates"][spans[0]["sidecarPick"]]["row"] == 9
+    assert checks["amongCandidates"] == 1
+
+
+def test_a_renderer_address_the_candidate_list_lacks_is_added_not_believed():
+    profile = _own_profile([(5, 0, "성명", "static"),
+                            (9, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("성명", (100.0, 50.0, 160.0, 70.0),
+                  {"kind": "cell", "table": 0, "row": 11, "col": 4})], profile)
+    assert spans[0]["confidence"] == "ambiguous"
+    assert len(spans[0]["candidates"]) == 3
+    assert checks["notAmongCandidates"] == 1
+
+
+def test_a_line_only_the_renderer_can_place_is_recorded_and_not_claimed():
+    """The one refusal this whole cross-check exists for."""
+    profile = _own_profile([(5, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("아무도 모르는 줄", (100.0, 50.0, 260.0, 70.0),
+                  {"kind": "para", "atPara": 41})], profile)
+    assert spans[0]["confidence"] == "unmapped"
+    assert spans[0]["address"] is None
+    assert spans[0]["sidecarAddress"]["atPara"] == 41
+    assert spans[0]["addressBasis"] == "sidecar_only"
+    assert checks["sidecarOnly"] == 1
+
+
+def test_a_box_that_declares_no_address_leaves_the_scan_alone():
+    profile = _own_profile([(5, 0, "성명", "static")])
+    spans, checks = _mapped_own(
+        [_own_box("성명", (100.0, 50.0, 160.0, 70.0))], profile)
+    assert spans[0]["confidence"] == "unique"
+    assert "addressBasis" not in spans[0]
+    assert checks["scanOnly"] == 1 and checks["declared"] == 0
+
+
+# --- seats from the boxes the renderer itself drew ----------------------------
+
+def _cell_box(row, col, rect, table=0, page=1):
+    x0, y0, x1, y1 = rect
+    return {"page": page, "table": table, "row": row, "col": col,
+            "rowSpan": 1, "colSpan": 1, "x0": x0, "y0": y0, "x1": x1, "y1": y1}
+
+
+def test_an_empty_fill_cell_is_seated_from_the_box_we_drew_it_as():
+    profile = _own_profile([(5, 0, "성명", "static"),
+                            (5, 1, "", "fill_target")])
+    seats, absences = rt_geometry.derive_own_seats(
+        profile, [], [_cell_box(5, 0, (100.0, 50.0, 200.0, 80.0)),
+                      _cell_box(5, 1, (200.0, 50.0, 400.0, 80.0))],
+        600.0, 800.0)
+    assert len(seats) == 1
+    assert seats[0]["derivation"] == "own_cell"
+    assert seats[0]["rect"] == rt_geometry._norm_rect(
+        (200.0, 50.0, 400.0, 80.0), 600.0, 800.0)
+    assert absences == {}
+    # No grid was rebuilt and no anchor was walked to reach it — the address
+    # arrived on the box.
+    assert "verifiedBy" in seats[0]["basis"]
+
+
+def test_a_fill_cell_this_page_did_not_draw_is_absent_with_a_reason():
+    profile = _own_profile([(5, 1, "", "fill_target"),
+                            (9, 1, "", "fill_target")])
+    seats, absences = rt_geometry.derive_own_seats(
+        profile, [], [_cell_box(5, 1, (200.0, 50.0, 400.0, 80.0))],
+        600.0, 800.0)
+    assert [(s["row"], s["col"]) for s in seats] == [(5, 1)]
+    assert absences == {"grid_gap": 1}
+    assert set(absences) <= set(rt_geometry.ABSENCE_REASONS)
+
+
+def test_a_table_that_drew_nothing_here_says_so_rather_than_gap():
+    profile = _own_profile([(5, 1, "", "fill_target")])
+    seats, absences = rt_geometry.derive_own_seats(
+        profile, [], [], 600.0, 800.0)
+    assert seats == []
+    assert absences == {"no_anchor_on_page": 1}
+
+
+def test_a_seat_that_already_shows_text_names_the_line_showing_it():
+    profile = _own_profile([(5, 1, "값", "fill_target")])
+    spans = [_span_at([0.3, 0.06, 0.6, 0.1],
+                      {"kind": "cell", "table": 0, "row": 5, "col": 1},
+                      index=7)]
+    seats, _absences = rt_geometry.derive_own_seats(
+        profile, spans, [_cell_box(5, 1, (200.0, 50.0, 400.0, 80.0))],
+        600.0, 800.0)
+    # The rect is still the CELL, never the text extent: a seat is where a
+    # value goes, not where the old value happened to end.
+    assert seats[0]["derivation"] == "own_cell"
+    assert seats[0]["basis"]["spanIndex"] == 7
+    assert seats[0]["rect"] == rt_geometry._norm_rect(
+        (200.0, 50.0, 400.0, 80.0), 600.0, 800.0)
+
+
+def test_own_cell_is_a_declared_derivation_and_not_a_free_string():
+    assert "own_cell" in rt_geometry.DERIVATION_METHODS
+    assert "own_cell" in rt_geometry.geometry_capability()["derivationMethods"]
