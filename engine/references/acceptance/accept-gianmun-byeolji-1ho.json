@@ -1,0 +1,44 @@
+{
+  "ok": false,
+  "exit_code": 3,
+  "source": "<scratchpad>\\leg1-gianmun-edited.hwpx",
+  "candidate": "<scratchpad>\\leg1a-gianmun\\leg1-gianmun-edited.accept-candidate.hwpx",
+  "source_sha256": "6853f48bd0d89f26d334719746e3da87b8975a029a10ecd9cc6f2094f9a665d9",
+  "candidate_sha256": "c37598c005add03bad9ca276e13e1e09232366752e3400335481f72b18220a51",
+  "edit_marker": "RIGORLOOM-E3-ACCEPT-GIANMUN-01",
+  "closed_reason": null,
+  "checks": {
+    "open_no_repair": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "save_new_path": {
+      "status": "pass",
+      "candidate_sha256": "c37598c005add03bad9ca276e13e1e09232366752e3400335481f72b18220a51"
+    },
+    "close": {
+      "status": "pass"
+    },
+    "reopen": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "edit_preserved": {
+      "status": "pass"
+    },
+    "structures_preserved": {
+      "status": "pass",
+      "source_tables": 3,
+      "candidate_tables": 3,
+      "source_paragraphs": 67,
+      "candidate_paragraphs": 67,
+      "qname_count_delta": {}
+    },
+    "bindings_valid": {
+      "status": "pass",
+      "source_sha256": "6853f48bd0d89f26d334719746e3da87b8975a029a10ecd9cc6f2094f9a665d9",
+      "candidate_sha256": "c37598c005add03bad9ca276e13e1e09232366752e3400335481f72b18220a51"
+    }
+  },
+  "notes": []
+}
