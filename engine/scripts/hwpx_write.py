@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -867,6 +868,86 @@ _BLANK_VERSION = (
     ' buildNumber="0" os="1" xmlVersion="1.5" application="Rigorloom"'
     ' appVersion="0, 0, 0, 0 WIN32LEWindows_10"/>'
 )
+
+#: ``version.xml@application`` -- the name of the program that WROTE the
+#: package.  This is the only writer signature an HWPX carries: Hancom stamps
+#: its own product name and build there on every save (the ten corpus forms
+#: all read ``application="Hancom Office Hangul" appVersion="13, 0, 0, 2986
+#: WIN32LEWindows_10"``), and :func:`blank_package` has always stamped
+#: ``Rigorloom`` on a package this writer authored from scratch.
+#:
+#: WHY IT IS PROVENANCE AND NOT DECORATION.  ``docs/research/
+#: lineseg-on-save-01.md`` measured that Hancom recomputes ``hp:lineseg`` on
+#: every save and reproduces it byte-identically only when nothing about the
+#: text flow changed; a one-character edit moved a paragraph 534 positions
+#: downstream.  So a cached layout may be trusted only on a package whose most
+#: recent writer was Hancom itself.  An edit applied to a Hancom-saved package
+#: WITHOUT routing it back through Hancom leaves the cache describing the old
+#: text, and the file has to say so.  ``version.xml`` is the right place
+#: because Hancom overwrites the whole member on its own save, so the marker
+#: CLEARS ITSELF the moment Hancom becomes the last writer again -- which is
+#: exactly the provenance semantics, and is not true of any marker parked in
+#: ``Contents/content.hpf`` (Hancom's treatment of an unknown ``opf:meta`` on
+#: resave is NOT MEASURED; see engine/references/own-render-notes.md).
+WRITER_APPLICATION = "Rigorloom"
+WRITER_APP_VERSION = "0, 0, 0, 0 WIN32LEWindows_10"
+
+#: ``application`` values that mean "Hancom wrote this member last".  Matched
+#: case-insensitively on the prefix so ``Hancom Office Hangul``, ``Hancom
+#: Office Hangul 2020`` and a localized product name all land here.
+HANCOM_APPLICATION_PREFIXES = ("hancom", "hwp", "한컴")
+
+_APPLICATION_RE = re.compile(br'(\sapplication=")([^"]*)(")')
+_APP_VERSION_RE = re.compile(br'(\sappVersion=")([^"]*)(")')
+
+
+def read_writer_application(data):
+    """``version.xml@application`` as text, or ``None`` if it is absent.
+
+    ``data`` is the raw ``version.xml`` bytes.  Read lexically rather than
+    through a parser: this is one attribute on the root element of a
+    one-element member, and the caller must not pay a parse for it.
+    """
+    if data is None:
+        return None
+    match = _APPLICATION_RE.search(bytes(data))
+    if match is None:
+        return None
+    return match.group(2).decode("utf-8", "replace")
+
+
+def is_hancom_application(application):
+    """Whether ``application`` names Hancom's own word processor."""
+    if not application:
+        return False
+    lowered = application.strip().lower()
+    return any(lowered.startswith(prefix)
+               for prefix in HANCOM_APPLICATION_PREFIXES)
+
+
+def stamp_writer_application(data):
+    """Rewrite ``version.xml`` so it names THIS writer, byte-minimally.
+
+    Only the two attribute values change; every other byte of the member --
+    declaration, namespace declaration, attribute order, and the ``major``/
+    ``minor``/``micro``/``xmlVersion`` format version the document is still in
+    -- is left exactly as the source wrote it.  Returns the input unchanged
+    when the member carries no ``application`` attribute at all, so a package
+    shaped unlike anything measured is never silently rewritten.
+    """
+    if data is None:
+        return None
+    data = bytes(data)
+    if _APPLICATION_RE.search(data) is None:
+        return data
+    stamped = _APPLICATION_RE.sub(
+        lambda m: m.group(1) + WRITER_APPLICATION.encode("utf-8") + m.group(3),
+        data, count=1)
+    stamped = _APP_VERSION_RE.sub(
+        lambda m: m.group(1) + WRITER_APP_VERSION.encode("utf-8") + m.group(3),
+        stamped, count=1)
+    return stamped
+
 
 _BLANK_HEADER = (
     '<hh:head' + _NS_ATTRS + ' version="1.5" secCnt="1">'
