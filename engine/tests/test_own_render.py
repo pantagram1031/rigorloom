@@ -4020,3 +4020,150 @@ def test_a_single_column_document_is_unaffected_by_column_geometry(
     counters = report["block_layout"].get("flow_counters")
     if counters is not None:
         assert "column_breaks_honored" in counters
+
+
+def _page_split_fixture(tmp_path, name="split-para.hwpx", tail_lines=2):
+    """A document whose ONE body paragraph's cached ``vertpos`` restarts.
+
+    Built from a corpus form's own last paragraph so every id it references
+    is valid against that form's ``header.xml``: the paragraph is given a
+    ``hp:linesegarray`` that walks down the page and then jumps back to the
+    top, which is exactly the shape the authoring engine caches for a
+    paragraph it ran off the bottom of a page.  No corpus form has one -- all
+    ten are one-block-per-page government forms -- so this is a synthetic
+    fixture, not a measured reference.
+    """
+    import copy
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+    with zipfile.ZipFile(_need(GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    body = own_render._kids(root, "p")
+    source = body[-1]
+    # Paragraph 0 carries the section's own hp:secPr (and with it hp:pagePr),
+    # so it stays -- emptied of text and of its cached lines, so it draws
+    # nothing and the only line boxes on the page are the split paragraph's.
+    keep = body[0]
+    for run in own_render._kids(keep, "run"):
+        for child in list(run):
+            # Drop the form's own text and its anchored grid -- both draw
+            # line boxes, and this probe counts line boxes.  Everything else
+            # (hp:ctrl, hp:secPr and what hangs off them) stays: the section's
+            # hp:pagePr is in there.
+            if own_render._local(child.tag) in ("t", "tbl", "pic"):
+                run.remove(child)
+    seg_array = own_render._kid(keep, "linesegarray")
+    if seg_array is not None:
+        keep.remove(seg_array)
+    for para in body[1:]:
+        root.remove(para)
+    para = copy.deepcopy(source)
+    seg_array = own_render._kid(para, "linesegarray")
+    if seg_array is not None:
+        para.remove(seg_array)
+    run = own_render._kid(para, "run")
+    for child in list(run):
+        if own_render._local(child.tag) == "t":
+            run.remove(child)
+    head_lines = 3
+    per_line = 6
+    total = head_lines + tail_lines
+    text = ET.SubElement(run, HP + "t")
+    text.text = "가나다라마바" * total
+    seg_array = ET.SubElement(para, HP + "linesegarray")
+    for index in range(total):
+        # Head lines walk down the page; the tail restarts from the next
+        # page's own body top, which is what makes vertpos jump backwards.
+        step = index if index < head_lines else index - head_lines
+        seg = ET.SubElement(seg_array, HP + "lineseg")
+        seg.set("textpos", str(index * per_line))
+        seg.set("vertpos", str(step * 2000))
+        seg.set("vertsize", "1800")
+        seg.set("textheight", "1800")
+        seg.set("baseline", "1500")
+        seg.set("spacing", "200")
+        seg.set("horzpos", "0")
+        seg.set("horzsize", "40000")
+        seg.set("flags", "0")
+    root.append(para)
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for n in names:
+            archive.writestr(n, payload[n])
+    return target
+
+
+def test_a_paragraph_whose_own_vertpos_restarts_is_split_into_page_runs(
+        tmp_path):
+    """``vertpos`` restarts WITHIN a paragraph the authoring engine split."""
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    paras = [own_render.Paragraph(el, renderer.defs["para_pr"])
+             for el in own_render._kids(renderer.sections[0], "p")]
+    body = [p for p in paras if len(p.linesegs) == 5]
+    assert body, [len(p.linesegs) for p in paras]
+    assert body[0].page_runs() == [(0, 3), (3, 5)]
+    # ...and the same paragraph with a monotonic vertpos is ONE run.
+    monotonic = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(monotonic.linesegs):
+        seg.set("vertpos", str(index * 2000))
+    assert monotonic.page_runs() == [(0, 5)]
+    # A three-page paragraph is three runs, not two.
+    triple = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(triple.linesegs):
+        seg.set("vertpos", str((index % 2) * 2000))
+    assert triple.page_runs() == [(0, 2), (2, 4), (4, 5)]
+
+
+def test_a_split_paragraphs_tail_draws_on_the_next_page_not_over_its_head(
+        tmp_path):
+    """The defect: the tail was drawn at vertpos 0 of the page the head is on.
+
+    Found on a private report-class holdout, whose page 1 carried a stray
+    one-word line ("있다.", the tail of a body paragraph) above the title
+    where the Hancom reference starts with the title.  Every line of the
+    paragraph was drawn on the head's page, and the tail's cached ``vertpos``
+    -- measured from the NEXT page's body top, so near zero -- put it at the
+    very top.
+    """
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    pages = renderer.paginate()
+    runs = [[getattr(p, "rows", None) for p in page if p.linesegs]
+            for page in pages]
+    assert len(pages) == 2, runs
+    assert runs[0][-1] == (0, 3), runs
+    assert runs[1][0] == (3, 5), runs
+    images, sidecar = renderer.render()
+    assert len(images) == 2
+    boxes = sidecar["line_boxes"]
+    top = renderer.px(renderer.page_geometry()["body_top"])
+    first_page = sorted(b["y0"] for b in boxes if b["page"] == 1)
+    second_page = sorted(b["y0"] for b in boxes if b["page"] == 2)
+    assert len(first_page) == 3, first_page
+    assert len(second_page) == 2, second_page
+    # The tail sits at its own cached vertpos on page 2 -- at the body top,
+    # not rebased onto it and not stacked under the head's last line.
+    assert abs(second_page[0] - first_page[0]) < 2, (first_page, second_page)
+    assert first_page[0] >= top - 2, (first_page, top)
+    # The paragraph is counted once, not once per page it spans.
+    assert sidecar["elements_rendered"]["paragraphs"] == len(
+        own_render._kids(renderer.sections[0], "p"))
+
+
+def test_no_corpus_paragraph_is_split_across_a_page(gianmun_render):
+    """The split is a no-op for every corpus form -- pinned, not assumed."""
+    import glob
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(path, dpi=144)
+        for section in renderer.sections:
+            for el in own_render._kids(section, "p"):
+                para = own_render.Paragraph(el, renderer.defs["para_pr"])
+                assert len(para.page_runs()) == 1, (
+                    os.path.basename(path),
+                    [own_render._iattr(s, "vertpos") for s in para.linesegs])
