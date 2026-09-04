@@ -1240,14 +1240,20 @@ def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
     carries it, because that is where a caret goes; ``x1`` does not, because
     the reference PDFs' own boxes were measured to stop at the last piece
     that draws ink.  The gap is the half-width space cell at that run's
-    declared size — 7.020 px and 8.667 px on the two lines that have one, at
-    the fixture's 96 dpi.
+    declared size — 7.020 px and 8.667 px on the two lines the edited
+    paragraph owns, at the fixture's 96 dpi.
+
+    Since the provenance policy, an edit sends the *whole* document
+    computed, so other paragraphs' trailing spaces hang too; the two
+    documented values must still be among them, and every hang must be a
+    positive space cell that drew no ink.
     """
     boxes = [b for b in edited_render["report"]["line_boxes"]
              if b["mode"] == "computed"]
     hangs = sorted(round(b["x1_advance"] - b["x1"], 3) for b in boxes
                    if b["x1_advance"] - b["x1"] > 0.01)
-    assert hangs == [7.02, 8.667], hangs
+    assert hangs, "no computed line ends in a space"
+    assert {7.02, 8.667} <= set(hangs), hangs
     for box in boxes:
         assert box["x1"] == box["x1_visible_advance"]
         if box["x1_advance"] > box["x1"]:
