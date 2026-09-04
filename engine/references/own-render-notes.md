@@ -803,6 +803,16 @@ Read honestly: **0.793**, and the median `|dy|` is 0 on every one of the ten
 forms — where the flow pass puts a block on the right page, it puts it at
 exactly the cached vertical position. 117 of the 122 misses are one form.
 
+`--flow-agreement --line-layout computed` compounds the two errors instead of
+isolating the block model, and it is the channel `_line_metrics` is graded on.
+The object-line rules (`docs/research/object-line-box.md`) move it from
+**344 / 590** pages and 119 / 590 exact `dy` to **392 / 590** and
+**216 / 590**, with no form worse on either count: `kstartup` computes 22
+pages (its reference's own count) where it computed 27, and `gianmun-1ho`,
+`gianmun-2ho` and `admrul` each drop from 2 to their cached 1. The `auto`
+column above does not move at all — it reads the cached line boxes — which is
+what keeps the shipping render byte-identical on 51 of the corpus's 52 pages.
+
 ### kstartup is the form where the CACHE is wrong, not the flow pass
 
 kstartup's 0.279 is not a flow-pass failure and reporting it as one would be
@@ -2122,6 +2132,22 @@ the cached `hp:lineseg` carries it on every corpus form — and adding
 `block_layout=computed`, where it cost `kstartup` a 23rd page against a
 21-page reference. The box still moves down by `top`, which is the half the
 references do measure.
+
+> **The limit was wrong twice over, and both halves are now measured**
+> (`docs/research/object-line-box.md`). The cached `hp:lineseg` *is* the
+> measurement — it was simply never read on the lines that carry an object.
+> Over the ten forms' **79 object lines**, `vertsize` (and `textheight`) is
+> `hh:sz@height + outMargin@top + outMargin@bottom` on **79 of 79**, exactly,
+> against 16/79 for the extent alone. The 23rd page it used to cost was the
+> *other* defect masking this one: the paragraph's `PERCENT` leading was being
+> taken off the object-sized line box, so kstartup's full-page inline tables
+> each claimed a further 40% of a page. With the leading taken off the run's
+> own character size instead — exact on 66 of 79 cached lines, within
+> 2 HWPUNIT on 12 more — `kstartup` computes **22** pages against its 22-page
+> reference (it was 27 under `line_layout=computed`), and `gianmun-1ho`,
+> `gianmun-2ho` and `admrul` each drop from 2 to their cached 1.
+> `_line_metrics` adds the vertical margin; `_object_extent` still does not,
+> so it is added exactly once.
 
 ### The measurement, after
 

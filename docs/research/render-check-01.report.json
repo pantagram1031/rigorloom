@@ -1153,7 +1153,7 @@
         "candidate": {
           "page": 3,
           "top": 0.69131,
-          "bottom": 0.85855
+          "bottom": 0.81772
         },
         "reference": {
           "page": 3,
@@ -1162,23 +1162,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8586,
-      "ssim_blocks": 2277,
-      "ssim_inked": 0.3524,
-      "ssim_inked_blocks": 493,
+      "ssim": 0.8096,
+      "ssim_blocks": 1683,
+      "ssim_inked": 0.3516,
+      "ssim_inked_blocks": 491,
       "iou": 0.3381,
       "ink": {
-        "reference": 0.01146,
-        "candidate": 0.0284,
-        "delta": 0.01694
+        "reference": 0.01517,
+        "candidate": 0.0376,
+        "delta": 0.02243
       },
       "crop_px": [
         794,
-        188
+        142
       ],
       "band_px": {
         "reference": 142,
-        "candidate": 188
+        "candidate": 142
       },
       "verdict": "close",
       "png": "F27.png"
@@ -1191,7 +1191,7 @@
       "region": {
         "candidate": {
           "page": 3,
-          "top": 0.85855,
+          "top": 0.81772,
           "bottom": 0.89899
         },
         "reference": {
@@ -1201,25 +1201,25 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8786,
-      "ssim_blocks": 495,
+      "ssim": 0.9448,
+      "ssim_blocks": 1089,
       "ssim_inked": 0.2763,
       "ssim_inked_blocks": 83,
       "iou": 0.6132,
       "ink": {
-        "reference": 0.01873,
-        "candidate": 0.03069,
-        "delta": 0.01196
+        "reference": 0.00936,
+        "candidate": 0.01535,
+        "delta": 0.00598
       },
       "crop_px": [
         794,
-        46
+        92
       ],
       "band_px": {
         "reference": 28,
-        "candidate": 46
+        "candidate": 92
       },
-      "verdict": "close",
+      "verdict": "match",
       "png": "F28.png"
     },
     {
@@ -1230,8 +1230,8 @@
       "region": {
         "candidate": {
           "page": 4,
-          "top": 0.2618,
-          "bottom": 0.37749
+          "top": 0.22096,
+          "bottom": 0.31292
         },
         "reference": {
           "page": 4,
@@ -1240,23 +1240,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.7935,
-      "ssim_blocks": 1584,
+      "ssim": 0.7247,
+      "ssim_blocks": 1188,
       "ssim_inked": 0.4128,
       "ssim_inked_blocks": 556,
       "iou": 0.5551,
       "ink": {
-        "reference": 0.02751,
-        "candidate": 0.03579,
-        "delta": 0.00827
+        "reference": 0.03473,
+        "candidate": 0.04517,
+        "delta": 0.01044
       },
       "crop_px": [
         794,
-        130
+        103
       ],
       "band_px": {
         "reference": 103,
-        "candidate": 130
+        "candidate": 103
       },
       "verdict": "close",
       "png": "F29.png"
@@ -1269,8 +1269,8 @@
       "region": {
         "candidate": {
           "page": 4,
-          "top": 0.37749,
-          "bottom": 0.43094
+          "top": 0.31292,
+          "bottom": 0.36637
         },
         "reference": {
           "page": 4,
@@ -1279,11 +1279,11 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9058,
+      "ssim": 0.921,
       "ssim_blocks": 693,
-      "ssim_inked": 0.2416,
+      "ssim_inked": 0.3638,
       "ssim_inked_blocks": 86,
-      "iou": 0.4735,
+      "iou": 0.5286,
       "ink": {
         "reference": 0.01113,
         "candidate": 0.02309,
@@ -1308,8 +1308,8 @@
       "region": {
         "candidate": {
           "page": 4,
-          "top": 0.43094,
-          "bottom": 0.55257
+          "top": 0.36637,
+          "bottom": 0.46427
         },
         "reference": {
           "page": 4,
@@ -1318,23 +1318,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.7404,
-      "ssim_blocks": 1683,
-      "ssim_inked": 0.104,
+      "ssim": 0.6684,
+      "ssim_blocks": 1287,
+      "ssim_inked": 0.1247,
       "ssim_inked_blocks": 487,
-      "iou": 0.4194,
+      "iou": 0.4325,
       "ink": {
-        "reference": 0.02877,
-        "candidate": 0.04774,
-        "delta": 0.01897
+        "reference": 0.03583,
+        "candidate": 0.05945,
+        "delta": 0.02362
       },
       "crop_px": [
         794,
-        137
+        110
       ],
       "band_px": {
         "reference": 110,
-        "candidate": 137
+        "candidate": 110
       },
       "declared_limits": [
         {
@@ -1389,8 +1389,8 @@
       "region": {
         "candidate": {
           "page": 4,
-          "top": 0.55257,
-          "bottom": 0.69701
+          "top": 0.46427,
+          "bottom": 0.57642
         },
         "reference": {
           "page": 4,
@@ -1399,25 +1399,25 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9198,
-      "ssim_blocks": 1980,
-      "ssim_inked": 0.5023,
+      "ssim": 0.8056,
+      "ssim_blocks": 1485,
+      "ssim_inked": 0.0938,
       "ssim_inked_blocks": 318,
-      "iou": 0.6468,
+      "iou": 0.5093,
       "ink": {
-        "reference": 0.01811,
-        "candidate": 0.02458,
-        "delta": 0.00648
+        "reference": 0.02328,
+        "candidate": 0.03161,
+        "delta": 0.00833
       },
       "crop_px": [
         794,
-        162
+        126
       ],
       "band_px": {
         "reference": 126,
-        "candidate": 162
+        "candidate": 126
       },
-      "verdict": "match",
+      "verdict": "close",
       "png": "F32.png"
     },
     {
@@ -1428,8 +1428,8 @@
       "region": {
         "candidate": {
           "page": 4,
-          "top": 0.69701,
-          "bottom": 0.89899
+          "top": 0.57642,
+          "bottom": 0.71492
         },
         "reference": {
           "page": 4,
@@ -1438,23 +1438,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8893,
-      "ssim_blocks": 2772,
-      "ssim_inked": 0.3536,
-      "ssim_inked_blocks": 473,
-      "iou": 0.4943,
+      "ssim": 0.8378,
+      "ssim_blocks": 1881,
+      "ssim_inked": 0.3532,
+      "ssim_inked_blocks": 471,
+      "iou": 0.4969,
       "ink": {
-        "reference": 0.01445,
-        "candidate": 0.01848,
-        "delta": 0.00403
+        "reference": 0.02102,
+        "candidate": 0.02676,
+        "delta": 0.00573
       },
       "crop_px": [
         794,
-        227
+        156
       ],
       "band_px": {
         "reference": 156,
-        "candidate": 227
+        "candidate": 156
       },
       "declared_limits": [
         {
@@ -1473,9 +1473,9 @@
       "block_ordinal": 67,
       "region": {
         "candidate": {
-          "page": 5,
-          "top": 0.11783,
-          "bottom": 0.17128
+          "page": 4,
+          "top": 0.71492,
+          "bottom": 0.76838
         },
         "reference": {
           "page": 4,
@@ -1483,12 +1483,12 @@
           "bottom": 0.76908
         }
       },
-      "page_agreement": false,
-      "ssim": 0.8374,
+      "page_agreement": true,
+      "ssim": 0.8327,
       "ssim_blocks": 693,
-      "ssim_inked": 0.1289,
-      "ssim_inked_blocks": 129,
-      "iou": 0.449,
+      "ssim_inked": 0.1174,
+      "ssim_inked_blocks": 131,
+      "iou": 0.4549,
       "ink": {
         "reference": 0.01656,
         "candidate": 0.031,
@@ -1519,9 +1519,9 @@
       "block_ordinal": 69,
       "region": {
         "candidate": {
-          "page": 5,
-          "top": 0.17128,
-          "bottom": 0.36561
+          "page": 4,
+          "top": 0.76838,
+          "bottom": 0.89899
         },
         "reference": {
           "page": 4,
@@ -1529,24 +1529,24 @@
           "bottom": 0.89899
         }
       },
-      "page_agreement": false,
-      "ssim": 0.6747,
-      "ssim_blocks": 2673,
-      "ssim_inked": 0.1486,
-      "ssim_inked_blocks": 1021,
-      "iou": 0.1166,
+      "page_agreement": true,
+      "ssim": 0.6753,
+      "ssim_blocks": 1782,
+      "ssim_inked": 0.212,
+      "ssim_inked_blocks": 734,
+      "iou": 0.2265,
       "ink": {
-        "reference": 0.01611,
-        "candidate": 0.03674,
-        "delta": 0.02063
+        "reference": 0.024,
+        "candidate": 0.02959,
+        "delta": 0.00559
       },
       "crop_px": [
         794,
-        219
+        147
       ],
       "band_px": {
         "reference": 146,
-        "candidate": 219
+        "candidate": 147
       },
       "declared_limits": [
         {
@@ -1566,8 +1566,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.36561,
-          "bottom": 0.44163
+          "top": 0.18197,
+          "bottom": 0.24802
         },
         "reference": {
           "page": 5,
@@ -1576,23 +1576,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9559,
-      "ssim_blocks": 990,
-      "ssim_inked": 0.2347,
+      "ssim": 0.955,
+      "ssim_blocks": 891,
+      "ssim_inked": 0.2963,
       "ssim_inked_blocks": 57,
-      "iou": 0.5514,
+      "iou": 0.6011,
       "ink": {
-        "reference": 0.00624,
-        "candidate": 0.01034,
-        "delta": 0.0041
+        "reference": 0.00707,
+        "candidate": 0.01172,
+        "delta": 0.00465
       },
       "crop_px": [
         794,
-        85
+        75
       ],
       "band_px": {
         "reference": 72,
-        "candidate": 85
+        "candidate": 75
       },
       "declared_limits": [
         {
@@ -1612,8 +1612,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.44163,
-          "bottom": 0.51765
+          "top": 0.24802,
+          "bottom": 0.31406
         },
         "reference": {
           "page": 5,
@@ -1622,23 +1622,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9395,
-      "ssim_blocks": 990,
+      "ssim": 0.9328,
+      "ssim_blocks": 891,
       "ssim_inked": 0.1799,
       "ssim_inked_blocks": 72,
       "iou": 0.4227,
       "ink": {
-        "reference": 0.00547,
-        "candidate": 0.00978,
-        "delta": 0.00431
+        "reference": 0.00628,
+        "candidate": 0.01123,
+        "delta": 0.00495
       },
       "crop_px": [
         794,
-        85
+        74
       ],
       "band_px": {
         "reference": 60,
-        "candidate": 85
+        "candidate": 74
       },
       "declared_limits": [
         {
@@ -1658,8 +1658,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.51765,
-          "bottom": 0.61648
+          "top": 0.31406,
+          "bottom": 0.39436
         },
         "reference": {
           "page": 5,
@@ -1668,23 +1668,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8852,
-      "ssim_blocks": 1287,
-      "ssim_inked": 0.0731,
+      "ssim": 0.8712,
+      "ssim_blocks": 1089,
+      "ssim_inked": 0.1202,
       "ssim_inked_blocks": 159,
-      "iou": 0.3126,
+      "iou": 0.3368,
       "ink": {
-        "reference": 0.00963,
-        "candidate": 0.01771,
-        "delta": 0.00808
+        "reference": 0.01188,
+        "candidate": 0.02184,
+        "delta": 0.00996
       },
       "crop_px": [
         794,
-        111
+        90
       ],
       "band_px": {
         "reference": 78,
-        "candidate": 111
+        "candidate": 90
       },
       "declared_limits": [
         {
@@ -1704,8 +1704,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.61648,
-          "bottom": 0.7153
+          "top": 0.39436,
+          "bottom": 0.47465
         },
         "reference": {
           "page": 5,
@@ -1714,23 +1714,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.945,
-      "ssim_blocks": 1287,
+      "ssim": 0.935,
+      "ssim_blocks": 1089,
       "ssim_inked": 0.1369,
       "ssim_inked_blocks": 82,
       "iou": 0.4188,
       "ink": {
-        "reference": 0.00591,
-        "candidate": 0.01001,
-        "delta": 0.0041
+        "reference": 0.00729,
+        "candidate": 0.01234,
+        "delta": 0.00505
       },
       "crop_px": [
         794,
-        111
+        90
       ],
       "band_px": {
         "reference": 70,
-        "candidate": 111
+        "candidate": 90
       },
       "declared_limits": [
         {
@@ -1750,8 +1750,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.7153,
-          "bottom": 0.82173
+          "top": 0.47465,
+          "bottom": 0.58108
         },
         "reference": {
           "page": 5,
@@ -1789,8 +1789,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.82173,
-          "bottom": 0.89899
+          "top": 0.58108,
+          "bottom": 0.6495
         },
         "reference": {
           "page": 5,
@@ -1799,23 +1799,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8899,
-      "ssim_blocks": 990,
-      "ssim_inked": 0.1797,
-      "ssim_inked_blocks": 132,
-      "iou": 0.4011,
+      "ssim": 0.8797,
+      "ssim_blocks": 891,
+      "ssim_inked": 0.1752,
+      "ssim_inked_blocks": 130,
+      "iou": 0.4052,
       "ink": {
-        "reference": 0.01271,
-        "candidate": 0.01969,
-        "delta": 0.00698
+        "reference": 0.01436,
+        "candidate": 0.02198,
+        "delta": 0.00762
       },
       "crop_px": [
         794,
-        87
+        77
       ],
       "band_px": {
         "reference": 77,
-        "candidate": 87
+        "candidate": 76
       },
       "verdict": "close",
       "png": "F41.png"
@@ -1827,9 +1827,9 @@
       "block_ordinal": 88,
       "region": {
         "candidate": {
-          "page": 6,
-          "top": 0.11783,
-          "bottom": 0.16724
+          "page": 5,
+          "top": 0.6495,
+          "bottom": 0.69891
         },
         "reference": {
           "page": 5,
@@ -1837,7 +1837,7 @@
           "bottom": 0.65622
         }
       },
-      "page_agreement": false,
+      "page_agreement": true,
       "ssim": 0.8495,
       "ssim_blocks": 693,
       "ssim_inked": 0.1038,
@@ -1866,9 +1866,9 @@
       "block_ordinal": 90,
       "region": {
         "candidate": {
-          "page": 6,
-          "top": 0.16724,
-          "bottom": 0.21666
+          "page": 5,
+          "top": 0.69891,
+          "bottom": 0.74833
         },
         "reference": {
           "page": 5,
@@ -1876,7 +1876,7 @@
           "bottom": 0.70573
         }
       },
-      "page_agreement": false,
+      "page_agreement": true,
       "ssim": 0.8618,
       "ssim_blocks": 693,
       "ssim_inked": 0.1655,
@@ -1905,9 +1905,9 @@
       "block_ordinal": 92,
       "region": {
         "candidate": {
-          "page": 6,
-          "top": 0.21666,
-          "bottom": 0.26607
+          "page": 5,
+          "top": 0.74833,
+          "bottom": 0.79774
         },
         "reference": {
           "page": 5,
@@ -1915,16 +1915,16 @@
           "bottom": 0.7551
         }
       },
-      "page_agreement": false,
-      "ssim": 0.8705,
+      "page_agreement": true,
+      "ssim": 0.8808,
       "ssim_blocks": 693,
-      "ssim_inked": 0.1816,
+      "ssim_inked": 0.2472,
       "ssim_inked_blocks": 108,
-      "iou": 0.4437,
+      "iou": 0.4609,
       "ink": {
         "reference": 0.01457,
-        "candidate": 0.0365,
-        "delta": 0.02193
+        "candidate": 0.03657,
+        "delta": 0.022
       },
       "crop_px": [
         794,
@@ -1944,8 +1944,8 @@
       "block_ordinal": 94,
       "region": {
         "candidate": {
-          "page": 6,
-          "top": 0.26607,
+          "page": 5,
+          "top": 0.79774,
           "bottom": 0.89899
         },
         "reference": {
@@ -1954,24 +1954,24 @@
           "bottom": 0.89899
         }
       },
-      "page_agreement": false,
-      "ssim": 0.9659,
-      "ssim_blocks": 8712,
-      "ssim_inked": 0.5085,
-      "ssim_inked_blocks": 604,
-      "iou": 0.174,
+      "page_agreement": true,
+      "ssim": 0.843,
+      "ssim_blocks": 1980,
+      "ssim_inked": 0.4837,
+      "ssim_inked_blocks": 602,
+      "iou": 0.209,
       "ink": {
-        "reference": 0.00487,
-        "candidate": 0.00298,
-        "delta": -0.00189
+        "reference": 0.02136,
+        "candidate": 0.01308,
+        "delta": -0.00828
       },
       "crop_px": [
         794,
-        711
+        162
       ],
       "band_px": {
         "reference": 162,
-        "candidate": 711
+        "candidate": 114
       },
       "declared_limits": [
         {
@@ -2237,5 +2237,5 @@
     "match": 3,
     "unsupported": 2
   },
-  "png_bytes": 1136342
+  "png_bytes": 1119182
 }
