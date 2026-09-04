@@ -720,14 +720,27 @@ block taller than one page (placed and allowed to overflow, because no rule
 can make it fit), headers/footers/notes taking room in the flow, and any
 section past `section0`.
 
-**Table splitting.** A table is split at a row boundary **only** when it
-declares `hp:tbl@pageBreak="CELL"` (셀 단위로 나눔). `NONE` (나누지 않음) and
-`TABLE` (표 단위로 나눔) both move the whole table to the next page. The corpus
-declares CELL on 62 tables and NONE on 19; `TABLE` never appears and is
-grouped with `NONE`. A split leaves two placement records carrying the row
-range each page draws, and `_render_table` draws exactly that range with the
-row origin pulled back — the continuation page does **not** repeat the header
-row.
+**Table splitting.** A table is split at a row boundary only when **both**
+halves of the permission hold: it declares `hp:tbl@pageBreak="CELL"`
+(셀 단위로 나눔) **and** it is anchored rather than 글자처럼 취급
+(`hp:tbl/hp:pos@treatAsChar="0"`). `NONE` (나누지 않음) and `TABLE`
+(표 단위로 나눔) both move the whole table to the next page, and so does every
+inline table whatever it declares. The corpus declares CELL on 62 tables and
+NONE on 19; `TABLE` never appears and is grouped with `NONE`.
+
+The second half is measured, not read off the schema: Hancom never splits an
+inline table — eleven probe variants and three Hancom-authored controls, no
+exception ([`docs/research/table-page-break-rule.md`](../../docs/research/table-page-break-rule.md)).
+An inline table that does not fit the room left moves whole; one that does
+not fit a whole page is drawn from the top of that page and allowed to
+overflow, which is what Hancom does with its own. The fit test for such a
+line clears the table's **whole** height rather than the usual `baseline`
+allowance (`_row_extent`) — a table has no descender to hang past the margin.
+
+A split leaves two placement records carrying the row range each page draws,
+and `_render_table` draws exactly that range with the row origin pulled back
+— the continuation page does **not** repeat the header row, where Hancom's
+anchored split does.
 
 ### How well the flow pass agrees with the engine that wrote the file
 

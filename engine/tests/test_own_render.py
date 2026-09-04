@@ -2546,24 +2546,27 @@ def test_the_flow_pass_is_deterministic(tmp_path):
             == second["report"]["block_layout"]["blocks"])
 
 
-def test_a_table_only_splits_across_a_page_when_it_says_it_may():
-    """hp:tbl@pageBreak is the whole permission, and it is checked, not
-    assumed: the corpus declares CELL on 62 tables and NONE on 19."""
+def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():
+    """The split permission has two halves, and BOTH are checked.
+
+    ``hp:tbl@pageBreak="CELL"`` is the declared half.  The measured half is
+    글자처럼 취급 (``hp:pos@treatAsChar``): Hancom never splits an inline
+    table, whatever ``pageBreak`` says — twelve probe variants and two
+    Hancom-authored tables, no exception
+    (``docs/research/table-page-break-rule.md``).
+    """
     renderer = own_render.OwnRenderer(
         _need(os.path.join(CORPUS, "saeopja-deungnok-sinchengseo.hwpx")),
         dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
-    draw = renderer._scratch_draw()
     seen = {"CELL": 0, "other": 0}
     for element in renderer.sections[0].iter():
         if own_render._local(element.tag) != "tbl":
             continue
-        splittable, ys = renderer._table_split_rows(draw, element)
         declared = (element.get("pageBreak") or "").upper()
-        assert splittable == (declared == "CELL"), declared
+        inline = renderer._table_is_inline(element)
+        assert renderer._table_may_split(element) == (
+            declared == "CELL" and not inline), (declared, inline)
         seen["CELL" if declared == "CELL" else "other"] += 1
-        if not splittable:
-            # Room for every row but the last, and it still refuses to split.
-            assert renderer._split_table_row(draw, element, ys[-2]) is None
     assert seen["CELL"] and seen["other"], "fixture drifted"
 
 
