@@ -88,6 +88,32 @@ identically — this harness is COM-Automation-only (open/save/close/reopen/
 text/counts), it does not re-render to PDF or inspect page layout, so a
 qname-count balance is evidence of structural survival, not visual proof.
 
+## Rerun — (d) render-check-01, harness fix verified
+
+2026-09-05, same writer tip (`71e2369`) and same `d-render-check-edited`
+input (unmodified `render-check-01.hwpx` from `origin/claude/engine-e2-converge-3`
+with `RIGORLOOM-E3-ACCEPT-RENDERCHECK-02` planted in the same first `<hp:t>`
+of `Contents/section0.xml`, still the `hp:header` control's own `hp:subList`
+paragraph). `Hwp.exe` checked clear via `tasklist` immediately before and
+after fetching/planting, single COM session, strictly serial. Record:
+`engine/references/acceptance/run-02/render-check-01.rerun.json`.
+
+The harness gap this run's `edit_preserved` fail root-caused is now closed:
+`edit_preserved` reads the reopened-and-saved candidate through the repo's
+own lexical reader instead of Automation's plain-text export, so it now
+locates the marker in its actual container and reports `pass` with
+`"kind": "header"`. The old Automation-export signal still runs, renamed
+`edit_preserved_text_export`, and honestly reports `skipped`/`not_exported`
+(with a one-line reason) instead of a fabricated fail once the lexical
+check has already found the marker in a container `GetTextFile("TEXT","")`
+does not export. All other checks unchanged: `open_no_repair`,
+`save_new_path`, `close`, `reopen`, `structures_preserved` (now reported as
+`body_structure` -- 6 tbl/227 p/111 tc, unchanged -- plus the same
+`style_catalog_delta` cluster this doc showed in run 02, still ungated),
+and `bindings_valid` all `pass`. 28/28 (counting the new
+`edit_preserved_text_export` row) reportable checks now honestly resolve to
+either `pass` or a correctly-labeled `skipped`, with no fail.
+
 ## Not done here
 
 - The writer was not modified. `structures_preserved`'s policy (table +
