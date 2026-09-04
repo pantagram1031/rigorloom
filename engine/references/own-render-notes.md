@@ -2593,3 +2593,77 @@ removed the term that used to cancel the block-height drift. Full report:
   registration because they move only once registration joins #210, and
   because #208 provably never fires on that document — not because a tree with
   registration removed was rendered.
+
+
+## Layout was a function of the raster — measured, 2026-09-05
+
+The ink-residual slice recorded a 144 dpi tally it could not claim, because
+`F06` broke its lines in different places at 144 dpi than at 96. This is that
+finding turned into a number, on a channel with no pixels in it.
+
+### The instrument
+
+`own_render.py --layout-digest` (`layout_digest()`) prints every layout
+decision the renderer makes **in the document's own units**: line breaks as
+character offsets, `horzpos`/`horzsize`/`vertpos`/`vertsize`/`baseline` in
+HWPUNIT, and the flow pass's per-block page and page-relative top. Both
+passes are forced to `computed`, because reading the cached `hp:lineseg`
+boxes would be dpi-free whatever the renderer does and would measure nothing.
+The report deliberately carries **no `dpi` field**: a renderer whose layout is
+a function of the document alone emits the same bytes at every resolution.
+
+The column a paragraph is broken into is the paragraph's own cached first line
+box where the file carries one and the section's `usable_width` where it does
+not (`render-check-01` carries no `linesegarray` at all). Both are read
+straight out of the file.
+
+### The drift, before
+
+`render-check-01`, blocks `F06`–`F08`, characters per line:
+
+| block | 96 dpi | 144 / 192 / 288 dpi |
+| --- | --- | --- |
+| `F06` (줄간격 130%) | 46 · **50** · 5 | 46 · **44** · 11 |
+| `F07` (줄간격 160%) | 46 · **50** · 5 | 46 · **44** · 11 |
+| `F08` (줄간격 200%) | 46 · **50** · 47 · 48 · 11 | 46 · **44** · 47 · **44** · 21 |
+
+Six characters on `F06`'s second line, and the same six on every block that
+shares its text. Whole documents, digest against the 96 dpi digest:
+
+| document | 144 | 192 | 288 |
+| --- | --- | --- | --- |
+| `render-check-01` | 18 paras rebroken, +2 lines | 20, +3 | 19, +3 |
+| `gianmun-byeolji-2ho` | 1 | 3 | 1 |
+| `jeongbo-gonggae-cheongguseo` | 5 | 6 | 5 |
+| `jumin-deungchobon` | 6, −1 line | 16, +3 | 7, −1 |
+| `kstartup-…-saeopgyehoekseo` | 6, −1 | 18, +11, **+1 page, 122 blocks re-paged** | 5, −1 |
+| `moel-…-2013` | 25, +12, **+2 pages, 77 blocks re-paged** | 19, +2, +1 page | 16, +2 |
+| `moel-…-2025` | 10, −2, 75 blocks moved | 16, +4 | 3, −1 |
+| `saeopja-deungnok` | 17, −8 | 24, −7 | 16, −8 |
+| `admrul`, `gianmun-1ho`, `nrf` | identical | identical | identical |
+
+Three of the ten forms were already dpi-independent — they are the ones whose
+declared character sizes happen to land on integer pixels at every dpi tested.
+The worst case is not the smallest raster: `moel-2013` gains **two pages** at
+144 dpi relative to 96, and `kstartup` gains one at 192.
+
+### The cause
+
+`_font_for` asks the font book for `pt_to_px(pt) = max(1, round(pt * dpi/72))`
+— an **integer** pixel size — and every advance was then `draw.textlength` on
+that rasterised font. Two separate leaks, and both are in the layout:
+
+1. **The integer size.** A 10 pt run is 13 px at 96 dpi and 20 px at 144. 13
+   px is 9.75 pt, so the text is 2.5% narrower at 96 dpi than the document
+   says it is, and 2.5% more of it fits on a line. That is the six characters.
+2. **Hinting.** FreeType rounds a hinted glyph's advance to a whole pixel, so
+   even at sizes that land exactly on an integer the per-glyph error is up to
+   half a pixel — 1/40 em at a 20 px em, and a different fraction at every
+   other size.
+
+Nothing downstream of the advances is guilty. `_line_metrics` was already
+HWPUNIT and reads declared sizes only; `_object_extent` is HWPUNIT;
+`_half_cell_px` and `_offset_px` are exact linear functions of dpi; the
+equation extent is already measured at a fixed 600 dpi and scaled. The break
+positions were the whole of it, and everything else in the digest moved
+because the breaks did.
