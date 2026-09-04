@@ -1,0 +1,783 @@
+{
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 136,
+    "cells": 70,
+    "paragraphs": 77,
+    "placeholders": 1,
+    "runs": 104,
+    "tables": 2,
+    "text_lines": 62
+  },
+  "elements_skipped": [
+    {
+      "count": 3,
+      "element": "hh:bottomBorder@type=DASH",
+      "reason": "non-solid border stroked as solid"
+    },
+    {
+      "count": 3,
+      "element": "hh:topBorder@type=DASH",
+      "reason": "non-solid border stroked as solid"
+    },
+    {
+      "count": 1,
+      "element": "hp:header",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:imgDim",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:orgSz",
+      "reason": "element has no handler in this tier; nothing drawn"
+    },
+    {
+      "count": 1,
+      "element": "hp:pic",
+      "reason": "object drawn as a placeholder box at its declared hp:sz extent; its content is not rendered"
+    }
+  ],
+  "fonts": {
+    "characters_on_a_resolved_face": 1141,
+    "characters_on_a_substituted_face": 0,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 621,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 9,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 44,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 385,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 27,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 5,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 6,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 28,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 7,
+        "declared": "한양견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 1.0,
+    "system_font_files_scanned": 457
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "rendered by Rigorloom's own OWPML renderer; NOT certified against a Hancom reference render. Certification is per document class via pipeline/scripts/render_cert.py.",
+  "hwpunit_per_inch": 7200,
+  "line_boxes": [
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 113.36,
+      "x1": 761.6,
+      "y0": 115.48,
+      "y1": 134.48
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 412.625,
+      "x1": 640.575,
+      "y0": 169.04,
+      "y1": 202.04
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 123.56,
+      "x1": 587.56,
+      "y0": 230.98,
+      "y1": 247.98
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 123.56,
+      "x1": 579.56,
+      "y0": 257.22,
+      "y1": 274.22
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 123.56,
+      "x1": 189.62,
+      "y0": 285.12,
+      "y1": 304.12
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 420.38,
+      "x1": 474.8,
+      "y0": 285.12,
+      "y1": 304.12
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 670.16,
+      "x1": 754.46,
+      "y0": 285.12,
+      "y1": 304.12
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 138.07,
+      "x1": 199.01,
+      "y0": 419.46,
+      "y1": 442.46
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 489.24,
+      "y0": 322.94,
+      "y1": 343.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 694.0,
+      "x1": 808.9,
+      "y0": 322.94,
+      "y1": 343.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 694.0,
+      "x1": 890.85,
+      "y0": 348.94,
+      "y1": 369.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 563.64,
+      "y0": 378.76,
+      "y1": 399.76
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 694.0,
+      "x1": 911.6,
+      "y0": 378.76,
+      "y1": 399.76
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 329.04,
+      "y0": 434.58,
+      "y1": 455.58
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 694.0,
+      "x1": 910.9,
+      "y0": 434.58,
+      "y1": 455.58
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 342.94,
+      "y0": 490.4,
+      "y1": 511.4
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 694.0,
+      "x1": 767.0,
+      "y0": 490.4,
+      "y1": 511.4
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 130.085,
+      "x1": 216.075,
+      "y0": 572.78,
+      "y1": 595.78
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 130.085,
+      "x1": 216.075,
+      "y0": 633.94,
+      "y1": 656.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 352.72,
+      "y0": 634.24,
+      "y1": 655.24
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 369.84,
+      "x1": 506.62,
+      "y0": 634.24,
+      "y1": 655.24
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 524.36,
+      "x1": 625.14,
+      "y0": 634.24,
+      "y1": 655.24
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 655.46,
+      "x1": 792.24,
+      "y0": 634.24,
+      "y1": 655.24
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 849.02,
+      "x1": 965.76,
+      "y0": 634.24,
+      "y1": 655.24
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 130.085,
+      "x1": 216.075,
+      "y0": 680.54,
+      "y1": 703.54
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 340.11,
+      "y0": 680.84,
+      "y1": 701.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 369.84,
+      "x1": 434.62,
+      "y0": 680.84,
+      "y1": 701.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 524.36,
+      "x1": 630.53,
+      "y0": 680.84,
+      "y1": 701.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 655.46,
+      "x1": 774.24,
+      "y0": 680.84,
+      "y1": 701.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 849.02,
+      "x1": 1025.15,
+      "y0": 680.84,
+      "y1": 701.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 142.61,
+      "x1": 203.55,
+      "y0": 779.8,
+      "y1": 802.8
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 358.89,
+      "y0": 726.38,
+      "y1": 747.38
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 524.36,
+      "x1": 672.96,
+      "y0": 726.38,
+      "y1": 747.38
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 312.59,
+      "y0": 759.64,
+      "y1": 780.64
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 987.24,
+      "y0": 815.58,
+      "y1": 832.58
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 233.94,
+      "x1": 583.14,
+      "y0": 841.18,
+      "y1": 858.18
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 123.56,
+      "x1": 1078.76,
+      "y0": 877.52,
+      "y1": 898.52
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 123.56,
+      "x1": 337.36,
+      "y0": 909.52,
+      "y1": 930.52
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 949.63,
+      "x1": 1064.3,
+      "y0": 938.16,
+      "y1": 959.16
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 489.66,
+      "x1": 545.06,
+      "y0": 969.62,
+      "y1": 990.62
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 907.0,
+      "x1": 996.98,
+      "y0": 977.06,
+      "y1": 994.06
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 333.31,
+      "y0": 998.2,
+      "y1": 1025.2
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 537.32,
+      "x1": 623.16,
+      "y0": 1029.84,
+      "y1": 1056.84
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 190.62,
+      "y0": 1063.38,
+      "y1": 1084.38
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 524.36,
+      "x1": 618.15,
+      "y0": 1063.38,
+      "y1": 1084.38
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 190.62,
+      "y0": 1091.02,
+      "y1": 1112.02
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 524.36,
+      "x1": 900.16,
+      "y0": 1091.02,
+      "y1": 1112.02
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 458.17,
+      "y0": 1118.16,
+      "y1": 1139.16
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 932.32,
+      "x1": 1064.26,
+      "y0": 1146.6,
+      "y1": 1165.6
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 466.53,
+      "x1": 598.53,
+      "y0": 1213.94,
+      "y1": 1238.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 621.51,
+      "x1": 705.51,
+      "y0": 1213.94,
+      "y1": 1238.94
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 537.16,
+      "x1": 646.16,
+      "y0": 1294.92,
+      "y1": 1317.92
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 1033.32,
+      "y0": 1324.7,
+      "y1": 1345.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 689.02,
+      "y0": 1354.7,
+      "y1": 1375.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 1037.47,
+      "y0": 1384.7,
+      "y1": 1405.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 1009.97,
+      "y0": 1414.7,
+      "y1": 1435.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 573.07,
+      "y0": 1444.7,
+      "y1": 1465.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 1048.04,
+      "y0": 1474.7,
+      "y1": 1495.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 498.76,
+      "y0": 1504.7,
+      "y1": 1525.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 1040.67,
+      "y0": 1534.7,
+      "y1": 1555.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 119.02,
+      "x1": 609.57,
+      "y0": 1564.7,
+      "y1": 1585.7
+    },
+    {
+      "mode": "lineseg",
+      "page": 1,
+      "x0": 772.84,
+      "x1": 1068.84,
+      "y0": 1595.92,
+      "y1": 1612.92
+    }
+  ],
+  "line_boxes_meaning": "every text line box drawn, in device pixels at this render's dpi; y bounds are the font's ascent/descent about the cached baseline, x bounds are the measured text extent (inline objects excluded). The comparison channel engine/scripts/render_scoreboard.py pairs these against a reference PDF's text lines.",
+  "line_layout": {
+    "caller_marked_edited": [],
+    "computed_reasons": {},
+    "forced_breaks": 0,
+    "forced_breaks_meaning": "lines this renderer had to cut at a position the paragraph's own breakSetting forbids, because no permitted break opportunity existed inside the box",
+    "line_geometry_model": {
+      "baseline": "== round(0.85 * textheight) (3212/3214 exact, all 3214 within 1 HWPUNIT); the ratio is a measured constant of this corpus, not a number KS X 6101 publishes",
+      "spacing": "PERCENT: vertsize + spacing == round(textheight * value / 100); FIXED: vertsize + spacing == value",
+      "textheight": "max declared hh:charPr@height x hh:relSz over the characters on the line",
+      "vertpos": "== previous vertpos + previous vertsize + previous spacing (219/219 corpus continuation lines)",
+      "vertsize": "== textheight (3214/3214 corpus line boxes)"
+    },
+    "paragraph_origin": "a relaid-out paragraph still starts where the cached layout put it; this slice re-derives line breaking inside a paragraph, not the block stacking that decides where a paragraph begins. Paragraphs after a relaid-out one in the same container are shifted by its height change so they cannot be drawn over, but a table row does not grow and no content reflows onto another page.",
+    "paragraphs": {
+      "computed": 0,
+      "lineseg": 58
+    },
+    "paragraphs_relaid_out": [],
+    "parapr_honored": [
+      "hh:breakSetting@breakLatinWord (KEEP_WORD / BREAK_WORD)",
+      "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD)",
+      "hh:breakSetting@lineWrap=BREAK",
+      "hp:paraPr@condense (최소 공백: a line may overrun by the width its spaces can give up)",
+      "hh:lineSpacing@type=PERCENT and @type=FIXED, with @value",
+      "hh:margin/hh:left, hh:right, hh:intent (들여쓰기 positive, 내어쓰기 negative)",
+      "hh:align@horizontal (LEFT / CENTER / RIGHT / JUSTIFY / DISTRIBUTE)",
+      "hp:paraPr@tabPrIDRef, for the explicit LEFT stops hh:tabPr declares"
+    ],
+    "parapr_not_honored": [
+      "hh:breakSetting@breakLatinWord=HYPHENATION — hyphenation is not implemented; broken at word boundaries instead",
+      "hh:breakSetting@widowOrphan / @keepWithNext / @keepLines / @pageBreakBefore — block-level pagination rules; this tier does not do block layout",
+      "hp:paraPr@fontLineHeight=1 — line height from the resolved font's own ascent/descent; the declared character size is used instead",
+      "hp:paraPr@snapToGrid — the section grid is not implemented",
+      "hh:lineSpacing@type=BETWEEN_LINES — implemented as pure leading, never exercised by the corpus",
+      "hh:tab@type=RIGHT / CENTER / DECIMAL — advanced as a LEFT stop",
+      "hp:tab elements inside a run are not placed in the character stream"
+    ],
+    "policy": "auto",
+    "policy_meaning": "auto: a paragraph keeps the document's cached hp:lineseg boxes unless they provably no longer describe its text, in which case this renderer's own breaker lays it out. computed: every paragraph is laid out by this renderer's breaker, which is how the breaker itself is measured — not how a document is rendered most faithfully.",
+    "prohibition_table": {
+      "line_end_forbidden": "#$(@[\\{£¥‘“‵〈《「『【〔＃＄（＠［｛￥￦",
+      "line_start_forbidden": "!\"%'),.:;?]}¢°·’”‥…‰′″℃、。々〆〉》」』】〕ぁぃぅぇぉっゃゅょゎゝゞァィゥェォッャュョヮヵヶーㆍ！），．：；？］｝",
+      "note": "금칙처리. KS X 6101 does not publish the prohibited-character sets any more than it publishes the language-slot partition; this is the conventional Korean/CJK table and is this renderer's, declared, not the spec's."
+    },
+    "stale_detection": "a cached line box is judged stale when a cached textpos starts past the end of the character stream, or when a cached line's FONT-INDEPENDENT lower-bound width (full-width cells at their declared size x hh:ratio, plus the declared hh:spacing gaps) exceeds that line's own cached horzsize by more than 1%. The bound can never exceed the width the authoring engine actually fitted, so the detector raises no false positive on an unedited paragraph — but it is INCOMPLETE: an edit that leaves every line still fitting is invisible in the file, and an editor that knows it changed a paragraph must declare it through relayout_paragraphs instead of relying on detection."
+  },
+  "notes": [
+    "line boxes come from the document's own cached hp:lineseg layout wherever that cache is present and provably still describes the paragraph's text; where it is not, this renderer's own line breaker lays the paragraph out and line_layout says which paragraphs and why",
+    "line breaking therefore matches the authoring engine exactly on an unedited paragraph, and is this renderer's own answer on an edited one; intra-line text extents match neither (see fonts)",
+    "character typography (hh:ratio, hh:spacing, hh:relSz, hh:offset) IS applied, per language slot; see typography for what this document exercised and typography_slot_model for how a character is assigned to a slot",
+    "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no trailing gap), measured against the Hancom reference render",
+    "hh:align JUSTIFY stretches every line of a paragraph except its last; DISTRIBUTE stretches every line; neither ever shrinks a line that already overruns its box",
+    "headers, footers, footnotes, endnotes and master pages are not drawn",
+    "full limits and the certification path: engine/references/own-render-notes.md"
+  ],
+  "page_geometry_hwpunit": {
+    "body_left": 5668,
+    "body_top": 5668,
+    "height": 84188,
+    "landscape": "WIDELY",
+    "margin": {
+      "bottom": 2834,
+      "footer": 0,
+      "gutter": 0,
+      "header": 0,
+      "left": 5668,
+      "right": 5668,
+      "top": 5668
+    },
+    "usable_height": 75686,
+    "usable_width": 48192,
+    "width": 59528
+  },
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": 1,
+  "png_pages": [
+    "jeongbo-gonggae-cheongguseo-p1.png"
+  ],
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "source": "jeongbo-gonggae-cheongguseo.hwpx",
+  "typography": {
+    "applied_characters": {
+      "hh:ratio": 1003,
+      "hh:spacing": 1018
+    },
+    "meaning": "how many characters (and, for hh:align, how many lines) this render actually applied each metric to. A metric absent here is one the document never declares away from its neutral value, not one this renderer ignores."
+  },
+  "typography_slot_model": {
+    "assignment": "OWPML declares hh:ratio/spacing/relSz/offset once per language slot. The standard names the slots but does not publish the codepoint partition, so the mapping used here is this renderer's plain Unicode-block reading of the slot names — an approximation, declared, not the spec.",
+    "slots": [
+      "hangul",
+      "latin",
+      "hanja",
+      "japanese",
+      "other",
+      "symbol",
+      "user"
+    ],
+    "user_slot": "never selected: HWP fills the user slot from a user-defined character range table the document does not carry, so a renderer reading only the file cannot honour it"
+  }
+}

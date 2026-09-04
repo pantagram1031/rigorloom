@@ -1,0 +1,1084 @@
+{
+  "caveats": [
+    "every number here depends on which fonts this machine has installed; see fonts.faces for what resolved and what was substituted",
+    "changed_channel_ratio is render_cert's raster channel verbatim and carries no threshold here — see thresholds.rationale",
+    "the reference raster is scaled to the candidate's pixel grid, never the reverse"
+  ],
+  "document": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+  "document_class": "grant",
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 1418,
+    "cells": 366,
+    "equations": 0,
+    "images": 0,
+    "page_numbers": 0,
+    "paragraphs": 793,
+    "placeholders": 5,
+    "runs": 1047,
+    "tables": 42,
+    "text_lines": 463
+  },
+  "fidelity_target": {
+    "ink_delta_abs_max": 0.002,
+    "note": "not evaluated. The gap to it is the honest measure of how far tier 3 is from Hancom, and the largest remaining term is sub-pixel glyph registration, not any single unimplemented element.",
+    "page_count_exact": true,
+    "ssim_inked_min": 0.7,
+    "ssim_min": 0.95,
+    "text_line_iou_mean_min": 0.8,
+    "text_line_pair_rate_min": 0.95
+  },
+  "fonts": {
+    "characters_on_a_resolved_face": 7898,
+    "characters_on_a_substituted_face": 520,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 89,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 51,
+        "declared": "HY견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 12,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 105,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 19,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 32,
+        "declared": "HY헤드라인M",
+        "face_index": 0,
+        "file": "H2HDRM.TTF",
+        "installed_family": "HY헤드라인M",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 2361,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 567,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 11,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "hanja"
+      },
+      {
+        "bold": false,
+        "characters": 260,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": true,
+        "characters": 59,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 5,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 1821,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgun.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 350,
+        "declared": "맑은 고딕",
+        "face_index": 0,
+        "file": "malgunbd.ttf",
+        "installed_family": "맑은 고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 554,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 117,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 53,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": true,
+        "characters": 10,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 13,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 608,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 322,
+        "declared": "바탕",
+        "face_index": 0,
+        "file": "batang.ttc",
+        "installed_family": "바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 26,
+        "declared": "한양신명조",
+        "face_index": 0,
+        "file": "H2MJSM.TTF",
+        "installed_family": "HY신명조",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 37,
+        "declared": "한양신명조",
+        "face_index": 0,
+        "file": "H2MJSM.TTF",
+        "installed_family": "HY신명조",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 142,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 4,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 236,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 8,
+        "declared": "함초롬바탕",
+        "face_index": 0,
+        "file": "HANBatangB.ttf",
+        "installed_family": "함초롬바탕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "함초롬바탕",
+        "face_index": 0,
+        "file": "HANBatangB.ttf",
+        "installed_family": "함초롬바탕",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "HCI Poppy",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "HY울릉도M",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 17,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 66,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 4,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 4,
+        "declared": "신명 신문명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 10,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 2,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "latin",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 13,
+        "declared": "휴먼고딕",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 384,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "hangul",
+        "substituted_with": "malgunbd.ttf"
+      },
+      {
+        "bold": false,
+        "characters": 3,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgun.ttf"
+      },
+      {
+        "bold": true,
+        "characters": 2,
+        "declared": "휴먼명조",
+        "file": null,
+        "installed_family": null,
+        "resolved": false,
+        "slot": "symbol",
+        "substituted_with": "malgunbd.ttf"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 0.938228,
+    "system_font_files_scanned": 457
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "measured against a Hancom reference render; the grade stays own-uncertified because the thresholds below are PROPOSED and not operator-ratified, and because pipeline/scripts/render_cert.py — the certification path — cannot score this renderer until it emits a PDF text layer.",
+  "label": "before-e2.5",
+  "line_layout": "auto",
+  "line_layout_meaning": "which engine laid out the line boxes being scored. auto: the document's own cached hp:lineseg wherever it still describes the text, so this column measures everything EXCEPT the line breaker. computed: every line broken by this renderer, so this column is the honest measure OF the line breaker.",
+  "line_layout_paragraphs": {
+    "computed": 4,
+    "lineseg": 453
+  },
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": [
+    {
+      "changed_channel_ratio": 0.156100318,
+      "ink": {
+        "candidate": 0.046105,
+        "delta": -0.001186,
+        "reference": 0.047292
+      },
+      "page": 1,
+      "scored": true,
+      "ssim": 0.771491,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.287418,
+      "ssim_inked_blocks": 9959,
+      "text_line_iou": {
+        "candidate_lines": 60,
+        "mean": 0.601965,
+        "median": 0.607098,
+        "pair_rate": 1.0,
+        "pairs": 56,
+        "reference_lines": 56,
+        "unpaired_candidate": 4,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.085951279,
+      "ink": {
+        "candidate": 0.05399,
+        "delta": 0.006175,
+        "reference": 0.047815
+      },
+      "page": 2,
+      "scored": true,
+      "ssim": 0.774514,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.176399,
+      "ssim_inked_blocks": 8487,
+      "text_line_iou": {
+        "candidate_lines": 35,
+        "mean": 0.657727,
+        "median": 0.706163,
+        "pair_rate": 1.0,
+        "pairs": 34,
+        "reference_lines": 34,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.070939808,
+      "ink": {
+        "candidate": 0.026818,
+        "delta": -0.000291,
+        "reference": 0.027109
+      },
+      "page": 3,
+      "scored": true,
+      "ssim": 0.857513,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.203174,
+      "ssim_inked_blocks": 5551,
+      "text_line_iou": {
+        "candidate_lines": 20,
+        "mean": 0.59936,
+        "median": 0.573362,
+        "pair_rate": 1.0,
+        "pairs": 20,
+        "reference_lines": 20,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.094970992,
+      "ink": {
+        "candidate": 0.020115,
+        "delta": 0.00587,
+        "reference": 0.014245
+      },
+      "page": 4,
+      "scored": true,
+      "ssim": 0.901635,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.357822,
+      "ssim_inked_blocks": 4759,
+      "text_line_iou": {
+        "candidate_lines": 21,
+        "mean": 0.599145,
+        "median": 0.595028,
+        "pair_rate": 1.0,
+        "pairs": 10,
+        "reference_lines": 10,
+        "unpaired_candidate": 11,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.18325552,
+      "ink": {
+        "candidate": 0.045594,
+        "delta": 0.028587,
+        "reference": 0.017008
+      },
+      "page": 5,
+      "scored": true,
+      "ssim": 0.696805,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.202613,
+      "ssim_inked_blocks": 11806,
+      "text_line_iou": {
+        "candidate_lines": 103,
+        "mean": 0.101157,
+        "median": 0.052787,
+        "pair_rate": 1.0,
+        "pairs": 10,
+        "reference_lines": 10,
+        "unpaired_candidate": 93,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.148061005,
+      "ink": {
+        "candidate": 0.006148,
+        "delta": -0.0297,
+        "reference": 0.035848
+      },
+      "page": 6,
+      "scored": true,
+      "ssim": 0.755705,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.215789,
+      "ssim_inked_blocks": 9672,
+      "text_line_iou": {
+        "candidate_lines": 2,
+        "mean": 0.269458,
+        "median": 0.269458,
+        "pair_rate": 0.023256,
+        "pairs": 2,
+        "reference_lines": 86,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 84
+      }
+    },
+    {
+      "changed_channel_ratio": 0.071159023,
+      "ink": {
+        "candidate": 0.013607,
+        "delta": 0.000986,
+        "reference": 0.01262
+      },
+      "page": 7,
+      "scored": true,
+      "ssim": 0.888261,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.176394,
+      "ssim_inked_blocks": 4211,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.031437,
+        "median": 0.0,
+        "pair_rate": 0.357143,
+        "pairs": 5,
+        "reference_lines": 14,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 9
+      }
+    },
+    {
+      "changed_channel_ratio": 0.070933659,
+      "ink": {
+        "candidate": 0.012391,
+        "delta": 0.007401,
+        "reference": 0.00499
+      },
+      "page": 8,
+      "scored": true,
+      "ssim": 0.932528,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.339188,
+      "ssim_inked_blocks": 3173,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.085708,
+        "median": 0.085708,
+        "pair_rate": 1.0,
+        "pairs": 1,
+        "reference_lines": 1,
+        "unpaired_candidate": 2,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.091984586,
+      "ink": {
+        "candidate": 0.012868,
+        "delta": -0.001297,
+        "reference": 0.014165
+      },
+      "page": 9,
+      "scored": true,
+      "ssim": 0.899851,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.291181,
+      "ssim_inked_blocks": 4391,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.0,
+        "median": 0.0,
+        "pair_rate": 0.75,
+        "pairs": 3,
+        "reference_lines": 4,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 1
+      }
+    },
+    {
+      "changed_channel_ratio": 0.072808036,
+      "ink": {
+        "candidate": 0.0152,
+        "delta": 0.000989,
+        "reference": 0.014211
+      },
+      "page": 10,
+      "scored": true,
+      "ssim": 0.910727,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.242772,
+      "ssim_inked_blocks": 3661,
+      "text_line_iou": {
+        "candidate_lines": 3,
+        "mean": 0.002137,
+        "median": 0.0,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.068398313,
+      "ink": {
+        "candidate": 0.019289,
+        "delta": 0.004416,
+        "reference": 0.014873
+      },
+      "page": 11,
+      "scored": true,
+      "ssim": 0.900199,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.175219,
+      "ssim_inked_blocks": 3760,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.4577,
+        "median": 0.480479,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 2,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.068558029,
+      "ink": {
+        "candidate": 0.020089,
+        "delta": 0.002939,
+        "reference": 0.01715
+      },
+      "page": 12,
+      "scored": true,
+      "ssim": 0.890956,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.130532,
+      "ssim_inked_blocks": 3893,
+      "text_line_iou": {
+        "candidate_lines": 5,
+        "mean": 0.241035,
+        "median": 0.0,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 2,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.069434389,
+      "ink": {
+        "candidate": 0.014044,
+        "delta": -0.006353,
+        "reference": 0.020397
+      },
+      "page": 13,
+      "scored": true,
+      "ssim": 0.895093,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.160328,
+      "ssim_inked_blocks": 3879,
+      "text_line_iou": {
+        "candidate_lines": 4,
+        "mean": 0.576489,
+        "median": 0.64869,
+        "pair_rate": 0.6,
+        "pairs": 3,
+        "reference_lines": 5,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 2
+      }
+    },
+    {
+      "changed_channel_ratio": 0.173601596,
+      "ink": {
+        "candidate": 0.040256,
+        "delta": 0.018637,
+        "reference": 0.021618
+      },
+      "page": 14,
+      "scored": true,
+      "ssim": 0.777663,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.273332,
+      "ssim_inked_blocks": 9503,
+      "text_line_iou": {
+        "candidate_lines": 30,
+        "mean": 0.232813,
+        "median": 0.166057,
+        "pair_rate": 1.0,
+        "pairs": 5,
+        "reference_lines": 5,
+        "unpaired_candidate": 25,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.247715779,
+      "ink": {
+        "candidate": 0.033254,
+        "delta": 0.017069,
+        "reference": 0.016185
+      },
+      "page": 15,
+      "scored": true,
+      "ssim": 0.807589,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.414891,
+      "ssim_inked_blocks": 10213,
+      "text_line_iou": {
+        "candidate_lines": 31,
+        "mean": 0.282978,
+        "median": 0.098621,
+        "pair_rate": 1.0,
+        "pairs": 3,
+        "reference_lines": 3,
+        "unpaired_candidate": 28,
+        "unpaired_reference": 0
+      }
+    },
+    {
+      "changed_channel_ratio": 0.298049238,
+      "ink": {
+        "candidate": 0.043083,
+        "delta": -0.001763,
+        "reference": 0.044845
+      },
+      "page": 16,
+      "scored": true,
+      "ssim": 0.67692,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.240171,
+      "ssim_inked_blocks": 13210,
+      "text_line_iou": {
+        "candidate_lines": 26,
+        "mean": 0.051248,
+        "median": 0.0,
+        "pair_rate": 0.806452,
+        "pairs": 25,
+        "reference_lines": 31,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 6
+      }
+    },
+    {
+      "changed_channel_ratio": 0.270901017,
+      "ink": {
+        "candidate": 0.023359,
+        "delta": -0.009174,
+        "reference": 0.032533
+      },
+      "page": 17,
+      "scored": true,
+      "ssim": 0.741939,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.332849,
+      "ssim_inked_blocks": 12002,
+      "text_line_iou": {
+        "candidate_lines": 22,
+        "mean": 0.070588,
+        "median": 0.0,
+        "pair_rate": 0.733333,
+        "pairs": 22,
+        "reference_lines": 30,
+        "unpaired_candidate": 0,
+        "unpaired_reference": 8
+      }
+    },
+    {
+      "changed_channel_ratio": 0.18954743,
+      "ink": {
+        "candidate": 0.0,
+        "delta": -0.037475,
+        "reference": 0.037475
+      },
+      "page": 18,
+      "scored": true,
+      "ssim": 0.796436,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.283477,
+      "ssim_inked_blocks": 8802,
+      "text_line_iou": {
+        "candidate_lines": 34,
+        "mean": 0.005876,
+        "median": 0.005876,
+        "pair_rate": 0.038462,
+        "pairs": 1,
+        "reference_lines": 26,
+        "unpaired_candidate": 33,
+        "unpaired_reference": 25
+      }
+    },
+    {
+      "changed_channel_ratio": 0.107289396,
+      "ink": {
+        "candidate": 0.049637,
+        "delta": 0.030078,
+        "reference": 0.019559
+      },
+      "page": 19,
+      "scored": true,
+      "ssim": 0.763391,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.050171,
+      "ssim_inked_blocks": 7718,
+      "text_line_iou": {
+        "candidate_lines": 19,
+        "mean": 0.118893,
+        "median": 0.0,
+        "pair_rate": 0.818182,
+        "pairs": 18,
+        "reference_lines": 22,
+        "unpaired_candidate": 1,
+        "unpaired_reference": 4
+      }
+    },
+    {
+      "changed_channel_ratio": 0.182580425,
+      "ink": {
+        "candidate": 0.040136,
+        "delta": -0.02192,
+        "reference": 0.062056
+      },
+      "page": 20,
+      "scored": true,
+      "ssim": 0.585669,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.072696,
+      "ssim_inked_blocks": 13865,
+      "text_line_iou": {
+        "candidate_lines": 32,
+        "mean": 0.09829,
+        "median": 0.0,
+        "pair_rate": 0.848485,
+        "pairs": 28,
+        "reference_lines": 33,
+        "unpaired_candidate": 4,
+        "unpaired_reference": 5
+      }
+    }
+  ],
+  "reference_geometry_scale": {
+    "comparable": true,
+    "declared_median_pt": 12.0,
+    "method": "glyph-weighted median of reference PDF span sizes over glyph-weighted median of declared hh:charPr@height x hh:ratio",
+    "reference_median_pt": 12.0,
+    "scale": 1.0,
+    "tolerance": 0.05
+  },
+  "reference_pdf": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.pdf",
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "scoreboard_version": "2",
+  "ssim_variant": "block-8x8 non-overlapping, C1=6.502500000000001, C2=58.522499999999994, L=255.0; in-repo implementation because scikit-image is not installed in this environment",
+  "summary": {
+    "changed_channel_ratio_mean": 0.136111992,
+    "ink_delta_abs_max": 0.037475,
+    "page_count": {
+      "candidate": 20,
+      "exact": false,
+      "reference": 22
+    },
+    "pages_scored": 20,
+    "ssim_inked_mean": 0.231321,
+    "ssim_inked_min": 0.050171,
+    "ssim_mean": 0.811244,
+    "ssim_min": 0.585669,
+    "text_line_iou_mean": 0.2542,
+    "text_line_pair_rate_mean": 0.798766
+  },
+  "thresholds": {
+    "ink_delta_abs_max": 0.05,
+    "kind": "regression_floor",
+    "page_count_exact": true,
+    "ratified": false,
+    "rationale": "measured worst-of-seven on the comparable corpus forms at 144 dpi: ssim_min 0.4867 (jumin), ssim_inked_min -0.0224 (saeopja), text_line_iou_mean 0.2470 (kstartup), text_line_pair_rate 0.4490 (admrul), ink_delta_abs_max 0.0375 (kstartup). Each bound is set below (or above, for the max) that worst value with a little headroom. raster changed_channel_ratio carries NO threshold: a font-substituting renderer cannot reach a meaningful one, and a gate nobody can pass is not a gate.",
+    "ssim_inked_min": -0.1,
+    "ssim_min": 0.4,
+    "text_line_iou_mean_min": 0.2,
+    "text_line_pair_rate_min": 0.4
+  },
+  "verdict": {
+    "blocked": false,
+    "blocked_reason": null,
+    "checks": [
+      {
+        "bound": true,
+        "check": "page_count_exact",
+        "pass": false,
+        "value": false
+      },
+      {
+        "bound": 0.4,
+        "check": "ssim_min",
+        "pass": true,
+        "value": 0.585669
+      },
+      {
+        "bound": -0.1,
+        "check": "ssim_inked_min",
+        "pass": true,
+        "value": 0.050171
+      },
+      {
+        "bound": 0.2,
+        "check": "text_line_iou_mean",
+        "pass": true,
+        "value": 0.2542
+      },
+      {
+        "bound": 0.4,
+        "check": "text_line_pair_rate_mean",
+        "pass": true,
+        "value": 0.798766
+      },
+      {
+        "bound": 0.05,
+        "check": "ink_delta_abs_max",
+        "pass": true,
+        "value": 0.037475
+      }
+    ],
+    "note": "a passing verdict against UNRATIFIED thresholds promotes nothing; the grade stays own-uncertified",
+    "pass": false,
+    "ratified": false
+  }
+}
