@@ -62,6 +62,9 @@ export type View = "document" | "agent";
  */
 export type CenterMode = "text" | "page";
 
+/** 폭 맞춤 / 쪽 맞춤 / 직접. See `WorkspaceState.pageFit`. */
+export type PageFit = "width" | "page" | "free";
+
 export type Selection =
   | { kind: "paragraph"; atPara: number }
   | { kind: "cell"; table: number; row: number; col: number }
@@ -299,6 +302,18 @@ export interface WorkspaceState {
   page: number;
   /** Page-preview zoom. Independent of `uiZoom`, which scales the whole app. */
   zoom: number;
+  /**
+   * How the page is fitted to the window, when it is fitted at all.
+   *
+   * `"free"` means `zoom` is exactly what the user asked for. `"width"` and
+   * `"page"` mean the page view derives the scale from its own measured box
+   * every time that box changes — so a resized window keeps fitting.
+   *
+   * GEOMETRY IS ZOOM-INDEPENDENT and this changes nothing about that: the
+   * overlay rects are fractions of the page, so a fit change multiplies by a
+   * different pixel size and asks the runtime nothing (§12.1).
+   */
+  pageFit: PageFit;
   centerMode: CenterMode;
   /** Bumped whenever something asks the centre to reveal the selection. */
   locateNonce: number;
@@ -612,6 +627,7 @@ const initial: WorkspaceState = {
   expanded: [],
   page: 1,
   zoom: 1,
+  pageFit: "free",
   centerMode: "text",
   locateNonce: 0,
 
@@ -770,8 +786,46 @@ export function toggleExpanded(id: string) {
   });
 }
 
+/**
+ * A zoom the user asked for by number. Leaves any fit mode, because a fit that
+ * silently overrode the number the person just typed would be a control that
+ * does not do what it says.
+ */
 export const setZoom = (zoom: number) =>
+  setState({ zoom: Math.min(4, Math.max(0.5, zoom)), pageFit: "free" });
+
+/** Enter (or leave) a fit mode. The scale itself is measured by the page view. */
+export const setPageFit = (pageFit: PageFit) => setState({ pageFit });
+
+/**
+ * The scale a FIT arrived at. Keeps the mode, unlike `setZoom`.
+ *
+ * Separate function rather than a flag, because the two callers mean different
+ * things: a person moving the zoom control has left the fit, and a window
+ * resize has not.
+ */
+export const setFittedZoom = (zoom: number) =>
   setState({ zoom: Math.min(4, Math.max(0.5, zoom)) });
+
+/**
+ * The scale a fit mode wants, from the box it has to fit into.
+ *
+ * Kept here rather than in the component so the smoke can assert the arithmetic
+ * without a layout, and so both call sites agree. `pagePx` is the page's size
+ * at 100%; `boxPx` is the scroller's usable interior.
+ */
+export function fitScale(
+  fit: PageFit,
+  page: { width: number; height: number },
+  box: { width: number; height: number },
+  current: number,
+): number {
+  if (fit === "free" || page.width <= 0 || page.height <= 0) return current;
+  if (box.width <= 0 || box.height <= 0) return current;
+  const byWidth = box.width / page.width;
+  const scale = fit === "width" ? byWidth : Math.min(byWidth, box.height / page.height);
+  return Math.min(4, Math.max(0.5, Math.round(scale * 1000) / 1000));
+}
 
 export const setPage = (page: number) => setState({ page: Math.max(1, page) });
 
@@ -1121,6 +1175,7 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     expanded: [...s.expanded].sort(),
     page: s.page,
     zoom: s.zoom,
+    pageFit: s.pageFit,
     centerMode: s.centerMode,
     sessions: s.sessions.map((x) => x.sessionId),
     documentHash: activeInspect(s)?.documentHash ?? null,

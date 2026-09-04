@@ -35,18 +35,66 @@
  * charPr 11 (돋움체) where the preflight suggests charPr 23 (한양중고딕) is a
  * fact a person can act on; "11 vs 23" was not.
  */
-import { applyUiZoom, runCheck } from "../actions";
+import {
+  applyUiZoom,
+  exportApplied,
+  openViaDialog,
+  requestApprovalForDraft,
+  runCheck,
+  stepUiZoom,
+} from "../actions";
 import {
   activeText,
   canRenderPages,
+  canRequestApproval,
   cellKey,
   setCenterMode,
+  setState,
+  setView,
   setZoom,
   useWorkspace,
   type Selection,
 } from "../store";
 import type { InspectResult, RegionText, TypefaceByLang } from "../types";
 import { Tag } from "./Tag";
+
+/**
+ * A menu in the band: a disclosure, not a popup.
+ *
+ * The five actions above earn their place in the strip because people reach for
+ * them constantly. Everything else — the font the document declares, the shape
+ * id, the size, the app zoom — is something a person LOOKS UP, once, when they
+ * have a question. Those used to be six always-on fields competing with the
+ * actions for the same 40 pixels, which is most of why the band read as a
+ * dashboard rather than as a toolbar.
+ *
+ * `<details>` rather than a floating panel on purpose: its content stays in the
+ * DOM when closed, so nothing here becomes unreachable to a screen reader or to
+ * the evidence harness, and there is no z-index, no outside-click handler and
+ * no portal to keep in step with the window.
+ */
+function ToolMenu({
+  label,
+  testId,
+  summary,
+  children,
+}: {
+  label: string;
+  testId: string;
+  /** What the closed menu shows, so a glance still answers the question. */
+  summary?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="toolmenu" data-testid={testId}>
+      <summary>
+        <span className="tool-label">{label}</span>
+        {summary ? <span className="tool-value">{summary}</span> : null}
+      </summary>
+      <div className="toolmenu-body">{children}</div>
+    </details>
+  );
+}
 
 /**
  * charPr id -> the face the DOCUMENT declares for it, joined from the two
@@ -183,6 +231,8 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const applied = useWorkspace((s) => s.applied);
   const checkPhase = useWorkspace((s) => s.checkPhase);
   const findings = useWorkspace((s) => s.findings);
+  const exportPhase = useWorkspace((s) => s.exportPhase);
+  const canApprove = useWorkspace(canRequestApproval);
 
   const baseline = inspect?.summary.baselineCharPr ?? null;
   const hard = findings.filter((f) => f.severity === "hard").length;
@@ -203,6 +253,95 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
 
   return (
     <div className="toolbar" data-testid="editor-toolbar" role="toolbar" aria-label="편집 도구">
+      {/* THE FIVE ACTIONS, first and unqualified.
+          Until now these were scattered across four places — 열기 in the title
+          bar, 검사 here, 내보내기 in the verification bar, 되돌리기 behind a tab
+          in the other view, 승인 in the right-hand panel — and a person doing
+          the ordinary loop had to learn where each of them lived. They are one
+          row now. The panels that own the detail still own it; these are the
+          doors. Each says why it is unavailable rather than being greyed in
+          silence. */}
+      <div className="tool-actions" data-testid="tool-actions">
+        <button
+          className="action"
+          data-testid="act-open"
+          title="문서 열기 (Ctrl+O)"
+          onClick={() => void openViaDialog()}
+        >
+          열기
+        </button>
+        <button
+          className="action"
+          data-testid="act-export"
+          disabled={!applied || exportPhase === "starting"}
+          title={
+            applied
+              ? "후보본과 영수증을 함께 저장합니다"
+              : "아직 내보낼 후보본이 없습니다. 편집을 승인해 적용하면 생깁니다."
+          }
+          onClick={() => void exportApplied()}
+        >
+          {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
+        </button>
+        <button
+          className="action"
+          data-testid="act-undo"
+          title="되돌리기와 후보본 계보를 봅니다"
+          onClick={() => {
+            setView("agent");
+            setState({ agentTab: "history" });
+          }}
+        >
+          되돌리기
+        </button>
+        <button
+          className="action"
+          data-testid="toolbar-check"
+          disabled={!inspect || checkPhase === "starting"}
+          title="서식 검사를 돌립니다"
+          onClick={() => void runCheck()}
+        >
+          {checkPhase === "starting"
+            ? "검사 중…"
+            : checkPhase === "idle"
+              ? "검사"
+              : hard > 0
+                ? `막힘 ${hard}`
+                : `검사 ${findings.length}`}
+        </button>
+        <button
+          className={approvalPhase === "pending" ? "action point" : "action"}
+          data-testid="act-approve"
+          disabled={approvalPhase !== "pending" && !canApprove}
+          title={
+            approvalPhase === "pending"
+              ? "승인 게이트가 열려 있습니다. 오른쪽 패널에서 결정합니다."
+              : canApprove
+                ? "대기 중인 편집의 승인을 요청합니다"
+                : "승인을 요청할 편집이 없습니다. 채움 자리에 값을 넣으면 대기열에 쌓입니다."
+          }
+          onClick={() => {
+            if (approvalPhase === "pending") {
+              document
+                .querySelector('[data-testid="approval-gate"]')
+                ?.scrollIntoView({ block: "center" });
+              return;
+            }
+            void requestApprovalForDraft();
+          }}
+        >
+          {approvalPhase === "pending" ? "승인 대기" : "승인"}
+        </button>
+      </div>
+
+      <div className="tool-sep" />
+
+      {/* 서식 — looked up, not watched. §14's two absences stay apart inside. */}
+      <ToolMenu
+        label="서식"
+        testId="tool-format"
+        summary={name ?? (charPr.id !== null ? `charPr ${charPr.id}` : "—")}
+      >
       {/* 글꼴. The face the DOCUMENT declares, never a default (§14). */}
       <div className="tool-group" data-testid="tool-typeface">
         <span className="tool-label">글꼴</span>
@@ -282,6 +421,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         </span>
         <span className="tool-note tiny">{caret?.sizePt ? "지면에서 잰 값" : "본문 기준"}</span>
       </div>
+      </ToolMenu>
 
       <div className="tool-sep" />
 
@@ -359,37 +499,49 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
             후보본 있음
           </Tag>
         ) : null}
-        <button
-          className="ghost"
-          data-testid="toolbar-check"
-          disabled={!inspect || checkPhase === "starting"}
-          title="서식 검사를 돌립니다"
-          onClick={() => void runCheck()}
-        >
-          {checkPhase === "starting"
-            ? "검사 중…"
-            : checkPhase === "idle"
-              ? "검사"
-              : hard > 0
-                ? `막힘 ${hard}`
-                : `검사 ${findings.length}`}
-        </button>
       </div>
 
       <div className="tool-sep" />
 
-      {/* App zoom, distinct from document zoom and labelled so. */}
-      <div className="tool-group" data-testid="tool-uizoom">
-        <span className="tool-label">화면</span>
-        <button
-          className="tool-value mono"
-          title="Ctrl+0 으로 되돌립니다"
-          disabled={uiZoom === 1}
-          onClick={() => void applyUiZoom(1)}
-        >
-          {Math.round(uiZoom * 100)}%
-        </button>
-      </div>
+      {/* 화면 — the WHOLE application's scale, not the document's. Two numbers
+          that both read as a percentage sat side by side in the strip and were
+          routinely mistaken for each other; the one people change with the
+          keyboard belongs in a menu that names its own shortcuts. */}
+      <ToolMenu label="화면" testId="tool-uizoom" summary={`${Math.round(uiZoom * 100)}%`}>
+        <div className="tool-group zoomer">
+          <button
+            className="ghost"
+            aria-label="화면 축소"
+            title="Ctrl+−"
+            disabled={uiZoom <= 0.5}
+            onClick={() => stepUiZoom(-1)}
+          >
+            −
+          </button>
+          <button
+            className="tool-value mono"
+            data-testid="uizoom-value"
+            title="Ctrl+0 으로 되돌립니다"
+            disabled={uiZoom === 1}
+            onClick={() => void applyUiZoom(1)}
+          >
+            {Math.round(uiZoom * 100)}%
+          </button>
+          <button
+            className="ghost"
+            aria-label="화면 확대"
+            title="Ctrl+="
+            disabled={uiZoom >= 2}
+            onClick={() => stepUiZoom(1)}
+          >
+            +
+          </button>
+        </div>
+        <p className="tool-note tiny">
+          창 전체를 키웁니다. 문서만 키우려면 왼쪽의 문서 배율을 쓰십시오. Ctrl+= · Ctrl+− ·
+          Ctrl+0
+        </p>
+      </ToolMenu>
     </div>
   );
 }
