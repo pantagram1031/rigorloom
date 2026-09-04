@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import math
@@ -243,8 +244,15 @@ PARA_MARGIN_SCALE = 0.5
 
 # hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
 # (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
-# "the whole table moves", the same as NONE.  Only ``CELL`` makes a table
-# splittable across a page boundary; anything else moves the table whole.
+# "the whole table moves", the same as NONE.
+#
+# MEASURED (docs/research/table-page-break-rule.md): ``pageBreak`` is only
+# half the permission.  The other half is 글자처럼 취급 —
+# ``hp:tbl/hp:pos@treatAsChar``.  Hancom splits a table at a row boundary
+# only when the table is ANCHORED (``treatAsChar="0"``) *and* declares
+# ``CELL``.  An INLINE table (``treatAsChar="1"``) is a character-like object
+# in its line: it never splits, whatever ``pageBreak`` says.  Twelve probe
+# variants plus two Hancom-authored tables agree with no exception.
 TABLE_SPLIT_AT_ROWS = "CELL"
 
 # How far the flow pass will back a block up to satisfy ``keepWithNext``.
@@ -601,6 +609,82 @@ def _mm_to_hwp(raw):
 
 
 # --------------------------------------------------------------------------
+# Non-solid border geometry (``hh:borderFill`` ``@type``)
+# --------------------------------------------------------------------------
+#
+# MEASURED, black-box, off the Hancom reference PDFs themselves: none of them
+# carries a PDF ``d`` (dash-array) operator, so Hancom emits every dash as its
+# own path piece, and the pattern can be read straight out of the geometry.
+# Collinear pieces were merged per rule and the run/gap lengths taken as
+# medians, over every corpus reference that declares a DASH side:
+#
+#   declared    stroke      dash      gap     period   dash/w   gap/w  forms
+#   0.10 mm     0.240 pt   0.360    0.480    0.840     1.270   1.693   nrf
+#   0.12 mm     0.360 pt   0.480    0.720    1.200     1.411   2.116   gianmun-2ho,
+#                                                                      jumin,
+#                                                                      kstartup,
+#                                                                      moel-2025
+#   0.15 mm     0.480 pt   0.600    0.840    1.440     1.411   1.976   jeongbo
+#   0.70 mm     2.039 pt   2.879    4.318    7.197     1.451   2.176   jeongbo
+#
+# ``dash/w`` and ``gap/w`` are against the *declared* width (0.12 mm =
+# 34.02 HWPUNIT = 0.3402 pt), not the width Hancom actually strokes -- the
+# stroked width is quantised onto what looks like a 600 dpi device grid
+# (0.240/0.360/0.480/2.039 pt are 2/3/4/17 units of 1/600 in) and the dash
+# geometry tracks the declared width, not the quantised one.
+#
+# The 0.12 mm class is 43 of the corpus's 55 DASH sides, so the constants
+# below are its measurement exactly (1.412 x 0.3402 pt = 0.4804, measured
+# 0.4800; 2.118 x 0.3402 = 0.7206, measured 0.7200).  They land within 3% on
+# the 0.70 mm class and within 0.05 pt on 0.15 mm; 0.10 mm is the loosest fit
+# (predicted 0.400/0.600 against 0.360/0.480) and nothing in the corpus
+# distinguishes "Hancom uses a per-width-class table" from "the 0.10 mm rule
+# is quantised harder", so one ratio is used for every class and the residual
+# is stated here rather than curve-fitted away.  At 144 dpi one 0.12 mm dash
+# is 0.96 px on a 2.4 px pitch, so the residual is well under the pixel.
+BORDER_DASH_PERIOD = 3.53      # x declared border width, measured
+BORDER_DASH_DUTY = 0.40        # ink fraction of the period, measured
+
+# DECLARED, NOT MEASURED.  No corpus form declares DOT, DASH_DOT,
+# DASH_DOT_DOT or LONG_DASH on any border side, and there is therefore no
+# Hancom reference for them at all.  They are built out of the DASH family's
+# own measured period so the four read as one system, and every side drawn
+# with one says so in the sidecar.  A square dot is the width of the stroke.
+BORDER_DOT_INK = 1.0           # x declared border width, declared
+BORDER_LONG_DASH_INK = 2.0     # x the measured dash length, declared
+
+BORDER_DASH_VOCABULARY = {
+    "DASH": ("dash",),
+    "LONG_DASH": ("long_dash",),
+    "DOT": ("dot",),
+    "DASH_DOT": ("dash", "dot"),
+    "DASH_DOT_DOT": ("dash", "dot", "dot"),
+}
+# Which of the above this renderer has actually measured against Hancom.
+BORDER_DASH_MEASURED = frozenset({"DASH"})
+
+
+def border_dash_run(btype, width_hwp):
+    """``[(ink, gap), ...]`` in HWPUNIT for one period, or ``None`` if solid.
+
+    ``None`` means "this type is not a dash family member" -- SOLID, NONE,
+    DOUBLE_SLIM, CIRCLE and everything else keep whatever path they had.
+    """
+    kinds = BORDER_DASH_VOCABULARY.get((btype or "").upper())
+    if not kinds or width_hwp <= 0:
+        return None
+    period = BORDER_DASH_PERIOD * width_hwp
+    dash = BORDER_DASH_DUTY * period
+    gap = period - dash
+    ink_of = {
+        "dash": dash,
+        "long_dash": BORDER_LONG_DASH_INK * dash,
+        "dot": BORDER_DOT_INK * width_hwp,
+    }
+    return [(ink_of[kind], gap) for kind in kinds]
+
+
+# --------------------------------------------------------------------------
 # Header definitions (Contents/header.xml)
 # --------------------------------------------------------------------------
 
@@ -805,6 +889,91 @@ def _normalise_face(name):
     if not name:
         return ""
     return re.sub(r"[\s\-_]+", "", str(name)).casefold()
+
+
+# A document declares one of Hancom's own faces (바탕, 함초롬돋움, HY견고딕, ...)
+# and a machine without Hancom Office has none of them installed — the
+# document then fell all the way through to the single generic system
+# fallback (Malgun on Windows), which is a DIFFERENT face from what any other
+# machine's fallback happens to be, so the same file drew different pixels
+# depending on what else was installed.  This table is the fix: a fixed,
+# family-by-family map from the Hancom/HWP face names a document actually
+# declares to an OFL-licensed family bundled in the repo, so those names
+# resolve to the SAME bundled face everywhere, Hancom Office or not.
+#
+# Only the declared names listed below are mapped; every other declared name
+# (HCI Poppy, 한컴바탕, 신명 신문명조, HY울릉도M, 필기, ...) is unaffected and
+# still falls through to "system" exactly as before — this table is scoped to
+# the plain body serif/sans/monospace families a report-class document sets
+# its running text in, not to Hancom's decorative or display faces, which a
+# generic serif/sans substitute would misrepresent.
+#
+# Licence for every bundled family: engine/references/fonts/LICENSES.md.
+_FAMILY_MAP_TABLE = (
+    ("Nanum Myeongjo",
+     "engine/references/fonts/family-map/NanumMyeongjo-Regular.ttf",
+     "engine/references/fonts/family-map/NanumMyeongjo-Bold.ttf",
+     ("바탕", "함초롬바탕", "휴먼명조", "신명조", "한양신명조", "궁서")),
+    ("Nanum Gothic",
+     "engine/references/fonts/family-map/NanumGothic-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothic-Bold.ttf",
+     ("돋움", "굴림", "함초롬돋움", "맑은 고딕", "한양중고딕", "HY견고딕")),
+    ("Nanum Gothic Coding",
+     "engine/references/fonts/family-map/NanumGothicCoding-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothicCoding-Bold.ttf",
+     ("돋움체", "굴림체")),
+)
+
+
+class BundledFontMap:
+    """The Hancom-face -> bundled-OFL-family map, keyed by normalised name.
+
+    Shaped like a ``SystemFontIndex`` lookup result (``regular``/``bold`` as
+    ``(path, face_index)``, plus ``family``) so ``_face_for`` can treat a
+    bundled hit exactly like an installed one once the installed lookup has
+    already failed.  Built from the fixed table above, not a directory scan —
+    resolving it is a dict lookup, but the entries are built once per
+    ``repo_root`` and shared, the same reasoning as ``SystemFontIndex.shared``.
+    A family whose files are not present on disk (a slim checkout) is simply
+    absent from the map, so its declared names fall through to ``system``
+    rather than raising.
+    """
+
+    _shared = {}
+
+    def __init__(self, repo_root):
+        self.entries = {}
+        for family, reg_rel, bold_rel, declared_names in _FAMILY_MAP_TABLE:
+            reg = Path(repo_root) / reg_rel
+            bold = Path(repo_root) / bold_rel
+            if not reg.is_file():
+                continue
+            entry = {
+                "family": family,
+                "regular": (str(reg), 0),
+                "bold": (str(bold), 0) if bold.is_file() else (str(reg), 0),
+                "italic": None,
+                "bold_italic": None,
+            }
+            for name in declared_names:
+                key = _normalise_face(name)
+                if key:
+                    self.entries[key] = entry
+
+    @classmethod
+    def shared(cls, repo_root):
+        key = str(repo_root)
+        hit = cls._shared.get(key)
+        if hit is None:
+            hit = cls(repo_root)
+            cls._shared[key] = hit
+        return hit
+
+    def lookup(self, face_name):
+        key = _normalise_face(face_name)
+        if not key:
+            return None
+        return self.entries.get(key)
 
 
 def _sfnt_name_records(path):
@@ -1238,6 +1407,56 @@ class Paragraph:
         la = _kid(el, "linesegarray")
         if la is not None:
             self.linesegs = _kids(la, "lineseg")
+        # ``(first, last)`` when this object is one page's worth of a
+        # paragraph the cache carries across a page break; ``None`` — every
+        # corpus paragraph — when it is the whole paragraph.
+        self.rows = None
+
+    def page_runs(self):
+        """``[(first, last), ...]`` — this paragraph's linesegs split wherever
+        its own cached ``vertpos`` jumps BACKWARDS.
+
+        ``vertpos`` is measured from the top of the body box of the page the
+        line is on and restarts on every page, which is the rule ``paginate``
+        already applies BETWEEN top-level paragraphs and ``_restart_segments``
+        applies between the paragraphs of a container.  It applies just as
+        much WITHIN one paragraph: a body paragraph long enough to run off the
+        bottom of a page has its continuation lines cached from the next
+        page's top, so its ``vertpos`` sequence drops back to (near) zero
+        part-way through.
+
+        No corpus form contains such a paragraph — all ten are one-block-per-
+        page government forms — so every corpus paragraph returns a single
+        run and nothing downstream changes for them.  A report-class document
+        has them routinely: the private windpath holdout has five, and before
+        this split each one drew its whole tail at the TOP of the page its
+        head is on, over the title (one stray "있다." above the page-1 title,
+        where the Hancom reference starts with the title).
+        """
+        if len(self.linesegs) < 2:
+            return [(0, len(self.linesegs))]
+        runs = []
+        start = 0
+        prev = _iattr(self.linesegs[0], "vertpos")
+        for i in range(1, len(self.linesegs)):
+            vertpos = _iattr(self.linesegs[i], "vertpos")
+            if vertpos < prev:
+                runs.append((start, i))
+                start = i
+            prev = vertpos
+        runs.append((start, len(self.linesegs)))
+        return runs
+
+    def page_run(self, first, last):
+        """A view of this paragraph limited to linesegs ``[first, last)``.
+
+        Shares the element, the character stream and the lineseg list — only
+        ``rows`` differs — so ``paragraph_index`` still names one paragraph
+        however many pages it is drawn across.
+        """
+        view = copy.copy(self)
+        view.rows = (first, last)
+        return view
 
     @property
     def text(self):
@@ -1405,14 +1624,20 @@ class OwnRenderer:
         #                pass against the authoring engine's own cache.
         self.block_layout = block_layout
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
-        self.fonts_meta = resolve_fonts(repo_root)
+        self.repo_root = Path(repo_root) if repo_root else Path(
+            __file__).resolve().parents[2]
+        self.fonts_meta = resolve_fonts(self.repo_root)
         self.fontbook = FontBook(self.fonts_meta)
         # A pinned face means "rasterise everything with this one", which is
         # what a machine-independent certification run wants; otherwise the
-        # document's own declared faces are resolved against the system.
+        # document's own declared faces are resolved against the system,
+        # then against the bundled family map (BundledFontMap) — see
+        # _face_for.
         self.pinned_face = self.fonts_meta.get("source") == "env"
         self.font_index = (None if self.pinned_face
                            else SystemFontIndex.shared())
+        self.font_family_map = (None if self.pinned_face
+                                else BundledFontMap.shared(self.repo_root))
         self.face_resolution = {}
         self._face_cache = {}
         self.skipped = {}
@@ -1770,6 +1995,13 @@ class OwnRenderer:
         ``@pageBreak`` is deliberately *not* consulted: on this corpus it is
         also set on paragraphs whose ``vertpos`` does not restart, so honouring
         it would invent pages the cached layout does not have.
+
+        The same backward-jump rule applies WITHIN one paragraph
+        (``Paragraph.page_runs``): a body paragraph long enough to run off the
+        page has its continuation lines cached from the next page's top, and
+        each run after the first starts a page here just as a restart between
+        two paragraphs does.  No corpus paragraph has more than one run, so
+        this changes nothing for any of the ten forms.
         """
         usable = max(1, self.page_geometry()["usable_height"])
         pages = []
@@ -1778,6 +2010,7 @@ class OwnRenderer:
         prev_bottom = -1
         for el in _kids(self.sections[self._current_section], "p"):
             para = Paragraph(el, self.defs["para_pr"])
+            runs = para.page_runs()
             if para.linesegs:
                 first = _iattr(para.linesegs[0], "vertpos")
                 last = para.linesegs[-1]
@@ -1787,8 +2020,23 @@ class OwnRenderer:
                 if restart and current:
                     pages.append(current)
                     current = []
-                prev_first, prev_bottom = first, bottom
-            current.append(para)
+                # The paragraph after this one continues below its LAST run,
+                # not below the run it started on — with a split, vertpos[0]
+                # belongs to an earlier page and would make the comparison
+                # against the next paragraph meaningless.
+                prev_first = _iattr(para.linesegs[runs[-1][0]], "vertpos")
+                prev_bottom = bottom
+            if len(runs) == 1:
+                current.append(para)
+                continue
+            # This paragraph's own cache carries it across a page break: each
+            # run after the first STARTS a page, exactly as a restart between
+            # two paragraphs does.
+            for index, (lo, hi) in enumerate(runs):
+                if index:
+                    pages.append(current)
+                    current = []
+                current.append(para.page_run(lo, hi))
         if current or not pages:
             pages.append(current)
         return pages
@@ -1861,6 +2109,9 @@ class OwnRenderer:
             "content overflows the usable box; split at a row boundary the "
             "same way the computed flow pass would, instead of drawing the "
             "overflow")
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
         queue.append((0, cut))
@@ -1919,12 +2170,14 @@ class OwnRenderer:
         rows = []
         if mode == LINE_LAYOUT_COMPUTED and para.chars:
             for line in self.compute_lines(draw, para, column_hwp):
+                table = self._flowing_table(
+                    para, line["start"], line["end"])
                 rows.append({
                     "advance": line["vertsize"] + line["spacing"],
-                    "extent": line["baseline"],
+                    "extent": self._row_extent(line["baseline"],
+                                               line["vertsize"], table),
                     "start": line["start"], "end": line["end"],
-                    "table": self._flowing_table(
-                        para, line["start"], line["end"]),
+                    "table": table,
                 })
             return mode, rows
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
@@ -1935,28 +2188,52 @@ class OwnRenderer:
             vertsize = _iattr(seg, "vertsize")
             baseline = _iattr(seg, "baseline") or int(round(
                 BASELINE_RATIO * vertsize))
+            table = self._flowing_table(para, start, end)
             rows.append({
                 "advance": vertsize + _iattr(seg, "spacing"),
-                "extent": baseline,
+                "extent": self._row_extent(baseline, vertsize, table),
                 "start": start, "end": end,
-                "table": self._flowing_table(para, start, end),
+                "table": table,
             })
         return mode, rows
 
-    def _table_split_rows(self, draw, tbl):
-        """Cumulative row bottoms of ``tbl``, and whether it may be split.
+    @staticmethod
+    def _row_extent(baseline, vertsize, table):
+        """The height a page-bottom test has to clear for one line.
 
-        A table is splittable at a row boundary only when it says so —
-        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔).  ``NONE`` (나누지 않음)
-        and ``TABLE`` (표 단위로 나눔) both mean the whole table moves.
+        ``baseline`` for a line of text: the descender below it may cross the
+        margin, and refusing that costs 3 of 47 corpus pages
+        (``docs/research/line-fit-rule.md``).  A line whose content is an
+        inline TABLE has no descender, and Hancom's own placement was
+        measured against the table's WHOLE height
+        (``docs/research/table-page-break-rule.md``): a table that does not
+        clear the room left on the page moves whole, it does not hang 15% of
+        itself past the margin and then get cut.
         """
-        splittable = (tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
-        self._quiet += 1
-        try:
-            _xs, ys, _cells = self._table_tracks(draw, tbl)
-        finally:
-            self._quiet -= 1
-        return splittable, ys
+        return max(baseline, vertsize) if table is not None else baseline
+
+    @staticmethod
+    def _table_is_inline(tbl):
+        """True when ``tbl`` is 글자처럼 취급 (``hp:pos@treatAsChar="1"``).
+
+        The measured half of the split permission: an inline table never
+        splits at a page boundary, whatever ``hp:tbl@pageBreak`` says.
+        """
+        pos = _kid(tbl, "pos")
+        if pos is None:
+            return False
+        return (pos.get("treatAsChar") or "0") not in ("0", "false", "FALSE")
+
+    def _table_may_split(self, tbl):
+        """May ``tbl`` be cut at a row boundary across a page?
+
+        Both halves, measured (docs/research/table-page-break-rule.md):
+        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔) AND the table anchored
+        rather than 글자처럼 취급.  ``NONE`` (나누지 않음), ``TABLE``
+        (표 단위로 나눔) and every inline table move whole instead.
+        """
+        return ((tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
+                and not self._table_is_inline(tbl))
 
     # hp:tbl/@textWrap — 본문과의 배치.  Only these reserve vertical room in
     # the flow: TOP_AND_BOTTOM (위/아래 배치) puts the text below the object,
@@ -2033,7 +2310,7 @@ class OwnRenderer:
             wrap = (el.get("textWrap") or "").upper()
             if wrap not in self.FLOW_RESERVING_WRAPS:
                 continue
-            if (el.get("pageBreak") or "").upper() != TABLE_SPLIT_AT_ROWS:
+            if not self._table_may_split(el):
                 continue
             pos = _kid(el, "pos")
             vrel = ((pos.get("vertRelTo") or "PARA").upper()
@@ -2077,8 +2354,8 @@ class OwnRenderer:
     def _row_cut_for_room(ys, start, room):
         """Largest row boundary at/after ``start`` whose height above
         ``ys[start]`` still fits ``room`` — or ``start`` when not even the
-        next row fits.  Same rule ``_split_table_row`` uses for an inline
-        table, generalised to a boundary that need not be zero.
+        next row fits — the row-boundary cut generalised to a boundary that
+        need not be zero.
         """
         cut = start
         for row_index in range(start + 1, len(ys) - 1):
@@ -2106,6 +2383,9 @@ class OwnRenderer:
         cut = self._row_cut_for_room(ys, 0, room)
         if cut == 0:
             return None
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         counters["tables_split"] += 1
         # The paragraph itself is a one-slot placeholder for the anchored
@@ -2186,8 +2466,11 @@ class OwnRenderer:
         * ``@keepWithNext`` (다음 문단과 함께) — this block starts on the page
           its successor starts on, backed up at most
           ``KEEP_WITH_NEXT_MAX_CHAIN`` blocks.
-        * ``hp:tbl@pageBreak`` — a table splits at a row boundary only when it
-          declares ``CELL``; otherwise the whole table moves.
+        * ``hp:tbl@pageBreak`` + ``hp:pos@treatAsChar`` — a table splits at a
+          row boundary only when it declares ``CELL`` AND is anchored;
+          otherwise the whole table moves to the next page, and a table
+          taller than a whole page is drawn from the top of that page and
+          allowed to overflow (measured: Hancom does the same).
 
         Columns.  A page whose section declares real columns (equal widths,
         ``hp:colPr@sameSz=true``, ``colCount>1``) is modelled as
@@ -2435,25 +2718,14 @@ class OwnRenderer:
                 seg_height += row["advance"]
                 index += 1
                 continue
-            split = (self._split_table_row(draw, row["table"], room)
-                     if row["table"] is not None else None)
-            if split is not None:
-                counters["tables_split"] += 1
-                out.append(self._flow_record(
-                    block, page, seg_top, seg_height + split["height"],
-                    (seg_first, index + 1), kind="table",
-                    split=split["first"]))
-                page += 1
-                tail = row["advance"] - split["height"]
-                out.append(self._flow_record(
-                    block, page, 0, tail, (index, index + 1), kind="table",
-                    split=split["rest"]))
-                cursor = tail
-                seg_top = tail
-                seg_height = 0
-                index += 1
-                seg_first = index
-                continue
+            # An INLINE (글자처럼 취급) table never splits — measured, see
+            # ``TABLE_SPLIT_AT_ROWS`` above and
+            # docs/research/table-page-break-rule.md.  ``row["table"]`` is by
+            # construction inline (``_flowing_table`` excludes anchored
+            # tables), so the only answer here is "the whole table moves",
+            # and a table taller than a whole page is then drawn from the top
+            # of the next page and allowed to overflow — which is exactly
+            # what Hancom does with its own.
             if row["table"] is not None:
                 counters["tables_moved_whole"] += 1
             if seg_height:
@@ -2484,33 +2756,6 @@ class OwnRenderer:
             cursor += row["advance"]
             count += 1
         return count
-
-    def _split_table_row(self, draw, tbl, room):
-        """Split a table at the last row boundary that fits in ``room``.
-
-        ``None`` when the table does not declare itself splittable, or when no
-        row boundary fits — in both cases the whole table moves instead.
-        """
-        splittable, ys = self._table_split_rows(draw, tbl)
-        if not splittable or len(ys) < 3:
-            return None
-        cut = 0
-        for row_index in range(1, len(ys) - 1):
-            if ys[row_index] <= room:
-                cut = row_index
-            else:
-                break
-        if cut == 0:
-            return None
-        self._skip("hp:tbl@repeatHeader",
-                   "a table split across a page boundary does not repeat its "
-                   "header row on the continuation page")
-        return {
-            "height": ys[cut],
-            "first": {"table": id(tbl), "row_start": 0, "row_end": cut},
-            "rest": {"table": id(tbl), "row_start": cut,
-                     "row_end": len(ys) - 1},
-        }
 
     def _apply_keep_with_next(self, blocks, placements, counters, usable,
                               from_block):
@@ -2618,13 +2863,26 @@ class OwnRenderer:
         return self.defs["char_pr"].get(cid or "", {})
 
     def _face_for(self, cid, slot, bold):
-        """The installed face this run's ``hh:fontRef`` names for ``slot``.
+        """The face this run's ``hh:fontRef`` names for ``slot``.
 
         ``hh:charPr/hh:fontRef`` carries one font id *per language slot*, and
         ``hh:fontfaces`` resolves each id per slot to a face name.  That name
-        is matched against the system font index by the family names the
-        installed faces themselves declare — including their Korean ones,
-        which is what makes 함초롬돋움 / 바탕 / HY신명조 resolvable at all.
+        is resolved in a fixed order, each declared per face in the sidecar
+        as ``source``:
+
+        1. ``installed``  — matched against the system font index by the
+           family names the installed faces themselves declare, including
+           their Korean ones, which is what makes 함초롬돋움 / 바탕 / HY신명조
+           resolvable at all when Hancom Office (or the matching face) is on
+           this machine.
+        2. ``bundled``    — the declared name is not installed here, but it
+           is one of the plain body serif/sans/monospace names
+           ``BundledFontMap`` maps to an OFL family shipped in the repo
+           (see ``_FAMILY_MAP_TABLE``), so the SAME bundled face answers for
+           it on every machine, Hancom Office or not.
+        3. ``system``     — neither matched; the run falls back to
+           ``self.fonts_meta``, the single machine-dependent fallback face
+           (see ``resolve_fonts``).
 
         Returns ``(path, index)`` or ``None`` for "use the fallback face".
         Every answer is recorded in ``face_resolution`` so the sidecar can
@@ -2654,28 +2912,37 @@ class OwnRenderer:
             if face_name:
                 break
         if not face_name:
-            record = self._declare_face(None, slot, None, bold)
+            record = self._declare_face(None, slot, None, bold, "system")
             self._face_cache[key] = (None, record)
             return None
         entry = self.font_index.lookup(face_name)
+        source = "installed"
+        if entry is None:
+            entry = (self.font_family_map.lookup(face_name)
+                     if self.font_family_map is not None else None)
+            source = "bundled" if entry is not None else "system"
         chosen = None
         if entry is not None:
             chosen = entry["bold" if bold else "regular"] or entry["regular"] \
                 or entry["bold"]
+        if chosen is None:
+            source = "system"
         # A family with no bold cut installed — 바탕 / Batang is one, and it is
         # the face a report-class document is set in — hands back its regular
         # face here.  HWP does not then draw regular text: it fakes the weight.
         # Record that this face has to be emboldened by hand, so the drawing
         # side can do the same rather than silently losing every bold run.
+        # Every bundled family carries a real bold cut, so this never fires
+        # for source == "bundled".
         self._synthetic_bold[key] = bool(
             bold and chosen is not None and entry is not None
             and not entry["bold"])
         record = self._declare_face(face_name, slot,
-                                    entry if chosen else None, bold)
+                                    entry if chosen else None, bold, source)
         self._face_cache[key] = (chosen, record)
         return chosen
 
-    def _declare_face(self, face_name, slot, entry, bold):
+    def _declare_face(self, face_name, slot, entry, bold, source="system"):
         key = (face_name or "(no hh:fontRef for this slot)", slot, bold)
         record = self.face_resolution.get(key)
         if record is None:
@@ -2684,7 +2951,11 @@ class OwnRenderer:
                 "slot": slot,
                 "bold": bold,
                 "resolved": entry is not None,
+                "source": source,
                 "installed_family": entry["family"] if entry else None,
+                "family_map": (entry["family"]
+                               if entry is not None and source == "bundled"
+                               else None),
                 "file": None,
                 "characters": 0,
             }
@@ -3303,11 +3574,59 @@ class OwnRenderer:
                 return LINE_LAYOUT_COMPUTED, "stale_line_width"
         return "lineseg", None
 
+    @staticmethod
+    def _object_out_margin(el):
+        """``hp:outMargin`` — the object's 바깥 여백, ``(left, top, right, bottom)``.
+
+        Schema: ``DevDoc/OWPML SCHEMA/ParaList XML schema.xml`` gives every
+        ``ShapeObject`` an ``outMargin`` alongside its ``sz`` and ``pos``.  It
+        is the gap *outside* the object's own box, so the box's own top-left
+        sits ``(left, top)`` in from the slot the object occupies, and the
+        slot is ``left + width + right`` wide.  Measured against the corpus
+        reference PDFs, that is exactly what the authoring engine does: every
+        form whose tables declare ``outMargin=0`` registers on its reference
+        to within a tenth of a point, and every form that declares 140/141/283
+        drew 1.40/1.41/2.83 pt up and to the left of it — see
+        ``engine/references/own-render-notes.md``.
+        """
+        margin = _kid(el, "outMargin")
+        if margin is None:
+            return (0, 0, 0, 0)
+        return (_iattr(margin, "left"), _iattr(margin, "top"),
+                _iattr(margin, "right"), _iattr(margin, "bottom"))
+
+    def _object_origin(self, el, origin_hwp):
+        """The object box's own top-left, given the slot's top-left."""
+        left, top, _right, _bottom = self._object_out_margin(el)
+        if left or top:
+            self.applied["hp:outMargin"] = self.applied.get("hp:outMargin", 0) + 1
+        return (origin_hwp[0] + left, origin_hwp[1] + top)
+
     def _object_extent(self, el):
+        """The object's inline slot: its box, plus the outer margin's WIDTH.
+
+        Horizontally this is a footprint and not just a box, and that is
+        measured: ``moel-2013`` centres a table that declares
+        ``outMargin=283`` on all four sides, and its reference PDF draws that
+        table centred on the body box to within a tenth of a point.  That only
+        comes out right if the slot the line centres is ``left + width +
+        right`` wide and the box sits ``left`` inside it — insetting the box
+        alone would put it 2.83 pt right of centre.
+
+        **Vertically the outer margin is NOT added, and that is a declared
+        limit, not a finding.**  Nothing in the reference set measures the
+        line *height* an inline object claims — the cached ``hp:lineseg``
+        carries it on every corpus form — so growing it here would be a guess
+        that only shows up in ``block_layout=computed``, where it costs
+        ``kstartup`` a 23rd page against a 21-page reference.  The box is
+        still drawn ``top`` down from the slot (``_object_origin``), which is
+        the part the references do measure.
+        """
         if _local(el.tag) in ("footNote", "endNote"):
             return self._note_mark_extent(el)
         sz = _kid(el, "sz")
-        return (_iattr(sz, "width") if sz is not None else 0,
+        left, _top, right, _bottom = self._object_out_margin(el)
+        return ((_iattr(sz, "width") if sz is not None else 0) + left + right,
                 _iattr(sz, "height") if sz is not None else 0)
 
     def _line_pieces(self, draw, items, split_for_justification):
@@ -3462,7 +3781,8 @@ class OwnRenderer:
                 continue
             if piece["kind"] == "obj":
                 name, el, _charpr, _floating = piece["payload"]
-                origin = (self.hwp_from_px(cursor), line_top_hwp)
+                origin = self._object_origin(
+                    el, (self.hwp_from_px(cursor), line_top_hwp))
                 if name in ("footNote", "endNote"):
                     self._draw_note_mark(draw, el, cursor, baseline_px)
                 elif name == "tbl":
@@ -3528,23 +3848,45 @@ class OwnRenderer:
         oy += block_offset_hwp
         shift = 0
         for para in paragraphs:
-            self.counts["paragraphs"] += 1
-            self.counts["runs"] += len(_kids(para.el, "run"))
-            if para.tabs:
-                self._skip("hp:tab", "hp:tab elements inside a run are not "
-                                     "placed in the character stream, so the "
-                                     "line they sit on is measured without "
-                                     "them")
-            self._render_floating(draw, para, (ox, oy + shift))
+            # A paragraph the cache carries across a page break arrives here
+            # once per page, as a view over its own lineseg range
+            # (``Paragraph.page_runs``).  Everything that belongs to the
+            # PARAGRAPH rather than to the lines on this page — the counts,
+            # its anchored objects, the layout record — happens on the first
+            # view only, or it would be done once per page it spans.
+            head = para.rows is None or para.rows[0] == 0
+            if head:
+                self.counts["paragraphs"] += 1
+                self.counts["runs"] += len(_kids(para.el, "run"))
+                if para.tabs:
+                    self._skip("hp:tab", "hp:tab elements inside a run are "
+                                         "not placed in the character stream, "
+                                         "so the line they sit on is measured "
+                                         "without them")
+                self._render_floating(draw, para, (ox, oy + shift))
             if not para.chars:
                 continue
             index = self.paragraph_index.get(id(para.el))
             mode, reason = self.line_layout_mode(para, avail_w_hwp, index)
-            self._layout_counts[mode] += 1
+            if para.rows is not None and mode != "lineseg":
+                # A split paragraph IS a cached-layout fact: the split is read
+                # out of the cache, so the halves have to be drawn from it too.
+                # Reflowing one across a page boundary is the flow pass's job
+                # (``--block-layout computed``), not this path's.
+                mode = "lineseg"
+                reason = ("the cache carries this paragraph across a page "
+                          "break; its halves are drawn from the cache rather "
+                          "than relaid out on this path")
+                if head:
+                    self._skip("hp:p (split across a page)", reason)
+            if head:
+                self._layout_counts[mode] += 1
             if mode == "lineseg":
-                self._record_layout(index, para, mode, reason, None)
+                if head:
+                    self._record_layout(index, para, mode, reason, None)
                 self._render_cached_lines(draw, para, (ox, oy + shift),
-                                          avail_w_hwp)
+                                          avail_w_hwp, rows=para.rows,
+                                          rebase=False)
                 continue
             self._layout_reasons[reason] = self._layout_reasons.get(reason, 0) + 1
             lines = self.compute_lines(draw, para, avail_w_hwp)
@@ -3625,11 +3967,22 @@ class OwnRenderer:
             )
 
     def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp,
-                             rows=None):
+                             rows=None, rebase=True):
+        """Draw ``para``'s cached line boxes, optionally only rows
+        ``[first, last)``.
+
+        ``rebase`` pulls the range's first line onto ``origin`` — what the
+        computed flow pass wants, because it has decided where the range goes
+        and the cached ``vertpos`` is stale.  The cached path passes
+        ``rebase=False``: there the cached ``vertpos`` IS the answer on both
+        halves of a paragraph the authoring engine split (a continuation's
+        own ``vertpos`` is already measured from its new page's body top),
+        and rebasing would slam it against the top margin instead.
+        """
         ox, oy = origin_hwp
         positions = [_iattr(s, "textpos") for s in para.linesegs]
         first, last = rows if rows is not None else (0, len(para.linesegs))
-        if rows is not None and first < len(para.linesegs):
+        if rows is not None and rebase and first < len(para.linesegs):
             oy -= _iattr(para.linesegs[first], "vertpos")
         self._line_mode = "lineseg"
         margin_right = para.para_pr.get("margin_right", 0) or 0
@@ -3796,18 +4149,19 @@ class OwnRenderer:
                        f"anchored object (treatAsChar=0, horzRelTo={hrel}, "
                        f"vertRelTo={vrel}) placed at its declared offset; "
                        "text wrap around it is not computed")
+            origin = self._object_origin(el, (x, y))
             if name == "tbl":
                 if is_split_target:
                     row_range = (auto_range if auto_range is not None
                                 else (split["row_start"], split["row_end"]))
                     self._table_splits[id(el)] = row_range
                 try:
-                    self._render_table(draw, el, (x, y))
+                    self._render_table(draw, el, origin)
                 finally:
                     if is_split_target:
                         self._table_splits.pop(id(el), None)
             else:
-                self._render_placeholder(draw, el, name, (x, y))
+                self._render_placeholder(draw, el, name, origin)
 
     def _binary_bytes(self, item_id):
         """The bytes of one ``BinData/`` entry, read on demand and cached."""
@@ -3931,8 +4285,13 @@ class OwnRenderer:
         chosen = None
         if entry is not None:
             chosen = entry["regular"] or entry["bold"]
-        record = self._declare_face(face_name or None, "equation",
-                                    entry if chosen else None, False)
+        # Equation faces are not looked up in BundledFontMap: that table maps
+        # plain body serif/sans/monospace names, and an equation's declared
+        # face is a maths-specific one (see the italic-cut discussion below),
+        # so a body substitute would misrepresent it rather than help it.
+        record = self._declare_face(
+            face_name or None, "equation", entry if chosen else None, False,
+            "installed" if chosen else "system")
         italic_cut = entry.get("italic") if entry else None
         if italic_cut is not None:
             italic_face, italic_kind = italic_cut, "cut"
@@ -4868,6 +5227,20 @@ class OwnRenderer:
                               fill=colour, width=stroke)
                 self.counts["borders"] += 1
                 continue
+            run = border_dash_run(btype, spec.get("width_hwp") or 0)
+            if run is not None:
+                # 파선/점선.  The period is measured off the Hancom reference
+                # PDFs' own path geometry — see ``border_dash_run``.
+                if btype not in BORDER_DASH_MEASURED:
+                    self._skip(
+                        f"hh:{side}Border@type={btype}",
+                        "no corpus form and no Hancom reference declares this "
+                        "type; drawn from the measured DASH period, not "
+                        "measured itself")
+                self._stroke_dashed(draw, (ax, ay), (bx, by), colour, width,
+                                    run)
+                self.counts["borders"] += 1
+                continue
             if btype != "SOLID":
                 reason = ("non-solid border stroked as solid"
                           if btype != "DOUBLE_SLIM" else
@@ -4877,6 +5250,55 @@ class OwnRenderer:
             draw.line([(ax_px, ay_px), (bx_px, by_px)],
                       fill=colour, width=width)
             self.counts["borders"] += 1
+
+    def _stroke_dashed(self, draw, p0_hwp, p1_hwp, colour, width_px, run_hwp):
+        """Stroke one axis-aligned edge as a dash run.  Returns piece count.
+
+        The phase is anchored to the PAGE origin, not to the edge's own start:
+        a table rule is drawn once per cell it crosses, and a per-edge phase
+        would restart the pattern at every column boundary, which is not what
+        the reference does — Hancom's dashed rules run the whole width of the
+        table on one uninterrupted phase.  Anchoring at the origin makes every
+        collinear piece agree without any of them knowing about the others.
+        """
+        (ax, ay), (bx, by) = p0_hwp, p1_hwp
+        vertical = ax == bx
+        lo, hi = (ay, by) if vertical else (ax, bx)
+        if hi < lo:
+            lo, hi = hi, lo
+        period = sum(ink + gap for ink, gap in run_hwp)
+        if period <= 0:
+            draw.line([(self.px(ax), self.px(ay)), (self.px(bx), self.px(by))],
+                      fill=colour, width=width_px)
+            return 1
+        cursor = math.floor(lo / period) * period
+        pieces = index = 0
+        cross = self.px(ax if vertical else ay)
+        while cursor < hi:
+            ink, gap = run_hwp[index % len(run_hwp)]
+            index += 1
+            start, end = max(cursor, lo), min(cursor + ink, hi)
+            cursor += ink + gap
+            if end <= start:
+                continue
+            s_px, e_px = self.px(start), self.px(end)
+            if e_px <= s_px:
+                # A dash shorter than a device pixel is still a dash: dropping
+                # it would silently turn the rule into a blank at low dpi.
+                e_px = s_px + 1
+            # ``draw.line`` includes BOTH endpoints, so the last pixel of a
+            # dash belongs to the following gap: a dash drawn s..e would be
+            # one pixel longer than it measures.  A solid rule keeps both
+            # endpoints — its ends are the cell's own corners.
+            e_px -= 1
+            if vertical:
+                draw.line([(cross, s_px), (cross, e_px)],
+                          fill=colour, width=width_px)
+            else:
+                draw.line([(s_px, cross), (e_px, cross)],
+                          fill=colour, width=width_px)
+            pieces += 1
+        return pieces
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         margin = cell["margin"]
@@ -4974,29 +5396,40 @@ class OwnRenderer:
         }
 
     def _font_report(self):
-        """Per declared face: resolved against the system, or substituted.
+        """Per declared face: installed, bundled-mapped, or substituted.
 
         The honesty rule in its sharpest form.  Before this the sidecar said
         "every HWP face is rasterised with one family" — true, and useless for
         judging a page, because it could not say *which* of the document's
         faces the reader was actually looking at.  Now every declared face is
-        listed with the installed file that answered for it, or with the
-        substitute that stood in, and both are counted in characters.
+        listed with the file that answered for it — installed, or the
+        deterministic bundled fallback (``BundledFontMap``), or the generic
+        machine-dependent one that stood in for neither — and all three are
+        counted in characters.  ``resolved_character_share`` counts installed
+        AND bundled together (neither is the generic substitute); the
+        ``installed``/``bundled``/``substituted`` counts below break that
+        back apart, because a bundled hit is still not the exact declared
+        face and its advance widths still differ from the authoring engine's.
         """
         faces = sorted(self.face_resolution.values(),
                        key=lambda f: (not f["resolved"],
                                       f["declared"] or "", f["slot"],
                                       f["bold"]))
-        resolved = sum(f["characters"] for f in faces if f["resolved"])
-        substituted = sum(f["characters"] for f in faces if not f["resolved"])
+        installed = sum(f["characters"] for f in faces
+                        if f["source"] == "installed")
+        bundled = sum(f["characters"] for f in faces
+                     if f["source"] == "bundled")
+        substituted = sum(f["characters"] for f in faces
+                          if f["source"] == "system")
+        resolved = installed + bundled
         total = resolved + substituted
         for face in faces:
             if not face["resolved"] and face["declared"]:
                 self._skip(
                     f"hh:fontface[{face['declared']}]",
-                    "declared face is not installed on this machine; "
-                    "substituted, so advance widths differ from the "
-                    "authoring engine's")
+                    "declared face is not installed on this machine and not "
+                    "in the bundled family map; substituted, so advance "
+                    "widths differ from the authoring engine's")
         return {
             "fallback_regular": self.fonts_meta["regular"],
             "fallback_bold": self.fonts_meta["bold"],
@@ -5004,22 +5437,39 @@ class OwnRenderer:
             "pinned_single_face": self.pinned_face,
             "system_font_files_scanned": (
                 self.font_index.scanned if self.font_index else 0),
+            "characters_on_an_installed_face": installed,
+            "characters_on_a_bundled_face": bundled,
             "characters_on_a_resolved_face": resolved,
             "characters_on_a_substituted_face": substituted,
             "resolved_character_share": (
                 round(resolved / total, 6) if total else None),
+            "installed_character_share": (
+                round(installed / total, 6) if total else None),
+            "bundled_character_share": (
+                round(bundled / total, 6) if total else None),
             "faces": faces,
             "note": (
-                "declared faces are matched against the installed faces' own "
-                "family names, read from each font's OpenType name table "
-                "(including its Korean records, which FreeType does not "
-                "expose). A face that is not installed is substituted with "
-                "the fallback and named here and in elements_skipped; its "
-                "advance widths then differ from the authoring engine's. "
-                "This makes a render machine-dependent BY DESIGN: the same "
-                "document on a machine without these faces will not produce "
-                "the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one "
-                "face and take that variable out of the measurement."
+                "declared faces are matched, in order, against (1) the "
+                "installed faces' own family names, read from each font's "
+                "OpenType name table (including its Korean records, which "
+                "FreeType does not expose), (2) BundledFontMap — a fixed "
+                "table mapping plain body serif/sans/monospace Hancom face "
+                "names to an OFL family shipped in the repo (engine/"
+                "references/fonts/family-map/, licences in engine/"
+                "references/fonts/LICENSES.md), so those names render "
+                "identically whether or not Hancom Office is installed, and "
+                "(3) the single generic fallback face if neither matched. "
+                "Every non-installed answer is named here and in "
+                "elements_skipped; its advance widths differ from the "
+                "authoring engine's — bundled less unpredictably than the "
+                "generic fallback, but still not byte-identical to it. "
+                "A declared name outside the bundled table (HCI Poppy, "
+                "한컴바탕, 필기, ...) still falls through to the generic "
+                "fallback and is machine-dependent BY DESIGN: the same "
+                "document on a machine without those faces will not produce "
+                "the same pixels there. Set RIGORLOOM_OWN_RENDER_FONT to pin "
+                "one face and take that variable out of the measurement "
+                "entirely."
             ),
         }
 
