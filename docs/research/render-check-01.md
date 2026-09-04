@@ -70,7 +70,11 @@ has been scored with them.
 
 ## Result
 
-**3 match · 37 close · 9 differs · 2 unsupported** over 51 features.
+**3 match · 38 close · 8 differs · 2 unsupported** over 51 features.
+
+`F49` 다단 is the one row that moved since the line-metrics measurement
+(**3 · 37 · 9 · 2**), and it moved because *the document* was fixed, not the
+renderer: see note 4. Page agreement is unchanged at **47/51**.
 
 Measured on the E2 line-metrics tree (`claude/engine-e2-line-metrics`), which
 adds the character- and line-metric rules of
@@ -167,12 +171,12 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 | `F41` [글머리표 (bullets)](render-check-01/F41.png) | 0.880 | 0.175 | 0.405 | +0.0076 | 5 | **close** |
 | `F42` [각주 (footnote)](render-check-01/F42.png) | 0.837 | 0.145 | 0.467 | +0.0134 | 5 | **close** |
 | `F43` [미주 (endnote)](render-check-01/F43.png) | 0.862 | 0.166 | 0.462 | +0.0134 | 5 | **close** |
-| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.865 | 0.244 | 0.478 | +0.0223 | 5 | **close** |
+| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.864 | 0.240 | 0.476 | +0.0223 | 5 | **close** |
 | `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.854 | 0.516 | 0.174 | -0.0083 | 5 | **unsupported** |
 | `F46` [쪽 나누기 (page break, pageBreakBefore)](render-check-01/F46.png) | 0.798 | 0.200 | 0.524 | +0.0190 | 6 | **close** |
 | `F47` [표 — 쪽을 넘기는 표 (table split across a page)](render-check-01/F47.png) | 0.993 | 0.240 | 0.535 | +0.0008 | 6 | **close** |
 | `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8/9 | **differs** |
-| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.816 | 0.047 | 0.141 | +0.0085 | 9/10 | **differs** |
+| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.871 | 0.117 | 0.355 | +0.0092 | 9/10 | **close** |
 | `F50` [머리말 (header)](render-check-01/F50.png) | 0.940 | 0.153 | 0.153 | +0.0090 | 1 | **differs** |
 | `F51` [꼬리말 + 쪽 번호 (footer with page number)](render-check-01/F51.png) | 0.974 | 0.154 | 0.156 | +0.0030 | 1 | **unsupported** |
 
@@ -305,19 +309,47 @@ matches `own-render-notes.md`'s own description of `solve_tracks`.
 > separates from the rasteriser, and the item should not be re-attacked as row
 > height without a probe that measures a row directly.
 
-### 4. `F49` 다단 — 2단 구역 (IoU 0.150)
+### 4. `F49` 다단 — 2단 구역 (IoU 0.141 → 0.355, `differs` → `close`)
 
-We honour `hp:colPr@colCount=2` and lay the section out in two columns.
-Hancom renders the same section full width. Both engines kept
-`colCount="2"` through the COM round-trip, so they disagree about when the
-control takes effect, not about what it says.
+**The document was malformed; the renderer was right.** This item used to read
+"we lay the section out in two columns, Hancom renders it full width". It was
+measured, and the disagreement was not about columns at all — it was about
+where the `hp:colPr` control sits in the section-head paragraph.
 
-*Mechanism guess.* The `hp:colPr` control sits in the same run as `hp:secPr`
-at the head of the section. Hancom likely requires a column definition to be
-established by a column break or a section restart before it applies to the
-paragraphs that follow. The catalog's expectation was the opposite of what was
-measured — it lists 다단 as declared-skipped by our renderer — so this row of
-the catalog needs updating.
+Two probe documents (one section per case, Hwp 2024 13.0.0.2986, PDF export
+read back for the x-extent of the text — `colCount="2"` in every case):
+
+| case | section-head control order | Hancom renders |
+|---|---|---|
+| `P1` | `secPr`, header, footer, `colPr` `sameGap=0` | one column |
+| `P2` | `secPr`, header, footer, `colPr` `sameGap=1134` | one column |
+| `P3` | `secPr`, header, footer, `colPr` `sameSz=0` + 2×`colSz` | one column |
+| `P6` | `secPr`, header, footer, `colPr` `BALANCED_NEWSPAPER` | one column |
+| `P7` | `secPr`, header, footer, `colPr` `sameSz="true"` | one column |
+| `Q1` | `secPr`, header, `colPr`, footer | one column |
+| `Q3` | `secPr`, footer, `colPr` | one column |
+| `Q2` | `secPr`, `colPr` | **two columns** |
+| `P4`/`Q4` | `secPr`, `colPr`, header, footer | **two columns** |
+| `P5` | `secPr`, header, footer; `colPr` in the *next* paragraph | **two columns** |
+
+So none of the attribute candidates matters. `type`, `layout`, `sameSz`,
+`sameGap` and explicit `hp:colSz` children all behave the same on both sides
+of the line; what decides it is that **Hancom ignores an `hp:colPr` that any
+header or footer control precedes inside the section-head paragraph**. It
+honours one that comes straight after `hp:secPr` (`Q2`, `Q4`), and it honours
+one carried by a later paragraph (`P5`) — the furniture controls of the
+*section head* are the whole mechanism.
+
+`render-check-01` emitted the `P1` order, so Hancom was right to render `F49`
+full width: the document declared a column definition in a position that does
+not take effect. `build_render_check.sec_pr` now emits `secPr`, `colPr`,
+furniture; the document, its reference PDF and their manifest hashes are
+re-pinned on that. `own_render`'s column logic is unchanged — it was already
+laying the section out the way Hancom does once the document says so.
+
+What is left in this row is the pagination drift of note 1, not columns:
+`F49` still lands on our page 11 against Hancom's page 9, which is why it
+reads `close` rather than `match`.
 
 ### 5. `F50` 머리말 / `F51` 꼬리말 (IoU 0.153 / 0.156)
 
@@ -406,8 +438,13 @@ size of the gap:
    the paraPr margin unit (line-and-character-metrics.md §6): all four now read
    `close` or `match`. Whatever row-height error is left is below what this
    document can separate from the rasteriser.
-3. `hp:colPr` applied from the head of the section where Hancom does not
-   (`F49`).
+3. ~~`hp:colPr` applied from the head of the section where Hancom does not
+   (`F49`).~~ **Measured, and it was the document.** Hancom ignores an
+   `hp:colPr` that a header or footer control precedes in the section-head
+   paragraph (note 4); `render-check-01` emitted exactly that order.
+   `build_render_check` now emits `secPr`, `colPr`, furniture, and `F49` reads
+   `close` against a two-column Hancom reference. The renderer was not
+   changed. What is left of this row is item 7's pagination drift.
 4. Header/footer horizontal placement (`F50`, `F51`).
 5. ~~`hh:spacing` over-condenses on negative values (`F13`).~~ **Measured and
    fixed** — the gap is a percent of the character's own advance
@@ -423,7 +460,9 @@ size of the gap:
    both object extents rather than pagination rules: **`hp:equation` takes its
    inline slot from the declared `hp:sz@height`**, which Hancom's own layout
    disagrees with by 1 to 15 pt per equation and which costs section 0 its
-   extra page; and the two-column section of item 3.
+   extra page; and the two-column section of item 3, whose column definition
+   Hancom now honours as well, so the page it disagrees on is pagination and
+   nothing else.
 8. `hh:tabPr`'s stops are never read: the corpus declares them as
    `hh:tabItem` inside the same MCE `hp:switch` the paraPr geometry uses, and
    the reader looks for `hh:tab` outside it, finds none, and falls back to its
