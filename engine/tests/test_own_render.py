@@ -3877,6 +3877,123 @@ def test_an_equation_larger_than_its_box_is_scaled_and_declared(tmp_path):
     assert "hp:equation@equation_scaled" in declared
 
 
+def _equation_element(renderer):
+    for section in renderer.sections:
+        for el in section.iter():
+            if own_render._local(el.tag) == "equation":
+                return el
+    raise AssertionError("fixture drifted: no hp:equation")
+
+
+def _equation_paragraph(renderer):
+    """The ``Paragraph`` the fixture hung its equation run on."""
+    seen = 0
+    for el in renderer.sections[0].iter():
+        if own_render._local(el.tag) != "p":
+            continue
+        if seen == EQUATION_PARAGRAPH:
+            return own_render.Paragraph(el, renderer.defs["para_pr"])
+        seen += 1
+    raise AssertionError("fixture drifted: no such paragraph")
+
+
+def _adopted_reserve(renderer, el, declared):
+    """``min(declared, max(nominal, ink))``, computed here, not asked for.
+
+    The rule under test, rebuilt from the layout primitives so the assertion
+    is against the RULE and not against whatever ``_equation_extent_height``
+    happens to return.
+    """
+    script = "".join(own_render._kid(el, "script").itertext())
+    tree, _info = hwpeqn_parse.parse(script)
+    renderer._eq_face = renderer._equation_face(el.get("font"), count=False)
+    size = max(2.0, own_render._iattr(el, "baseUnit")
+               * own_render.EQUATION_EXTENT_DPI
+               / own_render.HWPUNIT_PER_INCH)
+    laid = renderer._eq_layout(tree, size)
+    _x0, y0, _x1, y1 = renderer._eq_bounds(laid)
+    scale = (own_render.HWPUNIT_PER_INCH
+             / float(own_render.EQUATION_EXTENT_DPI))
+    return min(declared, int(round(max((laid.asc + laid.desc) * scale,
+                                       (y1 - y0) * scale))))
+
+
+def test_an_over_declared_equation_reserves_its_own_extent_not_hp_sz(tmp_path):
+    """The measured rule: Hancom sizes the slot to the equation, not to hp:sz.
+
+    ``render-check-01`` declares 2400 for ``a over b`` and Hancom reserves
+    2252; declares 2400 for a square root and reserves 1304.  Two equal
+    declared heights, two different reserves — so the slot cannot be a
+    function of the declared extent, and this fixture is the same shape:
+    a box declared far taller than the equation needs.
+    """
+    declared = 9000
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "roomy-slot.hwpx",
+        [("a over b", 9000, declared)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    el = _equation_element(renderer)
+    want = _adopted_reserve(renderer, el, declared)
+    assert want < declared, "fixture drifted: the box is not over-declared"
+    assert renderer._object_extent(el)[1] == want
+    # And the line the equation sits on takes that, not the declared box:
+    # _line_metrics adds the object's own vertical hp:outMargin to it.
+    para = _equation_paragraph(renderer)
+    textheight, _vertsize, _baseline, _spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    _l, top, _r, bottom = renderer._object_out_margin(el)
+    assert textheight == want + top + bottom
+
+
+def test_an_under_declared_equation_still_reserves_only_the_declared_box(
+        tmp_path):
+    """The clamp: the equation is drawn inside hp:sz, so that is the ceiling.
+
+    Byte-for-byte the old behaviour on this side of the clamp — which is why
+    a Hancom-authored document, whose declared extent already IS Hancom's own
+    measurement, mostly does not move.
+    """
+    declared = 900
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "tight-slot.hwpx",
+        [(_hwpeqn(r"\frac{a+b+c+d+e}{f+g+h+i+j}"), 2400, declared)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    el = _equation_element(renderer)
+    assert _adopted_reserve(renderer, el, declared) == declared
+    assert renderer._object_extent(el)[1] == declared
+
+
+def test_the_equation_reserve_does_not_move_with_the_render_resolution(
+        tmp_path):
+    """Pinned at ``EQUATION_EXTENT_DPI``, so pagination is not a dpi setting.
+
+    The layout itself is not resolution-free — ``fontbook`` rasterises at an
+    integer pixel size — which is exactly why the measurement resolution is
+    pinned instead of taken from ``--dpi``.
+    """
+    path = _form_with_equations(
+        _need(EQUATION_FORM), tmp_path / "dpi.hwpx",
+        [("sum _{i=1} ^{n} i^{2} = {n(n+1)(2n+1)} over 6", 22000, 9000)])
+    reserved = set()
+    for dpi in (96, 144, 300, 600):
+        renderer = own_render.OwnRenderer(path, dpi=dpi)
+        reserved.add(renderer._object_extent(_equation_element(renderer))[1])
+    assert len(reserved) == 1, reserved
+
+
+def test_an_equation_with_no_script_keeps_the_declared_extent(tmp_path):
+    """Nothing to lay out, nothing to measure: the declared box stands.
+
+    It is also what such an equation is *drawn* as — a placeholder box at the
+    declared ``hp:sz`` — so the slot and the drawing still agree.
+    """
+    path = _form_with_equations(_need(EQUATION_FORM),
+                                tmp_path / "no-script.hwpx", [("   ", 9000,
+                                                               7000)])
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    assert renderer._object_extent(_equation_element(renderer))[1] == 7000
+
+
 def test_an_unsupported_construct_is_declared_per_construct(tmp_path):
     path = _form_with_equations(
         _need(EQUATION_FORM), tmp_path / "unsupported.hwpx",
