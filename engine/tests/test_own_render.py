@@ -2605,37 +2605,64 @@ def edited_render(tmp_path_factory):
 
 
 def test_an_edited_paragraph_is_never_drawn_from_a_stale_box(edited_render):
-    """The rule this slice exists for: a stale cached box is never drawn.
+    """The rule this slice exists for, now enforced for the WHOLE document.
 
     The text of one paragraph is lengthened past what its cached line boxes
-    can hold.  The renderer must notice from the file alone, relay that
-    paragraph out itself, and say so — and it must leave every other
-    paragraph on the authoring engine's own boxes.
+    can hold, and — this is the point — the package still carries Hancom's
+    own writer signature, because the fixture rewrites the section XML
+    without going through a writer that stamps its own.  The staleness
+    detector raises no false positive, so a hit FALSIFIES that signature:
+    the package is not the untouched Hancom save it claims to be, and
+    ``docs/research/lineseg-on-save-01.md`` measured that an edit moves
+    paragraphs it never touched (534 positions downstream).  So every
+    paragraph goes computed, not just the one that was caught.
     """
     report = edited_render["report"]
+    assert report["layout_provenance"]["writer"] == "hancom_untouched"
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith(
+        "stale_cache_contradicts_provenance"), report["layout_policy_reason"]
     layout = report["line_layout"]
-    assert layout["paragraphs"]["computed"] == 1, layout["paragraphs"]
-    assert layout["computed_reasons"] == {"stale_line_width": 1}
-    relaid = layout["paragraphs_relaid_out"]
-    assert len(relaid) == 1
-    record = relaid[0]
-    assert record["paragraph"] == EDIT_PARAGRAPH
+    assert layout["stale_diagnostics"] == {str(EDIT_PARAGRAPH):
+                                           "stale_line_width"}
+    assert layout["paragraphs"]["lineseg"] == 0, layout["paragraphs"]
+    assert set(layout["computed_reasons"]) == {"policy"}
+    record = next(r for r in layout["paragraphs_relaid_out"]
+                  if r["paragraph"] == EDIT_PARAGRAPH)
     assert record["mode"] == "computed"
-    assert record["reason"] == "stale_line_width"
     assert record["cached_lines"] == 2
     assert record["computed_lines"] > record["cached_lines"], (
         "a longer paragraph must take more lines")
     assert record["height_delta_hwpunit"] > 0
 
 
-def test_every_line_box_says_which_engine_broke_it(edited_render):
+def test_every_line_box_says_which_engine_broke_it(edited_render, tmp_path):
+    """Per line, which engine broke it — under both policies.
+
+    Under the shipping policy an edited document is drawn entirely by this
+    renderer, so every box says ``computed``.  The mixture is still reachable,
+    and still declared per box: pin the cache policy (a measurement pin, and
+    unsound for rendering) and declare the one edited paragraph, and only
+    that paragraph's lines come from this breaker.
+    """
     report = edited_render["report"]
     modes = {}
     for box in report["line_boxes"]:
         modes[box["mode"]] = modes.get(box["mode"], 0) + 1
-    assert set(modes) == {"lineseg", "computed"}
+    assert set(modes) == {"computed"}, modes
+
+    edited_path = _edited_copy(_need(EDIT_FORM), tmp_path / "edited.hwpx",
+                               EDIT_PARAGRAPH, EDIT_TEXT)
+    mixed = own_render.render_to_dir(
+        edited_path, tmp_path / "mixed", dpi=96,
+        layout_policy="cache", relayout_paragraphs={EDIT_PARAGRAPH})
+    modes = {}
+    for box in mixed["report"]["line_boxes"]:
+        modes[box["mode"]] = modes.get(box["mode"], 0) + 1
+    assert set(modes) == {"lineseg", "computed"}, modes
     assert modes["computed"] == (
-        report["line_layout"]["paragraphs_relaid_out"][0]["computed_lines"])
+        mixed["report"]["line_layout"]
+        ["paragraphs_relaid_out"][0]["computed_lines"])
     assert modes["lineseg"] > 0
 
 
@@ -2686,32 +2713,214 @@ def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
             f"page {page} draws ink right of the column edge")
 
 
-def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
-    """The detector is sound but incomplete, so the editor gets a channel.
+def _first_text_paragraph(path=None):
+    """Document-order index of the first paragraph that carries text.
 
-    An edit that leaves every line still fitting is invisible in the file.
-    ``relayout_paragraphs`` is how E1's apply path says "I changed this one",
-    and the sidecar has to repeat the claim rather than absorb it.
+    Paragraph numbering is document order over every ``hp:p``, which the
+    caller can compute from the same file; an empty paragraph never reaches
+    the layout decision at all.
     """
-    # Paragraph numbering is document order over every hp:p in section0, which
-    # the caller can compute from the same file; an empty paragraph never
-    # reaches the decision at all, so pick the first one that carries text.
-    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
-    chosen = next(
+    renderer = own_render.OwnRenderer(_need(path or GIANMUN), dpi=96)
+    return next(
         renderer.paragraph_index[id(el)]
         for el in renderer.sections[0].iter()
         if own_render._local(el.tag) == "p"
         and own_render.Paragraph(el, renderer.defs["para_pr"]).chars)
 
+
+def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
+    """The detector is incomplete, so the editor gets a channel.
+
+    An edit that leaves every line still fitting is invisible in the file.
+    ``relayout_paragraphs`` is how E1's apply path says "I changed this one",
+    and the sidecar has to repeat the claim rather than absorb it.
+
+    What the claim now BUYS is the whole document, not one paragraph: a
+    package somebody edited is not the untouched save its writer signature
+    describes, wherever the edit landed.
+    """
+    chosen = _first_text_paragraph()
     result = own_render.render_to_dir(
         _need(GIANMUN), tmp_path / "marked", dpi=96,
         relayout_paragraphs={chosen})
-    layout = result["report"]["line_layout"]
+    report = result["report"]
+    layout = report["line_layout"]
+    assert layout["caller_marked_edited"] == [chosen]
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith("caller_marked_edited")
+    assert layout["paragraphs"]["lineseg"] == 0
+    assert set(layout["computed_reasons"]) == {"policy"}
+
+
+def test_a_declared_edit_still_relays_out_one_paragraph_under_a_cache_pin(
+        tmp_path):
+    """The per-paragraph incremental path, kept and reachable.
+
+    E2.1/E2.5's "relay out the edited paragraph, re-place everything after
+    it" machinery is not gone; the shipping policy simply no longer routes an
+    edited document to it, because a cache that is stale anywhere may be
+    stale in paragraphs no per-paragraph test can name.  Pinning the cache
+    policy is how it is still exercised — and the pin is declared.
+    """
+    chosen = _first_text_paragraph()
+    result = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "pinned", dpi=96, layout_policy="cache",
+        relayout_paragraphs={chosen})
+    report = result["report"]
+    assert report["layout_policy"] == "cache"
+    assert "override: --layout-policy cache" in report["layout_policy_reason"]
+    layout = report["line_layout"]
     assert layout["caller_marked_edited"] == [chosen]
     assert layout["computed_reasons"] == {"caller_marked_edited": 1}
     assert layout["paragraphs"]["computed"] == 1
     assert [r["paragraph"]
             for r in layout["paragraphs_relaid_out"]] == [chosen]
+
+
+# ---------------------------------------------------- layout provenance policy
+
+def _repackaged_with_application(source, target, application):
+    """A copy of ``source`` whose version.xml names ``application``.
+
+    Only the writer signature changes; every other member is copied byte for
+    byte, so the layout cache the policy is reasoning about is identical
+    across the copies and the ONLY thing under test is provenance.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(source) as archive:
+        names = archive.namelist()
+        payload = {name: archive.read(name) for name in names}
+    version = next(n for n in names if n.rsplit("/", 1)[-1] == "version.xml")
+    text = payload[version].decode("utf-8")
+    before, _, rest = text.partition(' application="')
+    _old, _, after = rest.partition('"')
+    payload[version] = (before + ' application="' + application + '"'
+                        + after).encode("utf-8")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, payload[name])
+    return target
+
+
+def test_an_untouched_hancom_package_keeps_its_cache(tmp_path):
+    """Provenance case 1, on all ten corpus forms: cache.
+
+    These forms are official templates Hancom itself saved last, nothing in
+    this repo has written to them, and ``docs/research/lineseg-on-save-01.md``
+    measured an untouched Hancom resave reproducing 223 of 223 cached line
+    boxes byte-identically.  That is the one case where the cache may be
+    trusted, and the mechanism that keeps the corpus renders unchanged.
+    """
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        result = own_render.render_to_dir(path, tmp_path / name, dpi=96)
+        report = result["report"]
+        assert report["layout_provenance"]["writer"] == "hancom_untouched", name
+        assert report["layout_policy"] == "cache", name
+        assert report["layout_policy_reason"].startswith(
+            "hancom_untouched"), name
+        assert report["line_layout"]["policy"] == "auto", name
+        assert report["block_layout"]["policy"] == "auto", name
+        assert report["line_layout"]["paragraphs"]["lineseg"] > 0, name
+        assert report["line_layout"]["stale_diagnostics"] == {}, name
+
+
+def test_a_rigorloom_written_package_goes_computed(tmp_path):
+    """Provenance case 2: this repo's own writer wrote it, so no Hancom cache.
+
+    ``render-check-01`` is built by ``hwpx_write``, which stamps
+    ``application="Rigorloom"``.  Whatever ``hp:lineseg`` it carries was
+    written by that builder, not measured by a layout engine, so there is
+    nothing here to trust.
+    """
+    result = own_render.render_to_dir(_need(RENDER_CHECK),
+                                      tmp_path / "rigorloom", dpi=96)
+    report = result["report"]
+    assert report["layout_provenance"]["writer"] == "rigorloom_written"
+    assert report["layout_provenance"]["application"] == "Rigorloom"
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith("rigorloom_written")
+    assert report["line_layout"]["policy"] == "computed"
+    # Multi-section: block_layout is one report per section, in spine order.
+    blocks = report["block_layout"]
+    for section in (blocks if isinstance(blocks, list) else [blocks]):
+        assert section["policy"] == "computed"
+    assert report["line_layout"]["paragraphs"]["lineseg"] == 0
+
+
+def test_an_unknown_writer_goes_computed_and_says_so(tmp_path):
+    """Provenance case 3: some third program wrote it. Conservative side.
+
+    Neither Hancom nor this repo, so nothing certifies that the cached layout
+    describes the current text; the whole document is computed and the
+    sidecar names the application it could not vouch for.  A package carrying
+    no ``application`` attribute at all lands here too.
+    """
+    foreign = _repackaged_with_application(
+        _need(GIANMUN), tmp_path / "foreign.hwpx", "SomeOtherWordProcessor")
+    result = own_render.render_to_dir(foreign, tmp_path / "foreign", dpi=96)
+    report = result["report"]
+    assert report["layout_provenance"]["writer"] == "unknown_writer"
+    assert report["layout_provenance"]["application"] == "SomeOtherWordProcessor"
+    assert report["layout_policy"] == "computed"
+    assert "SomeOtherWordProcessor" in report["layout_policy_reason"]
+    assert report["line_layout"]["paragraphs"]["lineseg"] == 0
+
+
+def test_the_rigorloom_writer_stamps_the_package_it_saves(tmp_path):
+    """The edit path must not inherit Hancom's claim, or `auto` is a lie.
+
+    ``xml_backend.HwpxDocument.save`` copies every member it did not change
+    forward verbatim, ``version.xml`` included.  Without the stamp, a
+    Rigorloom edit of a Hancom-saved form would still read
+    ``application="Hancom Office Hangul"`` and the policy would trust a cache
+    describing the text from before the edit.
+    """
+    import xml_backend
+
+    out = tmp_path / "saved.hwpx"
+    xml_backend.HwpxDocument(_need(GIANMUN)).save(out)
+    before = own_render.package_writer_provenance(_need(GIANMUN))
+    after = own_render.package_writer_provenance(out)
+    assert before["writer"] == "hancom_untouched"
+    assert after["writer"] == "rigorloom_written"
+    assert after["application"] == "Rigorloom"
+    result = own_render.render_to_dir(out, tmp_path / "render", dpi=96)
+    assert result["report"]["layout_policy"] == "computed"
+
+
+def test_the_policy_and_the_render_it_chooses_are_deterministic(tmp_path):
+    """Same input, same policy, same bytes — on a computed-policy document."""
+    first = own_render.render_to_dir(_need(RENDER_CHECK), tmp_path / "r1",
+                                     dpi=96)
+    second = own_render.render_to_dir(_need(RENDER_CHECK), tmp_path / "r2",
+                                      dpi=96)
+    assert (first["report"]["layout_policy"]
+            == second["report"]["layout_policy"] == "computed")
+    assert (first["report"]["layout_policy_reason"]
+            == second["report"]["layout_policy_reason"])
+    assert len(first["pngs"]) == len(second["pngs"])
+    for left, right in zip(first["pngs"], second["pngs"]):
+        with open(left, "rb") as fh:
+            a = fh.read()
+        with open(right, "rb") as fh:
+            b = fh.read()
+        assert a == b
+
+
+def test_the_sidecar_declares_the_policy_its_reason_and_the_evidence(tmp_path):
+    """A reader must be able to tell WHY, without re-running anything."""
+    result = own_render.render_to_dir(_need(GIANMUN), tmp_path / "declared",
+                                      dpi=96)
+    report = result["report"]
+    assert report["layout_policy"] in ("cache", "computed")
+    assert report["layout_policy_meaning"]
+    provenance = report["layout_provenance"]
+    assert set(provenance) == {"writer", "application", "evidence"}
+    assert "version.xml@application" in provenance["evidence"]
+    assert provenance["evidence"] in report["layout_policy_reason"]
 
 
 def test_computed_policy_relays_out_every_paragraph(tmp_path):
@@ -2887,12 +3096,23 @@ REFLOW_TEXT = ("추가로 입력한 문장을 여기에 아주 길게 붙여넣�
 
 @pytest.fixture(scope="module")
 def reflow_renders(tmp_path_factory):
-    """The same form, before and after one paragraph is lengthened."""
+    """The same form, before and after one paragraph is lengthened.
+
+    The edited render PINS the cache policy and declares the edited
+    paragraph, because that is now the only way into the incremental flow
+    path these tests exist to pin: the shipping policy sends any edited
+    document wholly computed, which places every block from the top of the
+    document and so has no "first flowed block" to speak of.  The pin is
+    unsound for rendering and is declared as an override in the sidecar; what
+    it buys here is that the E2.5 machinery stays measured.
+    """
     out = tmp_path_factory.mktemp("reflow")
     base = own_render.render_to_dir(_need(REFLOW_FORM), out / "base", dpi=96)
     edited_path = _edited_copy(_need(REFLOW_FORM), out / "edited.hwpx",
                                REFLOW_PARAGRAPH, REFLOW_TEXT)
-    edited = own_render.render_to_dir(edited_path, out / "edited", dpi=96)
+    edited = own_render.render_to_dir(
+        edited_path, out / "edited", dpi=96, layout_policy="cache",
+        relayout_paragraphs={REFLOW_PARAGRAPH})
     return base, edited
 
 
