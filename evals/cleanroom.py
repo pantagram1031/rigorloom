@@ -507,10 +507,15 @@ def load_tasks(tasks_dir: Path | str = TASKS_DIR) -> list[dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
-# Assertion mini-language: "len(anchors) >= 29", "table_map[0].rowCnt == 19"
+# Assertion mini-language: "len(anchors) >= 29", "table_map[0].rowCnt == 19",
+# and "tally.match + tally.close >= 41" — a '+'-joined sum of paths, for a
+# floor that has to gate on an ordering (won't-go-below) rather than on one
+# bucket's exact count (which is a ceiling in disguise: an improvement that
+# promotes an item out of that bucket into a better one would fail it).
 # --------------------------------------------------------------------------- #
+_TERM = r"(?:len\([^)]+\)|[A-Za-z_][\w.\[\]]*)"
 _ASSERT_RE = re.compile(
-    r"^\s*(?P<path>len\([^)]+\)|[A-Za-z_][\w.\[\]]*)\s*"
+    r"^\s*(?P<path>" + _TERM + r"(?:\s*\+\s*" + _TERM + r")*)\s*"
     r"(?P<op>==|!=|>=|<=|>|<)\s*(?P<value>.+?)\s*$")
 _OPS = {
     "==": lambda a, b: a == b,
@@ -527,7 +532,8 @@ def _parse_assertion(expr: str, source: str = "<assert>") -> tuple[str, str, Any
     if not match:
         raise CleanroomError(
             f"{source}: unparseable assertion {expr!r} — expected "
-            "'<json.path> <op> <value>', e.g. 'len(anchors) >= 29'")
+            "'<json.path> <op> <value>', e.g. 'len(anchors) >= 29' or "
+            "'tally.match + tally.close >= 41'")
     raw_value = match.group("value")
     try:
         value = json.loads(raw_value)
@@ -556,12 +562,29 @@ def _resolve_json_path(document: Any, path: str) -> Any:
     return len(current) if wrap_len else current
 
 
+def _resolve_path_sum(document: Any, path: str) -> Any:
+    """Resolve a '+'-joined path expression: the sum of each term's value.
+
+    A single term (no '+') is unchanged — this returns exactly what
+    ``_resolve_json_path`` returns, same type. Two or more terms are summed,
+    which is only meaningful for numeric fields; a non-numeric term raises
+    the same ``TypeError`` a caller of ``+`` on incompatible types would get.
+    """
+    terms = [term.strip() for term in path.split("+")]
+    if len(terms) == 1:
+        return _resolve_json_path(document, terms[0])
+    total = 0
+    for term in terms:
+        total = total + _resolve_json_path(document, term)
+    return total
+
+
 def evaluate_assertions(document: Any, expressions: Iterable[str]) -> list[dict]:
     results = []
     for expr in expressions:
         path, op, expected = _parse_assertion(expr)
         try:
-            actual = _resolve_json_path(document, path)
+            actual = _resolve_path_sum(document, path)
             ok = bool(_OPS[op](actual, expected))
             detail = None
         except (KeyError, TypeError) as exc:
