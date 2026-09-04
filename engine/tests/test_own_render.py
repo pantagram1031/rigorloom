@@ -5422,9 +5422,13 @@ def test_every_character_has_an_x_and_they_run_left_to_right(gianmun_render):
         # the same thing on both tiers.
         assert len(edges) == len(box["text"]) + 1, box["text"]
         assert edges == sorted(edges), box["text"]
-        # and they sit inside the box the same line reports
+        # and they sit inside the caret box the same line reports.  The last
+        # edge is a full advance, so it may pass ``x1`` (the geometry box,
+        # which stops at the last piece that draws ink) by a trailing space;
+        # it never passes ``x1_advance``, which is where a caret goes.
         assert edges[0] >= box["x0"] - 0.5
-        assert edges[-1] <= box["x1"] + 0.5
+        assert edges[-1] <= box["x1_advance"] + 0.5
+        assert box["x1"] <= box["x1_advance"] + 1e-3
 
 
 def test_a_line_box_names_the_owpml_it_was_drawn_from(gianmun_render):
