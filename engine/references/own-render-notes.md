@@ -1540,17 +1540,53 @@ Roman in `test_a_real_italic_cut_is_used_without_a_shear` and
 `test_system_font_index_finds_an_installed_italic_cut`, not against an
 equation face.
 
-**Not proven**: how close the synthetic 12-degree shear reads to Hancom's
-own italic angle. The measurement this slice's own instructions called for —
-`ssim_inked` / IoU over the equation regions, before/after, against a
-reference render, on the corpus's equations if any exist, else on the
-private report-class holdout's 14 (see *One holdout document* above) — did
-not run: no corpus form carries an `hp:equation` (unchanged from the
-*Equations* section above), and the private holdout was not available on
-the machine this slice ran on. The shear angle is declared as a calibration
-in the source (`_EQ_ITALIC_SHEAR`), the same way `_EQ_AXIS` and the other
-equation constants below are, and carries the same status: this renderer's
-guess, not a measured or published one.
+**Measured, after all, on the private report-class holdout.** No corpus form
+carries an `hp:equation` (unchanged from the *Equations* section above), but
+the holdout named in *One holdout document* turned out to have equations too
+— 14 of them, its own `Preview`-verified original. Scored with
+`render_scoreboard.score_form` at 144 dpi, before (the pre-italic commit) and
+after (this slice), aggregate only, nothing quoted:
+
+| channel | before | after |
+| --- | --- | --- |
+| whole-page `ssim_mean` | 0.728998 | 0.729013 |
+| whole-page `ssim_inked_mean` | 0.129474 | 0.129458 |
+| whole-page `text_line_iou_mean` | 0.538851 | 0.538851 |
+| whole-page `text_line_pair_rate_mean` | 0.904137 | 0.904137 |
+| equation-region `ssim_mean` (14 crops, `hp:sz` boxes) | 0.433831 | 0.435337 |
+| equation-region `ssim_inked_mean` | 0.028416 | 0.028776 |
+| equation-region ink-mask IoU mean | 0.039072 | 0.037703 |
+
+The whole-page row barely moves, for the reason mechanisms 1 and 4 already
+established: the same 14 equations are ~1.5% of 18 pages, so a fraction-of-a
+percent change on them is arithmetic noise on the page-level mean.
+Text-line geometry is exactly unchanged (italic does not move a line box).
+On the equations themselves, `ssim` and `ssim_inked` move a hair positive;
+a from-scratch ink-mask IoU built for this measurement (candidate vs.
+reference pixels both thresholded below 128, on the `hp:sz` box, no
+`render_scoreboard` region support exists to call instead) moves a hair
+negative. Read honestly, none of the three channels moves enough to call
+the shear proven — `HancomEQN` is not installed on this machine either, so
+before and after both substitute the same fallback face; italic only
+changes *whether that fallback's letterforms lean*, not *which* letterforms
+they are, and the corpus fonts a rasterised IoU is actually sensitive to are
+Hancom's math-italic glyphs, not this renderer's stand-in's. What the
+measurement rules out is a large regression: no channel moved by more than
+0.0014.
+
+Visual check on the crop the largest equation region scores from (page 11,
+`Q_r^{2025}(\ell) = \sum_x a_x h_{2025}(x) K_\ell(d(x,S_r)) / \sum_x a_x
+h_{2025}(x)`, `K_\ell(d)=\exp(-d/\ell)\ (d\le3\ell)`): the reference sets
+every one of `Q, a, h, K, d, S, x, ℓ` in a visibly slanted italic and
+`exp`/digits/operators upright, exactly the token-class split this slice
+implements; this renderer's synthetic-oblique render reproduces the same
+split with a visible (if shallower, this-machine-font-dependent) lean —
+**after a bug this same check caught and a follow-up commit fixed**: the
+first cut of `_eq_draw_sheared` read the glyph bbox with the wrong Pillow
+anchor and pivoted the shear on the wrong row, which did not just look
+less italic — it broke the layout outright, smearing equation bodies out
+of their brackets. That regression is what the crop check is for; the
+`ssim`/`ssim_inked`/IoU numbers above are already the fixed version's.
 
 ### What an equation still does not get
 
