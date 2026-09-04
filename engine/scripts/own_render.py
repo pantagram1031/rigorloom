@@ -89,6 +89,8 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_io import utf8_stdio  # noqa: E402
 import hwpeqn_parse  # noqa: E402
+from hwpx_write import (  # noqa: E402
+    WRITER_APPLICATION, is_hancom_application, read_writer_application)
 
 RENDERER_ID = "rigorloom-own"
 RENDERER_VERSION = "0.1.0"
@@ -246,6 +248,131 @@ LINE_LAYOUT_MODES = (LINE_LAYOUT_AUTO, LINE_LAYOUT_COMPUTED)
 BLOCK_LAYOUT_AUTO = "auto"
 BLOCK_LAYOUT_COMPUTED = "computed"
 BLOCK_LAYOUT_MODES = (BLOCK_LAYOUT_AUTO, BLOCK_LAYOUT_COMPUTED)
+
+# --------------------------------------------------------------------------
+# Layout provenance, and the document-wide policy it decides.
+#
+# ``docs/research/lineseg-on-save-01.md`` measured what Hancom does to a
+# cached ``hp:lineseg`` on save, on three corpus forms, twice each:
+#
+#   * an UNTOUCHED open/save-as reproduces every cached line box
+#     byte-identically -- 0 of 223 paragraphs changed a single one of the 9
+#     lineseg fields.  Hancom recomputes line layout on every save rather than
+#     copying the stored bytes forward, but the recomputation is deterministic
+#     and idempotent, so an untouched resave is indistinguishable from a keep.
+#   * a ONE-CHARACTER edit did not perturb the edited paragraph at all, and
+#     DID perturb a paragraph 534 positions downstream (``vertpos`` 0 ->
+#     70884) plus two paragraphs elsewhere that had never been laid out.
+#
+# The consequence is the whole of this policy: "trust the cache for the
+# paragraphs that were not touched" is NOT SOUND, because no per-paragraph
+# test on the file can predict which OTHER paragraphs a layout pass would also
+# have moved.  The cache is trustworthy for a whole document or for none of
+# it, and the question that decides which is provenance: is this package the
+# direct, unedited output of Hancom's own most recent save?
+#
+# The only writer signature an HWPX carries is ``version.xml@application``.
+# Hancom stamps its product name there on every save; this repo's writers
+# stamp ``Rigorloom`` (hwpx_write.blank_package always has, and
+# xml_backend.HwpxDocument.save now does, because it copies version.xml
+# forward verbatim and would otherwise inherit Hancom's claim).  The marker
+# self-clears the moment Hancom saves the package again, which is exactly the
+# semantics wanted.  What it CANNOT distinguish is an edit made by some third
+# program that also leaves Hancom's signature in place; that is a limit, and
+# it is declared in the sidecar and in the notes rather than papered over.
+PROVENANCE_HANCOM = "hancom_untouched"
+PROVENANCE_RIGORLOOM = "rigorloom_written"
+PROVENANCE_UNKNOWN = "unknown_writer"
+
+# ``cache``    — the whole document keeps the cached hp:lineseg layout.
+# ``computed`` — the WHOLE document (lines AND block flow) is laid out by this
+#                renderer.  Never a mixture decided per paragraph: see above.
+LAYOUT_POLICY_CACHE = "cache"
+LAYOUT_POLICY_COMPUTED = "computed"
+LAYOUT_POLICIES = (LAYOUT_POLICY_CACHE, LAYOUT_POLICY_COMPUTED)
+
+LAYOUT_POLICY_MEANING = (
+    "cache: this package is the direct output of Hancom's own most recent "
+    "save, so the whole document keeps the cached hp:lineseg line boxes and "
+    "the page assignment read out of them. computed: the WHOLE document -- "
+    "line breaking and block flow both -- is laid out by this renderer, "
+    "because the cached layout is not provably Hancom's own most recent one "
+    "and a cache that is stale anywhere may be stale in paragraphs no "
+    "per-paragraph test can name (docs/research/lineseg-on-save-01.md "
+    "measured a one-character edit moving a paragraph 534 positions "
+    "downstream). The choice is document-wide by construction; layout_policy_"
+    "reason says what decided it."
+)
+
+
+def package_writer_provenance(hwpx_path):
+    """Who wrote this package last, from ``version.xml@application``.
+
+    Returns ``{"writer", "application", "evidence"}``.  ``writer`` is one of
+    the three ``PROVENANCE_*`` values; ``application`` is the raw attribute
+    text, or ``None`` when the package carries no ``version.xml`` or no
+    ``application`` attribute on it -- both of which read as
+    ``unknown_writer``, the conservative side.
+    """
+    application = None
+    member = None
+    try:
+        with zipfile.ZipFile(hwpx_path) as archive:
+            names = archive.namelist()
+            member = next((name for name in names
+                           if name.rsplit("/", 1)[-1] == "version.xml"), None)
+            if member is not None:
+                application = read_writer_application(archive.read(member))
+    except (OSError, KeyError, zipfile.BadZipFile):
+        application = None
+    if application is None:
+        writer = PROVENANCE_UNKNOWN
+        evidence = ("no version.xml@application in the package"
+                    if member is None else
+                    f"{member} carries no application attribute")
+    elif is_hancom_application(application):
+        writer = PROVENANCE_HANCOM
+        evidence = f"{member}@application={application!r}"
+    elif application.strip() == WRITER_APPLICATION:
+        writer = PROVENANCE_RIGORLOOM
+        evidence = f"{member}@application={application!r}"
+    else:
+        writer = PROVENANCE_UNKNOWN
+        evidence = f"{member}@application={application!r}"
+    return {"writer": writer, "application": application,
+            "evidence": evidence}
+
+
+def resolve_layout_policy(provenance, line_layout, relayout_paragraphs,
+                          override=None):
+    """``(policy, reason)`` — which layout the whole document is drawn from.
+
+    Ordered so that an explicit caller instruction always beats an inference
+    off the file, and so that every path that ends in ``cache`` had to prove
+    it.  ``override`` is the measurement escape hatch (``--layout-policy``):
+    it can pin ``cache`` on a package provenance says was edited, which is
+    UNSOUND for rendering and exists so the two policies can be measured
+    against each other on the same document.  It is named in the reason.
+    """
+    writer = provenance.get("writer")
+    evidence = provenance.get("evidence")
+    if override is not None:
+        return override, (f"override: --layout-policy {override} "
+                          f"(provenance: {writer}; {evidence})")
+    if line_layout == LINE_LAYOUT_COMPUTED:
+        return LAYOUT_POLICY_COMPUTED, "caller asked for line_layout=computed"
+    if relayout_paragraphs:
+        return LAYOUT_POLICY_COMPUTED, (
+            f"caller_marked_edited: {len(relayout_paragraphs)} paragraph(s) "
+            "declared edited, so this package is no longer the untouched "
+            "output of whatever wrote it")
+    if writer == PROVENANCE_HANCOM:
+        return LAYOUT_POLICY_CACHE, f"{writer}: {evidence}"
+    return LAYOUT_POLICY_COMPUTED, (
+        f"{writer}: {evidence} - not provably Hancom's own most recent save, "
+        "so the cached hp:lineseg may describe text this package no longer "
+        "has")
+
 
 # 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next) used to be halved
 # here by a PARA_MARGIN_SCALE constant.  That halving was real but was
@@ -1650,7 +1777,7 @@ class _EqBox:
 class OwnRenderer:
     def __init__(self, hwpx_path, dpi=DEFAULT_DPI, repo_root=None,
                  line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
-                 block_layout=BLOCK_LAYOUT_AUTO):
+                 block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
         self.path = Path(hwpx_path)
         self.dpi = int(dpi)
         if self.dpi <= 0:
@@ -1682,6 +1809,35 @@ class OwnRenderer:
         #                document.  This is the mode that MEASURES the flow
         #                pass against the authoring engine's own cache.
         self.block_layout = block_layout
+        # -- layout provenance policy -------------------------------------
+        # What the caller ASKED for, kept because the policy below can
+        # override both: an ``auto`` render of a package this renderer cannot
+        # prove is Hancom's own untouched save goes computed for the WHOLE
+        # document, lines and flow together.  ``auto`` therefore means "let
+        # provenance decide", not "decide per paragraph".
+        if layout_policy is not None and layout_policy not in LAYOUT_POLICIES:
+            raise ValueError(
+                f"layout_policy must be one of {sorted(LAYOUT_POLICIES)} "
+                "or None")
+        self.requested_line_layout = line_layout
+        self.requested_block_layout = block_layout
+        self.layout_policy_override = layout_policy
+        self.provenance = package_writer_provenance(self.path)
+        self.layout_policy, self.layout_policy_reason = resolve_layout_policy(
+            self.provenance, line_layout, self.relayout_paragraphs,
+            override=layout_policy)
+        if self.layout_policy == LAYOUT_POLICY_COMPUTED:
+            self.line_layout = LINE_LAYOUT_COMPUTED
+            self.block_layout = BLOCK_LAYOUT_COMPUTED
+        # Paragraphs the per-paragraph staleness detector flagged.  Under the
+        # ``cache`` policy this is DIAGNOSTIC ONLY -- it names paragraphs
+        # whose cached boxes no longer describe their text without changing
+        # what is drawn, because a document whose provenance says untouched
+        # cannot have a stale paragraph, and a detector hit on one is a
+        # finding about the detector or the file, not a licence to redraw one
+        # paragraph out of a cache that is trustworthy as a whole or not at
+        # all.
+        self._stale_diagnostics = {}
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
         self.repo_root = Path(repo_root) if repo_root else Path(
             __file__).resolve().parents[2]
@@ -1865,6 +2021,69 @@ class OwnRenderer:
             "engine/references/own-render-notes.md",
         ]
         self._load()
+        self._scan_stale_cache()
+
+    def _scan_stale_cache(self):
+        """Run the staleness detector over the whole document, once.
+
+        Two jobs, and only the second one changes a pixel:
+
+        1. DIAGNOSIS.  ``line_layout.stale_diagnostics`` names every paragraph
+           whose own cached line boxes cannot hold its own text.  Worth
+           reporting on any document, and it costs one pass.
+        2. FALSIFICATION.  A hit CONTRADICTS a ``cache`` policy.  The package
+           claims to be Hancom's own untouched save; Hancom's own save does
+           not leave a line box too narrow for the text on it (measured: 0
+           hits across all ten corpus forms, and
+           ``docs/research/lineseg-on-save-01.md`` measured an untouched
+           Hancom resave reproducing 223 of 223 caches byte-identically).  So
+           the claim is false, and the WHOLE document goes computed -- not
+           only the paragraphs that were caught, which is the unsound rule
+           this slice removed.  A caller that pinned the policy with
+           ``layout_policy`` asked for a measurement and keeps it.
+
+        Only ``stale_line_width`` is scanned.  ``unusable_cache_reason``'s two
+        conditions are NOT evidence of an edit -- ``textpos_past_end`` fires
+        on three unedited corpus forms because of an ``hp:ctrl`` this reader
+        gives no character cell -- and they are handled where they belong,
+        per paragraph, in ``line_layout_mode``.
+
+        The sweep evaluates a lineseg that carries no ``horzsize`` against no
+        column width at all and skips it, where a render-time call would have
+        substituted the paragraph's own column.  Zero corpus linesegs are
+        shaped that way; it is declared rather than guessed at.
+        """
+        if self.requested_line_layout != LINE_LAYOUT_AUTO:
+            return
+        hits = []
+        for section in self.sections:
+            for element in section.iter():
+                if _local(element.tag) != "p":
+                    continue
+                para = Paragraph(element, self.defs["para_pr"])
+                if not para.chars or self.unusable_cache_reason(para):
+                    continue
+                reason = self.stale_cache_reason(para, 0)
+                if reason is None:
+                    continue
+                index = self.paragraph_index.get(id(element))
+                self._note_stale(index, reason)
+                hits.append((index, reason))
+        if not hits or self.layout_policy != LAYOUT_POLICY_CACHE:
+            return
+        if self.layout_policy_override is not None:
+            return
+        index, reason = hits[0]
+        self.layout_policy = LAYOUT_POLICY_COMPUTED
+        self.line_layout = LINE_LAYOUT_COMPUTED
+        self.block_layout = BLOCK_LAYOUT_COMPUTED
+        self.layout_policy_reason = (
+            f"stale_cache_contradicts_provenance: {len(hits)} paragraph(s) "
+            "carry cached line boxes that no longer describe their own text "
+            f"(first: paragraph {index}, {reason}), so "
+            f"{self.provenance['writer']} is not true of this package "
+            f"({self.provenance['evidence']}); the whole document is laid "
+            "out computed")
 
     # -- input -----------------------------------------------------------
     def _load(self):
@@ -3796,41 +4015,64 @@ class OwnRenderer:
                 total += gap if (is_full_width(ch) or gap < 0) else 0.0
         return total
 
-    def line_layout_mode(self, para, column_hwp, paragraph_index=None):
-        """``(mode, reason)`` — which engine lays this paragraph's lines out.
+    @staticmethod
+    def unusable_cache_reason(para):
+        """Why this paragraph's cache cannot be READ, never mind trusted.
 
-        ``computed`` wins for four named reasons, and only those:
+        ``cache_absent``     — no ``hp:linesegarray`` at all.
+        ``textpos_past_end`` — a cached line starts past the end of the
+                               character stream this reader built, so there is
+                               no character range for that line box to
+                               describe and it cannot be drawn from.
 
-          ``policy``            the whole render was asked for computed lines;
-          ``cache_absent``      the paragraph carries no ``hp:linesegarray``;
-          ``textpos_past_end``  a cached line starts past the end of the
-                                paragraph's character stream, so the text is
-                                shorter than the cache describes;
-          ``stale_line_width``  a cached line's font-independent lower-bound
-                                width exceeds its own cached ``horzsize``, so
-                                the text is longer than that line could hold;
-          ``caller_marked_edited`` the caller said it edited this paragraph.
+        Not a staleness inference, and deliberately not treated as one: the
+        renderer simply has nothing to index.  ``lineseg_agreement`` already
+        draws the line in the same place, excluding a paragraph whose cache is
+        "absent, or a textpos past the end of the character stream" from the
+        measurement rather than scoring it wrong.
 
-        The last two matter because a stale box is the one thing this renderer
-        must never draw.  ``stale_line_width`` is **sound but incomplete**: it
-        never fires on an unedited paragraph (the bound is a lower bound on
-        text the authoring engine did fit), and it does not fire on an edit
-        that leaves every line still fitting.  An editor that knows it changed
-        a paragraph must say so through ``relayout_paragraphs`` rather than
-        rely on detection.
+        PRE-EXISTING, NOT FIXED HERE, and load-bearing on the reading above:
+        ``textpos_past_end`` fires on exactly one paragraph of each of three
+        UNEDITED corpus forms (moel-2013 #159, saeopja #321, kstartup #264).
+        All three carry an ``hp:ctrl`` this reader gives no character cell —
+        a HYPERLINK ``hp:fieldBegin``/``fieldEnd`` pair, an ``hp:colPr`` —
+        while the authoring engine's ``textpos`` counted one.  So the
+        condition means "this reader cannot line up its character stream with
+        the cache", which is exactly a cache it must not draw from, and NOT
+        "somebody edited this document".
         """
-        if self.line_layout == LINE_LAYOUT_COMPUTED:
-            return LINE_LAYOUT_COMPUTED, "policy"
-        if paragraph_index is not None and paragraph_index in self.relayout_paragraphs:
-            return LINE_LAYOUT_COMPUTED, "caller_marked_edited"
-        if not para.linesegs:
-            return LINE_LAYOUT_COMPUTED, "cache_absent"
         count = len(para.chars)
+        if not para.linesegs:
+            return "cache_absent"
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
         if positions and max(positions) > count:
-            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+            return "textpos_past_end"
         if count and len(positions) > 1 and max(positions) >= count:
-            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+            return "textpos_past_end"
+        return None
+
+    def stale_cache_reason(self, para, column_hwp):
+        """``"stale_line_width"`` when a cached line cannot hold its own text.
+
+        A cached line's font-independent lower-bound width exceeds its own
+        cached ``horzsize``, so the paragraph's text is *longer* than the box
+        the authoring engine laid out for it.  ``None`` otherwise.
+
+        **Sound, incomplete, and since this slice DIAGNOSTIC rather than
+        per-paragraph decisive.**  The bound can never exceed the width the
+        authoring engine actually fitted, so it raises no false positive on an
+        unedited paragraph — measured: it fires on 0 paragraphs of all ten
+        corpus forms.  But an edit that leaves every line still fitting is
+        invisible in the file, and — the finding that demoted it —
+        ``docs/research/lineseg-on-save-01.md`` measured an edit perturbing a
+        paragraph 534 positions downstream that it never touched.  So what one
+        paragraph's cache looks like cannot decide whether the DOCUMENT's
+        cache may be trusted; provenance decides that, for the whole document
+        at once (:func:`resolve_layout_policy`).  Being sound, a hit still
+        FALSIFIES a cache policy — see ``_scan_stale_cache``.
+        """
+        count = len(para.chars)
+        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
         for i, seg in enumerate(para.linesegs):
             first = positions[i]
             last = positions[i + 1] if i + 1 < len(positions) else count
@@ -3839,7 +4081,48 @@ class OwnRenderer:
                 continue
             bound = self._cached_lower_bound_hwp(para, first, last)
             if bound > horzsize * (1.0 + STALE_LINE_TOLERANCE):
-                return LINE_LAYOUT_COMPUTED, "stale_line_width"
+                return "stale_line_width"
+        return None
+
+    def _note_stale(self, paragraph_index, reason):
+        if paragraph_index is None or reason is None:
+            return
+        self._stale_diagnostics.setdefault(paragraph_index, reason)
+
+    def line_layout_mode(self, para, column_hwp, paragraph_index=None):
+        """``(mode, reason)`` — which engine lays this paragraph's lines out.
+
+        ``computed`` wins for three named reasons, and only those:
+
+          ``policy``            the whole document is drawn computed, either
+                                because the caller asked for it or because
+                                ``layout_policy`` resolved to ``computed`` off
+                                the package's provenance;
+          ``cache_absent``      the paragraph carries no ``hp:linesegarray``,
+                                so there is no cached box to draw from at all;
+          ``textpos_past_end``  a cached line starts past the end of the
+                                character stream, so no character range lines
+                                up with that box (see
+                                :meth:`unusable_cache_reason`: a cache this
+                                reader cannot READ, not one it distrusts);
+          ``caller_marked_edited`` the caller said it edited this paragraph.
+
+        ``stale_line_width`` used to appear here too.  It no longer decides
+        anything per paragraph: an edit moves paragraphs it never touched, so
+        one paragraph's cache cannot be the unit the cache is trusted in.  It
+        is still measured, reported in ``line_layout.stale_diagnostics``, and
+        used once, document-wide, in ``_scan_stale_cache``.
+        """
+        if self.line_layout == LINE_LAYOUT_COMPUTED:
+            return LINE_LAYOUT_COMPUTED, "policy"
+        if paragraph_index is not None and paragraph_index in self.relayout_paragraphs:
+            return LINE_LAYOUT_COMPUTED, "caller_marked_edited"
+        unusable = self.unusable_cache_reason(para)
+        if unusable is not None:
+            return LINE_LAYOUT_COMPUTED, unusable
+        # No staleness call here on purpose: ``_scan_stale_cache`` has already
+        # run that detector once per paragraph over the whole document, and it
+        # is not allowed to decide anything per paragraph anyway.
         return "lineseg", None
 
     @staticmethod
@@ -6088,6 +6371,21 @@ class OwnRenderer:
                 "opportunity existed inside the box"
             ),
             "caller_marked_edited": sorted(self.relayout_paragraphs),
+            "stale_diagnostics": {
+                str(index): reason
+                for index, reason in sorted(self._stale_diagnostics.items())
+            },
+            "stale_diagnostics_meaning": (
+                "paragraphs whose OWN cached line boxes cannot hold their own "
+                "text (stale_line_width), by document-order index. It never "
+                "decides a paragraph: the cache is trusted for a whole "
+                "document or for none of it (see layout_policy), because an "
+                "edit perturbs paragraphs it never touched and no "
+                "per-paragraph test can name them. Because the detector "
+                "raises no false positive, a NON-EMPTY list under a cache "
+                "policy falsifies that policy and sends the whole document "
+                "computed; layout_policy_reason says so when it happens."
+            ),
             "stale_detection": (
                 "a cached line box is judged stale when a cached textpos "
                 "starts past the end of the character stream, or when a "
@@ -7219,6 +7517,10 @@ class OwnRenderer:
                 ),
             },
             "equations": self._equation_report(),
+            "layout_policy": self.layout_policy,
+            "layout_policy_reason": self.layout_policy_reason,
+            "layout_policy_meaning": LAYOUT_POLICY_MEANING,
+            "layout_provenance": dict(self.provenance),
             "block_layout": self._flow_report,
             "line_layout": self._line_layout_report(),
             "line_boxes": list(self.line_boxes),
@@ -7467,7 +7769,11 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
     paragraphs (2995 paragraphs, 161 of them multi-line) and an "agreement"
     number dominated by paragraphs that cannot break is not a measurement.
     """
-    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root)
+    # Pinned to the cache policy: this measurement IS the comparison against
+    # the cached layout, so it must run the same way whatever the package's
+    # provenance says about trusting that cache for a render.
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                           layout_policy=LAYOUT_POLICY_CACHE)
     canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
     renderer._image = canvas
     draw = renderer.ImageDraw.Draw(canvas)
@@ -7654,8 +7960,12 @@ def flow_agreement(hwpx_path, dpi=DEFAULT_DPI, line_layout=LINE_LAYOUT_AUTO):
     boxes in place, a disagreement here is the BLOCK model's and not the line
     breaker's.  Pass ``computed`` to see the two errors compounded.
     """
+    # Pinned to the cache policy for the same reason lineseg_agreement is:
+    # the flow pass is being graded AGAINST the cache, so the provenance
+    # policy must not silently redefine what ``line_layout`` means here.
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
-                           block_layout=BLOCK_LAYOUT_COMPUTED)
+                           block_layout=BLOCK_LAYOUT_COMPUTED,
+                           layout_policy=LAYOUT_POLICY_CACHE)
     placements, pages, counters = renderer.flow()
     cached_pages = renderer.paginate()
     cached = []
@@ -7745,10 +8055,11 @@ def save_png(image, path):
 
 def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
                   line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
-                  block_layout=BLOCK_LAYOUT_AUTO):
+                  block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
                            relayout_paragraphs=relayout_paragraphs,
-                           block_layout=block_layout)
+                           block_layout=block_layout,
+                           layout_policy=layout_policy)
     images, sidecar = renderer.render()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -7768,7 +8079,7 @@ def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
 
 def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
                   line_layout=LINE_LAYOUT_AUTO,
-                  block_layout=BLOCK_LAYOUT_AUTO):
+                  block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
     """Raster PDF, for the ``[binary, {in}, {out}]`` argv render_cert expects.
 
     The pages carry no text layer, so ``render_cert``'s unique-word anchor
@@ -7777,7 +8088,8 @@ def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
     see engine/references/own-render-notes.md.
     """
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
-                           block_layout=block_layout)
+                           block_layout=block_layout,
+                           layout_policy=layout_policy)
     images, sidecar = renderer.render()
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -7831,6 +8143,17 @@ def build_parser():
              "out, and the flow pass takes over from there. computed: the "
              "flow pass places every block from the top of the document, "
              "which is how the flow pass itself is measured.")
+    parser.add_argument(
+        "--layout-policy", choices=["auto"] + list(LAYOUT_POLICIES),
+        default="auto",
+        help="auto (default): the package's own provenance decides. A "
+             "package whose version.xml@application says Hancom wrote it "
+             "last is drawn from its cached hp:lineseg layout; anything else "
+             "-- this repo's own writers, an unknown writer, or a caller "
+             "that declared it edited a paragraph -- is laid out computed for "
+             "the WHOLE document, lines and flow together. cache/computed "
+             "pin the policy for MEASUREMENT and are declared as an override "
+             "in the sidecar; pinning cache on an edited package is unsound.")
     return parser
 
 
@@ -7883,17 +8206,20 @@ def main(argv=None):
         print(json.dumps(report, ensure_ascii=False, indent=2,
                          sort_keys=True))
         return 0
+    layout_policy = None if args.layout_policy == "auto" else args.layout_policy
     try:
         if args.output:
             result = render_to_pdf(args.input, args.output, dpi=args.dpi,
                                    line_layout=args.line_layout,
-                                   block_layout=args.block_layout)
+                                   block_layout=args.block_layout,
+                                   layout_policy=layout_policy)
         else:
             out_dir = args.out_dir or Path(args.input).with_suffix("").name + "-render"
             result = render_to_dir(args.input, out_dir, dpi=args.dpi,
                                    stem=args.stem,
                                    line_layout=args.line_layout,
-                                   block_layout=args.block_layout)
+                                   block_layout=args.block_layout,
+                                   layout_policy=layout_policy)
     except RendererUnavailable as exc:
         print(f"own_render: unavailable — {exc}", file=sys.stderr)
         return 3
