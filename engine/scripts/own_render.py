@@ -1836,7 +1836,9 @@ class OwnRenderer:
             "--block-layout computed the flow pass shortens the page by the "
             "block it reserves, and under the auto policy it cannot, so a "
             "collision with the cached body layout is DECLARED per render",
-            "endnotes ARE drawn, at the end of section0, continuing onto new "
+            "endnotes ARE drawn where hp:endNotePr/hp:placement@place says — "
+            "END_OF_DOCUMENT after the last section's last page, "
+            "END_OF_SECTION after each section's own — continuing onto new "
             "pages at a NOTE boundary; a single endnote taller than the body "
             "box is set from the top of its own page and declared",
             "every line box carries the piece of furniture that drew it in "
@@ -6720,7 +6722,7 @@ class OwnRenderer:
         return int(round(used))
 
     def _render_endnotes(self, images, geo, page_w, page_h, page_offset=0,
-                         first_number_override=None):
+                         first_number_override=None, entries=None):
         """Set 미주 at the end of THIS section, continuing onto new pages.
 
         Unlike a footnote, an endnote block is not bound to one page, so the
@@ -6730,16 +6732,23 @@ class OwnRenderer:
         its own page and allowed to overflow, which is the same answer this
         tier already gives a block taller than a page, and it is counted.
 
-        ``images`` is THIS SECTION's own page list — one call per section, in
-        ``render``'s per-section loop — so END_OF_SECTION and END_OF_DOCUMENT
-        are drawn identically here (both mean "at the end of the pages this
-        call was given"), which is what the sidecar note below still says.
+        ``images`` is one section's own page list — one call per section, in
+        ``render``'s per-section loop — so this method always means "at the
+        end of the pages this call was given".  WHICH section gets the call
+        is ``render``'s decision: under END_OF_SECTION every section sets its
+        own notes, and under END_OF_DOCUMENT every earlier section hands its
+        notes forward and only the last section is called, with ``entries``
+        carrying the whole document's notes in spine order.  Measured against
+        Hancom on ``render-check-01``: the document's one endnote is authored
+        in section 0 and Hancom sets it under the last inked line of page 9,
+        the last page of section 2, not at the end of section 0.
         ``page_offset`` is how many pages precede this section in the whole
         document, so ``self._page``/``line_boxes`` stay absolute while
         ``local_page_number`` (passed to header/footer/page-number) stays
         section-relative.
         """
-        entries = self._furniture_scan()["endnote"]
+        if entries is None:
+            entries = self._furniture_scan()["endnote"]
         if not entries:
             return images
         pr = self._note_pr("endnote")
@@ -6923,6 +6932,7 @@ class OwnRenderer:
         first_geo = None
         display_counter = None
         absolute_page = 0
+        deferred_endnotes = []
         for si in range(len(self.sections)):
             self._current_section = si
             geo = self.page_geometry()
@@ -7017,10 +7027,26 @@ class OwnRenderer:
                 if pagenum_spec is not None:
                     self._render_page_number(draw, geo, local_idx,
                                              section_first_number)
-            section_images = self._render_endnotes(
-                section_images, geo, page_w, page_h,
-                page_offset=absolute_page,
-                first_number_override=section_first_number)
+            # hp:endNotePr/hp:placement@place=END_OF_DOCUMENT means the end of
+            # the DOCUMENT, not the end of the section that authors the note.
+            # A section that is not the last one therefore hands its endnotes
+            # forward instead of setting them, which is the whole of the
+            # render-check-01 page-count gap: the one endnote is authored in
+            # section 0, did not fit under the F47 table that already
+            # overflows the body box, and took a page of its own — a page
+            # Hancom's reference PDF does not have.
+            own_endnotes = self._furniture_scan()["endnote"]
+            last_section = (si == len(self.sections) - 1)
+            if (self._note_pr("endnote")["place"] == "END_OF_DOCUMENT"
+                    and not last_section):
+                deferred_endnotes.extend(own_endnotes)
+            else:
+                section_images = self._render_endnotes(
+                    section_images, geo, page_w, page_h,
+                    page_offset=absolute_page,
+                    first_number_override=section_first_number,
+                    entries=deferred_endnotes + own_endnotes)
+                deferred_endnotes = []
             if pagenum_spec is not None:
                 display_counter = (section_first_number
                                    + len(section_images) - 1)
@@ -7189,9 +7215,14 @@ class OwnRenderer:
         "the reference mark's own character cell is this renderer's reading "
         "of how hp:lineseg@textpos counts a note control, not a measurement — "
         "no document in reach of this repo carries a note to measure it on",
-        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT and "
-        "END_OF_SECTION are the same thing here (E2.7): both mean the end of "
-        "the CURRENT section's own pages, not the whole document",
+        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT sets every "
+        "section's notes after the LAST section's last page, in spine order; "
+        "END_OF_SECTION sets each section's own after its own pages "
+        "(measured on render-check-01: Hancom sets section 0's endnote on "
+        "the document's last page, and that one page was the whole 10-vs-9 "
+        "page-count gap). The note block is still set at the body box's full "
+        "width even in a multi-column section, where Hancom sets it in the "
+        "first column — a width difference, not a page-count one",
         "the endnote cursor is the bottom of the page's INKED body text, not "
         "a layout cursor: a page whose last block draws no ink is treated as "
         "ending where its ink ends",

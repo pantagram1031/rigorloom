@@ -4929,3 +4929,96 @@ def test_out_margin_changes_no_corpus_page_count():
             continue
         images, _sidecar = own_render.OwnRenderer(path, dpi=144).render()
         assert len(images) == expected[stem], stem
+
+
+# ------------------------------------------ endnote placement across sections
+#
+# MEASURED against Hancom on tests/corpus/render-check/render-check-01.hwpx
+# (docs/research/render-check-01.md note 1): the document's one hp:endNote is
+# authored in section 0 and every section declares
+# hp:endNotePr/hp:placement@place="END_OF_DOCUMENT".  Hancom's reference PDF
+# sets that note on page 9 of 9 -- section 2's only page -- under the last
+# inked body line (separator y=464.5 pt, note body y=470.5 pt, last body line
+# ending 456.3 pt).  Before this rule the renderer set it at the end of
+# section 0, where it did not fit under the F47 table that already overflows
+# the body box, and it took a page of its own: candidate 10 pages against the
+# reference's 9.  That page was the whole of the page-count gap.
+
+def _two_section_note_renderer(tmp_path, place, kind="endNote"):
+    """Two sections from one corpus form, with ONE note grafted into the
+    first, and @place set on every section's note properties."""
+    from xml.etree import ElementTree as ET
+
+    path = _multi_section_copy(
+        _need(GIANMUN), tmp_path / ("place-%s.hwpx" % place.lower()),
+        [{"page_pr": {}}])
+    renderer = own_render.OwnRenderer(str(path), dpi=144)
+    first = renderer.sections[0]
+    own_render._kids(first, "p")[1].append(ET.fromstring(
+        _note_xml(kind, "note1 " + NOTE_FILLER)))
+    tag = "footNotePr" if kind == "footNote" else "endNotePr"
+    for section in renderer.sections:
+        pr = next(e for e in section.iter()
+                  if own_render._local(e.tag) == tag)
+        placement = next(e for e in pr
+                         if own_render._local(e.tag) == "placement")
+        placement.set("place", place)
+    renderer._furniture_by_section = {}
+    renderer._note_marks = {}
+    renderer.paragraph_index = {
+        id(el): index
+        for index, el in enumerate(
+            e for e in first.iter() if own_render._local(e.tag) == "p")
+    }
+    return renderer
+
+
+def test_end_of_document_endnote_is_set_after_the_last_section(tmp_path):
+    renderer = _two_section_note_renderer(tmp_path, "END_OF_DOCUMENT")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    last_section = sidecar["sections"][-1]
+    assert min(b["page"] for b in boxes) >= last_section["pages"][0], (
+        [b["page"] for b in boxes], last_section["pages"])
+    assert max(b["page"] for b in boxes) == sidecar["pages"]
+
+
+def test_end_of_section_endnote_stays_in_its_own_section(tmp_path):
+    """The other half of the same rule: END_OF_SECTION is NOT deferred."""
+    renderer = _two_section_note_renderer(tmp_path, "END_OF_SECTION")
+    _images, sidecar = renderer.render()
+    assert sidecar["elements_rendered"]["endnotes"] == 1
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes
+    first_section = sidecar["sections"][0]
+    assert max(b["page"] for b in boxes) <= first_section["pages"][1], (
+        [b["page"] for b in boxes], first_section["pages"])
+
+
+def test_a_deferred_endnote_costs_no_page_of_its_own(tmp_path):
+    """The page-count property the render-check gap was made of: a note that
+    would not fit at the end of its own section costs a page there and none
+    at the end of a document whose last page has room."""
+    deferred = _two_section_note_renderer(tmp_path, "END_OF_DOCUMENT")
+    _images, deferred_side = deferred.render()
+    own = _two_section_note_renderer(tmp_path, "END_OF_SECTION")
+    _images, own_side = own.render()
+    assert deferred_side["pages"] <= own_side["pages"], (
+        deferred_side["pages"], own_side["pages"])
+    assert (deferred_side["sections"][0]["pages"][1]
+            <= own_side["sections"][0]["pages"][1])
+
+
+def test_render_check_01_pages_match_the_reference_count():
+    """The measured outcome: 9 pages against Hancom's 9, and section 0 no
+    longer carries an endnote page of its own."""
+    path = os.path.join(ROOT, "tests", "corpus", "render-check",
+                        "render-check-01.hwpx")
+    images, sidecar = own_render.OwnRenderer(_need(path), dpi=96).render()
+    assert len(images) == 9, len(images)
+    assert sidecar["sections"][0]["pages"] == [1, 7], sidecar["sections"][0]
+    boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
+    assert boxes and min(b["page"] for b in boxes) == 9, [
+        b["page"] for b in boxes]

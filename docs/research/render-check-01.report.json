@@ -7,9 +7,9 @@
   "reference_pdf": "render-check-01.pdf",
   "dpi": 96,
   "pages": {
-    "candidate": 10,
+    "candidate": 9,
     "reference": 9,
-    "exact": false
+    "exact": true
   },
   "reference_geometry_scale": {
     "scale": 0.995,
@@ -2096,7 +2096,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 9,
+          "page": 8,
           "top": 0.11484,
           "bottom": 0.89524
         },
@@ -2106,7 +2106,7 @@
           "bottom": 0.89524
         }
       },
-      "page_agreement": false,
+      "page_agreement": true,
       "ssim": 0.9472,
       "ssim_blocks": 15960,
       "ssim_inked": 0.0835,
@@ -2135,7 +2135,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 10,
+          "page": 9,
           "top": 0.12496,
           "bottom": 0.89899
         },
@@ -2145,16 +2145,16 @@
           "bottom": 0.89899
         }
       },
-      "page_agreement": false,
-      "ssim": 0.8708,
+      "page_agreement": true,
+      "ssim": 0.864,
       "ssim_blocks": 10692,
-      "ssim_inked": 0.1171,
-      "ssim_inked_blocks": 1561,
-      "iou": 0.3551,
+      "ssim_inked": 0.1105,
+      "ssim_inked_blocks": 1632,
+      "iou": 0.3435,
       "ink": {
         "reference": 0.00956,
-        "candidate": 0.01872,
-        "delta": 0.00916
+        "candidate": 0.02001,
+        "delta": 0.01045
       },
       "crop_px": [
         794,
@@ -2262,5 +2262,5 @@
     "match": 3,
     "unsupported": 2
   },
-  "png_bytes": 1120117
+  "png_bytes": 1121881
 }
