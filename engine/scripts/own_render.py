@@ -1570,6 +1570,14 @@ _EQ_FENCE_MAX_SCALE = 6.0
 # render, declared rather than measured off KS X 6101 (which does not publish
 # one).
 _EQ_ITALIC_SHEAR = 0.2126
+# The resolution the room an equation reserves is measured at, PINNED so that
+# the reserve — and therefore the pagination — is the same number whatever
+# ``--dpi`` the page is drawn at.  It is a measurement grid, not a tuned
+# constant, but it is not free either: `fontbook` rasterises at an integer
+# pixel size, so the same equation laid out at 300 / 600 / 1200 dpi measures
+# up to 14 HWPUNIT (0.14 pt) apart.  Pinning one of them is what makes the
+# reserve deterministic; 600 is the middle of that sweep.
+EQUATION_EXTENT_DPI = 600
 
 
 def _eq_word_head(node):
@@ -1712,6 +1720,12 @@ class OwnRenderer:
         self._eq_face_italic = None
         self._eq_italic_kind = "none"
         self._eq_italic_cache = {}
+        # The vertical room each inline hp:equation reserves, per element, in
+        # HWPUNIT.  Cached because ``_object_extent`` is asked for it once per
+        # line-breaking pass and laying an equation out is not free — and
+        # because the number must not drift between the line box and the box
+        # the equation is then drawn in.  See ``_equation_extent_height``.
+        self._eq_extent = {}
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -3777,8 +3791,108 @@ class OwnRenderer:
             return self._note_mark_extent(el)
         sz = _kid(el, "sz")
         left, _top, right, _bottom = self._object_out_margin(el)
+        height = _iattr(sz, "height") if sz is not None else 0
+        if height and _local(el.tag) == "equation":
+            height = self._equation_extent_height(el, height)
         return ((_iattr(sz, "width") if sz is not None else 0) + left + right,
-                _iattr(sz, "height") if sz is not None else 0)
+                height)
+
+    def _equation_extent_height(self, el, declared):
+        """The vertical room an inline ``hp:equation`` takes, in HWPUNIT.
+
+        **It is not the declared ``hp:sz@height``.**  Hancom re-lays the
+        script out on open and reserves what its own layout needs; the stored
+        extent is a cache it refreshes, not an instruction it obeys.  Measured
+        on ``render-check-01``, whose four equations were authored by
+        `build_render_check.py` with round declared heights that Hancom never
+        agreed to (``tests/corpus/render-check/measure_equation_extent.py``,
+        written up in ``docs/research/equation-line-box.md``):
+
+        | script | declared | Hancom reserves |
+        | --- | --- | --- |
+        | ``a over b`` | 2400 | 2252 |
+        | ``sqrt {x^{2} + y^{2}}`` | 2400 | 1304 |
+        | ``sum _{i=1} ^{n} … over 6`` | 3600 | 2696 |
+        | ``left [ matrix{…} right ]`` | 3600 | 2108 |
+
+        Two equal declared heights reserving 2252 and 1304 rule out every
+        function of the declared extent alone — no factor, no padding, no
+        attribute.  **There is no "size to content" flag**: all four declare
+        ``heightRelTo="ABSOLUTE"``, ``protect="0"``, ``lineMode="CHAR"``,
+        ``baseUnit="1000"`` and ``Equation Version 60``, i.e. exactly what
+        every equation of the Hancom-authored holdout declares, and those two
+        documents disagree about whether the stored height is honoured.  The
+        one attribute that *does* vary is ``baseLine``, which the fixture
+        leaves at a flat 85 and Hancom writes per equation (59…76) — a tell
+        that the fixture's extents were never Hancom's, not a rule.
+
+        So the reserve is **this renderer's own layout of the script**,
+        clamped to the declared box:
+
+            ``min(declared, max(nominal, ink))``
+
+        ``nominal`` is the layout tree's ascent + descent on the
+        ``_EQ_ASC``/``_EQ_DESC`` stacking cells and is the term that carries
+        the rule — it alone scores worst +256 HWPUNIT (17.0%), mean 170,
+        against +1492 (84.0%) and mean 910 for the declared height, and the
+        drawn-ink extent alone is the rejected alternative at worst −494
+        (19.3%), mean 346.  ``ink`` (``_eq_bounds``) joins it as a floor and
+        not as a fit: a fence grown around a fraction, or an accent, marks
+        outside its own cell, and a line may not reserve less room than the
+        equation puts glyphs in.  It costs the fit nothing measurable —
+        worst +256 (19.3%), mean 178.
+
+        Rejected outright, on this evidence: any function of the declared
+        height (two equal declared heights, two different reserves); a
+        constant factor on the content (the best one is 0.99 and removes
+        none of the spread); a constant padding (``reserve − content`` runs
+        −1786…+222 HWPUNIT).
+
+        The clamp is not a tolerance.  ``_render_equation`` guarantees an
+        equation is drawn *inside* its declared box, scaling down where this
+        renderer's metrics do not fit, so the drawn extent can never exceed
+        the declared one and the line reserves exactly what is drawn.  Where
+        the layout is the larger number this is byte-for-byte today's
+        behaviour.
+
+        Cross-checked on a private Hancom-authored holdout, 14 equations,
+        where the declared extent *is* Hancom's own measurement of the same
+        quantity: nominal / declared has mean 0.9934 (min 0.8828, max 1.1089,
+        sd 0.0748) and the adopted expression 0.9650 (min 0.8828, max 1.0).
+        n = 18 in all.  What is left is this renderer's equation layout
+        disagreeing with Hancom's by up to 19%, which is a layout question
+        and not a line-box one.
+
+        Anything that cannot be laid out — no script, a script past the
+        parser's recursion budget, no Pillow — falls back to the declared
+        height, which is also what such an equation is *drawn* as (a
+        placeholder box at the declared extent).
+        """
+        key = id(el)
+        cached = self._eq_extent.get(key)
+        if cached is not None:
+            return cached
+        height = declared
+        script_el = _kid(el, "script")
+        script = "".join(script_el.itertext()) if script_el is not None else ""
+        if script.strip():
+            try:
+                tree, _info = hwpeqn_parse.parse(script)
+                saved = self._eq_face
+                self._eq_face = self._equation_face(el.get("font"), count=False)
+                size = max(2.0, (_iattr(el, "baseUnit") or 1000)
+                           * EQUATION_EXTENT_DPI / HWPUNIT_PER_INCH)
+                laid = self._eq_layout(tree, size)
+                _x0, y0, _x1, y1 = self._eq_bounds(laid)
+                self._eq_face = saved
+                scale = HWPUNIT_PER_INCH / float(EQUATION_EXTENT_DPI)
+                extent = max((laid.asc + laid.desc) * scale,
+                             (y1 - y0) * scale)
+                height = min(declared, int(round(extent)))
+            except (RecursionError, OSError, AttributeError, ValueError):
+                height = declared
+        self._eq_extent[key] = height
+        return height
 
     def _line_pieces(self, draw, items, split_for_justification):
         """Flatten a line's items into positioned-in-order drawable pieces.
@@ -4405,8 +4519,13 @@ class OwnRenderer:
         return True
 
     # -- equations -------------------------------------------------------
-    def _equation_face(self, face_name):
+    def _equation_face(self, face_name, count=True):
         """The installed face an ``hp:equation@font`` names.
+
+        ``count=False`` resolves the face without counting a character
+        against it: ``_equation_extent_height`` has to lay the equation out
+        to measure it, and that measurement must not show up in the sidecar
+        as a second equation drawn in the same face.
 
         Resolved through the same ``SystemFontIndex`` and declared through the
         same ``face_resolution`` record as every text face, under the slot
@@ -4427,7 +4546,8 @@ class OwnRenderer:
         key = ("equation", face_name or "")
         hit = self._face_cache.get(key)
         if hit is not None:
-            hit[1]["characters"] += 1
+            if count:
+                hit[1]["characters"] += 1
             self._eq_face_italic, self._eq_italic_kind = \
                 self._eq_italic_cache[key]
             return hit[0]
@@ -4443,6 +4563,8 @@ class OwnRenderer:
         record = self._declare_face(
             face_name or None, "equation", entry if chosen else None, False,
             "installed" if chosen else "system")
+        if not count:
+            record["characters"] -= 1
         italic_cut = entry.get("italic") if entry else None
         if italic_cut is not None:
             italic_face, italic_kind = italic_cut, "cut"
@@ -4985,12 +5107,19 @@ class OwnRenderer:
                       baseline_in_mask)
         bands = self._eq_merge_bands(self._eq_bands(laid), size * 0.25)
         shrink = 1.0
-        if ink_w > box_w or ink_h > box_h:
+        # ``ink_w``/``ink_h`` carry the mask's 1 px antialias margin on each
+        # side, and that margin is blank: it must not count against the box,
+        # or an equation drawn in a box sized to its OWN extent
+        # (``_equation_extent_height``) would be shrunk by two pixels' worth
+        # at every resolution — 13% of it at 96 dpi.  The comparison is
+        # therefore against the box plus that margin, which is the same test
+        # as "does the INK fit", and the margin is what hangs outside.
+        if ink_w > box_w + 2 or ink_h > box_h + 2:
             # Rounding, or a face whose metrics simply will not fit: the
             # promise is that the box is never overflowed, so the last
             # reduction is on the raster.  LANCZOS is pinned for the same
             # reason it is in _render_picture.
-            shrink = min(box_w / ink_w, box_h / ink_h)
+            shrink = min((box_w + 2) / ink_w, (box_h + 2) / ink_h)
             ink_w = max(1, int(ink_w * shrink))
             ink_h = max(1, int(ink_h * shrink))
             mask = mask.resize((ink_w, ink_h), self.Image.Resampling.LANCZOS)
@@ -5003,8 +5132,11 @@ class OwnRenderer:
         percent = _iattr(el, "baseLine")
         fraction = (percent / 100.0) if 0 < percent < 100 else BASELINE_RATIO
         top = int(round(by0 + box_h * fraction - baseline_in_mask))
-        top = max(by0, min(top, by1 - ink_h))
-        left = bx0 + max(0, (box_w - ink_w) // 2)
+        # The clamp is on the INK, not on the mask: the mask's blank margin
+        # is allowed to hang one pixel outside the box on each side, which is
+        # what makes a box sized to the equation's own extent hold it.
+        top = max(by0 - 1, min(top, by1 + 1 - ink_h))
+        left = bx0 + max(-1, (box_w - ink_w) // 2)
         colour = _colour(el.get("textColor")) or (0, 0, 0)
         self._image.paste(self.Image.new("RGB", (ink_w, ink_h), colour),
                           (left, top), mask)
@@ -5035,7 +5167,10 @@ class OwnRenderer:
         self.eq_placements.append({
             "page": self._page,
             "box_px": [bx0, by0, bx1, by1],
-            "ink_px": [left, top, left + ink_w, top + ink_h],
+            # The INK rectangle, which is the mask minus its 1 px antialias
+            # margin — that margin carries no glyph and is the one part of
+            # the raster allowed to sit outside ``box_px``.
+            "ink_px": [left + 1, top + 1, left + ink_w - 1, top + ink_h - 1],
             "scale": round(scale, 4),
             "baselines": len(bands),
         })
@@ -5060,9 +5195,14 @@ class OwnRenderer:
         if name == "pic" and extent_known and self._render_picture(
                 el, origin_hwp, w, h):
             return
-        if name == "equation" and extent_known and self._render_equation(
-                el, origin_hwp, w, h):
-            return
+        if name == "equation" and extent_known:
+            # The box drawn in is the box the LINE reserved, or the equation
+            # would spill the slot it was measured into; where the two differ
+            # the declared height was the larger one, so this only ever
+            # tightens the box.  See ``_equation_extent_height``.
+            if self._render_equation(el, origin_hwp, w,
+                                     self._equation_extent_height(el, h)):
+                return
         if not extent_known:
             w = w or 6000
             h = h or 3000
