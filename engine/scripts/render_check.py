@@ -517,6 +517,13 @@ def run(hwpx_path, reference_pdf, blocks_path, dpi=DEFAULT_DPI,
         cand_crop = _crop(candidate_pages[cand_index].convert("RGB"),
                           cand_region)
         metrics = score_region(ref_crop, cand_crop, rs.INK_THRESHOLD)
+        # The two band heights are the cheapest read on whether the feature
+        # occupies the same amount of page on both sides.  A band that is
+        # tall on one side and a stub on the other means the content ran onto
+        # the next page in one engine and not the other, which is a
+        # pagination finding, not a finding about the feature itself.
+        metrics["band_px"] = {"reference": ref_crop.size[1],
+                              "candidate": cand_crop.size[1]}
         row.update(metrics)
         limits, not_drawn = declared_limits(feature, skipped)
         if limits:
