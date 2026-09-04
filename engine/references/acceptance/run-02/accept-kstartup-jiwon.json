@@ -1,0 +1,44 @@
+{
+  "ok": false,
+  "exit_code": 3,
+  "source": "<scratchpad>\\c-kstartup-edited.hwpx",
+  "candidate": "<scratchpad>\\out-c-kstartup\\c-kstartup-edited.accept-candidate.hwpx",
+  "source_sha256": "4193479bd0a8bcd6d02bf4d9b436157007645837e67f8636442d44f4bc7ed493",
+  "candidate_sha256": "8e08bbbbc93ccd7f03a73f2a5eec6ba71c71410a178b15bf45294a1cb7a739a7",
+  "edit_marker": "RIGORLOOM-E3-ACCEPT-KSTARTUP-02",
+  "closed_reason": null,
+  "checks": {
+    "open_no_repair": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "save_new_path": {
+      "status": "pass",
+      "candidate_sha256": "8e08bbbbc93ccd7f03a73f2a5eec6ba71c71410a178b15bf45294a1cb7a739a7"
+    },
+    "close": {
+      "status": "pass"
+    },
+    "reopen": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "edit_preserved": {
+      "status": "pass"
+    },
+    "structures_preserved": {
+      "status": "pass",
+      "source_tables": 42,
+      "candidate_tables": 42,
+      "source_paragraphs": 798,
+      "candidate_paragraphs": 798,
+      "qname_count_delta": {}
+    },
+    "bindings_valid": {
+      "status": "pass",
+      "source_sha256": "4193479bd0a8bcd6d02bf4d9b436157007645837e67f8636442d44f4bc7ed493",
+      "candidate_sha256": "8e08bbbbc93ccd7f03a73f2a5eec6ba71c71410a178b15bf45294a1cb7a739a7"
+    }
+  },
+  "notes": []
+}
