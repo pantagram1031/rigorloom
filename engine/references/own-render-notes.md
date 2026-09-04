@@ -1944,3 +1944,22 @@ false` on both; the grade stays `own-uncertified` on every class.
     metrics table. Out of scope for the refs-1:1 slice (font-metric
     resolution, not reference pinning); the regression floor was widened to
     0.012 to keep the gate honest rather than hiding the finding.
+
+## E2 refs-1:1 slice — closing gate run, 2026-09-04
+
+Ran clean at commit `ea0887c` on `claude/engine-e2-refs-1to1`:
+
+- `pytest engine/tests -q`: 1160 passed, 135 skipped, 0 failed (267s). The
+  determinism tests (`test_the_computed_breaker_is_deterministic_too`,
+  `test_the_flow_pass_is_deterministic`, `test_a_page_with_furniture_renders_
+  deterministically`) are in this run and green.
+- `python scripts/py_compile_sweep.py`: 103 files, 0 failures.
+- `python pipeline/scripts/privacy_scan.py archive --json`: hard 0, warn 0,
+  total 0, incomplete false.
+
+No code changes made in this pass beyond what the E2 refs-1:1 slice commit
+already carries; this is a gate-verification entry, not new work. The
+`engine/references/render-1to1/NOTES.md` provenance file this section's PDF
+re-pin notes cite lives on `claude/engine-e3-hancom-accept`
+(commit `b8a87e1`), not yet merged into this branch — a known cross-branch
+reference, not a broken one; no test on this branch depends on that path.
