@@ -115,6 +115,49 @@ DEFAULT_DPI = 144
 # DIFFERENT error per resolution, which is what moved the line breaks.
 LAYOUT_REFERENCE_PX = 1024
 
+# WHERE A TEXT LINE'S GEOMETRY BOX ENDS.  Three conventions are possible and
+# every ``line_boxes`` record carries all three explicitly:
+#
+#   ``advance``           the advance of every glyph piece on the line, a
+#                         trailing space included.  This is what a caret
+#                         needs, so ``x1_advance`` is always emitted whatever
+#                         this constant says.
+#   ``ink``               where the last glyph's outline stops (the advance
+#                         minus that glyph's right side bearing).
+#   ``visible_advance``   the advance of the last piece that draws ink, i.e.
+#                         the advance convention with trailing whitespace
+#                         dropped.
+#
+# MEASURED, corpus-wide, against the ten Hancom reference PDFs.  The
+# reference's own box is the union of PyMuPDF's per-character ADVANCE quads (a
+# 12.96 pt Hangul character measures exactly 12.96 wide there — its 1.0 em
+# advance, not its ~0.95 em ink), so it is an ADVANCE box and ``ink`` loses
+# decisively.  Read on the 817 pairs whose left edges agree to 1.5 px and
+# whose baselines agree to 2.0 px — the pairs that are demonstrably the same
+# line, rather than whatever the greedy centre-distance pairing put together,
+# whose |dx| tail is 150 px of line-breaker disagreement on every convention
+# alike:
+#
+#   convention          median |dx|   p90 |dx|   mean IoU
+#   ink                    2.484        5.427     0.8480
+#   advance                0.371        6.239     0.8707
+#   visible_advance        0.363        5.275     0.8713
+#
+# ``visible_advance`` wins median, p90 and IoU on that set, so it is what the
+# geometry box reports.  It is close, and the reason is that the reference
+# itself is not consistent: the two advance readings differ on only 34 of the
+# 817, and on those Hancom SPLITS — 19 lines drop the trailing space from the
+# PDF (visible 1.75 px vs advance 12.68 px) and 15 keep it (advance 2.68 px vs
+# visible 9.59 px).  Nothing in the OWPML predicts which, and 19 > 15 is the
+# whole of the margin.  Full derivation, and the per-form cost on the
+# scoreboard's IoU channel: ``engine/references/own-render-notes.md``, "Where
+# a text line's box ends".
+#
+# ``x1_advance`` stays in the sidecar whatever this constant says, because it
+# is the number a caret needs: a caret sits after the trailing space, not on
+# the last glyph's ink.
+LINE_BOX_END = "visible_advance"
+
 # U+FFFC OBJECT REPLACEMENT CHARACTER: the single textpos slot an
 # inline object occupies in a paragraph character stream.
 OBJECT_SLOT = "\ufffc"
@@ -1759,6 +1802,7 @@ class OwnRenderer:
         self._image = None
         self._typo_cache = {}
         self._em_cache = {}
+        self._rsb_cache = {}
         # Which character metrics this document actually exercised, counted in
         # characters.  The honesty rule cuts both ways: the sidecar has to say
         # what was *applied*, not only what was skipped, or "we apply hh:ratio"
@@ -3086,6 +3130,47 @@ class OwnRenderer:
             self._em_cache[key] = hit
         return hit
 
+    def _em_right_bearing(self, font, ch):
+        """``ch``'s right side bearing in EM: advance minus ink, off the face.
+
+        Measured at ``LAYOUT_REFERENCE_PX`` and divided by it, exactly like
+        :meth:`_em_width`, so it is dpi-free for the same reason.  Pillow's
+        ``getbbox`` is NOT ink — it reports the advance box (a space's bbox is
+        as wide as its advance and zero high) — so the ink edge has to come
+        off the rendered mask.
+
+        Only the LAST character is needed, and the decomposition is exact:
+        kerning moves a glyph's origin, never its own advance, so the ink
+        right edge of a chunk is the chunk's advance minus its last
+        character's bearing.  Verified on 바탕: ``abc`` is 1700/1639 and ``c``
+        alone is 555/494 — the same 61 units of bearing.
+        """
+        key = (font.path, getattr(font, "index", 0), ch)
+        hit = self._rsb_cache.get(key)
+        if hit is None:
+            reference = self._reference_font(font)
+            advance = float(reference.getlength(ch))
+            box = reference.getmask(ch, mode="L").getbbox()
+            right = float(box[2]) if box else advance
+            hit = max(0.0, advance - right) / LAYOUT_REFERENCE_PX
+            self._rsb_cache[key] = hit
+        return hit
+
+    def _ink_right_px(self, piece, cursor):
+        """Where ``piece``'s ink ends, in device pixels.
+
+        The bearing is scaled by the piece's own advance rather than by a
+        point size, because ``advance_hwpunit / em_width`` already carries the
+        declared size and ``hh:ratio`` together.
+        """
+        text = piece["text"]
+        em = self._em_width(piece["font"], text)
+        if not em:
+            return cursor + piece["advance"]
+        bearing = self._em_right_bearing(piece["font"], text[-1])
+        return cursor + piece["advance"] - self.pxf(
+            bearing * piece["advance_hwpunit"] / em)
+
     def _embolden_px(self, cid, slot, font):
         """Stroke width, in pixels, for a bold run drawn on a regular face.
 
@@ -4139,6 +4224,13 @@ class OwnRenderer:
         baseline_px = self.pxf(baseline_hwp)
         drew_text = False
         text_x0 = text_x1 = None
+        # The three candidate right edges, kept apart because they answer
+        # different questions: ``text_x1`` is the advance of every glyph piece
+        # (a trailing space included) and is what a caret needs; ``ink_x1`` is
+        # where the last glyph's outline stops; ``visible_x1`` is the advance
+        # of the last piece that draws ink.  Which one the geometry box
+        # reports is decided in ``LINE_BOX_END`` by measurement.
+        ink_x1 = visible_x1 = None
         ascent = descent = 0
         for piece in pieces:
             w = piece["advance"]
@@ -4169,6 +4261,10 @@ class OwnRenderer:
             # Q2 contributor 2).
             if piece["text"].strip():
                 drew_text = True
+                right = self._ink_right_px(piece, cursor)
+                ink_x1 = right if ink_x1 is None else max(ink_x1, right)
+                visible_x1 = (cursor + w) if visible_x1 is None \
+                    else max(visible_x1, cursor + w)
             seg_ascent, seg_descent = font.getmetrics()
             shift = piece["offset_px"]
             ascent = max(ascent, seg_ascent + shift)
@@ -4190,12 +4286,21 @@ class OwnRenderer:
             # The box is the *text* extent, not the item extent: an inline
             # placeholder sharing the line must not inflate a box that is
             # about to be paired against a reference PDF's text lines.
+            ends = {
+                "advance": text_x1,
+                "ink": ink_x1 if ink_x1 is not None else text_x1,
+                "visible_advance": (visible_x1 if visible_x1 is not None
+                                    else text_x1),
+            }
             self.line_boxes.append({
                 "page": self._page,
                 "mode": self._furniture_mode or self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
-                "x1": round(text_x1, 3),
+                "x1": round(ends[LINE_BOX_END], 3),
+                "x1_advance": round(ends["advance"], 3),
+                "x1_ink": round(ends["ink"], 3),
+                "x1_visible_advance": round(ends["visible_advance"], 3),
                 "y1": round(baseline_px + descent, 3),
             })
 
@@ -5276,12 +5381,19 @@ class OwnRenderer:
             "baselines": len(bands),
         })
         for _baseline, gx0, gy0, gx1, gy1 in bands:
+            # An equation band is already measured off the glyph mask, so all
+            # three ``LINE_BOX_END`` readings coincide here: there is no
+            # trailing space to drop and no advance beyond the ink.
+            band_x1 = round(left + (gx1 + 1.0 - x0) * shrink, 3)
             self.line_boxes.append({
                 "page": self._page,
                 "mode": "equation",
                 "x0": round(left + (gx0 + 1.0 - x0) * shrink, 3),
                 "y0": round(top + (gy0 + 1.0 - y0) * shrink, 3),
-                "x1": round(left + (gx1 + 1.0 - x0) * shrink, 3),
+                "x1": band_x1,
+                "x1_advance": band_x1,
+                "x1_ink": band_x1,
+                "x1_visible_advance": band_x1,
                 "y1": round(top + (gy1 + 1.0 - y0) * shrink, 3),
             })
         return True
@@ -6264,12 +6376,18 @@ class OwnRenderer:
         # A stamped number is a text line the reference PDF also extracts, so
         # it belongs in the geometric comparison channel like any other line.
         self.counts["text_lines"] += 1
+        # A stamped number is digits and separators only — no trailing space
+        # can be in it — so the advance and visible-advance readings coincide.
+        stamp_x1 = round(x0 + width, 3)
         self.line_boxes.append({
             "page": self._page,
             "mode": "pagenum",
             "x0": round(x0, 3),
             "y0": round(baseline - ascent, 3),
-            "x1": round(x0 + width, 3),
+            "x1": stamp_x1,
+            "x1_advance": stamp_x1,
+            "x1_ink": stamp_x1,
+            "x1_visible_advance": stamp_x1,
             "y1": round(baseline + descent, 3),
         })
 
@@ -7228,8 +7346,18 @@ class OwnRenderer:
                 "baseline, x bounds are the measured text extent (inline "
                 "objects excluded). The comparison channel "
                 "engine/scripts/render_scoreboard.py pairs these against a "
-                "reference PDF's text lines."
+                "reference PDF's text lines. Three right edges are reported "
+                "and they differ only on a line that ends in whitespace or "
+                "whose last glyph has a right side bearing: x1_advance is "
+                "every glyph piece's advance, a trailing space included, and "
+                "is what a caret needs; x1_ink is where the last glyph's "
+                "outline stops; x1_visible_advance is the advance of the "
+                "last piece that draws ink. x1 is the geometry box and "
+                "follows own_render.LINE_BOX_END, which is "
+                f"{LINE_BOX_END!r} because that is the reading the ten Hancom "
+                "reference PDFs' own line boxes were measured to agree with."
             ),
+            "line_box_end": LINE_BOX_END,
             "page_furniture": self._page_furniture_report(geo),
             "sections": section_infos,
             "sections_meaning": (
