@@ -1,0 +1,279 @@
+{
+  "caveats": [
+    "every number here depends on which fonts this machine has installed; see fonts.faces for what resolved and what was substituted",
+    "changed_channel_ratio is render_cert's raster channel verbatim and carries no threshold here — see thresholds.rationale",
+    "the reference raster is scaled to the candidate's pixel grid, never the reverse"
+  ],
+  "document": "jeongbo-gonggae-cheongguseo.hwpx",
+  "document_class": "petition",
+  "dpi": 144,
+  "elements_rendered": {
+    "borders": 136,
+    "cells": 70,
+    "paragraphs": 77,
+    "placeholders": 1,
+    "runs": 104,
+    "tables": 2,
+    "text_lines": 62
+  },
+  "fidelity_target": {
+    "ink_delta_abs_max": 0.002,
+    "note": "not evaluated. The gap to it is the honest measure of how far tier 3 is from Hancom, and the largest remaining term is sub-pixel glyph registration, not any single unimplemented element.",
+    "page_count_exact": true,
+    "ssim_inked_min": 0.7,
+    "ssim_min": 0.95,
+    "text_line_iou_mean_min": 0.8,
+    "text_line_pair_rate_min": 0.95
+  },
+  "fonts": {
+    "characters_on_a_resolved_face": 1141,
+    "characters_on_a_substituted_face": 0,
+    "faces": [
+      {
+        "bold": false,
+        "characters": 621,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 9,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 44,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 385,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": true,
+        "characters": 7,
+        "declared": "돋움",
+        "face_index": 2,
+        "file": "gulim.ttc",
+        "installed_family": "돋움",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 27,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": true,
+        "characters": 5,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 6,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "latin"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "other"
+      },
+      {
+        "bold": false,
+        "characters": 28,
+        "declared": "돋움체",
+        "face_index": 3,
+        "file": "gulim.ttc",
+        "installed_family": "돋움체",
+        "resolved": true,
+        "slot": "symbol"
+      },
+      {
+        "bold": false,
+        "characters": 7,
+        "declared": "한양견고딕",
+        "face_index": 0,
+        "file": "H2GTRE.TTF",
+        "installed_family": "HY견고딕",
+        "resolved": true,
+        "slot": "hangul"
+      },
+      {
+        "bold": false,
+        "characters": 1,
+        "declared": "한양중고딕",
+        "face_index": 0,
+        "file": "H2GTRM.TTF",
+        "installed_family": "HY중고딕",
+        "resolved": true,
+        "slot": "symbol"
+      }
+    ],
+    "fallback_bold": "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "fallback_regular": "C:\\Windows\\Fonts\\malgun.ttf",
+    "fallback_source": "system",
+    "note": "declared faces are matched against the installed faces' own family names, read from each font's OpenType name table (including its Korean records, which FreeType does not expose). A face that is not installed is substituted with the fallback and named here and in elements_skipped; its advance widths then differ from the authoring engine's. This makes a render machine-dependent BY DESIGN: the same document on a machine without these faces will not produce the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one face and take that variable out of the measurement.",
+    "pinned_single_face": false,
+    "resolved_character_share": 1.0,
+    "system_font_files_scanned": 457
+  },
+  "grade": "own-uncertified",
+  "grade_meaning": "measured against a Hancom reference render; the grade stays own-uncertified because the thresholds below are PROPOSED and not operator-ratified, and because pipeline/scripts/render_cert.py — the certification path — cannot score this renderer until it emits a PDF text layer.",
+  "label": "before-e2.1",
+  "page_size_px": [
+    1191,
+    1684
+  ],
+  "pages": [
+    {
+      "changed_channel_ratio": 0.158638821,
+      "ink": {
+        "candidate": 0.039573,
+        "delta": -0.00037,
+        "reference": 0.039943
+      },
+      "page": 1,
+      "scored": true,
+      "ssim": 0.617547,
+      "ssim_blocks": 31080,
+      "ssim_inked": 0.037182,
+      "ssim_inked_blocks": 12332,
+      "text_line_iou": {
+        "candidate_lines": 62,
+        "mean": 0.438491,
+        "median": 0.426724,
+        "pair_rate": 1.0,
+        "pairs": 59,
+        "reference_lines": 59,
+        "unpaired_candidate": 3,
+        "unpaired_reference": 0
+      }
+    }
+  ],
+  "reference_geometry_scale": {
+    "comparable": true,
+    "declared_median_pt": 9.5,
+    "method": "glyph-weighted median of reference PDF span sizes over glyph-weighted median of declared hh:charPr@height x hh:ratio",
+    "reference_median_pt": 9.72,
+    "scale": 1.023158,
+    "tolerance": 0.05
+  },
+  "reference_pdf": "jeongbo-gonggae-cheongguseo.pdf",
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "scoreboard_version": "2",
+  "ssim_variant": "block-8x8 non-overlapping, C1=6.502500000000001, C2=58.522499999999994, L=255.0; in-repo implementation because scikit-image is not installed in this environment",
+  "summary": {
+    "changed_channel_ratio_mean": 0.158638821,
+    "ink_delta_abs_max": 0.00037,
+    "page_count": {
+      "candidate": 1,
+      "exact": true,
+      "reference": 1
+    },
+    "pages_scored": 1,
+    "ssim_inked_mean": 0.037182,
+    "ssim_inked_min": 0.037182,
+    "ssim_mean": 0.617547,
+    "ssim_min": 0.617547,
+    "text_line_iou_mean": 0.438491,
+    "text_line_pair_rate_mean": 1.0
+  },
+  "thresholds": {
+    "ink_delta_abs_max": 0.05,
+    "kind": "regression_floor",
+    "page_count_exact": true,
+    "ratified": false,
+    "rationale": "measured worst-of-seven on the comparable corpus forms at 144 dpi: ssim_min 0.4867 (jumin), ssim_inked_min -0.0224 (saeopja), text_line_iou_mean 0.2470 (kstartup), text_line_pair_rate 0.4490 (admrul), ink_delta_abs_max 0.0375 (kstartup). Each bound is set below (or above, for the max) that worst value with a little headroom. raster changed_channel_ratio carries NO threshold: a font-substituting renderer cannot reach a meaningful one, and a gate nobody can pass is not a gate.",
+    "ssim_inked_min": -0.1,
+    "ssim_min": 0.4,
+    "text_line_iou_mean_min": 0.2,
+    "text_line_pair_rate_min": 0.4
+  },
+  "verdict": {
+    "blocked": false,
+    "blocked_reason": null,
+    "checks": [
+      {
+        "bound": true,
+        "check": "page_count_exact",
+        "pass": true,
+        "value": true
+      },
+      {
+        "bound": 0.4,
+        "check": "ssim_min",
+        "pass": true,
+        "value": 0.617547
+      },
+      {
+        "bound": -0.1,
+        "check": "ssim_inked_min",
+        "pass": true,
+        "value": 0.037182
+      },
+      {
+        "bound": 0.2,
+        "check": "text_line_iou_mean",
+        "pass": true,
+        "value": 0.438491
+      },
+      {
+        "bound": 0.4,
+        "check": "text_line_pair_rate_mean",
+        "pass": true,
+        "value": 1.0
+      },
+      {
+        "bound": 0.05,
+        "check": "ink_delta_abs_max",
+        "pass": true,
+        "value": 0.00037
+      }
+    ],
+    "note": "a passing verdict against UNRATIFIED thresholds promotes nothing; the grade stays own-uncertified",
+    "pass": true,
+    "ratified": false
+  }
+}

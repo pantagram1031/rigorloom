@@ -1,0 +1,416 @@
+{
+  "caveat": "pages_cached is what own_render.paginate() reads out of the cached vertpos, and on kstartup that heuristic is itself wrong: it reads 20 pages where Hancom's own reference render has 22, because the paragraph after a full-page ANCHORED table does not restart at vertpos 0. The flow pass computes 22 from the geometry alone, so kstartup's low agreement number is the flow pass disagreeing with a heuristic, not with Hancom.",
+  "dpi": 144,
+  "forms": [
+    {
+      "abs_dy_hwpunit": {
+        "exact": 15,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 15,
+      "document": "admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 0,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        15,
+        15
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 1,
+      "pages_computed": 1,
+      "top_level_blocks": 15
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 3,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 3,
+      "document": "gianmun-byeolji-1ho.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 0,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        3,
+        3
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 1,
+      "pages_computed": 1,
+      "top_level_blocks": 3
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 3,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 3,
+      "document": "gianmun-byeolji-2ho.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 0,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        3,
+        3
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 1,
+      "pages_computed": 1,
+      "top_level_blocks": 3
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 1,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 1,
+      "document": "jeongbo-gonggae-cheongguseo.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 1,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 0,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        1,
+        1
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 1,
+      "pages_computed": 1,
+      "top_level_blocks": 1
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 3,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 3,
+      "document": "jumin-deungchobon-sinchengseo.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 2,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        3,
+        3
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 3,
+      "pages_computed": 3,
+      "top_level_blocks": 3
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 128,
+        "max": 69785.0,
+        "median": 0.0,
+        "p90": 8640.0
+      },
+      "abs_dy_px": {
+        "max": 1395.7,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 165,
+      "document": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 2,
+        "anchored_extents_ignored": 1,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 4,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 5,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        46,
+        165
+      ],
+      "page_assignment_rate": 0.2788,
+      "pages_cached": 20,
+      "pages_computed": 22,
+      "top_level_blocks": 165
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 154,
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 0.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 154,
+      "document": "moel-pyojun-geunrogyeyakseo-2013.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 2,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 2,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 4,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        154,
+        154
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 7,
+      "pages_computed": 7,
+      "top_level_blocks": 154
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 186,
+        "max": 1000.0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "abs_dy_px": {
+        "max": 20.0,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 187,
+      "document": "moel-pyojun-geunrogyeyakseo-2025.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 5,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 1,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        187,
+        187
+      ],
+      "page_assignment_rate": 1.0,
+      "pages_cached": 7,
+      "pages_computed": 7,
+      "top_level_blocks": 187
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 43,
+        "max": 71630.0,
+        "median": 0.0,
+        "p90": 5120.0
+      },
+      "abs_dy_px": {
+        "max": 1432.6,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 53,
+      "document": "nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 0,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 2,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 0,
+        "tables_split": 0,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        51,
+        53
+      ],
+      "page_assignment_rate": 0.9623,
+      "pages_cached": 4,
+      "pages_computed": 4,
+      "top_level_blocks": 53
+    },
+    {
+      "abs_dy_hwpunit": {
+        "exact": 5,
+        "max": 72538.0,
+        "median": 0.0,
+        "p90": 72538.0
+      },
+      "abs_dy_px": {
+        "max": 1450.76,
+        "median": 0.0
+      },
+      "block_layout": "computed",
+      "compared": 6,
+      "document": "saeopja-deungnok-sinchengseo.hwpx",
+      "dpi": 144,
+      "excluded_no_cache": 0,
+      "flow_counters": {
+        "anchored_blocks_moved": 0,
+        "anchored_extents_ignored": 0,
+        "blocks_taller_than_page": 5,
+        "column_breaks_as_page_breaks": 0,
+        "explicit_page_breaks": 2,
+        "keep_lines_moved": 0,
+        "keep_with_next_given_up": 0,
+        "keep_with_next_moved": 0,
+        "tables_moved_whole": 2,
+        "tables_split": 1,
+        "widow_orphan_moved": 0
+      },
+      "line_layout": "auto",
+      "meaning": "the flow pass placed every top-level block of this UNEDITED document from its own measured heights, and each block's computed page and page-relative top (HWPUNIT, from the top of the body box, the same origin hp:lineseg@vertpos uses) is compared to what the authoring engine cached. page_assignment_agreement is the share of blocks the flow pass puts on the same page; abs_dy is how far it puts them from the cached vertical position. pages_cached is what paginate() reads out of the cache, which is itself a heuristic and not ground truth — where the two disagree, only a reference render settles which is right.",
+      "page_assignment_agreement": [
+        5,
+        6
+      ],
+      "page_assignment_rate": 0.8333,
+      "pages_cached": 6,
+      "pages_computed": 6,
+      "top_level_blocks": 6
+    }
+  ],
+  "renderer": "rigorloom-own/0.1",
+  "renderer_version": "0.1.0",
+  "total": {
+    "page_assignment_agreement": [
+      468,
+      590
+    ],
+    "page_assignment_rate": 0.7932
+  },
+  "what": "the E2.5 block flow pass, run in computed mode over each corpus form's UNEDITED text and measured against the page assignment and hp:lineseg@vertpos the authoring engine cached. Line layout stays auto, so a disagreement here is the BLOCK model's and not the line breaker's."
+}
