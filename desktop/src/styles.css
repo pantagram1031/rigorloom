@@ -2495,6 +2495,27 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .skipped-items .count { color: var(--fg-faint); }
 .skipped-items .why { color: var(--fg-muted); }
 
+/* A line our own renderer drew, with no address behind it.
+   Invisible at rest, on purpose: the rectangle is a measurement and a hit
+   target, and it is NOT an invitation to type. Anything with a resting fill
+   would join the seat vocabulary and promise an edit this page cannot give. */
+.ov-line {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.ov-line:hover,
+.ov-line:focus-visible {
+  outline: 1px dashed var(--line-strong);
+  outline-offset: 1px;
+}
+
+.ov-line.ov-picked {
+  outline: 1px solid var(--accent-line);
+  outline-offset: 1px;
+  background: var(--accent-soft);
+}
+
 /* The document's own zoom. `zoom` scales layout, so glyphs re-rasterise
    rather than being resampled — the same reasoning as the app zoom. */
 .doc-zoom {

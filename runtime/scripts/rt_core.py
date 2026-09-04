@@ -193,7 +193,7 @@ class RuntimeCore:
                 "maxRegionBytes": MAX_REGION_BYTES,
                 "maxSourceBytes": MAX_SOURCE_BYTES,
             },
-            "render": render_capability(),
+            "render": render_capability(self.tools),
             "geometry": geometry_capability(),
             "modules": module_capability(self.tools.root),
             "childPython": child_python_facts(),

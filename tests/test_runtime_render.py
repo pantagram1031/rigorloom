@@ -517,6 +517,28 @@ def test_the_capability_row_says_the_renderer_is_not_certified(core):
     assert render["grades"] == list(__import__("rt_own").RENDER_GRADES)
 
 
+def test_the_capability_row_reads_the_engine_root_it_was_given(tmp_path):
+    """The frozen-bundle defect, caught at the level it actually occurs.
+
+    A packaged sidecar finds its scripts through ``--engine-root``, which
+    becomes ``RuntimeCore(engine_root=...)`` and then ``EngineTools.root``.
+    ``render_capability`` used to build the tier-3 row without that, falling
+    back to a path derived from ``rt_engine.__file__`` — correct in a checkout,
+    and pointing outside the bundle in a frozen build. The symptom would have
+    been a shipped install advertising ``own.state: "no"`` while carrying the
+    renderer perfectly well, which no test that only ever runs from a checkout
+    can see. So: point a core at a root that has no engine, and require the
+    capability to say so.
+    """
+    empty = tmp_path / "not-an-engine-root"
+    empty.mkdir()
+    blind = RuntimeCore(tmp_path / "root", engine_root=empty)
+    assert blind.capability_snapshot(methods=[])["render"]["own"]["state"] == "no"
+
+    real = RuntimeCore(tmp_path / "root2")
+    assert real.capability_snapshot(methods=[])["render"]["own"]["state"] == "yes"
+
+
 # --- the CLI mirror ---------------------------------------------------------
 
 def _opaque(tmp_path):

@@ -984,9 +984,8 @@ def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
     ``geometrySource: "own"`` is on the answer so a client can say which of the
     two it is looking at, and the smoke asserts the badge and the geometry agree.
     """
-    from rt_own import (OWN_GRADE, line_boxes_for_page, read_sidecar,
-                        sidecar_page_size)
-    from rt_own import existing_own
+    from rt_own import (OWN_GRADE, any_own_for, line_boxes_for_page,
+                        read_sidecar, sidecar_page_size)
 
     subject_sha = subject_facts.get("sha256")
     if not isinstance(subject_sha, str) or not subject_sha:
@@ -994,12 +993,8 @@ def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
     # Deliberately only the CACHE. Geometry never triggers a render: the raster
     # call is the one that decides whether tier 3 runs, and a geometry request
     # that spawned its own renderer could hand back boxes for a page the user is
-    # not looking at.
-    record = None
-    for dpi in sorted({DEFAULT_RENDER_DPI, 96, 144, 300}):
-        record = existing_own(session, subject_sha256=subject_sha, dpi=dpi)
-        if record is not None:
-            break
+    # not looking at. Any dpi will do — the rects are page fractions.
+    record = any_own_for(session, subject_sha256=subject_sha)
     if record is None:
         return None
 

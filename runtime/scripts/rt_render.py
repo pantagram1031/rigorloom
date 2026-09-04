@@ -101,8 +101,15 @@ def rasterizer_facts() -> dict:
             "formats": []}
 
 
-def render_capability() -> dict:
+def render_capability(tools=None) -> dict:
     """The ``capabilities.render`` block. No subprocess, no probe, no wait.
+
+    ``tools`` matters for the tier-3 row and only for it. ``EngineTools``
+    resolves the engine root from ``--engine-root``, which is how the PACKAGED
+    sidecar finds `<bundle>/repo`; a tools-less call falls back to a path
+    derived from ``__file__``, and in a frozen build that path does not exist.
+    Left unthreaded, a shipped install would advertise ``own.state: "no"`` on a
+    bundle that carries the renderer perfectly well.
 
     The converter row is flatly ``no`` and says why: this build calls no
     converter, whatever the machine happens to have installed. A caller that
@@ -118,7 +125,7 @@ def render_capability() -> dict:
         "prepare": prepare_capability(),
         # TIER 3. The row that makes a fresh install show a page at all: no
         # Hancom, no PDF, and still something honest on screen (§11.1c).
-        "own": own_capability(),
+        "own": own_capability(tools),
         "grades": list(RENDER_GRADES),
         "tiers": {
             "1": "hancom — a PDF this machine's Hancom produced",
@@ -144,13 +151,17 @@ def render_capability() -> dict:
     }
 
 
-def _unavailable(session, reason: str, detail: str, **extra) -> dict:
+def _unavailable(session, reason: str, detail: str, _tools=None, **extra) -> dict:
+    # `_tools` is underscored because ``extra`` is the wire's own namespace and
+    # a caller must never be able to shadow this by naming a detail field
+    # "tools". It exists so the capability block inside a refusal describes the
+    # same install the refusal came from — see render_capability.
     assert reason in UNAVAILABLE_REASONS, reason
     return {
         "sessionId": session.id,
         "available": False,
         "unavailable": {"reason": reason, "detail": detail, **extra},
-        "capability": render_capability(),
+        "capability": render_capability(_tools),
     }
 
 
@@ -358,6 +369,7 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
                  if prepare["state"] == "yes" else
                  "this session holds an HWPX; a page image needs a PDF, and "
                  "this machine cannot make one: " + str(prepare["reason"])),
+                _tools=tools,
                 artifactKind=kind, documentKind=document_kind, suffix=suffix,
                 prepare=prepare,
                 # Why the third tier did not step in either. Without this the
@@ -368,12 +380,13 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
         return _unavailable(
             session, "no_rasterizable_artifact",
             f"nothing here is a PDF (the {kind} is {suffix or 'extensionless'})",
+            _tools=tools,
             artifactKind=kind, documentKind=document_kind, suffix=suffix)
 
     if path is None or not path.is_file():
         return _unavailable(session, "artifact_missing",
                             "the artifact named by this request is not on disk",
-                            artifactKind=kind)
+                            _tools=tools, artifactKind=kind)
 
     module = rasterizer_module()
     if module is None:
@@ -381,7 +394,7 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
             session, "rasterizer_missing",
             "a PDF is present but PyMuPDF is not importable in this "
             "interpreter, so it cannot be rasterised",
-            artifactKind=kind, artifact=facts)
+            _tools=tools, artifactKind=kind, artifact=facts)
 
     try:
         document = module.open(str(path))
