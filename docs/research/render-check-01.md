@@ -70,79 +70,86 @@ has been scored with them.
 
 ## Result
 
-**1 match · 35 close · 13 differs · 2 unsupported** over 51 features.
+**3 match · 37 close · 9 differs · 2 unsupported** over 51 features.
 
-Measured on the converged E2 tree (`claude/engine-e2-converge`: the
-`hp:outMargin` registration fix #211, the bundled Korean fallback faces #208
-and the inline-table move rule #210 in one tree). Three features moved off
-`differs` since this page was first written against the pre-convergence tree
-(**1 · 32 · 16 · 2**):
+Measured on the E2 line-metrics tree (`claude/engine-e2-line-metrics`), which
+adds the character- and line-metric rules of
+[line-and-character-metrics.md](line-and-character-metrics.md) to the converged
+tree. That page is the measurement; this one is what it was worth. Five
+features moved off `differs` and two onto `match` since the converged tree
+(**1 · 35 · 13 · 2**):
 
 | feature | before | after | mechanism |
 |---|---|---|---|
-| `F47` 표 — 쪽을 넘기는 표 | IoU 0.025 `differs` | IoU 0.535 `close` | #210 — an inline (글자처럼 취급) table never splits; it moves whole, as Hancom's does. See note 2 |
-| `F31` 표 — 테두리 종류 | IoU 0.222 `differs` | IoU 0.376 `close` | #211 — the `hp:outMargin` inset puts the table box where Hancom puts it, so the grids overlap. See note 3 |
-| `F32` 표 — 셀 세로 정렬 | IoU 0.205 `differs` | IoU 0.479 `close` | #211, same inset |
+| `F17` 진하게 | IoU 0.129 `differs` | IoU 0.655 `close` | the paraPr margin unit — the two engines now keep the same paragraph on the same page, so the band is no longer 20 px against 77 |
+| `F28` 표 — 셀 병합 | IoU 0.137 `differs` | IoU 0.613 `close` | same, and for the same reason |
+| `F16` 글자 위치 | IoU 0.211 `differs` | IoU 0.435 `close` | `hh:offset` was drawn with the sign inverted and off the relSz-scaled size |
+| `F14` 장평 | IoU 0.345 `differs` | IoU 0.385 `close` | `hh:relSz`/`hh:ratio` left the line height, so the block band stopped drifting |
+| `F27` 표 — 기본 격자 | IoU 0.294 `differs` | IoU 0.338 `close` | the margin unit, again — registration, not row height |
+| `F22` 아래첨자 | IoU 0.524 `close` | IoU 0.558 **`match`** | `hh:offset` sign |
+| `F32` 표 — 셀 세로 정렬 | IoU 0.479 `close` | IoU 0.647 **`match`** | the margin unit |
 
-Means over the 51 features: `ssim` 0.7813 → 0.7918, `ssim_inked` 0.1218 →
-0.1396, IoU 0.3429 → 0.3728. Page agreement is unchanged at 45/51 — the same
-six features (`F44`–`F49`) still land on a different page in the two engines.
-The bundled-fonts tier (#208) changed **nothing** on this document: it
-declares only 바탕, 돋움 and 궁서, all three installed on the measuring
-machine, so the installed tier wins and `BundledFontMap` is never consulted.
-This is the first measurement with registration and fonts in one tree.
+One moved the other way: `F35` 그림 — 어울림 (IoU 0.317 `close` → 0.117
+`differs`), whose anchored image now lands on a page Hancom does not put it on.
+That is the page-count gap of note 1, not a wrapping change.
+
+Means over the 51 features: `ssim` 0.7918 → **0.8073**, `ssim_inked` 0.1396 →
+**0.1739**, IoU 0.3728 → **0.4104**. Page agreement fell from 45/51 to
+**41/51**: the correct (larger) paragraph margins push more content down, and
+`F34`, `F42`, `F43` and `F44` joined `F35`, `F46`–`F49` on the wrong side of a
+page boundary. The candidate still runs 11 pages to Hancom's 9.
 
 | feature | ssim | ssim(inked) | IoU | ink Δ | page | verdict |
 |---|---|---|---|---|---|---|
-| `F01` [정렬 — 왼쪽 (align LEFT)](render-check-01/F01.png) | 0.679 | 0.086 | 0.354 | +0.0236 | 1 | **close** |
-| `F02` [정렬 — 가운데 (align CENTER)](render-check-01/F02.png) | 0.677 | 0.100 | 0.403 | +0.0240 | 1 | **close** |
-| `F03` [정렬 — 오른쪽 (align RIGHT)](render-check-01/F03.png) | 0.693 | 0.106 | 0.403 | +0.0240 | 1 | **close** |
-| `F04` [정렬 — 양쪽 (align JUSTIFY)](render-check-01/F04.png) | 0.693 | 0.119 | 0.393 | +0.0246 | 1 | **close** |
-| `F05` [정렬 — 배분 (align DISTRIBUTE)](render-check-01/F05.png) | 0.678 | 0.117 | 0.395 | +0.0249 | 1 | **close** |
-| `F06` [줄간격 — 130% (PERCENT)](render-check-01/F06.png) | 0.552 | 0.078 | 0.356 | +0.0361 | 1 | **differs** |
-| `F07` [줄간격 — 160% (PERCENT)](render-check-01/F07.png) | 0.595 | 0.080 | 0.346 | +0.0312 | 1 | **differs** |
-| `F08` [줄간격 — 200% (PERCENT)](render-check-01/F08.png) | 0.579 | 0.067 | 0.284 | +0.0368 | 1 | **differs** |
-| `F09` [줄간격 — 고정 24pt (FIXED)](render-check-01/F09.png) | 0.740 | 0.061 | 0.328 | +0.0225 | 2 | **close** |
-| `F10` [첫줄 들여쓰기 (first-line indent)](render-check-01/F10.png) | 0.652 | 0.060 | 0.323 | +0.0241 | 2 | **close** |
-| `F11` [내어쓰기 (hanging indent)](render-check-01/F11.png) | 0.668 | 0.092 | 0.327 | +0.0239 | 2 | **close** |
-| `F12` [좌우 여백 (left/right margin)](render-check-01/F12.png) | 0.674 | 0.077 | 0.344 | +0.0241 | 2 | **close** |
-| `F13` [자간 (hh:spacing −15 / 0 / +30)](render-check-01/F13.png) | 0.633 | 0.071 | 0.366 | +0.0255 | 2 | **differs** |
-| `F14` [장평 (hh:ratio 50 / 100 / 150)](render-check-01/F14.png) | 0.639 | 0.101 | 0.345 | +0.0247 | 2 | **differs** |
-| `F15` [상대 크기 (hh:relSz 60 / 100 / 140)](render-check-01/F15.png) | 0.611 | 0.055 | 0.217 | +0.0150 | 2 | **differs** |
-| `F16` [글자 위치 (hh:offset +40 / 0 / −40)](render-check-01/F16.png) | 0.584 | 0.063 | 0.211 | +0.0246 | 2 | **differs** |
-| `F17` [진하게 (bold)](render-check-01/F17.png) | 0.801 | 0.052 | 0.129 | +0.0358 | 2 | **differs** |
-| `F18` [기울임 (italic)](render-check-01/F18.png) | 0.801 | 0.097 | 0.422 | +0.0148 | 3 | **close** |
-| `F19` [밑줄 (underline)](render-check-01/F19.png) | 0.789 | 0.096 | 0.420 | +0.0201 | 3 | **close** |
-| `F20` [취소선 (strikeout)](render-check-01/F20.png) | 0.801 | 0.120 | 0.425 | +0.0135 | 3 | **close** |
-| `F21` [위첨자 (superscript)](render-check-01/F21.png) | 0.898 | 0.246 | 0.532 | +0.0077 | 3 | **close** |
-| `F22` [아래첨자 (subscript)](render-check-01/F22.png) | 0.914 | 0.142 | 0.524 | +0.0084 | 3 | **close** |
-| `F23` [글꼴 — 바탕 (declared face 바탕)](render-check-01/F23.png) | 0.791 | 0.141 | 0.428 | +0.0175 | 3 | **close** |
-| `F24` [글꼴 — 돋움 (declared face 돋움)](render-check-01/F24.png) | 0.788 | 0.103 | 0.463 | +0.0092 | 3 | **close** |
-| `F25` [글꼴 — 궁서 (declared face 궁서)](render-check-01/F25.png) | 0.803 | 0.186 | 0.477 | +0.0012 | 3 | **close** |
-| `F26` [글자 크기 8 / 10 / 12 / 14 / 18 / 24 pt](render-check-01/F26.png) | 0.848 | 0.170 | 0.409 | +0.0085 | 3 | **close** |
-| `F27` [표 — 기본 격자 (plain grid 3×3)](render-check-01/F27.png) | 0.773 | 0.003 | 0.294 | +0.0175 | 3 | **differs** |
-| `F28` [표 — 셀 병합 (colSpan 2 + rowSpan 2)](render-check-01/F28.png) | 0.747 | 0.052 | 0.137 | +0.0329 | 3 | **differs** |
-| `F29` [표 — 셀 음영 (cell shading #D9D9D9)](render-check-01/F29.png) | 0.894 | 0.700 | 0.757 | +0.0084 | 4 | **close** |
-| `F30` [캡션 — 표 (table caption)](render-check-01/F30.png) | 0.901 | 0.215 | 0.498 | +0.0120 | 4 | **close** |
-| `F31` [표 — 테두리 종류 (SOLID / DASH / DOT / DOUBLE / 굵기)](render-check-01/F31.png) | 0.723 | 0.117 | 0.376 | +0.0198 | 4 | **close** |
-| `F32` [표 — 셀 세로 정렬 (TOP / CENTER / BOTTOM)](render-check-01/F32.png) | 0.836 | 0.031 | 0.479 | +0.0067 | 4 | **close** |
-| `F33` [그림 — 본문 안 (inline, treatAsChar)](render-check-01/F33.png) | 0.865 | 0.234 | 0.481 | +0.0041 | 4 | **close** |
-| `F34` [캡션 — 그림 (image caption)](render-check-01/F34.png) | 0.831 | 0.108 | 0.401 | +0.0144 | 4 | **close** |
-| `F35` [그림 — 어울림 TOP_AND_BOTTOM (anchored, text wrap)](render-check-01/F35.png) | 0.825 | 0.255 | 0.317 | -0.0098 | 4 | **close** |
-| `F36` [수식 — 분수 (fraction)](render-check-01/F36.png) | 0.959 | 0.286 | 0.600 | +0.0044 | 5 | **match** |
-| `F37` [수식 — 근호 (sqrt)](render-check-01/F37.png) | 0.941 | 0.205 | 0.461 | +0.0046 | 5 | **close** |
-| `F38` [수식 — 총합·상하한 (sum with limits)](render-check-01/F38.png) | 0.884 | 0.066 | 0.313 | +0.0085 | 5 | **close** |
-| `F39` [수식 — 행렬 (matrix)](render-check-01/F39.png) | 0.946 | 0.134 | 0.416 | +0.0043 | 5 | **close** |
-| `F40` [개요 번호 — 3수준 (numbered outline, 1. / 1.1 / 1.1.1)](render-check-01/F40.png) | 0.855 | 0.102 | 0.305 | +0.0096 | 5 | **close** |
-| `F41` [글머리표 (bullets)](render-check-01/F41.png) | 0.874 | 0.168 | 0.395 | +0.0076 | 5 | **close** |
-| `F42` [각주 (footnote)](render-check-01/F42.png) | 0.826 | 0.091 | 0.431 | +0.0134 | 5 | **close** |
-| `F43` [미주 (endnote)](render-check-01/F43.png) | 0.840 | 0.097 | 0.314 | +0.0172 | 5 | **close** |
-| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.843 | 0.122 | 0.432 | +0.0224 | 5/6 | **close** |
-| `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.977 | 0.584 | 0.197 | -0.0024 | 5/6 | **unsupported** |
+| `F01` [정렬 — 왼쪽 (align LEFT)](render-check-01/F01.png) | 0.702 | 0.096 | 0.360 | +0.0236 | 1 | **close** |
+| `F02` [정렬 — 가운데 (align CENTER)](render-check-01/F02.png) | 0.702 | 0.118 | 0.415 | +0.0240 | 1 | **close** |
+| `F03` [정렬 — 오른쪽 (align RIGHT)](render-check-01/F03.png) | 0.701 | 0.105 | 0.416 | +0.0240 | 1 | **close** |
+| `F04` [정렬 — 양쪽 (align JUSTIFY)](render-check-01/F04.png) | 0.700 | 0.116 | 0.391 | +0.0244 | 1 | **close** |
+| `F05` [정렬 — 배분 (align DISTRIBUTE)](render-check-01/F05.png) | 0.703 | 0.142 | 0.417 | +0.0249 | 1 | **close** |
+| `F06` [줄간격 — 130% (PERCENT)](render-check-01/F06.png) | 0.564 | 0.103 | 0.375 | +0.0361 | 1 | **differs** |
+| `F07` [줄간격 — 160% (PERCENT)](render-check-01/F07.png) | 0.619 | 0.117 | 0.376 | +0.0312 | 1 | **differs** |
+| `F08` [줄간격 — 200% (PERCENT)](render-check-01/F08.png) | 0.621 | 0.118 | 0.386 | +0.0346 | 1 | **differs** |
+| `F09` [줄간격 — 고정 24pt (FIXED)](render-check-01/F09.png) | 0.745 | 0.076 | 0.358 | +0.0225 | 2 | **close** |
+| `F10` [첫줄 들여쓰기 (first-line indent)](render-check-01/F10.png) | 0.707 | 0.073 | 0.349 | +0.0241 | 2 | **close** |
+| `F11` [내어쓰기 (hanging indent)](render-check-01/F11.png) | 0.680 | 0.104 | 0.335 | +0.0239 | 2 | **close** |
+| `F12` [좌우 여백 (left/right margin)](render-check-01/F12.png) | 0.681 | 0.098 | 0.365 | +0.0241 | 2 | **close** |
+| `F13` [자간 (hh:spacing −15 / 0 / +30)](render-check-01/F13.png) | 0.648 | 0.075 | 0.368 | +0.0251 | 2 | **differs** |
+| `F14` [장평 (hh:ratio 50 / 100 / 150)](render-check-01/F14.png) | 0.696 | 0.133 | 0.385 | +0.0247 | 2 | **close** |
+| `F15` [상대 크기 (hh:relSz 60 / 100 / 140)](render-check-01/F15.png) | 0.642 | 0.157 | 0.415 | +0.0173 | 2 | **differs** |
+| `F16` [글자 위치 (hh:offset +40 / 0 / −40)](render-check-01/F16.png) | 0.707 | 0.142 | 0.435 | +0.0246 | 2 | **close** |
+| `F17` [진하게 (bold)](render-check-01/F17.png) | 0.887 | 0.344 | 0.655 | +0.0146 | 2 | **close** |
+| `F18` [기울임 (italic)](render-check-01/F18.png) | 0.813 | 0.151 | 0.454 | +0.0148 | 3 | **close** |
+| `F19` [밑줄 (underline)](render-check-01/F19.png) | 0.806 | 0.127 | 0.429 | +0.0199 | 3 | **close** |
+| `F20` [취소선 (strikeout)](render-check-01/F20.png) | 0.797 | 0.106 | 0.447 | +0.0135 | 3 | **close** |
+| `F21` [위첨자 (superscript)](render-check-01/F21.png) | 0.896 | 0.255 | 0.554 | +0.0077 | 3 | **close** |
+| `F22` [아래첨자 (subscript)](render-check-01/F22.png) | 0.916 | 0.163 | 0.558 | +0.0084 | 3 | **match** |
+| `F23` [글꼴 — 바탕 (declared face 바탕)](render-check-01/F23.png) | 0.783 | 0.105 | 0.418 | +0.0175 | 3 | **close** |
+| `F24` [글꼴 — 돋움 (declared face 돋움)](render-check-01/F24.png) | 0.801 | 0.161 | 0.484 | +0.0092 | 3 | **close** |
+| `F25` [글꼴 — 궁서 (declared face 궁서)](render-check-01/F25.png) | 0.807 | 0.204 | 0.501 | +0.0012 | 3 | **close** |
+| `F26` [글자 크기 8 / 10 / 12 / 14 / 18 / 24 pt](render-check-01/F26.png) | 0.859 | 0.213 | 0.444 | +0.0085 | 3 | **close** |
+| `F27` [표 — 기본 격자 (plain grid 3×3)](render-check-01/F27.png) | 0.859 | 0.352 | 0.338 | +0.0169 | 3 | **close** |
+| `F28` [표 — 셀 병합 (colSpan 2 + rowSpan 2)](render-check-01/F28.png) | 0.879 | 0.276 | 0.613 | +0.0120 | 3 | **close** |
+| `F29` [표 — 셀 음영 (cell shading #D9D9D9)](render-check-01/F29.png) | 0.793 | 0.413 | 0.555 | +0.0083 | 4 | **close** |
+| `F30` [캡션 — 표 (table caption)](render-check-01/F30.png) | 0.906 | 0.242 | 0.473 | +0.0120 | 4 | **close** |
+| `F31` [표 — 테두리 종류 (SOLID / DASH / DOT / DOUBLE / 굵기)](render-check-01/F31.png) | 0.740 | 0.104 | 0.419 | +0.0190 | 4 | **close** |
+| `F32` [표 — 셀 세로 정렬 (TOP / CENTER / BOTTOM)](render-check-01/F32.png) | 0.920 | 0.502 | 0.647 | +0.0065 | 4 | **match** |
+| `F33` [그림 — 본문 안 (inline, treatAsChar)](render-check-01/F33.png) | 0.889 | 0.354 | 0.494 | +0.0040 | 4 | **close** |
+| `F34` [캡션 — 그림 (image caption)](render-check-01/F34.png) | 0.837 | 0.129 | 0.449 | +0.0144 | 4/5 | **close** |
+| `F35` [그림 — 어울림 TOP_AND_BOTTOM (anchored, text wrap)](render-check-01/F35.png) | 0.675 | 0.149 | 0.117 | +0.0206 | 4/5 | **differs** |
+| `F36` [수식 — 분수 (fraction)](render-check-01/F36.png) | 0.956 | 0.235 | 0.551 | +0.0041 | 5 | **match** |
+| `F37` [수식 — 근호 (sqrt)](render-check-01/F37.png) | 0.940 | 0.180 | 0.423 | +0.0043 | 5 | **close** |
+| `F38` [수식 — 총합·상하한 (sum with limits)](render-check-01/F38.png) | 0.885 | 0.073 | 0.313 | +0.0081 | 5 | **close** |
+| `F39` [수식 — 행렬 (matrix)](render-check-01/F39.png) | 0.945 | 0.137 | 0.419 | +0.0041 | 5 | **close** |
+| `F40` [개요 번호 — 3수준 (numbered outline, 1. / 1.1 / 1.1.1)](render-check-01/F40.png) | 0.859 | 0.109 | 0.322 | +0.0096 | 5 | **close** |
+| `F41` [글머리표 (bullets)](render-check-01/F41.png) | 0.890 | 0.180 | 0.401 | +0.0070 | 5 | **close** |
+| `F42` [각주 (footnote)](render-check-01/F42.png) | 0.850 | 0.104 | 0.431 | +0.0132 | 5/6 | **close** |
+| `F43` [미주 (endnote)](render-check-01/F43.png) | 0.862 | 0.166 | 0.462 | +0.0134 | 5/6 | **close** |
+| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.871 | 0.182 | 0.444 | +0.0219 | 5/6 | **close** |
+| `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.966 | 0.508 | 0.174 | -0.0019 | 5/6 | **unsupported** |
 | `F46` [쪽 나누기 (page break, pageBreakBefore)](render-check-01/F46.png) | 0.798 | 0.200 | 0.524 | +0.0190 | 6/7 | **close** |
 | `F47` [표 — 쪽을 넘기는 표 (table split across a page)](render-check-01/F47.png) | 0.993 | 0.240 | 0.535 | +0.0008 | 6/7 | **close** |
-| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.943 | 0.068 | 0.268 | +0.0036 | 8/10 | **differs** |
-| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.818 | 0.051 | 0.150 | +0.0085 | 9/11 | **differs** |
+| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8/10 | **differs** |
+| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.816 | 0.047 | 0.141 | +0.0085 | 9/11 | **differs** |
 | `F50` [머리말 (header)](render-check-01/F50.png) | 0.940 | 0.153 | 0.153 | +0.0090 | 1 | **differs** |
 | `F51` [꼬리말 + 쪽 번호 (footer with page number)](render-check-01/F51.png) | 0.974 | 0.154 | 0.156 | +0.0030 | 1 | **unsupported** |
 
@@ -174,6 +181,18 @@ second contribution and made the drift **worse** by one page (10 → 11), which
 is the honest outcome: moving the table whole pushes its rows down instead of
 filling the room the split used. The residual is now entirely the first
 contribution, block heights running tall.
+
+> **The first contribution is gone, and the drift is not.** Block heights and
+> paragraph gaps were measured off the reference PDF
+> ([line-and-character-metrics.md](line-and-character-metrics.md)) and both are
+> now exact: on pages 1–2 every feature band starts within 0.0002 of the page
+> height of Hancom's and `F06`/`F07`/`F08` measure 121/121, 140/140 and 94/94
+> px against Hancom's own bands. The `F17` and `F28` page-boundary artefacts
+> named above are gone with them (both now `close`, IoU 0.655 and 0.613). The
+> page count is still 11 against 9, and page agreement went **down**, 45/51 to
+> 41/51, because the correct — larger — 문단 위/아래 간격 pushes more content
+> past each boundary: `F34`, `F42`, `F43` and `F44` joined the disagreeing set.
+> Whatever is left is a pagination rule, not a metric.
 
 ### 2. `F47` 표 — 쪽을 넘기는 표 (IoU 0.025, the largest gap)
 
@@ -217,6 +236,15 @@ matches `own-render-notes.md`'s own description of `solve_tracks`.
 > post-convergence ones. What is left is genuinely row height — the rows are
 > still short, they are simply no longer short *and* offset.
 
+> **And most of the rest was the paragraph-margin unit.** With
+> `line-and-character-metrics.md` §6 the table blocks land where Hancom puts
+> them vertically as well: `F27` 0.294 → 0.338 (`close`), `F28`
+> 0.137 → 0.613 (`close`), `F31` 0.376 → 0.419, `F32` 0.479 → 0.647
+> (**`match`**). Twice now this heading's "row height" has turned out to be
+> registration; whatever row-height error remains is below what this document
+> separates from the rasteriser, and the item should not be re-attacked as row
+> height without a probe that measures a row directly.
+
 ### 4. `F49` 다단 — 2단 구역 (IoU 0.150)
 
 We honour `hp:colPr@colCount=2` and lay the section out in two columns.
@@ -245,6 +273,28 @@ drawn"; the `hp:pageNum` control beside it *is* drawn, so the page number
 appears but the field does not.
 
 ### 6. Typography knobs that read `differs`
+
+*Measured since, and four of the five guesses were wrong in a useful way.*
+[line-and-character-metrics.md](line-and-character-metrics.md) reads each of
+these rules off the reference PDF's own text layer, one at a time. The heading
+and the original text below are kept because they record the state the
+measurement was started from.
+
+> `hh:spacing` really was a unit mismatch, but not in the conversion — the gap
+> is a percent of the character's **own advance**, not a flat percent of the
+> character size, which is why narrow Latin glyphs collided and full-width
+> Hangul did not. `hh:offset` was drawn with the **sign inverted** and against
+> the relSz-scaled size instead of the declared one. `hh:relSz` was being
+> counted **into the line height**, which Hancom does not do. `hh:ratio` and
+> the `PERCENT` line pitch were already right — `PERCENT` is `value/100` of the
+> declared character size and always was (24 baseline steps, worst residual
+> 0.091 pt). What was actually moving `F06`–`F08` was one level down: the
+> paraPr MCE switch's `default` branch states every length in half a HWPUNIT,
+> so 문단 위/아래 간격 was halved by a constant and `left`/`right`/`intent` were
+> read doubled. `F14` and `F16` are now `close`; `F06`–`F08` and `F13`/`F15`
+> still read `differs`, but their bands now agree with Hancom's **to the pixel**
+> and they fail on `ssim`/`ink Δ` alone — the rasteriser ceiling this page
+> already declares unisolated, not layout.
 
 `F13` 자간 over-condenses: the `hh:spacing="-15"` run collides its glyphs
 where Hancom merely tightens them, which reads like a unit mismatch in the
@@ -292,15 +342,28 @@ size of the gap:
    because the extra page and the unmoved table used to cancel out.
 2. Table row height ignores the declared `hp:cellSz@height` floor
    (`F27`, `F28`, `F31`, `F32`). Half of what this item was worth turned out
-   to be the `hp:outMargin` offset, now fixed (#211); `F31` and `F32` read
-   `close` on the residual, `F27` and `F28` still `differs`.
+   to be the `hp:outMargin` offset, then fixed (#211), and most of the rest was
+   the paraPr margin unit (line-and-character-metrics.md §6): all four now read
+   `close` or `match`. Whatever row-height error is left is below what this
+   document can separate from the rasteriser.
 3. `hp:colPr` applied from the head of the section where Hancom does not
    (`F49`).
 4. Header/footer horizontal placement (`F50`, `F51`).
-5. `hh:spacing` over-condenses on negative values (`F13`).
+5. ~~`hh:spacing` over-condenses on negative values (`F13`).~~ **Measured and
+   fixed** — the gap is a percent of the character's own advance
+   ([line-and-character-metrics.md](line-and-character-metrics.md) §3).
 6. `hp:autoNum` has no handler, so a page-number *field* inside a footer draws
    nothing (`F51`).
-7. Cumulative block-height drift, one page over nine (note 1).
+7. Cumulative block drift, two pages over nine, and it is no longer block
+   *height*: heights and paragraph gaps now match Hancom on pages 1–3 to
+   within 0.0002 of the page height. Page agreement fell 45/51 → 41/51 with the
+   correct (larger) margins, so what is left is a pagination rule this page has
+   not isolated.
+8. `hh:tabPr`'s stops are never read: the corpus declares them as
+   `hh:tabItem` inside the same MCE `hp:switch` the paraPr geometry uses, and
+   the reader looks for `hh:tab` outside it, finds none, and falls back to its
+   declared default interval. Named by the switch-unit measurement, not fixed
+   here.
 
 Two catalog rows are contradicted by measurement and should be corrected
 there: 머리말/꼬리말 and 다단 are both listed as declared-skipped, and both are
@@ -333,3 +396,10 @@ drawn.
   2); `F31`/`F32` moved only once registration joined it, and no run isolates
   registration from fonts — the fonts tier is a proven no-op here, which is
   what makes the attribution safe.
+- **The line-metrics deltas are two changes measured as one, with one
+  intermediate run.** The character-metric rules alone (자간, `hh:offset`,
+  `hh:relSz` out of the line height) score **1 · 35 · 13 · 2**, means `ssim`
+  0.7937 / IoU 0.3750: only `F16` moves off `differs`, because every band is
+  still drifting. Adding the paraPr switch-unit rule gives the 3 · 37 · 9 · 2
+  above. Attribution per feature in the table is by mechanism, not by a
+  per-feature isolating run.
