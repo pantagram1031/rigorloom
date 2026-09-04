@@ -132,6 +132,12 @@ try {
         # list is open, because a closed disclosure photographs as a caption.
         @{ phase = 'hold-shot-own';           name = 'page-own-render';      scale = 1.0 },
         @{ phase = 'hold-shot-own-zoom';      name = 'page-own-render-150pct'; scale = 1.0 },
+        # TIER 3, BEING EDITED — the shot gap 34 made impossible. A seat open
+        # on a page no Hancom drew, in the same inline editor a tree click
+        # opens. Same corpus form, nothing staged: the seats come from the cell
+        # boxes our own renderer drew (`own_cell`), so this is the fresh
+        # install's page and not a Hancom render wearing its caption.
+        @{ phase = 'hold-shot-own-seat';      name = 'page-own-render-seat-edit'; scale = 1.0 },
         # The band: the five actions of the ordinary loop in one row, with the
         # 서식 and 화면 menus holding what used to compete with them for the
         # same strip. The phase asks both menus to open and neither does in the
