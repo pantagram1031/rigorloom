@@ -570,7 +570,7 @@ enabling modules, so their skill fragments are merged in.
 
    `install_root` must be ABSOLUTE — e.g.
    `~/.claude/skills/rigorloom-hwp`, or on Windows
-   `C:\\\\Users\\\\<you>\\\\.claude\\\\skills\\\\rigorloom-hwp`.
+   `C:\\\\Users\\\\<user>\\\\.claude\\\\skills\\\\rigorloom-hwp`.
 
 2. Run the bundled installer, pointing `--checkout-root` at THIS install
    root (the `from:` paths above are resolved against it):
