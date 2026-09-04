@@ -2120,3 +2120,168 @@ synthetic fixture built from a corpus form's own paragraph with a restarting
 `linesegarray`. On the holdout: page 1 now starts with the title, the tail
 draws at the top of page 2 where its cache puts it, and the page count is
 unchanged at 18.
+
+## The whole-page offset was `hp:outMargin` — measured and closed, 2026-09-04
+
+The standing E2 registration gap this file names in several places — "every
+rule on `jeongbo` page 1 sits a constant −2.83 pt above where the reference
+draws it", `moel-2013` −2.93, `saeopja`/`jumin`/`admrul` ≈ −1.4 — is one
+defect with one cause, and it is not the page box. It is the table's own
+**`hp:outMargin`** (바깥쪽 여백), which this renderer listed as a structural,
+no-ink tag and never read.
+
+### How it was measured
+
+Rules straight out of the two vector sources, no raster and no cross-
+correlation: every cell rectangle the renderer places (HWPUNIT, so pt =
+HWPUNIT/100) against every horizontal and vertical rule in the reference
+PDF's own drawing operators, matched with the same order-preserving DP the
+row-height measurement above uses.
+
+One correction has to come out first, or nothing lines up. **The reference
+PDFs are exported onto an integer-point A4 page**: `page.rect` is 595 x 841
+while every corpus form declares 59528 x 84188 HWPUNIT = 595.28 x 841.88 pt.
+The content is scaled to match, so a raw delta carries a slope of
+841.88/841 − 1 = +0.00105 pt/pt vertically and +0.00047 horizontally — about
+0.9 pt over a page, which is the same order as the defect being hunted.
+Subtracting that per-axis scale leaves a residual that is flat to within a
+tenth of a point, and that residual is the registration error. (The
+scoreboard rasterises the reference onto the candidate's own pixel grid,
+which undoes the same scale, which is why the raster channel saw a constant
+and not a ramp.)
+
+### The measurement, before
+
+`dy`/`dx` are candidate minus reference in pt, scale-corrected, median over
+the matched rules on the form's pages. `outMargin` is the value the form's
+tables declare in all four slots.
+
+| form | outMargin | dy | dx | top / header / gutter |
+| --- | --- | --- | --- | --- |
+| jumin-deungchobon-sinchengseo (p1 table) | 0 | **+0.07** | **+0.07** | 5669 / 0 / 0 |
+| admrul-gajokdolbom-hyuga-sinchengseo | 141 | −1.37 | −1.33 | 5669 / 0 / 0 |
+| gianmun-byeolji-1ho | 141, 140 | −1.38 | −1.33 | 5669 / 0 / 0 |
+| gianmun-byeolji-2ho | 141 | (see below) | −1.34 | 5669 / 0 / 0 |
+| jeongbo-gonggae-cheongguseo | 283 | −2.78 | −2.75 | 5668 / 0 / 0 |
+| jumin (p2, p3 tables) | 141 | −1.33 / −1.37 | −1.36 | 5669 / 0 / 0 |
+| kstartup-jiwon-sincheongseo | 140, 141, 283, 138 | −1.42 | −1.41 | 5668 / 332 / 0 |
+| moel-pyojun-geunrogyeyakseo-2013 | 283 (p1–5), 141 | −2.85 | 0.00 (centred) | 3600 / 3600 / 0 |
+| moel-pyojun-geunrogyeyakseo-2025 | 0 (8 tables), 141 | −0.45† / −1.35 | −0.43† / −1.26 | 2834 / 2834 / 0 |
+| nrf-gyeolgwa-bogoseo-yangsik | 140, 138 | −1.37 | −1.37 | 5668 / 1416 / 0 |
+| saeopja-deungnok-sinchengseo | 141 | −1.35 | −1.34 | 5668 / 0 / 0 |
+
+† an artefact of the measurement, not an offset: those pages' tables draw a
+doubled rule ~1.08 pt apart and the DP matches the first of the pair. Their
+midpoints agree to +0.16 pt, i.e. zero, which is what `outMargin=0` predicts.
+
+Read the first two columns together and the rule is exact: the offset is
+`−outMargin/100` pt in both axes, per table, with no reference to the form.
+
+### Hypotheses this kills
+
+Every candidate that lives on the page rather than on the object is
+disproven by one line of the table: `jumin` p1 and `admrul` declare the
+**same** `hp:pagePr` — top 5669, header 0, footer 0, gutter 0,
+`gutterType="LEFT_ONLY"`, same page size — and register 0.07 pt and 1.37 pt
+apart. So none of these is the cause:
+
+* **header-height handling.** `body_top = top + header` is right as it
+  stands. The two forms with the largest declared `header` (`moel-2013`
+  3600, `moel-2025` 2834) are not the two with the largest offset, and
+  `jeongbo` — the only form carrying an `hp:header` element at all — has
+  `header="0"` and an offset of exactly its tables' `outMargin`.
+* **gutter / binding side.** Every corpus form declares `gutter="0"` and
+  `gutterType="LEFT_ONLY"`. There is nothing to add to either side.
+* **1 mm HWPUNIT rounding of the margins** (7200/25.4 = 283.46). 283 does
+  appear — but as `jeongbo`'s and `moel-2013`'s `outMargin`, not as a margin
+  correction, and forms that declare 138/140/141 are off by 1.38/1.40/1.41
+  pt, which no rounding of a 5669 margin produces.
+* **raster origin convention** (pixel centre vs edge). 0.5 px at 144 dpi is
+  0.25 pt; the vector measurement above never touches a raster and sees the
+  same offsets.
+
+### The rule, and what it costs
+
+`hp:outMargin` is the gap *outside* an object's own box (schema:
+`DevDoc/OWPML SCHEMA/ParaList XML schema.xml`, on every `ShapeObject`
+alongside `hp:sz` and `hp:pos`). The authoring engine gives the object a
+slot `left + width + right` wide and draws the box `(left, top)` inside it.
+`_object_origin` applies the inset — for inline objects at the line cursor
+and for anchored ones at the declared `hp:pos` — and `_object_extent`
+returns the wider slot.
+
+Horizontal footprint is measured, not assumed: `moel-2013` centres a table
+declaring `outMargin=283`, and its reference draws that table centred on the
+body box. Insetting the box without widening the slot would put it 2.83 pt
+right of centre; the table's `dx` of 0.00 above is that prediction holding.
+
+**The line HEIGHT deliberately does not grow, and that is a declared limit.**
+Nothing in the reference set measures the height an inline object claims —
+the cached `hp:lineseg` carries it on every corpus form — and adding
+`top + bottom` there is a guess that shows up only under
+`block_layout=computed`, where it cost `kstartup` a 23rd page against a
+21-page reference. The box still moves down by `top`, which is the half the
+references do measure.
+
+### The measurement, after
+
+Matched rules whose scale-corrected `|dy|` is within a tolerance, summed over
+every page of every form:
+
+| tolerance | before | after |
+| --- | --- | --- |
+| 1 pt | 61 / 428 | **365 / 428** |
+| 0.25 pt | 28 / 428 | **335 / 428** |
+
+Scoreboard, `--corpus`, corpus means: `ssim` 0.7837 -> 0.8250, `ssim_inked`
+0.1376 -> 0.2551, `text_line_iou` 0.5170 -> 0.6423, `text_line_pair_rate`
+0.8364 -> 0.8364. **Page counts are unchanged on all ten forms**, and no
+form's `ssim` or `text_line_iou` falls.
+
+Per form, `ssim` / `ssim_inked` / `iou`:
+
+| form | ssim | ssim_inked | text_line_iou |
+| --- | --- | --- | --- |
+| admrul | 0.8913 -> 0.9197 | 0.3218 -> 0.5007 | 0.5070 -> 0.5877 |
+| gianmun-1ho | 0.9112 -> 0.9375 | 0.0600 -> 0.2965 | 0.6215 -> 0.8428 |
+| gianmun-2ho | 0.9075 -> 0.9075 | 0.0545 -> 0.0538 | 0.5515 -> 0.6468 |
+| jeongbo | 0.6207 -> 0.7571 | 0.0398 -> 0.2692 | 0.4551 -> 0.8273 |
+| jumin | 0.6426 -> 0.6822 | 0.0851 -> 0.1399 | 0.5893 -> 0.6711 |
+| kstartup | 0.8134 -> 0.8282 | 0.2219 -> 0.2884 | 0.2451 -> 0.2727 |
+| moel-2013 | 0.7751 -> 0.7880 | 0.0698 -> 0.1008 | 0.4680 -> 0.5063 |
+| moel-2025 | 0.7634 -> 0.7706 | 0.1804 -> 0.1918 | 0.5167 -> 0.5396 |
+| nrf | 0.8673 -> 0.8924 | 0.3246 -> 0.4418 | 0.6597 -> 0.7225 |
+| saeopja | 0.6447 -> 0.7664 | 0.0179 -> 0.2681 | 0.5562 -> 0.8060 |
+
+**No corpus form renders byte-identically**, and none can: all twelve
+committed forms (the ten scored plus the two `grant/` forms) declare a
+non-zero `outMargin` on at least one object. What is pinned instead is the
+no-op: a document whose objects declare `outMargin=0`, and the same document
+with the `hp:outMargin` elements deleted outright, render to identical PNG
+bytes — so the rule moves nothing that does not ask to be moved, and no
+per-form constant is involved anywhere.
+
+### The one exception, and it is not this rule
+
+`gianmun-byeolji-2ho` goes the other way on the rule channel: 8 of 10 matched
+rules within 1 pt before, 2 of 10 after. Its `dx` is fixed (−1.34 -> +0.05)
+and its `text_line_iou` rises 0.5515 -> 0.6468, but its `dy` runs
++0.58 pt at the table's first rule and +3.55 pt twelve rows down. That is
+**row-height accumulation, not registration**: our row pitch on that table is
+24.44 pt against the reference's 24.09 (24.12 scale-corrected), so the error
+grows ~0.33 pt per row and used to cancel the 1.41 pt outer margin somewhere
+near the middle of the page. This file's row-height measurement already names
+`gianmun-2ho` as one of the two forms genuinely wrong on that channel and
+defers it; it is still deferred.
+
+`kstartup` pages 6, 9, 10, 15 and 16 keep large residuals for the reason E2.5
+already names — its pagination under `auto` is wrong on those pages, so the
+rules being compared are not the same rules.
+
+### Private holdout (windpath, aggregate only)
+
+14 pages compared. `dx` median −1.403 pt -> −0.018 pt; `dy` median
+−1.423 -> −1.122, with 0/81 matched rules within 0.25 pt before and 28/76
+after. Horizontal registration is closed there too; the vertical residual on
+a report-class document is paragraph flow above the table, a different
+channel from this one.
