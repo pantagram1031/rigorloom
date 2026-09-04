@@ -1,0 +1,16 @@
+{
+  "schema": "rigorloom/conversion-record/v1",
+  "tool": "com_backend.py convert",
+  "created_utc": "2026-09-04T00:47:36Z",
+  "source": "tests/corpus/forms/converted/nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+  "source_sha256": "776b8ae8acc78653dcd87ec60eac6275daaa5250dfa44a48636e39a3ddbce445",
+  "pdf": "engine/references/render-1to1/nrf-gyeolgwa-bogoseo-yangsik.pdf",
+  "pdf_sha256": "e3cb08e04134f88aec9ebb68865232eee8b0976e005c6d8f1b4648dc7a78d1ba",
+  "source_print_method": 4,
+  "print_method_normalized": {
+    "from": 4,
+    "to": 0
+  },
+  "pages_document": 4,
+  "pages_pdf": 4
+}
