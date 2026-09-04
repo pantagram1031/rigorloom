@@ -128,7 +128,11 @@ PROFILE_STORE_SCHEMAS = frozenset({
 })
 _STORE_PATH_SEGMENTS = (".local", "personalization")
 
-RE_USER_PATH = re.compile(r'C:\\Users\\([^\\/\s"\']+)')
+# Separator is one-or-more backslash/forward-slash (not just a single
+# backslash) so this also matches a JSON-escaped path, where each real
+# backslash is doubled by JSON string escaping in the raw file text, and the
+# forward-slash spelling of the same path.
+RE_USER_PATH = re.compile(r'C:[\\/]+Users[\\/]+([^\\/\s"\']+)')
 RE_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 RE_DIGIT5 = re.compile(r"(?<!\d)\d{5}(?!\d)")
 RE_HANGUL = re.compile(r"(?<![가-힣])[가-힣]{2,4}(?![가-힣])")
