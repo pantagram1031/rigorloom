@@ -695,7 +695,39 @@ _NOTE_PR = (
 
 def sec_pr(*, width: int, height: int, landscape: str, margin: dict,
            col_count: int, furniture: str = "") -> str:
-    """The ``hp:secPr`` + furniture + ``hp:colPr`` run payload for a section."""
+    """The ``hp:secPr`` + ``hp:colPr`` + furniture run payload for a section.
+
+    Order matters, and it is not the schema's business: ``ParaList XML
+    schema.xml`` lets the section-head paragraph carry its ``hp:ctrl``
+    children in any order, but **Hancom only honours an ``hp:colPr`` that is
+    the first control after ``hp:secPr``**.  Measured (two probe documents,
+    Hwp 2024 13.0.0.2986, one section per case, PDF export read back for the
+    x-extent of the text):
+
+    ======  =====================================  ==============
+    case    section-head control order             Hancom renders
+    ======  =====================================  ==============
+    P1/P2   secPr, header, footer, colPr           one column
+    Q1      secPr, header, colPr, footer           one column
+    Q3      secPr, footer, colPr                   one column
+    Q2      secPr, colPr                           two columns
+    P4/Q4   secPr, colPr, header, footer           two columns
+    P5      secPr, header, footer; colPr in the    two columns
+            *next* paragraph
+    ======  =====================================  ==============
+
+    ``colCount``, ``type``, ``layout``, ``sameSz``, ``sameGap`` and explicit
+    ``hp:colSz`` children make no difference to this: ``sameGap="0"`` in the
+    honoured position gives two columns (P5, Q2, Q4), and
+    ``BALANCED_NEWSPAPER`` / ``sameSz="0"`` + ``hp:colSz`` / ``sameSz="true"``
+    in the ignored position all still give one (P3, P6, P7).  A header or
+    footer control between ``hp:secPr`` and ``hp:colPr`` is the whole
+    mechanism.
+
+    This document used to emit the P1 order, which is why `F49` 다단 declared
+    ``colCount="2"`` and Hancom rendered it full width — the document was
+    malformed, not the renderer.
+    """
     return (
         '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134"'
         ' tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT"'
@@ -718,9 +750,9 @@ def sec_pr(*, width: int, height: int, landscape: str, margin: dict,
            margin["gutter"], margin["left"], margin["right"], margin["top"],
            margin["bottom"])
         + _NOTE_PR + _PAGE_BORDER_FILLS + '</hp:secPr>'
-        + furniture
         + '<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT"'
-          ' colCount="%d" sameSz="1" sameGap="0"/></hp:ctrl>' % col_count)
+          ' colCount="%d" sameSz="1" sameGap="0"/></hp:ctrl>' % col_count
+        + furniture)
 
 
 #: Ship the document with NO cached line layout.
