@@ -65,6 +65,25 @@ def session(core, tmp_path):
 
 
 @pytest.fixture()
+def without_tier3(monkeypatch):
+    """Tier 3 off, for the tests whose subject is the ABSENCE of a page.
+
+    Our own renderer now draws an HWPX, so ``needs_conversion`` is no longer
+    what a plain HWPX session answers. It is still what a machine that cannot
+    run the renderer answers, and the prepare guidance inside it still has to
+    name the way out — which is what these tests are about. The switch is the
+    renderer's path, so the refusal travels the real wiring.
+    """
+    import rt_own
+
+    from pathlib import Path
+
+    monkeypatch.setattr(
+        rt_own, "own_render_script",
+        lambda tools=None: Path(__file__).resolve().parent / "_no_such_own_render.py")
+
+
+@pytest.fixture()
 def hancom_present(monkeypatch):
     """Pretend Hancom is installed and idle, without touching COM."""
     monkeypatch.setattr(rt_convert, "hancom_facts",
@@ -370,7 +389,7 @@ def test_preparing_appends_an_event(core, session, hancom_present, fake_convert)
 
 @pytest.mark.skipif(not HAVE_RASTERIZER, reason="PyMuPDF is optional")
 def test_prepare_then_render_turns_an_hwpx_session_into_pages(
-        core, session, hancom_present, fake_convert):
+        core, session, hancom_present, fake_convert, without_tier3):
     before = core.document_render(session)
     assert before["available"] is False
     assert before["unavailable"]["reason"] == "needs_conversion"
@@ -384,17 +403,34 @@ def test_prepare_then_render_turns_an_hwpx_session_into_pages(
     assert after["source"]["kind"] == "prepared_pdf"
     assert after["source"]["producedBy"].endswith("convert")
     assert after["image"]["widthPx"] > 100
+    # tier 1, and it is the ONLY grade that may say Hancom
+    assert after["grade"] == "hancom"
+    assert after["tier"] == 1
+
+
+def test_a_prepared_pdf_outranks_the_own_render(core, session, hancom_present,
+                                                fake_convert):
+    """Tier order with tier 3 live. Our own renderer draws this HWPX happily;
+    once Hancom has produced a PDF, that PDF is what the page view gets."""
+    first = core.document_render(session, dpi=72)
+    if first["available"]:
+        assert first["grade"] == "own-uncertified"
+    core.document_render_prepare(session)
+    after = core.document_render(session, dpi=72)
+    assert after["available"] is True
+    assert after["grade"] == "hancom"
+    assert after["source"]["kind"] == "prepared_pdf"
 
 
 def test_the_unavailable_state_points_at_prepare_when_it_could_work(
-        core, session, hancom_present):
+        core, session, hancom_present, without_tier3):
     result = core.document_render(session)
     assert result["unavailable"]["reason"] == "needs_conversion"
     assert "document/renderPrepare" in result["unavailable"]["detail"]
 
 
 def test_the_unavailable_state_says_why_not_when_it_could_not(
-        core, session, monkeypatch):
+        core, session, monkeypatch, without_tier3):
     monkeypatch.setattr(rt_convert, "hancom_facts",
                         lambda: {"state": "no", "pyhwpx": True, "progid": None,
                                  "reason": "no HWP COM ProgID is registered"})

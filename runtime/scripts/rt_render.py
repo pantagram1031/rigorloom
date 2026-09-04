@@ -56,12 +56,21 @@ RASTERIZABLE_SUFFIXES = (".pdf",)
 
 #: Why a session has no page image. One closed set, so the Desktop can switch
 #: on it exhaustively instead of matching on prose.
+#:
+#: ``needs_conversion`` survives tier 3 and still means what it always meant:
+#: it is what comes back when our own renderer could not draw the document
+#: either, and the ``own`` row inside it says why. A page that WAS drawn by
+#: tier 3 is ``available: true`` with ``grade: "own-uncertified"``.
 UNAVAILABLE_REASONS = (
     "rasterizer_missing",       # no PyMuPDF in this interpreter
     "no_rasterizable_artifact",  # nothing here is a PDF
     "needs_conversion",         # an hwpx/hwp that a converter could turn into one
     "artifact_missing",         # a runId was named and its bytes are gone
 )
+
+#: The one producer whose output may be graded ``hancom``. Read off the
+#: prepared record's ``producedBy``, never inferred from a kind string.
+HANCOM_PRODUCER = "engine/scripts/com_backend.py convert"
 
 #: Same three-state style as ``pipeline/scripts/render_probe.py:22``.
 CAPABILITY_STATES = ("yes", "no", "unknown")
@@ -102,10 +111,20 @@ def render_capability() -> dict:
     an explicit, opt-in ~8 second call, never something ``initialize`` pays for.
     """
     from rt_convert import prepare_capability
+    from rt_own import RENDER_GRADES, own_capability
 
     return {
         "rasterizer": rasterizer_facts(),
         "prepare": prepare_capability(),
+        # TIER 3. The row that makes a fresh install show a page at all: no
+        # Hancom, no PDF, and still something honest on screen (§11.1c).
+        "own": own_capability(),
+        "grades": list(RENDER_GRADES),
+        "tiers": {
+            "1": "hancom — a PDF this machine's Hancom produced",
+            "2": "pdf — a PDF that arrived as the document or as a candidate",
+            "3": "own-uncertified — engine/scripts/own_render.py, ours, uncertified",
+        },
         "converter": {
             "state": "no",
             "reason": ("document/render itself converts nothing: it needs a "
@@ -182,8 +201,125 @@ def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dic
     return source, "session_source", {"sha256": digest, "bytes": size}
 
 
+def grade_and_tier(kind: str, facts: dict) -> tuple[str, int]:
+    """Which tier this raster came from, from what produced it — not from a flag.
+
+    ``prepared`` and ``candidate_prepared`` are the only kinds Hancom can have
+    made, and they carry the converter's name in ``producedBy``; reading that
+    rather than trusting the kind string means a future second converter cannot
+    quietly inherit the word ``hancom``.
+    """
+    from rt_own import GRADE_TIER
+
+    produced_by = facts.get("producedBy")
+    grade = "hancom" if produced_by == HANCOM_PRODUCER else "pdf"
+    return grade, GRADE_TIER[grade]
+
+
+def _image_record(png: bytes, path: Path, session, *, width: int, height: int,
+                  inline: bool) -> dict:
+    """The ``image`` block, identical whichever tier drew the bytes."""
+    written_sha, written_bytes = sha256_file(path)
+    image = {
+        "mediaType": "image/png",
+        "widthPx": int(width),
+        "heightPx": int(height),
+        "bytes": written_bytes,
+        "sha256": written_sha,
+        "path": path.relative_to(session.dir).as_posix(),
+        "inline": False,
+        "inlineLimit": MAX_INLINE_IMAGE_BYTES,
+    }
+    if inline and written_bytes <= MAX_INLINE_IMAGE_BYTES:
+        image["inline"] = True
+        image["encoding"] = "base64"
+        image["data"] = base64.b64encode(png).decode("ascii")
+    elif inline:
+        image["reason"] = ("larger than the inline limit; read it from path, or "
+                           "ask for a lower dpi")
+    return image
+
+
+def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
+                    page: int, dpi: int, run_id: str | None,
+                    inline: bool) -> tuple[dict | None, dict | None]:
+    """Tier 3 — ``(result, refusal)``. Never claims to be anything else.
+
+    Every field that could be mistaken for a Hancom render is deliberately
+    different: ``source.kind`` is ``own_render`` rather than ``*_pdf``,
+    ``grade`` is the engine's own word, and the elements the renderer did not
+    draw travel WITH the page instead of in a log the UI would never read.
+    """
+    from rt_own import (OWN_GRADE, elements_skipped, font_summary, own_render,
+                        page_png, read_sidecar, sidecar_page_size)
+
+    subject_sha = subject_facts.get("sha256")
+    if not isinstance(subject_sha, str) or not subject_sha:
+        from rt_own import own_unavailable
+
+        return None, own_unavailable(
+            "render_failed", "this subject has no recorded digest, and a page "
+            "is only ever served bound to the bytes it was drawn from")
+    record, refusal = own_render(session, tools, subject=subject,
+                                 subject_sha256=subject_sha, dpi=dpi)
+    if record is None:
+        return None, refusal
+
+    sidecar = read_sidecar(session, record)
+    count = len(record.get("pages") or [])
+    if page >= count:
+        raise RpcError("page_out_of_range",
+                       f"page {page} does not exist; our own renderer drew "
+                       f"{count}", page=page, pageCount=count)
+    png_path = page_png(session, record, page)
+    if png_path is None or not png_path.is_file():
+        from rt_own import own_unavailable
+
+        return None, own_unavailable(
+            "page_out_of_range", f"our own renderer drew {count} page(s) and "
+            f"page {page} is not among them", page=page, pageCount=count)
+    size = sidecar_page_size(sidecar, page)
+    if size is None:
+        from rt_own import own_unavailable
+
+        return None, own_unavailable(
+            "render_failed", "the renderer's sidecar records no page size, so "
+            "nothing can be told about the size of what it drew")
+    width_px, height_px = size
+    png = png_path.read_bytes()
+
+    return {
+        "sessionId": session.id,
+        "available": True,
+        # NOT "*_pdf". Nothing downstream may mistake this for a PDF read.
+        "source": {"kind": "own_render", "sha256": subject_sha,
+                   "bytes": subject_facts.get("bytes"),
+                   **({"runId": run_id} if run_id else {}),
+                   "producedBy": record["producedBy"]},
+        "page": page,
+        "pageCount": count,
+        "pageSize": {"widthPt": round(width_px / dpi * 72.0, 2),
+                     "heightPt": round(height_px / dpi * 72.0, 2)},
+        "dpi": dpi,
+        "image": _image_record(png, png_path, session, width=width_px,
+                               height=height_px, inline=inline),
+        "evidence": render_capability()["evidence"],
+        # THE LABEL. Three fields, because the Desktop switches on the first,
+        # prints the second, and lists the third.
+        "grade": OWN_GRADE,
+        "tier": 3,
+        "gradeMeaning": sidecar.get("grade_meaning"),
+        "renderer": {"id": sidecar.get("renderer"),
+                     "version": sidecar.get("renderer_version"),
+                     "certified": False},
+        "elementsSkipped": elements_skipped(sidecar),
+        "fonts": font_summary(sidecar),
+    }, None
+
+
 def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
-                run_id: str | None = None, inline: bool = True) -> dict:
+                run_id: str | None = None, inline: bool = True,
+                tools=None) -> dict:
     """Rasterise one page, or say precisely why there is no page to rasterise."""
     if not isinstance(page, int) or isinstance(page, bool) or page < 0:
         raise RpcError("invalid_params", "page must be a non-negative integer",
@@ -204,6 +340,16 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
         if document_kind in ("hwpx",) or suffix in (".hwpx", ".hwp"):
             from rt_convert import prepare_capability
 
+            # TIER 3, before the refusal. A Hancom PDF is still the better
+            # answer and tiers 1 and 2 were already tried above; this is what
+            # a machine with neither gets, and it is a page rather than a card
+            # explaining that there is no page.
+            own_result, own_refusal = own_render_page(
+                session, tools, subject=path, subject_facts=facts, page=page,
+                dpi=dpi, run_id=run_id, inline=inline)
+            if own_result is not None:
+                return own_result
+
             prepare = prepare_capability()
             return _unavailable(
                 session, "needs_conversion",
@@ -213,7 +359,12 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
                  "this session holds an HWPX; a page image needs a PDF, and "
                  "this machine cannot make one: " + str(prepare["reason"])),
                 artifactKind=kind, documentKind=document_kind, suffix=suffix,
-                prepare=prepare)
+                prepare=prepare,
+                # Why the third tier did not step in either. Without this the
+                # user is told Hancom is missing and never told that the
+                # renderer we DO ship also declined, which is the fact they can
+                # act on.
+                own=own_refusal)
         return _unavailable(
             session, "no_rasterizable_artifact",
             f"nothing here is a PDF (the {kind} is {suffix or 'extensionless'})",
@@ -267,25 +418,10 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
     # without pushing a megabyte through a frame.
     target = session.renders_dir / f"{kind}-{run_id or 'source'}-p{page}-{dpi}dpi.png"
     atomic_write_bytes(target, png)
-    written_sha, written_bytes = sha256_file(target)
 
-    image = {
-        "mediaType": "image/png",
-        "widthPx": int(pixmap.width),
-        "heightPx": int(pixmap.height),
-        "bytes": written_bytes,
-        "sha256": written_sha,
-        "path": target.relative_to(session.dir).as_posix(),
-        "inline": False,
-        "inlineLimit": MAX_INLINE_IMAGE_BYTES,
-    }
-    if inline and written_bytes <= MAX_INLINE_IMAGE_BYTES:
-        image["inline"] = True
-        image["encoding"] = "base64"
-        image["data"] = base64.b64encode(png).decode("ascii")
-    elif inline:
-        image["reason"] = ("larger than the inline limit; read it from path, or "
-                           "ask for a lower dpi")
+    image = _image_record(png, target, session, width=pixmap.width,
+                          height=pixmap.height, inline=inline)
+    grade, tier = grade_and_tier(kind, facts)
 
     return {
         "sessionId": session.id,
@@ -297,6 +433,18 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
         "dpi": dpi,
         "image": image,
         "evidence": render_capability()["evidence"],
+        # The same three fields tier 3 carries, so the Desktop reads ONE shape
+        # and a page can never arrive unlabelled. `elementsSkipped` is empty
+        # here and that is a claim, not a gap: a PDF rasteriser draws the page
+        # it is given whole.
+        "grade": grade,
+        "tier": tier,
+        "gradeMeaning": (
+            "rendered by Hancom, then rasterised from its PDF"
+            if grade == "hancom" else
+            "rasterised from a PDF this session already held; who laid that "
+            "PDF out is not something this build can know"),
+        "elementsSkipped": [],
     }
 
 

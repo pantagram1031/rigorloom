@@ -924,6 +924,66 @@ source-binding rule, the authority split, and the whole prepare → render chain
 with `rt_convert.run_convert` substituted by a prebuilt PDF. One live smoke on
 an operator machine is owed.
 
+### 11.1c Tier 3 — our own renderer, and the label that says it is ours
+
+The two tiers above both need a PDF, and a fresh install has neither: the
+packaged sidecar carries no `pyhwpx`, so `renderPrepare` answers `needs_hancom`
+on every machine that has not installed the office suite. That was honest and
+it was also the whole page view — a refusal card, on the machine most people
+will run this on.
+
+`engine/scripts/own_render.py` draws an OWPML document without Hancom.
+`runtime/scripts/rt_own.py` wires it in as a third tier, spawned through the
+same `run_child` / `child_python` path as every other engine child, so the
+frozen sidecar's interpreter role covers it and there is no second spawn
+convention.
+
+**Every render is now graded, whichever tier drew it.** One closed set
+(`rt_own.RENDER_GRADES`), on the response and in `capabilities.render.grades`:
+
+| grade | tier | means |
+| --- | --- | --- |
+| `hancom` | 1 | a PDF this machine's Hancom produced, then rasterised |
+| `pdf` | 2 | a PDF that arrived as the document or as a candidate |
+| `own-uncertified` | 3 | `own_render.py` — ours, and NOT certified |
+
+The grade is read off the prepared record's `producedBy`, not off a kind
+string, so a second converter cannot quietly inherit the word `hancom`.
+
+A tier-3 answer carries `source.kind: "own_render"` (never `*_pdf`), the
+engine's own `gradeMeaning`, `renderer.certified: false`, the sidecar's
+`elementsSkipped` **verbatim**, and a `fonts` substitution summary. A renderer
+that quietly omits a border and one that draws it are indistinguishable from a
+screenshot; the list is the difference, so it travels with the page rather than
+into a log.
+
+**`needs_conversion` still means what it always meant.** It is what comes back
+when tier 3 could not draw the document either, and it now carries an `own`
+row naming which of `script_missing`, `not_own_renderable`,
+`renderer_unavailable`, `render_failed`, `page_out_of_range` applies. A user
+told only about the Hancom they do not have has not been told the actionable
+half.
+
+**Caching is bound to the bytes.** A render lands under
+`<session>/derived/own/<sha16>-<dpi>dpi/` and is served back only for the digest
+it was drawn from — the same rule `existing_pdf` enforces. Drawing the page
+ourselves does not make it acceptable to serve it for a different document.
+
+**Geometry, and what tier 3 honestly cannot give.** `document/pageGeometry`
+answers from the same sidecar with `geometrySource: "own"` (the PDF path now
+says `"pdf"`). The rects are real: `line_boxes` is every text line the renderer
+drew, in device pixels, normalised by the page's own pixel size. The TEXT is
+not carried — the sidecar records where each line was drawn, not what it said —
+so `mapping.state` is `unavailable`, `seats` is empty, every span is
+`confidence: "unmapped"` with `address: null`, and `charOffsets.state` is
+`unavailable`. Nothing is re-derived by reopening the document and guessing
+which line is which: a wrong address is the one failure this subsystem exists
+to prevent.
+
+Geometry reads the render CACHE only and never starts a render of its own; a
+geometry call that drew its own page could hand back boxes for a page nobody is
+looking at.
+
 ### 11.2 Events
 
 Sessions now keep their own log at `<session>/events.jsonl`, appended on every

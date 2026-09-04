@@ -27,11 +27,17 @@ import ast
 import sys
 from pathlib import Path
 
-#: Exactly what EngineTools resolves (runtime/scripts/rt_engine.py:164-166).
+#: Everything the Runtime spawns as a child. The first three are what
+#: EngineTools resolves (runtime/scripts/rt_engine.py:164-166); ``own_render``
+#: is tier 3 (runtime/scripts/rt_own.py), spawned through the same interpreter
+#: role, and it is the ONLY entrypoint here that pulls a third-party package
+#: (Pillow) in from a lazy function-level import — which is exactly the shape
+#: PyInstaller cannot see and this walk exists to find.
 ENTRYPOINTS = (
     "engine/scripts/form_inspect.py",
     "engine/scripts/preedit.py",
     "pipeline/scripts/check_residue.py",
+    "engine/scripts/own_render.py",
 )
 
 #: Where a bare `import foo` may resolve to a repo sibling rather than a package.
