@@ -6446,10 +6446,13 @@ class OwnRenderer:
         if entry is None:
             return (0, 0)
         font = self._note_mark_font(entry["charpr"])
-        width = float(self._scratch_draw().textlength(entry["mark"], font=font))
+        # HWPUNIT from face metrics, not from the raster: this extent
+        # reserves the note column, so it is layout and may not move with dpi
+        # (see ``LAYOUT_REFERENCE_PX``).
         height = ((self._charpr(entry["charpr"]).get("height_pt") or 10.0)
                   * HWPUNIT_PER_PT * self.NOTE_MARK_RELSZ / 100.0)
-        return (int(round(self.hwp_from_px(width))), int(round(height)))
+        width = self._em_width(font, entry["mark"]) * height
+        return (int(round(width)), int(round(height)))
 
     def _draw_note_mark(self, draw, el, cursor_px, baseline_px):
         """Draw one reference mark as a raised, reduced numeral."""
@@ -6583,8 +6586,12 @@ class OwnRenderer:
             cid = (paras[0].chars[0][1]
                    if paras and paras[0].chars else entry["charpr"])
             font = self._font_for(cid, 100, "latin")
-            width = int(round(self.hwp_from_px(
-                float(draw.textlength(entry["mark"] + " ", font=font)))))
+            # Same rule as ``_note_mark_extent``: the body column this leaves
+            # is layout, so it is measured in the document's units.
+            width = int(round(
+                self._em_width(font, entry["mark"] + " ")
+                * (self._charpr(cid).get("height_pt") or 10.0)
+                * HWPUNIT_PER_PT))
             body_column = max(1, column - width)
             items.append({
                 "entry": entry, "paras": paras, "cid": cid,

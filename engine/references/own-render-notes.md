@@ -2775,3 +2775,17 @@ as the authoring engine did, which is the same 2% narrowness closing.
   needs its own measurement.
 - **The dpi ladder is four rungs**, 96–288. Nothing was measured below 96 or
   above 288, and `pt_to_px`'s `max(1, ...)` floor still exists for the raster.
+- **The footnote column is now analytic too but is not in the digest.**
+  `_note_mark_extent` and the note body column used to reach HWPUNIT through
+  `hwp_from_px(draw.textlength(...))` — the same leak, in a channel
+  `layout_digest` does not cover. They were converted with everything else,
+  but no corpus document exercises them enough for the byte-identity
+  assertion to be evidence about them.
+
+### What is still measured on the raster, deliberately
+
+`draw.textlength` survives in exactly two places, and neither is layout: the
+glyph mask's buffer size in `_draw_glyph_piece` (a rasterisation allocation),
+and the equation box, which is already measured at a fixed
+`EQUATION_EXTENT_DPI = 600` and scaled — dpi-free by the same argument as
+`LAYOUT_REFERENCE_PX`, arrived at earlier and independently.
