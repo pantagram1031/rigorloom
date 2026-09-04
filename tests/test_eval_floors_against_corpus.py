@@ -111,9 +111,9 @@ def test_task_floors_hold_against_the_real_corpus(task_path, tmp_path):
 
 def _render_check_assert_json():
     task = cleanroom.load_task(ROOT / "evals" / "tasks" / "render-check-01.yaml")
-    checks = [c for c in task["machine_checks"] if c["id"] == "render_check_report"]
-    assert len(checks) == 1, checks
-    return checks[0]["assert_json"]
+    checks_by_id = {c["id"]: c for c in task["machine_checks"]}
+    assert "render_check_report" in checks_by_id, checks_by_id
+    return checks_by_id["render_check_report"]["assert_json"]
 
 
 def test_render_check_floor_gates_on_ordering_not_on_close_alone():
