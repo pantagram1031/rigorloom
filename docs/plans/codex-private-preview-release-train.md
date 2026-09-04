@@ -308,6 +308,21 @@ C2 blocker on the same exact HEAD:
   Hancom binary/SDK/font/template/icon/clipart/dictionary/security module or
   standalone local EULA was found, and no reverse-engineering implementation
   was found. The Hancom inquiry is drafted but not sent.
+- Requirement-by-requirement completion audit on `ca2bc51…`:
+  `private/epoch-0/ca2bc51/release/acceptance-matrix.json`, 10,669 bytes,
+  SHA-256
+  `18E6A0FC90FAE96C691B81460C91532C14FAB77F2D8A825EEB102E3999B993DC`.
+  It classifies 34 requirements as 14 proven, 4 partial, 2 failed, 9 not run,
+  4 blocked, and 1 policy-satisfied. All four evidence-file entries rehashed
+  with zero mismatches. The matrix records `releaseDisposition: BLOCKED` and
+  does not convert a narrow/unit/old result into installed-preview evidence.
+  `f9fb6d8…` remains the latest behavior change; every later tracked change is
+  only this durable state document.
+- Current Git custody recheck: #176/#184/#150 and nested #175 are ancestors;
+  the recorded E0-D1 #153 head is not. Current local tips of
+  `own-renderer-mvp`, `engine-e2-typography`, `engine-e2-linebreak`, and
+  `engine-e3-owpml-writer` are not ancestors. The worktree is clean and no
+  remote integration branch exists.
 
 Not yet complete on the final Epoch 0 HEAD:
 
@@ -352,6 +367,10 @@ tree and installer.
   installer build, installed preview, or acceptance claim is allowed while it
   remains red. Further investigation is paused by the user's no-security-work
   instruction; ask for separate direction rather than assuming scope.
+- Current C: free space is approximately 0.31 GiB. Do not start a final
+  sidecar/Tauri build until adequate headroom is available; prior build docs
+  record multi-gigabyte pressure. E: test basetemp was deleted after the failed
+  run and is not a persistent build destination.
 
 ## Next executable actions
 
