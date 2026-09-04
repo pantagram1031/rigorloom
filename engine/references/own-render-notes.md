@@ -2375,3 +2375,104 @@ synthetic fixture built from a corpus form's own paragraph with a restarting
 draws at the top of page 2 where its cache puts it, and the page count is
 unchanged at 18.
 
+
+## E2 convergence — registration + fonts + table move in one tree, 2026-09-04
+
+Three E2 renderer slices that had only ever been measured apart are now one
+tree (`claude/engine-e2-converge`): the `hp:outMargin` registration inset
+(#211, the branch this merge starts from), the bundled Korean fallback faces
+(#208) and the inline-table move rule (#210, which also brings
+`render_check.py` and the render-check corpus, plus `hwpx_write.py` from the
+writer line). Every number pinned by any of the three is re-measured here on
+the merged tree, and each one either moves with a stated reason or is
+confirmed unchanged.
+
+### Corpus scoreboard, `--corpus`, merged
+
+Against the numbers #211 pinned (its own before → after table above is
+untouched; this is that table's "after" column re-measured with fonts and the
+table rule also present):
+
+| form | ssim | ssim_inked | text_line_iou | pages c/r |
+| --- | --- | --- | --- | --- |
+| admrul | 0.9197 -> **0.9213** | 0.5007 -> **0.5067** | 0.5877 -> **0.5993** | 1/1 |
+| gianmun-1ho | 0.9375 | 0.2965 | 0.8428 | 1/1 |
+| gianmun-2ho | 0.9075 | 0.0538 | 0.6468 | 1/1 |
+| jeongbo | 0.7571 | 0.2692 | 0.8273 | 1/1 |
+| jumin | 0.6822 | 0.1399 | 0.6711 | 3/3 |
+| kstartup | 0.8282 -> **0.8286** | 0.2884 -> **0.2888** | 0.2727 -> **0.2715** | 21/22 |
+| moel-2013 | 0.7880 -> **0.7920** | 0.1008 -> **0.1081** | 0.5063 -> **0.5200** | 7/7 |
+| moel-2025 | 0.7706 -> **0.7788** | 0.1918 -> **0.2015** | 0.5396 -> **0.5563** | 7/7 |
+| nrf | 0.8924 -> **0.8951** | 0.4418 -> **0.4462** | 0.7225 -> **0.7059** | 4/4 |
+| saeopja | 0.7664 | 0.2681 | 0.8060 | 6/6 |
+
+Corpus means: `ssim` 0.8250 -> **0.8266**, `ssim_inked` 0.2551 -> **0.2579**,
+`text_line_iou` 0.6423 -> **0.6447**, `text_line_pair_rate` 0.8364 ->
+**0.8364** (unchanged).
+
+**Every form that moves is a form the bundled family map answers for**, and
+it moves by the amount #208 measured on the pre-registration tree — the two
+slices are additive, not interacting. The five forms whose declared faces all
+resolve installed (gianmun-1ho, gianmun-2ho, jeongbo, jumin, saeopja) are
+byte-identical to #211. `nrf`'s `text_line_iou` still falls (0.7225 ->
+0.7059), the same direction and the same cause #208 reported and did not
+smooth over; registration does not rescue it.
+
+**No page count moves.** `kstartup` reads 21/22 here, but that is its state on
+#211 too — it is the one form whose page count has never been exact, and
+`test_out_margin_changes_no_corpus_page_count` pins all ten counts, including
+that 21. The inline-table move rule (#210) does not repaginate any public
+corpus form; the one document it repaginates is the synthetic render-check
+document, which is what it was written against.
+
+### The registration rule channel is unmoved
+
+`hp:outMargin`'s headline pin — 365/428 matched rules within 1 pt, 335/428
+within 0.25 pt — was produced by an ad-hoc script that was never committed, so
+it cannot be re-run byte-identically. What was done instead: the measurement
+was reimplemented (candidate cell rectangles out of `_render_table` against
+the reference PDF's own `l`/`re` drawing operators, per-axis scale correction,
+order-preserving DP) and run twice, once on `origin/claude/engine-e2-registration`
+and once on the merged tree. The reimplementation's own scale is smaller
+(117 matched horizontal, 107 vertical, because it dedupes rule positions per
+page rather than counting per cell side) and is **not** comparable to 365/428
+in absolute terms. The two runs are:
+
+| | 1 pt | 0.25 pt |
+| --- | --- | --- |
+| #211 | dy 117/117, dx 107/107 | dy 102, dx 99 |
+| merged | dy 117/117, dx 107/107 | dy 102, dx 99 |
+
+Identical, per form as well as in total, on all ten forms. So the merge moves
+the registration channel by nothing and **365/428 and 335/428 stand as
+written**.
+
+### The line breaker is unmoved
+
+`test_the_corpus_wide_agreement_is_exactly_this` pins
+`[2148, 2097, 2004, 158, 135, 216, 65]` — the 58 -> 65 break-position column
+#208 measured. It passes unchanged on the merged tree: registration is a
+placement rule and moves no line box, so the breaker sees the same boxes.
+
+### render-check-01
+
+**1 · 32 · 16 · 2 -> 1 match · 35 close · 13 differs · 2 unsupported.**
+`F47` from #210 (IoU 0.025 -> 0.535); `F31` (0.222 -> 0.376) and `F32`
+(0.205 -> 0.479) from #211's inset. #208 is a measured no-op on that document
+— it declares only 바탕, 돋움 and 궁서, all installed here. Page count moved
+the wrong way, 10 -> 11 against Hancom's 9, because moving the table whole
+removed the term that used to cancel the block-height drift. Full report:
+[`docs/research/render-check-01.md`](../../docs/research/render-check-01.md).
+
+### Not proven
+
+- **The rule-agreement re-check is a reimplementation, not the original
+  script.** It shows the merge changes nothing in that channel; it does not
+  re-derive 365/428.
+- **One machine.** Fonts still resolve against this machine's installed index,
+  and #208's "installed always wins" is still verified by construction rather
+  than on a second machine.
+- **No slice was isolated by ablation.** `F31`/`F32` are attributed to
+  registration because they move only once registration joins #210, and
+  because #208 provably never fires on that document — not because a tree with
+  registration removed was rendered.
