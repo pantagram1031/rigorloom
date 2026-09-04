@@ -479,3 +479,103 @@ def test_the_flow_pass_places_every_probe_table_where_hancom_does():
         # because they moved, the rest because they carry the page break.
         assert label_page is not None and ref_page == label_page + 1, case
     assert mismatch == [], mismatch
+
+
+# ---------------------------------------------------------------------------
+# Resolution-aware bounds (docs/research/ink-residual.md)
+#
+# Two of this harness's channels are stated in PIXELS but mean something
+# PHYSICAL: the IoU tolerance is 0.26 mm of registration slack, and the ink
+# bound is a bound on a residual that lives in the ~1 px antialias band along
+# every glyph outline.  Both are now derived from the raster in use.  The one
+# thing that must never move is the ratified 96 dpi baseline, so that is
+# pinned first.
+# ---------------------------------------------------------------------------
+def test_the_derived_bounds_are_exact_no_ops_at_the_default_dpi():
+    assert rc.iou_tolerance_px(rc.DEFAULT_DPI) == rc.IOU_TOLERANCE_PX == 1
+    for band in ("match", "close"):
+        base = rc.THRESHOLDS[band]["ink_delta_abs_max"]
+        assert rc.ink_delta_bound(base, rc.DEFAULT_DPI) == base
+
+
+def test_the_iou_tolerance_holds_its_physical_size_across_rasters():
+    # 0.26 mm is one pixel at 96 dpi, two at 144 and 192, three at 288.
+    assert rc.iou_tolerance_px(96) == 1
+    assert rc.iou_tolerance_px(144) == 2
+    assert rc.iou_tolerance_px(192) == 2
+    assert rc.iou_tolerance_px(288) == 3
+    # Never zero: a zero-tolerance IoU measures rasteriser luck, which is the
+    # whole reason the tolerance exists.
+    assert rc.iou_tolerance_px(48) == 1
+
+
+def test_the_ink_bound_only_ever_tightens_above_the_default_dpi():
+    base = rc.THRESHOLDS["close"]["ink_delta_abs_max"]
+    bounds = [rc.ink_delta_bound(base, d) for d in (96, 144, 192, 288)]
+    assert bounds == sorted(bounds, reverse=True)
+    assert bounds[0] == base
+    # The residual it bounds decays FASTER than 1/dpi (measured coverage ratio
+    # 1.80 -> 1.16 -> ~1.0 over 96 -> 144 -> 192), so the bound stays
+    # conservative rather than chasing the measurement.
+    assert bounds[1] == pytest.approx(base * 96 / 144.0)
+
+
+def test_verdict_for_applies_the_bound_of_the_dpi_it_is_given():
+    base = rc.THRESHOLDS["close"]["ink_delta_abs_max"]
+    metrics = _metrics(ssim=0.70, iou=0.40, delta=base)
+    assert rc.verdict_for(metrics, [], 96) == "close"
+    # The same delta is out of bounds on a finer raster, where the rasteriser
+    # cannot account for it.
+    assert rc.verdict_for(metrics, [], 288) == "differs"
+
+
+# ---------------------------------------------------------------------------
+# The rasteriser floor is recorded, not tuned away
+# ---------------------------------------------------------------------------
+def test_the_ink_mass_channel_is_threshold_free_and_not_gated():
+    from PIL import Image
+    # A band of pure 50% grey: every pixel is lighter than the ink threshold,
+    # so the thresholded channel calls it blank and the coverage channel does
+    # not.  That gap is exactly what RASTERISER_FLOOR is about.
+    grey = Image.new("L", (20, 10), 128)
+    assert rs._ink_fraction(grey) == 0.0
+    assert rc.ink_mass_fraction(grey) == pytest.approx((255 - 128) / 255.0)
+    assert rc.ink_mass_fraction(Image.new("L", (4, 4), 255)) == 0.0
+    assert rc.ink_mass_fraction(Image.new("L", (4, 4), 0)) == 1.0
+    # Reported, never gated: the bounds are stated against ink.delta.
+    assert "ink_mass" in rc.THRESHOLDS["reported_not_gated"]
+    assert "ink_ratio" in rc.THRESHOLDS["reported_not_gated"]
+    assert rc.THRESHOLDS["gated_on"] == ["iou", "ink_delta", "ssim"]
+
+
+def test_score_region_reports_the_coverage_channel_beside_the_gated_one():
+    from PIL import Image
+    reference = Image.new("RGB", (24, 12), (255, 255, 255))
+    candidate = Image.new("RGB", (24, 12), (255, 255, 255))
+    for y in range(4, 8):
+        for x in range(6, 14):
+            reference.putpixel((x, y), (0, 0, 0))
+            candidate.putpixel((x, y), (0, 0, 0))
+    metrics = rc.score_region(reference, candidate, rs.INK_THRESHOLD)
+    ink = metrics["ink"]
+    assert ink["mass_ratio"] == pytest.approx(1.0)
+    assert ink["mass_delta"] == 0.0
+    assert metrics["iou_tolerance_px"] == rc.IOU_TOLERANCE_PX
+    # A heavier candidate shows up on the coverage channel as a ratio, which
+    # is the shape the residual actually has.
+    for y in range(3, 9):
+        for x in range(5, 15):
+            candidate.putpixel((x, y), (0, 0, 0))
+    heavier = rc.score_region(reference, candidate, rs.INK_THRESHOLD)
+    assert heavier["ink"]["mass_ratio"] > 1.5
+
+
+def test_the_rasteriser_floor_is_declared_with_its_measurement():
+    floor = rc.RASTERISER_FLOOR
+    assert (floor["coverage_ratio_body_text"]["96"]
+            > floor["coverage_ratio_body_text"]["144"]
+            >= floor["coverage_ratio_body_text"]["192"])
+    # The floor at 96 dpi is the close bound: the ink channel cannot separate
+    # a real ink error from the rasteriser there, and says so.
+    assert (floor["floor_at_96_dpi"]
+            == rc.THRESHOLDS["close"]["ink_delta_abs_max"])
