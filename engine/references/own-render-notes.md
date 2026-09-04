@@ -1492,10 +1492,44 @@ back to the placeholder box and says which.
    decided on the **drawn ink** instead (`_eq_bounds`), which is also what
    makes the containment claim below checkable.
 
-### `hp:sz` is the ground truth, and scale-to-fit is a declared fallback
+### The line reserves the equation's own extent, not `hp:sz@height`
 
-The declared extent is what the authoring engine measured the equation to be,
-and it is what the paragraph's line box was sized around. So the equation is
+**Hancom does not honour the declared height.** It re-lays the script out on
+open and reserves what its own layout needs; the stored `hp:sz` is a cache it
+refreshes. Measured on `render-check-01`, whose declared extents were written
+by `build_render_check.py` and never by Hancom:
+
+| script | declared | Hancom reserves |
+| --- | --- | --- |
+| `a over b` | 2400 | 2252 |
+| `sqrt {x^{2} + y^{2}}` | 2400 | 1304 |
+| `sum _{i=1} ^{n} i^{2} = … over 6` | 3600 | 2696 |
+| `left [ matrix{ 1 & 2 # 3 & 4 } right ]` | 3600 | 2108 |
+
+Two equal declared heights reserving 2252 and 1304 rule out every function of
+the declared extent. **No attribute says "size to content"**: all four declare
+`heightRelTo="ABSOLUTE"`, `protect="0"`, `lineMode="CHAR"`, `baseUnit="1000"`
+and `Equation Version 60` — exactly what every equation of the Hancom-authored
+holdout declares, and those two documents disagree about whether the stored
+height is honoured. The rule adopted is this renderer's own layout of the
+script, clamped to the declared box:
+
+    reserve = min(declared, max(nominal, ink))
+
+`nominal` (the `_EQ_ASC`/`_EQ_DESC` stacking cells) carries it — worst
+residual +256 HWPUNIT (17.0%), mean 170, against +1492 (84.0%) and mean 910
+for the declared height; the ink extent alone scores −494 (19.3%) and is
+rejected, but joins as a **floor** so a line never reserves less room than the
+equation puts glyphs in. n = 18: 4 measured off the reference PDF, 14 against
+a Hancom-authored holdout's own declared extents (nominal / declared mean
+0.9934, sd 0.0748). Pinned at `EQUATION_EXTENT_DPI` so the reserve does not
+move with `--dpi`. Full derivation and what it is worth:
+[`docs/research/equation-line-box.md`](../../docs/research/equation-line-box.md).
+
+### `hp:sz` is the ceiling, and scale-to-fit is a declared fallback
+
+The declared extent is the ceiling the equation is drawn inside, and where the
+layout is smaller it is also what the line reserves. So the equation is
 laid out *inside* it. Where this renderer's metrics do not fit — a substituted
 maths face advances differently — the equation is re-laid out smaller, and if
 rounding still leaves it over, the raster is reduced. Either way the scaling

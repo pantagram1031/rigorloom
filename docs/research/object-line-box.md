@@ -153,6 +153,16 @@ Hancom's position and not at ours. Fixing it means measuring `hp:equation`
 layout against the reference, which is a different subsystem; it is a
 **follow-up**, not this pass.
 
+> **Closed since.** Hancom sizes the slot to its own layout of the script and
+> the stored `hp:sz` is a cache it refreshes, not an instruction it obeys —
+> two of these four declare the same 2400 and reserve 2252 and 1304, which no
+> function of the declared extent can produce, and no attribute says
+> "size to content". The rule adopted is
+> `min(declared, max(nominal, ink))` off this renderer's own layout tree:
+> [equation-line-box.md](equation-line-box.md). The 36.4 pt becomes 4.7 pt,
+> the page count moves **11 → 10** against Hancom's 9 and page agreement
+> 47 → **49 / 51**.
+
 The other two pages are already owned elsewhere: the two-column section 2 runs
 2 pages to Hancom's 1 ([render-check-01.md](render-check-01.md) note 4, where
 Hancom does not apply `hp:colPr` at all).

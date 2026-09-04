@@ -114,6 +114,14 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 > 0.0003 — the padded-band metric was rewarding a band too tall to be right.
 > The page count did **not** move, and note 1 below now names what is left.
 
+> **The equation extent landed too, and the table above carries its numbers.**
+> [equation-line-box.md](equation-line-box.md) shows Hancom sizes an inline
+> `hp:equation`'s slot to its own layout of the script and not to the declared
+> `hp:sz@height`. Page agreement 47/51 → **49/51**, IoU 0.4139 → **0.4176**,
+> `ssim_inked` 0.1726 → **0.1761**, `ssim` 0.7988 → 0.7984, tally unchanged at
+> 3 · 37 · 9 · 2 — and the **page count moves for the first time, 11 → 10**
+> against Hancom's 9.
+
 | feature | ssim | ssim(inked) | IoU | ink Δ | page | verdict |
 |---|---|---|---|---|---|---|
 | `F01` [정렬 — 왼쪽 (align LEFT)](render-check-01/F01.png) | 0.702 | 0.096 | 0.360 | +0.0236 | 1 | **close** |
@@ -151,20 +159,20 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 | `F33` [그림 — 본문 안 (inline, treatAsChar)](render-check-01/F33.png) | 0.838 | 0.353 | 0.497 | +0.0057 | 4 | **close** |
 | `F34` [캡션 — 그림 (image caption)](render-check-01/F34.png) | 0.833 | 0.117 | 0.455 | +0.0144 | 4 | **close** |
 | `F35` [그림 — 어울림 TOP_AND_BOTTOM (anchored, text wrap)](render-check-01/F35.png) | 0.675 | 0.212 | 0.227 | +0.0056 | 4 | **differs** |
-| `F36` [수식 — 분수 (fraction)](render-check-01/F36.png) | 0.955 | 0.296 | 0.601 | +0.0046 | 5 | **match** |
-| `F37` [수식 — 근호 (sqrt)](render-check-01/F37.png) | 0.933 | 0.180 | 0.423 | +0.0050 | 5 | **close** |
-| `F38` [수식 — 총합·상하한 (sum with limits)](render-check-01/F38.png) | 0.871 | 0.120 | 0.337 | +0.0100 | 5 | **close** |
-| `F39` [수식 — 행렬 (matrix)](render-check-01/F39.png) | 0.935 | 0.137 | 0.419 | +0.0050 | 5 | **close** |
+| `F36` [수식 — 분수 (fraction)](render-check-01/F36.png) | 0.954 | 0.285 | 0.597 | +0.0047 | 5 | **match** |
+| `F37` [수식 — 근호 (sqrt)](render-check-01/F37.png) | 0.932 | 0.253 | 0.481 | +0.0057 | 5 | **close** |
+| `F38` [수식 — 총합·상하한 (sum with limits)](render-check-01/F38.png) | 0.880 | 0.177 | 0.434 | +0.0115 | 5 | **close** |
+| `F39` [수식 — 행렬 (matrix)](render-check-01/F39.png) | 0.924 | 0.126 | 0.436 | +0.0062 | 5 | **close** |
 | `F40` [개요 번호 — 3수준 (numbered outline, 1. / 1.1 / 1.1.1)](render-check-01/F40.png) | 0.859 | 0.109 | 0.322 | +0.0096 | 5 | **close** |
 | `F41` [글머리표 (bullets)](render-check-01/F41.png) | 0.880 | 0.175 | 0.405 | +0.0076 | 5 | **close** |
-| `F42` [각주 (footnote)](render-check-01/F42.png) | 0.850 | 0.104 | 0.431 | +0.0132 | 5 | **close** |
+| `F42` [각주 (footnote)](render-check-01/F42.png) | 0.837 | 0.145 | 0.467 | +0.0134 | 5 | **close** |
 | `F43` [미주 (endnote)](render-check-01/F43.png) | 0.862 | 0.166 | 0.462 | +0.0134 | 5 | **close** |
-| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.881 | 0.247 | 0.461 | +0.0220 | 5 | **close** |
-| `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.843 | 0.484 | 0.209 | -0.0083 | 5 | **unsupported** |
-| `F46` [쪽 나누기 (page break, pageBreakBefore)](render-check-01/F46.png) | 0.798 | 0.200 | 0.524 | +0.0190 | 6/7 | **close** |
-| `F47` [표 — 쪽을 넘기는 표 (table split across a page)](render-check-01/F47.png) | 0.993 | 0.240 | 0.535 | +0.0008 | 6/7 | **close** |
-| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8/10 | **differs** |
-| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.816 | 0.047 | 0.141 | +0.0085 | 9/11 | **differs** |
+| `F44` [하이퍼링크 (hyperlink field)](render-check-01/F44.png) | 0.865 | 0.244 | 0.478 | +0.0223 | 5 | **close** |
+| `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.854 | 0.516 | 0.174 | -0.0083 | 5 | **unsupported** |
+| `F46` [쪽 나누기 (page break, pageBreakBefore)](render-check-01/F46.png) | 0.798 | 0.200 | 0.524 | +0.0190 | 6 | **close** |
+| `F47` [표 — 쪽을 넘기는 표 (table split across a page)](render-check-01/F47.png) | 0.993 | 0.240 | 0.535 | +0.0008 | 6 | **close** |
+| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8/9 | **differs** |
+| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.816 | 0.047 | 0.141 | +0.0085 | 9/10 | **differs** |
 | `F50` [머리말 (header)](render-check-01/F50.png) | 0.940 | 0.153 | 0.153 | +0.0090 | 1 | **differs** |
 | `F51` [꼬리말 + 쪽 번호 (footer with page number)](render-check-01/F51.png) | 0.974 | 0.154 | 0.156 | +0.0030 | 1 | **unsupported** |
 
@@ -230,6 +238,21 @@ contribution, block heights running tall.
 > pushes `F45` off page 4. The other extra page is note 4's two-column
 > section, which Hancom renders full width on one page. Neither is a
 > pagination rule; both are object-extent questions, and both are follow-ups.
+>
+> **The equation half is measured and closed.** Hancom reserves its own
+> layout of the `hp:script`, not the declared `hp:sz@height` — the same
+> declared 2400 reserves 2252 for `a over b` and 1304 for a square root, and
+> no attribute distinguishes the two documents that disagree about whether
+> the stored extent is honoured
+> ([equation-line-box.md](equation-line-box.md)). With
+> `min(declared, max(nominal, ink))` off this renderer's own layout tree the
+> drift over the four blocks is 4.7 pt, the **page count moves 11 → 10**
+> against Hancom's 9, page agreement 47 → **49 / 51**, `iou` mean
+> 0.4139 → **0.4176** and `ssim_inked` 0.1726 → **0.1761**; `F37` `iou`
+> 0.423 → 0.481, `F38` 0.337 → 0.434, `F39` 0.419 → 0.436. `F46` and `F47`
+> come back onto Hancom's page. The table above carries the post-fix numbers.
+> The one page left in section 0 is 4.7 pt of unattributed block drift;
+> note 4's two-column section is the other.
 
 ### 2. `F47` 표 — 쪽을 넘기는 표 (IoU 0.025, the largest gap)
 
