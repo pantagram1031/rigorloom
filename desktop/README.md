@@ -1179,6 +1179,23 @@ document tool that glows looks like a marketing page.
 Screenshots: `page-own-render.png` (the badge, the open 무엇을 못 그렸나 list),
 `page-own-render-150pct.png`, `toolbar.png`.
 
+**Renderer at #215.** The sidecar in this build carries
+`claude/engine-e2-converge` merged to its tip (#215) — table/box registration,
+the bundled OFL faces (now actually shipped as PyInstaller data; see the new
+`admrul` role check in `build.ps1` above), and the inline-table page-break
+rule. The only third-party fidelity read on that tree is the private holdout,
+tracker 02 (`docs/research/holdout-scoreboard-02.md`, aggregate numbers only,
+document withheld): 18/18 pages exact, `ssim_inked_mean` 0.1295 → 0.1731,
+`text_line_iou_mean` 0.5389 → 0.5847, `ssim_inked_min` crossing zero
+(−0.0405 → +0.0273 — no page's ink is anti-correlated with Hancom's any
+more). That is better and still not close to fidelity in absolute terms, and
+it says nothing about the fonts this slice bundled: the holdout's own faces
+were all installed on the machine that scored it (`bundled_character_share`
+0.0), so `BundledFontMap` was never consulted and no fidelity number exists
+yet for a document that actually falls through to it. None of this reaches
+the UI — the badge still reads 자체 렌더 · 미인증, and `own-uncertified`
+stays the only grade a fresh install can earn.
+
 **Three defects the evidence found, all in the packaging and all invisible to
 the checks that existed before it.**
 
