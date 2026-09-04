@@ -1571,7 +1571,27 @@ export async function clickOverlaySpan(
     return;
   }
   const address = span.address;
-  if (!address) return; // unmapped: not clickable, and nothing to say
+  if (!address) {
+    // UNMAPPED, and it now says so. This used to return in silence, which was
+    // fine while every page came from a PDF and an unmapped line was a rare
+    // miss. On an own-rendered page EVERY line is unmapped — the sidecar
+    // carries where each line was drawn and not what it said (§11.1c) — so a
+    // silent click reads as a dead page instead of as a stated limit. The line
+    // it landed on is real and is named; no address is invented.
+    const source = getState().geometry?.geometrySource;
+    setState({
+      overlayPick: {
+        kind: "unmapped",
+        targetId: id,
+        address: null,
+        label:
+          source === "own"
+            ? `${span.index + 1}번째 줄 — 자체 렌더 지면이라 이 줄이 어느 자리인지 붙이지 못합니다`
+            : `${span.index + 1}번째 줄 — 이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다`,
+      },
+    });
+    return;
+  }
 
   // A PARAGRAPH LINE. The caret path, and the runtime decides whether there is
   // one — this shell asks and prints the answer, whichever way it comes back.

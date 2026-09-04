@@ -422,11 +422,59 @@ export interface RenderImage {
   reason?: string;
 }
 
+/**
+ * One element the renderer did not draw, in its own words (§11.1c).
+ *
+ * Forwarded verbatim from the own renderer's sidecar. A renderer that quietly
+ * omits a dashed border and one that draws it are indistinguishable from a
+ * screenshot, so this list is the difference — which is why the page view puts
+ * it one click away rather than in a log.
+ */
+export interface SkippedElement {
+  element: string;
+  reason: string;
+  count: number;
+}
+
+/** How a page was drawn. The closed set `capabilities.render.grades` carries. */
+export type RenderGrade = "hancom" | "pdf" | "own-uncertified";
+
 export interface RenderResult {
   sessionId: string;
   available: boolean;
   /** Present when `available` — the source the raster came from. */
-  source?: { kind: string; sha256?: string; bytes?: number; runId?: string };
+  source?: {
+    kind: string;
+    sha256?: string;
+    bytes?: number;
+    runId?: string;
+    producedBy?: string;
+  };
+  /**
+   * WHICH TIER DREW THIS, and it is never absent from an available result.
+   * The badge switches on it; `gradeMeaning` is what it prints underneath.
+   */
+  grade?: RenderGrade | string;
+  tier?: number;
+  gradeMeaning?: string;
+  renderer?: { id?: string; version?: string; certified: boolean };
+  /** Empty for tiers 1 and 2 — a claim, not a gap. */
+  elementsSkipped?: SkippedElement[];
+  /** Tier 3 only: which declared faces were drawn with something else. */
+  fonts?: {
+    state: string;
+    reason?: string;
+    charactersResolved?: number;
+    charactersSubstituted?: number;
+    facesTotal?: number;
+    facesSubstituted?: number;
+    substituted?: {
+      declared?: string;
+      drawnWith?: string;
+      slot?: string;
+      characters?: number;
+    }[];
+  };
   page?: number;
   pageCount?: number;
   pageSize?: { widthPt: number; heightPt: number };
@@ -442,6 +490,8 @@ export interface RenderResult {
       | string;
     detail: string;
     prepare?: CapabilityRow;
+    /** Why the THIRD tier did not step in either (§11.1c). */
+    own?: { state: string; reason: string; detail: string };
     [key: string]: unknown;
   };
   capability?: RenderCapability;
@@ -508,6 +558,12 @@ export interface GeometrySpan {
    * them would be a pick.
    */
   sizePt?: number;
+  /**
+   * Own-rendered pages only: which line breaker placed this box. `lineseg` is
+   * the authoring engine's own cached layout, `computed` is our breaker's, and
+   * they are not equally trustworthy.
+   */
+  lineMode?: string;
 }
 
 /**
@@ -546,6 +602,16 @@ export interface GeometryResult {
   unit?: string;
   origin?: string;
   spanUnit?: string;
+  /**
+   * WHOSE LAYOUT THIS IS. `"pdf"` read a PDF's own text objects — rects, text,
+   * addresses, seats, per-character offsets. `"own"` read our renderer's line
+   * boxes — rects only, because the sidecar records where each line was drawn
+   * and not what it said (§11.1c). The page view refuses to draw an overlay
+   * whose source disagrees with the raster's tier.
+   */
+  geometrySource?: "pdf" | "own" | string;
+  grade?: RenderGrade | string;
+  tier?: number;
   spans?: GeometrySpan[];
   seats?: GeometrySeat[];
   seatDerivations?: Record<string, number>;
@@ -579,7 +645,19 @@ export interface GeometryResult {
  * listed and nothing is chosen until a person chooses it.
  */
 export interface OverlayPick {
-  kind: "seat" | "unique" | "ambiguous" | "not_editable" | "caret" | "no_caret";
+  kind:
+    | "seat"
+    | "unique"
+    | "ambiguous"
+    | "not_editable"
+    | "caret"
+    | "no_caret"
+    /**
+     * A line with real position and no address. What every span on an
+     * own-rendered page is (§11.1c), and what a click on one must still SAY —
+     * silence would read as a dead page rather than as a stated limit.
+     */
+    | "unmapped";
   /** What the status bar prints. Already Korean, already final. */
   label: string;
   /** The span or seat this came from, so the drawn overlay can mark itself. */

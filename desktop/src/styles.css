@@ -28,13 +28,18 @@
      Consolas has the tabular figures and unambiguous 0/O that hashes need. */
   --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
 
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 15px;
-  --text-xl: 20px;
-  --text-2xl: 28px;
+  /* Bumped one step across the board. The old scale bottomed out at 11px for
+     labels a person is expected to READ, which on a 1080p laptop at 100% is
+     smaller than any office suite ships and is most of why the window read as
+     a dense web dashboard rather than as a document tool. Nothing below 12px
+     survives, and the text people work in is 14px. */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-2xl: 30px;
 
   /* Hangul glyphs fill their em box; Latin-tuned 1.4-1.5 crowds them. */
   --leading-body: 1.6;
@@ -55,7 +60,11 @@
   --s12: 48px;
   --s16: 64px;
 
-  --row-h: 27px;
+  /* Hit targets. 27px was a mouse-only row; 32 is the smallest thing that is
+     comfortable to click without aiming, and --ctl-h is what every button in
+     the band inherits so none of them can drift back under it. */
+  --row-h: 32px;
+  --ctl-h: 30px;
   --radius: 5px;
   --radius-lg: 10px;
 
@@ -110,8 +119,11 @@
   --none: #6f7175;
   --none-soft: rgba(111, 113, 117, 0.1);
 
-  --shadow-paper: 0 1px 2px rgba(28, 30, 33, 0.05), 0 8px 24px rgba(28, 30, 33, 0.07);
-  --shadow-pop: 0 2px 6px rgba(28, 30, 33, 0.08), 0 12px 32px rgba(28, 30, 33, 0.14);
+  /* Tightened. The wide soft halos read as glow rather than as elevation, and
+     a document tool that glows looks like a marketing page. What is left is
+     enough to separate a surface from the one under it and no more. */
+  --shadow-paper: 0 1px 2px rgba(28, 30, 33, 0.06);
+  --shadow-pop: 0 1px 3px rgba(28, 30, 33, 0.10), 0 6px 14px rgba(28, 30, 33, 0.10);
 }
 
 /* Dark keeps the roles, not the values: warm ink rather than a blue night
@@ -307,6 +319,7 @@ button {
 
 .ghost {
   padding: 4px var(--s3);
+  min-height: var(--ctl-h);
   border-radius: var(--radius);
   font-size: var(--text-base);
   color: rgba(241, 238, 232, 0.78);
@@ -320,6 +333,7 @@ button {
 
 .action {
   padding: 4px var(--s3);
+  min-height: var(--ctl-h);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--bg-raised);
@@ -2288,7 +2302,7 @@ body.dragging .drop {
   align-items: center;
   gap: var(--s2);
   flex: none;
-  min-height: 32px;
+  min-height: 40px;
   padding: 0 var(--s3);
   background: var(--bg-sunken);
   border-bottom: 1px solid var(--line);
@@ -2337,13 +2351,149 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 }
 
 .toolbar .zoomer button.ghost {
-  width: 20px;
+  width: 26px;
   padding: 0;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .toolbar .modeswitch { background: var(--bg-panel); }
+
+/* ── the five actions, and the menus that hold the rest ──────────────────
+   The band used to be six always-on read-outs with the actions distributed
+   across four other places. The actions come first now and they are the only
+   thing in the strip that is always a button; everything a person LOOKS UP is
+   behind a disclosure that still shows its value when closed. */
+.tool-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: none;
+}
+
+.tool-actions .action {
+  background: transparent;
+  border-color: transparent;
+}
+
+.tool-actions .action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
+}
+
+.toolmenu {
+  flex: none;
+  position: relative;
+}
+
+.toolmenu > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: var(--ctl-h);
+  padding: 0 var(--s2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.toolmenu > summary::-webkit-details-marker { display: none; }
+
+.toolmenu > summary::after {
+  content: "▾";
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.toolmenu > summary:hover { background: var(--bg-hover); }
+.toolmenu[open] > summary { background: var(--bg-active); }
+
+/* Over the document, not pushing it. A disclosure in a horizontal strip that
+   grew the strip would move the paper every time somebody checked a font. */
+.toolmenu-body {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  white-space: normal;
+}
+
+/* ── which renderer drew this page (§11.1c) ──────────────────────────────
+   Above the paper, in the reading order a person needs: what this is, then
+   what that means. Never a hover, never a corner mark. */
+.gradebar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  width: 100%;
+  max-width: 720px;
+  margin-bottom: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* The one place the warning palette is spent here: an uncertified render is a
+   caveat, not an error, and it must not read as either a failure or a badge. */
+.gradebar[data-grade="own-uncertified"] {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.grade-note {
+  flex: 1 1 20ch;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.disclosure.skipped {
+  width: 100%;
+  max-width: 720px;
+  margin-top: var(--s2);
+}
+
+.disclosure.skipped > summary {
+  cursor: pointer;
+  padding: var(--s1) 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.skipped-items {
+  margin: var(--s1) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.skipped-items li {
+  display: grid;
+  grid-template-columns: minmax(10ch, auto) auto 1fr;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s1) var(--s2);
+  background: var(--bg-sunken);
+  border-radius: 3px;
+  font-size: var(--text-sm);
+}
+
+.skipped-items .count { color: var(--fg-faint); }
+.skipped-items .why { color: var(--fg-muted); }
 
 /* The document's own zoom. `zoom` scales layout, so glyphs re-rasterise
    rather than being resampled — the same reasoning as the app zoom. */
