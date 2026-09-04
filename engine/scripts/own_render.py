@@ -4376,23 +4376,46 @@ class OwnRenderer:
         """
         font = box.font
         text = box.text
-        bbox = font.getbbox(text)
+        # ``anchor="ls"`` throughout: (0, 0) is the LEFT edge of the glyph
+        # AT ITS BASELINE, the same convention ``_eq_draw``'s plain
+        # ``draw.text(..., anchor="ls")`` places (x, baseline) on. Reading
+        # this bbox with the default anchor ("la", ascender-relative) would
+        # give a ``top``/``bottom`` on a different origin than the paste
+        # math below assumes, pasting every glyph off by roughly the font's
+        # ascent — exactly the corruption a synthetic-oblique first cut of
+        # this produced (equation bodies smeared out of their brackets).
+        bbox = font.getbbox(text, anchor="ls")
         if not text or bbox is None:
             return
         left, top, right, bottom = bbox
         w = max(1, right - left)
         h = max(1, bottom - top)
+        # The baseline's row in this small canvas: ``top`` is negative
+        # (ascender ink sits above the baseline), so ``-top`` is how far
+        # down from the canvas's top edge the baseline itself falls. A
+        # descender's ink runs BELOW that row, not off the canvas bottom —
+        # ``h`` is the ink's total span, not the baseline's position, and
+        # shearing about ``h`` instead (this method's first cut) pivoted
+        # every glyph around its descender line rather than its baseline.
         shear = box.shear
-        pad = int(math.ceil(shear * h)) + 1
-        glyph = self.Image.new("L", (w + pad, h), 0)
-        self.ImageDraw.Draw(glyph).text((-left, -top), text, font=font,
-                                        fill=255)
+        base_row = -top
+        # A true oblique pivots on the baseline: rows ABOVE it shift right,
+        # rows BELOW it (a descender) shift left by the same slope. Room for
+        # each has to come from its own side of the canvas, or one of the
+        # two clips — a synthetic-italic descender (y, g, p, q, j...) is what
+        # this method's first cut clipped, having only ever padded the right.
+        pad_right = int(math.ceil(shear * base_row)) + 1
+        pad_left = int(math.ceil(shear * (h - base_row))) + 1
+        glyph = self.Image.new("L", (pad_left + w + pad_right, h), 0)
+        self.ImageDraw.Draw(glyph).text((pad_left - left, -top), text,
+                                        font=font, fill=255, anchor="ls")
         sheared = glyph.transform(
             glyph.size, self.Image.Transform.AFFINE,
-            (1, shear, -shear * h, 0, 1, 0),
+            (1, shear, -shear * base_row, 0, 1, 0),
             resample=self.Image.Resampling.BICUBIC)
         image.paste(sheared,
-                   (int(round(x + left)), int(round(baseline + top))),
+                   (int(round(x + left - pad_left)),
+                    int(round(baseline + top))),
                    sheared)
 
     def _render_equation(self, el, origin_hwp, w_hwp, h_hwp):
