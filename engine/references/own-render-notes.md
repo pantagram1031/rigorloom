@@ -166,21 +166,32 @@ script belongs to.
 
 | element | meaning | applied as |
 | --- | --- | --- |
-| `hh:ratio` | horizontal glyph scale, % | advance scales, and so does the ink: the piece is rasterised to its own mask at natural width, resampled horizontally (LANCZOS, pinned), composited in the run colour |
-| `hh:spacing` | letter spacing, % **of the character size** | a gap *between* characters — n−1 per line, no trailing gap |
-| `hh:relSz` | relative character size, % | scales the point size before rasterisation |
-| `hh:offset` | baseline shift, % of the character size | raises/lowers the glyph, and the recorded line box follows |
+| `hh:ratio` | horizontal glyph scale, % | advance scales, and so does the ink: the piece is rasterised to its own mask at natural width, resampled horizontally (LANCZOS, pinned), composited in the run colour. **Vertically inert** — it never enters the line height |
+| `hh:spacing` | letter spacing, % **of the character's own advance** | a gap *between* characters — n−1 per line, no trailing gap |
+| `hh:relSz` | relative character size, % | scales the point size before rasterisation, and the advance with it. **Does not enter the line height** |
+| `hh:offset` | baseline shift, % of the **declared** `hh:charPr@height` | **positive lowers** the glyph; the recorded line box follows |
 
-Two of those readings were forced by measurement rather than chosen.
+Every one of those readings was forced by measurement rather than chosen, and
+three of them were wrong until `render-check-01` was measured character by
+character — `docs/research/line-and-character-metrics.md`, reproduced by
+`python tests/corpus/render-check/measure_metrics.py`.
+
 gianmun's `발신명의` is `charPr` id 8 — 15 pt, `ratio="100"`, `spacing="50"` —
 and Hancom's own render draws that span 58.65 pt at a reported size of
 10.67 pt, i.e. **5.496 em**. Four advances plus three half-em gaps is 5.5 em;
-four advances plus *four* gaps would be 6.0. So the gap count is n−1, and the
-percentage is of the character size rather than of the ratio-scaled advance.
-Em is the unit because gianmun's reference PDF is one of the three the
-scoreboard rejects as a ~0.707 print reduction — the ratio is scale-free, the
-absolute pixels are not. `test_the_spread_run_matches_the_hancom_reference_in_em`
-pins it.
+four advances plus *four* gaps would be 6.0. So the gap count is n−1. What that
+run could *not* settle is what the percent is a percent **of**: a Hangul cell
+advances by exactly 1 em, so "% of the character size" and "% of this
+character's advance" predict the same 0.5 em. `render-check-01`'s `F13` draws
+Latin and spaces at the same 자간 and separates them — `ABCdef` at −15 measures
+31.077 pt against 31.106 proportional and 27.595 flat; a half-width space at
++30 measures 6.479 against 6.500 and 8.000. Proportional, with no exception.
+Em is the unit for the gianmun figure because its reference PDF is one of the
+three the scoreboard rejects as a ~0.707 print reduction — the ratio is
+scale-free, the absolute pixels are not.
+`test_the_spread_run_matches_the_hancom_reference_in_em` pins gianmun;
+`test_the_spacing_gap_is_a_percent_of_the_characters_own_advance` pins what it
+could not say.
 
 **The slot table is ours, not the standard's.** KS X 6101 names the seven slots
 and says a character is metered by its script's slot; it does not publish the
@@ -240,8 +251,11 @@ Under `auto`, `computed` wins for exactly five named reasons, each counted in
 `stale_line_width` is the interesting one. The bound counts only full-width
 cells (Hangul, Hanja, kana, CJK punctuation, an inline object slot — whose
 advance in HWP is exactly the declared character size × `hh:ratio`, whatever
-face draws them) plus the declared `hh:spacing` gaps; Latin and spaces
-contribute nothing. It can therefore never exceed the width the authoring
+face draws them) plus their `hh:spacing` gaps, which are exact because the gap
+is a percent of that same cell advance. Latin and spaces contribute no width;
+their gaps count only when **negative**, since a positive gap on a
+proportional character is a percent of an advance the bound does not know and
+cannot be assumed to be a full cell's worth. It can therefore never exceed the width the authoring
 engine actually fitted, which makes the detector **sound**: it fires on no
 paragraph of any of the ten corpus forms (the worst unedited line reaches
 0.901 of its box by this bound, against a 1% tolerance), and
@@ -299,9 +313,14 @@ implemented, and re-measured by
 
 The 0.85 is HWP's baseline convention and is a **measured constant of this
 corpus**, not a number the standard publishes. `textheight` is the maximum
-declared `hh:charPr@height × hh:relSz` over the characters on the line — and
-over any inline object's `hp:sz@height`, which was a measured defect before it
-was a rule (see below). Against the cache, the computed `textheight` is exact
+declared `hh:charPr@height` over the characters on the line — and over any
+inline object's `hp:sz@height`, which was a measured defect before it was a
+rule (see below). The **character metrics stay out of it**: `hh:relSz`,
+`hh:ratio` and `hh:offset` change the drawn glyph, not the line's advance.
+No corpus form declares any of the three away from neutral, so the corpus
+could not have said; `render-check-01`'s `F15` line of `relSz="140"` text on a
+10 pt charPr advances 15.950 pt, not the 22.40 a 14 pt line would
+(`docs/research/line-and-character-metrics.md` §2). Against the cache, the computed `textheight` is exact
 on 2303 of the 2370 comparable lines, `baseline` on 2303, and `spacing` on
 1421; almost every `spacing` miss is ±2 HWPUNIT, i.e. 0.04 px at 144 dpi.
 
@@ -664,23 +683,38 @@ moves, everything after it is re-placed.** The sidecar's `block_layout` says
 so per block (`placement: cached | flowed`) and per page (`page_reflowed`),
 alongside `first_flowed_block` and the `flow_counters` below.
 
-### The inter-paragraph advance is a half, and that was measured
+### The inter-paragraph advance is the declared margin — in the right unit
 
 Where the next top-level paragraph starts:
 
 ```
 next.first.vertpos == prev.last.vertpos + prev.last.vertsize
                     + prev.last.spacing
-                    + (prev.margin_next + next.margin_prev) / 2
+                    + prev.margin_next + next.margin_prev
 ```
 
-Every corpus `hh:margin/hh:prev` carries `unit="HWPUNIT"` (771 of 774), and
-yet the advance the authoring engine actually leaves is **half** the declared
-value from each side — 200/600/1000/2000 declared against 100/300/500/1000 laid
-out. Taken at face value the relation holds on 334 of the 539 adjacent
-top-level pairs the corpus has; halving each side it holds on **534**. The
-halving is therefore this renderer's *measured reading of the unit*, recorded
-as such in `PARA_MARGIN_SCALE`, and it is not something KS X 6101 publishes.
+with both margins **in HWPUNIT**. This used to read `/ 2`, because the advance
+the authoring engine leaves really is half of what the corpus paraPr appear to
+declare — 200/600/1000/2000 declared against 100/300/500/1000 laid out; face
+value held on 334 of the corpus's 539 adjacent top-level pairs, halving each
+side on 534.
+
+The half was the **unit**, not the rule. Every corpus `hh:paraPr` wraps its
+`hh:margin` and `hh:lineSpacing` in the MCE `hp:switch`, and a length in the
+`hp:default` branch — the branch a reader without the 2016 `HwpUnitChar`
+namespace must take — is in a unit exactly half a HWPUNIT: over 811 corpus
+paraPr the ratio `default / case` is 2.0 without exception on `intent` (328),
+`left` (116), `right` (54), `prev` (143), `next` (11) and the one `FIXED`
+`lineSpacing`, and 1.0 on all 806 `PERCENT` values, a percent being no length.
+`_para_pr_geometry_source` now converts at the parse; `PARA_MARGIN_SCALE` is
+gone, and `left`/`right`/`intent` — which the old constant never touched, so
+they were being read doubled — are right for the first time.
+
+The reference-side half of this is Hancom's own render of
+`tests/corpus/render-check/render-check-01.hwpx`, an `.hwpx` authored with no
+switch at all: its bare `<hc:prev value="600" unit="HWPUNIT"/>` leaves exactly
+6.00 pt. One rule now fits both, with corpus flow agreement unchanged at
+542/590 blocks. See `docs/research/line-and-character-metrics.md` §6.
 
 ### An anchored object reserves its extent, and that was the whole of kstartup
 

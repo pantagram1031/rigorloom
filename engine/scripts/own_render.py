@@ -231,16 +231,13 @@ BLOCK_LAYOUT_AUTO = "auto"
 BLOCK_LAYOUT_COMPUTED = "computed"
 BLOCK_LAYOUT_MODES = (BLOCK_LAYOUT_AUTO, BLOCK_LAYOUT_COMPUTED)
 
-# 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next), and the one number
-# in this slice that had to be MEASURED rather than read.  Every corpus
-# hh:prev carries unit="HWPUNIT" (771 of 774), yet the advance the authoring
-# engine actually leaves between two adjacent top-level paragraphs is HALF the
-# declared value from each side: 774 corpus paraPr, gaps of 200/600/1000/2000
-# declared against 100/300/500/1000 laid out, on every form that declares one.
-# Reading the declared value at face value scores 334 of 539 adjacent
-# top-level pairs; halving each side scores 534.  Declared as this renderer's
-# measured reading of the unit, not as something KS X 6101 publishes.
-PARA_MARGIN_SCALE = 0.5
+# 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next) used to be halved
+# here by a PARA_MARGIN_SCALE constant.  That halving was real but was
+# attributed to the wrong thing: it is the UNIT of the hh:paraPr MCE switch's
+# `default` branch, which every corpus form uses and which states every length
+# in half a HWPUNIT.  `_para_pr_geometry_source` now converts at the parse, so
+# the flow pass adds the declared gap at face value and `left`/`right`/
+# `intent` — which the old constant never touched — are no longer doubled.
 
 # hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
 # (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
@@ -348,11 +345,21 @@ def break_opportunities(text, break_latin="KEEP_WORD",
 LANG_SLOTS = ("hangul", "latin", "hanja", "japanese", "other", "symbol",
               "user")
 
-# The neutral value of each metric, i.e. what "no typography" means.
-#   ratio   — horizontal glyph scale, percent
-#   spacing — letter spacing, percent of the character size
-#   relSz   — relative character size, percent
-#   offset  — baseline shift, percent of the character size (positive = up)
+# The neutral value of each metric, i.e. what "no typography" means.  Each
+# reading below was MEASURED off the Hancom reference render of
+# tests/corpus/render-check/render-check-01.hwpx (its `F13`–`F16` blocks), and
+# the measurement is written up in docs/research/line-and-character-metrics.md.
+#   ratio   — horizontal glyph scale, percent.  Scales the advance and the
+#             glyph horizontally; the character's HEIGHT is untouched, so it
+#             never enters the line height (F14: a line carrying a ratio=150
+#             run still advances 10 pt x 160% = 15.95 pt measured).
+#   spacing — letter spacing, percent of the character's OWN ADVANCE (not of
+#             the character size).  See ``_spacing_gap_px``.
+#   relSz   — relative character size, percent.  Scales the drawn size and the
+#             advance, and does NOT enter the line height (see
+#             ``_line_metrics``).
+#   offset  — baseline shift, percent of the DECLARED hh:charPr@height (not of
+#             the relSz-scaled size).  POSITIVE MOVES THE GLYPH DOWN the page.
 TYPOGRAPHY_DEFAULTS = {"ratio": 100, "spacing": 0, "relSz": 100, "offset": 0}
 NEUTRAL_TYPOGRAPHY = (100, 0, 100, 0)
 
@@ -555,22 +562,43 @@ def _kid(el, name):
 
 
 def _para_pr_geometry_source(pp):
-    """The ``hh:paraPr`` branch a reader without the 2016 extension must take.
+    """``(branch, length_scale)`` for one ``hh:paraPr``'s geometry.
 
     Every corpus ``hh:paraPr`` wraps its ``hh:margin`` and ``hh:lineSpacing``
     in ``<hh:switch><hh:case hp:required-namespace="…/2016/HwpUnitChar">…
-    </hh:case><hh:default>…</hh:default></hh:switch>`` — the MCE pattern.  The
-    ``case`` branch states the same quantities in the 2016 *character* unit
-    (measured: its margins are consistently half the default branch's), so a
-    renderer that does not implement that namespace takes ``default``.  774 of
-    774 corpus paraPr carry the switch; 477 of them differ between the two
-    branches, so picking the wrong one is not cosmetic.
+    </hh:case><hh:default>…</hh:default></hh:switch>`` — the MCE pattern.  A
+    reader that does not implement the 2016 namespace takes ``default``, and
+    that is still the branch this reads.
+
+    MEASURED: the two branches carry the same LENGTH in two different units,
+    and ``default`` is in a unit exactly HALF the size of ``case``'s.  Over the
+    twelve corpus forms' 811 paraPr — every one of which carries the switch —
+    the ratio ``default / case`` is 2.0 with no exception on every length that
+    is non-zero in both: ``intent`` 328/328, ``left`` 116/116, ``right``
+    54/54, ``prev`` 143/143, ``next`` 11/11, and the one ``FIXED``
+    ``lineSpacing`` value.  A ``PERCENT`` ``lineSpacing`` value is a percent,
+    not a length, and is identical in both branches on all 806 of them —
+    which is what makes "different unit" the reading rather than "different
+    value".  The ``case`` branch's elements are the ones that carry
+    ``unit="HWPUNIT"``.
+
+    So a length read out of ``default`` is halved to reach HWPUNIT.  A
+    ``hh:paraPr`` with no switch (an ``.hwpx`` authored directly rather than
+    converted, such as ``tests/corpus/render-check/render-check-01.hwpx``)
+    declares ``unit="HWPUNIT"`` outright and is read at face value: Hancom's
+    own render of that document leaves exactly the declared 6.00 pt after a
+    ``<hc:prev value="600" unit="HWPUNIT"/>`` — see
+    docs/research/line-and-character-metrics.md §6.  This one rule replaces the
+    old ``PARA_MARGIN_SCALE`` constant, which halved 문단 위/아래 간격 only and
+    left ``left``/``right``/``intent`` doubled.
     """
     switch = _kid(pp, "switch")
     if switch is None:
-        return pp
+        return pp, 1.0
     default = _kid(switch, "default")
-    return default if default is not None else pp
+    if default is None:
+        return pp, 1.0
+    return default, 0.5
 
 
 def _iattr(el, name, default=0):
@@ -771,14 +799,14 @@ def parse_header(header_xml: bytes) -> dict:
         if pid is None:
             continue
         align = _kid(pp, "align")
-        geometry = _para_pr_geometry_source(pp)
+        geometry, length_scale = _para_pr_geometry_source(pp)
         margin = _kid(geometry, "margin")
         spacing = _kid(geometry, "lineSpacing")
         brk = _kid(pp, "breakSetting")
 
         def _margin(name):
             el = _kid(margin, name) if margin is not None else None
-            return _iattr(el, "value", 0)
+            return int(round(_iattr(el, "value", 0) * length_scale))
 
         def _brk(name, default):
             raw = brk.get(name) if brk is not None else None
@@ -806,7 +834,13 @@ def parse_header(header_xml: bytes) -> dict:
             "line_spacing_type": (
                 (spacing.get("type") if spacing is not None else None)
                 or "PERCENT").upper(),
-            "line_spacing_value": _iattr(spacing, "value", 100),
+            # PERCENT is a percent and is branch-invariant; every other type
+            # states a LENGTH and takes the branch's unit scale.
+            "line_spacing_value": (
+                _iattr(spacing, "value", 100)
+                if ((spacing.get("type") if spacing is not None else None)
+                    or "PERCENT").upper() == "PERCENT"
+                else int(round(_iattr(spacing, "value", 100) * length_scale))),
             "line_spacing_unit": (
                 (spacing.get("unit") if spacing is not None else None)
                 or "HWPUNIT").upper(),
@@ -814,7 +848,8 @@ def parse_header(header_xml: bytes) -> dict:
             "margin_right": _margin("right"),
             "indent": _margin("intent"),
             # 문단 위/아래 간격.  Block-level, so it is the flow pass that acts
-            # on them; see PARA_MARGIN_SCALE for the half that was measured.
+            # on them; `_para_pr_geometry_source` has already put them in
+            # HWPUNIT, and the flow pass adds them at face value.
             "margin_prev": _margin("prev"),
             "margin_next": _margin("next"),
         }
@@ -1758,7 +1793,14 @@ class OwnRenderer:
             "document exercised and typography_slot_model for how a character "
             "is assigned to a slot",
             "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no "
-            "trailing gap), measured against the Hancom reference render",
+            "trailing gap) whose width is that character's OWN advance times "
+            "the declared percent, NOT a flat percent of the character size; "
+            "hh:offset shifts a glyph DOWN the page for a positive value, by "
+            "the declared percent of hh:charPr@height (not of the relSz-"
+            "scaled size); neither hh:relSz nor hh:ratio nor hh:offset enters "
+            "the line height. All four measured off the Hancom reference "
+            "render of render-check-01 (blocks F13-F16, F21-F22) -- see "
+            "docs/research/line-and-character-metrics.md",
             "a space (U+0020, U+00A0) advances by HALF the declared character "
             "size times hh:ratio -- the half-width counterpart of HWP's "
             "full-width cell -- and NOT by the resolved face's own hmtx "
@@ -2549,8 +2591,7 @@ class OwnRenderer:
         i = from_block
         while i < len(blocks):
             block = blocks[i]
-            gap = int((prev_next_margin + block["margin_prev"])
-                      * PARA_MARGIN_SCALE)
+            gap = prev_next_margin + block["margin_prev"]
             forced_col = block["column_break"] and not block["page_break_before"]
             forced = (block["page_break_before"] or block["column_break"])
             if forced and (placements or y > 0):
@@ -3067,7 +3108,7 @@ class OwnRenderer:
             pieces.append({
                 "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
-                "offset_px": size_px * offset / 100.0,
+                "offset_px": self._offset_px(cid, offset),
                 "embolden": self._embolden_px(cid, slot, font),
             })
             run.clear()
@@ -3105,7 +3146,8 @@ class OwnRenderer:
             if spacing:
                 pieces.append({
                     "kind": "gap",
-                    "advance": self._spacing_px(cid, rel_sz, spacing),
+                    "advance": self._spacing_gap_px(pieces[-1]["advance"],
+                                                    spacing),
                 })
         flush()
         return pieces
@@ -3135,17 +3177,63 @@ class OwnRenderer:
         pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
         return (pt * self.dpi / 72.0 * ratio / 100.0 * SPACE_CELL_FRACTION)
 
-    def _spacing_px(self, cid, rel_sz, spacing):
-        """``hh:spacing`` in pixels: a percent of the *character size*.
+    def _offset_px(self, cid, offset):
+        """``hh:offset`` as pixels the glyph is RAISED off its baseline.
 
-        Not of the ratio-scaled advance — ``hh:ratio`` scales the glyph, 자간
-        is declared against the character height.  Measured against the Hancom
-        reference: gianmun's four-character 발신명의 run, 15 pt with
-        ``spacing="50"``, is drawn 5.5 em wide (4 advances + 3 gaps of 0.5 em),
-        and the reference PDF reports 5.496 em.
+        Two readings were MEASURED off the Hancom reference render of
+        ``render-check-01``, and the code had both of them backwards.
+
+        *Sign.*  A POSITIVE ``hh:offset`` moves the glyph DOWN the page, so the
+        raise this returns is negated.  ``F16`` declares ``offset="40"`` on its
+        first run and ``offset="-40"`` on its third: the +40 run is drawn
+        3.962 pt BELOW the neutral run's baseline and the −40 run 3.952 pt
+        above it.  ``F21``/``F22`` say the same at ±35 (+3.482 / −3.602 pt),
+        which is also why the document's 위첨자 sits below its base line in
+        Hancom's own render.
+
+        *Reference size.*  The percent is of the DECLARED ``hh:charPr@height``,
+        not of the ``hh:relSz``-scaled size.  ``F21``'s run declares
+        ``relSz="65"`` on a 10 pt charPr and shifts 3.482 pt: 35% of 10 pt is
+        3.50 pt, 35% of the scaled 6.5 pt would be 2.275 pt.
+
+        Worst residual over the four runs is 0.102 pt, inside the reference
+        PDF's own 1/600 in positioning grid.
         """
-        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-        return pt * self.dpi / 72.0 * spacing / 100.0
+        if not offset:
+            return 0.0
+        pt = self._charpr(cid).get("height_pt") or 10.0
+        return -(pt * self.dpi / 72.0 * offset / 100.0)
+
+    @staticmethod
+    def _spacing_gap_px(advance_px, spacing):
+        """``hh:spacing`` gap after a character: a percent of ITS OWN advance.
+
+        MEASURED off the Hancom reference render of ``render-check-01`` (block
+        ``F13``, three runs of the same text at ``spacing`` −15 / 0 / +30, 10 pt
+        바탕).  A full-width Hangul cell advances by 1 em, so it cannot tell a
+        gap proportional to the advance from a gap that is a flat percent of
+        the character size; the Latin runs and the half-width space can, and
+        they say proportional, with no exception:
+
+          span                     measured   ∝ advance    flat % of size
+          ``ABCdef`` spacing −15    31.077 pt  31.106 pt     27.595 pt
+          ``ABCdef␣`` spacing +30   54.236 pt  54.074 pt     62.595 pt
+          space (0.5 em) −15         4.319 pt   4.250 pt      3.500 pt
+          space (0.5 em) +30         6.479 pt   6.500 pt      8.000 pt
+
+        Residual against the proportional reading is at most 0.16 pt, which is
+        the reference PDF's own 1/600 in (0.12 pt) positioning grid; against
+        the flat reading it reaches 8.36 pt.  The earlier flat reading was
+        fitted to gianmun's 발신명의 run — four *Hangul* cells at 15 pt with
+        ``spacing="50"``, drawn 5.5 em wide — which both readings satisfy
+        exactly, so nothing there is contradicted.
+
+        ``advance_px`` is the character's advance with ``hh:ratio`` and
+        ``hh:relSz`` already applied, so the gap composes after both.  That
+        ordering is the natural reading of "percent of the advance" but is NOT
+        measured: ``F13`` declares ``ratio=100`` and ``relSz=100`` throughout.
+        """
+        return advance_px * spacing / 100.0
 
     def _line_items(self, para, chars, base_index):
         """Ordered ``("text", Segment)`` / ``("obj", record)`` items for a line.
@@ -3241,9 +3329,9 @@ class OwnRenderer:
                 advances.append(0.0)              # resolved against tab stops
                 gaps.append(0.0)
                 continue
-            _ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
+            _ratio, spacing, _rel_sz, _offset = self._typography(cid, ch)
             advances.append(self._measure(draw, ch, cid))
-            gaps.append(self._spacing_px(cid, rel_sz, spacing)
+            gaps.append(self._spacing_gap_px(advances[-1], spacing)
                         if spacing else 0.0)
         return advances, gaps
 
@@ -3324,6 +3412,27 @@ class OwnRenderer:
         ``BASELINE_RATIO``: ``vertsize == textheight`` (3214/3214),
         ``baseline == round(0.85 * textheight)``, and for a ``PERCENT``
         paragraph ``vertsize + spacing == textheight * value / 100``.
+
+        ``textheight`` is the largest DECLARED ``hh:charPr@height`` on the
+        line.  The character metrics do not enter it — MEASURED against the
+        Hancom render of ``render-check-01``:
+
+        * ``F15``'s second line is drawn entirely at ``relSz="140"`` on a 10 pt
+          charPr, and the gap from it to the next block's first baseline is
+          22.906 pt — the same, to three decimals, as the gap after ``F13``'s
+          and ``F14``'s 10 pt last lines.  A 14 pt line at this paragraph's
+          160% would have advanced 22.40 pt instead of 16.00.
+        * ``F15``'s first line carries a ``relSz="140"`` character and still
+          advances 15.950 pt (10 pt x 160%), not 22.40.
+        * ``F14``'s line carrying a ``ratio="150"`` run advances 15.949 pt.
+
+        The line pitch itself was measured over 17 baseline-to-baseline steps
+        in ``F01``–``F09``: ``PERCENT`` is ``value / 100`` times the declared
+        character size (130% → 13.00, 160% → 16.00, 200% → 20.00, worst
+        residual 0.091 pt) and ``FIXED`` is the declared value (24.00 pt,
+        worst residual 0.019 pt).  Reading ``PERCENT`` against the face's own
+        ascent+descent, or against a fixed 1.2 line, misses by 2.1 to 12.0 pt
+        and is rejected.
         """
         pr = para.para_pr
         heights = []
@@ -3339,8 +3448,10 @@ class OwnRenderer:
                 if record is not None and not record[3]:
                     heights.append(self._object_extent(record[1])[1])
                     continue
-            _ratio, _spacing, rel_sz, _offset = self._typography(cid, ch)
-            pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+            # hh:relSz, hh:ratio and hh:offset are all EXCLUDED here: the line
+            # height is the declared character size, whatever the character
+            # metrics do to the drawn glyph.  See the docstring.
+            pt = self._charpr(cid).get("height_pt") or 10.0
             heights.append(pt * HWPUNIT_PER_PT)
         if not heights:
             cid = para.chars[0][1] if para.chars else None
@@ -3520,12 +3631,20 @@ class OwnRenderer:
             ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
             size = ((self._charpr(cid).get("height_pt") or 10.0)
                     * rel_sz / 100.0 * HWPUNIT_PER_PT)
+            cell = size * ratio / 100.0
             if is_full_width(ch):
-                total += size * ratio / 100.0
+                total += cell
             # n-1 gaps: the gap after the last character of the span is not
             # drawn, exactly as `_measure` drops it.
             if spacing and offset < len(window) - 1:
-                total += size * spacing / 100.0
+                gap = cell * spacing / 100.0
+                # The gap is a percent of the character's OWN advance
+                # (``_spacing_gap_px``).  For a full-width cell that advance is
+                # exactly ``cell``, so the gap is exact.  For a proportional
+                # character the advance is unknown and no larger than a full
+                # cell, so a POSITIVE gap has to be dropped to keep this a
+                # lower bound, while a NEGATIVE one is counted at its worst.
+                total += gap if (is_full_width(ch) or gap < 0) else 0.0
         return total
 
     def line_layout_mode(self, para, column_hwp, paragraph_index=None):
@@ -5530,10 +5649,10 @@ class OwnRenderer:
         "of the page that block starts on, and the block's own usable height "
         "is reduced by exactly that reserve, so the note travels WITH its "
         "reference the way the standard's continuation rule requires",
-        "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), each at "
-        f"{PARA_MARGIN_SCALE:g} of its declared value — see the constant, "
-        "which records why that halving is a measurement and not a reading "
-        "of the schema",
+        "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), at face "
+        "value in HWPUNIT; where the paraPr wraps its geometry in the MCE "
+        "hp:switch, every LENGTH in the default branch is halved first to "
+        "reach HWPUNIT — see _para_pr_geometry_source for the measurement",
         "hp:tbl@textWrap=TOP_AND_BOTTOM / SQUARE / TIGHT / THROUGH on an "
         "ANCHORED object — the object's declared extent is reserved in the "
         "flow, so the next block starts below it",
@@ -5654,7 +5773,10 @@ class OwnRenderer:
                 "flowed": sum(1 for b in blocks if b["placement"] == "flowed"),
             },
             "flow_counters": counters,
-            "para_margin_scale": PARA_MARGIN_SCALE,
+            "para_margin_unit": (
+                "hh:margin lengths are read in HWPUNIT at face value; a "
+                "paraPr that carries the MCE hp:switch has every length in "
+                "its default branch halved at the parse to reach HWPUNIT"),
             "measured_against_the_authoring_engine": (
                 "own_render.py --flow-agreement runs this same pass over an "
                 "UNEDITED document and reports how often it puts a block on "
@@ -5728,8 +5850,11 @@ class OwnRenderer:
                 "spacing": ("PERCENT: vertsize + spacing == round(textheight "
                             "* value / 100); FIXED: vertsize + spacing == "
                             "value"),
-                "textheight": ("max declared hh:charPr@height x hh:relSz over "
-                               "the characters on the line"),
+                "textheight": ("max declared hh:charPr@height over the "
+                               "characters on the line; the character metrics "
+                               "(hh:relSz, hh:ratio, hh:offset) do NOT enter "
+                               "it -- measured off the Hancom render of "
+                               "render-check-01 F14/F15"),
             },
             "prohibition_table": {
                 "line_start_forbidden": "".join(sorted(LINE_START_PROHIBITED)),
