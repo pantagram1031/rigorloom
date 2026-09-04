@@ -1,0 +1,63 @@
+{
+  "ok": false,
+  "exit_code": 3,
+  "source": "<scratchpad>\\b-blank-edited.hwpx",
+  "candidate": "<scratchpad>\\out-b-blank\\b-blank-edited.accept-candidate.hwpx",
+  "source_sha256": "95f67d3882964c28ef4225c9437b96706faa9ef70f8cfc5db4c0d7b4fc5eca67",
+  "candidate_sha256": "bea30fe82c00e3ce6aae997cd3c7eab73ac15dba848b7c6b4acfcc483e786033",
+  "edit_marker": "RIGORLOOM-E3-ACCEPT-BLANK-02",
+  "closed_reason": null,
+  "checks": {
+    "open_no_repair": {
+      "status": "pass",
+      "title": "b-blank-edited.hwpx [<scratchpad>\\] - 한글"
+    },
+    "save_new_path": {
+      "status": "pass",
+      "candidate_sha256": "bea30fe82c00e3ce6aae997cd3c7eab73ac15dba848b7c6b4acfcc483e786033"
+    },
+    "close": {
+      "status": "pass"
+    },
+    "reopen": {
+      "status": "pass",
+      "title": "b-blank-edited.accept-candidate.hwpx [<scratchpad>\\out-b-blank\\] - 한글"
+    },
+    "edit_preserved": {
+      "status": "pass"
+    },
+    "structures_preserved": {
+      "status": "pass",
+      "source_tables": 0,
+      "candidate_tables": 0,
+      "source_paragraphs": 1,
+      "candidate_paragraphs": 1,
+      "qname_count_delta": {
+        "hp:switch": 1,
+        "hc:next": 1,
+        "hc:left": 1,
+        "hp:default": 1,
+        "hh:numberings": -1,
+        "hh:fontface": 6,
+        "hh:autoSpacing": 1,
+        "hh:margin": 1,
+        "hc:right": 1,
+        "opf:meta": 5,
+        "hp:case": 1,
+        "hh:trackchageConfig": 1,
+        "hh:substFont": 1,
+        "hh:font": 6,
+        "hh:typeInfo": 6,
+        "hc:intent": 1,
+        "hh:lineSpacing": 1,
+        "hc:prev": 1
+      }
+    },
+    "bindings_valid": {
+      "status": "pass",
+      "source_sha256": "95f67d3882964c28ef4225c9437b96706faa9ef70f8cfc5db4c0d7b4fc5eca67",
+      "candidate_sha256": "bea30fe82c00e3ce6aae997cd3c7eab73ac15dba848b7c6b4acfcc483e786033"
+    }
+  },
+  "notes": []
+}

@@ -1,0 +1,87 @@
+{
+  "ok": false,
+  "exit_code": 3,
+  "source": "<scratchpad>\\d-render-check-edited.hwpx",
+  "candidate": "<scratchpad>\\out-d-rendercheck\\d-render-check-edited.accept-candidate.hwpx",
+  "source_sha256": "91e96b36acd767c2734d28642cf58771c1f93f6aebd3a8ce00d4d0c28a22faa8",
+  "candidate_sha256": "6aad1465d6a7bbce8867f6fb220c342d34a83abad3dff2f2ee488792729184a0",
+  "edit_marker": "RIGORLOOM-E3-ACCEPT-RENDERCHECK-02",
+  "closed_reason": null,
+  "checks": {
+    "open_no_repair": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "save_new_path": {
+      "status": "pass",
+      "candidate_sha256": "6aad1465d6a7bbce8867f6fb220c342d34a83abad3dff2f2ee488792729184a0"
+    },
+    "close": {
+      "status": "pass"
+    },
+    "reopen": {
+      "status": "pass",
+      "title": "빈 문서 1 - 한글"
+    },
+    "edit_preserved": {
+      "status": "fail",
+      "reason": "edit_marker_not_found"
+    },
+    "structures_preserved": {
+      "status": "pass",
+      "source_tables": 6,
+      "candidate_tables": 6,
+      "source_paragraphs": 227,
+      "candidate_paragraphs": 227,
+      "qname_count_delta": {
+        "opf:meta": 5,
+        "hp:run": -7,
+        "hh:bullets": -1,
+        "hh:relSz": -3,
+        "hh:numbering": -1,
+        "hh:breakSetting": -5,
+        "hp:t": 12,
+        "hh:img": -1,
+        "hh:bullet": -1,
+        "hp:integerParam": 1,
+        "hh:border": -5,
+        "hh:numberings": -1,
+        "hh:underline": -3,
+        "hh:outline": -3,
+        "hp:default": 19,
+        "hc:next": 14,
+        "hh:align": -5,
+        "hh:strikeout": -3,
+        "hh:shadow": -3,
+        "hh:paraHead": -11,
+        "hc:right": 14,
+        "hh:margin": 14,
+        "hh:heading": -5,
+        "hh:charPr": -3,
+        "hc:left": 14,
+        "hp:stringParam": 4,
+        "hc:intent": 14,
+        "hh:offset": -3,
+        "hh:ratio": -3,
+        "hh:autoSpacing": 19,
+        "hp:switch": 19,
+        "hp:autoNumFormat": 3,
+        "hh:fontRef": -3,
+        "hh:trackchageConfig": 1,
+        "hh:spacing": -3,
+        "hh:lineSpacing": 14,
+        "hp:case": 19,
+        "hh:paraPr": -5,
+        "hh:font": 7,
+        "hh:typeInfo": 7,
+        "hc:prev": 14
+      }
+    },
+    "bindings_valid": {
+      "status": "pass",
+      "source_sha256": "91e96b36acd767c2734d28642cf58771c1f93f6aebd3a8ce00d4d0c28a22faa8",
+      "candidate_sha256": "6aad1465d6a7bbce8867f6fb220c342d34a83abad3dff2f2ee488792729184a0"
+    }
+  },
+  "notes": []
+}
