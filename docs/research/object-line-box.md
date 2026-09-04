@@ -180,5 +180,9 @@ Hancom does not apply `hp:colPr` at all).
   from the cache heuristic `own-render-notes.md` limit 12 already calls wrong.
   On the pagination that is right for that form (`block_layout=computed`) the
   same form improves.
+- **The `auto` flow-agreement row is re-measured, not the committed sample.**
+  `own-render-samples/e2.5-flow-agreement.json` records 468 / 590; this tree
+  measures 469 / 590 both before and after (`saeopja` 5/6 → 6/6). That one
+  block moved before this slice and is not attributed here.
 - **The block walk covers section 0 only.** Sections 1 (landscape) and 2
   (two-column) are scored but not walked block by block.
