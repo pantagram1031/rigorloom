@@ -1154,6 +1154,107 @@ def test_no_glyph_class_is_measured_more_than_a_hundredth_of_an_em_out():
     assert all(abs(e) <= 0.012 for e in worst.values()), worst
 
 
+# --------------------------------- where a text line's box ends (E2 linebox)
+
+
+def test_the_reference_line_box_is_an_advance_box_not_an_ink_box():
+    """Why ``LINE_BOX_END`` may not be ``ink``, measured on Hancom's own PDFs.
+
+    PyMuPDF reports a character's bbox as its ADVANCE quad, and Hancom
+    advances a full-width cell by exactly one em, so a Hangul character's
+    reference bbox is 1.000 em wide.  Its INK is strictly narrower — every
+    face carries side bearings — so a renderer reporting the ink edge would
+    report a systematically short line.  Both halves are asserted here: the
+    reference's own number, and the ink deficit on the faces this machine
+    resolves the same characters to.
+    """
+    import fitz
+    import collections
+    ems = []
+    for path in _reference_pdfs():
+        with fitz.open(path) as doc:
+            for page in doc:
+                for block in page.get_text("rawdict").get("blocks", []):
+                    if block.get("type") != 0:
+                        continue
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            size = span["size"]
+                            if size <= 0:
+                                continue
+                            for char in span["chars"]:
+                                if not own_render.is_full_width(char["c"]):
+                                    continue
+                                width = char["bbox"][2] - char["bbox"][0]
+                                ems.append(width / size)
+    assert len(ems) >= 10000, len(ems)
+    inside = sum(1 for v in ems if abs(v - 1.0) <= 0.005)
+    assert inside / len(ems) > 0.9, (
+        f"{inside} of {len(ems)} full-width reference advances within "
+        "0.005 em of 1.0")
+    ems.sort()
+    assert ems[len(ems) // 2] == pytest.approx(1.0, abs=0.005)
+
+    # ...and the ink of the same class of character is measurably narrower,
+    # which is the whole reason ``ink`` loses.
+    index = own_render.SystemFontIndex.shared()
+    Image, ImageDraw, ImageFont = own_render._require_pillow()
+    entry = index.lookup("맑은 고딕") or index.lookup("Malgun Gothic")
+    if entry is None:
+        pytest.skip("no Korean face installed to measure ink against")
+    path, sub = entry["regular"] or entry["bold"]
+    kwargs = {"index": sub} if sub else {}
+    kwargs["layout_engine"] = ImageFont.Layout.BASIC
+    font = ImageFont.truetype(path, own_render.LAYOUT_REFERENCE_PX, **kwargs)
+    for ch in "가한글":
+        advance = font.getlength(ch)
+        box = font.getmask(ch, mode="L").getbbox()
+        assert box is not None and box[2] < advance - 1.0, (ch, box, advance)
+
+
+def test_a_line_box_reports_three_right_edges_and_they_are_ordered():
+    """``ink <= visible_advance <= advance``, on every line of a real form.
+
+    The three are separate fields on purpose: the geometry box follows
+    ``LINE_BOX_END``, the caret follows ``x1_advance``, and a containment
+    check follows ``x1_ink``.  A consumer that picks the wrong one should be
+    picking a documented field, not guessing at ``x1``.
+    """
+    path = _need(os.path.join(CORPUS, "nrf-gyeolgwa-bogoseo-yangsik.hwpx"))
+    _images, report = own_render.OwnRenderer(path, dpi=144).render()
+    boxes = report["line_boxes"]
+    assert boxes
+    assert report["line_box_end"] == own_render.LINE_BOX_END
+    for box in boxes:
+        assert box["x1_ink"] <= box["x1_visible_advance"] + 1e-3, box
+        assert box["x1_visible_advance"] <= box["x1_advance"] + 1e-3, box
+        assert box["x1"] == box[f"x1_{own_render.LINE_BOX_END}"], box
+        assert box["x0"] <= box["x1_ink"] + 1e-3, box
+
+
+def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
+        edited_render):
+    """The follow-up the resolution-independence slice named, now closed.
+
+    On this fixture a computed line ends in a space.  ``x1_advance`` still
+    carries it, because that is where a caret goes; ``x1`` does not, because
+    the reference PDFs' own boxes were measured to stop at the last piece
+    that draws ink.  The gap is the half-width space cell at that run's
+    declared size — 7.020 px and 8.667 px on the two lines that have one, at
+    the fixture's 96 dpi.
+    """
+    boxes = [b for b in edited_render["report"]["line_boxes"]
+             if b["mode"] == "computed"]
+    hangs = sorted(round(b["x1_advance"] - b["x1"], 3) for b in boxes
+                   if b["x1_advance"] - b["x1"] > 0.01)
+    assert hangs == [7.02, 8.667], hangs
+    for box in boxes:
+        assert box["x1"] == box["x1_visible_advance"]
+        if box["x1_advance"] > box["x1"]:
+            # the dropped piece drew nothing, so the ink edge is unaffected
+            assert box["x1_ink"] <= box["x1"] + 1e-3, box
+
+
 def test_negative_spacing_narrows_a_run(typo_probe):
     renderer, _image, draw = typo_probe
     plain = _synthetic_charpr(renderer, "__p2__", height=1200)
@@ -2644,23 +2745,24 @@ def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
 
     Two claims, and they are not the same claim.
 
-    The reported box may hang past the column edge, because a space that
-    lands at a line end hangs there rather than forcing a break -- real
-    behaviour, and ``line_boxes`` measures the advance rather than the ink,
-    so it reports the hang.  The bound on it is one half-width space cell,
-    and half the line's own height is a conservative stand-in for that (a
-    cell is 0.5 em, the box is ascent+descent, about 1.2 em).  On this
-    fixture the hang is 7.677 px of a 19 px line.
+    ``x1_advance`` -- the caret edge -- may hang past the column, because a
+    space that lands at a line end hangs there rather than forcing a break.
+    That is real behaviour and the bound on it is one half-width space cell;
+    half the line's own height is a conservative stand-in (a cell is 0.5 em,
+    the box is ascent+descent, about 1.2 em).  On this fixture the hang is
+    7.677 px of a 19 px line.
 
-    What may NOT happen is ink outside the column, and that is checked
+    The GEOMETRY box may not: ``LINE_BOX_END`` was measured against the
+    Hancom reference PDFs and settled on ``visible_advance``, so ``x1``
+    stops at the last piece that draws ink and the hang is gone from it.
+    Neither may ``x1_ink``.  Both are held to one pixel here, which is the
+    bound this test carried before the resolution-independence slice and had
+    to give up; it is back, and this time it is not an accident of the dpi
+    the fixture happens to render at.
+
+    What may NOT happen is ink outside the column, and that is still checked
     directly against the rendered page: every pixel right of the column edge
-    is white.  Before the resolution-independence slice this test bounded the
-    box at one pixel, which held only because the breaker was measuring the
-    text 2.5% narrow at 96 dpi and the break happened to land off a space.
-    That the box can exceed the ink by a whole space is a REPORTING gap in
-    ``line_boxes`` -- named here, not fixed here: closing it moves
-    ``text_line_iou`` on eight of the ten corpus forms in both directions,
-    which is a different slice's measurement to make.
+    is white.
     """
     report = edited_render["report"]
     geo = report["page_geometry_hwpunit"]
@@ -2671,10 +2773,18 @@ def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
     computed = [b for b in report["line_boxes"] if b["mode"] == "computed"]
     assert computed
     pages = set()
+    hung = 0
     for box in computed:
         assert box["x0"] >= left - 1.0, box
-        assert box["x1"] <= right + (box["y1"] - box["y0"]) / 2.0, box
+        assert box["x1"] <= right + 1.0, box
+        assert box["x1_ink"] <= right + 1.0, box
+        assert box["x1_advance"] <= right + (box["y1"] - box["y0"]) / 2.0, box
+        if box["x1_advance"] > right + 1.0:
+            hung += 1
         pages.add(box["page"])
+    assert hung, ("the fixture is supposed to contain a line whose trailing "
+                  "space hangs past the column; if it no longer does, this "
+                  "test has stopped measuring what it claims to")
 
     from PIL import Image
     out = pathlib.Path(edited_render["pngs"][0]).parent
