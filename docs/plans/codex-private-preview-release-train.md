@@ -420,6 +420,26 @@ tree and installer.
   corpus HWPX baselines. Each worktree blob matched its exact `HEAD:<path>` Git
   blob; their SHA-256 values are `52232388...`, `03BC49F2...`, and
   `8335DC71...`. Recheck the same bytes after any later Desktop acceptance.
+- **Coordinated Desktop smoke, 2026-09-04:** the release shell ran in short
+  foreground batches while the operator was remote and Claude continued on
+  the same host. `open` passed 55/55 and `reattach` 10/10, proving packaged
+  sidecar launch, a supported HWPX open, Document/Agent switching with one
+  shared state, Korean content/table/fill-seat inspection, clean close, and
+  state/hash recovery across a fresh process. A second batch passed 226 checks:
+  `page` 16, `overlay` 80, `undo` 59, `packs` 34, `chrome` 33, and
+  `chrome-reattach` 4. Its one failure was the provider-settings assertion in
+  `chrome-reattach`: the prerequisite `settings` phase had intentionally not
+  run because it is part of the paused credential/security surface. Window
+  geometry itself restored exactly. This is a subset result, not the required
+  full local Desktop smoke.
+- The live HWPX page path remained honest: packaged `document/renderPrepare`
+  returned `needs_hancom` because the frozen sidecar has no `pyhwpx`. The
+  overlay batch used the repository's existing Hancom-rendered PDF of the same
+  licensed sample as a staged artifact; it does not show that arbitrary live
+  documents use the own renderer or can be rendered on this install.
+- Post-smoke SHA-256 and Git-blob comparisons remained exact for all three
+  recorded corpus HWPX files, tracked status was clean, and no
+  `rigorloom-desktop` or `rigorloomd` process remained.
 - The Tauri target is an ignored junction to the dedicated E: Cargo target.
   C: nevertheless fell to about 3.4 GiB during the release link. Read-only
   accounting found approximately 0.78 GiB in a currently active Claude temp
@@ -436,10 +456,11 @@ tree and installer.
    the packaged sidecar, Rust release tests, and a no-bundle Tauri release shell
    are freshly green at `774b325...`; preserve their logs under
    `private/epoch-0/774b325/packaging/`.
-3. Keep GUI smoke, Korean IME, install/uninstall, and live client acceptance
-   deferred while Claude is using the same interactive Windows session, unless
-   an explicitly coordinated foreground window is available. Do not treat the
-   no-bundle shell as an installed preview.
+3. The non-security Desktop subset is complete. Keep Korean IME,
+   install/uninstall, the security-sensitive smoke phases, and live client
+   acceptance deferred while Claude is using the same interactive Windows
+   session or until the relevant security gate is reauthorized. Do not treat
+   the no-bundle shell as an installed preview or the subset as a full smoke.
 4. After the security blocker is separately authorized and resolved, rerun the
    full all-modules gate, build the NSIS installer, and run the complete Desktop
    smoke on the then-final tracked HEAD.
