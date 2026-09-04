@@ -99,6 +99,22 @@ HWPUNIT_PER_INCH = 7200
 HWPUNIT_PER_PT = 100
 DEFAULT_DPI = 144
 
+# Every advance this renderer lays out with is measured off the face at THIS
+# pixel size and scaled analytically to HWPUNIT, whatever ``--dpi`` the page
+# is finally rasterised at.  Layout is therefore a function of the document
+# alone; the raster enters exactly once, at the end, when a glyph is drawn.
+#
+# WHY A LARGE REFERENCE SIZE RATHER THAN UNHINTED METRICS.  The correct input
+# is the face's own unhinted outline advance, and Pillow does not expose one:
+# ``FreeTypeFont`` loads glyphs with hinting on, and FreeType then rounds a
+# hinted advance to a whole pixel.  A reference size is the standard way out —
+# the rounding is 1 px of a 1024 px em, i.e. under 0.1% per glyph, and, which
+# is the entire point, it is the SAME 0.1% at every output resolution.  The
+# old code measured at ``round(pt * dpi / 72)`` px, where the same rounding is
+# 1/13 em at 10 pt / 96 dpi and 1/20 em at 10 pt / 144 dpi: not an error but a
+# DIFFERENT error per resolution, which is what moved the line breaks.
+LAYOUT_REFERENCE_PX = 1024
+
 # U+FFFC OBJECT REPLACEMENT CHARACTER: the single textpos slot an
 # inline object occupies in a paragraph character stream.
 OBJECT_SLOT = "\ufffc"
@@ -354,7 +370,7 @@ LANG_SLOTS = ("hangul", "latin", "hanja", "japanese", "other", "symbol",
 #             never enters the line height (F14: a line carrying a ratio=150
 #             run still advances 10 pt x 160% = 15.95 pt measured).
 #   spacing — letter spacing, percent of the character's OWN ADVANCE (not of
-#             the character size).  See ``_spacing_gap_px``.
+#             the character size).  See ``_spacing_gap``.
 #   relSz   — relative character size, percent.  Scales the drawn size and the
 #             advance, and does NOT enter the line height (see
 #             ``_line_metrics``).
@@ -1742,6 +1758,7 @@ class OwnRenderer:
         self._page = 1
         self._image = None
         self._typo_cache = {}
+        self._em_cache = {}
         # Which character metrics this document actually exercised, counted in
         # characters.  The honesty rule cuts both ways: the sidecar has to say
         # what was *applied*, not only what was skipped, or "we apply hh:ratio"
@@ -3036,6 +3053,39 @@ class OwnRenderer:
         return self.fontbook.get(self.pt_to_px(pt), bold,
                                  self._face_for(cid, slot, bold))
 
+    def _reference_font(self, font):
+        """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
+
+        Taken off the resolved font object rather than re-running
+        ``_face_for``, so the face-resolution report still counts each
+        character once.
+        """
+        return self.fontbook.get(LAYOUT_REFERENCE_PX, False,
+                                 (font.path, getattr(font, "index", 0)))
+
+    def _em_width(self, font, text):
+        """Advance of ``text`` in EM, off ``font``'s face. dpi-free.
+
+        The one measurement the whole line layout rests on.  It is taken at
+        ``LAYOUT_REFERENCE_PX`` and divided by it, so it is a property of the
+        outlines and the face's kern table and of nothing else — no output
+        resolution, no rounded pixel size, no hinting grid that moves with
+        either.  Callers scale it by the run's declared point size to get
+        HWPUNIT.
+
+        Kerning is preserved because the whole chunk is measured in one call,
+        exactly as before; ``layout_engine=BASIC`` is pinned by ``FontBook``.
+        """
+        if not text:
+            return 0.0
+        key = (font.path, getattr(font, "index", 0), text)
+        hit = self._em_cache.get(key)
+        if hit is None:
+            reference = self._reference_font(font)
+            hit = float(reference.getlength(text)) / LAYOUT_REFERENCE_PX
+            self._em_cache[key] = hit
+        return hit
+
     def _embolden_px(self, cid, slot, font):
         """Stroke width, in pixels, for a bold run drawn on a regular face.
 
@@ -3119,10 +3169,17 @@ class OwnRenderer:
             ratio, _spacing, rel_sz, offset = metrics
             font = self._font_for(cid, rel_sz, slot)
             chunk = "".join(run)
-            width = float(draw.textlength(chunk, font=font)) * ratio / 100.0
+            # HWPUNIT first, pixels derived.  ``font`` is the RASTER font (an
+            # integer pixel size); its size is deliberately not what the
+            # advance is measured against — see ``LAYOUT_REFERENCE_PX``.
+            pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+            advance_hwp = (self._em_width(font, chunk) * pt * HWPUNIT_PER_PT
+                           * ratio / 100.0)
+            width = self.pxf(advance_hwp)
             size_px = font.size
             pieces.append({
-                "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
+                "kind": "glyph", "advance": width,
+                "advance_hwpunit": advance_hwp, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
                 "offset_px": self._offset_px(cid, offset),
                 "embolden": self._embolden_px(cid, slot, font),
@@ -3156,14 +3213,19 @@ class OwnRenderer:
                 # ``flush`` measured it with the face; overwrite that with the
                 # cell width HWP actually advances by.  See
                 # ``SPACE_CELL_FRACTION``.
-                pieces[-1]["advance"] = self._half_cell_px(cid, rel_sz, ratio)
+                pieces[-1]["advance_hwpunit"] = self._half_cell_hwp(
+                    cid, rel_sz, ratio)
+                pieces[-1]["advance"] = self.pxf(
+                    pieces[-1]["advance_hwpunit"])
                 self.applied["half_width_space_cell"] = (
                     self.applied.get("half_width_space_cell", 0) + 1)
             if spacing:
+                gap_hwp = self._spacing_gap(
+                    pieces[-1]["advance_hwpunit"], spacing)
                 pieces.append({
                     "kind": "gap",
-                    "advance": self._spacing_gap_px(pieces[-1]["advance"],
-                                                    spacing),
+                    "advance": self.pxf(gap_hwp),
+                    "advance_hwpunit": gap_hwp,
                 })
         flush()
         return pieces
@@ -3181,6 +3243,30 @@ class OwnRenderer:
             pieces.pop()
         return sum(p["advance"] for p in pieces)
 
+    def _measure_hwp(self, draw, text, cid):
+        """``_measure``, in HWPUNIT. This is the one the LAYOUT uses.
+
+        ``_measure`` stays in device pixels because the drawing cursor is in
+        device pixels; every advance it sums is ``pxf`` of the value summed
+        here, so the two never disagree about anything but float rounding.
+        """
+        pieces = self._text_pieces(draw, cid, text)
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        return sum(p["advance_hwpunit"] for p in pieces)
+
+    def _half_cell_hwp(self, cid, rel_sz, ratio):
+        """A space's advance in HWPUNIT: half the declared character cell.
+
+        The full-width cell is ``declared size x hh:ratio``
+        (``_cached_lower_bound_hwp`` states the same rule); the space is half
+        of it.  The resolved face is not consulted at all -- that is the whole
+        point, and ``SPACE_CELL_FRACTION`` carries the measurement it rests
+        on.  Declared sizes only, so this was always dpi-free.
+        """
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        return pt * HWPUNIT_PER_PT * ratio / 100.0 * SPACE_CELL_FRACTION
+
     def _half_cell_px(self, cid, rel_sz, ratio):
         """A space's advance in pixels: half the declared character cell.
 
@@ -3190,8 +3276,7 @@ class OwnRenderer:
         that is the whole point, and ``SPACE_CELL_FRACTION`` carries the
         measurement it rests on.
         """
-        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-        return (pt * self.dpi / 72.0 * ratio / 100.0 * SPACE_CELL_FRACTION)
+        return self.pxf(self._half_cell_hwp(cid, rel_sz, ratio))
 
     def _offset_px(self, cid, offset):
         """``hh:offset`` as pixels the glyph is RAISED off its baseline.
@@ -3221,8 +3306,11 @@ class OwnRenderer:
         return -(pt * self.dpi / 72.0 * offset / 100.0)
 
     @staticmethod
-    def _spacing_gap_px(advance_px, spacing):
+    def _spacing_gap(advance, spacing):
         """``hh:spacing`` gap after a character: a percent of ITS OWN advance.
+
+        A pure proportion, so it is correct in whatever unit ``advance`` is
+        in; the layout passes HWPUNIT and the drawing path passes pixels.
 
         MEASURED off the Hancom reference render of ``render-check-01`` (block
         ``F13``, three runs of the same text at ``spacing`` −15 / 0 / +30, 10 pt
@@ -3244,12 +3332,12 @@ class OwnRenderer:
         ``spacing="50"``, drawn 5.5 em wide — which both readings satisfy
         exactly, so nothing there is contradicted.
 
-        ``advance_px`` is the character's advance with ``hh:ratio`` and
+        ``advance`` is the character's advance with ``hh:ratio`` and
         ``hh:relSz`` already applied, so the gap composes after both.  That
         ordering is the natural reading of "percent of the advance" but is NOT
         measured: ``F13`` declares ``ratio=100`` and ``relSz=100`` throughout.
         """
-        return advance_px * spacing / 100.0
+        return advance * spacing / 100.0
 
     def _line_items(self, para, chars, base_index):
         """Ordered ``("text", Segment)`` / ``("obj", record)`` items for a line.
@@ -3316,7 +3404,12 @@ class OwnRenderer:
 
     # -- line breaking from metrics (E2.1) -------------------------------
     def _char_advance_tables(self, draw, para):
-        """Per-character advance and letter-spacing gap, in device pixels.
+        """Per-character advance and letter-spacing gap, in HWPUNIT.
+
+        HWPUNIT and not device pixels, because this is where line breaking
+        starts and line breaking must not be a function of the raster: an
+        advance measured at the output resolution puts different characters
+        on a line at 96 dpi than at 144.  See ``LAYOUT_REFERENCE_PX``.
 
         Two arrays rather than one, because ``hh:spacing`` opens a gap
         *between* characters: a line of ``k`` characters carries ``k``
@@ -3338,7 +3431,7 @@ class OwnRenderer:
                     element = record[1] if record else None
                     width = (self._object_extent(element)[0]
                              if element is not None else 0)
-                    advances.append(self.pxf(width))
+                    advances.append(float(width))   # hp:sz is HWPUNIT
                 gaps.append(0.0)
                 continue
             if ch == "\t":
@@ -3346,13 +3439,13 @@ class OwnRenderer:
                 gaps.append(0.0)
                 continue
             _ratio, spacing, _rel_sz, _offset = self._typography(cid, ch)
-            advances.append(self._measure(draw, ch, cid))
-            gaps.append(self._spacing_gap_px(advances[-1], spacing)
+            advances.append(self._measure_hwp(draw, ch, cid))
+            gaps.append(self._spacing_gap(advances[-1], spacing)
                         if spacing else 0.0)
         return advances, gaps
 
     def span_width(self, draw, para, start, end):
-        """Advance of ``para.chars[start:end]`` in device pixels.
+        """Advance of ``para.chars[start:end]`` in HWPUNIT.
 
         The same quantity the breaker fits against a line box: character
         advances plus the ``hh:spacing`` gaps *between* them, with no trailing
@@ -3366,8 +3459,8 @@ class OwnRenderer:
         return (sum(advances[start:end]) + sum(gaps[start:end])
                 - gaps[end - 1])
 
-    def _tab_advance(self, para, x_px, column_hwp):
-        """Where a ``\\t`` at ``x_px`` lands, per ``hh:tabPr``.
+    def _tab_advance(self, para, here, column_hwp):
+        """Where a ``\\t`` at ``here`` lands, per ``hh:tabPr``. All HWPUNIT.
 
         Explicit ``<hh:tab pos=…>`` stops are honoured (LEFT behaviour only —
         RIGHT/CENTER/DECIMAL need the *following* text, which a left-to-right
@@ -3377,14 +3470,13 @@ class OwnRenderer:
         default, not the file's.
         """
         table = self.defs.get("tab_pr", {}).get(para.para_pr.get("tab_pr") or "")
-        here = self.hwp_from_px(x_px)
         if table and table["stops"]:
             for pos, kind in table["stops"]:
                 if pos > here + 1:
                     if kind != "LEFT":
                         self._skip(f"hh:tab@type={kind}",
                                    "non-left tab stop advanced as a left stop")
-                    return self.pxf(min(pos, column_hwp))
+                    return float(min(pos, column_hwp))
         self._skip("hh:tabPr",
                    "paragraph declares no explicit tab stop; the default "
                    f"interval used is this renderer's "
@@ -3392,7 +3484,7 @@ class OwnRenderer:
                    "the file's")
         step = DEFAULT_TAB_INTERVAL_HWP
         nxt = (int(here) // step + 1) * step
-        return self.pxf(min(nxt, column_hwp))
+        return float(min(nxt, column_hwp))
 
     def _line_box(self, para, index, column_hwp):
         """``(horzpos, horzsize)`` in HWPUNIT for the ``index``-th line.
@@ -3534,15 +3626,21 @@ class OwnRenderer:
 
         Returns paragraph-relative line records:
         ``{start, end, horzpos, horzsize, vertpos, vertsize, textheight,
-        baseline, spacing, forced, width_px}``, where ``start``/``end`` index
+        baseline, spacing, forced, width_hwpunit, width_px}``, where
+        ``start``/``end`` index
         the paragraph's character stream exactly the way ``hp:lineseg@textpos``
         does, so a record is directly comparable to a cached one.
 
         Greedy first-fit, which is what HWP's own line breaker is (its cached
         boxes are reproducible by a greedy pass; a Knuth-Plass total-fit pass
-        would disagree with them on purpose).  ``width_px`` excludes trailing
-        whitespace, because a space that falls at a line end hangs outside the
-        box rather than forcing a break.
+        would disagree with them on purpose).  ``width_hwpunit`` excludes
+        trailing whitespace, because a space that falls at a line end hangs
+        outside the box rather than forcing a break; ``width_px`` is that
+        width at this render's dpi, for the drawing side.
+
+        EVERY quantity this method compares is in HWPUNIT, read from the
+        document or scaled analytically from face metrics.  Nothing here may
+        be measured at the output resolution: see ``LAYOUT_REFERENCE_PX``.
         """
         pr = para.para_pr
         chars = para.chars
@@ -3611,9 +3709,9 @@ class OwnRenderer:
                 cursor += 1
                 continue
             horzpos, horzsize = self._line_box(para, index, column_hwp)
-            avail = self.pxf(horzsize)
+            avail = float(horzsize)
             if ch == "\t":
-                here = self.pxf(horzpos) + width(start, cursor)
+                here = horzpos + width(start, cursor)
                 advances[cursor] = max(
                     0.0, self._tab_advance(para, here, column_hwp) - here)
                 for i in range(cursor, count):
@@ -3657,7 +3755,8 @@ class OwnRenderer:
                 "vertpos": vertpos, "vertsize": vertsize,
                 "textheight": textheight, "baseline": baseline,
                 "spacing": spacing, "forced": forced,
-                "width_px": width(first, visible),
+                "width_hwpunit": width(first, visible),
+                "width_px": self.pxf(width(first, visible)),
             })
             vertpos += vertsize + spacing
         return lines
@@ -3689,7 +3788,7 @@ class OwnRenderer:
             if spacing and offset < len(window) - 1:
                 gap = cell * spacing / 100.0
                 # The gap is a percent of the character's OWN advance
-                # (``_spacing_gap_px``).  For a full-width cell that advance is
+                # (``_spacing_gap``).  For a full-width cell that advance is
                 # exactly ``cell``, so the gap is exact.  For a proportional
                 # character the advance is unknown and no larger than a full
                 # cell, so a POSITIVE gap has to be dropped to keep this a
@@ -7440,18 +7539,17 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
                 conditional["early"] += 1
             else:
                 conditional["late"] += 1
-            box_px = renderer.pxf(_iattr(para.linesegs[i], "horzsize")
-                                  or column)
+            box_hwp = float(_iattr(para.linesegs[i], "horzsize") or column)
             visible = target
             while (visible > here
                    and para.chars[visible - 1][0] in SPACE_CHARS):
                 visible -= 1
-            if box_px > 0 and visible > here:
+            if box_hwp > 0 and visible > here:
                 # How full the authoring engine's own line is, measured by
                 # this renderer.  A value under 1.0 says this renderer thinks
                 # there was still room where the authoring engine broke.
                 fills.append(renderer.span_width(draw, para, here, visible)
-                             / box_px)
+                             / box_hwp)
         if cached != computed and len(disagreements) < 40:
             disagreements.append({
                 "paragraph": index,
