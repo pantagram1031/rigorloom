@@ -107,3 +107,41 @@ def test_task_floors_hold_against_the_real_corpus(task_path, tmp_path):
                                                 check["assert_json"])
         failed = [r for r in results if not r["ok"]]
         assert failed == [], (task_path.stem, check["id"], failed)
+
+
+def _render_check_assert_json():
+    task = cleanroom.load_task(ROOT / "evals" / "tasks" / "render-check-01.yaml")
+    checks_by_id = {c["id"]: c for c in task["machine_checks"]}
+    assert "render_check_report" in checks_by_id, checks_by_id
+    return checks_by_id["render_check_report"]["assert_json"]
+
+
+def test_render_check_floor_gates_on_ordering_not_on_close_alone():
+    """T-floor-ordering: the render-check-01 floor must survive a genuine
+    match/close promotion and still catch a real regression.
+
+    #236 promoted a block from `close` to `match` (3 match/38 close ->
+    6 match/37 close), which is a genuine improvement but drops `close`
+    below a `close`-alone floor of 38 — that floor was a ceiling in
+    disguise. The rewritten floor gates on `tally.match + tally.close`
+    (an ordering a real improvement can never violate) instead, plus
+    `tally.match >= 3` so a regression that loses exact matches (even by
+    demoting them all the way to `close`) still fails.
+    """
+    assert_json = _render_check_assert_json()
+
+    # One more match than the pinned measurement, taken out of close:
+    # 7 match / 36 close / 6 differs / 2 unsupported. A genuine improvement
+    # must pass.
+    improved = {"tally": {"match": 7, "close": 36, "differs": 6,
+                          "unsupported": 2}, "pages": {"reference": 9}}
+    results = cleanroom.evaluate_assertions(improved, assert_json)
+    failed = [r for r in results if not r["ok"]]
+    assert failed == [], failed
+
+    # A real regression: fewer matches, more differs. Must fail.
+    regressed = {"tally": {"match": 2, "close": 38, "differs": 9,
+                           "unsupported": 2}, "pages": {"reference": 9}}
+    results = cleanroom.evaluate_assertions(regressed, assert_json)
+    failed = [r for r in results if not r["ok"]]
+    assert failed != []

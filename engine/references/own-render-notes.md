@@ -227,26 +227,77 @@ line breaker can be graded without a reference render.
 
 ### Which engine laid out which paragraph, and why
 
-Two policies, declared per render in `line_layout.policy`, and per paragraph
-in `line_layout.paragraphs_relaid_out`:
+**The unit the cache is trusted in is the DOCUMENT, not the paragraph.**
+`docs/research/lineseg-on-save-01.md` measured Hancom saving three corpus
+forms twice each, untouched and with one character appended. Untouched, all
+223 cached line boxes came back byte-identical in all 9 `hp:lineseg` fields —
+Hancom recomputes line layout on every save, but the recomputation is
+idempotent. With one character appended, the *edited* paragraph did not move
+at all, while a paragraph **534 positions downstream** shifted its `vertpos`
+from 0 to 70884 and two never-laid-out paragraphs elsewhere gained line boxes.
+So a per-paragraph test cannot decide anything: it cannot name the paragraphs
+a layout pass would also have moved.
 
-- **`auto`** (default, and what ships). A paragraph keeps its cached
-  `hp:lineseg` boxes unless they provably no longer describe its text.
-- **`computed`** (`--line-layout computed`). Every paragraph is relaid out by
-  this breaker. This is how the breaker is *measured*; it is not how a
-  document is rendered most faithfully, and the scoreboard below says by how
-  much.
+What can decide it is **provenance** — is this package the direct, unedited
+output of Hancom's own most recent save? The renderer answers from
+`version.xml@application`, the only writer signature an HWPX carries, and
+declares the answer in the sidecar (`layout_policy`, `layout_policy_reason`,
+`layout_provenance`):
 
-Under `auto`, `computed` wins for exactly five named reasons, each counted in
+| `layout_provenance.writer` | what decides it | `layout_policy` |
+| --- | --- | --- |
+| `hancom_untouched` | `application` starts with Hancom's product name | `cache` |
+| `rigorloom_written` | `application` is `Rigorloom` | `computed` |
+| `unknown_writer` | any other value, or no `version.xml`/attribute | `computed` |
+
+Two things override the file: a caller that names an edited paragraph in
+`relayout_paragraphs` (an edited package is not an untouched one, wherever
+the edit landed), and `--line-layout computed`. `--layout-policy cache|computed`
+pins either policy for MEASUREMENT — pinning `cache` on an edited package is
+unsound and is declared as an override in the reason string.
+
+`computed` means the **whole** document: `line_layout` and `block_layout` both.
+There is no half-computed document under `auto` any more.
+
+**The stamp, and why it lives in `version.xml`.** `hwpx_write.blank_package`
+has always written `application="Rigorloom"`; `xml_backend.HwpxDocument.save`
+now does too, through `hwpx_write.stamp_writer_application`, which rewrites
+only the `application` and `appVersion` attribute values and leaves every
+other byte of the member alone. Without it the edit path — which copies
+`version.xml` forward verbatim, as it does every member it did not change —
+would keep claiming Hancom wrote the package last, and `auto` would trust a
+cache describing the text from before the edit. `version.xml` is the right
+home because Hancom overwrites the whole member on its own save, so the marker
+**clears itself** the moment Hancom is the last writer again. A marker parked
+in `Contents/content.hpf` would not: whether Hancom preserves an unknown
+`opf:meta` across a resave is NOT MEASURED here, and a marker that survived
+would pin the package to `computed` forever.
+
+This does make a Rigorloom-edited package trivially distinguishable from a
+Hancom-edited one, which is what E3 is otherwise trying to eliminate
+(`hwpx_write.canonical_from_elementtree`). The tension is deliberate and
+resolved the same way every time in this repo: an honest, declared marker
+beats a silent mimicry that would make `auto` draw a stale box.
+
+Under `auto`, `computed` wins for exactly three named reasons, each counted in
 `line_layout.computed_reasons`:
 
 | reason | what it means |
 | --- | --- |
+| `policy` | the whole document is computed — the caller asked, or provenance said so. `layout_policy_reason` says which |
 | `cache_absent` | the paragraph carries no `hp:linesegarray` at all |
-| `textpos_past_end` | a cached line starts past the end of the character stream, so the text is *shorter* than the cache describes |
-| `stale_line_width` | a cached line's font-independent lower-bound width exceeds its own cached `horzsize`, so the text is *longer* than that line could hold |
-| `caller_marked_edited` | the caller passed the paragraph in `relayout_paragraphs` |
-| `policy` | the whole render was asked for computed lines |
+| `textpos_past_end` | a cached line starts past the end of the character stream, so no character range lines up with that box |
+| `caller_marked_edited` | the caller passed the paragraph in `relayout_paragraphs`, under a pinned `cache` policy |
+
+`cache_absent` and `textpos_past_end` are **not** staleness inferences and are
+not affected by the policy: they describe a cache this reader cannot *read*,
+so there is nothing to draw from either way. `textpos_past_end` earns that
+reading by measurement — it fires on exactly one paragraph of each of three
+**unedited** corpus forms (moel-2013 #159, saeopja #321, kstartup #264), all
+three carrying an `hp:ctrl` this reader gives no character cell (a HYPERLINK
+`hp:fieldBegin`/`fieldEnd` pair, an `hp:colPr`) where the authoring engine
+counted one. That is a reader gap, named and **not fixed here**; it is
+emphatically not evidence that somebody edited a government form template.
 
 `stale_line_width` is the interesting one. The bound counts only full-width
 cells (Hangul, Hanja, kana, CJK punctuation, an inline object slot — whose
@@ -264,13 +315,96 @@ paragraph of any of the ten corpus forms (the worst unedited line reaches
 It is also **incomplete**, and the sidecar says so in those words: an edit
 that leaves every line still fitting is invisible in the file. An editor that
 knows it changed a paragraph must declare it through `relayout_paragraphs`
-rather than rely on detection. A paragraph is named there by its document-order
+rather than rely on detection.
+
+Since this slice it **decides no paragraph**. `_scan_stale_cache` runs it once
+over the whole document at load, reports every hit in
+`line_layout.stale_diagnostics`, and uses it for exactly one thing: because it
+raises no false positive, a hit *falsifies* a `cache` policy. A package
+claiming to be Hancom's own untouched save that carries a line box too narrow
+for the text on it is not that package, so the WHOLE document goes computed
+and `layout_policy_reason` starts `stale_cache_contradicts_provenance`. That
+is what catches an edit applied by something that did not stamp its own
+signature — the case the notes could otherwise only hope did not happen. (The
+sweep skips a lineseg carrying no `horzsize`, having no column width to fall
+back on; zero corpus linesegs are shaped that way.) A paragraph is named there by its document-order
 position among every `hp:p` in `section0`, counting from 0 — `hp:p@id` is not
 unique (moel-2025 gives `2147483648` to 329 of its 330 paragraphs), and the
 caller can compute the ordinal from the same file without asking the renderer.
 
 Every line box in the sidecar carries `mode: "lineseg" | "computed"`, so a
 reader can tell per line which engine broke it.
+
+### What the computed default costs, measured
+
+An edited document is now always drawn computed, so the question is what that
+costs where the cache *would* have been usable. Every number below is
+`render_scoreboard.py` at 96 dpi against the forms' own Hancom reference PDFs,
+the same document scored twice — `--layout-policy cache` against
+`--line-layout computed --block-layout computed` — so nothing but the policy
+moves. Columns are **computed minus cache**; negative is worse.
+
+| form | pages cache / computed / ref | Δssim | Δssim_inked | Δtext_line_iou | Δpair_rate |
+| --- | --- | --- | --- | --- | --- |
+| admrul-gajokdolbom-hyuga-sinchengseo | 1 / 1 / 1 | −0.0864 | −0.2741 | **−0.4088** | 0.0000 |
+| gianmun-byeolji-1ho | 1 / 1 / 1 | −0.0037 | −0.0170 | −0.0116 | 0.0000 |
+| gianmun-byeolji-2ho | 1 / 1 / 1 | +0.0007 | +0.0033 | +0.0032 | 0.0000 |
+| jeongbo-gonggae-cheongguseo | 1 / 1 / 1 | +0.0007 | +0.0019 | +0.0008 | 0.0000 |
+| jumin-deungchobon-sinchengseo | 3 / 3 / 3 | −0.0072 | −0.0011 | −0.0032 | 0.0000 |
+| kstartup-jiwon-…-saeopgyehoekseo | 21 / **22** / 22 | +0.0547 | +0.1268 | **+0.3616** | +0.1428 |
+| moel-pyojun-geunrogyeyakseo-2013 | 7 / 7 / 7 | −0.0119 | −0.0143 | −0.0453 | +0.0061 |
+| moel-pyojun-geunrogyeyakseo-2025 | 7 / 7 / 7 | −0.0734 | −0.0834 | −0.2128 | −0.0214 |
+| nrf-gyeolgwa-bogoseo-yangsik | 4 / 4 / 4 | −0.0232 | −0.0402 | −0.1576 | −0.0089 |
+| saeopja-deungnok-sinchengseo | 6 / 6 / 6 | −0.0231 | −0.0326 | −0.0768 | −0.0024 |
+
+Corpus means, cache → computed: `ssim` 0.8006 → 0.7833 (−0.0173),
+`ssim_inked` 0.2779 → 0.2449 (−0.0331), `text_line_iou` 0.6319 → 0.5768
+(−0.0550), `text_line_pair_rate` 0.8362 → 0.8478 (**+0.0116**),
+`changed_channel_ratio` 0.1132 → 0.1145 (+0.0013). **Page count exact against
+the reference: 9 of 10 under cache, 10 of 10 under computed** — the one form
+that changes is kstartup, which is *the form where the cache is wrong* (see
+*kstartup is the form where the CACHE is wrong, not the flow pass*), and
+computed fixes it.
+
+Line breaking, the same corpus, conditional-break agreement (the breaker
+restarted at each line start the authoring engine chose, asked only where it
+would put the next break): **77 / 216 decisions exact, 0.356**, worst
+moel-2025 at 7/47 and best gianmun-2ho at 2/2. Block flow agreement against
+the cache is *identical* whether the lines under it are cached or computed —
+all ten forms score the same page-assignment hits either way (kstartup
+46/165, nrf 51/53, the other eight 100%), so the flow pass's error is its own
+and not the breaker's leaking into it.
+
+`render-check-01` is the one document where the policy flip costs **nothing at
+all**: its renders are byte-identical under both policies (9 pages either
+way), because all 216 of its paragraphs are already excluded from the cache —
+`hwpx_write` wrote its `hp:lineseg` and every one of them trips
+`textpos_past_end`, so 238 of 238 paragraphs were laid out by this breaker
+before the policy existed. Its scoreboard cannot be taken: its sections
+declare different page sizes and `render_scoreboard.ssim` refuses operands of
+different sizes. Pre-existing, named, not fixed here.
+
+The private report-class holdout (E2.1's, aggregate only) is the sharpest
+version of the same answer: 18 reference pages, and **18 pages under both
+policies**, while every geometry channel falls — `ssim` 0.6963 → 0.6108,
+`ssim_inked` 0.1834 → 0.0982, `text_line_iou` 0.5680 → **0.2311**,
+`text_line_pair_rate` 0.9150 → 0.7804, `changed_channel_ratio` 0.1400 →
+0.1633. It is a Hancom-saved package, so the policy keeps it on `cache`; the
+computed column is what an edit to it would now cost.
+
+**So: is computed good enough to be the default for edited documents?** For
+*pagination*, yes and better — page counts hold on 10 of 10 corpus forms and
+on the holdout, and the one disagreement it fixes is a real one. For *line
+geometry*, no: it is measurably worse wherever the cache is valid, by −0.055
+mean IoU on the corpus and −0.337 on the holdout, and on one form (admrul) by
+−0.409. That is the honest shape of the trade, and it is the right trade only
+because the policy routes a document to computed exactly when its cache is
+*not* valid — where the alternative is not this table's cache column but a
+layout describing text the document no longer has. What the table really
+prices is a **misclassification**: what it costs to call an untouched Hancom
+package edited. Nothing here argues for computed as a general default, and
+E2.1's *Where it fails, and why* still names the advance-width gap that this
+column is mostly measuring.
 
 ### What the breaker honours
 
@@ -667,13 +801,20 @@ honest way to grade a flow pass without a reference render is to run it on an
 
 ### Two policies, and why an unedited render is byte-identical
 
-- **`auto`** (default, and what ships). Nothing is placed by the flow pass
-  until some paragraph has to be relaid out. `flow_plan()` returns `None` on a
-  document where no paragraph is stale and none is named in
-  `relayout_paragraphs`, and `render()` then takes exactly the path it took
+- **`auto`** (default, and what ships). On a package provenance says is
+  Hancom's own untouched save, nothing is placed by the flow pass at all:
+  `flow_plan()` returns `None` and `render()` takes exactly the path it took
   before E2.5. Measured, not asserted: all ten corpus forms, 51 pages, render
   to **byte-identical PNGs** before and after this slice, and the seven
   comparable scoreboards are unchanged to every decimal place they carry.
+  (Still true after the provenance policy: the ten forms plus
+  `render-check-01` are byte-identical at 96 dpi against pre-policy HEAD.)
+  On any other package `auto` resolves to `computed` for the whole document —
+  see *Which engine laid out which paragraph* — so the incremental
+  "seed the flow at the edited block" path below is reached only under a
+  pinned `cache` policy. It is kept, and kept measured, because it is the
+  right answer once an edited package can be trusted paragraph by paragraph
+  again; it is not the shipping answer today.
 - **`computed`** (`--block-layout computed`). The flow pass places every block
   from the top of the document. This is how the flow pass is *measured*.
 
@@ -1284,9 +1425,19 @@ not only here.
     the one that matches Hancom. It is used only where the cached layout
     cannot be, which on an unedited document is nowhere — but it is what
     everything after an edit gets.
-15. **The staleness detector is sound but incomplete.** It cannot see an edit
-    that leaves every line still fitting; `relayout_paragraphs` is the channel
-    an editor must use instead. See *Which engine laid out which paragraph*.
+15. **The staleness detector is sound but incomplete, and decides nothing
+    per paragraph.** It cannot see an edit that leaves every line still
+    fitting; `relayout_paragraphs` is the channel an editor must use instead.
+    Since the provenance policy it only diagnoses, and falsifies a `cache`
+    policy document-wide. See *Which engine laid out which paragraph*.
+15a. **Provenance is a claim about the last writer, not a proof of
+    integrity.** `version.xml@application` says which program wrote the
+    package; it cannot detect a third program that edited a Hancom-saved file
+    while leaving Hancom's signature in place. `stale_line_width` catches such
+    an edit only when it makes some line overflow its own box. And whether
+    Hancom preserves this repo's stamp across its own resave is NOT MEASURED —
+    if it did, an edited-then-Hancom-saved package would stay on `computed`,
+    which is the safe direction but not the accurate one.
 16. **A split table does not repeat its header row.** `hp:tbl@repeatHeader` is
     set on all 81 corpus tables and is parsed, counted and skipped: the
     continuation page starts at the row the split cut at. Declared in every
@@ -2593,3 +2744,422 @@ removed the term that used to cancel the block-height drift. Full report:
   registration because they move only once registration joins #210, and
   because #208 provably never fires on that document — not because a tree with
   registration removed was rendered.
+
+
+## Layout was a function of the raster — measured, 2026-09-05
+
+The ink-residual slice recorded a 144 dpi tally it could not claim, because
+`F06` broke its lines in different places at 144 dpi than at 96. This is that
+finding turned into a number, on a channel with no pixels in it.
+
+### The instrument
+
+`own_render.py --layout-digest` (`layout_digest()`) prints every layout
+decision the renderer makes **in the document's own units**: line breaks as
+character offsets, `horzpos`/`horzsize`/`vertpos`/`vertsize`/`baseline` in
+HWPUNIT, and the flow pass's per-block page and page-relative top. Both
+passes are forced to `computed`, because reading the cached `hp:lineseg`
+boxes would be dpi-free whatever the renderer does and would measure nothing.
+The report deliberately carries **no `dpi` field**: a renderer whose layout is
+a function of the document alone emits the same bytes at every resolution.
+
+The column a paragraph is broken into is the paragraph's own cached first line
+box where the file carries one and the section's `usable_width` where it does
+not (`render-check-01` carries no `linesegarray` at all). Both are read
+straight out of the file.
+
+### The drift, before
+
+`render-check-01`, blocks `F06`–`F08`, characters per line:
+
+| block | 96 dpi | 144 / 192 / 288 dpi |
+| --- | --- | --- |
+| `F06` (줄간격 130%) | 46 · **50** · 5 | 46 · **44** · 11 |
+| `F07` (줄간격 160%) | 46 · **50** · 5 | 46 · **44** · 11 |
+| `F08` (줄간격 200%) | 46 · **50** · 47 · 48 · 11 | 46 · **44** · 47 · **44** · 21 |
+
+Six characters on `F06`'s second line, and the same six on every block that
+shares its text. Whole documents, digest against the 96 dpi digest:
+
+| document | 144 | 192 | 288 |
+| --- | --- | --- | --- |
+| `render-check-01` | 18 paras rebroken, +2 lines | 20, +3 | 19, +3 |
+| `gianmun-byeolji-2ho` | 1 | 3 | 1 |
+| `jeongbo-gonggae-cheongguseo` | 5 | 6 | 5 |
+| `jumin-deungchobon` | 6, −1 line | 16, +3 | 7, −1 |
+| `kstartup-…-saeopgyehoekseo` | 6, −1 | 18, +11, **+1 page, 122 blocks re-paged** | 5, −1 |
+| `moel-…-2013` | 25, +12, **+2 pages, 77 blocks re-paged** | 19, +2, +1 page | 16, +2 |
+| `moel-…-2025` | 10, −2, 75 blocks moved | 16, +4 | 3, −1 |
+| `saeopja-deungnok` | 17, −8 | 24, −7 | 16, −8 |
+| `admrul`, `gianmun-1ho`, `nrf` | identical | identical | identical |
+
+Three of the ten forms were already dpi-independent — they are the ones whose
+declared character sizes happen to land on integer pixels at every dpi tested.
+The worst case is not the smallest raster: `moel-2013` gains **two pages** at
+144 dpi relative to 96, and `kstartup` gains one at 192.
+
+### The cause
+
+`_font_for` asks the font book for `pt_to_px(pt) = max(1, round(pt * dpi/72))`
+— an **integer** pixel size — and every advance was then `draw.textlength` on
+that rasterised font. Two separate leaks, and both are in the layout:
+
+1. **The integer size.** A 10 pt run is 13 px at 96 dpi and 20 px at 144. 13
+   px is 9.75 pt, so the text is 2.5% narrower at 96 dpi than the document
+   says it is, and 2.5% more of it fits on a line. That is the six characters.
+2. **Hinting.** FreeType rounds a hinted glyph's advance to a whole pixel, so
+   even at sizes that land exactly on an integer the per-glyph error is up to
+   half a pixel — 1/40 em at a 20 px em, and a different fraction at every
+   other size.
+
+Nothing downstream of the advances is guilty. `_line_metrics` was already
+HWPUNIT and reads declared sizes only; `_object_extent` is HWPUNIT;
+`_half_cell_px` and `_offset_px` are exact linear functions of dpi; the
+equation extent is already measured at a fixed 600 dpi and scaled. The break
+positions were the whole of it, and everything else in the digest moved
+because the breaks did.
+
+### The fix
+
+Every advance the layout uses is now measured off the face at a fixed
+`LAYOUT_REFERENCE_PX = 1024` em and scaled analytically into HWPUNIT:
+
+    advance_hwpunit = em_width(face, chunk) x declared_pt x 100 x ratio/100
+
+`_em_width` is the only place a font is measured for layout, and its answer
+is a property of the outlines and the kern table alone. The raster now enters
+exactly once, at the end, when a glyph is drawn — `_font_for` still builds an
+integer-pixel font, and the drawn pixel advance is `pxf()` of the HWPUNIT one,
+so the drawing cursor and the breaker cannot disagree.
+
+Everything the breaker compares moved to HWPUNIT with it:
+`_char_advance_tables`, `span_width`, `_tab_advance`, `compute_lines`'s
+`avail`/`width`/`slack`, and the `hh:spacing` gap (a pure proportion, correct
+in either unit, so `_spacing_gap_px` became `_spacing_gap`). `_half_cell_hwp`
+is the space cell in the document's units and `_half_cell_px` is now derived
+from it. A line record gained `width_hwpunit`; `width_px` stays for the
+drawing side.
+
+**Which hinting story this is.** Not unhinted metrics — Pillow does not expose
+them, and FreeType rounds a hinted advance to a whole pixel. This is the
+large-reference-size story: at a 1024 px em that rounding is under 0.1% per
+glyph and, decisively, it is the *same* 0.1% at every output resolution.
+Stated in the constant's own comment so no reader has to infer it.
+
+### After
+
+`layout_digest` is byte-identical at 96 / 144 / 192 / 288 dpi on the
+render-check document and on all ten corpus forms, asserted by
+`test_the_layout_is_identical_at_every_dpi` (11 parametrised cases) and, for
+the mechanism alone, by
+`test_an_advance_is_the_same_fraction_of_an_em_at_every_dpi`. `F06`–`F08` now
+read 46 · 44 · 11 at every dpi. The private report-class holdout is identical
+across the ladder too (661 lines, 18 pages, at all four).
+
+**Line breaker against the authoring engine's own cache**, corpus-wide,
+144 dpi:
+
+| channel | before | after |
+| --- | --- | --- |
+| break positions matched | 68 / 216 | **80 / 216** |
+| per-decision exact (`conditional_breaks`) | 65 / 216 | **77 / 216** |
+| — of the misses, `late` | 78 | 65 |
+| paragraphs, exact break sequence | 2014 / 2148 | **2030 / 2148** |
+| paragraphs, exact line count | 2105 | **2116** |
+
+**What moved at the default 144 dpi.** Five of the eleven documents are
+byte-identical before and after (`admrul`, `gianmun-1ho`, `gianmun-2ho`,
+`jeongbo`, `nrf`) — their declared sizes already landed on integer pixels at
+144. The six that move:
+
+| document | paragraphs rebroken | lines | pages |
+| --- | --- | --- | --- |
+| `moel-2013` | 24 of 264 | 327 → 317 | 9 → 7 |
+| `moel-2025` | 4 of 314 | 349 → 353 | 7 |
+| `saeopja-deungnok` | 3 of 765 | 794 | 6 |
+| `jumin-deungchobon` | 1 of 133 | 170 | 3 |
+| `kstartup` | 2 of 462 | 509 | 22 |
+| `render-check-01` | 1 of 227 | 281 → 282 | 7 |
+
+`moel-2013` going 9 → 7 pages is a move *toward* the cached pagination, which
+reads 7.
+
+**Corpus scoreboard against the Hancom reference PDFs**, 144 dpi, `auto`
+layout. Every form still comparable, every verdict still `pass`, every page
+count unchanged. Means over the ten: `ssim_mean` +0.00078,
+`ssim_inked_mean` +0.0021, `text_line_iou_mean` +0.00024. Per form, the
+extremes: `gianmun-1ho` `ssim_inked` +0.0150 and `jumin` +0.0106 the good way;
+`nrf` `ssim_inked` −0.0160 and `text_line_iou` −0.0128 the other. `nrf` is the
+one regression worth naming — its faces happened to be better served by the
+old 144 dpi rounding. **Diagnosed 2026-09-05** — see *The nrf regression the
+resolution-independence slice left behind*: the face is 휴먼명조 resolving to
+Nanum Myeongjo, Hancom advances it at 1.0000 em, we measure 0.9502 and the
+old raster measured 0.9545, so the old number was accidentally closer.
+
+**render-check-01 tally**, 9/9 pages exact at both resolutions:
+
+| dpi | before | after |
+| --- | --- | --- |
+| 96 | 3 match · 38 close · 8 differs · 2 unsupported | **6 · 37 · 6 · 2** |
+| 144 | 7 · 38 · 4 · 2 | **14 · 31 · 4 · 2** |
+
+The 144 dpi tally the ink-residual slice recorded but would not claim is now
+claimable, and it is the better of the two.
+
+**Private holdout (aggregate only).** 18/18 pages exact, before and after.
+`ssim_mean` 0.8132 → 0.8206, `ssim_inked_mean` 0.2927 → 0.3158,
+`text_line_iou_mean` 0.7641 → 0.7651. Its lineseg break recall is unmoved at
+59/252, but the per-decision accuracy goes 0.4365 → 0.4603 and the `late`
+misses collapse 38 → 15: the breaker measures a line 0.9794 → 0.9840 as full
+as the authoring engine did, which is the same 2% narrowness closing.
+
+### Not proven
+
+- **One machine, one font stack.** Every number here resolves faces against
+  this machine's installed index. The em measurement removes the *resolution*
+  dependence, not the face dependence.
+- **1024 px is not zero.** Hinting still rounds each glyph advance to 1/1024
+  em. It is identical at every dpi, which is what was asked, but it is not
+  the unhinted outline advance and no test asserts a bound against one.
+- **`line_boxes` reports the advance, not the ink.** A space that hangs past
+  a line end moves the reported box (7.677 px on the relayout fixture) with no
+  pixel drawn there. `test_a_relaid_out_paragraph_stays_inside_its_column`
+  now checks the page raster instead, and names this as a follow-up: closing
+  it moves `text_line_iou` on eight of the ten forms in both directions and
+  needs its own measurement. **Measured and closed 2026-09-05** — see *Where
+  a text line's box ends*. It moves the IoU on all ten, seven down and three
+  up, for a mean of −0.00177.
+- **The dpi ladder is four rungs**, 96–288. Nothing was measured below 96 or
+  above 288, and `pt_to_px`'s `max(1, ...)` floor still exists for the raster.
+- **The footnote column is now analytic too but is not in the digest.**
+  `_note_mark_extent` and the note body column used to reach HWPUNIT through
+  `hwp_from_px(draw.textlength(...))` — the same leak, in a channel
+  `layout_digest` does not cover. They were converted with everything else,
+  but no corpus document exercises them enough for the byte-identity
+  assertion to be evidence about them.
+
+### What is still measured on the raster, deliberately
+
+`draw.textlength` survives in exactly two places, and neither is layout: the
+glyph mask's buffer size in `_draw_glyph_piece` (a rasterisation allocation),
+and the equation box, which is already measured at a fixed
+`EQUATION_EXTENT_DPI = 600` and scaled — dpi-free by the same argument as
+`LAYOUT_REFERENCE_PX`, arrived at earlier and independently.
+
+
+## Where a text line's box ends — measured, 2026-09-05
+
+The resolution-independence slice left a named follow-up: `line_boxes`
+reported the *advance*, so a space landing at a line end moved the reported
+box (7.677 px on the relayout fixture) with no pixel drawn there, and closing
+it "moves `text_line_iou` on eight of the ten forms in both directions and
+needs its own measurement". This is that measurement.
+
+### Three conventions, and what the reference is
+
+A line's right edge can be read three ways, and every `line_boxes` record now
+carries all three explicitly:
+
+| field | what it is |
+| --- | --- |
+| `x1_advance` | the advance of every glyph piece on the line, a trailing space included. What a **caret** needs. |
+| `x1_ink` | where the last glyph's outline stops — the advance minus that glyph's right side bearing. What a **containment check** needs. |
+| `x1_visible_advance` | the advance of the last piece that draws ink: the advance reading with trailing whitespace dropped. |
+| `x1` | the geometry box, which follows `own_render.LINE_BOX_END`. |
+
+**The reference is an advance box, not an ink box.** `render_scoreboard`
+forms the reference line boxes from PyMuPDF's `page.get_text("dict")` line
+`bbox`, which is the union of the line's per-character quads, and a MuPDF
+character quad spans the character's **advance**, not its ink. Read straight
+off the corpus: a 12.96 pt Hangul character in the nrf reference measures
+exactly 12.96 wide, i.e. 1.000 em, which is its full-width cell advance —
+its ink is narrower on every face (맑은 고딕's `가` inks 1000 of a 1024 em).
+Over all 21995 full-width characters in the ten reference PDFs the median is
+1.0000 em and 92.1% land within 0.005 em of it.
+`test_the_reference_line_box_is_an_advance_box_not_an_ink_box` asserts both
+halves.
+
+Pillow is not a way round this: `FreeTypeFont.getbbox` also reports the
+advance box (a space's `getbbox` is as wide as its advance and zero high), so
+the ink edge has to come off the rendered mask. `_em_right_bearing` measures
+it at `LAYOUT_REFERENCE_PX` and divides, so it is dpi-free for the same
+reason `_em_width` is, and only the chunk's LAST character is measured:
+kerning moves a glyph's origin, never its own advance, so the ink right edge
+of a chunk is the chunk's advance minus its last character's bearing (바탕:
+`abc` is 1700/1639 and `c` alone 555/494 — the same 61 units).
+
+### The measurement
+
+The scoreboard's pairing is greedy by centre distance and will happily pair
+two lines holding different text, which puts a 150 px tail on **every**
+convention alike and measures the line breaker rather than the box end. So
+the decision is read off the confident subset: pairs whose left edges agree
+to 1.5 px and whose baselines agree to 2.0 px, i.e. lines that demonstrably
+start in the same place. 817 of the 2086 corpus pairs, 144 dpi:
+
+| convention | n | median abs(dx) | p90 abs(dx) | mean IoU |
+| --- | --- | --- | --- | --- |
+| `ink` | 817 | 2.484 | 5.427 | 0.8480 |
+| `advance` | 817 | 0.371 | 6.239 | 0.8707 |
+| `visible_advance` | 817 | **0.363** | **5.275** | **0.8713** |
+
+`ink` loses decisively, as the reference reading above predicts. The two
+advance readings are close, and the reason is that **the reference itself is
+not consistent**. They differ on only 34 of the 817 — the lines that end in
+whitespace — and on those Hancom splits:
+
+| the reference PDF… | n | `advance` median abs(dx) | `visible_advance` median abs(dx) |
+| --- | --- | --- | --- |
+| dropped the trailing space | 19 | 12.676 | **1.750** |
+| kept the trailing space | 15 | **2.682** | 9.591 |
+
+19 > 15 is the whole of `visible_advance`'s margin, and nothing in the OWPML
+predicts which way a given line will go. `LINE_BOX_END = "visible_advance"`
+is adopted on that evidence and is a **named soft call**, not a proof.
+
+### What it cost, per form
+
+Corpus scoreboard, 144 dpi, `auto` layout. `ssim`, `ssim_inked`, page counts,
+pair rates and every lineseg channel are byte-identical before and after —
+nothing about the raster or the layout changed, only what the sidecar reports
+— so `text_line_iou_mean` is the only column that moves. It moves on all ten
+forms, seven down and three up:
+
+| form | text_line_iou_mean |
+| --- | --- |
+| `nrf-gyeolgwa-bogoseo-yangsik` | **−0.01222** |
+| `gianmun-byeolji-1ho` | −0.00378 |
+| `jeongbo-gonggae-cheongguseo` | −0.00370 |
+| `admrul-gajokdolbom-hyuga-sinchengseo` | −0.00261 |
+| `gianmun-byeolji-2ho` | −0.00129 |
+| `kstartup-…-saeopgyehoekseo` | −0.00114 |
+| `saeopja-deungnok-sinchengseo` | −0.00066 |
+| `moel-…-2013` | +0.00153 |
+| `moel-…-2025` | +0.00232 |
+| `jumin-deungchobon-sinchengseo` | **+0.00386** |
+
+Mean over the ten: 0.647522 → 0.645754, **−0.00177**. Every verdict is
+unchanged, every page count is unchanged, `text_line_pair_rate_mean` is
+unchanged at 0.836210.
+
+`render-check-01` is unmoved: 9/9 pages exact and the tally is 6 · 37 · 6 · 2
+at 96 dpi and 14 · 31 · 4 · 2 at 144, the same as after the
+resolution-independence slice. The private report-class holdout is 18/18
+pages exact before and after, with `ssim_mean` 0.746015 and
+`ssim_inked_mean` 0.175313 unchanged and `text_line_iou_mean`
+0.585179 → 0.583784.
+
+**The IoU channel and the abs(dx) channel disagree, and this is recorded
+rather than resolved.** On all 2086 pairs — mispairings included — `advance`
+scores 0.670222 and `visible_advance` 0.669558, which is where the −0.00177
+comes from; on the 817 confident pairs the order reverses (0.8707 vs 0.8713).
+The brief for this slice was to minimise abs(dx) on paired lines and that is
+what was done; a reader who cares about the aggregate IoU number more than
+about the box being right should flip `LINE_BOX_END` back to `"advance"` and
+will get the old numbers exactly.
+
+### The relayout containment test, tightened
+
+`test_a_relaid_out_paragraph_stays_inside_its_column` had to give up its
+one-pixel bound on the reported box when the resolution-independence slice
+made the trailing-space hang visible; it now has it back, on `x1` and on
+`x1_ink`, while `x1_advance` is still allowed the half-cell hang and is
+asserted to actually take it on the fixture (7.020 px and 8.667 px at 96
+dpi). The raster check — no ink right of the column edge — is unchanged.
+
+## The nrf regression the resolution-independence slice left behind
+
+That slice named one form moving the wrong way: `nrf` `ssim_inked` −0.0160
+and `text_line_iou` −0.0128. Diagnosed here, and **not fixed here**.
+
+### It is not a layout regression
+
+`nrf`'s line breaking did not change at all. Its `--lineseg-agreement` report
+is identical at `origin/claude/engine-e2-ink-residual` (75a1264) and at
+2339ce7 on every channel — 234 JSON leaves, 3 differ, and all three are the
+`cached_line_fill` percentiles (median 0.984049 → 0.983573). Break positions,
+break sequences, line counts, first-line boxes: unchanged. So the new layout
+is neither closer to Hancom's cached `hp:lineseg` nor farther from it; the
+"if farther" branch of the question does not arise. (`--layout-digest` itself
+cannot be diffed across that pair — it was added by the slice under
+examination — so the agreement report, which both revisions carry, is the
+channel that answers it.)
+
+What changed on `nrf` is the **drawing**: under `auto` it keeps its cached
+linesegs, and only the intra-line cursor moved, from `draw.textlength` at a
+rounded raster size to `pxf` of the analytic 1024 px em.
+
+### The face, and what the reference says
+
+The glyph class is the full-width cell, and the face is a 한양 one resolved
+through the bundled map. `nrf` sets 639 of its 1063 full-width characters in
+휴먼명조, which is not installed on this machine and resolves to Nanum
+Myeongjo. Measured three ways, in EM:
+
+| | Hangul advance |
+| --- | --- |
+| Hancom's own reference PDF (n = 639, p05 = p95 = median) | **1.0000** |
+| our new 1024 px em measurement (Nanum Myeongjo) | 0.9502 |
+| the old raster measurement (21 px of a 22 px font) | 0.9545 |
+
+So **neither** the old advance nor the new one is right, and the old one was
+accidentally 0.4% closer because FreeType rounded 20.9 px up to 21. That
+rounding is the whole of the named regression.
+
+### The rule that follows, measured, and why it is a follow-up and not a fix
+
+The right answer is the rule this codebase already states in two places and
+does not apply on the advance path: `is_full_width`'s docstring and
+`_cached_lower_bound_hwp` both say a full-width cell advances by exactly the
+declared character size × `hh:ratio`, whatever face draws it — the full-width
+counterpart of `SPACE_CELL_FRACTION`. The reference PDFs agree: 21995
+full-width characters, median 1.0000 em, 92.1% within 0.005 em, and per
+document the median is 1.0000 or 1.0003 on nine of the ten.
+
+It was implemented and measured on the corpus, and it is **not shipped**,
+because it buys the raster channel at the line breaker's expense:
+
+| channel | before | with the full-width cell rule |
+| --- | --- | --- |
+| `nrf` `text_line_iou_mean` | 0.69946 | **0.72981** |
+| `nrf` `ssim_inked` | 0.45356 | **0.46134** |
+| `nrf` `cached_line_fill` median | 0.9423 | **0.9836** |
+| corpus `text_line_iou_mean` | 0.647522 | 0.650740 |
+| corpus `ssim_inked_mean` | 0.276175 | 0.278762 |
+| corpus `ssim_mean` | 0.830919 | 0.829829 |
+| **corpus break positions matched** | **80 / 216** | **66 / 216** |
+| paragraphs, exact break sequence | 2030 / 2148 | 1981 / 2148 |
+| — of the misses, `early` | 74 | 93 |
+
+It more than reverses the named `nrf` regression and moves
+`cached_line_fill` toward 1.0 on three forms and away on none (jumin +0.0081,
+kstartup +0.0132, nrf +0.0413), which is the direct evidence that the advance
+itself gets *more* correct. But it breaks `moel-2013`, `moel-2025`, `jumin`
+and `kstartup` lines earlier, because those forms **already** measured their
+own cached lines as overflowing before the change (`cached_line_fill` p90
+1.0258 and 1.0458 on the two `moel` forms) and a correct, wider full-width
+cell pushes more of them over. That over-measure is a separate, pre-existing
+defect — the reference PDF says those forms' 휴먼명조 cells are 1.0003 em
+flat, so Hancom is fitting text a 1.0 em model says will not fit — and it has
+to be found before the cell rule can land without lowering
+`test_the_breaker_agrees_with_the_authoring_engine_exactly_this_much`.
+
+### Not proven
+
+- **The trailing-space split is 34 lines.** 19 against 15 decided
+  `LINE_BOX_END`, on one machine's font stack. A different corpus could
+  reverse it, and no mechanism was found that predicts which lines Hancom
+  writes the space into.
+- **`x1_ink` is the mask's ink, not the outline's.** It is measured off a
+  1024 px FreeType mask, so it carries the same sub-0.1%-per-glyph hinting
+  residual `LAYOUT_REFERENCE_PX` already declares, and it excludes the
+  antialias fringe and any synthetic-bold smear, both of which put a pixel or
+  two of real ink past it.
+- **The confident subset is a filter, not a ground truth.** 817 of 2086 pairs
+  qualify; the other 1269 are dropped because our line and the reference's do
+  not start in the same place, which is usually a line-breaking disagreement
+  but is not proven to be one, line by line.
+- **The full-width cell rule was measured, not ablated.** Its cost is
+  attributed to the pre-existing over-measure on `moel`/`jumin` because those
+  forms' fills were already over 1.0 before it, not because a tree with that
+  over-measure removed was rendered.

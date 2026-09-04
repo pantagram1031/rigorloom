@@ -89,9 +89,9 @@ THRESHOLDS = {
     "match": {"iou_min": 0.55, "ink_delta_abs_max": 0.010, "ssim_min": 0.90},
     "close": {"iou_min": 0.30, "ink_delta_abs_max": 0.025, "ssim_min": 0.65},
     "ink_threshold": rs.INK_THRESHOLD,
-    "iou_tolerance_px": 1,
+    "iou_tolerance_mm": 0.26,
     "gated_on": ["iou", "ink_delta", "ssim"],
-    "reported_not_gated": ["ssim_inked"],
+    "reported_not_gated": ["ssim_inked", "ink_mass", "ink_ratio"],
     "ratified": False,
     "rationale": (
         "match = same ink in the same places, differing only in rasterisation;"
@@ -101,6 +101,85 @@ THRESHOLDS = {
         " they separate its features; they are not a ratified regression"
         " gate and no other document has been scored with them."),
 }
+
+#: The ink channel's own noise floor, measured, not fitted.
+#:
+#: ``docs/research/ink-residual.md`` pairs 1,000+ glyphs of this document
+#: against the reference by their own characters, on bands whose lines are
+#: already pixel-exact, and finds the residual is neither displacement nor
+#: substitution: our rasteriser simply lays down MORE COVERAGE per glyph than
+#: the reference's.  The excess is multiplicative and uniform — the same
+#: factor on features that read ``close`` and on features that read
+#: ``differs`` — and it decays as the glyphs get bigger in device pixels:
+#:
+#:     body-text coverage ratio (ours / reference), 9.95 pt 바탕
+#:       96 dpi (13 px em)   1.80   dark-pixel ratio 2.60
+#:      144 dpi (20 px em)   1.16   dark-pixel ratio 1.25
+#:      192 dpi (27 px em)   ~1.0
+#:      288 dpi (40 px em)   ~1.0   band ink delta reaches 0.000
+#:
+#: Two consequences the bounds have to respect.  First, at the default 96 dpi
+#: ``ink_delta`` on a dense 10 pt Korean text band IS this floor: the measured
+#: band delta is the band's own reference ink fraction times (ratio - 1), so
+#: a denser band scores a larger delta for identical renderer behaviour.  The
+#: ``close`` bound of 0.025 and the floor are the same size at 96 dpi, which
+#: is why the ink channel cannot separate a real ink error from the rasteriser
+#: there.  Second, a genuinely missing element does NOT behave this way: F45
+#: (a declared-unsupported text box) holds ``ink_delta`` at -0.008 .. -0.023
+#: at every dpi from 96 to 384 while every drawn text feature collapses to
+#: zero.  The channel's NEGATIVE side is where its signal is.
+#:
+#: No fudge is applied for any of this.  It is recorded, echoed into the
+#: report, and the bounds are made resolution-aware below.
+RASTERISER_FLOOR = {
+    "measured_on": "render-check-01, F01/F06/F07/F08/F13/F15, per glyph",
+    "coverage_ratio_body_text": {"96": 1.80, "144": 1.16, "192": 1.0,
+                                 "288": 1.0},
+    "dark_pixel_ratio_body_text": {"96": 2.60, "144": 1.25},
+    "band_delta_model": "reference_ink_fraction * (coverage_ratio - 1)",
+    "floor_at_96_dpi": 0.025,
+    "note": ("at 96 dpi the positive side of ink_delta on 10 pt Korean text"
+             " is at this floor; the negative side is not, and that is the"
+             " side a missing element moves"),
+}
+
+
+def iou_tolerance_px(dpi=DEFAULT_DPI):
+    """The ink-agreement tolerance, in pixels of a ``dpi`` raster.
+
+    The tolerance is PHYSICAL, and this module already said so: the comment
+    on ``_ink_mask`` fixes it at one pixel of a 96 dpi raster, i.e. 0.26 mm,
+    "below what a reader can see, and far below the displacement a real layout
+    bug produces".  A constant *pixel* count does not keep that promise — the
+    same document scored at 288 dpi would be held to 0.09 mm — so the pixel
+    count is derived from the physical figure instead of hard-coded.
+
+    At ``DEFAULT_DPI`` this returns 1, exactly what the constant was, so every
+    number this harness has published is reproduced unchanged.
+    """
+    return max(1, int(round(dpi / float(DEFAULT_DPI))))
+
+
+def ink_delta_bound(base, dpi=DEFAULT_DPI):
+    """``base`` (a bound set at ``DEFAULT_DPI``) rescaled to ``dpi``.
+
+    ``RASTERISER_FLOOR`` says the disagreement lives in the antialias and
+    hinting band along glyph outlines.  That band is about one pixel wide at
+    any resolution, so for a region of FIXED PHYSICAL SIZE the share of its
+    pixels that lie in the band — and therefore the ink delta the two
+    rasterisers can disagree by — falls as 1/dpi.  A bound that stays constant
+    in pixels is a bound that gets laxer, in physical terms, the finer the
+    raster; scaling it by ``DEFAULT_DPI / dpi`` keeps it fixed against the
+    thing it is bounding.
+
+    This is an exact no-op at ``DEFAULT_DPI``, and it only ever TIGHTENS the
+    gate above it.  It is not fitted: the measured decay of the residual is
+    steeper than 1/dpi (1.80 -> 1.16 -> ~1.0 over 96 -> 144 -> 192), so this
+    bound stays conservative at every resolution measured.
+    """
+    if dpi == DEFAULT_DPI:
+        return base          # exactly, not to within a float multiply
+    return base * DEFAULT_DPI / float(dpi)
 
 #: Which feature owns which ``elements_skipped`` entry.  Keyed by the base tag
 #: of the ledger entry (the part before ``@`` or ``[``), valued by label
@@ -314,7 +393,9 @@ def _crop(image, region):
 #: reference, and pixel-exact IoU on 10 pt Korean text at 96 dpi sits near
 #: 0.1 even where the two renders are visually indistinguishable.  One pixel
 #: at 96 dpi is 0.26 mm — below what a reader can see, and far below the
-#: displacement a real layout bug produces.
+#: displacement a real layout bug produces.  ``iou_tolerance_px`` above turns
+#: that physical figure into a pixel count for whatever raster is in use; this
+#: constant is what it returns at ``DEFAULT_DPI`` and is the default here.
 IOU_TOLERANCE_PX = 1
 
 
@@ -358,7 +439,23 @@ def _pad_to(image, size):
     return canvas
 
 
-def score_region(reference_rgb, candidate_rgb, threshold):
+def ink_mass_fraction(grey):
+    """Mean ink COVERAGE per pixel: 0.0 for white, 1.0 for solid black.
+
+    ``rs._ink_fraction`` counts pixels darker than a threshold, which asks a
+    yes/no question of every antialiased edge pixel and therefore amplifies a
+    rasteriser's weight rather than measuring it: on this document's body text
+    at 96 dpi our coverage is 1.80x the reference's and our thresholded pixel
+    count is 2.60x it.  This is the same quantity without the threshold, so a
+    later pass can read the residual as the multiplicative thing it is.
+    Reported, never gated — the bounds are stated against ``_ink_fraction``.
+    """
+    histogram = grey.histogram()
+    total = float(grey.size[0] * grey.size[1])
+    return sum((255 - v) * histogram[v] for v in range(256)) / (255.0 * total)
+
+
+def score_region(reference_rgb, candidate_rgb, threshold, tolerance=None):
     width = max(reference_rgb.size[0], candidate_rgb.size[0], 8)
     height = max(reference_rgb.size[1], candidate_rgb.size[1], 8)
     ref_grey = _pad_to(reference_rgb, (width, height)).convert("L")
@@ -366,17 +463,30 @@ def score_region(reference_rgb, candidate_rgb, threshold):
     mean, blocks, inked_mean, inked_blocks = rs.ssim(ref_grey, cand_grey)
     ref_ink = rs._ink_fraction(ref_grey)
     cand_ink = rs._ink_fraction(cand_grey)
-    iou = _mask_iou(_ink_mask(ref_grey, threshold),
-                    _ink_mask(cand_grey, threshold))
+    if tolerance is None:
+        tolerance = IOU_TOLERANCE_PX
+    iou = _mask_iou(_ink_mask(ref_grey, threshold, tolerance),
+                    _ink_mask(cand_grey, threshold, tolerance))
+    ref_mass = ink_mass_fraction(ref_grey)
+    cand_mass = ink_mass_fraction(cand_grey)
     return {
         "ssim": round(mean, 4),
         "ssim_blocks": blocks,
         "ssim_inked": round(inked_mean, 4) if inked_blocks else None,
         "ssim_inked_blocks": inked_blocks,
         "iou": round(iou, 4),
+        "iou_tolerance_px": tolerance,
         "ink": {"reference": round(ref_ink, 5),
                 "candidate": round(cand_ink, 5),
-                "delta": round(cand_ink - ref_ink, 5)},
+                "delta": round(cand_ink - ref_ink, 5),
+                # Reported, not gated.  See ``RASTERISER_FLOOR``: the residual
+                # on a drawn text band is multiplicative, so the ratio is the
+                # channel that stays put when the band's density changes.
+                "mass_reference": round(ref_mass, 5),
+                "mass_candidate": round(cand_mass, 5),
+                "mass_delta": round(cand_mass - ref_mass, 5),
+                "mass_ratio": (round(cand_mass / ref_mass, 4)
+                               if ref_mass > 0 else None)},
         "crop_px": [width, height],
     }
 
@@ -400,7 +510,7 @@ def declared_limits(feature, skipped):
     return owned, not_drawn
 
 
-def verdict_for(metrics, not_drawn):
+def verdict_for(metrics, not_drawn, dpi=DEFAULT_DPI):
     if not_drawn:
         return "unsupported"
     ssim_value = metrics["ssim"]
@@ -408,10 +518,12 @@ def verdict_for(metrics, not_drawn):
     delta = abs(metrics["ink"]["delta"])
     good = THRESHOLDS["match"]
     okay = THRESHOLDS["close"]
-    if (iou >= good["iou_min"] and delta <= good["ink_delta_abs_max"]
+    good_ink = ink_delta_bound(good["ink_delta_abs_max"], dpi)
+    okay_ink = ink_delta_bound(okay["ink_delta_abs_max"], dpi)
+    if (iou >= good["iou_min"] and delta <= good_ink
             and ssim_value >= good["ssim_min"]):
         return "match"
-    if (iou >= okay["iou_min"] and delta <= okay["ink_delta_abs_max"]
+    if (iou >= okay["iou_min"] and delta <= okay_ink
             and ssim_value >= okay["ssim_min"]):
         return "close"
     return "differs"
@@ -455,6 +567,7 @@ def side_by_side(reference_rgb, candidate_rgb, out_path, max_width=900):
 def run(hwpx_path, reference_pdf, blocks_path, dpi=DEFAULT_DPI,
         png_dir=None, max_png_bytes=None):
     features = json.load(open(blocks_path, encoding="utf-8"))["features"]
+    tolerance = iou_tolerance_px(dpi)
 
     renderer = own_render.OwnRenderer(hwpx_path, dpi=dpi)
     candidate_pages, sidecar = renderer.render()
@@ -516,7 +629,8 @@ def run(hwpx_path, reference_pdf, blocks_path, dpi=DEFAULT_DPI,
         ref_crop = _crop(reference_pages[ref_index], ref_region)
         cand_crop = _crop(candidate_pages[cand_index].convert("RGB"),
                           cand_region)
-        metrics = score_region(ref_crop, cand_crop, rs.INK_THRESHOLD)
+        metrics = score_region(ref_crop, cand_crop, rs.INK_THRESHOLD,
+                               tolerance=tolerance)
         # The two band heights are the cheapest read on whether the feature
         # occupies the same amount of page on both sides.  A band that is
         # tall on one side and a stub on the other means the content ran onto
@@ -530,7 +644,7 @@ def run(hwpx_path, reference_pdf, blocks_path, dpi=DEFAULT_DPI,
             row["declared_limits"] = limits
         if not_drawn:
             row["declared_not_drawn"] = [e["element"] for e in not_drawn]
-        row["verdict"] = verdict_for(metrics, not_drawn)
+        row["verdict"] = verdict_for(metrics, not_drawn, dpi)
 
         if png_dir is not None:
             path = os.path.join(png_dir, "%s.png" % fid)
@@ -556,6 +670,21 @@ def run(hwpx_path, reference_pdf, blocks_path, dpi=DEFAULT_DPI,
         "reference_geometry_scale": rs.reference_geometry_scale(hwpx_path,
                                                                 reference_pdf),
         "thresholds": THRESHOLDS,
+        "thresholds_at_dpi": {
+            "dpi": dpi,
+            "iou_tolerance_px": tolerance,
+            "match_ink_delta_abs_max": ink_delta_bound(
+                THRESHOLDS["match"]["ink_delta_abs_max"], dpi),
+            "close_ink_delta_abs_max": ink_delta_bound(
+                THRESHOLDS["close"]["ink_delta_abs_max"], dpi),
+            "derivation": ("the IoU tolerance is the pixel count covering"
+                           " thresholds.iou_tolerance_mm at this raster; the"
+                           " ink bounds scale as DEFAULT_DPI/dpi because the"
+                           " rasteriser residual lives in a ~1 px band along"
+                           " glyph outlines (see rasteriser_floor).  Both are"
+                           " exact no-ops at DEFAULT_DPI."),
+        },
+        "rasteriser_floor": RASTERISER_FLOOR,
         "region_derivation": {
             "candidate": ("own_render block_layout[section].blocks, indexed by"
                           " the feature's own block ordinal; band features use"

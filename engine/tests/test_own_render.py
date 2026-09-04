@@ -24,6 +24,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -1153,6 +1154,113 @@ def test_no_glyph_class_is_measured_more_than_a_hundredth_of_an_em_out():
     assert all(abs(e) <= 0.012 for e in worst.values()), worst
 
 
+# --------------------------------- where a text line's box ends (E2 linebox)
+
+
+def test_the_reference_line_box_is_an_advance_box_not_an_ink_box():
+    """Why ``LINE_BOX_END`` may not be ``ink``, measured on Hancom's own PDFs.
+
+    PyMuPDF reports a character's bbox as its ADVANCE quad, and Hancom
+    advances a full-width cell by exactly one em, so a Hangul character's
+    reference bbox is 1.000 em wide.  Its INK is strictly narrower — every
+    face carries side bearings — so a renderer reporting the ink edge would
+    report a systematically short line.  Both halves are asserted here: the
+    reference's own number, and the ink deficit on the faces this machine
+    resolves the same characters to.
+    """
+    import fitz
+    import collections
+    ems = []
+    for path in _reference_pdfs():
+        with fitz.open(path) as doc:
+            for page in doc:
+                for block in page.get_text("rawdict").get("blocks", []):
+                    if block.get("type") != 0:
+                        continue
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            size = span["size"]
+                            if size <= 0:
+                                continue
+                            for char in span["chars"]:
+                                if not own_render.is_full_width(char["c"]):
+                                    continue
+                                width = char["bbox"][2] - char["bbox"][0]
+                                ems.append(width / size)
+    assert len(ems) >= 10000, len(ems)
+    inside = sum(1 for v in ems if abs(v - 1.0) <= 0.005)
+    assert inside / len(ems) > 0.9, (
+        f"{inside} of {len(ems)} full-width reference advances within "
+        "0.005 em of 1.0")
+    ems.sort()
+    assert ems[len(ems) // 2] == pytest.approx(1.0, abs=0.005)
+
+    # ...and the ink of the same class of character is measurably narrower,
+    # which is the whole reason ``ink`` loses.
+    index = own_render.SystemFontIndex.shared()
+    Image, ImageDraw, ImageFont = own_render._require_pillow()
+    entry = index.lookup("맑은 고딕") or index.lookup("Malgun Gothic")
+    if entry is None:
+        pytest.skip("no Korean face installed to measure ink against")
+    path, sub = entry["regular"] or entry["bold"]
+    kwargs = {"index": sub} if sub else {}
+    kwargs["layout_engine"] = ImageFont.Layout.BASIC
+    font = ImageFont.truetype(path, own_render.LAYOUT_REFERENCE_PX, **kwargs)
+    for ch in "가한글":
+        advance = font.getlength(ch)
+        box = font.getmask(ch, mode="L").getbbox()
+        assert box is not None and box[2] < advance - 1.0, (ch, box, advance)
+
+
+def test_a_line_box_reports_three_right_edges_and_they_are_ordered():
+    """``ink <= visible_advance <= advance``, on every line of a real form.
+
+    The three are separate fields on purpose: the geometry box follows
+    ``LINE_BOX_END``, the caret follows ``x1_advance``, and a containment
+    check follows ``x1_ink``.  A consumer that picks the wrong one should be
+    picking a documented field, not guessing at ``x1``.
+    """
+    path = _need(os.path.join(CORPUS, "nrf-gyeolgwa-bogoseo-yangsik.hwpx"))
+    _images, report = own_render.OwnRenderer(path, dpi=144).render()
+    boxes = report["line_boxes"]
+    assert boxes
+    assert report["line_box_end"] == own_render.LINE_BOX_END
+    for box in boxes:
+        assert box["x1_ink"] <= box["x1_visible_advance"] + 1e-3, box
+        assert box["x1_visible_advance"] <= box["x1_advance"] + 1e-3, box
+        assert box["x1"] == box[f"x1_{own_render.LINE_BOX_END}"], box
+        assert box["x0"] <= box["x1_ink"] + 1e-3, box
+
+
+def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
+        edited_render):
+    """The follow-up the resolution-independence slice named, now closed.
+
+    On this fixture a computed line ends in a space.  ``x1_advance`` still
+    carries it, because that is where a caret goes; ``x1`` does not, because
+    the reference PDFs' own boxes were measured to stop at the last piece
+    that draws ink.  The gap is the half-width space cell at that run's
+    declared size — 7.020 px and 8.667 px on the two lines the edited
+    paragraph owns, at the fixture's 96 dpi.
+
+    Since the provenance policy, an edit sends the *whole* document
+    computed, so other paragraphs' trailing spaces hang too; the two
+    documented values must still be among them, and every hang must be a
+    positive space cell that drew no ink.
+    """
+    boxes = [b for b in edited_render["report"]["line_boxes"]
+             if b["mode"] == "computed"]
+    hangs = sorted(round(b["x1_advance"] - b["x1"], 3) for b in boxes
+                   if b["x1_advance"] - b["x1"] > 0.01)
+    assert hangs, "no computed line ends in a space"
+    assert {7.02, 8.667} <= set(hangs), hangs
+    for box in boxes:
+        assert box["x1"] == box["x1_visible_advance"]
+        if box["x1_advance"] > box["x1"]:
+            # the dropped piece drew nothing, so the ink edge is unaffected
+            assert box["x1_ink"] <= box["x1"] + 1e-3, box
+
+
 def test_negative_spacing_narrows_a_run(typo_probe):
     renderer, _image, draw = typo_probe
     plain = _synthetic_charpr(renderer, "__p2__", height=1200)
@@ -2233,10 +2341,12 @@ def test_condense_lets_a_line_keep_what_its_spaces_can_give_up(typo_probe):
     text = "가나 다라 마바 사아"
     para = _synthetic_paragraph(renderer, text, cid, para_id="__condmeasure__")
     full = renderer.span_width(draw, para, 0, len(text))
-    space = renderer._measure(draw, " ", cid)
+    space = renderer._measure_hwp(draw, " ", cid)
     # A box narrower than the line by less than what its three spaces can give
     # up at condense=75: the line breaks without that budget and holds with it.
-    column = int(renderer.hwp_from_px(full - 1.5 * space))
+    # Both quantities are HWPUNIT, which is what the breaker fits in -- see
+    # ``LAYOUT_REFERENCE_PX``; there is no pixel anywhere in this decision.
+    column = int(full - 1.5 * space)
     tight, _ = _breaks(renderer, draw, text, cid, column, condense=0)
     loose, _ = _breaks(renderer, draw, text, cid, column, condense=75)
     assert len(tight) == 2, tight
@@ -2329,11 +2439,93 @@ LINESEG_AGREEMENT = {
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
     "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 450, 432, 29, 28, 44, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 243, 223, 34, 27, 49, 12),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 301, 281, 37, 27, 47, 12),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 258, 243, 34, 30, 49, 23),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 12),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 8),
+    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
 }
+
+
+RENDER_CHECK = os.path.join(ROOT, "tests", "corpus", "render-check",
+                            "render-check-01.hwpx")
+
+DPI_LADDER = (96, 144, 192, 288)
+
+
+@pytest.mark.parametrize(
+    "name", ["render-check-01"] + sorted(LINESEG_AGREEMENT))
+def test_the_layout_is_identical_at_every_dpi(name):
+    """Layout is a function of the DOCUMENT, never of the output resolution.
+
+    ``layout_digest`` reports every layout decision in the document's own
+    units -- line breaks as character offsets, line boxes and vertical
+    positions in HWPUNIT, the flow pass's page assignment -- so the JSON has
+    to be byte-identical at 96, 144, 192 and 288 dpi.  It was not: the
+    breaker measured its advances off a font rasterised at
+    ``round(pt * dpi / 72)`` pixels, so both the rounded pixel size and
+    FreeType's hinting at that size decided where lines broke.
+    ``render-check-01``'s ``F06`` fitted 50 characters on its second line at
+    96 dpi and 44 at 144; ``moel-2013`` gained two whole pages.  See
+    ``LAYOUT_REFERENCE_PX`` for what replaced it.
+
+    This is the assertion the whole slice exists for, so it runs on every
+    corpus form and on the render-check document, not on a sample.
+    """
+    path = (RENDER_CHECK if name == "render-check-01"
+            else os.path.join(CORPUS, name + ".hwpx"))
+    _need(path)
+    reference = None
+    for dpi in DPI_LADDER:
+        digest = json.dumps(own_render.layout_digest(path, dpi=dpi),
+                            sort_keys=True, ensure_ascii=False)
+        if reference is None:
+            reference = digest
+            continue
+        if digest == reference:
+            continue
+        first = json.loads(reference)
+        other = json.loads(digest)
+        moved = [p["paragraph"] for p, q
+                 in zip(first["paragraphs"], other["paragraphs"])
+                 if p["breaks"] != q["breaks"]]
+        raise AssertionError(
+            f"{name}: layout at {dpi} dpi differs from {DPI_LADDER[0]} dpi -- "
+            f"{first['lines_total']} -> {other['lines_total']} lines, "
+            f"{first['pages']} -> {other['pages']} pages, "
+            f"paragraphs rebroken: {moved[:12]}")
+
+
+def test_an_advance_is_the_same_fraction_of_an_em_at_every_dpi():
+    """The mechanism under the digest, isolated.
+
+    ``_em_width`` is where resolution independence is won or lost: it must
+    return the same number whatever the renderer's dpi, because it is a
+    property of the face's outlines and of nothing else.  The old code had no
+    such function -- it called ``draw.textlength`` on a font built at
+    ``pt_to_px(pt)``, which this test also shows moving, so the two readings
+    are side by side rather than asserted in the abstract.
+    """
+    _need(GIANMUN)
+    # 10 pt is the size to ask at: it is 13.33 px at 96 dpi, 20 at 144, 26.67
+    # at 192 and 40 at 288, so ``pt_to_px`` rounds it three different ways
+    # along the ladder.  Latin, because a Hangul cell is exactly 1 em at every
+    # size and could not show the difference either way.
+    text = "ABCdef gh"
+    ems = {}
+    rastered = {}
+    for dpi in DPI_LADDER:
+        renderer = own_render.OwnRenderer(GIANMUN, dpi=dpi)
+        image = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+        draw = renderer.ImageDraw.Draw(image)
+        font = renderer.fontbook.get(renderer.pt_to_px(10.0), False, None)
+        ems[dpi] = renderer._em_width(font, text)
+        # what the layout used to be measured with: the RASTER font, whose
+        # size is an integer number of pixels, expressed back in em
+        rastered[dpi] = float(draw.textlength(text, font=font)) / font.size
+    assert len(set(ems.values())) == 1, ems
+    assert len(set(rastered.values())) > 1, (
+        "fixture drifted: the old raster measurement no longer moves with "
+        "dpi, so this test is no longer showing anything")
 
 
 @pytest.mark.parametrize("name", sorted(LINESEG_AGREEMENT))
@@ -2416,7 +2608,18 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # read doubled out of the paraPr MCE switch's default branch (measured,
     # `_para_pr_geometry_source`), which more than pays it back — kstartup
     # alone goes 435 -> 450 / 416 -> 432 / 13 -> 16.
-    assert totals == [2148, 2105, 2014, 158, 136, 216, 68], totals
+    #
+    # 2105 -> 2116, 2014 -> 2030, 136 -> 139, 68 -> 80 on the
+    # resolution-independence slice: advances stopped being measured off a
+    # font rasterised at ``round(pt * dpi / 72)`` integer pixels and are now
+    # scaled analytically from face metrics into HWPUNIT, so the breaker
+    # finally fits the size the document declares rather than the size the
+    # raster rounded it to.  Every column moved the same way.  Three forms
+    # move at the default 144 dpi -- moel-2013 (12 -> 23 break positions),
+    # moel-2025 (301 -> 297 line counts) and saeopja (8 -> 9); the other
+    # seven are unchanged there because their declared sizes already landed
+    # on integer pixels at 144.
+    assert totals == [2148, 2116, 2030, 158, 139, 216, 80], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -2509,42 +2712,91 @@ def edited_render(tmp_path_factory):
 
 
 def test_an_edited_paragraph_is_never_drawn_from_a_stale_box(edited_render):
-    """The rule this slice exists for: a stale cached box is never drawn.
+    """The rule this slice exists for, now enforced for the WHOLE document.
 
     The text of one paragraph is lengthened past what its cached line boxes
-    can hold.  The renderer must notice from the file alone, relay that
-    paragraph out itself, and say so — and it must leave every other
-    paragraph on the authoring engine's own boxes.
+    can hold, and — this is the point — the package still carries Hancom's
+    own writer signature, because the fixture rewrites the section XML
+    without going through a writer that stamps its own.  The staleness
+    detector raises no false positive, so a hit FALSIFIES that signature:
+    the package is not the untouched Hancom save it claims to be, and
+    ``docs/research/lineseg-on-save-01.md`` measured that an edit moves
+    paragraphs it never touched (534 positions downstream).  So every
+    paragraph goes computed, not just the one that was caught.
     """
     report = edited_render["report"]
+    assert report["layout_provenance"]["writer"] == "hancom_untouched"
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith(
+        "stale_cache_contradicts_provenance"), report["layout_policy_reason"]
     layout = report["line_layout"]
-    assert layout["paragraphs"]["computed"] == 1, layout["paragraphs"]
-    assert layout["computed_reasons"] == {"stale_line_width": 1}
-    relaid = layout["paragraphs_relaid_out"]
-    assert len(relaid) == 1
-    record = relaid[0]
-    assert record["paragraph"] == EDIT_PARAGRAPH
+    assert layout["stale_diagnostics"] == {str(EDIT_PARAGRAPH):
+                                           "stale_line_width"}
+    assert layout["paragraphs"]["lineseg"] == 0, layout["paragraphs"]
+    assert set(layout["computed_reasons"]) == {"policy"}
+    record = next(r for r in layout["paragraphs_relaid_out"]
+                  if r["paragraph"] == EDIT_PARAGRAPH)
     assert record["mode"] == "computed"
-    assert record["reason"] == "stale_line_width"
     assert record["cached_lines"] == 2
     assert record["computed_lines"] > record["cached_lines"], (
         "a longer paragraph must take more lines")
     assert record["height_delta_hwpunit"] > 0
 
 
-def test_every_line_box_says_which_engine_broke_it(edited_render):
+def test_every_line_box_says_which_engine_broke_it(edited_render, tmp_path):
+    """Per line, which engine broke it — under both policies.
+
+    Under the shipping policy an edited document is drawn entirely by this
+    renderer, so every box says ``computed``.  The mixture is still reachable,
+    and still declared per box: pin the cache policy (a measurement pin, and
+    unsound for rendering) and declare the one edited paragraph, and only
+    that paragraph's lines come from this breaker.
+    """
     report = edited_render["report"]
     modes = {}
     for box in report["line_boxes"]:
         modes[box["mode"]] = modes.get(box["mode"], 0) + 1
-    assert set(modes) == {"lineseg", "computed"}
+    assert set(modes) == {"computed"}, modes
+
+    edited_path = _edited_copy(_need(EDIT_FORM), tmp_path / "edited.hwpx",
+                               EDIT_PARAGRAPH, EDIT_TEXT)
+    mixed = own_render.render_to_dir(
+        edited_path, tmp_path / "mixed", dpi=96,
+        layout_policy="cache", relayout_paragraphs={EDIT_PARAGRAPH})
+    modes = {}
+    for box in mixed["report"]["line_boxes"]:
+        modes[box["mode"]] = modes.get(box["mode"], 0) + 1
+    assert set(modes) == {"lineseg", "computed"}, modes
     assert modes["computed"] == (
-        report["line_layout"]["paragraphs_relaid_out"][0]["computed_lines"])
+        mixed["report"]["line_layout"]
+        ["paragraphs_relaid_out"][0]["computed_lines"])
     assert modes["lineseg"] > 0
 
 
 def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
-    """No computed line may run out of the text column it was broken for."""
+    """No computed line may put INK outside the column it was broken for.
+
+    Two claims, and they are not the same claim.
+
+    ``x1_advance`` -- the caret edge -- may hang past the column, because a
+    space that lands at a line end hangs there rather than forcing a break.
+    That is real behaviour and the bound on it is one half-width space cell;
+    half the line's own height is a conservative stand-in (a cell is 0.5 em,
+    the box is ascent+descent, about 1.2 em).  On this fixture the hang is
+    7.677 px of a 19 px line.
+
+    The GEOMETRY box may not: ``LINE_BOX_END`` was measured against the
+    Hancom reference PDFs and settled on ``visible_advance``, so ``x1``
+    stops at the last piece that draws ink and the hang is gone from it.
+    Neither may ``x1_ink``.  Both are held to one pixel here, which is the
+    bound this test carried before the resolution-independence slice and had
+    to give up; it is back, and this time it is not an accident of the dpi
+    the fixture happens to render at.
+
+    What may NOT happen is ink outside the column, and that is still checked
+    directly against the rendered page: every pixel right of the column edge
+    is white.
+    """
     report = edited_render["report"]
     geo = report["page_geometry_hwpunit"]
     dpi = report["dpi"]
@@ -2553,40 +2805,238 @@ def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
              / own_render.HWPUNIT_PER_INCH)
     computed = [b for b in report["line_boxes"] if b["mode"] == "computed"]
     assert computed
+    pages = set()
+    hung = 0
     for box in computed:
         assert box["x0"] >= left - 1.0, box
-        # One pixel of tolerance, and no more: a space that lands at a line
-        # end hangs outside the box rather than forcing a break, so the drawn
-        # advance can exceed the fitted width by that space.
         assert box["x1"] <= right + 1.0, box
+        assert box["x1_ink"] <= right + 1.0, box
+        assert box["x1_advance"] <= right + (box["y1"] - box["y0"]) / 2.0, box
+        if box["x1_advance"] > right + 1.0:
+            hung += 1
+        pages.add(box["page"])
+    assert hung, ("the fixture is supposed to contain a line whose trailing "
+                  "space hangs past the column; if it no longer does, this "
+                  "test has stopped measuring what it claims to")
+
+    from PIL import Image
+    out = pathlib.Path(edited_render["pngs"][0]).parent
+    for page in sorted(pages):
+        image = Image.open(out / f"edited-p{page}.png").convert("L")
+        width, height = image.size
+        margin = image.crop((int(right) + 1, 0, width, height))
+        assert min(margin.getdata()) == 255, (
+            f"page {page} draws ink right of the column edge")
 
 
-def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
-    """The detector is sound but incomplete, so the editor gets a channel.
+def _first_text_paragraph(path=None):
+    """Document-order index of the first paragraph that carries text.
 
-    An edit that leaves every line still fitting is invisible in the file.
-    ``relayout_paragraphs`` is how E1's apply path says "I changed this one",
-    and the sidecar has to repeat the claim rather than absorb it.
+    Paragraph numbering is document order over every ``hp:p``, which the
+    caller can compute from the same file; an empty paragraph never reaches
+    the layout decision at all.
     """
-    # Paragraph numbering is document order over every hp:p in section0, which
-    # the caller can compute from the same file; an empty paragraph never
-    # reaches the decision at all, so pick the first one that carries text.
-    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
-    chosen = next(
+    renderer = own_render.OwnRenderer(_need(path or GIANMUN), dpi=96)
+    return next(
         renderer.paragraph_index[id(el)]
         for el in renderer.sections[0].iter()
         if own_render._local(el.tag) == "p"
         and own_render.Paragraph(el, renderer.defs["para_pr"]).chars)
 
+
+def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
+    """The detector is incomplete, so the editor gets a channel.
+
+    An edit that leaves every line still fitting is invisible in the file.
+    ``relayout_paragraphs`` is how E1's apply path says "I changed this one",
+    and the sidecar has to repeat the claim rather than absorb it.
+
+    What the claim now BUYS is the whole document, not one paragraph: a
+    package somebody edited is not the untouched save its writer signature
+    describes, wherever the edit landed.
+    """
+    chosen = _first_text_paragraph()
     result = own_render.render_to_dir(
         _need(GIANMUN), tmp_path / "marked", dpi=96,
         relayout_paragraphs={chosen})
-    layout = result["report"]["line_layout"]
+    report = result["report"]
+    layout = report["line_layout"]
+    assert layout["caller_marked_edited"] == [chosen]
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith("caller_marked_edited")
+    assert layout["paragraphs"]["lineseg"] == 0
+    assert set(layout["computed_reasons"]) == {"policy"}
+
+
+def test_a_declared_edit_still_relays_out_one_paragraph_under_a_cache_pin(
+        tmp_path):
+    """The per-paragraph incremental path, kept and reachable.
+
+    E2.1/E2.5's "relay out the edited paragraph, re-place everything after
+    it" machinery is not gone; the shipping policy simply no longer routes an
+    edited document to it, because a cache that is stale anywhere may be
+    stale in paragraphs no per-paragraph test can name.  Pinning the cache
+    policy is how it is still exercised — and the pin is declared.
+    """
+    chosen = _first_text_paragraph()
+    result = own_render.render_to_dir(
+        _need(GIANMUN), tmp_path / "pinned", dpi=96, layout_policy="cache",
+        relayout_paragraphs={chosen})
+    report = result["report"]
+    assert report["layout_policy"] == "cache"
+    assert "override: --layout-policy cache" in report["layout_policy_reason"]
+    layout = report["line_layout"]
     assert layout["caller_marked_edited"] == [chosen]
     assert layout["computed_reasons"] == {"caller_marked_edited": 1}
     assert layout["paragraphs"]["computed"] == 1
     assert [r["paragraph"]
             for r in layout["paragraphs_relaid_out"]] == [chosen]
+
+
+# ---------------------------------------------------- layout provenance policy
+
+def _repackaged_with_application(source, target, application):
+    """A copy of ``source`` whose version.xml names ``application``.
+
+    Only the writer signature changes; every other member is copied byte for
+    byte, so the layout cache the policy is reasoning about is identical
+    across the copies and the ONLY thing under test is provenance.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(source) as archive:
+        names = archive.namelist()
+        payload = {name: archive.read(name) for name in names}
+    version = next(n for n in names if n.rsplit("/", 1)[-1] == "version.xml")
+    text = payload[version].decode("utf-8")
+    before, _, rest = text.partition(' application="')
+    _old, _, after = rest.partition('"')
+    payload[version] = (before + ' application="' + application + '"'
+                        + after).encode("utf-8")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, payload[name])
+    return target
+
+
+def test_an_untouched_hancom_package_keeps_its_cache(tmp_path):
+    """Provenance case 1, on all ten corpus forms: cache.
+
+    These forms are official templates Hancom itself saved last, nothing in
+    this repo has written to them, and ``docs/research/lineseg-on-save-01.md``
+    measured an untouched Hancom resave reproducing 223 of 223 cached line
+    boxes byte-identically.  That is the one case where the cache may be
+    trusted, and the mechanism that keeps the corpus renders unchanged.
+    """
+    for name in sorted(LINESEG_AGREEMENT):
+        path = os.path.join(CORPUS, name + ".hwpx")
+        _need(path)
+        result = own_render.render_to_dir(path, tmp_path / name, dpi=96)
+        report = result["report"]
+        assert report["layout_provenance"]["writer"] == "hancom_untouched", name
+        assert report["layout_policy"] == "cache", name
+        assert report["layout_policy_reason"].startswith(
+            "hancom_untouched"), name
+        assert report["line_layout"]["policy"] == "auto", name
+        assert report["block_layout"]["policy"] == "auto", name
+        assert report["line_layout"]["paragraphs"]["lineseg"] > 0, name
+        assert report["line_layout"]["stale_diagnostics"] == {}, name
+
+
+def test_a_rigorloom_written_package_goes_computed(tmp_path):
+    """Provenance case 2: this repo's own writer wrote it, so no Hancom cache.
+
+    ``render-check-01`` is built by ``hwpx_write``, which stamps
+    ``application="Rigorloom"``.  Whatever ``hp:lineseg`` it carries was
+    written by that builder, not measured by a layout engine, so there is
+    nothing here to trust.
+    """
+    result = own_render.render_to_dir(_need(RENDER_CHECK),
+                                      tmp_path / "rigorloom", dpi=96)
+    report = result["report"]
+    assert report["layout_provenance"]["writer"] == "rigorloom_written"
+    assert report["layout_provenance"]["application"] == "Rigorloom"
+    assert report["layout_policy"] == "computed"
+    assert report["layout_policy_reason"].startswith("rigorloom_written")
+    assert report["line_layout"]["policy"] == "computed"
+    # Multi-section: block_layout is one report per section, in spine order.
+    blocks = report["block_layout"]
+    for section in (blocks if isinstance(blocks, list) else [blocks]):
+        assert section["policy"] == "computed"
+    assert report["line_layout"]["paragraphs"]["lineseg"] == 0
+
+
+def test_an_unknown_writer_goes_computed_and_says_so(tmp_path):
+    """Provenance case 3: some third program wrote it. Conservative side.
+
+    Neither Hancom nor this repo, so nothing certifies that the cached layout
+    describes the current text; the whole document is computed and the
+    sidecar names the application it could not vouch for.  A package carrying
+    no ``application`` attribute at all lands here too.
+    """
+    foreign = _repackaged_with_application(
+        _need(GIANMUN), tmp_path / "foreign.hwpx", "SomeOtherWordProcessor")
+    result = own_render.render_to_dir(foreign, tmp_path / "foreign", dpi=96)
+    report = result["report"]
+    assert report["layout_provenance"]["writer"] == "unknown_writer"
+    assert report["layout_provenance"]["application"] == "SomeOtherWordProcessor"
+    assert report["layout_policy"] == "computed"
+    assert "SomeOtherWordProcessor" in report["layout_policy_reason"]
+    assert report["line_layout"]["paragraphs"]["lineseg"] == 0
+
+
+def test_the_rigorloom_writer_stamps_the_package_it_saves(tmp_path):
+    """The edit path must not inherit Hancom's claim, or `auto` is a lie.
+
+    ``xml_backend.HwpxDocument.save`` copies every member it did not change
+    forward verbatim, ``version.xml`` included.  Without the stamp, a
+    Rigorloom edit of a Hancom-saved form would still read
+    ``application="Hancom Office Hangul"`` and the policy would trust a cache
+    describing the text from before the edit.
+    """
+    import xml_backend
+
+    out = tmp_path / "saved.hwpx"
+    xml_backend.HwpxDocument(_need(GIANMUN)).save(out)
+    before = own_render.package_writer_provenance(_need(GIANMUN))
+    after = own_render.package_writer_provenance(out)
+    assert before["writer"] == "hancom_untouched"
+    assert after["writer"] == "rigorloom_written"
+    assert after["application"] == "Rigorloom"
+    result = own_render.render_to_dir(out, tmp_path / "render", dpi=96)
+    assert result["report"]["layout_policy"] == "computed"
+
+
+def test_the_policy_and_the_render_it_chooses_are_deterministic(tmp_path):
+    """Same input, same policy, same bytes — on a computed-policy document."""
+    first = own_render.render_to_dir(_need(RENDER_CHECK), tmp_path / "r1",
+                                     dpi=96)
+    second = own_render.render_to_dir(_need(RENDER_CHECK), tmp_path / "r2",
+                                      dpi=96)
+    assert (first["report"]["layout_policy"]
+            == second["report"]["layout_policy"] == "computed")
+    assert (first["report"]["layout_policy_reason"]
+            == second["report"]["layout_policy_reason"])
+    assert len(first["pngs"]) == len(second["pngs"])
+    for left, right in zip(first["pngs"], second["pngs"]):
+        with open(left, "rb") as fh:
+            a = fh.read()
+        with open(right, "rb") as fh:
+            b = fh.read()
+        assert a == b
+
+
+def test_the_sidecar_declares_the_policy_its_reason_and_the_evidence(tmp_path):
+    """A reader must be able to tell WHY, without re-running anything."""
+    result = own_render.render_to_dir(_need(GIANMUN), tmp_path / "declared",
+                                      dpi=96)
+    report = result["report"]
+    assert report["layout_policy"] in ("cache", "computed")
+    assert report["layout_policy_meaning"]
+    provenance = report["layout_provenance"]
+    assert set(provenance) == {"writer", "application", "evidence"}
+    assert "version.xml@application" in provenance["evidence"]
+    assert provenance["evidence"] in report["layout_policy_reason"]
 
 
 def test_computed_policy_relays_out_every_paragraph(tmp_path):
@@ -2762,12 +3212,23 @@ REFLOW_TEXT = ("추가로 입력한 문장을 여기에 아주 길게 붙여넣�
 
 @pytest.fixture(scope="module")
 def reflow_renders(tmp_path_factory):
-    """The same form, before and after one paragraph is lengthened."""
+    """The same form, before and after one paragraph is lengthened.
+
+    The edited render PINS the cache policy and declares the edited
+    paragraph, because that is now the only way into the incremental flow
+    path these tests exist to pin: the shipping policy sends any edited
+    document wholly computed, which places every block from the top of the
+    document and so has no "first flowed block" to speak of.  The pin is
+    unsound for rendering and is declared as an override in the sidecar; what
+    it buys here is that the E2.5 machinery stays measured.
+    """
     out = tmp_path_factory.mktemp("reflow")
     base = own_render.render_to_dir(_need(REFLOW_FORM), out / "base", dpi=96)
     edited_path = _edited_copy(_need(REFLOW_FORM), out / "edited.hwpx",
                                REFLOW_PARAGRAPH, REFLOW_TEXT)
-    edited = own_render.render_to_dir(edited_path, out / "edited", dpi=96)
+    edited = own_render.render_to_dir(
+        edited_path, out / "edited", dpi=96, layout_policy="cache",
+        relayout_paragraphs={REFLOW_PARAGRAPH})
     return base, edited
 
 
@@ -4961,9 +5422,13 @@ def test_every_character_has_an_x_and_they_run_left_to_right(gianmun_render):
         # the same thing on both tiers.
         assert len(edges) == len(box["text"]) + 1, box["text"]
         assert edges == sorted(edges), box["text"]
-        # and they sit inside the box the same line reports
+        # and they sit inside the caret box the same line reports.  The last
+        # edge is a full advance, so it may pass ``x1`` (the geometry box,
+        # which stops at the last piece that draws ink) by a trailing space;
+        # it never passes ``x1_advance``, which is where a caret goes.
         assert edges[0] >= box["x0"] - 0.5
-        assert edges[-1] <= box["x1"] + 0.5
+        assert edges[-1] <= box["x1_advance"] + 0.5
+        assert box["x1"] <= box["x1_advance"] + 1e-3
 
 
 def test_a_line_box_names_the_owpml_it_was_drawn_from(gianmun_render):
