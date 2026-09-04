@@ -57,24 +57,40 @@ METRICS, AND EXACTLY WHAT EACH ONE MEANS
       over the pairs and the unpaired counts on both sides.  A pair with IoU
       0 still counts as a pair — dropping it would flatter the mean.
 
-THE REFERENCE SET IS NOT UNIFORMLY 1:1 — MEASURED, NOT ASSUMED
-    Three of the ten corpus reference PDFs (``gianmun-byeolji-1ho``,
-    ``gianmun-byeolji-2ho``, ``nrf-gyeolgwa-bogoseo-yangsik``) were produced at
-    ~0.707 = 1/sqrt(2) of the document's declared geometry: their text is drawn
-    at 70.7% of the ``hh:charPr@height`` the file declares, anchored near the
-    top-left of an otherwise A4 page.  The documents' own embedded
-    ``Preview/PrvImage.png`` shows the content filling the page, so the
-    documents are right and those three reference *renders* carry a print
-    reduction.
+THE REFERENCE SET'S 1:1-NESS IS MEASURED, NOT ASSUMED
+    Through 2026-09-03, three of the ten corpus reference PDFs
+    (``gianmun-byeolji-1ho``, ``gianmun-byeolji-2ho``,
+    ``nrf-gyeolgwa-bogoseo-yangsik``) were produced at ~0.707 = 1/sqrt(2) of
+    the document's declared geometry: their text was drawn at 70.7% of the
+    ``hh:charPr@height`` the file declares, anchored near the top-left of an
+    otherwise A4 page — traced to a stale ``PrintInfo/PrintMethod=4`` (2-up
+    imposition) in each document's own ``settings.xml``, applied by the export
+    facility even to a single-page document with nothing to pair.  The
+    documents' own embedded ``Preview/PrvImage.png`` showed the content
+    filling the page, so the documents were right and those three reference
+    *renders* carried a print reduction, not the other way round.  Re-pinned
+    2026-09-04 to true 1:1 renders (``com_backend.py``'s existing
+    PrintMethod-normalization staging, forcing ``PrintMethod`` to 0 before
+    ``SaveAs`` PDF) — see ``engine/references/own-render-notes.md`` and
+    ``engine/references/render-1to1/NOTES.md`` for the full defect writeup and
+    provenance.  All ten corpus reference PDFs are 1:1 renders as of that date.
 
     Comparing a 1:1 render against a 0.707 reference measures the reference
-    facility, not the renderer.  ``reference_geometry_scale`` therefore
-    estimates the scale from the reference's own span sizes against the
-    document's declared character heights, and a form whose scale is more than
-    ``SCALE_TOLERANCE`` off 1.0 is marked ``comparable: false`` and its verdict
-    is **blocked** rather than passed or failed.  Its metrics are still
-    reported, because a before/after delta on a fixed misaligned pair still
-    shows movement — but only as a relative number, flagged as such.
+    facility, not the renderer, so this is checked rather than assumed:
+    ``reference_geometry_scale`` estimates the scale from the reference's own
+    span sizes against the document's declared character heights, and a form
+    whose scale is more than ``SCALE_TOLERANCE`` off 1.0 is marked
+    ``comparable: false`` and its verdict is **blocked** rather than passed or
+    failed.  Its metrics are still reported, because a before/after delta on a
+    fixed misaligned pair still shows movement — but only as a relative
+    number, flagged as such.  A tighter [0.97, 1.03] band across a sample of
+    each reference's own dominant declared-size spans is pinned as a
+    permanent regression test
+    (``test_every_render_reference_matches_its_declared_charpr_height`` in
+    ``engine/tests/test_render_scoreboard.py``), so a future replacement PDF
+    that regresses toward the historical 0.707 print reduction — or any other
+    silent rescale — fails at commit time rather than surfacing only as an
+    unexplained scoreboard delta.
 
 CALIBRATION HONESTY
     Every number here depends on which fonts this machine has installed,
@@ -123,11 +139,12 @@ INK_THRESHOLD = 128
 SSIM_INK_BLOCK_MEAN = 254.0
 
 # Proposed, NOT ratified.  These are a REGRESSION FLOOR, not a fidelity bar:
-# each bound sits just below the worst value the seven comparable corpus forms
-# measure today, so a renderer change that makes any of them worse fails and
-# the current state passes.  Clearing this floor says only "no worse than
-# 2026-09"; it does not say the render is faithful.  ``FIDELITY_TARGET`` below
-# is what certification should eventually demand, and nothing today reaches it.
+# each bound sits just below the worst value the seven forms comparable
+# before the 2026-09-04 reference fix measured, so a renderer change that
+# makes any of them worse fails and the current state passes.  Clearing this
+# floor says only "no worse than 2026-09"; it does not say the render is
+# faithful.  ``FIDELITY_TARGET`` below is what certification should
+# eventually demand, and nothing today reaches it.
 PROPOSED_THRESHOLDS = {
     "page_count_exact": True,
     "ssim_min": 0.40,
@@ -138,12 +155,19 @@ PROPOSED_THRESHOLDS = {
     "ratified": False,
     "kind": "regression_floor",
     "rationale": (
-        "measured worst-of-seven on the comparable corpus forms at 144 dpi: "
-        "ssim_min 0.4867 (jumin), ssim_inked_min -0.0224 (saeopja), "
-        "text_line_iou_mean 0.2470 (kstartup), text_line_pair_rate 0.4490 "
-        "(admrul), ink_delta_abs_max 0.0375 (kstartup). Each bound is set "
-        "below (or above, for the max) that worst value with a little "
-        "headroom. raster changed_channel_ratio carries NO threshold: a "
+        "measured worst-of-seven on the corpus forms comparable before the "
+        "2026-09-04 reference fix, at 144 dpi: ssim_min 0.4867 (jumin), "
+        "ssim_inked_min -0.0224 (saeopja), text_line_iou_mean 0.2470 "
+        "(kstartup), text_line_pair_rate 0.4490 (admrul), ink_delta_abs_max "
+        "0.0375 (kstartup). Each bound is set below (or above, for the max) "
+        "that worst value with a little headroom. The three forms fixed on "
+        "2026-09-04 (gianmun-byeolji-1ho, gianmun-byeolji-2ho, "
+        "nrf-gyeolgwa-bogoseo-yangsik) measure comfortably inside every "
+        "bound too (ssim_min >= 0.73, ssim_inked_min >= 0.05, "
+        "text_line_iou_mean >= 0.55, text_line_pair_rate >= 0.78, "
+        "ink_delta_abs_max <= 0.005) and set no new worst value, so these "
+        "bounds were left as they were rather than re-fit to all ten. "
+        "raster changed_channel_ratio carries NO threshold: a "
         "font-substituting renderer cannot reach a meaningful one, and a gate "
         "nobody can pass is not a gate."
     ),

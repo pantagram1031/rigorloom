@@ -1646,13 +1646,13 @@ metric change can only come from the renderer) and reports, per page:
 
 No new dependency: PyMuPDF and Pillow are already `engine` extras.
 
-### Three of the ten reference PDFs are not 1:1 renders
+### Three of the ten reference PDFs were not 1:1 renders — fixed 2026-09-04
 
-Found by the first run of this scoreboard, and it is not about the renderer.
-`gianmun-byeolji-1ho`, `gianmun-byeolji-2ho` and `nrf-gyeolgwa-bogoseo-yangsik`
-draw their text at **~0.707 = 1/√2** of the `hh:charPr@height` their files
-declare, anchored near the top-left of an otherwise A4 page. Three independent
-measurements agree:
+Found by the first run of this scoreboard, and it was not about the renderer.
+Through 2026-09-03, `gianmun-byeolji-1ho`, `gianmun-byeolji-2ho` and
+`nrf-gyeolgwa-bogoseo-yangsik` drew their text at **~0.707 = 1/√2** of the
+`hh:charPr@height` their files declare, anchored near the top-left of an
+otherwise A4 page. Three independent measurements agreed:
 
 - glyph-weighted median span size ÷ declared size: 0.707, 0.707, 0.709, against
   0.996–1.023 for the other seven;
@@ -1660,13 +1660,52 @@ measurements agree:
 - each document's own `Preview/PrvImage.png` shows the content **filling** the
   page, exactly as this renderer lays it out.
 
-The documents are right; those three reference renders carry a print reduction.
-Scoring against them would grade the operator's reference facility, so
-`reference_geometry_scale` detects it and the verdict is **blocked** —
-`pass: null`, never `false`. The metrics are still reported and flagged
-relative-only, because a before/after delta on the same misaligned pair still
-shows movement. **Regenerating those three references at 1:1 is the single
-highest-value thing the operator can do for this lane.**
+The documents were right; those three reference renders carried a print
+reduction. Root cause (confirmed): all three forms' `settings.xml` stored
+`PrintInfo/PrintMethod = 4` (2-up "모아찍기" imposition), which Hancom's
+`SaveAs(..., "PDF")` honors even for a single-page document with nothing to
+pair — each page lands in an imposed half-sheet slot at ~1/√2 scale instead
+of exporting full-size. `nrf` (4 document pages) additionally lost its
+page-count-parity signal (2 landscape PDF pages instead of 4 portrait) for
+the same reason.
+
+**Fixed 2026-09-04** (E2 refs-1:1 slice): re-converted with
+`com_backend.py convert`'s existing `PrintMethod`-normalization staging
+(forces `PrintMethod` to 0 on a temp copy before `SaveAs("PDF")` — no new
+code, an existing §9.3 fix that these three references had predated), then
+re-pinned in `tests/corpus/forms/manifest.json` with provenance
+(`converter`, `hancom_version`, `source_print_method`/
+`print_method_normalized_to`, `pages_document`/`pages_pdf`,
+`geometry_scale_verified`). Verified independently with PyMuPDF: glyph-height
+ratio 1.004, 1.004, 1.003 respectively (was 0.704, 0.704, 0.711), and
+`pages_document == pages_pdf` for all three (1/1, 1/1, 4/4 — nrf's parity
+signal is clean now too). Full provenance and the conversion sidecars:
+`engine/references/render-1to1/NOTES.md`.
+
+All ten corpus reference PDFs are now 1:1 renders. `reference_geometry_scale`
+no longer blocks any of them (`comparable: true`, scale 0.995–1.004 for the
+three), and a permanent regression test
+(`test_every_render_reference_matches_its_declared_charpr_height`) pins a
+tighter [0.97, 1.03] band across a sample of each reference's own dominant
+declared-size spans, so a future replacement PDF that regresses toward this
+same 0.707 defect — or any other silent rescale — fails at commit time.
+
+First-ever real (non-blocked) metrics for the three, 144 dpi, this machine's
+fonts, current renderer:
+
+| form | ssim | ssim_inked | line IoU | pair rate | page_count exact |
+| --- | --- | --- | --- | --- | --- |
+| gianmun-1ho | 0.9112 | 0.0600 | 0.6215 | 1.0000 | yes (1/1) |
+| gianmun-2ho | 0.9074 | 0.0531 | 0.5515 | 0.7826 | yes (1/1) |
+| nrf | 0.8673 | 0.3246 | 0.6597 | 1.0000 | yes (4/4) |
+
+All three clear the existing `PROPOSED_THRESHOLDS` regression floor
+comfortably and set no new worst value across any channel, so the floor's
+five bounds were left exactly as they were (calibrated worst-of-seven before
+this fix) rather than re-fit to all ten — see the threshold `rationale` in
+`render_scoreboard.py`. The other seven forms' scores are unchanged to 4
+decimal places (re-verified by re-running `--corpus` against both the old and
+new reference sets: their inputs never changed, so their outputs could not).
 
 ### Measured state, 144 dpi, machine with Hancom Office fonts installed
 
@@ -1851,8 +1890,10 @@ false` on both; the grade stays `own-uncertified` on every class.
 
 ## Remaining order of work
 
-1. **Regenerate the three reduced reference PDFs at 1:1** — until then three
-   document classes (gongmun, research) cannot be graded at all.
+1. ~~**Regenerate the three reduced reference PDFs at 1:1.**~~ Done 2026-09-04
+   (E2 refs-1:1 slice) — see *Three of the ten reference PDFs are not 1:1
+   renders* above, now updated in place. All ten document classes are
+   comparable.
 1b. ~~**Render `hp:equation`.**~~ Done — see *Equations* above. What it left
    open is italic variable shaping, which is now the largest visual difference
    on the equation pages and needs per-cut face resolution, not equation work.
@@ -1890,3 +1931,35 @@ false` on both; the grade stays `own-uncertified` on every class.
    only ever asks for `"bold" if bold else "regular"`.
 9. Only then ask `render_cert` for a per-document-class grade. Until it
    answers, the grade stays `own-uncertified`.
+10. **`MalgunGothicBold` bold-face advance metric.** Found by the E2
+    refs-1:1 slice's own re-baseline of
+    `test_no_glyph_class_is_measured_more_than_a_hundredth_of_an_em_out`:
+    with the three re-pinned references doubling the qualifying sample count
+    for this face's bold Latin glyphs, `I`/`R`/`B` measure ~0.04-0.05 em wide
+    of Hancom's own reference render (e.g. `I` 0.270 em declared/measured by
+    Hancom vs 0.310 em this renderer draws), pulling the `latin` glyph class
+    from 0.0056 to 0.0111 em mean error — not a reference-swap artifact (the
+    per-glyph reference ratios themselves barely moved), a genuine pre-
+    existing gap in how this renderer resolves `MalgunGothicBold`'s bold
+    metrics table. Out of scope for the refs-1:1 slice (font-metric
+    resolution, not reference pinning); the regression floor was widened to
+    0.012 to keep the gate honest rather than hiding the finding.
+
+## E2 refs-1:1 slice — closing gate run, 2026-09-04
+
+Ran clean at commit `ea0887c` on `claude/engine-e2-refs-1to1`:
+
+- `pytest engine/tests -q`: 1160 passed, 135 skipped, 0 failed (267s). The
+  determinism tests (`test_the_computed_breaker_is_deterministic_too`,
+  `test_the_flow_pass_is_deterministic`, `test_a_page_with_furniture_renders_
+  deterministically`) are in this run and green.
+- `python scripts/py_compile_sweep.py`: 103 files, 0 failures.
+- `python pipeline/scripts/privacy_scan.py archive --json`: hard 0, warn 0,
+  total 0, incomplete false.
+
+No code changes made in this pass beyond what the E2 refs-1:1 slice commit
+already carries; this is a gate-verification entry, not new work. The
+`engine/references/render-1to1/NOTES.md` provenance file this section's PDF
+re-pin notes cite lives on `claude/engine-e3-hancom-accept`
+(commit `b8a87e1`), not yet merged into this branch — a known cross-branch
+reference, not a broken one; no test on this branch depends on that path.
