@@ -39,6 +39,13 @@ import own_render  # noqa: E402
 CORPUS = os.path.join(ROOT, "tests", "corpus", "forms", "converted")
 GIANMUN = os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")
 PICTURE_FORM = os.path.join(CORPUS, "jeongbo-gonggae-cheongguseo.hwpx")
+# A form this tier still cannot draw every element of.  It used to be
+# PICTURE_FORM, whose last unhandled element was its dashed borders; those are
+# drawn now (``border_dash_run``) and it skips nothing at all, so the
+# "nothing is dropped silently" contract needs a form that still has
+# something to drop — moel-2013's CIRCLE borders and its four unresolved
+# faces.
+SKIPS_SOMETHING = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2013.hwpx")
 
 pytestmark = pytest.mark.skipif(
     not own_render.pillow_available(),
@@ -120,7 +127,7 @@ def test_skipped_elements_are_named_not_dropped(tmp_path):
     render rather than on one named tag: every entry carries a non-empty
     reason and a positive count, and nothing is dropped silently.
     """
-    result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
+    result = own_render.render_to_dir(_need(SKIPS_SOMETHING), tmp_path, dpi=144)
     report = result["report"]
     assert report["elements_skipped"], "a form with unhandled elements said nothing"
     for entry in report["elements_skipped"]:
@@ -2893,12 +2900,127 @@ def test_a_double_border_too_narrow_to_resolve_stays_solid_and_declared():
 
 
 def test_other_non_solid_border_types_are_still_declared_as_solid():
-    """DASH is in the corpus and is still stroked solid — say so."""
-    renderer, runs = _border_probe("DASH", 283.46456692913387)
+    """CIRCLE is in the corpus (moel-2013) and is still stroked solid."""
+    renderer, runs = _border_probe("CIRCLE", 283.46456692913387)
     assert len(runs) == 1, runs
     reasons = [e["reason"] for e in renderer.skipped.values()
-               if "DASH" in e["element"]]
+               if "CIRCLE" in e["element"]]
     assert any("stroked as solid" in r for r in reasons), reasons
+
+
+def _dash_runs(btype, width_hwp, dpi=1200, length_hwp=6000):
+    """Ink/gap run lengths along one horizontal border of ``btype``.
+
+    Rendered at 1200 dpi so the pattern is resolved well past the 144 dpi the
+    corpus is scored at — the geometry under test is in HWPUNIT, and at 144
+    dpi a 0.12 mm dash is under a pixel wide.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"]["probe"] = {
+        "top": {"type": btype, "width_hwp": width_hwp, "color": (0, 0, 0)},
+        "bottom": {"type": "NONE"}, "left": {"type": "NONE"},
+        "right": {"type": "NONE"},
+    }
+    span = renderer.px(length_hwp)
+    row = renderer.px(1000)
+    image = renderer.Image.new("RGB", (span + 40, row + 40), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    tc = ET.fromstring('<hp:tc xmlns:hp="urn:x" borderFillIDRef="probe"/>')
+    renderer._draw_cell_borders(draw, {"tc": tc}, 0, 1000, length_hwp, 2000)
+    grey = image.convert("L").load()
+    ink, gap, runs = [], [], []
+    x, state, start = 0, None, 0
+    while x < span:
+        dark = grey[x, row] < 160
+        if state is None:
+            state, start = dark, x
+        elif dark != state:
+            (ink if state else gap).append(x - start)
+            runs.append((state, x - start))
+            state, start = dark, x
+        x += 1
+    return renderer, ink, gap, runs
+
+
+def test_a_dashed_border_is_drawn_dashed_at_the_measured_period():
+    """DASH: 0.12 mm measures 0.480 pt of ink on a 1.200 pt period.
+
+    Measured black-box off the Hancom reference PDFs (see
+    ``own_render.border_dash_run``): the 0.12 mm class is 43 of the corpus's
+    55 DASH sides and every one of them is that period.
+    """
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer, ink, gap, _runs = _dash_runs("DASH", width)
+    assert len(ink) > 20, len(ink)
+    # 1200 dpi: 1 pt = 16.667 px.
+    per_pt = 1200 / 72.0
+    body_ink = sorted(ink)[1:-1]
+    body_gap = sorted(gap)[1:-1]
+    mean_ink = sum(body_ink) / len(body_ink) / per_pt
+    mean_gap = sum(body_gap) / len(body_gap) / per_pt
+    assert abs(mean_ink - 0.480) < 0.02, mean_ink
+    assert abs(mean_gap - 0.720) < 0.02, mean_gap
+    # ...and it is no longer declared as "stroked as solid".
+    assert not [e for e in renderer.skipped.values()
+                if "DASH" in e["element"]], renderer.skipped
+
+
+def test_a_dashed_border_runs_the_same_phase_in_both_directions():
+    """The pin: a vertical DASH edge dashes exactly like a horizontal one."""
+    from xml.etree import ElementTree as ET
+
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=1200)
+    for side in ("top", "left"):
+        renderer.defs["border_fill"][side] = {
+            "top": {"type": "NONE"}, "bottom": {"type": "NONE"},
+            "left": {"type": "NONE"}, "right": {"type": "NONE"},
+        }
+        renderer.defs["border_fill"][side][side] = {
+            "type": "DASH", "width_hwp": width, "color": (0, 0, 0)}
+    span = renderer.px(6000)
+    counts = {}
+    for side in ("top", "left"):
+        image = renderer.Image.new("RGB", (span + 40, span + 40),
+                                   (255, 255, 255))
+        draw = renderer.ImageDraw.Draw(image)
+        tc = ET.fromstring(
+            f'<hp:tc xmlns:hp="urn:x" borderFillIDRef="{side}"/>')
+        renderer._draw_cell_borders(draw, {"tc": tc}, 1000, 1000, 6000, 6000)
+        grey = image.convert("L").load()
+        line = renderer.px(1000)
+        counts[side] = [
+            i for i in range(span)
+            if (grey[i, line] < 160 if side == "top" else grey[line, i] < 160)]
+    assert counts["top"], counts
+    assert counts["top"] == counts["left"], (
+        len(counts["top"]), len(counts["left"]))
+
+
+def test_the_unmeasured_dash_family_members_say_they_are_unmeasured():
+    """DOT / DASH_DOT / DASH_DOT_DOT / LONG_DASH: no corpus, no reference."""
+    width = own_render._mm_to_hwp("0.12 mm")
+    for btype, periods in (("DOT", 1), ("DASH_DOT", 2),
+                           ("DASH_DOT_DOT", 3), ("LONG_DASH", 1)):
+        renderer, ink, _gap, _runs = _dash_runs(btype, width)
+        assert len(ink) > 10, (btype, len(ink))
+        assert len(own_render.border_dash_run(btype, width)) == periods, btype
+        reasons = [e["reason"] for e in renderer.skipped.values()
+                   if btype in e["element"]]
+        assert any("not measured itself" in r for r in reasons), (btype, reasons)
+
+
+def test_a_dot_is_square_and_a_long_dash_is_twice_a_dash():
+    """The declared shape of the two unmeasured single-kind patterns."""
+    width = own_render._mm_to_hwp("0.7 mm")
+    dash = own_render.border_dash_run("DASH", width)[0]
+    dot = own_render.border_dash_run("DOT", width)[0]
+    longd = own_render.border_dash_run("LONG_DASH", width)[0]
+    assert abs(dot[0] - width) < 1e-6, dot
+    assert abs(longd[0] - 2 * dash[0]) < 1e-6, (longd, dash)
+    assert dot[1] == dash[1] == longd[1]
 
 
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
@@ -3898,3 +4020,150 @@ def test_a_single_column_document_is_unaffected_by_column_geometry(
     counters = report["block_layout"].get("flow_counters")
     if counters is not None:
         assert "column_breaks_honored" in counters
+
+
+def _page_split_fixture(tmp_path, name="split-para.hwpx", tail_lines=2):
+    """A document whose ONE body paragraph's cached ``vertpos`` restarts.
+
+    Built from a corpus form's own last paragraph so every id it references
+    is valid against that form's ``header.xml``: the paragraph is given a
+    ``hp:linesegarray`` that walks down the page and then jumps back to the
+    top, which is exactly the shape the authoring engine caches for a
+    paragraph it ran off the bottom of a page.  No corpus form has one -- all
+    ten are one-block-per-page government forms -- so this is a synthetic
+    fixture, not a measured reference.
+    """
+    import copy
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+    with zipfile.ZipFile(_need(GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    body = own_render._kids(root, "p")
+    source = body[-1]
+    # Paragraph 0 carries the section's own hp:secPr (and with it hp:pagePr),
+    # so it stays -- emptied of text and of its cached lines, so it draws
+    # nothing and the only line boxes on the page are the split paragraph's.
+    keep = body[0]
+    for run in own_render._kids(keep, "run"):
+        for child in list(run):
+            # Drop the form's own text and its anchored grid -- both draw
+            # line boxes, and this probe counts line boxes.  Everything else
+            # (hp:ctrl, hp:secPr and what hangs off them) stays: the section's
+            # hp:pagePr is in there.
+            if own_render._local(child.tag) in ("t", "tbl", "pic"):
+                run.remove(child)
+    seg_array = own_render._kid(keep, "linesegarray")
+    if seg_array is not None:
+        keep.remove(seg_array)
+    for para in body[1:]:
+        root.remove(para)
+    para = copy.deepcopy(source)
+    seg_array = own_render._kid(para, "linesegarray")
+    if seg_array is not None:
+        para.remove(seg_array)
+    run = own_render._kid(para, "run")
+    for child in list(run):
+        if own_render._local(child.tag) == "t":
+            run.remove(child)
+    head_lines = 3
+    per_line = 6
+    total = head_lines + tail_lines
+    text = ET.SubElement(run, HP + "t")
+    text.text = "가나다라마바" * total
+    seg_array = ET.SubElement(para, HP + "linesegarray")
+    for index in range(total):
+        # Head lines walk down the page; the tail restarts from the next
+        # page's own body top, which is what makes vertpos jump backwards.
+        step = index if index < head_lines else index - head_lines
+        seg = ET.SubElement(seg_array, HP + "lineseg")
+        seg.set("textpos", str(index * per_line))
+        seg.set("vertpos", str(step * 2000))
+        seg.set("vertsize", "1800")
+        seg.set("textheight", "1800")
+        seg.set("baseline", "1500")
+        seg.set("spacing", "200")
+        seg.set("horzpos", "0")
+        seg.set("horzsize", "40000")
+        seg.set("flags", "0")
+    root.append(para)
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for n in names:
+            archive.writestr(n, payload[n])
+    return target
+
+
+def test_a_paragraph_whose_own_vertpos_restarts_is_split_into_page_runs(
+        tmp_path):
+    """``vertpos`` restarts WITHIN a paragraph the authoring engine split."""
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    paras = [own_render.Paragraph(el, renderer.defs["para_pr"])
+             for el in own_render._kids(renderer.sections[0], "p")]
+    body = [p for p in paras if len(p.linesegs) == 5]
+    assert body, [len(p.linesegs) for p in paras]
+    assert body[0].page_runs() == [(0, 3), (3, 5)]
+    # ...and the same paragraph with a monotonic vertpos is ONE run.
+    monotonic = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(monotonic.linesegs):
+        seg.set("vertpos", str(index * 2000))
+    assert monotonic.page_runs() == [(0, 5)]
+    # A three-page paragraph is three runs, not two.
+    triple = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(triple.linesegs):
+        seg.set("vertpos", str((index % 2) * 2000))
+    assert triple.page_runs() == [(0, 2), (2, 4), (4, 5)]
+
+
+def test_a_split_paragraphs_tail_draws_on_the_next_page_not_over_its_head(
+        tmp_path):
+    """The defect: the tail was drawn at vertpos 0 of the page the head is on.
+
+    Found on a private report-class holdout, whose page 1 carried a stray
+    one-word line ("있다.", the tail of a body paragraph) above the title
+    where the Hancom reference starts with the title.  Every line of the
+    paragraph was drawn on the head's page, and the tail's cached ``vertpos``
+    -- measured from the NEXT page's body top, so near zero -- put it at the
+    very top.
+    """
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    pages = renderer.paginate()
+    runs = [[getattr(p, "rows", None) for p in page if p.linesegs]
+            for page in pages]
+    assert len(pages) == 2, runs
+    assert runs[0][-1] == (0, 3), runs
+    assert runs[1][0] == (3, 5), runs
+    images, sidecar = renderer.render()
+    assert len(images) == 2
+    boxes = sidecar["line_boxes"]
+    top = renderer.px(renderer.page_geometry()["body_top"])
+    first_page = sorted(b["y0"] for b in boxes if b["page"] == 1)
+    second_page = sorted(b["y0"] for b in boxes if b["page"] == 2)
+    assert len(first_page) == 3, first_page
+    assert len(second_page) == 2, second_page
+    # The tail sits at its own cached vertpos on page 2 -- at the body top,
+    # not rebased onto it and not stacked under the head's last line.
+    assert abs(second_page[0] - first_page[0]) < 2, (first_page, second_page)
+    assert first_page[0] >= top - 2, (first_page, top)
+    # The paragraph is counted once, not once per page it spans.
+    assert sidecar["elements_rendered"]["paragraphs"] == len(
+        own_render._kids(renderer.sections[0], "p"))
+
+
+def test_no_corpus_paragraph_is_split_across_a_page(gianmun_render):
+    """The split is a no-op for every corpus form -- pinned, not assumed."""
+    import glob
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(path, dpi=144)
+        for section in renderer.sections:
+            for el in own_render._kids(section, "p"):
+                para = own_render.Paragraph(el, renderer.defs["para_pr"])
+                assert len(para.page_runs()) == 1, (
+                    os.path.basename(path),
+                    [own_render._iattr(s, "vertpos") for s in para.linesegs])

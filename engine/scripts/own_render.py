@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import math
@@ -598,6 +599,82 @@ def _mm_to_hwp(raw):
     if not m:
         return 0
     return float(m.group(1)) / 25.4 * HWPUNIT_PER_INCH
+
+
+# --------------------------------------------------------------------------
+# Non-solid border geometry (``hh:borderFill`` ``@type``)
+# --------------------------------------------------------------------------
+#
+# MEASURED, black-box, off the Hancom reference PDFs themselves: none of them
+# carries a PDF ``d`` (dash-array) operator, so Hancom emits every dash as its
+# own path piece, and the pattern can be read straight out of the geometry.
+# Collinear pieces were merged per rule and the run/gap lengths taken as
+# medians, over every corpus reference that declares a DASH side:
+#
+#   declared    stroke      dash      gap     period   dash/w   gap/w  forms
+#   0.10 mm     0.240 pt   0.360    0.480    0.840     1.270   1.693   nrf
+#   0.12 mm     0.360 pt   0.480    0.720    1.200     1.411   2.116   gianmun-2ho,
+#                                                                      jumin,
+#                                                                      kstartup,
+#                                                                      moel-2025
+#   0.15 mm     0.480 pt   0.600    0.840    1.440     1.411   1.976   jeongbo
+#   0.70 mm     2.039 pt   2.879    4.318    7.197     1.451   2.176   jeongbo
+#
+# ``dash/w`` and ``gap/w`` are against the *declared* width (0.12 mm =
+# 34.02 HWPUNIT = 0.3402 pt), not the width Hancom actually strokes -- the
+# stroked width is quantised onto what looks like a 600 dpi device grid
+# (0.240/0.360/0.480/2.039 pt are 2/3/4/17 units of 1/600 in) and the dash
+# geometry tracks the declared width, not the quantised one.
+#
+# The 0.12 mm class is 43 of the corpus's 55 DASH sides, so the constants
+# below are its measurement exactly (1.412 x 0.3402 pt = 0.4804, measured
+# 0.4800; 2.118 x 0.3402 = 0.7206, measured 0.7200).  They land within 3% on
+# the 0.70 mm class and within 0.05 pt on 0.15 mm; 0.10 mm is the loosest fit
+# (predicted 0.400/0.600 against 0.360/0.480) and nothing in the corpus
+# distinguishes "Hancom uses a per-width-class table" from "the 0.10 mm rule
+# is quantised harder", so one ratio is used for every class and the residual
+# is stated here rather than curve-fitted away.  At 144 dpi one 0.12 mm dash
+# is 0.96 px on a 2.4 px pitch, so the residual is well under the pixel.
+BORDER_DASH_PERIOD = 3.53      # x declared border width, measured
+BORDER_DASH_DUTY = 0.40        # ink fraction of the period, measured
+
+# DECLARED, NOT MEASURED.  No corpus form declares DOT, DASH_DOT,
+# DASH_DOT_DOT or LONG_DASH on any border side, and there is therefore no
+# Hancom reference for them at all.  They are built out of the DASH family's
+# own measured period so the four read as one system, and every side drawn
+# with one says so in the sidecar.  A square dot is the width of the stroke.
+BORDER_DOT_INK = 1.0           # x declared border width, declared
+BORDER_LONG_DASH_INK = 2.0     # x the measured dash length, declared
+
+BORDER_DASH_VOCABULARY = {
+    "DASH": ("dash",),
+    "LONG_DASH": ("long_dash",),
+    "DOT": ("dot",),
+    "DASH_DOT": ("dash", "dot"),
+    "DASH_DOT_DOT": ("dash", "dot", "dot"),
+}
+# Which of the above this renderer has actually measured against Hancom.
+BORDER_DASH_MEASURED = frozenset({"DASH"})
+
+
+def border_dash_run(btype, width_hwp):
+    """``[(ink, gap), ...]`` in HWPUNIT for one period, or ``None`` if solid.
+
+    ``None`` means "this type is not a dash family member" -- SOLID, NONE,
+    DOUBLE_SLIM, CIRCLE and everything else keep whatever path they had.
+    """
+    kinds = BORDER_DASH_VOCABULARY.get((btype or "").upper())
+    if not kinds or width_hwp <= 0:
+        return None
+    period = BORDER_DASH_PERIOD * width_hwp
+    dash = BORDER_DASH_DUTY * period
+    gap = period - dash
+    ink_of = {
+        "dash": dash,
+        "long_dash": BORDER_LONG_DASH_INK * dash,
+        "dot": BORDER_DOT_INK * width_hwp,
+    }
+    return [(ink_of[kind], gap) for kind in kinds]
 
 
 # --------------------------------------------------------------------------
@@ -1238,6 +1315,56 @@ class Paragraph:
         la = _kid(el, "linesegarray")
         if la is not None:
             self.linesegs = _kids(la, "lineseg")
+        # ``(first, last)`` when this object is one page's worth of a
+        # paragraph the cache carries across a page break; ``None`` — every
+        # corpus paragraph — when it is the whole paragraph.
+        self.rows = None
+
+    def page_runs(self):
+        """``[(first, last), ...]`` — this paragraph's linesegs split wherever
+        its own cached ``vertpos`` jumps BACKWARDS.
+
+        ``vertpos`` is measured from the top of the body box of the page the
+        line is on and restarts on every page, which is the rule ``paginate``
+        already applies BETWEEN top-level paragraphs and ``_restart_segments``
+        applies between the paragraphs of a container.  It applies just as
+        much WITHIN one paragraph: a body paragraph long enough to run off the
+        bottom of a page has its continuation lines cached from the next
+        page's top, so its ``vertpos`` sequence drops back to (near) zero
+        part-way through.
+
+        No corpus form contains such a paragraph — all ten are one-block-per-
+        page government forms — so every corpus paragraph returns a single
+        run and nothing downstream changes for them.  A report-class document
+        has them routinely: the private windpath holdout has five, and before
+        this split each one drew its whole tail at the TOP of the page its
+        head is on, over the title (one stray "있다." above the page-1 title,
+        where the Hancom reference starts with the title).
+        """
+        if len(self.linesegs) < 2:
+            return [(0, len(self.linesegs))]
+        runs = []
+        start = 0
+        prev = _iattr(self.linesegs[0], "vertpos")
+        for i in range(1, len(self.linesegs)):
+            vertpos = _iattr(self.linesegs[i], "vertpos")
+            if vertpos < prev:
+                runs.append((start, i))
+                start = i
+            prev = vertpos
+        runs.append((start, len(self.linesegs)))
+        return runs
+
+    def page_run(self, first, last):
+        """A view of this paragraph limited to linesegs ``[first, last)``.
+
+        Shares the element, the character stream and the lineseg list — only
+        ``rows`` differs — so ``paragraph_index`` still names one paragraph
+        however many pages it is drawn across.
+        """
+        view = copy.copy(self)
+        view.rows = (first, last)
+        return view
 
     @property
     def text(self):
@@ -1770,6 +1897,13 @@ class OwnRenderer:
         ``@pageBreak`` is deliberately *not* consulted: on this corpus it is
         also set on paragraphs whose ``vertpos`` does not restart, so honouring
         it would invent pages the cached layout does not have.
+
+        The same backward-jump rule applies WITHIN one paragraph
+        (``Paragraph.page_runs``): a body paragraph long enough to run off the
+        page has its continuation lines cached from the next page's top, and
+        each run after the first starts a page here just as a restart between
+        two paragraphs does.  No corpus paragraph has more than one run, so
+        this changes nothing for any of the ten forms.
         """
         usable = max(1, self.page_geometry()["usable_height"])
         pages = []
@@ -1778,6 +1912,7 @@ class OwnRenderer:
         prev_bottom = -1
         for el in _kids(self.sections[self._current_section], "p"):
             para = Paragraph(el, self.defs["para_pr"])
+            runs = para.page_runs()
             if para.linesegs:
                 first = _iattr(para.linesegs[0], "vertpos")
                 last = para.linesegs[-1]
@@ -1787,8 +1922,23 @@ class OwnRenderer:
                 if restart and current:
                     pages.append(current)
                     current = []
-                prev_first, prev_bottom = first, bottom
-            current.append(para)
+                # The paragraph after this one continues below its LAST run,
+                # not below the run it started on — with a split, vertpos[0]
+                # belongs to an earlier page and would make the comparison
+                # against the next paragraph meaningless.
+                prev_first = _iattr(para.linesegs[runs[-1][0]], "vertpos")
+                prev_bottom = bottom
+            if len(runs) == 1:
+                current.append(para)
+                continue
+            # This paragraph's own cache carries it across a page break: each
+            # run after the first STARTS a page, exactly as a restart between
+            # two paragraphs does.
+            for index, (lo, hi) in enumerate(runs):
+                if index:
+                    pages.append(current)
+                    current = []
+                current.append(para.page_run(lo, hi))
         if current or not pages:
             pages.append(current)
         return pages
@@ -3528,23 +3678,45 @@ class OwnRenderer:
         oy += block_offset_hwp
         shift = 0
         for para in paragraphs:
-            self.counts["paragraphs"] += 1
-            self.counts["runs"] += len(_kids(para.el, "run"))
-            if para.tabs:
-                self._skip("hp:tab", "hp:tab elements inside a run are not "
-                                     "placed in the character stream, so the "
-                                     "line they sit on is measured without "
-                                     "them")
-            self._render_floating(draw, para, (ox, oy + shift))
+            # A paragraph the cache carries across a page break arrives here
+            # once per page, as a view over its own lineseg range
+            # (``Paragraph.page_runs``).  Everything that belongs to the
+            # PARAGRAPH rather than to the lines on this page — the counts,
+            # its anchored objects, the layout record — happens on the first
+            # view only, or it would be done once per page it spans.
+            head = para.rows is None or para.rows[0] == 0
+            if head:
+                self.counts["paragraphs"] += 1
+                self.counts["runs"] += len(_kids(para.el, "run"))
+                if para.tabs:
+                    self._skip("hp:tab", "hp:tab elements inside a run are "
+                                         "not placed in the character stream, "
+                                         "so the line they sit on is measured "
+                                         "without them")
+                self._render_floating(draw, para, (ox, oy + shift))
             if not para.chars:
                 continue
             index = self.paragraph_index.get(id(para.el))
             mode, reason = self.line_layout_mode(para, avail_w_hwp, index)
-            self._layout_counts[mode] += 1
+            if para.rows is not None and mode != "lineseg":
+                # A split paragraph IS a cached-layout fact: the split is read
+                # out of the cache, so the halves have to be drawn from it too.
+                # Reflowing one across a page boundary is the flow pass's job
+                # (``--block-layout computed``), not this path's.
+                mode = "lineseg"
+                reason = ("the cache carries this paragraph across a page "
+                          "break; its halves are drawn from the cache rather "
+                          "than relaid out on this path")
+                if head:
+                    self._skip("hp:p (split across a page)", reason)
+            if head:
+                self._layout_counts[mode] += 1
             if mode == "lineseg":
-                self._record_layout(index, para, mode, reason, None)
+                if head:
+                    self._record_layout(index, para, mode, reason, None)
                 self._render_cached_lines(draw, para, (ox, oy + shift),
-                                          avail_w_hwp)
+                                          avail_w_hwp, rows=para.rows,
+                                          rebase=False)
                 continue
             self._layout_reasons[reason] = self._layout_reasons.get(reason, 0) + 1
             lines = self.compute_lines(draw, para, avail_w_hwp)
@@ -3625,11 +3797,22 @@ class OwnRenderer:
             )
 
     def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp,
-                             rows=None):
+                             rows=None, rebase=True):
+        """Draw ``para``'s cached line boxes, optionally only rows
+        ``[first, last)``.
+
+        ``rebase`` pulls the range's first line onto ``origin`` — what the
+        computed flow pass wants, because it has decided where the range goes
+        and the cached ``vertpos`` is stale.  The cached path passes
+        ``rebase=False``: there the cached ``vertpos`` IS the answer on both
+        halves of a paragraph the authoring engine split (a continuation's
+        own ``vertpos`` is already measured from its new page's body top),
+        and rebasing would slam it against the top margin instead.
+        """
         ox, oy = origin_hwp
         positions = [_iattr(s, "textpos") for s in para.linesegs]
         first, last = rows if rows is not None else (0, len(para.linesegs))
-        if rows is not None and first < len(para.linesegs):
+        if rows is not None and rebase and first < len(para.linesegs):
             oy -= _iattr(para.linesegs[first], "vertpos")
         self._line_mode = "lineseg"
         margin_right = para.para_pr.get("margin_right", 0) or 0
@@ -4868,6 +5051,20 @@ class OwnRenderer:
                               fill=colour, width=stroke)
                 self.counts["borders"] += 1
                 continue
+            run = border_dash_run(btype, spec.get("width_hwp") or 0)
+            if run is not None:
+                # 파선/점선.  The period is measured off the Hancom reference
+                # PDFs' own path geometry — see ``border_dash_run``.
+                if btype not in BORDER_DASH_MEASURED:
+                    self._skip(
+                        f"hh:{side}Border@type={btype}",
+                        "no corpus form and no Hancom reference declares this "
+                        "type; drawn from the measured DASH period, not "
+                        "measured itself")
+                self._stroke_dashed(draw, (ax, ay), (bx, by), colour, width,
+                                    run)
+                self.counts["borders"] += 1
+                continue
             if btype != "SOLID":
                 reason = ("non-solid border stroked as solid"
                           if btype != "DOUBLE_SLIM" else
@@ -4877,6 +5074,55 @@ class OwnRenderer:
             draw.line([(ax_px, ay_px), (bx_px, by_px)],
                       fill=colour, width=width)
             self.counts["borders"] += 1
+
+    def _stroke_dashed(self, draw, p0_hwp, p1_hwp, colour, width_px, run_hwp):
+        """Stroke one axis-aligned edge as a dash run.  Returns piece count.
+
+        The phase is anchored to the PAGE origin, not to the edge's own start:
+        a table rule is drawn once per cell it crosses, and a per-edge phase
+        would restart the pattern at every column boundary, which is not what
+        the reference does — Hancom's dashed rules run the whole width of the
+        table on one uninterrupted phase.  Anchoring at the origin makes every
+        collinear piece agree without any of them knowing about the others.
+        """
+        (ax, ay), (bx, by) = p0_hwp, p1_hwp
+        vertical = ax == bx
+        lo, hi = (ay, by) if vertical else (ax, bx)
+        if hi < lo:
+            lo, hi = hi, lo
+        period = sum(ink + gap for ink, gap in run_hwp)
+        if period <= 0:
+            draw.line([(self.px(ax), self.px(ay)), (self.px(bx), self.px(by))],
+                      fill=colour, width=width_px)
+            return 1
+        cursor = math.floor(lo / period) * period
+        pieces = index = 0
+        cross = self.px(ax if vertical else ay)
+        while cursor < hi:
+            ink, gap = run_hwp[index % len(run_hwp)]
+            index += 1
+            start, end = max(cursor, lo), min(cursor + ink, hi)
+            cursor += ink + gap
+            if end <= start:
+                continue
+            s_px, e_px = self.px(start), self.px(end)
+            if e_px <= s_px:
+                # A dash shorter than a device pixel is still a dash: dropping
+                # it would silently turn the rule into a blank at low dpi.
+                e_px = s_px + 1
+            # ``draw.line`` includes BOTH endpoints, so the last pixel of a
+            # dash belongs to the following gap: a dash drawn s..e would be
+            # one pixel longer than it measures.  A solid rule keeps both
+            # endpoints — its ends are the cell's own corners.
+            e_px -= 1
+            if vertical:
+                draw.line([(cross, s_px), (cross, e_px)],
+                          fill=colour, width=width_px)
+            else:
+                draw.line([(s_px, cross), (e_px, cross)],
+                          fill=colour, width=width_px)
+            pieces += 1
+        return pieces
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         margin = cell["margin"]
