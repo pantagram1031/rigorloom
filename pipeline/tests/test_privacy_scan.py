@@ -200,7 +200,9 @@ def test_large_file_with_denylist_term_is_hard(tmp_path: Path):
 
 
 def test_large_file_with_user_path_is_hard(tmp_path: Path):
-    body = (b"x" * (1024 * 1024)) + b"\nloaded from C:\\Users\\realperson\\AppData\\x\n"
+    # assembled at runtime so this source file never contains the literal
+    # user-path pattern (the repo self-scan must stay clean)
+    body = (b"x" * (1024 * 1024)) + b"\nloaded from C:\\Users\\" + b"realperson\\AppData\\x\n"
     (tmp_path / "big2.txt").write_bytes(body)
 
     payload, code = run(tmp_path)
