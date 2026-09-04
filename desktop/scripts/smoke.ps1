@@ -25,6 +25,17 @@
                              its plan lands in the same queue, and it cannot
                              approve — the host does, exactly as for a manual
                              edit.
+    runs 6-7 ("own", "own-reattach") TIER 3 — what a fresh install sees. No
+                             Hancom in the packaged sidecar, so the own
+                             renderer is the DEFAULT page here, not a
+                             fallback: the badge text, the 무엇을 못 그렸나
+                             list compared entry by entry against the runtime's
+                             own, an overlay click on a page whose lines carry
+                             no addresses, and both zooms — page fit, and the
+                             Ctrl+= / Ctrl+− / Ctrl+0 bindings as real key
+                             events. The second run is cold and asserts the app
+                             zoom came back.
+
     run 5 (phase "page")     페이지 보기 against what this machine can really
                              do. The Hancom COM server here is broken, so
                              renderPrepare returns convert_failed; the
@@ -286,7 +297,12 @@ $ran = @()
 
 # Ordered, because run 2 depends on what run 1 left on disk. Everything after
 # that opens its own session and is order-independent.
-$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'overlay', 'undo', 'packs',
+# `own` and `own-reattach` are adjacent and ORDERED for the same reason `open`
+# and `reattach` are: the second one is a cold process asserting what the first
+# one left in prefs. Everything after them meets the app zoom back at 1.2,
+# which `own-reattach` restores before it finishes.
+$phases = @('open', 'reattach', 'edit', 'agent', 'page', 'own', 'own-reattach',
+            'overlay', 'undo', 'packs',
             'composer', 'settings', 'chrome', 'chrome-reattach')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 

@@ -126,6 +126,15 @@ try {
         # row is a candidate on disk; nothing is staged.
         @{ phase = 'hold-shot-history';       name = 'history-reversal';     scale = 1.0 },
         @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
+        # TIER 3 — the page a fresh install actually gets. Nothing staged and
+        # nothing substituted: no Hancom on this machine, so our own renderer
+        # draws it and the badge says 자체 렌더 · 미인증. The 무엇을 못 그렸나
+        # list is open, because a closed disclosure photographs as a caption.
+        @{ phase = 'hold-shot-own';           name = 'page-own-render';      scale = 1.0 },
+        @{ phase = 'hold-shot-own-zoom';      name = 'page-own-render-150pct'; scale = 1.0 },
+        # The band: five actions in one row, with 서식 open so the shot shows
+        # both halves of the arrangement.
+        @{ phase = 'hold-shot-toolbar';       name = 'toolbar';              scale = 1.0 },
         # 한글 오버레이. The first is a real raster with the runtime's own rects
         # on it and the candidate chooser open over a real ambiguity; the second
         # is this machine with nothing substituted, which is a refusal.

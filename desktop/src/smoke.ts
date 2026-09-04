@@ -25,6 +25,7 @@ import {
   commitEdit,
   declareSuggestedCharPr,
   exportApplied,
+  loadGeometry,
   openPath,
   openReceipt,
   preparePages,
@@ -53,9 +54,11 @@ import {
   locateSelection,
   selectionId,
   setCenterMode,
+  setPageFit,
   setSelection,
   setState,
   setView,
+  setZoom,
   sharedStateSignature,
   type QueuedFillOp,
   type QueuedRunOp,
@@ -1445,9 +1448,19 @@ async function phasePage(config: SmokeConfig) {
     check("the refusal tells the user what they can do about it",
       domText('[data-testid="prepare-refusal"]').length > prepareError.message.length + 20,
       domText('[data-testid="prepare-refusal"]').slice(0, 240));
-    check("no page was fabricated after the refusal",
-      !document.querySelector('[data-testid="page-raster"]'),
-      "no raster element");
+    // NOTHING WAS FABRICATED — which since tier 3 is a different assertion
+    // from "there is no image". A refusal from `renderPrepare` must not
+    // conjure a Hancom page; it may leave the own-rendered one that was
+    // already there, and that page is labelled. So: either no raster at all,
+    // or a raster the runtime graded as ours.
+    const graded =
+      document.querySelector('[data-testid="render-grade"]')?.getAttribute("data-grade") ?? "";
+    checkDom("no page was fabricated after the refusal",
+      !document.querySelector('[data-testid="page-raster"]') ||
+        graded === "own-uncertified",
+      `raster=${!!document.querySelector('[data-testid="page-raster"]')} grade=${graded}`);
+    check("and the refusal did not promote anything to a Hancom grade",
+      getState().render?.grade !== "hancom", String(getState().render?.grade));
     check("the verification bar still says 증명 없음",
       domText('[data-testid="verification-bar"]').includes("증명 없음"));
   } else {
@@ -1458,6 +1471,284 @@ async function phasePage(config: SmokeConfig) {
   setCenterMode("text");
   await settled();
   checkAlive("the page view");
+}
+
+/**
+ * TIER 3 — what a fresh install actually sees.
+ *
+ * This is the phase whose subject is the machine, not the feature. Hancom is
+ * absent from the packaged sidecar (no `pyhwpx`), so `renderPrepare` answers
+ * `needs_hancom` here and on every machine that has not installed the office
+ * suite — which means an own-rendered page is the DEFAULT experience, not a
+ * fallback. Everything below is asserted against the release build with no
+ * substitution and no staged session: the corpus HWPX is opened the way a file
+ * dialog opens one, and whatever the runtime returns is what a first-time user
+ * would be looking at.
+ *
+ * The claims, in the order they matter:
+ *
+ * 1. **The page is labelled, and the label is honest.** `grade` is
+ *    `own-uncertified` and the badge says 자체 렌더 · 미인증 in those words.
+ *    A page that looks like a Hancom render and is not is the single most
+ *    convincing way this product could mislead someone, so the badge text is
+ *    asserted literally rather than by presence.
+ * 2. **It says what it could not draw**, and the list on screen is the
+ *    runtime's own — compared entry by entry against `elementsSkipped`, not
+ *    merely counted.
+ * 3. **A click on the page still resolves.** Every span on an own-rendered
+ *    page is unmapped (the sidecar carries line positions, not line text), so
+ *    the assertion is that a click produces a STATED outcome naming the line
+ *    rather than the silence the old code returned.
+ * 4. **Zoom.** The keyboard route (Ctrl+= / Ctrl+− / Ctrl+0) as real key
+ *    events, and 폭 맞춤 changing the drawn width without asking the runtime
+ *    for anything — `geometryFetches` before and after is the proof, because
+ *    "zoom does not refetch" is otherwise invisible from outside.
+ *
+ * The phase leaves the app zoom at a distinctive level on purpose; `own-reattach`
+ * starts cold and asserts it came back.
+ */
+const OWN_UI_ZOOM = 1.35;
+
+async function phaseOwn(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const sessionId = await openPath(config.corpus);
+  check("own-render phase opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(160);
+
+  const caps = getState().capabilities;
+  const own = (caps?.render as Record<string, unknown> | undefined)?.own as
+    | Record<string, unknown>
+    | undefined;
+  check("the runtime advertises a third tier", own?.state === "yes",
+    JSON.stringify(own ?? null).slice(0, 200));
+  check("and does not claim it is certified", own?.certified === false,
+    String(own?.certified));
+  // The premise of the whole phase, recorded rather than assumed: this really
+  // is a machine without a reachable Hancom, so tier 3 is not being tested
+  // instead of tier 1 by accident.
+  const prepare = (caps?.render as Record<string, unknown> | undefined)?.prepare as
+    | Record<string, unknown>
+    | undefined;
+  check("RECORDED: what this machine can do about a PDF", true,
+    `prepare.state=${prepare?.state} reason=${prepare?.reason ?? "none"}`);
+
+  setCenterMode("page");
+  await settled(200);
+  await renderCurrentPage(1);
+  for (let i = 0; i < 120 && getState().renderPhase === "starting"; i += 1) {
+    await settled(500);
+  }
+  const render = getState().render;
+  check("document/render answered", !!render, JSON.stringify(getState().renderError));
+  if (!render) return;
+
+  if (!render.available) {
+    // The honest other half. If our own renderer cannot run here either, the
+    // page must say BOTH why there is no Hancom PDF and why tier 3 declined.
+    check("RECORDED: tier 3 did not draw on this machine", true,
+      JSON.stringify(render.unavailable ?? null).slice(0, 400));
+    checkDom("and the third tier's own refusal is on screen, not just Hancom's",
+      !!document.querySelector('[data-testid="own-refusal"]'),
+      domText('[data-testid="preview-unavailable"]').slice(0, 300));
+    return;
+  }
+
+  // --- 1. the label ---------------------------------------------------------
+  check("the page a fresh install sees is graded own-uncertified",
+    render.grade === "own-uncertified", String(render.grade));
+  check("and it is tier 3", render.tier === 3, String(render.tier));
+  check("the runtime does not call our own render a PDF",
+    render.source?.kind === "own_render", render.source?.kind ?? "");
+  check("the renderer says it is not certified",
+    render.renderer?.certified === false, JSON.stringify(render.renderer ?? null));
+  checkDom("the badge is drawn", !!document.querySelector('[data-testid="render-grade"]'),
+    domState());
+  checkDom("the badge names the tier in the runtime's own grade",
+    document.querySelector('[data-testid="render-grade"]')?.getAttribute("data-grade") ===
+      "own-uncertified",
+    document.querySelector('[data-testid="render-grade"]')?.getAttribute("data-grade") ?? "");
+  // Literal, not by presence: 자체 렌더 alone would read as a brand.
+  checkDom("the badge says 자체 렌더 · 미인증 in those words",
+    domText('[data-testid="render-grade"]').includes("자체 렌더") &&
+      domText('[data-testid="render-grade"]').includes("미인증"),
+    domText('[data-testid="render-grade"]').slice(0, 160));
+  checkDom("no page ever claims 한컴 렌더 when our own renderer drew it",
+    !domText('[data-testid="render-grade"]').includes("한컴 렌더"),
+    domText('[data-testid="render-grade"]').slice(0, 160));
+  checkDom("the raster is drawn", !!document.querySelector('[data-testid="page-raster"]'));
+  checkDom("and it is still labelled as not being evidence",
+    render.evidence?.proofGrade === "none" &&
+      domText('[data-testid="raster-evidence"]').length > 0,
+    String(render.evidence?.proofGrade));
+
+  // --- 2. 무엇을 못 그렸나 ---------------------------------------------------
+  const skipped = render.elementsSkipped ?? [];
+  check("the runtime says what our renderer could not draw", skipped.length > 0,
+    JSON.stringify(skipped).slice(0, 300));
+  checkDom("the list is one click away on the page",
+    !!document.querySelector('[data-testid="skipped-list"]'),
+    domState());
+  checkDom("the list on screen has one row per entry the runtime sent",
+    document.querySelectorAll('[data-testid="skipped-item"]').length === skipped.length,
+    `${document.querySelectorAll('[data-testid="skipped-item"]').length} rows vs ${skipped.length} entries`);
+  // ENTRY BY ENTRY, not by count: a list that showed the right number of the
+  // wrong rows would pass a count check and mislead a person comparing it
+  // against their document.
+  const rows = Array.from(document.querySelectorAll('[data-testid="skipped-item"]')).map(
+    (el) => el.textContent ?? "",
+  );
+  checkDom("and every row carries the runtime's own element and reason, verbatim",
+    skipped.every((entry, index) =>
+      (rows[index] ?? "").includes(entry.element) &&
+      (rows[index] ?? "").includes(entry.reason) &&
+      (rows[index] ?? "").includes(String(entry.count))),
+    rows.join(" | ").slice(0, 400));
+  checkDom("the font row says whether anything was substituted",
+    !!document.querySelector('[data-testid="font-substitution"]'),
+    domText('[data-testid="font-substitution"]').slice(0, 200));
+
+  // --- 3. the overlay, on OUR page ------------------------------------------
+  await loadGeometry(1);
+  await settled(200);
+  const geometry = getState().geometry;
+  check("document/pageGeometry answered for an own-rendered page",
+    geometry?.available === true, JSON.stringify(geometry?.unavailable ?? null).slice(0, 300));
+  if (geometry?.available) {
+    check("and it says whose layout it is", geometry.geometrySource === "own",
+      String(geometry.geometrySource));
+    check("the line boxes are real rectangles",
+      (geometry.spans ?? []).length > 0 &&
+        (geometry.spans ?? []).every(
+          (s: GeometrySpan) =>
+            s.rect[0] >= 0 && s.rect[2] <= 1 && s.rect[2] >= s.rect[0] &&
+            s.rect[1] >= 0 && s.rect[3] <= 1 && s.rect[3] >= s.rect[1]),
+      `${(geometry.spans ?? []).length} spans`);
+    // The honest limit, asserted as the absence it is.
+    check("no address is invented on a page whose text we did not measure",
+      (geometry.spans ?? []).every((s: GeometrySpan) => s.address === null) &&
+        (geometry.seats ?? []).length === 0 &&
+        geometry.mapping?.state === "unavailable",
+      JSON.stringify(geometry.mapping ?? null).slice(0, 200));
+    checkDom("the overlay draws the lines it was given",
+      document.querySelectorAll('[data-testid="overlay-span"]').length ===
+        (geometry.spans ?? []).length,
+      `${document.querySelectorAll('[data-testid="overlay-span"]').length} drawn vs ${(geometry.spans ?? []).length} sent`);
+
+    // A CLICK STILL RESOLVES. Not into an edit — there is no address to edit —
+    // but into a stated outcome, which is the difference between a limit and a
+    // dead page.
+    const target = document.querySelector<HTMLElement>('[data-testid="overlay-span"]');
+    check("there is a line on the page to click", !!target);
+    if (target) {
+      target.click();
+      await settled(200);
+      const pick = getState().overlayPick;
+      checkDom("a click on an own-rendered line resolves to a stated outcome",
+        pick?.kind === "unmapped" && (pick.label ?? "").length > 0,
+        JSON.stringify(pick ?? null).slice(0, 240));
+      checkDom("and the status bar prints it",
+        domText('[data-testid="status-overlay-pick"]').length > 0 &&
+          document
+            .querySelector('[data-testid="status-overlay-pick"]')
+            ?.getAttribute("data-pick-kind") === "unmapped",
+        domText('[data-testid="status-overlay-pick"]').slice(0, 200));
+      check("and nothing was queued by a click that had no address",
+        getState().draft.ops.length === 0, String(getState().draft.ops.length));
+    }
+  }
+
+  // --- 4. zoom --------------------------------------------------------------
+  //
+  // PAGE zoom first. The proof that geometry is zoom-independent is the fetch
+  // counter: a client that refetched on zoom would have paid for every glyph
+  // position on every nudge, and no DOM assertion can see that.
+  const widthOf = () =>
+    Number.parseFloat(
+      (document.querySelector<HTMLElement>('[data-testid="page-stage"]')?.style.width ?? "0")
+        .replace("px", ""),
+    );
+  const fetchesBefore = getState().geometryFetches;
+  const widthAt100 = widthOf();
+  setZoom(1.5);
+  await settled(200);
+  checkDom("a page zoom changes the drawn width", widthOf() > widthAt100 * 1.4,
+    `${widthAt100} -> ${widthOf()}`);
+  check("and asks the runtime for nothing",
+    getState().geometryFetches === fetchesBefore,
+    `${fetchesBefore} -> ${getState().geometryFetches}`);
+  setPageFit("width");
+  await settled(260);
+  check("폭 맞춤 leaves the free zoom and takes a measured scale",
+    getState().pageFit === "width" && getState().zoom !== 1.5,
+    `fit=${getState().pageFit} zoom=${getState().zoom}`);
+  checkDom("the footer says which fit is on",
+    document.querySelector('[data-testid="page-zoomer"]')?.getAttribute("data-fit") === "width" &&
+      document.querySelector('[data-testid="fit-width"]')?.getAttribute("aria-pressed") === "true",
+    document.querySelector('[data-testid="page-zoomer"]')?.getAttribute("data-fit") ?? "");
+  check("and a fit still asks the runtime for nothing",
+    getState().geometryFetches === fetchesBefore,
+    `${fetchesBefore} -> ${getState().geometryFetches}`);
+  setPageFit("free");
+  setZoom(1);
+  await settled(160);
+
+  // APP zoom, through the KEYBOARD, as real key events on window — the same
+  // listener a user's Ctrl+= reaches. Calling `stepUiZoom` directly would
+  // prove the function and not the binding.
+  const press = (key: string) => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true }));
+  };
+  await applyUiZoom(1, false);
+  await settled(120);
+  press("=");
+  await settled(200);
+  const stepped = getState().uiZoom;
+  check("Ctrl+= raises the app zoom", stepped > 1, String(stepped));
+  press("-");
+  await settled(200);
+  check("Ctrl+− lowers it again", Math.abs(getState().uiZoom - 1) < 0.001,
+    String(getState().uiZoom));
+  press("=");
+  press("=");
+  press("=");
+  await settled(240);
+  check("Ctrl+= steps through the scale", getState().uiZoom > 1.2, String(getState().uiZoom));
+  press("0");
+  await settled(200);
+  check("Ctrl+0 returns to 100%", Math.abs(getState().uiZoom - 1) < 0.001,
+    String(getState().uiZoom));
+
+  // Left at a distinctive level for `own-reattach` to find. Set through the
+  // action rather than the keyboard because the step table is what the
+  // keyboard walks and this needs an exact value to assert against.
+  await applyUiZoom(OWN_UI_ZOOM, false);
+  await settled(160);
+  const prefs = await rt.loadPrefs();
+  check("the app zoom is written to prefs, not only to memory",
+    Math.abs(Number(prefs.uiZoom) - OWN_UI_ZOOM) < 0.001, String(prefs.uiZoom));
+
+  setCenterMode("text");
+  await settled();
+  checkAlive("the own-render page view");
+}
+
+/** The other half of the zoom claim: a cold process, and the level came back. */
+async function phaseOwnReattach() {
+  await settled(160);
+  const state = getState();
+  check("the app zoom came back at the level the previous run left it",
+    Math.abs(state.uiZoom - OWN_UI_ZOOM) < 0.001, String(state.uiZoom));
+  const prefs = await rt.loadPrefs();
+  check("and prefs still carries it after the restore",
+    Math.abs(Number(prefs.uiZoom) - OWN_UI_ZOOM) < 0.001, String(prefs.uiZoom));
+  // Put it back where the later phases expect it, so this phase cannot change
+  // what any other phase means.
+  await applyUiZoom(1.2, false);
+  checkAlive("the own reattach");
 }
 
 /**
@@ -1543,8 +1834,26 @@ async function phaseOverlay(config: SmokeConfig) {
       (live.spans ?? []).length === 0 && (live.seats ?? []).length === 0,
       `${(live.spans ?? []).length} spans, ${(live.seats ?? []).length} seats`);
   } else if (live?.available) {
+    // Since tier 3 landed this is the branch this machine takes: the live HWPX
+    // gets a page from our own renderer with no substitution at all. The
+    // anti-fabrication claim this phase exists for does NOT lapse — it moves.
+    // Geometry now arrives, so the assertion becomes: it is OUR layout, and it
+    // still invents nothing.
     check("the live document produced geometry on its own", true,
       `${(live.spans ?? []).length} spans without any substitution`);
+    check("and it says whose layout it is rather than passing as a PDF read",
+      live.geometrySource === "own" || live.geometrySource === "pdf",
+      String(live.geometrySource));
+    if (live.geometrySource === "own") {
+      check("an own-rendered page still claims no address it did not measure",
+        (live.spans ?? []).every((s: GeometrySpan) => s.address === null) &&
+          (live.seats ?? []).length === 0,
+        `${(live.spans ?? []).length} spans, ${(live.seats ?? []).length} seats`);
+      checkDom("and the page says which renderer drew it",
+        document.querySelector('[data-testid="render-grade"]')?.getAttribute("data-grade") ===
+          "own-uncertified",
+        domText('[data-testid="render-grade"]').slice(0, 160));
+    }
   }
 
   // --- STAGED-REAL: the corpus's own Hancom render of the same form ---------
@@ -2248,6 +2557,47 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       r.kind === "cell" && r.table !== undefined && r.row !== undefined && r.col !== undefined,
   );
   const clean = seats.filter((r) => r.scriptAnomaly !== true && r.colorAnomaly !== true);
+
+  // TIER 3, photographed with nothing substituted. This is the page a fresh
+  // install gets: no Hancom, no staged PDF, our own renderer, and the badge
+  // that says so. `own` opens the 무엇을 못 그렸나 list because a closed
+  // disclosure photographs as a caption; `own-zoom` is the same page at 150%,
+  // which is the claim that a zoom changes the drawn size and nothing else.
+  if (stop === "own" || stop === "own-zoom") {
+    setCenterMode("page");
+    await renderCurrentPage(1);
+    for (let i = 0; i < 120 && getState().renderPhase === "starting"; i += 1) {
+      await settled(500);
+    }
+    const { loadGeometry } = await import("./actions");
+    await loadGeometry(1);
+    await settled(300);
+    const list = document.querySelector<HTMLDetailsElement>('[data-testid="skipped-list"]');
+    if (list) list.open = true;
+    if (stop === "own-zoom") {
+      const { setZoom } = await import("./store");
+      setZoom(1.5);
+    }
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  // The band. One row of actions, with 서식 open so the shot shows both halves
+  // of the arrangement — what is always a button, and what is looked up.
+  if (stop === "toolbar") {
+    setCenterMode("text");
+    if (clean.length > 0) {
+      const seat = clean[0];
+      setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
+    }
+    await settled(250);
+    const menu = document.querySelector<HTMLDetailsElement>('[data-testid="tool-format"]');
+    if (menu) menu.open = true;
+    await settled(300);
+    await ready(`shot-${stop}`);
+    return;
+  }
 
   if (stop === "page") {
     setCenterMode("page");
@@ -3072,6 +3422,8 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "edit") await phaseEdit(config);
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
+    else if (config.phase === "own") await phaseOwn(config);
+    else if (config.phase === "own-reattach") await phaseOwnReattach();
     else if (config.phase === "undo") await phaseUndo(config);
     else if (config.phase === "overlay") await phaseOverlay(config);
     else if (config.phase === "packs") await phasePacks(config);

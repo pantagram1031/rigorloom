@@ -181,6 +181,7 @@ function SpanOverlay({
   picked,
   stale,
   editing,
+  source,
 }: {
   span: GeometrySpan;
   picked: boolean;
@@ -188,11 +189,45 @@ function SpanOverlay({
   stale: boolean;
   /** The open caret edit, when it is THIS line's. Null otherwise. */
   editing: InlineRunEdit | null;
+  /** Whose layout this is — `"pdf"` or `"own"` (§11.1c). */
+  source: string;
 }) {
-  // Unmapped text gets NOTHING. It is on the page, it is readable, and this
-  // shell has no address for it — so it gets no affordance rather than a
-  // hopeful one.
-  if (span.confidence === "unmapped") return null;
+  // Unmapped text gets NOTHING — on a page read out of a PDF. It is on the
+  // page, it is readable, and this shell has no address for it, so it gets no
+  // affordance rather than a hopeful one. An unmapped line there is a MISS:
+  // the text was read and matched nothing, and drawing a target over it would
+  // promise an edit that is not available.
+  //
+  // An own-rendered page is a different fact wearing the same word. There every
+  // line is unmapped BY CONSTRUCTION — the sidecar records where each line was
+  // drawn and not what it said — so the same rule deletes the entire overlay
+  // and leaves a page that looks like one nothing was measured on. The measured
+  // thing here is the RECTANGLE, and it is real. So the line is drawn, silently:
+  // no fill, no seat vocabulary, nothing that reads as "type here". It is a
+  // hit target that answers the one question it can answer, which the status
+  // bar then prints — 자체 렌더 지면이라 이 줄이 어느 자리인지 붙이지 못합니다.
+  if (span.confidence === "unmapped") {
+    if (source !== "own") return null;
+    return (
+      <button
+        type="button"
+        className={["ov", "ov-span", "ov-line", picked ? "ov-picked" : ""].join(" ")}
+        style={place(span.rect)}
+        data-testid="overlay-span"
+        data-confidence="unmapped"
+        data-editable="false"
+        data-caret-target="false"
+        data-has-offsets="false"
+        data-line-mode={span.lineMode ?? ""}
+        data-span-index={span.index}
+        title="자체 렌더러가 이 줄을 그린 자리입니다. 어느 주소인지는 알지 못합니다."
+        onClick={(e) => {
+          e.stopPropagation();
+          void clickOverlaySpan(span);
+        }}
+      />
+    );
+  }
 
   const ambiguous = span.confidence === "ambiguous";
   const editable = !ambiguous && addressIsEditable(span.address);
@@ -471,6 +506,7 @@ export function PageOverlay({
         <SpanOverlay
           key={`span-${span.index}`}
           span={span}
+          source={geometry.geometrySource ?? "pdf"}
           picked={pick?.targetId === `span-${span.index}`}
           stale={staleKeys.has(spanStaleKey(span))}
           editing={

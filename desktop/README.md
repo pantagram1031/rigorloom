@@ -1082,6 +1082,85 @@ visible. Those are the two real echoes. There is no third.
 
 ---
 
+## 자체 렌더 — the page a fresh install actually gets
+
+The honest states above were all correct and, taken together, they added up to
+a product that showed nothing. Trace what a first-time user meets: they open an
+HWPX, press 페이지 보기, and get a refusal card. Not because anything is broken
+— because the packaged sidecar carries no `pyhwpx`, so `renderPrepare` answers
+`needs_hancom` on every machine that has not installed the office suite. The
+marquee surface of this application was unreachable by default.
+
+`engine/scripts/own_render.py` draws OWPML without Hancom, and §11.1c wires it
+in as a third tier. What that changes here is not "there is now a picture" — it
+is that there are now **three kinds of picture** and the user has to be able to
+tell them apart at a glance, because they look identical.
+
+**The badge is the feature.** Above the paper, before the ruler, in the reading
+order a person needs: 한컴 렌더 · PDF 렌더 · 자체 렌더 · 미인증. It switches on
+the runtime's own closed grade set, never on prose. 미인증 is inside the badge
+TEXT rather than in a tooltip, because uncertified is the whole claim and a
+badge reading only 자체 렌더 would read as a brand name.
+
+**무엇을 못 그렸나** sits one click under the page and prints the sidecar's
+`elements_skipped` verbatim — element, reason, count — rather than a summary. A
+count on its own tells nobody anything they can check against their document;
+`hh:bottomBorder@type=DASH ×3 · non-solid border stroked as solid` does. On the
+corpus form the phase uses, that list has one entry (`hp:tbl@pos`, an anchored
+table placed at its declared offset with no wrap computation), and the smoke
+compares it row by row against what the runtime sent, not by counting rows.
+
+**Tiers are never mixed on one page.** The overlay is drawn only when the
+geometry and the raster came from the same renderer. Rects read out of a PDF,
+laid over pixels our own renderer drew, would be the most convincing lie this
+product could tell — every rectangle would look measured, and every one would
+be in the wrong place. A mismatch is a stated state, not a silent omission.
+
+**What an own-rendered page honestly cannot do.** The sidecar's `line_boxes`
+record where each line was DRAWN, not what it said, so geometry comes back with
+real rects and `mapping.state: "unavailable"`: no address, no seat, no caret
+offset. Nothing is reconstructed by reopening the document and guessing which
+line is which. A click therefore cannot open an edit — but it now says so,
+naming the line, where before it returned in silence. On a PDF page a silent
+unmapped click was a rare miss; on an own-rendered page every line is unmapped,
+and silence would read as a dead page rather than as a stated limit.
+
+That is the honest shape of the tier: **the page is usable to LOOK at and not
+to edit on**, and the UI says which. Editing still goes through 본문 보기, which
+never needed a render.
+
+### The band, and the five things people do
+
+The five actions of the ordinary loop were spread across four places — 열기 in
+the title bar, 검사 in the band, 저장/내보내기 in the verification bar, 되돌리기
+behind a tab in the other view, 승인 in the right-hand panel. Each placement was
+locally defensible and the sum was a product you had to be taught. They are one
+row now, first in the band, and each one says why it is unavailable instead of
+being greyed in silence. The panels that own the detail still own it; these are
+doors.
+
+What moved out is everything a person LOOKS UP rather than watches: 글꼴, 글자
+모양, 크기 into a 서식 menu, and the app zoom into a 화면 menu that names its own
+shortcuts. `<details>` rather than popups, so nothing leaves the DOM for a
+screen reader or for the evidence harness, and there is no z-index or
+outside-click handler to keep in step.
+
+**Two zooms, and they stopped being confusable.** 화면 (Ctrl+= / Ctrl+− /
+Ctrl+0, persisted, webview-level) and the document's own scale used to sit side
+by side in the strip as two percentages. The document one now lives in the page
+footer with 폭 맞춤 and 쪽 맞춤 beside it, measured off the scroller's own box
+through a `ResizeObserver` so a resized window keeps fitting. Neither refetches
+anything: the raster is CSS-scaled and the overlay rects are page fractions
+(§12.1), and the smoke proves it by comparing `geometryFetches` across a zoom
+sweep — the one property no DOM assertion can see.
+
+**Chrome.** Type scale up one step across the board (nothing under 12px
+survives; the text people work in is 14px), 30px minimum on every button, 40px
+band. The wide soft shadows are cut to thin elevation — they read as glow, and a
+document tool that glows looks like a marketing page.
+
+---
+
 ## Evidence
 
 ### Phase 3 (commit `2f27d3e`), reproduced from a clean build
@@ -2322,6 +2401,39 @@ rest stand.
     `load_profile` now accepts a subject. Then the centre re-reads against the
     head and the whole class of staleness closes at once, page and text
     together, instead of the page being honest alone.
+
+### New with the own renderer (tier 3)
+
+34. **An own-rendered page carries no addresses, so it cannot be edited on.**
+    The sidecar records where each line was drawn and not what it said, so
+    `document/pageGeometry` returns real rects with `mapping.state:
+    "unavailable"` — no address, no seat, no caret offset. The overlay draws
+    the lines and a click states the limit instead of opening an editor. This
+    is the honest floor of the tier, not a bug: reconstructing which line is
+    which by reopening the document and matching text would put a caret on the
+    wrong line with the authority of a measurement, which is the one failure
+    §12 exists to prevent.
+    *Suggested shape:* the renderer already knows the text it drew — it laid
+    the glyphs out. Emitting `text` and per-character x on each `line_box`
+    would let the existing `map_spans` / `derive_seats` path run unchanged and
+    would close this gap without a single new concept on the wire. That is an
+    engine change, not a desktop one.
+
+35. **Tier 3 is not certified against anything, and cannot be from here.**
+    `render_cert` scores a renderer against a Hancom reference render, and the
+    own renderer emits raster PDFs with no text layer, so only the page-count
+    and raster channels can score it at all. Every page it draws is therefore
+    `own-uncertified` and will stay that way until a vector text backend
+    exists. The Desktop's job is the label, and the label is the whole of what
+    this build can honestly offer.
+
+36. **The page a user sees can be a different tier from the one they had a
+    moment ago, with no transition.** Running `renderPrepare` successfully on a
+    machine that does have Hancom silently promotes the page from tier 3 to
+    tier 1: the badge changes, the skipped list empties, the overlay gains
+    addresses. That is correct, and it is also a jump with no explanation
+    attached. *Suggested shape:* a one-line note under the badge when the tier
+    changed during this session, naming both.
 
 ## Packaging gaps
 

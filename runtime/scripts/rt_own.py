@@ -173,6 +173,36 @@ def existing_own(session, *, subject_sha256: str, dpi: int) -> dict | None:
     return dict(record)
 
 
+def any_own_for(session, *, subject_sha256: str) -> dict | None:
+    """Any cached tier-3 render of these bytes, at whatever dpi drew it.
+
+    Geometry needs A render of this subject, not one at a particular dpi: the
+    rects it emits are normalised by the page's own pixel size, so every dpi
+    gives the same fractions. Searching by dpi would mean geometry knowing what
+    the CLIENT happened to ask the raster for — and the Desktop asks for 110,
+    which is nobody's round number.
+
+    Highest dpi wins where there are several: the line boxes are measured in
+    device pixels and the finer render rounds least.
+    """
+    renders = (session.meta or {}).get("ownRenders")
+    if not isinstance(renders, dict):
+        return None
+    best = None
+    for key, record in renders.items():
+        if not isinstance(record, dict):
+            continue
+        if record.get("subjectSha256") != subject_sha256:
+            continue
+        candidate = existing_own(session, subject_sha256=subject_sha256,
+                                 dpi=int(record.get("dpi") or 0))
+        if candidate is None:
+            continue
+        if best is None or int(candidate.get("dpi") or 0) > int(best.get("dpi") or 0):
+            best = candidate
+    return best
+
+
 def read_sidecar(session, record: dict) -> dict:
     path = session.dir / str(record.get("sidecar") or "")
     try:
