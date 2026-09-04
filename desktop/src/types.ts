@@ -564,6 +564,25 @@ export interface GeometrySpan {
    * they are not equally trustworthy.
    */
   lineMode?: string;
+  /**
+   * Own-rendered pages only: the address OUR RENDERER says it drew this line
+   * from, which it knows because it drew it out of the tree.
+   *
+   * It is a witness, never a verdict. The runtime cross-checks it against the
+   * form scan and only the scan's answer ever reaches `address`; this field is
+   * here so the shell can SAY what the renderer thought, which is the whole
+   * difference between a checked address and a trusted one.
+   */
+  sidecarAddress?: GeometryAddress | null;
+  /**
+   * How `address` (or its absence) came about on an own-rendered page:
+   * `scan+sidecar` both witnesses agree · `disagreement` they do not, and the
+   * span is ambiguous carrying both · `sidecar_only` the scan matched nothing
+   * and the renderer's answer was recorded and NOT believed.
+   */
+  addressBasis?: "scan+sidecar" | "disagreement" | "sidecar_only" | string;
+  /** Index into `candidates` of the one the renderer named. Never applied. */
+  sidecarPick?: number;
 }
 
 /**
@@ -577,7 +596,7 @@ export interface GeometrySeat {
   row?: number | null;
   col?: number | null;
   rect: NormRect;
-  derivation: "matched_text" | "cell_borders" | "interpolated" | string;
+  derivation: "matched_text" | "cell_borders" | "interpolated" | "own_cell" | string;
   basis?: Record<string, unknown>;
 }
 
@@ -590,6 +609,23 @@ export interface GeometryMapping {
   unique?: number;
   ambiguous?: number;
   unmapped?: number;
+  /**
+   * Own-rendered pages only. What the renderer's own record of which paragraph
+   * or cell it drew each line from did to the scan's answer, counted per page:
+   * `agree` confirmed a unique address, `disagree` demoted one to ambiguous,
+   * `amongCandidates` / `notAmongCandidates` marked a candidate on an already
+   * ambiguous line, `sidecarOnly` was recorded and not believed, `scanOnly`
+   * had no renderer opinion at all.
+   */
+  crossCheck?: {
+    declared?: number;
+    agree?: number;
+    disagree?: number;
+    amongCandidates?: number;
+    notAmongCandidates?: number;
+    sidecarOnly?: number;
+    scanOnly?: number;
+  };
 }
 
 export interface GeometryResult {
@@ -604,10 +640,12 @@ export interface GeometryResult {
   spanUnit?: string;
   /**
    * WHOSE LAYOUT THIS IS. `"pdf"` read a PDF's own text objects — rects, text,
-   * addresses, seats, per-character offsets. `"own"` read our renderer's line
-   * boxes — rects only, because the sidecar records where each line was drawn
-   * and not what it said (§11.1c). The page view refuses to draw an overlay
-   * whose source disagrees with the raster's tier.
+   * addresses, seats, per-character offsets. `"own"` read our renderer's
+   * sidecar, which carries all of the same things and is mapped by the same
+   * form scan; what still differs is that the RASTER under it is
+   * `own-uncertified`. The page view refuses to draw an overlay whose source
+   * disagrees with the raster's tier, and the status bar prints which of the
+   * two the seats and the caret are standing on.
    */
   geometrySource?: "pdf" | "own" | string;
   grade?: RenderGrade | string;
@@ -663,6 +701,13 @@ export interface OverlayPick {
   /** The span or seat this came from, so the drawn overlay can mark itself. */
   targetId: string;
   candidates?: GeometryAddress[];
+  /**
+   * Index into `candidates` of the one OUR RENDERER says it drew this line
+   * from, on an own-rendered page. Marked in the chooser and never applied: a
+   * second witness is something to show a person, not a tiebreak this shell is
+   * entitled to take (T41).
+   */
+  sidecarPick?: number;
   address?: GeometryAddress | null;
   /**
    * How the runtime came by this rectangle, carried through to the status bar.
