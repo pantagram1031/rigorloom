@@ -36,6 +36,51 @@ def _sha256(path):
 
 
 # ---------------------------------------------------------------------------
+# tiny synthetic fixtures for edit_preserved / edit_preserved_text_export —
+# a marker planted in the body, in a header control's own hp:subList, or
+# nowhere at all. Built the same way test_hwpx_lint.py builds its
+# section-head fixtures (raw hs:sec XML + hwpx_write's own part/package
+# constructors), the minimal set hwpx_write.HwpxPackage.validate() requires:
+# mimetype, Contents/header.xml (the style catalog, unrelated to the "hp:header"
+# control tag below), Contents/section0.xml.
+# ---------------------------------------------------------------------------
+
+_BODY_MARKER_SECTION = (
+    '<hs:sec' + hwpx_write._NS_ATTRS + '>'
+    '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0"'
+    ' merged="0"><hp:run charPrIDRef="0"><hp:t>%s</hp:t></hp:run></hp:p>'
+    '</hs:sec>'
+)
+
+_HEADER_MARKER_SECTION = (
+    '<hs:sec' + hwpx_write._NS_ATTRS + '>'
+    '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0"'
+    ' merged="0"><hp:run charPrIDRef="0">'
+    '<hp:ctrl><hp:header id="1" applyPageType="BOTH"><hp:subList>'
+    '<hp:p><hp:run><hp:t>%s</hp:t></hp:run></hp:p>'
+    '</hp:subList></hp:header></hp:ctrl><hp:t/></hp:run></hp:p>'
+    '</hs:sec>'
+)
+
+_NO_MARKER_SECTION = (
+    '<hs:sec' + hwpx_write._NS_ATTRS + '>'
+    '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0"'
+    ' merged="0"><hp:run charPrIDRef="0"><hp:t>nothing relevant here</hp:t>'
+    '</hp:run></hp:p></hs:sec>'
+)
+
+
+def _write_tiny_hwpx(path, section_xml):
+    payloads = [
+        ("mimetype", hwpx_write.MIMETYPE),
+        ("Contents/header.xml", hwpx_write._xml_bytes(hwpx_write._BLANK_HEADER)),
+        ("Contents/section0.xml", hwpx_write._xml_bytes(section_xml)),
+    ]
+    hwpx_write.hancom_package(payloads).write(path)
+    return path
+
+
+# ---------------------------------------------------------------------------
 # verdict schema
 # ---------------------------------------------------------------------------
 
@@ -43,7 +88,7 @@ def test_all_seven_checks_are_present_and_never_fabricated_pass(tmp_path):
     with mock.patch.object(hwpx_accept, "hwp_process_busy", return_value=(True, "busy")):
         verdict = hwpx_accept.run(str(FORM_A), str(tmp_path))
     assert set(verdict["checks"]) == set(hwpx_accept.CHECK_NAMES)
-    assert len(hwpx_accept.CHECK_NAMES) == 7
+    assert len(hwpx_accept.CHECK_NAMES) == 8
     for name, row in verdict["checks"].items():
         assert row["status"] in ("pass", "fail", "skipped"), (name, row)
         assert row["status"] != "pass"  # busy path: nothing can have actually run
@@ -213,29 +258,76 @@ class _FakeHwp:
 
 def test_full_mocked_run_marks_every_check_pass_with_a_matching_edit_marker(tmp_path):
     sessions = []
+    marker = "hello edited"
+    source = _write_tiny_hwpx(tmp_path / "src.hwpx", _BODY_MARKER_SECTION % marker)
 
     def _fake_open_session(path):
-        h = _FakeHwp(path=path)
+        h = _FakeHwp(path=path, text="%s world" % marker)
         sessions.append(h)
         return h, True
 
     with mock.patch.object(hwpx_accept, "hwp_process_busy", return_value=(False, "")), \
          mock.patch.dict(sys.modules, {"pyhwpx": mock.Mock()}), \
          mock.patch.object(hwpx_accept, "_open_session", side_effect=_fake_open_session):
-        verdict = hwpx_accept.run(str(FORM_A), str(tmp_path), edit_marker="hello edited")
+        verdict = hwpx_accept.run(str(source), str(tmp_path / "out"), edit_marker=marker)
 
     assert verdict["checks"]["open_no_repair"]["status"] == "pass"
     assert verdict["checks"]["save_new_path"]["status"] == "pass"
     assert verdict["checks"]["close"]["status"] == "pass"
     assert verdict["checks"]["reopen"]["status"] == "pass"
     assert verdict["checks"]["edit_preserved"]["status"] == "pass"
+    assert verdict["checks"]["edit_preserved"]["kind"] == "body"
+    assert verdict["checks"]["edit_preserved_text_export"]["status"] == "pass"
     # structures_preserved: candidate is a byte copy of the source here, so it
     # must trivially match.
     assert verdict["checks"]["structures_preserved"]["status"] == "pass"
     assert verdict["checks"]["bindings_valid"]["status"] == "pass"
-    assert verdict["candidate_sha256"] == _sha256(FORM_A)
+    assert verdict["candidate_sha256"] == _sha256(source)
     assert len(sessions) == 2  # one open, one reopen
     assert sessions[0].quit_called
+
+
+def test_header_anchored_marker_passes_lexically_export_reports_not_exported(tmp_path):
+    """The gap hancom-acceptance-02.md run 02 (d) root-caused, now closed:
+    a marker planted inside a hp:header control is found by the lexical
+    reader (which sees every Contents/section*.xml paragraph flow) even
+    though GetTextFile("TEXT", "") -- which does not export header/footer/
+    footnote/endnote content -- never contained it."""
+    marker = "RIGORLOOM-HEADER-MARKER"
+    source = _write_tiny_hwpx(tmp_path / "src.hwpx", _HEADER_MARKER_SECTION % marker)
+
+    def _fake_open_session(path):
+        return _FakeHwp(path=path, text="body text without the marker"), True
+
+    with mock.patch.object(hwpx_accept, "hwp_process_busy", return_value=(False, "")), \
+         mock.patch.dict(sys.modules, {"pyhwpx": mock.Mock()}), \
+         mock.patch.object(hwpx_accept, "_open_session", side_effect=_fake_open_session):
+        verdict = hwpx_accept.run(str(source), str(tmp_path / "out"), edit_marker=marker)
+
+    assert verdict["checks"]["edit_preserved"]["status"] == "pass"
+    assert verdict["checks"]["edit_preserved"]["kind"] == "header"
+    assert verdict["checks"]["edit_preserved_text_export"] == {
+        "status": "skipped", "reason": "not_exported",
+        "note": mock.ANY,
+    }
+
+
+def test_genuinely_lost_marker_fails_both_edit_preserved_checks(tmp_path):
+    marker = "RIGORLOOM-NEVER-PLANTED-MARKER"
+    source = _write_tiny_hwpx(tmp_path / "src.hwpx", _NO_MARKER_SECTION)
+
+    def _fake_open_session(path):
+        return _FakeHwp(path=path, text="nothing relevant here either"), True
+
+    with mock.patch.object(hwpx_accept, "hwp_process_busy", return_value=(False, "")), \
+         mock.patch.dict(sys.modules, {"pyhwpx": mock.Mock()}), \
+         mock.patch.object(hwpx_accept, "_open_session", side_effect=_fake_open_session):
+        verdict = hwpx_accept.run(str(source), str(tmp_path / "out"), edit_marker=marker)
+
+    assert verdict["checks"]["edit_preserved"] == {
+        "status": "fail", "reason": "edit_marker_not_found"}
+    assert verdict["checks"]["edit_preserved_text_export"] == {
+        "status": "fail", "reason": "edit_marker_not_found"}
 
 
 def test_edit_preserved_is_skipped_not_fabricated_when_no_marker_given(tmp_path):
@@ -248,6 +340,8 @@ def test_edit_preserved_is_skipped_not_fabricated_when_no_marker_given(tmp_path)
         verdict = hwpx_accept.run(str(FORM_A), str(tmp_path), edit_marker=None)
     assert verdict["checks"]["edit_preserved"] == {"status": "skipped",
                                                     "reason": "no_edit_description"}
+    assert verdict["checks"]["edit_preserved_text_export"] == {
+        "status": "skipped", "reason": "no_edit_description"}
 
 
 def test_edit_preserved_fails_when_marker_absent_from_reopened_text(tmp_path):
@@ -327,17 +421,20 @@ def test_candidate_path_collision_guard_refuses_and_skips_everything(tmp_path):
 def test_compare_structures_passes_when_source_and_candidate_are_identical():
     result = hwpx_accept.compare_structures(FORM_A, FORM_A)
     assert result["status"] == "pass"
-    assert result["qname_count_delta"] == {}
-    assert result["source_tables"] == result["candidate_tables"]
-    assert result["source_paragraphs"] == result["candidate_paragraphs"]
+    body = result["body_structure"]
+    assert body["status"] == "pass"
+    assert body["source_tables"] == body["candidate_tables"]
+    assert body["source_paragraphs"] == body["candidate_paragraphs"]
+    assert body["source_table_cells"] == body["candidate_table_cells"]
+    assert result["style_catalog_delta"]["qname_count_delta"] == {}
+    assert "note" in result["style_catalog_delta"]
 
 
 def test_compare_structures_fails_on_two_genuinely_different_forms():
     result = hwpx_accept.compare_structures(FORM_A, FORM_B)
     assert result["status"] == "fail"
-    assert result["reason"] == "table_or_paragraph_count_drift"
-    # the delta must not be empty for two unrelated forms
-    assert result["qname_count_delta"] != {}
+    assert result["reason"] == "table_paragraph_or_cell_count_drift"
+    assert result["body_structure"]["status"] == "fail"
 
 
 def test_compare_structures_reports_table_and_paragraph_counts_matching_the_reader():
@@ -348,20 +445,32 @@ def test_compare_structures_reports_table_and_paragraph_counts_matching_the_read
     expected_paras = sum(
         1 for name in pkg.section_names()
         for _n in pkg.part(name).tree().iter_local("p"))
+    expected_cells = sum(
+        1 for name in pkg.section_names()
+        for _n in pkg.part(name).tree().iter_local("tc"))
     result = hwpx_accept.compare_structures(FORM_A, FORM_A)
-    assert result["source_tables"] == expected_tables
-    assert result["source_paragraphs"] == expected_paras
+    body = result["body_structure"]
+    assert body["source_tables"] == expected_tables
+    assert body["source_paragraphs"] == expected_paras
+    assert body["source_table_cells"] == expected_cells
 
 
-def test_compare_structures_delta_is_symmetric_key_set():
-    """Every reported delta key really did change count in one direction or another."""
+def test_compare_structures_style_catalog_delta_is_header_xml_scoped_and_ungated():
+    """The style_catalog_delta is Contents/header.xml's own qname counts --
+    not the whole-package delta -- and never flips the overall status."""
     result = hwpx_accept.compare_structures(FORM_A, FORM_B)
     source_pkg = hwpx_write.HwpxPackage.read(FORM_A)
     candidate_pkg = hwpx_write.HwpxPackage.read(FORM_B)
-    source_counts = hwpx_accept._qname_counts(source_pkg)
-    candidate_counts = hwpx_accept._qname_counts(candidate_pkg)
-    for qname, delta in result["qname_count_delta"].items():
-        assert candidate_counts.get(qname, 0) - source_counts.get(qname, 0) == delta
+    source_counts = hwpx_accept._header_qname_counts(source_pkg)
+    candidate_counts = hwpx_accept._header_qname_counts(candidate_pkg)
+    delta = result["style_catalog_delta"]["qname_count_delta"]
+    for qname, value in delta.items():
+        assert candidate_counts.get(qname, 0) - source_counts.get(qname, 0) == value
+    # the two forms are genuinely different documents, so their style
+    # catalogs differ too -- but that must not be why status is "fail":
+    # body_structure's own count mismatch already accounts for it.
+    assert result["status"] == "fail"
+    assert result["body_structure"]["status"] == "fail"
 
 
 # ---------------------------------------------------------------------------
