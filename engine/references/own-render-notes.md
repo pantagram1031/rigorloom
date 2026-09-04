@@ -720,14 +720,27 @@ block taller than one page (placed and allowed to overflow, because no rule
 can make it fit), headers/footers/notes taking room in the flow, and any
 section past `section0`.
 
-**Table splitting.** A table is split at a row boundary **only** when it
-declares `hp:tbl@pageBreak="CELL"` (셀 단위로 나눔). `NONE` (나누지 않음) and
-`TABLE` (표 단위로 나눔) both move the whole table to the next page. The corpus
-declares CELL on 62 tables and NONE on 19; `TABLE` never appears and is
-grouped with `NONE`. A split leaves two placement records carrying the row
-range each page draws, and `_render_table` draws exactly that range with the
-row origin pulled back — the continuation page does **not** repeat the header
-row.
+**Table splitting.** A table is split at a row boundary only when **both**
+halves of the permission hold: it declares `hp:tbl@pageBreak="CELL"`
+(셀 단위로 나눔) **and** it is anchored rather than 글자처럼 취급
+(`hp:tbl/hp:pos@treatAsChar="0"`). `NONE` (나누지 않음) and `TABLE`
+(표 단위로 나눔) both move the whole table to the next page, and so does every
+inline table whatever it declares. The corpus declares CELL on 62 tables and
+NONE on 19; `TABLE` never appears and is grouped with `NONE`.
+
+The second half is measured, not read off the schema: Hancom never splits an
+inline table — eleven probe variants and three Hancom-authored controls, no
+exception ([`docs/research/table-page-break-rule.md`](../../docs/research/table-page-break-rule.md)).
+An inline table that does not fit the room left moves whole; one that does
+not fit a whole page is drawn from the top of that page and allowed to
+overflow, which is what Hancom does with its own. The fit test for such a
+line clears the table's **whole** height rather than the usual `baseline`
+allowance (`_row_extent`) — a table has no descender to hang past the margin.
+
+A split leaves two placement records carrying the row range each page draws,
+and `_render_table` draws exactly that range with the row origin pulled back
+— the continuation page does **not** repeat the header row, where Hancom's
+anchored split does.
 
 ### How well the flow pass agrees with the engine that wrote the file
 
@@ -1919,8 +1932,16 @@ false` on both; the grade stays `own-uncertified` on every class.
    kstartup the flow pass and the cached-`vertpos` heuristic disagree, and the
    flow pass is right. Answering that for all ten forms needs the reference
    renders item 1 is about.
-6. A vendored font with known metrics, so cross-machine determinism becomes
-   claimable and the scoreboard stops depending on which faces this machine has.
+6. ~~**A vendored font with known metrics.**~~ Largely done for the plain
+   body serif/sans/monospace slot — see *Bundled Korean fallback faces
+   (family map)* below: `BundledFontMap` maps 바탕/함초롬바탕/휴먼명조/
+   신명조/한양신명조/궁서, 돋움/굴림/함초롬돋움/맑은 고딕/한양중고딕/HY견고딕
+   and 돋움체/굴림체 to three OFL Nanum families shipped in the repo, so
+   those specific declared names resolve to the same face everywhere. What
+   is left: everything NOT in that table (HCI Poppy, 한컴바탕, 신명 신문명조,
+   HY울릉도M, 필기, and any Latin/decorative face) still falls through to the
+   single machine-dependent system fallback, so the scoreboard is not fully
+   off the machine's installed faces yet — only closer.
 7. `kstartup` pagination (limit 12) — now diagnosed and computable; what is
    left is the policy decision, not the mechanism.
 8. ~~**Italic cuts in `SystemFontIndex`, for equations.**~~ Done — see
@@ -1965,161 +1986,6 @@ already carries; this is a gate-verification entry, not new work. The
 re-pin notes cite lives on `claude/engine-e3-hancom-accept`
 (commit `b8a87e1`), not yet merged into this branch — a known cross-branch
 reference, not a broken one; no test on this branch depends on that path.
-
-## Dashed borders — measured, 2026-09-04 (E2 borders/rows slice)
-
-`docs/research/h2orestart-vs-own.md` names two defects on the two worst
-forms. This is the first: `hh:borderFill@type="DASH"` was stroked as a solid
-line of the declared width. 55 border sides across six corpus forms declare
-it (`gianmun-2ho` 7, `jeongbo` 4, `jumin` 9, `kstartup` 23, `moel-2025` 4,
-`nrf` 8).
-
-**Measured black-box off the Hancom reference PDFs, not guessed.** None of
-the ten references carries a PDF `d` (dash-array) operator: Hancom emits
-every dash as its own path piece, so the pattern reads straight out of the
-page geometry. Collinear pieces merged per rule, run/gap taken as medians,
-over every reference that declares a DASH side:
-
-| declared | stroked | dash | gap | period | dash/w | gap/w | forms |
-|---|---|---|---|---|---|---|---|
-| 0.10 mm | 0.240 pt | 0.360 | 0.480 | 0.840 | 1.270 | 1.693 | nrf |
-| 0.12 mm | 0.360 pt | 0.480 | 0.720 | 1.200 | 1.411 | 2.116 | gianmun-2ho, jumin, kstartup, moel-2025 |
-| 0.15 mm | 0.480 pt | 0.600 | 0.840 | 1.440 | 1.411 | 1.976 | jeongbo |
-| 0.70 mm | 2.039 pt | 2.879 | 4.318 | 7.197 | 1.451 | 2.176 | jeongbo |
-
-`dash/w` and `gap/w` are against the **declared** width (0.12 mm = 34.02
-HWPUNIT = 0.3402 pt), not the width Hancom strokes. The stroked width is
-quantised onto what looks like a 600 dpi device grid — 0.240 / 0.360 /
-0.480 / 2.039 pt are exactly 2 / 3 / 4 / 17 units of 1/600 in — and the dash
-geometry tracks the *declared* width, not the quantised one. That is the one
-non-obvious thing in the measurement: fitting the ratios against the stroked
-width gives no consistent constant, fitting against the declared width does.
-
-`BORDER_DASH_PERIOD = 3.53` (× declared width) and `BORDER_DASH_DUTY = 0.40`
-reproduce the 0.12 mm class — 43 of the 55 sides — exactly: 0.4804 / 0.7206
-predicted against 0.4800 / 0.7200 measured. Within 3% on 0.70 mm, within
-0.05 pt on 0.15 mm. 0.10 mm is the loosest fit (0.400 / 0.600 predicted
-against 0.360 / 0.480) and nothing in the corpus separates "Hancom keeps a
-per-width-class table" from "the 0.10 mm rule is quantised harder", so one
-ratio serves every class and the residual is stated rather than fitted away.
-At 144 dpi a 0.12 mm dash is 0.96 px on a 2.4 px pitch — the residual is
-well under the pixel the corpus is scored at.
-
-`DOT`, `DASH_DOT`, `DASH_DOT_DOT` and `LONG_DASH` are **declared, not
-measured**: no corpus form declares any of them on any side, so there is no
-Hancom reference for them at all. They are built out of the DASH family's
-own measured period (a dot is one stroke-width of ink; a long dash is two
-dash lengths) so the four read as one system, and every side drawn with one
-says "not measured itself" in the sidecar. `CIRCLE` is unchanged and still
-declared as stroked-solid.
-
-Phase is anchored to the **page origin**, not to the edge: a table rule is
-drawn once per cell it crosses, and a per-edge phase would restart the
-pattern at every column boundary. The reference's dashed rules run the whole
-width of the table on one uninterrupted phase; anchoring at the origin makes
-every collinear piece agree without any of them knowing about the others.
-
-### What it moved (144 dpi, corpus scoreboard, before → after)
-
-| form | ssim | ssim_inked | line IoU | dashed edges |
-|---|---|---|---|---|
-| jeongbo-gonggae-cheongguseo | 0.6203 → 0.6207 | 0.0388 → 0.0398 | 0.4551 → 0.4551 | 6 |
-| gianmun-byeolji-2ho | 0.9074 → 0.9075 | 0.0531 → 0.0545 | 0.5515 → 0.5515 | 7 |
-| moel-pyojun-geunrogyeyakseo-2025 | 0.7637 → 0.7634 | 0.1808 → 0.1804 | 0.5167 → 0.5167 | 4 |
-| kstartup-jiwon-…-saeopgyehoekseo | 0.8134 → 0.8134 | 0.2218 → 0.2219 | 0.2451 → 0.2451 | 84 |
-| jumin-deungchobon-sinchengseo | 0.6426 → 0.6426 | 0.0851 → 0.0851 | 0.5893 → 0.5893 | 13 |
-| nrf-gyeolgwa-bogoseo-yangsik | 0.8673 → 0.8673 | 0.3246 → 0.3246 | 0.6597 → 0.6597 | 18 |
-| **corpus mean (10)** | **0.7837 → 0.7837** | **0.1374 → 0.1376** | **0.5170 → 0.5170** | |
-
-The other four forms — `admrul`, `gianmun-1ho`, `moel-2013`, `saeopja` —
-declare no DASH side and render **byte-identical** (sha256 over their PNG
-pages). Two consecutive full-corpus renders hash identically, so the dash
-walk is deterministic.
-
-**Honest reading of that table: the scoreboard barely moves.** At 144 dpi a
-dashed rule differs from a solid one by roughly one pixel in three along a
-handful of thin lines, which is far below what an 8×8-block SSIM or a
-text-line IoU can see. The defect was real and is closed — the render now
-draws what the file declares, and `jeongbo` and `gianmun-2ho` no longer skip
-any element at all — but nobody should expect this to move a corpus metric,
-and the numbers above are the evidence that it does not.
-
-## Table row heights are NOT too tall — measured, 2026-09-04
-
-`docs/research/h2orestart-vs-own.md`'s second named defect ("the same form's
-table rows render visibly taller in the own renderer than the reference…
-Row height is being computed with more padding than Hancom's own layout
-uses") **does not reproduce as a row-height defect.** No code was changed
-for it; here is the measurement that says why.
-
-Method: every horizontal cell border the renderer actually draws (page,
-y, x-span) against every horizontal rule in the reference PDF (dash pieces
-merged into runs), reference rescaled onto the render's own pixel grid.
-Rules aligned with a **monotone** (order-preserving) DP, not greedy
-nearest-neighbour: greedy crosses whenever two rules sit within a couple of
-points of each other — a double rule, a thin banner row — and every crossed
-pair invents two large equal-and-opposite row-height errors that are not
-there. Per-row height is the spacing between consecutive matched rules, so a
-constant page offset cancels out of it.
-
-| form | rows compared | within 1 pt | mean abs error |
-|---|---|---|---|
-| jeongbo-gonggae-cheongguseo | 23 | 22 (0.957) | 0.212 pt |
-| jumin-deungchobon-sinchengseo | 46 | 46 (1.000) | 0.196 pt |
-| saeopja-deungnok-sinchengseo | 170 | 168 (0.988) | 0.183 pt |
-| moel-pyojun-geunrogyeyakseo-2025 | 25 | 23 (0.920) | 0.470 pt |
-| admrul-gajokdolbom-hyuga-sinchengseo | 5 | 5 (1.000) | 0.042 pt |
-
-0.2 pt is the 144 dpi half-pixel quantum. On the two forms the slice was
-aimed at, row heights are already at the measurement floor and there is
-nothing to fix; a "padding constant" correction here could only make them
-worse.
-
-**What is actually wrong on those forms is registration, not row height.**
-Every rule on `jeongbo` page 1 sits a constant −2.83 pt (283 HWPUNIT, almost
-exactly 1 mm) above where the reference draws it, from the first rule at
-y=143 to the last at y=797 — a whole-page offset, not an accumulating one.
-`moel-2013` shows −2.93 pt on five of its seven pages; `saeopja`, `jumin`
-and `admrul` show ≈ −1.4 pt, half of it. That is the standing E2 registration
-gap this file already names, and it is what makes the rows *look* wrong.
-
-Two forms are genuinely worse on this channel and are **follow-up, not this
-slice**: `gianmun-2ho` (0 of 5 rows within 1 pt, offset +11.5 pt) and
-`kstartup` (38 of 67, and per-page offsets running from −0.5 to −18.9 pt —
-the same form whose pagination E2.5 already names as wrong under `auto`).
-
-## A paragraph the cache split across a page — fixed, 2026-09-04
-
-Found on the private windpath holdout: page 1 carried a stray one-word line
-("있다.", the tail of a body paragraph) at the top of the body box, above
-the title, where the Hancom reference starts with the title.
-
-OWPML's cached `hp:lineseg@vertpos` is measured from the top of the body box
-of the page the line is on and restarts on every page. `paginate` already
-reads that backward jump to find page boundaries *between* top-level
-paragraphs, and `_restart_segments` reads it between the paragraphs of a
-container — but nothing looked *inside* one paragraph. A body paragraph long
-enough to run off the bottom of a page has its continuation lines cached
-from the next page's top, so its own `vertpos` sequence drops back to (near)
-zero part-way through; `_render_cached_lines` then drew every one of its
-linesegs from the head page's origin, and the tail's near-zero `vertpos` put
-it at that page's very top.
-
-`Paragraph.page_runs` applies the same rule within a paragraph, `paginate`
-starts a page at each run after the first, and `_render_paragraphs` draws
-each run as a view over its own lineseg range — counted, floated and
-layout-recorded once, on the head view. `_render_cached_lines` grew a
-`rebase` flag: the computed flow pass keeps rebasing a range onto the origin
-it chose, the cached path does not, because there the cached `vertpos` is
-already measured from the continuation's own page.
-
-**No paragraph in any of the ten corpus forms has more than one run** — all
-ten are one-block-per-page government forms — and all ten render
-byte-identical after the change. That is pinned as a test, alongside a
-synthetic fixture built from a corpus form's own paragraph with a restarting
-`linesegarray`. On the holdout: page 1 now starts with the title, the tail
-draws at the top of page 2 where its cache puts it, and the page count is
-unchanged at 18.
 
 ## The whole-page offset was `hp:outMargin` — measured and closed, 2026-09-04
 
@@ -2285,3 +2151,328 @@ rules being compared are not the same rules.
 after. Horizontal registration is closed there too; the vertical residual on
 a report-class document is paragraph flow above the table, a different
 channel from this one.
+
+
+## Bundled Korean fallback faces (family map), 2026-09-04
+
+`BundledFontMap` (own_render.py) adds a third face-resolution tier between
+the installed system index and the single generic system fallback: a fixed
+table mapping 14 plain body serif/sans/monospace Hancom/HWP face names to
+three OFL Nanum families shipped in `engine/references/fonts/family-map/`
+(licences in `engine/references/fonts/LICENSES.md`). See *Fonts: resolved
+where installed, substituted where not* above (updated in place) and item 6
+of *Remaining order of work*.
+
+Resolution order: installed exact face -> `BundledFontMap` -> generic system
+fallback. Declared per face in the sidecar as `fonts.faces[].source`
+(`installed` | `bundled` | `system`) and `family_map` (the bundled family
+name, when `source == "bundled"`). `resolved_character_share` keeps its old
+meaning (installed + bundled); `installed_character_share` /
+`bundled_character_share` split it back apart, since a bundled hit is still
+not the exact declared face.
+
+**Corpus scoreboard, before -> after** (`render_scoreboard.py --corpus`,
+before = this commit's parent, after = this commit; measured on a machine
+without Hancom Office installed, so every improving form below was landing
+on the generic Malgun fallback before):
+
+| form | resolved share | ssim_mean | ssim_inked_mean | line IoU mean |
+|---|---|---|---|---|
+| admrul | 0.545 -> 0.624 | 0.8913 -> 0.8929 | 0.3218 -> 0.3265 | 0.5070 -> 0.5186 |
+| kstartup | 0.938 -> 0.984 | 0.8134 -> 0.8138 | 0.2218 -> 0.2223 | 0.2451 -> 0.2458 |
+| moel-2013 | 0.858 -> 0.993 | 0.7751 -> 0.7792 | 0.0698 -> 0.0733 | 0.4680 -> 0.4817 |
+| moel-2025 | 0.738 -> 0.968 | 0.7637 -> 0.7719 | 0.1808 -> 0.1905 | 0.5167 -> 0.5334 |
+| nrf | 0.572 -> 0.788 | 0.8673 -> 0.8676 | 0.3246 -> 0.3251 | 0.6597 -> 0.6235 |
+
+The other five corpus forms (gianmun-1ho, gianmun-2ho, jeongbo, jumin,
+saeopja) declare no face `_FAMILY_MAP_TABLE` maps that this machine's
+installed index does not already resolve, so their scoreboards are
+byte-identical before and after, exactly as the design intends: installed
+still wins, unconditionally. `nrf`'s line-IoU mean is the one number that
+moved the wrong way (0.6597 -> 0.6235) despite every other channel on that
+form improving — not investigated further here, reported as measured, not
+smoothed over.
+
+**Private holdout** (바람숲_corpus여백.hwpx/.pdf, `report-windpath-hanmadang`
+output v6; local only, not committed or quoted beyond aggregate numbers):
+`resolved_character_share` was already `1.0` (installed) before this
+change — every face this document declares is already installed on this
+machine — so `BundledFontMap` matched 0 characters and before/after are
+identical: `ssim_inked_mean` 0.129458, line-IoU mean 0.538851, text-line
+pair rate 0.904137, all unchanged. Visual read of page 1 (candidate PNG vs
+the operator's Hancom reference render): body-text weight and the serif/
+sans split match the reference closely; the one visible difference is a
+pre-existing line-count/pagination gap near the bottom of page 1 (unrelated
+to fonts — see *Close the advance-width gap the breaker exposed* above),
+present identically before and after. This holdout does not demonstrate the
+bundled tier's effect — it simply was not a case that needed it.
+
+**Not proven / left open:** a Hancom-installed machine was not available to
+re-run this corpus on, so "installed still wins" is verified by construction
+(`_face_for`'s order, and the priority unit test) and by the fact that faces
+already resolving on THIS machine did not change, not by a second machine's
+measurement. Declared names outside the 14-entry table (HCI Poppy, 한컴바탕,
+신명 신문명조, HY울릉도M, 필기, and any Latin/decorative face) are unaffected
+by this slice and still machine-dependent.
+
+Evidence: `pytest engine/tests/test_own_render.py -q` — 185 passed;
+`pytest engine/tests -q` — 1163 passed, 135 skipped, 0 failed;
+`python scripts/py_compile_sweep.py` — 103 files, 0 failures.
+
+
+## Dashed borders — measured, 2026-09-04 (E2 borders/rows slice)
+
+`docs/research/h2orestart-vs-own.md` names two defects on the two worst
+forms. This is the first: `hh:borderFill@type="DASH"` was stroked as a solid
+line of the declared width. 55 border sides across six corpus forms declare
+it (`gianmun-2ho` 7, `jeongbo` 4, `jumin` 9, `kstartup` 23, `moel-2025` 4,
+`nrf` 8).
+
+**Measured black-box off the Hancom reference PDFs, not guessed.** None of
+the ten references carries a PDF `d` (dash-array) operator: Hancom emits
+every dash as its own path piece, so the pattern reads straight out of the
+page geometry. Collinear pieces merged per rule, run/gap taken as medians,
+over every reference that declares a DASH side:
+
+| declared | stroked | dash | gap | period | dash/w | gap/w | forms |
+|---|---|---|---|---|---|---|---|
+| 0.10 mm | 0.240 pt | 0.360 | 0.480 | 0.840 | 1.270 | 1.693 | nrf |
+| 0.12 mm | 0.360 pt | 0.480 | 0.720 | 1.200 | 1.411 | 2.116 | gianmun-2ho, jumin, kstartup, moel-2025 |
+| 0.15 mm | 0.480 pt | 0.600 | 0.840 | 1.440 | 1.411 | 1.976 | jeongbo |
+| 0.70 mm | 2.039 pt | 2.879 | 4.318 | 7.197 | 1.451 | 2.176 | jeongbo |
+
+`dash/w` and `gap/w` are against the **declared** width (0.12 mm = 34.02
+HWPUNIT = 0.3402 pt), not the width Hancom strokes. The stroked width is
+quantised onto what looks like a 600 dpi device grid — 0.240 / 0.360 /
+0.480 / 2.039 pt are exactly 2 / 3 / 4 / 17 units of 1/600 in — and the dash
+geometry tracks the *declared* width, not the quantised one. That is the one
+non-obvious thing in the measurement: fitting the ratios against the stroked
+width gives no consistent constant, fitting against the declared width does.
+
+`BORDER_DASH_PERIOD = 3.53` (× declared width) and `BORDER_DASH_DUTY = 0.40`
+reproduce the 0.12 mm class — 43 of the 55 sides — exactly: 0.4804 / 0.7206
+predicted against 0.4800 / 0.7200 measured. Within 3% on 0.70 mm, within
+0.05 pt on 0.15 mm. 0.10 mm is the loosest fit (0.400 / 0.600 predicted
+against 0.360 / 0.480) and nothing in the corpus separates "Hancom keeps a
+per-width-class table" from "the 0.10 mm rule is quantised harder", so one
+ratio serves every class and the residual is stated rather than fitted away.
+At 144 dpi a 0.12 mm dash is 0.96 px on a 2.4 px pitch — the residual is
+well under the pixel the corpus is scored at.
+
+`DOT`, `DASH_DOT`, `DASH_DOT_DOT` and `LONG_DASH` are **declared, not
+measured**: no corpus form declares any of them on any side, so there is no
+Hancom reference for them at all. They are built out of the DASH family's
+own measured period (a dot is one stroke-width of ink; a long dash is two
+dash lengths) so the four read as one system, and every side drawn with one
+says "not measured itself" in the sidecar. `CIRCLE` is unchanged and still
+declared as stroked-solid.
+
+Phase is anchored to the **page origin**, not to the edge: a table rule is
+drawn once per cell it crosses, and a per-edge phase would restart the
+pattern at every column boundary. The reference's dashed rules run the whole
+width of the table on one uninterrupted phase; anchoring at the origin makes
+every collinear piece agree without any of them knowing about the others.
+
+### What it moved (144 dpi, corpus scoreboard, before → after)
+
+| form | ssim | ssim_inked | line IoU | dashed edges |
+|---|---|---|---|---|
+| jeongbo-gonggae-cheongguseo | 0.6203 → 0.6207 | 0.0388 → 0.0398 | 0.4551 → 0.4551 | 6 |
+| gianmun-byeolji-2ho | 0.9074 → 0.9075 | 0.0531 → 0.0545 | 0.5515 → 0.5515 | 7 |
+| moel-pyojun-geunrogyeyakseo-2025 | 0.7637 → 0.7634 | 0.1808 → 0.1804 | 0.5167 → 0.5167 | 4 |
+| kstartup-jiwon-…-saeopgyehoekseo | 0.8134 → 0.8134 | 0.2218 → 0.2219 | 0.2451 → 0.2451 | 84 |
+| jumin-deungchobon-sinchengseo | 0.6426 → 0.6426 | 0.0851 → 0.0851 | 0.5893 → 0.5893 | 13 |
+| nrf-gyeolgwa-bogoseo-yangsik | 0.8673 → 0.8673 | 0.3246 → 0.3246 | 0.6597 → 0.6597 | 18 |
+| **corpus mean (10)** | **0.7837 → 0.7837** | **0.1374 → 0.1376** | **0.5170 → 0.5170** | |
+
+The other four forms — `admrul`, `gianmun-1ho`, `moel-2013`, `saeopja` —
+declare no DASH side and render **byte-identical** (sha256 over their PNG
+pages). Two consecutive full-corpus renders hash identically, so the dash
+walk is deterministic.
+
+**Honest reading of that table: the scoreboard barely moves.** At 144 dpi a
+dashed rule differs from a solid one by roughly one pixel in three along a
+handful of thin lines, which is far below what an 8×8-block SSIM or a
+text-line IoU can see. The defect was real and is closed — the render now
+draws what the file declares, and `jeongbo` and `gianmun-2ho` no longer skip
+any element at all — but nobody should expect this to move a corpus metric,
+and the numbers above are the evidence that it does not.
+
+## Table row heights are NOT too tall — measured, 2026-09-04
+
+`docs/research/h2orestart-vs-own.md`'s second named defect ("the same form's
+table rows render visibly taller in the own renderer than the reference…
+Row height is being computed with more padding than Hancom's own layout
+uses") **does not reproduce as a row-height defect.** No code was changed
+for it; here is the measurement that says why.
+
+Method: every horizontal cell border the renderer actually draws (page,
+y, x-span) against every horizontal rule in the reference PDF (dash pieces
+merged into runs), reference rescaled onto the render's own pixel grid.
+Rules aligned with a **monotone** (order-preserving) DP, not greedy
+nearest-neighbour: greedy crosses whenever two rules sit within a couple of
+points of each other — a double rule, a thin banner row — and every crossed
+pair invents two large equal-and-opposite row-height errors that are not
+there. Per-row height is the spacing between consecutive matched rules, so a
+constant page offset cancels out of it.
+
+| form | rows compared | within 1 pt | mean abs error |
+|---|---|---|---|
+| jeongbo-gonggae-cheongguseo | 23 | 22 (0.957) | 0.212 pt |
+| jumin-deungchobon-sinchengseo | 46 | 46 (1.000) | 0.196 pt |
+| saeopja-deungnok-sinchengseo | 170 | 168 (0.988) | 0.183 pt |
+| moel-pyojun-geunrogyeyakseo-2025 | 25 | 23 (0.920) | 0.470 pt |
+| admrul-gajokdolbom-hyuga-sinchengseo | 5 | 5 (1.000) | 0.042 pt |
+
+0.2 pt is the 144 dpi half-pixel quantum. On the two forms the slice was
+aimed at, row heights are already at the measurement floor and there is
+nothing to fix; a "padding constant" correction here could only make them
+worse.
+
+**What is actually wrong on those forms is registration, not row height.**
+Every rule on `jeongbo` page 1 sits a constant −2.83 pt (283 HWPUNIT, almost
+exactly 1 mm) above where the reference draws it, from the first rule at
+y=143 to the last at y=797 — a whole-page offset, not an accumulating one.
+`moel-2013` shows −2.93 pt on five of its seven pages; `saeopja`, `jumin`
+and `admrul` show ≈ −1.4 pt, half of it. That is the standing E2 registration
+gap this file already names, and it is what makes the rows *look* wrong.
+
+Two forms are genuinely worse on this channel and are **follow-up, not this
+slice**: `gianmun-2ho` (0 of 5 rows within 1 pt, offset +11.5 pt) and
+`kstartup` (38 of 67, and per-page offsets running from −0.5 to −18.9 pt —
+the same form whose pagination E2.5 already names as wrong under `auto`).
+
+## A paragraph the cache split across a page — fixed, 2026-09-04
+
+Found on the private windpath holdout: page 1 carried a stray one-word line
+("있다.", the tail of a body paragraph) at the top of the body box, above
+the title, where the Hancom reference starts with the title.
+
+OWPML's cached `hp:lineseg@vertpos` is measured from the top of the body box
+of the page the line is on and restarts on every page. `paginate` already
+reads that backward jump to find page boundaries *between* top-level
+paragraphs, and `_restart_segments` reads it between the paragraphs of a
+container — but nothing looked *inside* one paragraph. A body paragraph long
+enough to run off the bottom of a page has its continuation lines cached
+from the next page's top, so its own `vertpos` sequence drops back to (near)
+zero part-way through; `_render_cached_lines` then drew every one of its
+linesegs from the head page's origin, and the tail's near-zero `vertpos` put
+it at that page's very top.
+
+`Paragraph.page_runs` applies the same rule within a paragraph, `paginate`
+starts a page at each run after the first, and `_render_paragraphs` draws
+each run as a view over its own lineseg range — counted, floated and
+layout-recorded once, on the head view. `_render_cached_lines` grew a
+`rebase` flag: the computed flow pass keeps rebasing a range onto the origin
+it chose, the cached path does not, because there the cached `vertpos` is
+already measured from the continuation's own page.
+
+**No paragraph in any of the ten corpus forms has more than one run** — all
+ten are one-block-per-page government forms — and all ten render
+byte-identical after the change. That is pinned as a test, alongside a
+synthetic fixture built from a corpus form's own paragraph with a restarting
+`linesegarray`. On the holdout: page 1 now starts with the title, the tail
+draws at the top of page 2 where its cache puts it, and the page count is
+unchanged at 18.
+
+
+## E2 convergence — registration + fonts + table move in one tree, 2026-09-04
+
+Three E2 renderer slices that had only ever been measured apart are now one
+tree (`claude/engine-e2-converge`): the `hp:outMargin` registration inset
+(#211, the branch this merge starts from), the bundled Korean fallback faces
+(#208) and the inline-table move rule (#210, which also brings
+`render_check.py` and the render-check corpus, plus `hwpx_write.py` from the
+writer line). Every number pinned by any of the three is re-measured here on
+the merged tree, and each one either moves with a stated reason or is
+confirmed unchanged.
+
+### Corpus scoreboard, `--corpus`, merged
+
+Against the numbers #211 pinned (its own before → after table above is
+untouched; this is that table's "after" column re-measured with fonts and the
+table rule also present):
+
+| form | ssim | ssim_inked | text_line_iou | pages c/r |
+| --- | --- | --- | --- | --- |
+| admrul | 0.9197 -> **0.9213** | 0.5007 -> **0.5067** | 0.5877 -> **0.5993** | 1/1 |
+| gianmun-1ho | 0.9375 | 0.2965 | 0.8428 | 1/1 |
+| gianmun-2ho | 0.9075 | 0.0538 | 0.6468 | 1/1 |
+| jeongbo | 0.7571 | 0.2692 | 0.8273 | 1/1 |
+| jumin | 0.6822 | 0.1399 | 0.6711 | 3/3 |
+| kstartup | 0.8282 -> **0.8286** | 0.2884 -> **0.2888** | 0.2727 -> **0.2715** | 21/22 |
+| moel-2013 | 0.7880 -> **0.7920** | 0.1008 -> **0.1081** | 0.5063 -> **0.5200** | 7/7 |
+| moel-2025 | 0.7706 -> **0.7788** | 0.1918 -> **0.2015** | 0.5396 -> **0.5563** | 7/7 |
+| nrf | 0.8924 -> **0.8951** | 0.4418 -> **0.4462** | 0.7225 -> **0.7059** | 4/4 |
+| saeopja | 0.7664 | 0.2681 | 0.8060 | 6/6 |
+
+Corpus means: `ssim` 0.8250 -> **0.8266**, `ssim_inked` 0.2551 -> **0.2579**,
+`text_line_iou` 0.6423 -> **0.6447**, `text_line_pair_rate` 0.8364 ->
+**0.8364** (unchanged).
+
+**Every form that moves is a form the bundled family map answers for**, and
+it moves by the amount #208 measured on the pre-registration tree — the two
+slices are additive, not interacting. The five forms whose declared faces all
+resolve installed (gianmun-1ho, gianmun-2ho, jeongbo, jumin, saeopja) are
+byte-identical to #211. `nrf`'s `text_line_iou` still falls (0.7225 ->
+0.7059), the same direction and the same cause #208 reported and did not
+smooth over; registration does not rescue it.
+
+**No page count moves.** `kstartup` reads 21/22 here, but that is its state on
+#211 too — it is the one form whose page count has never been exact, and
+`test_out_margin_changes_no_corpus_page_count` pins all ten counts, including
+that 21. The inline-table move rule (#210) does not repaginate any public
+corpus form; the one document it repaginates is the synthetic render-check
+document, which is what it was written against.
+
+### The registration rule channel is unmoved
+
+`hp:outMargin`'s headline pin — 365/428 matched rules within 1 pt, 335/428
+within 0.25 pt — was produced by an ad-hoc script that was never committed, so
+it cannot be re-run byte-identically. What was done instead: the measurement
+was reimplemented (candidate cell rectangles out of `_render_table` against
+the reference PDF's own `l`/`re` drawing operators, per-axis scale correction,
+order-preserving DP) and run twice, once on `origin/claude/engine-e2-registration`
+and once on the merged tree. The reimplementation's own scale is smaller
+(117 matched horizontal, 107 vertical, because it dedupes rule positions per
+page rather than counting per cell side) and is **not** comparable to 365/428
+in absolute terms. The two runs are:
+
+| | 1 pt | 0.25 pt |
+| --- | --- | --- |
+| #211 | dy 117/117, dx 107/107 | dy 102, dx 99 |
+| merged | dy 117/117, dx 107/107 | dy 102, dx 99 |
+
+Identical, per form as well as in total, on all ten forms. So the merge moves
+the registration channel by nothing and **365/428 and 335/428 stand as
+written**.
+
+### The line breaker is unmoved
+
+`test_the_corpus_wide_agreement_is_exactly_this` pins
+`[2148, 2097, 2004, 158, 135, 216, 65]` — the 58 -> 65 break-position column
+#208 measured. It passes unchanged on the merged tree: registration is a
+placement rule and moves no line box, so the breaker sees the same boxes.
+
+### render-check-01
+
+**1 · 32 · 16 · 2 -> 1 match · 35 close · 13 differs · 2 unsupported.**
+`F47` from #210 (IoU 0.025 -> 0.535); `F31` (0.222 -> 0.376) and `F32`
+(0.205 -> 0.479) from #211's inset. #208 is a measured no-op on that document
+— it declares only 바탕, 돋움 and 궁서, all installed here. Page count moved
+the wrong way, 10 -> 11 against Hancom's 9, because moving the table whole
+removed the term that used to cancel the block-height drift. Full report:
+[`docs/research/render-check-01.md`](../../docs/research/render-check-01.md).
+
+### Not proven
+
+- **The rule-agreement re-check is a reimplementation, not the original
+  script.** It shows the merge changes nothing in that channel; it does not
+  re-derive 365/428.
+- **One machine.** Fonts still resolve against this machine's installed index,
+  and #208's "installed always wins" is still verified by construction rather
+  than on a second machine.
+- **No slice was isolated by ablation.** `F31`/`F32` are attributed to
+  registration because they move only once registration joins #210, and
+  because #208 provably never fires on that document — not because a tree with
+  registration removed was rendered.

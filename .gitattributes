@@ -5,3 +5,6 @@
 *.pdf binary
 *.hwp binary
 *.hwpx binary
+*.ttf binary
+*.otf binary
+*.ttc binary

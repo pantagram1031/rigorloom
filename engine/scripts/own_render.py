@@ -244,8 +244,15 @@ PARA_MARGIN_SCALE = 0.5
 
 # hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
 # (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
-# "the whole table moves", the same as NONE.  Only ``CELL`` makes a table
-# splittable across a page boundary; anything else moves the table whole.
+# "the whole table moves", the same as NONE.
+#
+# MEASURED (docs/research/table-page-break-rule.md): ``pageBreak`` is only
+# half the permission.  The other half is 글자처럼 취급 —
+# ``hp:tbl/hp:pos@treatAsChar``.  Hancom splits a table at a row boundary
+# only when the table is ANCHORED (``treatAsChar="0"``) *and* declares
+# ``CELL``.  An INLINE table (``treatAsChar="1"``) is a character-like object
+# in its line: it never splits, whatever ``pageBreak`` says.  Twelve probe
+# variants plus two Hancom-authored tables agree with no exception.
 TABLE_SPLIT_AT_ROWS = "CELL"
 
 # How far the flow pass will back a block up to satisfy ``keepWithNext``.
@@ -882,6 +889,91 @@ def _normalise_face(name):
     if not name:
         return ""
     return re.sub(r"[\s\-_]+", "", str(name)).casefold()
+
+
+# A document declares one of Hancom's own faces (바탕, 함초롬돋움, HY견고딕, ...)
+# and a machine without Hancom Office has none of them installed — the
+# document then fell all the way through to the single generic system
+# fallback (Malgun on Windows), which is a DIFFERENT face from what any other
+# machine's fallback happens to be, so the same file drew different pixels
+# depending on what else was installed.  This table is the fix: a fixed,
+# family-by-family map from the Hancom/HWP face names a document actually
+# declares to an OFL-licensed family bundled in the repo, so those names
+# resolve to the SAME bundled face everywhere, Hancom Office or not.
+#
+# Only the declared names listed below are mapped; every other declared name
+# (HCI Poppy, 한컴바탕, 신명 신문명조, HY울릉도M, 필기, ...) is unaffected and
+# still falls through to "system" exactly as before — this table is scoped to
+# the plain body serif/sans/monospace families a report-class document sets
+# its running text in, not to Hancom's decorative or display faces, which a
+# generic serif/sans substitute would misrepresent.
+#
+# Licence for every bundled family: engine/references/fonts/LICENSES.md.
+_FAMILY_MAP_TABLE = (
+    ("Nanum Myeongjo",
+     "engine/references/fonts/family-map/NanumMyeongjo-Regular.ttf",
+     "engine/references/fonts/family-map/NanumMyeongjo-Bold.ttf",
+     ("바탕", "함초롬바탕", "휴먼명조", "신명조", "한양신명조", "궁서")),
+    ("Nanum Gothic",
+     "engine/references/fonts/family-map/NanumGothic-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothic-Bold.ttf",
+     ("돋움", "굴림", "함초롬돋움", "맑은 고딕", "한양중고딕", "HY견고딕")),
+    ("Nanum Gothic Coding",
+     "engine/references/fonts/family-map/NanumGothicCoding-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothicCoding-Bold.ttf",
+     ("돋움체", "굴림체")),
+)
+
+
+class BundledFontMap:
+    """The Hancom-face -> bundled-OFL-family map, keyed by normalised name.
+
+    Shaped like a ``SystemFontIndex`` lookup result (``regular``/``bold`` as
+    ``(path, face_index)``, plus ``family``) so ``_face_for`` can treat a
+    bundled hit exactly like an installed one once the installed lookup has
+    already failed.  Built from the fixed table above, not a directory scan —
+    resolving it is a dict lookup, but the entries are built once per
+    ``repo_root`` and shared, the same reasoning as ``SystemFontIndex.shared``.
+    A family whose files are not present on disk (a slim checkout) is simply
+    absent from the map, so its declared names fall through to ``system``
+    rather than raising.
+    """
+
+    _shared = {}
+
+    def __init__(self, repo_root):
+        self.entries = {}
+        for family, reg_rel, bold_rel, declared_names in _FAMILY_MAP_TABLE:
+            reg = Path(repo_root) / reg_rel
+            bold = Path(repo_root) / bold_rel
+            if not reg.is_file():
+                continue
+            entry = {
+                "family": family,
+                "regular": (str(reg), 0),
+                "bold": (str(bold), 0) if bold.is_file() else (str(reg), 0),
+                "italic": None,
+                "bold_italic": None,
+            }
+            for name in declared_names:
+                key = _normalise_face(name)
+                if key:
+                    self.entries[key] = entry
+
+    @classmethod
+    def shared(cls, repo_root):
+        key = str(repo_root)
+        hit = cls._shared.get(key)
+        if hit is None:
+            hit = cls(repo_root)
+            cls._shared[key] = hit
+        return hit
+
+    def lookup(self, face_name):
+        key = _normalise_face(face_name)
+        if not key:
+            return None
+        return self.entries.get(key)
 
 
 def _sfnt_name_records(path):
@@ -1532,14 +1624,20 @@ class OwnRenderer:
         #                pass against the authoring engine's own cache.
         self.block_layout = block_layout
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
-        self.fonts_meta = resolve_fonts(repo_root)
+        self.repo_root = Path(repo_root) if repo_root else Path(
+            __file__).resolve().parents[2]
+        self.fonts_meta = resolve_fonts(self.repo_root)
         self.fontbook = FontBook(self.fonts_meta)
         # A pinned face means "rasterise everything with this one", which is
         # what a machine-independent certification run wants; otherwise the
-        # document's own declared faces are resolved against the system.
+        # document's own declared faces are resolved against the system,
+        # then against the bundled family map (BundledFontMap) — see
+        # _face_for.
         self.pinned_face = self.fonts_meta.get("source") == "env"
         self.font_index = (None if self.pinned_face
                            else SystemFontIndex.shared())
+        self.font_family_map = (None if self.pinned_face
+                                else BundledFontMap.shared(self.repo_root))
         self.face_resolution = {}
         self._face_cache = {}
         self.skipped = {}
@@ -2011,6 +2109,9 @@ class OwnRenderer:
             "content overflows the usable box; split at a row boundary the "
             "same way the computed flow pass would, instead of drawing the "
             "overflow")
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
         queue.append((0, cut))
@@ -2069,12 +2170,14 @@ class OwnRenderer:
         rows = []
         if mode == LINE_LAYOUT_COMPUTED and para.chars:
             for line in self.compute_lines(draw, para, column_hwp):
+                table = self._flowing_table(
+                    para, line["start"], line["end"])
                 rows.append({
                     "advance": line["vertsize"] + line["spacing"],
-                    "extent": line["baseline"],
+                    "extent": self._row_extent(line["baseline"],
+                                               line["vertsize"], table),
                     "start": line["start"], "end": line["end"],
-                    "table": self._flowing_table(
-                        para, line["start"], line["end"]),
+                    "table": table,
                 })
             return mode, rows
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
@@ -2085,28 +2188,52 @@ class OwnRenderer:
             vertsize = _iattr(seg, "vertsize")
             baseline = _iattr(seg, "baseline") or int(round(
                 BASELINE_RATIO * vertsize))
+            table = self._flowing_table(para, start, end)
             rows.append({
                 "advance": vertsize + _iattr(seg, "spacing"),
-                "extent": baseline,
+                "extent": self._row_extent(baseline, vertsize, table),
                 "start": start, "end": end,
-                "table": self._flowing_table(para, start, end),
+                "table": table,
             })
         return mode, rows
 
-    def _table_split_rows(self, draw, tbl):
-        """Cumulative row bottoms of ``tbl``, and whether it may be split.
+    @staticmethod
+    def _row_extent(baseline, vertsize, table):
+        """The height a page-bottom test has to clear for one line.
 
-        A table is splittable at a row boundary only when it says so —
-        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔).  ``NONE`` (나누지 않음)
-        and ``TABLE`` (표 단위로 나눔) both mean the whole table moves.
+        ``baseline`` for a line of text: the descender below it may cross the
+        margin, and refusing that costs 3 of 47 corpus pages
+        (``docs/research/line-fit-rule.md``).  A line whose content is an
+        inline TABLE has no descender, and Hancom's own placement was
+        measured against the table's WHOLE height
+        (``docs/research/table-page-break-rule.md``): a table that does not
+        clear the room left on the page moves whole, it does not hang 15% of
+        itself past the margin and then get cut.
         """
-        splittable = (tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
-        self._quiet += 1
-        try:
-            _xs, ys, _cells = self._table_tracks(draw, tbl)
-        finally:
-            self._quiet -= 1
-        return splittable, ys
+        return max(baseline, vertsize) if table is not None else baseline
+
+    @staticmethod
+    def _table_is_inline(tbl):
+        """True when ``tbl`` is 글자처럼 취급 (``hp:pos@treatAsChar="1"``).
+
+        The measured half of the split permission: an inline table never
+        splits at a page boundary, whatever ``hp:tbl@pageBreak`` says.
+        """
+        pos = _kid(tbl, "pos")
+        if pos is None:
+            return False
+        return (pos.get("treatAsChar") or "0") not in ("0", "false", "FALSE")
+
+    def _table_may_split(self, tbl):
+        """May ``tbl`` be cut at a row boundary across a page?
+
+        Both halves, measured (docs/research/table-page-break-rule.md):
+        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔) AND the table anchored
+        rather than 글자처럼 취급.  ``NONE`` (나누지 않음), ``TABLE``
+        (표 단위로 나눔) and every inline table move whole instead.
+        """
+        return ((tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
+                and not self._table_is_inline(tbl))
 
     # hp:tbl/@textWrap — 본문과의 배치.  Only these reserve vertical room in
     # the flow: TOP_AND_BOTTOM (위/아래 배치) puts the text below the object,
@@ -2183,7 +2310,7 @@ class OwnRenderer:
             wrap = (el.get("textWrap") or "").upper()
             if wrap not in self.FLOW_RESERVING_WRAPS:
                 continue
-            if (el.get("pageBreak") or "").upper() != TABLE_SPLIT_AT_ROWS:
+            if not self._table_may_split(el):
                 continue
             pos = _kid(el, "pos")
             vrel = ((pos.get("vertRelTo") or "PARA").upper()
@@ -2227,8 +2354,8 @@ class OwnRenderer:
     def _row_cut_for_room(ys, start, room):
         """Largest row boundary at/after ``start`` whose height above
         ``ys[start]`` still fits ``room`` — or ``start`` when not even the
-        next row fits.  Same rule ``_split_table_row`` uses for an inline
-        table, generalised to a boundary that need not be zero.
+        next row fits — the row-boundary cut generalised to a boundary that
+        need not be zero.
         """
         cut = start
         for row_index in range(start + 1, len(ys) - 1):
@@ -2256,6 +2383,9 @@ class OwnRenderer:
         cut = self._row_cut_for_room(ys, 0, room)
         if cut == 0:
             return None
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         counters["tables_split"] += 1
         # The paragraph itself is a one-slot placeholder for the anchored
@@ -2336,8 +2466,11 @@ class OwnRenderer:
         * ``@keepWithNext`` (다음 문단과 함께) — this block starts on the page
           its successor starts on, backed up at most
           ``KEEP_WITH_NEXT_MAX_CHAIN`` blocks.
-        * ``hp:tbl@pageBreak`` — a table splits at a row boundary only when it
-          declares ``CELL``; otherwise the whole table moves.
+        * ``hp:tbl@pageBreak`` + ``hp:pos@treatAsChar`` — a table splits at a
+          row boundary only when it declares ``CELL`` AND is anchored;
+          otherwise the whole table moves to the next page, and a table
+          taller than a whole page is drawn from the top of that page and
+          allowed to overflow (measured: Hancom does the same).
 
         Columns.  A page whose section declares real columns (equal widths,
         ``hp:colPr@sameSz=true``, ``colCount>1``) is modelled as
@@ -2585,25 +2718,14 @@ class OwnRenderer:
                 seg_height += row["advance"]
                 index += 1
                 continue
-            split = (self._split_table_row(draw, row["table"], room)
-                     if row["table"] is not None else None)
-            if split is not None:
-                counters["tables_split"] += 1
-                out.append(self._flow_record(
-                    block, page, seg_top, seg_height + split["height"],
-                    (seg_first, index + 1), kind="table",
-                    split=split["first"]))
-                page += 1
-                tail = row["advance"] - split["height"]
-                out.append(self._flow_record(
-                    block, page, 0, tail, (index, index + 1), kind="table",
-                    split=split["rest"]))
-                cursor = tail
-                seg_top = tail
-                seg_height = 0
-                index += 1
-                seg_first = index
-                continue
+            # An INLINE (글자처럼 취급) table never splits — measured, see
+            # ``TABLE_SPLIT_AT_ROWS`` above and
+            # docs/research/table-page-break-rule.md.  ``row["table"]`` is by
+            # construction inline (``_flowing_table`` excludes anchored
+            # tables), so the only answer here is "the whole table moves",
+            # and a table taller than a whole page is then drawn from the top
+            # of the next page and allowed to overflow — which is exactly
+            # what Hancom does with its own.
             if row["table"] is not None:
                 counters["tables_moved_whole"] += 1
             if seg_height:
@@ -2634,33 +2756,6 @@ class OwnRenderer:
             cursor += row["advance"]
             count += 1
         return count
-
-    def _split_table_row(self, draw, tbl, room):
-        """Split a table at the last row boundary that fits in ``room``.
-
-        ``None`` when the table does not declare itself splittable, or when no
-        row boundary fits — in both cases the whole table moves instead.
-        """
-        splittable, ys = self._table_split_rows(draw, tbl)
-        if not splittable or len(ys) < 3:
-            return None
-        cut = 0
-        for row_index in range(1, len(ys) - 1):
-            if ys[row_index] <= room:
-                cut = row_index
-            else:
-                break
-        if cut == 0:
-            return None
-        self._skip("hp:tbl@repeatHeader",
-                   "a table split across a page boundary does not repeat its "
-                   "header row on the continuation page")
-        return {
-            "height": ys[cut],
-            "first": {"table": id(tbl), "row_start": 0, "row_end": cut},
-            "rest": {"table": id(tbl), "row_start": cut,
-                     "row_end": len(ys) - 1},
-        }
 
     def _apply_keep_with_next(self, blocks, placements, counters, usable,
                               from_block):
@@ -2768,13 +2863,26 @@ class OwnRenderer:
         return self.defs["char_pr"].get(cid or "", {})
 
     def _face_for(self, cid, slot, bold):
-        """The installed face this run's ``hh:fontRef`` names for ``slot``.
+        """The face this run's ``hh:fontRef`` names for ``slot``.
 
         ``hh:charPr/hh:fontRef`` carries one font id *per language slot*, and
         ``hh:fontfaces`` resolves each id per slot to a face name.  That name
-        is matched against the system font index by the family names the
-        installed faces themselves declare — including their Korean ones,
-        which is what makes 함초롬돋움 / 바탕 / HY신명조 resolvable at all.
+        is resolved in a fixed order, each declared per face in the sidecar
+        as ``source``:
+
+        1. ``installed``  — matched against the system font index by the
+           family names the installed faces themselves declare, including
+           their Korean ones, which is what makes 함초롬돋움 / 바탕 / HY신명조
+           resolvable at all when Hancom Office (or the matching face) is on
+           this machine.
+        2. ``bundled``    — the declared name is not installed here, but it
+           is one of the plain body serif/sans/monospace names
+           ``BundledFontMap`` maps to an OFL family shipped in the repo
+           (see ``_FAMILY_MAP_TABLE``), so the SAME bundled face answers for
+           it on every machine, Hancom Office or not.
+        3. ``system``     — neither matched; the run falls back to
+           ``self.fonts_meta``, the single machine-dependent fallback face
+           (see ``resolve_fonts``).
 
         Returns ``(path, index)`` or ``None`` for "use the fallback face".
         Every answer is recorded in ``face_resolution`` so the sidecar can
@@ -2804,28 +2912,37 @@ class OwnRenderer:
             if face_name:
                 break
         if not face_name:
-            record = self._declare_face(None, slot, None, bold)
+            record = self._declare_face(None, slot, None, bold, "system")
             self._face_cache[key] = (None, record)
             return None
         entry = self.font_index.lookup(face_name)
+        source = "installed"
+        if entry is None:
+            entry = (self.font_family_map.lookup(face_name)
+                     if self.font_family_map is not None else None)
+            source = "bundled" if entry is not None else "system"
         chosen = None
         if entry is not None:
             chosen = entry["bold" if bold else "regular"] or entry["regular"] \
                 or entry["bold"]
+        if chosen is None:
+            source = "system"
         # A family with no bold cut installed — 바탕 / Batang is one, and it is
         # the face a report-class document is set in — hands back its regular
         # face here.  HWP does not then draw regular text: it fakes the weight.
         # Record that this face has to be emboldened by hand, so the drawing
         # side can do the same rather than silently losing every bold run.
+        # Every bundled family carries a real bold cut, so this never fires
+        # for source == "bundled".
         self._synthetic_bold[key] = bool(
             bold and chosen is not None and entry is not None
             and not entry["bold"])
         record = self._declare_face(face_name, slot,
-                                    entry if chosen else None, bold)
+                                    entry if chosen else None, bold, source)
         self._face_cache[key] = (chosen, record)
         return chosen
 
-    def _declare_face(self, face_name, slot, entry, bold):
+    def _declare_face(self, face_name, slot, entry, bold, source="system"):
         key = (face_name or "(no hh:fontRef for this slot)", slot, bold)
         record = self.face_resolution.get(key)
         if record is None:
@@ -2834,7 +2951,11 @@ class OwnRenderer:
                 "slot": slot,
                 "bold": bold,
                 "resolved": entry is not None,
+                "source": source,
                 "installed_family": entry["family"] if entry else None,
+                "family_map": (entry["family"]
+                               if entry is not None and source == "bundled"
+                               else None),
                 "file": None,
                 "characters": 0,
             }
@@ -4164,8 +4285,13 @@ class OwnRenderer:
         chosen = None
         if entry is not None:
             chosen = entry["regular"] or entry["bold"]
-        record = self._declare_face(face_name or None, "equation",
-                                    entry if chosen else None, False)
+        # Equation faces are not looked up in BundledFontMap: that table maps
+        # plain body serif/sans/monospace names, and an equation's declared
+        # face is a maths-specific one (see the italic-cut discussion below),
+        # so a body substitute would misrepresent it rather than help it.
+        record = self._declare_face(
+            face_name or None, "equation", entry if chosen else None, False,
+            "installed" if chosen else "system")
         italic_cut = entry.get("italic") if entry else None
         if italic_cut is not None:
             italic_face, italic_kind = italic_cut, "cut"
@@ -5270,29 +5396,40 @@ class OwnRenderer:
         }
 
     def _font_report(self):
-        """Per declared face: resolved against the system, or substituted.
+        """Per declared face: installed, bundled-mapped, or substituted.
 
         The honesty rule in its sharpest form.  Before this the sidecar said
         "every HWP face is rasterised with one family" — true, and useless for
         judging a page, because it could not say *which* of the document's
         faces the reader was actually looking at.  Now every declared face is
-        listed with the installed file that answered for it, or with the
-        substitute that stood in, and both are counted in characters.
+        listed with the file that answered for it — installed, or the
+        deterministic bundled fallback (``BundledFontMap``), or the generic
+        machine-dependent one that stood in for neither — and all three are
+        counted in characters.  ``resolved_character_share`` counts installed
+        AND bundled together (neither is the generic substitute); the
+        ``installed``/``bundled``/``substituted`` counts below break that
+        back apart, because a bundled hit is still not the exact declared
+        face and its advance widths still differ from the authoring engine's.
         """
         faces = sorted(self.face_resolution.values(),
                        key=lambda f: (not f["resolved"],
                                       f["declared"] or "", f["slot"],
                                       f["bold"]))
-        resolved = sum(f["characters"] for f in faces if f["resolved"])
-        substituted = sum(f["characters"] for f in faces if not f["resolved"])
+        installed = sum(f["characters"] for f in faces
+                        if f["source"] == "installed")
+        bundled = sum(f["characters"] for f in faces
+                     if f["source"] == "bundled")
+        substituted = sum(f["characters"] for f in faces
+                          if f["source"] == "system")
+        resolved = installed + bundled
         total = resolved + substituted
         for face in faces:
             if not face["resolved"] and face["declared"]:
                 self._skip(
                     f"hh:fontface[{face['declared']}]",
-                    "declared face is not installed on this machine; "
-                    "substituted, so advance widths differ from the "
-                    "authoring engine's")
+                    "declared face is not installed on this machine and not "
+                    "in the bundled family map; substituted, so advance "
+                    "widths differ from the authoring engine's")
         return {
             "fallback_regular": self.fonts_meta["regular"],
             "fallback_bold": self.fonts_meta["bold"],
@@ -5300,22 +5437,39 @@ class OwnRenderer:
             "pinned_single_face": self.pinned_face,
             "system_font_files_scanned": (
                 self.font_index.scanned if self.font_index else 0),
+            "characters_on_an_installed_face": installed,
+            "characters_on_a_bundled_face": bundled,
             "characters_on_a_resolved_face": resolved,
             "characters_on_a_substituted_face": substituted,
             "resolved_character_share": (
                 round(resolved / total, 6) if total else None),
+            "installed_character_share": (
+                round(installed / total, 6) if total else None),
+            "bundled_character_share": (
+                round(bundled / total, 6) if total else None),
             "faces": faces,
             "note": (
-                "declared faces are matched against the installed faces' own "
-                "family names, read from each font's OpenType name table "
-                "(including its Korean records, which FreeType does not "
-                "expose). A face that is not installed is substituted with "
-                "the fallback and named here and in elements_skipped; its "
-                "advance widths then differ from the authoring engine's. "
-                "This makes a render machine-dependent BY DESIGN: the same "
-                "document on a machine without these faces will not produce "
-                "the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one "
-                "face and take that variable out of the measurement."
+                "declared faces are matched, in order, against (1) the "
+                "installed faces' own family names, read from each font's "
+                "OpenType name table (including its Korean records, which "
+                "FreeType does not expose), (2) BundledFontMap — a fixed "
+                "table mapping plain body serif/sans/monospace Hancom face "
+                "names to an OFL family shipped in the repo (engine/"
+                "references/fonts/family-map/, licences in engine/"
+                "references/fonts/LICENSES.md), so those names render "
+                "identically whether or not Hancom Office is installed, and "
+                "(3) the single generic fallback face if neither matched. "
+                "Every non-installed answer is named here and in "
+                "elements_skipped; its advance widths differ from the "
+                "authoring engine's — bundled less unpredictably than the "
+                "generic fallback, but still not byte-identical to it. "
+                "A declared name outside the bundled table (HCI Poppy, "
+                "한컴바탕, 필기, ...) still falls through to the generic "
+                "fallback and is machine-dependent BY DESIGN: the same "
+                "document on a machine without those faces will not produce "
+                "the same pixels there. Set RIGORLOOM_OWN_RENDER_FONT to pin "
+                "one face and take that variable out of the measurement "
+                "entirely."
             ),
         }
 
