@@ -3365,6 +3365,102 @@ def test_two_equation_renders_are_byte_identical(tmp_path):
         assert a == b, "identical input produced different PNG bytes"
 
 
+# -- italic variable shaping ---------------------------------------------
+
+def _eq_leaf_boxes(box):
+    """Every drawn leaf ``_EqBox`` under ``box`` (``.text`` truthy)."""
+    out = []
+    if box.text:
+        out.append(box)
+    for _dx, _dy, child in box.children:
+        out.extend(_eq_leaf_boxes(child))
+    return out
+
+
+def _eq_leaf_shears(box):
+    """``[(text, shear), ...]`` for every drawn leaf under ``box``."""
+    return [(leaf.text, leaf.shear) for leaf in _eq_leaf_boxes(box)]
+
+
+def test_system_font_index_finds_an_installed_italic_cut():
+    """OS/2 fsSelection / head macStyle, read straight from the font file."""
+    italic_file = own_render.Path("C:/Windows/Fonts/timesi.ttf")
+    if not italic_file.is_file():
+        pytest.skip("no Times New Roman Italic on this machine")
+    index = own_render.SystemFontIndex.shared()
+    entry = index.lookup("Times New Roman")
+    assert entry is not None, "Times New Roman itself did not resolve"
+    assert entry["italic"] is not None, "its italic cut was not recorded"
+    assert own_render.Path(entry["italic"][0]).name.lower() == "timesi.ttf"
+
+
+def test_identifier_tokens_shear_other_token_classes_do_not():
+    """Only ``var`` atoms — single Latin letters/identifiers — italicise.
+
+    Numbers, operators, function names, Greek (upper- and lower-case) and a
+    quoted literal (the Hangul case: HwpEqn's word tokeniser is ASCII-only,
+    so a Hangul glyph can only ever reach the tree as a ``"literal"``, style
+    ``text``) all have to come back with ``shear == 0``.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    # Force the synthetic-oblique path deterministically, independent of
+    # whatever maths faces this machine happens to have installed.
+    renderer._eq_face = renderer.fontbook.fallback()
+    renderer._eq_face_italic = None
+    renderer._eq_italic_kind = "synthetic"
+    tree, _info = hwpeqn_parse.parse(
+        'x + 2 = sin y - Gamma mu "가"')
+    box = renderer._eq_layout(tree, 40.0)
+    shears = dict(_eq_leaf_shears(box))
+    assert shears["x"] == pytest.approx(own_render._EQ_ITALIC_SHEAR)
+    assert shears["y"] == pytest.approx(own_render._EQ_ITALIC_SHEAR)
+    for upright in ("2", "+", "=", "sin", "Γ", "μ", "가"):
+        assert shears[upright] == 0.0, (upright, shears[upright])
+
+
+def test_it_and_rm_override_the_per_style_default():
+    """An explicit ``it``/``rm`` beats the token-class default."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    renderer._eq_face = renderer.fontbook.fallback()
+    renderer._eq_face_italic = None
+    renderer._eq_italic_kind = "synthetic"
+    forced_upright, _ = hwpeqn_parse.parse("rm{x}")
+    forced_italic, _ = hwpeqn_parse.parse("it{2}")
+    assert dict(_eq_leaf_shears(
+        renderer._eq_layout(forced_upright, 40.0)))["x"] == 0.0
+    assert dict(_eq_leaf_shears(
+        renderer._eq_layout(forced_italic, 40.0)))["2"] == pytest.approx(
+        own_render._EQ_ITALIC_SHEAR)
+
+
+def test_a_real_italic_cut_is_used_without_a_shear():
+    """When the family installs an italic file, that face is used directly
+    — ``box.shear`` stays 0, because the glyph is already slanted outlines,
+    not a sheared upright one."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    renderer._eq_face = renderer.fontbook.fallback()
+    renderer._eq_face_italic = renderer.fontbook.fallback(bold=True)
+    renderer._eq_italic_kind = "cut"
+    tree, _info = hwpeqn_parse.parse("x")
+    box = renderer._eq_layout(tree, 40.0)
+    leaf = _eq_leaf_boxes(box)[0]
+    assert leaf.text == "x"
+    assert leaf.shear == 0.0
+    assert leaf.font is renderer.fontbook.get(
+        max(1, round(40.0)), False, renderer._eq_face_italic)
+
+
+def test_equation_face_declares_its_italic_resolution(equation_render):
+    """Every equation face record says cut, synthetic, or none — never
+    silently nothing, the same honesty rule as every other font fact."""
+    faces = [face for face in equation_render["report"]["fonts"]["faces"]
+             if face["slot"] == "equation"]
+    assert faces
+    for face in faces:
+        assert face["italic"] in ("cut", "synthetic", "none")
+    assert "italic" in equation_render["report"]["equations"]
+
+
 # ---------------------------------------------------------------- CLI
 
 def test_version_flag_prints_one_line():
