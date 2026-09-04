@@ -22,6 +22,7 @@ if str(_HERE) not in sys.path:
 from cli_io import utf8_stdio  # noqa: E402
 from eqn import (base_pt_to_hwpunit, count_hweqn_identifier,
                  hwpeqn_sanity_check, validate_equation_operation)  # noqa: E402
+from hwpx_write import stamp_writer_application  # noqa: E402
 
 
 SUPPORTED_OPS = {
@@ -219,6 +220,21 @@ class HwpxDocument:
             replacements[name] = ET.tostring(
                 self.package_trees[name].getroot(), encoding="utf-8",
                 xml_declaration=True)
+        # PROVENANCE.  This writer is now the package's most recent writer, so
+        # version.xml must say so: it still carries whatever Hancom stamped on
+        # ITS last save, and every member below is copied forward verbatim, so
+        # without this the output would claim a Hancom layout it no longer
+        # has.  ``docs/research/lineseg-on-save-01.md`` measured why that
+        # matters -- Hancom recomputes hp:lineseg on every save, and a
+        # one-character edit moved a paragraph 534 positions downstream -- and
+        # own_render's ``auto`` layout policy reads exactly this attribute to
+        # decide whether the document's cached layout may be trusted.  The
+        # stamp clears itself when Hancom saves the package again.
+        version_member = "version.xml"
+        if version_member in self.contents:
+            source = replacements.get(version_member,
+                                      self.contents[version_member])
+            replacements[version_member] = stamp_writer_application(source)
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(suffix=".hwpx", dir=str(out_path.parent))

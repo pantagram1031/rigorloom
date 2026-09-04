@@ -89,6 +89,8 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_io import utf8_stdio  # noqa: E402
 import hwpeqn_parse  # noqa: E402
+from hwpx_write import (  # noqa: E402
+    WRITER_APPLICATION, is_hancom_application, read_writer_application)
 
 RENDERER_ID = "rigorloom-own"
 RENDERER_VERSION = "0.1.0"
@@ -98,6 +100,65 @@ GRADE = "own-uncertified"
 HWPUNIT_PER_INCH = 7200
 HWPUNIT_PER_PT = 100
 DEFAULT_DPI = 144
+
+# Every advance this renderer lays out with is measured off the face at THIS
+# pixel size and scaled analytically to HWPUNIT, whatever ``--dpi`` the page
+# is finally rasterised at.  Layout is therefore a function of the document
+# alone; the raster enters exactly once, at the end, when a glyph is drawn.
+#
+# WHY A LARGE REFERENCE SIZE RATHER THAN UNHINTED METRICS.  The correct input
+# is the face's own unhinted outline advance, and Pillow does not expose one:
+# ``FreeTypeFont`` loads glyphs with hinting on, and FreeType then rounds a
+# hinted advance to a whole pixel.  A reference size is the standard way out —
+# the rounding is 1 px of a 1024 px em, i.e. under 0.1% per glyph, and, which
+# is the entire point, it is the SAME 0.1% at every output resolution.  The
+# old code measured at ``round(pt * dpi / 72)`` px, where the same rounding is
+# 1/13 em at 10 pt / 96 dpi and 1/20 em at 10 pt / 144 dpi: not an error but a
+# DIFFERENT error per resolution, which is what moved the line breaks.
+LAYOUT_REFERENCE_PX = 1024
+
+# WHERE A TEXT LINE'S GEOMETRY BOX ENDS.  Three conventions are possible and
+# every ``line_boxes`` record carries all three explicitly:
+#
+#   ``advance``           the advance of every glyph piece on the line, a
+#                         trailing space included.  This is what a caret
+#                         needs, so ``x1_advance`` is always emitted whatever
+#                         this constant says.
+#   ``ink``               where the last glyph's outline stops (the advance
+#                         minus that glyph's right side bearing).
+#   ``visible_advance``   the advance of the last piece that draws ink, i.e.
+#                         the advance convention with trailing whitespace
+#                         dropped.
+#
+# MEASURED, corpus-wide, against the ten Hancom reference PDFs.  The
+# reference's own box is the union of PyMuPDF's per-character ADVANCE quads (a
+# 12.96 pt Hangul character measures exactly 12.96 wide there — its 1.0 em
+# advance, not its ~0.95 em ink), so it is an ADVANCE box and ``ink`` loses
+# decisively.  Read on the 817 pairs whose left edges agree to 1.5 px and
+# whose baselines agree to 2.0 px — the pairs that are demonstrably the same
+# line, rather than whatever the greedy centre-distance pairing put together,
+# whose |dx| tail is 150 px of line-breaker disagreement on every convention
+# alike:
+#
+#   convention          median |dx|   p90 |dx|   mean IoU
+#   ink                    2.484        5.427     0.8480
+#   advance                0.371        6.239     0.8707
+#   visible_advance        0.363        5.275     0.8713
+#
+# ``visible_advance`` wins median, p90 and IoU on that set, so it is what the
+# geometry box reports.  It is close, and the reason is that the reference
+# itself is not consistent: the two advance readings differ on only 34 of the
+# 817, and on those Hancom SPLITS — 19 lines drop the trailing space from the
+# PDF (visible 1.75 px vs advance 12.68 px) and 15 keep it (advance 2.68 px vs
+# visible 9.59 px).  Nothing in the OWPML predicts which, and 19 > 15 is the
+# whole of the margin.  Full derivation, and the per-form cost on the
+# scoreboard's IoU channel: ``engine/references/own-render-notes.md``, "Where
+# a text line's box ends".
+#
+# ``x1_advance`` stays in the sidecar whatever this constant says, because it
+# is the number a caret needs: a caret sits after the trailing space, not on
+# the last glyph's ink.
+LINE_BOX_END = "visible_advance"
 
 # U+FFFC OBJECT REPLACEMENT CHARACTER: the single textpos slot an
 # inline object occupies in a paragraph character stream.
@@ -231,6 +292,131 @@ BLOCK_LAYOUT_AUTO = "auto"
 BLOCK_LAYOUT_COMPUTED = "computed"
 BLOCK_LAYOUT_MODES = (BLOCK_LAYOUT_AUTO, BLOCK_LAYOUT_COMPUTED)
 
+# --------------------------------------------------------------------------
+# Layout provenance, and the document-wide policy it decides.
+#
+# ``docs/research/lineseg-on-save-01.md`` measured what Hancom does to a
+# cached ``hp:lineseg`` on save, on three corpus forms, twice each:
+#
+#   * an UNTOUCHED open/save-as reproduces every cached line box
+#     byte-identically -- 0 of 223 paragraphs changed a single one of the 9
+#     lineseg fields.  Hancom recomputes line layout on every save rather than
+#     copying the stored bytes forward, but the recomputation is deterministic
+#     and idempotent, so an untouched resave is indistinguishable from a keep.
+#   * a ONE-CHARACTER edit did not perturb the edited paragraph at all, and
+#     DID perturb a paragraph 534 positions downstream (``vertpos`` 0 ->
+#     70884) plus two paragraphs elsewhere that had never been laid out.
+#
+# The consequence is the whole of this policy: "trust the cache for the
+# paragraphs that were not touched" is NOT SOUND, because no per-paragraph
+# test on the file can predict which OTHER paragraphs a layout pass would also
+# have moved.  The cache is trustworthy for a whole document or for none of
+# it, and the question that decides which is provenance: is this package the
+# direct, unedited output of Hancom's own most recent save?
+#
+# The only writer signature an HWPX carries is ``version.xml@application``.
+# Hancom stamps its product name there on every save; this repo's writers
+# stamp ``Rigorloom`` (hwpx_write.blank_package always has, and
+# xml_backend.HwpxDocument.save now does, because it copies version.xml
+# forward verbatim and would otherwise inherit Hancom's claim).  The marker
+# self-clears the moment Hancom saves the package again, which is exactly the
+# semantics wanted.  What it CANNOT distinguish is an edit made by some third
+# program that also leaves Hancom's signature in place; that is a limit, and
+# it is declared in the sidecar and in the notes rather than papered over.
+PROVENANCE_HANCOM = "hancom_untouched"
+PROVENANCE_RIGORLOOM = "rigorloom_written"
+PROVENANCE_UNKNOWN = "unknown_writer"
+
+# ``cache``    — the whole document keeps the cached hp:lineseg layout.
+# ``computed`` — the WHOLE document (lines AND block flow) is laid out by this
+#                renderer.  Never a mixture decided per paragraph: see above.
+LAYOUT_POLICY_CACHE = "cache"
+LAYOUT_POLICY_COMPUTED = "computed"
+LAYOUT_POLICIES = (LAYOUT_POLICY_CACHE, LAYOUT_POLICY_COMPUTED)
+
+LAYOUT_POLICY_MEANING = (
+    "cache: this package is the direct output of Hancom's own most recent "
+    "save, so the whole document keeps the cached hp:lineseg line boxes and "
+    "the page assignment read out of them. computed: the WHOLE document -- "
+    "line breaking and block flow both -- is laid out by this renderer, "
+    "because the cached layout is not provably Hancom's own most recent one "
+    "and a cache that is stale anywhere may be stale in paragraphs no "
+    "per-paragraph test can name (docs/research/lineseg-on-save-01.md "
+    "measured a one-character edit moving a paragraph 534 positions "
+    "downstream). The choice is document-wide by construction; layout_policy_"
+    "reason says what decided it."
+)
+
+
+def package_writer_provenance(hwpx_path):
+    """Who wrote this package last, from ``version.xml@application``.
+
+    Returns ``{"writer", "application", "evidence"}``.  ``writer`` is one of
+    the three ``PROVENANCE_*`` values; ``application`` is the raw attribute
+    text, or ``None`` when the package carries no ``version.xml`` or no
+    ``application`` attribute on it -- both of which read as
+    ``unknown_writer``, the conservative side.
+    """
+    application = None
+    member = None
+    try:
+        with zipfile.ZipFile(hwpx_path) as archive:
+            names = archive.namelist()
+            member = next((name for name in names
+                           if name.rsplit("/", 1)[-1] == "version.xml"), None)
+            if member is not None:
+                application = read_writer_application(archive.read(member))
+    except (OSError, KeyError, zipfile.BadZipFile):
+        application = None
+    if application is None:
+        writer = PROVENANCE_UNKNOWN
+        evidence = ("no version.xml@application in the package"
+                    if member is None else
+                    f"{member} carries no application attribute")
+    elif is_hancom_application(application):
+        writer = PROVENANCE_HANCOM
+        evidence = f"{member}@application={application!r}"
+    elif application.strip() == WRITER_APPLICATION:
+        writer = PROVENANCE_RIGORLOOM
+        evidence = f"{member}@application={application!r}"
+    else:
+        writer = PROVENANCE_UNKNOWN
+        evidence = f"{member}@application={application!r}"
+    return {"writer": writer, "application": application,
+            "evidence": evidence}
+
+
+def resolve_layout_policy(provenance, line_layout, relayout_paragraphs,
+                          override=None):
+    """``(policy, reason)`` — which layout the whole document is drawn from.
+
+    Ordered so that an explicit caller instruction always beats an inference
+    off the file, and so that every path that ends in ``cache`` had to prove
+    it.  ``override`` is the measurement escape hatch (``--layout-policy``):
+    it can pin ``cache`` on a package provenance says was edited, which is
+    UNSOUND for rendering and exists so the two policies can be measured
+    against each other on the same document.  It is named in the reason.
+    """
+    writer = provenance.get("writer")
+    evidence = provenance.get("evidence")
+    if override is not None:
+        return override, (f"override: --layout-policy {override} "
+                          f"(provenance: {writer}; {evidence})")
+    if line_layout == LINE_LAYOUT_COMPUTED:
+        return LAYOUT_POLICY_COMPUTED, "caller asked for line_layout=computed"
+    if relayout_paragraphs:
+        return LAYOUT_POLICY_COMPUTED, (
+            f"caller_marked_edited: {len(relayout_paragraphs)} paragraph(s) "
+            "declared edited, so this package is no longer the untouched "
+            "output of whatever wrote it")
+    if writer == PROVENANCE_HANCOM:
+        return LAYOUT_POLICY_CACHE, f"{writer}: {evidence}"
+    return LAYOUT_POLICY_COMPUTED, (
+        f"{writer}: {evidence} - not provably Hancom's own most recent save, "
+        "so the cached hp:lineseg may describe text this package no longer "
+        "has")
+
+
 # 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next) used to be halved
 # here by a PARA_MARGIN_SCALE constant.  That halving was real but was
 # attributed to the wrong thing: it is the UNIT of the hh:paraPr MCE switch's
@@ -354,7 +540,7 @@ LANG_SLOTS = ("hangul", "latin", "hanja", "japanese", "other", "symbol",
 #             never enters the line height (F14: a line carrying a ratio=150
 #             run still advances 10 pt x 160% = 15.95 pt measured).
 #   spacing — letter spacing, percent of the character's OWN ADVANCE (not of
-#             the character size).  See ``_spacing_gap_px``.
+#             the character size).  See ``_spacing_gap``.
 #   relSz   — relative character size, percent.  Scales the drawn size and the
 #             advance, and does NOT enter the line height (see
 #             ``_line_metrics``).
@@ -1634,7 +1820,7 @@ class _EqBox:
 class OwnRenderer:
     def __init__(self, hwpx_path, dpi=DEFAULT_DPI, repo_root=None,
                  line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
-                 block_layout=BLOCK_LAYOUT_AUTO):
+                 block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
         self.path = Path(hwpx_path)
         self.dpi = int(dpi)
         if self.dpi <= 0:
@@ -1666,6 +1852,35 @@ class OwnRenderer:
         #                document.  This is the mode that MEASURES the flow
         #                pass against the authoring engine's own cache.
         self.block_layout = block_layout
+        # -- layout provenance policy -------------------------------------
+        # What the caller ASKED for, kept because the policy below can
+        # override both: an ``auto`` render of a package this renderer cannot
+        # prove is Hancom's own untouched save goes computed for the WHOLE
+        # document, lines and flow together.  ``auto`` therefore means "let
+        # provenance decide", not "decide per paragraph".
+        if layout_policy is not None and layout_policy not in LAYOUT_POLICIES:
+            raise ValueError(
+                f"layout_policy must be one of {sorted(LAYOUT_POLICIES)} "
+                "or None")
+        self.requested_line_layout = line_layout
+        self.requested_block_layout = block_layout
+        self.layout_policy_override = layout_policy
+        self.provenance = package_writer_provenance(self.path)
+        self.layout_policy, self.layout_policy_reason = resolve_layout_policy(
+            self.provenance, line_layout, self.relayout_paragraphs,
+            override=layout_policy)
+        if self.layout_policy == LAYOUT_POLICY_COMPUTED:
+            self.line_layout = LINE_LAYOUT_COMPUTED
+            self.block_layout = BLOCK_LAYOUT_COMPUTED
+        # Paragraphs the per-paragraph staleness detector flagged.  Under the
+        # ``cache`` policy this is DIAGNOSTIC ONLY -- it names paragraphs
+        # whose cached boxes no longer describe their text without changing
+        # what is drawn, because a document whose provenance says untouched
+        # cannot have a stale paragraph, and a detector hit on one is a
+        # finding about the detector or the file, not a licence to redraw one
+        # paragraph out of a cache that is trustworthy as a whole or not at
+        # all.
+        self._stale_diagnostics = {}
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
         self.repo_root = Path(repo_root) if repo_root else Path(
             __file__).resolve().parents[2]
@@ -1760,6 +1975,8 @@ class OwnRenderer:
         self._page = 1
         self._image = None
         self._typo_cache = {}
+        self._em_cache = {}
+        self._rsb_cache = {}
         # Which character metrics this document actually exercised, counted in
         # characters.  The honesty rule cuts both ways: the sidecar has to say
         # what was *applied*, not only what was skipped, or "we apply hh:ratio"
@@ -1866,6 +2083,69 @@ class OwnRenderer:
             "engine/references/own-render-notes.md",
         ]
         self._load()
+        self._scan_stale_cache()
+
+    def _scan_stale_cache(self):
+        """Run the staleness detector over the whole document, once.
+
+        Two jobs, and only the second one changes a pixel:
+
+        1. DIAGNOSIS.  ``line_layout.stale_diagnostics`` names every paragraph
+           whose own cached line boxes cannot hold its own text.  Worth
+           reporting on any document, and it costs one pass.
+        2. FALSIFICATION.  A hit CONTRADICTS a ``cache`` policy.  The package
+           claims to be Hancom's own untouched save; Hancom's own save does
+           not leave a line box too narrow for the text on it (measured: 0
+           hits across all ten corpus forms, and
+           ``docs/research/lineseg-on-save-01.md`` measured an untouched
+           Hancom resave reproducing 223 of 223 caches byte-identically).  So
+           the claim is false, and the WHOLE document goes computed -- not
+           only the paragraphs that were caught, which is the unsound rule
+           this slice removed.  A caller that pinned the policy with
+           ``layout_policy`` asked for a measurement and keeps it.
+
+        Only ``stale_line_width`` is scanned.  ``unusable_cache_reason``'s two
+        conditions are NOT evidence of an edit -- ``textpos_past_end`` fires
+        on three unedited corpus forms because of an ``hp:ctrl`` this reader
+        gives no character cell -- and they are handled where they belong,
+        per paragraph, in ``line_layout_mode``.
+
+        The sweep evaluates a lineseg that carries no ``horzsize`` against no
+        column width at all and skips it, where a render-time call would have
+        substituted the paragraph's own column.  Zero corpus linesegs are
+        shaped that way; it is declared rather than guessed at.
+        """
+        if self.requested_line_layout != LINE_LAYOUT_AUTO:
+            return
+        hits = []
+        for section in self.sections:
+            for element in section.iter():
+                if _local(element.tag) != "p":
+                    continue
+                para = Paragraph(element, self.defs["para_pr"])
+                if not para.chars or self.unusable_cache_reason(para):
+                    continue
+                reason = self.stale_cache_reason(para, 0)
+                if reason is None:
+                    continue
+                index = self.paragraph_index.get(id(element))
+                self._note_stale(index, reason)
+                hits.append((index, reason))
+        if not hits or self.layout_policy != LAYOUT_POLICY_CACHE:
+            return
+        if self.layout_policy_override is not None:
+            return
+        index, reason = hits[0]
+        self.layout_policy = LAYOUT_POLICY_COMPUTED
+        self.line_layout = LINE_LAYOUT_COMPUTED
+        self.block_layout = BLOCK_LAYOUT_COMPUTED
+        self.layout_policy_reason = (
+            f"stale_cache_contradicts_provenance: {len(hits)} paragraph(s) "
+            "carry cached line boxes that no longer describe their own text "
+            f"(first: paragraph {index}, {reason}), so "
+            f"{self.provenance['writer']} is not true of this package "
+            f"({self.provenance['evidence']}); the whole document is laid "
+            "out computed")
 
     # -- input -----------------------------------------------------------
     def _load(self):
@@ -3071,6 +3351,80 @@ class OwnRenderer:
         return self.fontbook.get(self.pt_to_px(pt), bold,
                                  self._face_for(cid, slot, bold))
 
+    def _reference_font(self, font):
+        """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
+
+        Taken off the resolved font object rather than re-running
+        ``_face_for``, so the face-resolution report still counts each
+        character once.
+        """
+        return self.fontbook.get(LAYOUT_REFERENCE_PX, False,
+                                 (font.path, getattr(font, "index", 0)))
+
+    def _em_width(self, font, text):
+        """Advance of ``text`` in EM, off ``font``'s face. dpi-free.
+
+        The one measurement the whole line layout rests on.  It is taken at
+        ``LAYOUT_REFERENCE_PX`` and divided by it, so it is a property of the
+        outlines and the face's kern table and of nothing else — no output
+        resolution, no rounded pixel size, no hinting grid that moves with
+        either.  Callers scale it by the run's declared point size to get
+        HWPUNIT.
+
+        Kerning is preserved because the whole chunk is measured in one call,
+        exactly as before; ``layout_engine=BASIC`` is pinned by ``FontBook``.
+        """
+        if not text:
+            return 0.0
+        key = (font.path, getattr(font, "index", 0), text)
+        hit = self._em_cache.get(key)
+        if hit is None:
+            reference = self._reference_font(font)
+            hit = float(reference.getlength(text)) / LAYOUT_REFERENCE_PX
+            self._em_cache[key] = hit
+        return hit
+
+    def _em_right_bearing(self, font, ch):
+        """``ch``'s right side bearing in EM: advance minus ink, off the face.
+
+        Measured at ``LAYOUT_REFERENCE_PX`` and divided by it, exactly like
+        :meth:`_em_width`, so it is dpi-free for the same reason.  Pillow's
+        ``getbbox`` is NOT ink — it reports the advance box (a space's bbox is
+        as wide as its advance and zero high) — so the ink edge has to come
+        off the rendered mask.
+
+        Only the LAST character is needed, and the decomposition is exact:
+        kerning moves a glyph's origin, never its own advance, so the ink
+        right edge of a chunk is the chunk's advance minus its last
+        character's bearing.  Verified on 바탕: ``abc`` is 1700/1639 and ``c``
+        alone is 555/494 — the same 61 units of bearing.
+        """
+        key = (font.path, getattr(font, "index", 0), ch)
+        hit = self._rsb_cache.get(key)
+        if hit is None:
+            reference = self._reference_font(font)
+            advance = float(reference.getlength(ch))
+            box = reference.getmask(ch, mode="L").getbbox()
+            right = float(box[2]) if box else advance
+            hit = max(0.0, advance - right) / LAYOUT_REFERENCE_PX
+            self._rsb_cache[key] = hit
+        return hit
+
+    def _ink_right_px(self, piece, cursor):
+        """Where ``piece``'s ink ends, in device pixels.
+
+        The bearing is scaled by the piece's own advance rather than by a
+        point size, because ``advance_hwpunit / em_width`` already carries the
+        declared size and ``hh:ratio`` together.
+        """
+        text = piece["text"]
+        em = self._em_width(piece["font"], text)
+        if not em:
+            return cursor + piece["advance"]
+        bearing = self._em_right_bearing(piece["font"], text[-1])
+        return cursor + piece["advance"] - self.pxf(
+            bearing * piece["advance_hwpunit"] / em)
+
     def _embolden_px(self, cid, slot, font):
         """Stroke width, in pixels, for a bold run drawn on a regular face.
 
@@ -3154,10 +3508,17 @@ class OwnRenderer:
             ratio, _spacing, rel_sz, offset = metrics
             font = self._font_for(cid, rel_sz, slot)
             chunk = "".join(run)
-            width = float(draw.textlength(chunk, font=font)) * ratio / 100.0
+            # HWPUNIT first, pixels derived.  ``font`` is the RASTER font (an
+            # integer pixel size); its size is deliberately not what the
+            # advance is measured against — see ``LAYOUT_REFERENCE_PX``.
+            pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+            advance_hwp = (self._em_width(font, chunk) * pt * HWPUNIT_PER_PT
+                           * ratio / 100.0)
+            width = self.pxf(advance_hwp)
             size_px = font.size
             pieces.append({
-                "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
+                "kind": "glyph", "advance": width,
+                "advance_hwpunit": advance_hwp, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
                 "offset_px": self._offset_px(cid, offset),
                 "embolden": self._embolden_px(cid, slot, font),
@@ -3191,14 +3552,19 @@ class OwnRenderer:
                 # ``flush`` measured it with the face; overwrite that with the
                 # cell width HWP actually advances by.  See
                 # ``SPACE_CELL_FRACTION``.
-                pieces[-1]["advance"] = self._half_cell_px(cid, rel_sz, ratio)
+                pieces[-1]["advance_hwpunit"] = self._half_cell_hwp(
+                    cid, rel_sz, ratio)
+                pieces[-1]["advance"] = self.pxf(
+                    pieces[-1]["advance_hwpunit"])
                 self.applied["half_width_space_cell"] = (
                     self.applied.get("half_width_space_cell", 0) + 1)
             if spacing:
+                gap_hwp = self._spacing_gap(
+                    pieces[-1]["advance_hwpunit"], spacing)
                 pieces.append({
                     "kind": "gap",
-                    "advance": self._spacing_gap_px(pieces[-1]["advance"],
-                                                    spacing),
+                    "advance": self.pxf(gap_hwp),
+                    "advance_hwpunit": gap_hwp,
                 })
         flush()
         return pieces
@@ -3216,6 +3582,30 @@ class OwnRenderer:
             pieces.pop()
         return sum(p["advance"] for p in pieces)
 
+    def _measure_hwp(self, draw, text, cid):
+        """``_measure``, in HWPUNIT. This is the one the LAYOUT uses.
+
+        ``_measure`` stays in device pixels because the drawing cursor is in
+        device pixels; every advance it sums is ``pxf`` of the value summed
+        here, so the two never disagree about anything but float rounding.
+        """
+        pieces = self._text_pieces(draw, cid, text)
+        while pieces and pieces[-1]["kind"] == "gap":
+            pieces.pop()
+        return sum(p["advance_hwpunit"] for p in pieces)
+
+    def _half_cell_hwp(self, cid, rel_sz, ratio):
+        """A space's advance in HWPUNIT: half the declared character cell.
+
+        The full-width cell is ``declared size x hh:ratio``
+        (``_cached_lower_bound_hwp`` states the same rule); the space is half
+        of it.  The resolved face is not consulted at all -- that is the whole
+        point, and ``SPACE_CELL_FRACTION`` carries the measurement it rests
+        on.  Declared sizes only, so this was always dpi-free.
+        """
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        return pt * HWPUNIT_PER_PT * ratio / 100.0 * SPACE_CELL_FRACTION
+
     def _half_cell_px(self, cid, rel_sz, ratio):
         """A space's advance in pixels: half the declared character cell.
 
@@ -3225,8 +3615,7 @@ class OwnRenderer:
         that is the whole point, and ``SPACE_CELL_FRACTION`` carries the
         measurement it rests on.
         """
-        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-        return (pt * self.dpi / 72.0 * ratio / 100.0 * SPACE_CELL_FRACTION)
+        return self.pxf(self._half_cell_hwp(cid, rel_sz, ratio))
 
     def _offset_px(self, cid, offset):
         """``hh:offset`` as pixels the glyph is RAISED off its baseline.
@@ -3256,8 +3645,11 @@ class OwnRenderer:
         return -(pt * self.dpi / 72.0 * offset / 100.0)
 
     @staticmethod
-    def _spacing_gap_px(advance_px, spacing):
+    def _spacing_gap(advance, spacing):
         """``hh:spacing`` gap after a character: a percent of ITS OWN advance.
+
+        A pure proportion, so it is correct in whatever unit ``advance`` is
+        in; the layout passes HWPUNIT and the drawing path passes pixels.
 
         MEASURED off the Hancom reference render of ``render-check-01`` (block
         ``F13``, three runs of the same text at ``spacing`` −15 / 0 / +30, 10 pt
@@ -3279,12 +3671,12 @@ class OwnRenderer:
         ``spacing="50"``, drawn 5.5 em wide — which both readings satisfy
         exactly, so nothing there is contradicted.
 
-        ``advance_px`` is the character's advance with ``hh:ratio`` and
+        ``advance`` is the character's advance with ``hh:ratio`` and
         ``hh:relSz`` already applied, so the gap composes after both.  That
         ordering is the natural reading of "percent of the advance" but is NOT
         measured: ``F13`` declares ``ratio=100`` and ``relSz=100`` throughout.
         """
-        return advance_px * spacing / 100.0
+        return advance * spacing / 100.0
 
     def _line_items(self, para, chars, base_index):
         """Ordered ``("text", Segment)`` / ``("obj", record)`` items for a line.
@@ -3351,7 +3743,12 @@ class OwnRenderer:
 
     # -- line breaking from metrics (E2.1) -------------------------------
     def _char_advance_tables(self, draw, para):
-        """Per-character advance and letter-spacing gap, in device pixels.
+        """Per-character advance and letter-spacing gap, in HWPUNIT.
+
+        HWPUNIT and not device pixels, because this is where line breaking
+        starts and line breaking must not be a function of the raster: an
+        advance measured at the output resolution puts different characters
+        on a line at 96 dpi than at 144.  See ``LAYOUT_REFERENCE_PX``.
 
         Two arrays rather than one, because ``hh:spacing`` opens a gap
         *between* characters: a line of ``k`` characters carries ``k``
@@ -3373,7 +3770,7 @@ class OwnRenderer:
                     element = record[1] if record else None
                     width = (self._object_extent(element)[0]
                              if element is not None else 0)
-                    advances.append(self.pxf(width))
+                    advances.append(float(width))   # hp:sz is HWPUNIT
                 gaps.append(0.0)
                 continue
             if ch == "\t":
@@ -3381,13 +3778,13 @@ class OwnRenderer:
                 gaps.append(0.0)
                 continue
             _ratio, spacing, _rel_sz, _offset = self._typography(cid, ch)
-            advances.append(self._measure(draw, ch, cid))
-            gaps.append(self._spacing_gap_px(advances[-1], spacing)
+            advances.append(self._measure_hwp(draw, ch, cid))
+            gaps.append(self._spacing_gap(advances[-1], spacing)
                         if spacing else 0.0)
         return advances, gaps
 
     def span_width(self, draw, para, start, end):
-        """Advance of ``para.chars[start:end]`` in device pixels.
+        """Advance of ``para.chars[start:end]`` in HWPUNIT.
 
         The same quantity the breaker fits against a line box: character
         advances plus the ``hh:spacing`` gaps *between* them, with no trailing
@@ -3401,8 +3798,8 @@ class OwnRenderer:
         return (sum(advances[start:end]) + sum(gaps[start:end])
                 - gaps[end - 1])
 
-    def _tab_advance(self, para, x_px, column_hwp):
-        """Where a ``\\t`` at ``x_px`` lands, per ``hh:tabPr``.
+    def _tab_advance(self, para, here, column_hwp):
+        """Where a ``\\t`` at ``here`` lands, per ``hh:tabPr``. All HWPUNIT.
 
         Explicit ``<hh:tab pos=…>`` stops are honoured (LEFT behaviour only —
         RIGHT/CENTER/DECIMAL need the *following* text, which a left-to-right
@@ -3412,14 +3809,13 @@ class OwnRenderer:
         default, not the file's.
         """
         table = self.defs.get("tab_pr", {}).get(para.para_pr.get("tab_pr") or "")
-        here = self.hwp_from_px(x_px)
         if table and table["stops"]:
             for pos, kind in table["stops"]:
                 if pos > here + 1:
                     if kind != "LEFT":
                         self._skip(f"hh:tab@type={kind}",
                                    "non-left tab stop advanced as a left stop")
-                    return self.pxf(min(pos, column_hwp))
+                    return float(min(pos, column_hwp))
         self._skip("hh:tabPr",
                    "paragraph declares no explicit tab stop; the default "
                    f"interval used is this renderer's "
@@ -3427,7 +3823,7 @@ class OwnRenderer:
                    "the file's")
         step = DEFAULT_TAB_INTERVAL_HWP
         nxt = (int(here) // step + 1) * step
-        return self.pxf(min(nxt, column_hwp))
+        return float(min(nxt, column_hwp))
 
     def _line_box(self, para, index, column_hwp):
         """``(horzpos, horzsize)`` in HWPUNIT for the ``index``-th line.
@@ -3569,15 +3965,21 @@ class OwnRenderer:
 
         Returns paragraph-relative line records:
         ``{start, end, horzpos, horzsize, vertpos, vertsize, textheight,
-        baseline, spacing, forced, width_px}``, where ``start``/``end`` index
+        baseline, spacing, forced, width_hwpunit, width_px}``, where
+        ``start``/``end`` index
         the paragraph's character stream exactly the way ``hp:lineseg@textpos``
         does, so a record is directly comparable to a cached one.
 
         Greedy first-fit, which is what HWP's own line breaker is (its cached
         boxes are reproducible by a greedy pass; a Knuth-Plass total-fit pass
-        would disagree with them on purpose).  ``width_px`` excludes trailing
-        whitespace, because a space that falls at a line end hangs outside the
-        box rather than forcing a break.
+        would disagree with them on purpose).  ``width_hwpunit`` excludes
+        trailing whitespace, because a space that falls at a line end hangs
+        outside the box rather than forcing a break; ``width_px`` is that
+        width at this render's dpi, for the drawing side.
+
+        EVERY quantity this method compares is in HWPUNIT, read from the
+        document or scaled analytically from face metrics.  Nothing here may
+        be measured at the output resolution: see ``LAYOUT_REFERENCE_PX``.
         """
         pr = para.para_pr
         chars = para.chars
@@ -3646,9 +4048,9 @@ class OwnRenderer:
                 cursor += 1
                 continue
             horzpos, horzsize = self._line_box(para, index, column_hwp)
-            avail = self.pxf(horzsize)
+            avail = float(horzsize)
             if ch == "\t":
-                here = self.pxf(horzpos) + width(start, cursor)
+                here = horzpos + width(start, cursor)
                 advances[cursor] = max(
                     0.0, self._tab_advance(para, here, column_hwp) - here)
                 for i in range(cursor, count):
@@ -3692,7 +4094,8 @@ class OwnRenderer:
                 "vertpos": vertpos, "vertsize": vertsize,
                 "textheight": textheight, "baseline": baseline,
                 "spacing": spacing, "forced": forced,
-                "width_px": width(first, visible),
+                "width_hwpunit": width(first, visible),
+                "width_px": self.pxf(width(first, visible)),
             })
             vertpos += vertsize + spacing
         return lines
@@ -3724,7 +4127,7 @@ class OwnRenderer:
             if spacing and offset < len(window) - 1:
                 gap = cell * spacing / 100.0
                 # The gap is a percent of the character's OWN advance
-                # (``_spacing_gap_px``).  For a full-width cell that advance is
+                # (``_spacing_gap``).  For a full-width cell that advance is
                 # exactly ``cell``, so the gap is exact.  For a proportional
                 # character the advance is unknown and no larger than a full
                 # cell, so a POSITIVE gap has to be dropped to keep this a
@@ -3732,41 +4135,64 @@ class OwnRenderer:
                 total += gap if (is_full_width(ch) or gap < 0) else 0.0
         return total
 
-    def line_layout_mode(self, para, column_hwp, paragraph_index=None):
-        """``(mode, reason)`` — which engine lays this paragraph's lines out.
+    @staticmethod
+    def unusable_cache_reason(para):
+        """Why this paragraph's cache cannot be READ, never mind trusted.
 
-        ``computed`` wins for four named reasons, and only those:
+        ``cache_absent``     — no ``hp:linesegarray`` at all.
+        ``textpos_past_end`` — a cached line starts past the end of the
+                               character stream this reader built, so there is
+                               no character range for that line box to
+                               describe and it cannot be drawn from.
 
-          ``policy``            the whole render was asked for computed lines;
-          ``cache_absent``      the paragraph carries no ``hp:linesegarray``;
-          ``textpos_past_end``  a cached line starts past the end of the
-                                paragraph's character stream, so the text is
-                                shorter than the cache describes;
-          ``stale_line_width``  a cached line's font-independent lower-bound
-                                width exceeds its own cached ``horzsize``, so
-                                the text is longer than that line could hold;
-          ``caller_marked_edited`` the caller said it edited this paragraph.
+        Not a staleness inference, and deliberately not treated as one: the
+        renderer simply has nothing to index.  ``lineseg_agreement`` already
+        draws the line in the same place, excluding a paragraph whose cache is
+        "absent, or a textpos past the end of the character stream" from the
+        measurement rather than scoring it wrong.
 
-        The last two matter because a stale box is the one thing this renderer
-        must never draw.  ``stale_line_width`` is **sound but incomplete**: it
-        never fires on an unedited paragraph (the bound is a lower bound on
-        text the authoring engine did fit), and it does not fire on an edit
-        that leaves every line still fitting.  An editor that knows it changed
-        a paragraph must say so through ``relayout_paragraphs`` rather than
-        rely on detection.
+        PRE-EXISTING, NOT FIXED HERE, and load-bearing on the reading above:
+        ``textpos_past_end`` fires on exactly one paragraph of each of three
+        UNEDITED corpus forms (moel-2013 #159, saeopja #321, kstartup #264).
+        All three carry an ``hp:ctrl`` this reader gives no character cell —
+        a HYPERLINK ``hp:fieldBegin``/``fieldEnd`` pair, an ``hp:colPr`` —
+        while the authoring engine's ``textpos`` counted one.  So the
+        condition means "this reader cannot line up its character stream with
+        the cache", which is exactly a cache it must not draw from, and NOT
+        "somebody edited this document".
         """
-        if self.line_layout == LINE_LAYOUT_COMPUTED:
-            return LINE_LAYOUT_COMPUTED, "policy"
-        if paragraph_index is not None and paragraph_index in self.relayout_paragraphs:
-            return LINE_LAYOUT_COMPUTED, "caller_marked_edited"
-        if not para.linesegs:
-            return LINE_LAYOUT_COMPUTED, "cache_absent"
         count = len(para.chars)
+        if not para.linesegs:
+            return "cache_absent"
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
         if positions and max(positions) > count:
-            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+            return "textpos_past_end"
         if count and len(positions) > 1 and max(positions) >= count:
-            return LINE_LAYOUT_COMPUTED, "textpos_past_end"
+            return "textpos_past_end"
+        return None
+
+    def stale_cache_reason(self, para, column_hwp):
+        """``"stale_line_width"`` when a cached line cannot hold its own text.
+
+        A cached line's font-independent lower-bound width exceeds its own
+        cached ``horzsize``, so the paragraph's text is *longer* than the box
+        the authoring engine laid out for it.  ``None`` otherwise.
+
+        **Sound, incomplete, and since this slice DIAGNOSTIC rather than
+        per-paragraph decisive.**  The bound can never exceed the width the
+        authoring engine actually fitted, so it raises no false positive on an
+        unedited paragraph — measured: it fires on 0 paragraphs of all ten
+        corpus forms.  But an edit that leaves every line still fitting is
+        invisible in the file, and — the finding that demoted it —
+        ``docs/research/lineseg-on-save-01.md`` measured an edit perturbing a
+        paragraph 534 positions downstream that it never touched.  So what one
+        paragraph's cache looks like cannot decide whether the DOCUMENT's
+        cache may be trusted; provenance decides that, for the whole document
+        at once (:func:`resolve_layout_policy`).  Being sound, a hit still
+        FALSIFIES a cache policy — see ``_scan_stale_cache``.
+        """
+        count = len(para.chars)
+        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
         for i, seg in enumerate(para.linesegs):
             first = positions[i]
             last = positions[i + 1] if i + 1 < len(positions) else count
@@ -3775,7 +4201,48 @@ class OwnRenderer:
                 continue
             bound = self._cached_lower_bound_hwp(para, first, last)
             if bound > horzsize * (1.0 + STALE_LINE_TOLERANCE):
-                return LINE_LAYOUT_COMPUTED, "stale_line_width"
+                return "stale_line_width"
+        return None
+
+    def _note_stale(self, paragraph_index, reason):
+        if paragraph_index is None or reason is None:
+            return
+        self._stale_diagnostics.setdefault(paragraph_index, reason)
+
+    def line_layout_mode(self, para, column_hwp, paragraph_index=None):
+        """``(mode, reason)`` — which engine lays this paragraph's lines out.
+
+        ``computed`` wins for three named reasons, and only those:
+
+          ``policy``            the whole document is drawn computed, either
+                                because the caller asked for it or because
+                                ``layout_policy`` resolved to ``computed`` off
+                                the package's provenance;
+          ``cache_absent``      the paragraph carries no ``hp:linesegarray``,
+                                so there is no cached box to draw from at all;
+          ``textpos_past_end``  a cached line starts past the end of the
+                                character stream, so no character range lines
+                                up with that box (see
+                                :meth:`unusable_cache_reason`: a cache this
+                                reader cannot READ, not one it distrusts);
+          ``caller_marked_edited`` the caller said it edited this paragraph.
+
+        ``stale_line_width`` used to appear here too.  It no longer decides
+        anything per paragraph: an edit moves paragraphs it never touched, so
+        one paragraph's cache cannot be the unit the cache is trusted in.  It
+        is still measured, reported in ``line_layout.stale_diagnostics``, and
+        used once, document-wide, in ``_scan_stale_cache``.
+        """
+        if self.line_layout == LINE_LAYOUT_COMPUTED:
+            return LINE_LAYOUT_COMPUTED, "policy"
+        if paragraph_index is not None and paragraph_index in self.relayout_paragraphs:
+            return LINE_LAYOUT_COMPUTED, "caller_marked_edited"
+        unusable = self.unusable_cache_reason(para)
+        if unusable is not None:
+            return LINE_LAYOUT_COMPUTED, unusable
+        # No staleness call here on purpose: ``_scan_stale_cache`` has already
+        # run that detector once per paragraph over the whole document, and it
+        # is not allowed to decide anything per paragraph anyway.
         return "lineseg", None
 
     @staticmethod
@@ -4137,6 +4604,13 @@ class OwnRenderer:
         address = self._current_address()
         drew_text = False
         text_x0 = text_x1 = None
+        # The three candidate right edges, kept apart because they answer
+        # different questions: ``text_x1`` is the advance of every glyph piece
+        # (a trailing space included) and is what a caret needs; ``ink_x1`` is
+        # where the last glyph's outline stops; ``visible_x1`` is the advance
+        # of the last piece that draws ink.  Which one the geometry box
+        # reports is decided in ``LINE_BOX_END`` by measurement.
+        ink_x1 = visible_x1 = None
         ascent = descent = 0
         text_parts = []
         edges = []
@@ -4185,6 +4659,10 @@ class OwnRenderer:
             # Q2 contributor 2).
             if piece["text"].strip():
                 drew_text = True
+                right = self._ink_right_px(piece, cursor)
+                ink_x1 = right if ink_x1 is None else max(ink_x1, right)
+                visible_x1 = (cursor + w) if visible_x1 is None \
+                    else max(visible_x1, cursor + w)
             seg_ascent, seg_descent = font.getmetrics()
             shift = piece["offset_px"]
             ascent = max(ascent, seg_ascent + shift)
@@ -4206,12 +4684,21 @@ class OwnRenderer:
             # The box is the *text* extent, not the item extent: an inline
             # placeholder sharing the line must not inflate a box that is
             # about to be paired against a reference PDF's text lines.
+            ends = {
+                "advance": text_x1,
+                "ink": ink_x1 if ink_x1 is not None else text_x1,
+                "visible_advance": (visible_x1 if visible_x1 is not None
+                                    else text_x1),
+            }
             box = {
                 "page": self._page,
                 "mode": self._furniture_mode or self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
-                "x1": round(text_x1, 3),
+                "x1": round(ends[LINE_BOX_END], 3),
+                "x1_advance": round(ends["advance"], 3),
+                "x1_ink": round(ends["ink"], 3),
+                "x1_visible_advance": round(ends["visible_advance"], 3),
                 "y1": round(baseline_px + descent, 3),
             }
             self._annotate_line_box(box, "".join(text_parts), edges,
@@ -5332,12 +5819,19 @@ class OwnRenderer:
             "baselines": len(bands),
         })
         for _baseline, gx0, gy0, gx1, gy1 in bands:
+            # An equation band is already measured off the glyph mask, so all
+            # three ``LINE_BOX_END`` readings coincide here: there is no
+            # trailing space to drop and no advance beyond the ink.
+            band_x1 = round(left + (gx1 + 1.0 - x0) * shrink, 3)
             self.line_boxes.append({
                 "page": self._page,
                 "mode": "equation",
                 "x0": round(left + (gx0 + 1.0 - x0) * shrink, 3),
                 "y0": round(top + (gy0 + 1.0 - y0) * shrink, 3),
-                "x1": round(left + (gx1 + 1.0 - x0) * shrink, 3),
+                "x1": band_x1,
+                "x1_advance": band_x1,
+                "x1_ink": band_x1,
+                "x1_visible_advance": band_x1,
                 "y1": round(top + (gy1 + 1.0 - y0) * shrink, 3),
             })
         return True
@@ -6166,6 +6660,21 @@ class OwnRenderer:
                 "opportunity existed inside the box"
             ),
             "caller_marked_edited": sorted(self.relayout_paragraphs),
+            "stale_diagnostics": {
+                str(index): reason
+                for index, reason in sorted(self._stale_diagnostics.items())
+            },
+            "stale_diagnostics_meaning": (
+                "paragraphs whose OWN cached line boxes cannot hold their own "
+                "text (stale_line_width), by document-order index. It never "
+                "decides a paragraph: the cache is trusted for a whole "
+                "document or for none of it (see layout_policy), because an "
+                "edit perturbs paragraphs it never touched and no "
+                "per-paragraph test can name them. Because the detector "
+                "raises no false positive, a NON-EMPTY list under a cache "
+                "policy falsifies that policy and sends the whole document "
+                "computed; layout_policy_reason says so when it happens."
+            ),
             "stale_detection": (
                 "a cached line box is judged stale when a cached textpos "
                 "starts past the end of the character stream, or when a "
@@ -6342,12 +6851,18 @@ class OwnRenderer:
         # A stamped number is a text line the reference PDF also extracts, so
         # it belongs in the geometric comparison channel like any other line.
         self.counts["text_lines"] += 1
+        # A stamped number is digits and separators only — no trailing space
+        # can be in it — so the advance and visible-advance readings coincide.
+        stamp_x1 = round(x0 + width, 3)
         self.line_boxes.append({
             "page": self._page,
             "mode": "pagenum",
             "x0": round(x0, 3),
             "y0": round(baseline - ascent, 3),
-            "x1": round(x0 + width, 3),
+            "x1": stamp_x1,
+            "x1_advance": stamp_x1,
+            "x1_ink": stamp_x1,
+            "x1_visible_advance": stamp_x1,
             "y1": round(baseline + descent, 3),
         })
 
@@ -6524,10 +7039,13 @@ class OwnRenderer:
         if entry is None:
             return (0, 0)
         font = self._note_mark_font(entry["charpr"])
-        width = float(self._scratch_draw().textlength(entry["mark"], font=font))
+        # HWPUNIT from face metrics, not from the raster: this extent
+        # reserves the note column, so it is layout and may not move with dpi
+        # (see ``LAYOUT_REFERENCE_PX``).
         height = ((self._charpr(entry["charpr"]).get("height_pt") or 10.0)
                   * HWPUNIT_PER_PT * self.NOTE_MARK_RELSZ / 100.0)
-        return (int(round(self.hwp_from_px(width))), int(round(height)))
+        width = self._em_width(font, entry["mark"]) * height
+        return (int(round(width)), int(round(height)))
 
     def _draw_note_mark(self, draw, el, cursor_px, baseline_px):
         """Draw one reference mark as a raised, reduced numeral."""
@@ -6661,8 +7179,12 @@ class OwnRenderer:
             cid = (paras[0].chars[0][1]
                    if paras and paras[0].chars else entry["charpr"])
             font = self._font_for(cid, 100, "latin")
-            width = int(round(self.hwp_from_px(
-                float(draw.textlength(entry["mark"] + " ", font=font)))))
+            # Same rule as ``_note_mark_extent``: the body column this leaves
+            # is layout, so it is measured in the document's units.
+            width = int(round(
+                self._em_width(font, entry["mark"] + " ")
+                * (self._charpr(cid).get("height_pt") or 10.0)
+                * HWPUNIT_PER_PT))
             body_column = max(1, column - width)
             items.append({
                 "entry": entry, "paras": paras, "cid": cid,
@@ -7290,6 +7812,10 @@ class OwnRenderer:
                 ),
             },
             "equations": self._equation_report(),
+            "layout_policy": self.layout_policy,
+            "layout_policy_reason": self.layout_policy_reason,
+            "layout_policy_meaning": LAYOUT_POLICY_MEANING,
+            "layout_provenance": dict(self.provenance),
             "block_layout": self._flow_report,
             "line_layout": self._line_layout_report(),
             "line_boxes": list(self.line_boxes),
@@ -7299,20 +7825,29 @@ class OwnRenderer:
                 "baseline, x bounds are the measured text extent (inline "
                 "objects excluded). The comparison channel "
                 "engine/scripts/render_scoreboard.py pairs these against a "
-                "reference PDF's text lines. A box that drew characters also "
-                "carries `text` (the string drawn, in draw order), `char_x` "
-                "(one left edge per character plus the last right edge, same "
-                "device pixels, present only where every character was "
-                "measured and they run left to right), `size_pt` (only where "
-                "the whole line is set in ONE size) and `address` (the OWPML "
-                "the line was drawn FROM: {kind: para, atPara} or {kind: "
-                "cell, table, row, col, atPara}, where atPara is the global "
-                "hp:p document-order index and table is the global hp:tbl "
-                "document-order index). Each of the four is absent where it "
-                "was not measured rather than guessed, and `address` is a "
-                "claim about provenance, not a verdict: the runtime "
-                "cross-checks it against the form scan before any client is "
-                "told an address is certain."
+                "reference PDF's text lines. Three right edges are reported "
+                "and they differ only on a line that ends in whitespace or "
+                "whose last glyph has a right side bearing: x1_advance is "
+                "every glyph piece's advance, a trailing space included, and "
+                "is what a caret needs; x1_ink is where the last glyph's "
+                "outline stops; x1_visible_advance is the advance of the "
+                "last piece that draws ink. x1 is the geometry box and "
+                "follows own_render.LINE_BOX_END, which is "
+                f"{LINE_BOX_END!r} because that is the reading the ten Hancom "
+                "reference PDFs' own line boxes were measured to agree with. "
+                "A box that drew characters also carries `text` (the string "
+                "drawn, in draw order), `char_x` (one left edge per character "
+                "plus the last right edge, same device pixels, present only "
+                "where every character was measured and they run left to "
+                "right), `size_pt` (only where the whole line is set in ONE "
+                "size) and `address` (the OWPML the line was drawn FROM: "
+                "{kind: para, atPara} or {kind: cell, table, row, col, "
+                "atPara}, where atPara is the global hp:p document-order "
+                "index and table is the global hp:tbl document-order index). "
+                "Each of the four is absent where it was not measured rather "
+                "than guessed, and `address` is a claim about provenance, "
+                "not a verdict: the runtime cross-checks it against the "
+                "form scan before any client is told an address is certain."
             ),
             "cell_boxes": list(self.cell_boxes),
             "cell_boxes_meaning": (
@@ -7324,6 +7859,7 @@ class OwnRenderer:
                 "which is why a seat derived from one is reported as "
                 "`own_cell` and not as `cell_borders`."
             ),
+            "line_box_end": LINE_BOX_END,
             "page_furniture": self._page_furniture_report(geo),
             "sections": section_infos,
             "sections_meaning": (
@@ -7433,6 +7969,99 @@ class OwnRenderer:
 # Output
 # --------------------------------------------------------------------------
 
+def layout_digest(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
+    """Every layout decision this renderer makes, with the raster removed.
+
+    Line breaks as character offsets, line boxes and vertical positions in
+    HWPUNIT, and the flow pass's page assignment - the three channels the
+    question "is the layout a function of the document alone?" is about.
+    Not one field is in device pixels, so the JSON this returns MUST be
+    byte-identical at every ``--dpi``.
+    ``test_the_layout_is_identical_at_every_dpi`` asserts exactly that, and
+    before the resolution-independence slice it was false: the breaker
+    measured its advances off a font rasterised at ``round(pt * dpi / 72)``
+    pixels, so the integer pixel size and FreeType's hinting at that size
+    both leaked into the break positions.
+
+    Both layout passes are forced to ``computed`` - the cached ``hp:lineseg``
+    boxes are dpi-free whatever the renderer does with them, so reading them
+    would measure nothing.
+    """
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                           line_layout=LINE_LAYOUT_COMPUTED,
+                           block_layout=BLOCK_LAYOUT_COMPUTED)
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    renderer._quiet += 1
+
+    paragraphs = []
+    for section_index, root in enumerate(renderer.sections):
+        renderer._current_section = section_index
+        fallback = int(renderer.page_geometry()["usable_width"])
+        for element in root.iter():
+            if _local(element.tag) != "p":
+                continue
+            para = Paragraph(element, renderer.defs["para_pr"])
+            if not para.chars:
+                continue
+            # The paragraph's own cached first line box where the document
+            # carries one, so a disagreement is the breaker's and not the
+            # track solver's; the section's usable width where it does not,
+            # so a freshly built document (render-check-01 carries no
+            # linesegarray at all) is still covered.  Both are read straight
+            # out of the file, so neither depends on the raster.
+            column = fallback
+            if para.linesegs:
+                first = para.linesegs[0]
+                cached = (_iattr(first, "horzpos") + _iattr(first, "horzsize")
+                          + max(0, para.para_pr.get("margin_right", 0)))
+                if cached > 0:
+                    column = cached
+            if column <= 0:
+                continue
+            lines = renderer.compute_lines(draw, para, column)
+            paragraphs.append({
+                "section": section_index,
+                "paragraph": renderer.paragraph_index.get(id(element)),
+                "characters": len(para.chars),
+                "column_hwpunit": column,
+                "lines": len(lines),
+                "breaks": [line["start"] for line in lines],
+                "vertpos_hwpunit": [line["vertpos"] for line in lines],
+                "horzpos_hwpunit": [line["horzpos"] for line in lines],
+                "horzsize_hwpunit": [line["horzsize"] for line in lines],
+                "vertsize_hwpunit": [line["vertsize"] for line in lines],
+                "baseline_hwpunit": [line["baseline"] for line in lines],
+            })
+
+    renderer._current_section = 0
+    placements, pages, counters = renderer.flow()
+    seen = {}
+    for record in placements:
+        seen.setdefault(record["block"], record)
+    blocks = [{"block": block, "page": record["page"],
+               "top_hwpunit": record["top"]}
+              for block, record in sorted(seen.items())]
+    return {
+        "document": Path(hwpx_path).name,
+        "line_layout": LINE_LAYOUT_COMPUTED,
+        "block_layout": BLOCK_LAYOUT_COMPUTED,
+        "paragraphs_scored": len(paragraphs),
+        "lines_total": sum(p["lines"] for p in paragraphs),
+        "pages": len(pages),
+        "flow_counters": counters,
+        "paragraphs": paragraphs,
+        "blocks": blocks,
+        "meaning": (
+            "the whole layout, in the document's own units. dpi is "
+            "deliberately absent from this report: a renderer whose layout "
+            "is a function of the document alone produces the same bytes "
+            "here at every resolution."
+        ),
+    }
+
+
 def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
     """Measure this renderer's line breaker against the authoring engine's.
 
@@ -7468,7 +8097,11 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
     paragraphs (2995 paragraphs, 161 of them multi-line) and an "agreement"
     number dominated by paragraphs that cannot break is not a measurement.
     """
-    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root)
+    # Pinned to the cache policy: this measurement IS the comparison against
+    # the cached layout, so it must run the same way whatever the package's
+    # provenance says about trusting that cache for a render.
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                           layout_policy=LAYOUT_POLICY_CACHE)
     canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
     renderer._image = canvas
     draw = renderer.ImageDraw.Draw(canvas)
@@ -7547,18 +8180,17 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
                 conditional["early"] += 1
             else:
                 conditional["late"] += 1
-            box_px = renderer.pxf(_iattr(para.linesegs[i], "horzsize")
-                                  or column)
+            box_hwp = float(_iattr(para.linesegs[i], "horzsize") or column)
             visible = target
             while (visible > here
                    and para.chars[visible - 1][0] in SPACE_CHARS):
                 visible -= 1
-            if box_px > 0 and visible > here:
+            if box_hwp > 0 and visible > here:
                 # How full the authoring engine's own line is, measured by
                 # this renderer.  A value under 1.0 says this renderer thinks
                 # there was still room where the authoring engine broke.
                 fills.append(renderer.span_width(draw, para, here, visible)
-                             / box_px)
+                             / box_hwp)
         if cached != computed and len(disagreements) < 40:
             disagreements.append({
                 "paragraph": index,
@@ -7656,8 +8288,12 @@ def flow_agreement(hwpx_path, dpi=DEFAULT_DPI, line_layout=LINE_LAYOUT_AUTO):
     boxes in place, a disagreement here is the BLOCK model's and not the line
     breaker's.  Pass ``computed`` to see the two errors compounded.
     """
+    # Pinned to the cache policy for the same reason lineseg_agreement is:
+    # the flow pass is being graded AGAINST the cache, so the provenance
+    # policy must not silently redefine what ``line_layout`` means here.
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
-                           block_layout=BLOCK_LAYOUT_COMPUTED)
+                           block_layout=BLOCK_LAYOUT_COMPUTED,
+                           layout_policy=LAYOUT_POLICY_CACHE)
     placements, pages, counters = renderer.flow()
     cached_pages = renderer.paginate()
     cached = []
@@ -7747,10 +8383,11 @@ def save_png(image, path):
 
 def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
                   line_layout=LINE_LAYOUT_AUTO, relayout_paragraphs=None,
-                  block_layout=BLOCK_LAYOUT_AUTO):
+                  block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
                            relayout_paragraphs=relayout_paragraphs,
-                           block_layout=block_layout)
+                           block_layout=block_layout,
+                           layout_policy=layout_policy)
     images, sidecar = renderer.render()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -7770,7 +8407,7 @@ def render_to_dir(hwpx_path, out_dir, dpi=DEFAULT_DPI, stem=None,
 
 def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
                   line_layout=LINE_LAYOUT_AUTO,
-                  block_layout=BLOCK_LAYOUT_AUTO):
+                  block_layout=BLOCK_LAYOUT_AUTO, layout_policy=None):
     """Raster PDF, for the ``[binary, {in}, {out}]`` argv render_cert expects.
 
     The pages carry no text layer, so ``render_cert``'s unique-word anchor
@@ -7779,7 +8416,8 @@ def render_to_pdf(hwpx_path, out_pdf, dpi=DEFAULT_DPI,
     see engine/references/own-render-notes.md.
     """
     renderer = OwnRenderer(hwpx_path, dpi=dpi, line_layout=line_layout,
-                           block_layout=block_layout)
+                           block_layout=block_layout,
+                           layout_policy=layout_policy)
     images, sidecar = renderer.render()
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -7807,6 +8445,12 @@ def build_parser():
              "against the document's own cached hp:lineseg layout and "
              "print the report as JSON")
     parser.add_argument(
+        "--layout-digest", action="store_true",
+        help="do not render: print every layout decision (line breaks, line "
+             "boxes, vertical positions, page assignment) in the document's "
+             "own units. The output carries no dpi and must be identical at "
+             "every --dpi.")
+    parser.add_argument(
         "--flow-agreement", action="store_true",
         help="do not render: run the E2.5 block flow pass over the "
              "document's UNEDITED text and measure its page assignment and "
@@ -7827,6 +8471,17 @@ def build_parser():
              "out, and the flow pass takes over from there. computed: the "
              "flow pass places every block from the top of the document, "
              "which is how the flow pass itself is measured.")
+    parser.add_argument(
+        "--layout-policy", choices=["auto"] + list(LAYOUT_POLICIES),
+        default="auto",
+        help="auto (default): the package's own provenance decides. A "
+             "package whose version.xml@application says Hancom wrote it "
+             "last is drawn from its cached hp:lineseg layout; anything else "
+             "-- this repo's own writers, an unknown writer, or a caller "
+             "that declared it edited a paragraph -- is laid out computed for "
+             "the WHOLE document, lines and flow together. cache/computed "
+             "pin the policy for MEASUREMENT and are declared as an override "
+             "in the sidecar; pinning cache on an edited package is unsound.")
     return parser
 
 
@@ -7839,6 +8494,19 @@ def main(argv=None):
     if not args.input:
         print("own_render: an input .hwpx is required", file=sys.stderr)
         return 2
+    if args.layout_digest:
+        try:
+            report = layout_digest(args.input, dpi=args.dpi)
+        except RendererUnavailable as exc:
+            print(f"own_render: unavailable - {exc}", file=sys.stderr)
+            return 3
+        except (ValueError, OSError, zipfile.BadZipFile,
+                ET.ParseError) as exc:
+            print(f"own_render: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2,
+                         sort_keys=True))
+        return 0
     if args.flow_agreement:
         try:
             report = flow_agreement(args.input, dpi=args.dpi,
@@ -7866,17 +8534,20 @@ def main(argv=None):
         print(json.dumps(report, ensure_ascii=False, indent=2,
                          sort_keys=True))
         return 0
+    layout_policy = None if args.layout_policy == "auto" else args.layout_policy
     try:
         if args.output:
             result = render_to_pdf(args.input, args.output, dpi=args.dpi,
                                    line_layout=args.line_layout,
-                                   block_layout=args.block_layout)
+                                   block_layout=args.block_layout,
+                                   layout_policy=layout_policy)
         else:
             out_dir = args.out_dir or Path(args.input).with_suffix("").name + "-render"
             result = render_to_dir(args.input, out_dir, dpi=args.dpi,
                                    stem=args.stem,
                                    line_layout=args.line_layout,
-                                   block_layout=args.block_layout)
+                                   block_layout=args.block_layout,
+                                   layout_policy=layout_policy)
     except RendererUnavailable as exc:
         print(f"own_render: unavailable — {exc}", file=sys.stderr)
         return 3

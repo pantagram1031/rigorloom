@@ -31,17 +31,42 @@
       "ssim_min": 0.65
     },
     "ink_threshold": 128,
-    "iou_tolerance_px": 1,
+    "iou_tolerance_mm": 0.26,
     "gated_on": [
       "iou",
       "ink_delta",
       "ssim"
     ],
     "reported_not_gated": [
-      "ssim_inked"
+      "ssim_inked",
+      "ink_mass",
+      "ink_ratio"
     ],
     "ratified": false,
     "rationale": "match = same ink in the same places, differing only in rasterisation; close = drawn and recognisable but displaced or restyled; differs = missing, mislaid, or replaced by a placeholder. Bounds were set against the measured spread on this document, so they separate its features; they are not a ratified regression gate and no other document has been scored with them."
+  },
+  "thresholds_at_dpi": {
+    "dpi": 96,
+    "iou_tolerance_px": 1,
+    "match_ink_delta_abs_max": 0.01,
+    "close_ink_delta_abs_max": 0.025,
+    "derivation": "the IoU tolerance is the pixel count covering thresholds.iou_tolerance_mm at this raster; the ink bounds scale as DEFAULT_DPI/dpi because the rasteriser residual lives in a ~1 px band along glyph outlines (see rasteriser_floor).  Both are exact no-ops at DEFAULT_DPI."
+  },
+  "rasteriser_floor": {
+    "measured_on": "render-check-01, F01/F06/F07/F08/F13/F15, per glyph",
+    "coverage_ratio_body_text": {
+      "96": 1.8,
+      "144": 1.16,
+      "192": 1.0,
+      "288": 1.0
+    },
+    "dark_pixel_ratio_body_text": {
+      "96": 2.6,
+      "144": 1.25
+    },
+    "band_delta_model": "reference_ink_fraction * (coverage_ratio - 1)",
+    "floor_at_96_dpi": 0.025,
+    "note": "at 96 dpi the positive side of ink_delta on 10 pt Korean text is at this floor; the negative side is not, and that is the side a missing element moves"
   },
   "region_derivation": {
     "candidate": "own_render block_layout[section].blocks, indexed by the feature's own block ordinal; band features use the section's page geometry",
@@ -158,10 +183,15 @@
       "ssim_inked": 0.0959,
       "ssim_inked_blocks": 390,
       "iou": 0.3605,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02455,
         "candidate": 0.0481,
-        "delta": 0.02356
+        "delta": 0.02356,
+        "mass_reference": 0.02946,
+        "mass_candidate": 0.04595,
+        "mass_delta": 0.01649,
+        "mass_ratio": 1.5597
       },
       "crop_px": [
         794,
@@ -197,10 +227,15 @@
       "ssim_inked": 0.1176,
       "ssim_inked_blocks": 400,
       "iou": 0.4146,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02668,
         "candidate": 0.05065,
-        "delta": 0.02397
+        "delta": 0.02397,
+        "mass_reference": 0.03095,
+        "mass_candidate": 0.04795,
+        "mass_delta": 0.017,
+        "mass_ratio": 1.5493
       },
       "crop_px": [
         794,
@@ -236,10 +271,15 @@
       "ssim_inked": 0.1049,
       "ssim_inked_blocks": 394,
       "iou": 0.4165,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02578,
         "candidate": 0.04975,
-        "delta": 0.02397
+        "delta": 0.02397,
+        "mass_reference": 0.03055,
+        "mass_candidate": 0.04724,
+        "mass_delta": 0.0167,
+        "mass_ratio": 1.5467
       },
       "crop_px": [
         794,
@@ -275,10 +315,15 @@
       "ssim_inked": 0.1155,
       "ssim_inked_blocks": 400,
       "iou": 0.391,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02485,
         "candidate": 0.04919,
-        "delta": 0.02435
+        "delta": 0.02435,
+        "mass_reference": 0.02998,
+        "mass_candidate": 0.04673,
+        "mass_delta": 0.01675,
+        "mass_ratio": 1.5585
       },
       "crop_px": [
         794,
@@ -314,10 +359,15 @@
       "ssim_inked": 0.1424,
       "ssim_inked_blocks": 411,
       "iou": 0.4174,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02685,
         "candidate": 0.05174,
-        "delta": 0.02489
+        "delta": 0.02489,
+        "mass_reference": 0.03157,
+        "mass_candidate": 0.04881,
+        "mass_delta": 0.01725,
+        "mass_ratio": 1.5464
       },
       "crop_px": [
         794,
@@ -353,10 +403,15 @@
       "ssim_inked": 0.1027,
       "ssim_inked_blocks": 721,
       "iou": 0.3746,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03462,
         "candidate": 0.07072,
-        "delta": 0.0361
+        "delta": 0.0361,
+        "mass_reference": 0.0433,
+        "mass_candidate": 0.06875,
+        "mass_delta": 0.02545,
+        "mass_ratio": 1.5878
       },
       "crop_px": [
         794,
@@ -392,10 +447,15 @@
       "ssim_inked": 0.1166,
       "ssim_inked_blocks": 716,
       "iou": 0.3763,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02985,
         "candidate": 0.06105,
-        "delta": 0.0312
+        "delta": 0.0312,
+        "mass_reference": 0.03736,
+        "mass_candidate": 0.05936,
+        "mass_delta": 0.022,
+        "mass_ratio": 1.5888
       },
       "crop_px": [
         794,
@@ -431,10 +491,15 @@
       "ssim_inked": 0.1179,
       "ssim_inked_blocks": 468,
       "iou": 0.3862,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03445,
         "candidate": 0.06907,
-        "delta": 0.03462
+        "delta": 0.03462,
+        "mass_reference": 0.04232,
+        "mass_candidate": 0.06641,
+        "mass_delta": 0.02408,
+        "mass_ratio": 1.569
       },
       "crop_px": [
         794,
@@ -470,10 +535,15 @@
       "ssim_inked": 0.076,
       "ssim_inked_blocks": 657,
       "iou": 0.3585,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02166,
         "candidate": 0.04412,
-        "delta": 0.02246
+        "delta": 0.02246,
+        "mass_reference": 0.02697,
+        "mass_candidate": 0.04289,
+        "mass_delta": 0.01592,
+        "mass_ratio": 1.5904
       },
       "crop_px": [
         794,
@@ -509,10 +579,15 @@
       "ssim_inked": 0.073,
       "ssim_inked_blocks": 376,
       "iou": 0.3489,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02642,
         "candidate": 0.05052,
-        "delta": 0.02409
+        "delta": 0.02409,
+        "mass_reference": 0.03067,
+        "mass_candidate": 0.04777,
+        "mass_delta": 0.0171,
+        "mass_ratio": 1.5573
       },
       "crop_px": [
         794,
@@ -548,10 +623,15 @@
       "ssim_inked": 0.1042,
       "ssim_inked_blocks": 422,
       "iou": 0.3345,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02516,
         "candidate": 0.04908,
-        "delta": 0.02392
+        "delta": 0.02392,
+        "mass_reference": 0.02942,
+        "mass_candidate": 0.04672,
+        "mass_delta": 0.0173,
+        "mass_ratio": 1.588
       },
       "crop_px": [
         794,
@@ -587,10 +667,15 @@
       "ssim_inked": 0.0979,
       "ssim_inked_blocks": 418,
       "iou": 0.3655,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02593,
         "candidate": 0.05007,
-        "delta": 0.02414
+        "delta": 0.02414,
+        "mass_reference": 0.03009,
+        "mass_candidate": 0.0475,
+        "mass_delta": 0.0174,
+        "mass_ratio": 1.5784
       },
       "crop_px": [
         794,
@@ -626,10 +711,15 @@
       "ssim_inked": 0.0746,
       "ssim_inked_blocks": 339,
       "iou": 0.368,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02851,
         "candidate": 0.05365,
-        "delta": 0.02514
+        "delta": 0.02514,
+        "mass_reference": 0.0341,
+        "mass_candidate": 0.05049,
+        "mass_delta": 0.01639,
+        "mass_ratio": 1.4806
       },
       "crop_px": [
         794,
@@ -665,10 +755,15 @@
       "ssim_inked": 0.133,
       "ssim_inked_blocks": 312,
       "iou": 0.385,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.0288,
         "candidate": 0.0535,
-        "delta": 0.0247
+        "delta": 0.0247,
+        "mass_reference": 0.03459,
+        "mass_candidate": 0.05289,
+        "mass_delta": 0.01829,
+        "mass_ratio": 1.5288
       },
       "crop_px": [
         794,
@@ -704,10 +799,15 @@
       "ssim_inked": 0.1568,
       "ssim_inked_blocks": 378,
       "iou": 0.4149,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03443,
         "candidate": 0.05175,
-        "delta": 0.01732
+        "delta": 0.01732,
+        "mass_reference": 0.03871,
+        "mass_candidate": 0.0492,
+        "mass_delta": 0.01049,
+        "mass_ratio": 1.271
       },
       "crop_px": [
         794,
@@ -743,10 +843,15 @@
       "ssim_inked": 0.1423,
       "ssim_inked_blocks": 304,
       "iou": 0.4348,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02962,
         "candidate": 0.05424,
-        "delta": 0.02462
+        "delta": 0.02462,
+        "mass_reference": 0.03448,
+        "mass_candidate": 0.05067,
+        "mass_delta": 0.0162,
+        "mass_ratio": 1.4699
       },
       "crop_px": [
         794,
@@ -782,10 +887,15 @@
       "ssim_inked": 0.3445,
       "ssim_inked_blocks": 34,
       "iou": 0.655,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02003,
         "candidate": 0.03457,
-        "delta": 0.01455
+        "delta": 0.01455,
+        "mass_reference": 0.01926,
+        "mass_candidate": 0.02711,
+        "mass_delta": 0.00786,
+        "mass_ratio": 1.408
       },
       "crop_px": [
         794,
@@ -821,10 +931,15 @@
       "ssim_inked": 0.1512,
       "ssim_inked_blocks": 196,
       "iou": 0.4537,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01896,
         "candidate": 0.03379,
-        "delta": 0.01484
+        "delta": 0.01484,
+        "mass_reference": 0.02164,
+        "mass_candidate": 0.03186,
+        "mass_delta": 0.01022,
+        "mass_ratio": 1.4722
       },
       "crop_px": [
         794,
@@ -860,10 +975,15 @@
       "ssim_inked": 0.1266,
       "ssim_inked_blocks": 198,
       "iou": 0.4286,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01984,
         "candidate": 0.0397,
-        "delta": 0.01986
+        "delta": 0.01986,
+        "mass_reference": 0.02242,
+        "mass_candidate": 0.03748,
+        "mass_delta": 0.01506,
+        "mass_ratio": 1.6719
       },
       "crop_px": [
         794,
@@ -899,10 +1019,15 @@
       "ssim_inked": 0.106,
       "ssim_inked_blocks": 202,
       "iou": 0.4466,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02192,
         "candidate": 0.0354,
-        "delta": 0.01348
+        "delta": 0.01348,
+        "mass_reference": 0.02455,
+        "mass_candidate": 0.03312,
+        "mass_delta": 0.00857,
+        "mass_ratio": 1.3489
       },
       "crop_px": [
         794,
@@ -938,10 +1063,15 @@
       "ssim_inked": 0.2551,
       "ssim_inked_blocks": 82,
       "iou": 0.5538,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.0117,
         "candidate": 0.01944,
-        "delta": 0.00774
+        "delta": 0.00774,
+        "mass_reference": 0.01191,
+        "mass_candidate": 0.01633,
+        "mass_delta": 0.00442,
+        "mass_ratio": 1.371
       },
       "crop_px": [
         794,
@@ -977,10 +1107,15 @@
       "ssim_inked": 0.1612,
       "ssim_inked_blocks": 68,
       "iou": 0.5546,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01212,
         "candidate": 0.02053,
-        "delta": 0.00841
+        "delta": 0.00841,
+        "mass_reference": 0.01255,
+        "mass_candidate": 0.017,
+        "mass_delta": 0.00445,
+        "mass_ratio": 1.355
       },
       "crop_px": [
         794,
@@ -1016,10 +1151,15 @@
       "ssim_inked": 0.1053,
       "ssim_inked_blocks": 216,
       "iou": 0.4183,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02234,
         "candidate": 0.03988,
-        "delta": 0.01753
+        "delta": 0.01753,
+        "mass_reference": 0.02589,
+        "mass_candidate": 0.0363,
+        "mass_delta": 0.0104,
+        "mass_ratio": 1.4016
       },
       "crop_px": [
         794,
@@ -1055,10 +1195,15 @@
       "ssim_inked": 0.1612,
       "ssim_inked_blocks": 211,
       "iou": 0.4836,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.0287,
         "candidate": 0.03792,
-        "delta": 0.00921
+        "delta": 0.00921,
+        "mass_reference": 0.02959,
+        "mass_candidate": 0.0343,
+        "mass_delta": 0.00471,
+        "mass_ratio": 1.1591
       },
       "crop_px": [
         794,
@@ -1094,10 +1239,15 @@
       "ssim_inked": 0.2039,
       "ssim_inked_blocks": 216,
       "iou": 0.501,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03508,
         "candidate": 0.03628,
-        "delta": 0.00119
+        "delta": 0.00119,
+        "mass_reference": 0.03551,
+        "mass_candidate": 0.03281,
+        "mass_delta": -0.00269,
+        "mass_ratio": 0.9242
       },
       "crop_px": [
         794,
@@ -1133,10 +1283,15 @@
       "ssim_inked": 0.2129,
       "ssim_inked_blocks": 177,
       "iou": 0.4439,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01834,
         "candidate": 0.02683,
-        "delta": 0.00849
+        "delta": 0.00849,
+        "mass_reference": 0.01889,
+        "mass_candidate": 0.02383,
+        "mass_delta": 0.00494,
+        "mass_ratio": 1.2614
       },
       "crop_px": [
         794,
@@ -1172,10 +1327,15 @@
       "ssim_inked": 0.3516,
       "ssim_inked_blocks": 491,
       "iou": 0.3381,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01517,
         "candidate": 0.0376,
-        "delta": 0.02243
+        "delta": 0.02243,
+        "mass_reference": 0.02393,
+        "mass_candidate": 0.0359,
+        "mass_delta": 0.01196,
+        "mass_ratio": 1.4999
       },
       "crop_px": [
         794,
@@ -1211,10 +1371,15 @@
       "ssim_inked": 0.2763,
       "ssim_inked_blocks": 83,
       "iou": 0.6132,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00936,
         "candidate": 0.01535,
-        "delta": 0.00598
+        "delta": 0.00598,
+        "mass_reference": 0.00937,
+        "mass_candidate": 0.01207,
+        "mass_delta": 0.00269,
+        "mass_ratio": 1.2874
       },
       "crop_px": [
         794,
@@ -1250,10 +1415,15 @@
       "ssim_inked": 0.4128,
       "ssim_inked_blocks": 556,
       "iou": 0.5551,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03473,
         "candidate": 0.04517,
-        "delta": 0.01044
+        "delta": 0.01044,
+        "mass_reference": 0.06019,
+        "mass_candidate": 0.07344,
+        "mass_delta": 0.01325,
+        "mass_ratio": 1.2201
       },
       "crop_px": [
         794,
@@ -1289,10 +1459,15 @@
       "ssim_inked": 0.3638,
       "ssim_inked_blocks": 86,
       "iou": 0.5286,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01113,
         "candidate": 0.02309,
-        "delta": 0.01196
+        "delta": 0.01196,
+        "mass_reference": 0.01318,
+        "mass_candidate": 0.01797,
+        "mass_delta": 0.00479,
+        "mass_ratio": 1.3631
       },
       "crop_px": [
         794,
@@ -1328,10 +1503,15 @@
       "ssim_inked": 0.123,
       "ssim_inked_blocks": 487,
       "iou": 0.4307,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.03571,
         "candidate": 0.05945,
-        "delta": 0.02373
+        "delta": 0.02373,
+        "mass_reference": 0.04039,
+        "mass_candidate": 0.05566,
+        "mass_delta": 0.01527,
+        "mass_ratio": 1.3782
       },
       "crop_px": [
         794,
@@ -1409,10 +1589,15 @@
       "ssim_inked": 0.0936,
       "ssim_inked_blocks": 318,
       "iou": 0.5096,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02333,
         "candidate": 0.03161,
-        "delta": 0.00828
+        "delta": 0.00828,
+        "mass_reference": 0.02067,
+        "mass_candidate": 0.02877,
+        "mass_delta": 0.0081,
+        "mass_ratio": 1.3917
       },
       "crop_px": [
         794,
@@ -1448,10 +1633,15 @@
       "ssim_inked": 0.3532,
       "ssim_inked_blocks": 471,
       "iou": 0.4969,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02102,
         "candidate": 0.02676,
-        "delta": 0.00573
+        "delta": 0.00573,
+        "mass_reference": 0.02753,
+        "mass_candidate": 0.03061,
+        "mass_delta": 0.00308,
+        "mass_ratio": 1.1118
       },
       "crop_px": [
         794,
@@ -1494,10 +1684,15 @@
       "ssim_inked": 0.1174,
       "ssim_inked_blocks": 131,
       "iou": 0.4549,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01656,
         "candidate": 0.031,
-        "delta": 0.01444
+        "delta": 0.01444,
+        "mass_reference": 0.01814,
+        "mass_candidate": 0.02396,
+        "mass_delta": 0.00582,
+        "mass_ratio": 1.3212
       },
       "crop_px": [
         794,
@@ -1540,10 +1735,15 @@
       "ssim_inked": 0.212,
       "ssim_inked_blocks": 734,
       "iou": 0.2265,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.024,
         "candidate": 0.02959,
-        "delta": 0.00559
+        "delta": 0.00559,
+        "mass_reference": 0.03,
+        "mass_candidate": 0.03256,
+        "mass_delta": 0.00256,
+        "mass_ratio": 1.0853
       },
       "crop_px": [
         794,
@@ -1586,10 +1786,15 @@
       "ssim_inked": 0.2852,
       "ssim_inked_blocks": 57,
       "iou": 0.5972,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00717,
         "candidate": 0.01188,
-        "delta": 0.00471
+        "delta": 0.00471,
+        "mass_reference": 0.00741,
+        "mass_candidate": 0.0096,
+        "mass_delta": 0.00219,
+        "mass_ratio": 1.2953
       },
       "crop_px": [
         794,
@@ -1637,10 +1842,15 @@
       "ssim_inked": 0.2527,
       "ssim_inked_blocks": 63,
       "iou": 0.4809,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00738,
         "candidate": 0.01309,
-        "delta": 0.00572
+        "delta": 0.00572,
+        "mass_reference": 0.00823,
+        "mass_candidate": 0.01114,
+        "mass_delta": 0.00291,
+        "mass_ratio": 1.3534
       },
       "crop_px": [
         794,
@@ -1688,10 +1898,15 @@
       "ssim_inked": 0.1775,
       "ssim_inked_blocks": 130,
       "iou": 0.434,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01371,
         "candidate": 0.02521,
-        "delta": 0.0115
+        "delta": 0.0115,
+        "mass_reference": 0.01526,
+        "mass_candidate": 0.02189,
+        "mass_delta": 0.00663,
+        "mass_ratio": 1.4342
       },
       "crop_px": [
         794,
@@ -1739,10 +1954,15 @@
       "ssim_inked": 0.1257,
       "ssim_inked_blocks": 77,
       "iou": 0.4363,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00899,
         "candidate": 0.01522,
-        "delta": 0.00623
+        "delta": 0.00623,
+        "mass_reference": 0.00896,
+        "mass_candidate": 0.01254,
+        "mass_delta": 0.00358,
+        "mass_ratio": 1.3997
       },
       "crop_px": [
         794,
@@ -1790,10 +2010,15 @@
       "ssim_inked": 0.1093,
       "ssim_inked_blocks": 234,
       "iou": 0.3217,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01297,
         "candidate": 0.02259,
-        "delta": 0.00961
+        "delta": 0.00961,
+        "mass_reference": 0.01436,
+        "mass_candidate": 0.01958,
+        "mass_delta": 0.00522,
+        "mass_ratio": 1.3636
       },
       "crop_px": [
         794,
@@ -1829,10 +2054,15 @@
       "ssim_inked": 0.1752,
       "ssim_inked_blocks": 130,
       "iou": 0.4052,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01436,
         "candidate": 0.02198,
-        "delta": 0.00762
+        "delta": 0.00762,
+        "mass_reference": 0.01596,
+        "mass_candidate": 0.01964,
+        "mass_delta": 0.00368,
+        "mass_ratio": 1.2304
       },
       "crop_px": [
         794,
@@ -1868,10 +2098,15 @@
       "ssim_inked": 0.1451,
       "ssim_inked_blocks": 113,
       "iou": 0.4669,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01546,
         "candidate": 0.02885,
-        "delta": 0.0134
+        "delta": 0.0134,
+        "mass_reference": 0.01727,
+        "mass_candidate": 0.02614,
+        "mass_delta": 0.00887,
+        "mass_ratio": 1.5138
       },
       "crop_px": [
         794,
@@ -1907,10 +2142,15 @@
       "ssim_inked": 0.1655,
       "ssim_inked_blocks": 113,
       "iou": 0.462,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01518,
         "candidate": 0.02854,
-        "delta": 0.01336
+        "delta": 0.01336,
+        "mass_reference": 0.01693,
+        "mass_candidate": 0.02585,
+        "mass_delta": 0.00892,
+        "mass_ratio": 1.527
       },
       "crop_px": [
         794,
@@ -1946,10 +2186,15 @@
       "ssim_inked": 0.2405,
       "ssim_inked_blocks": 106,
       "iou": 0.4761,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.01491,
         "candidate": 0.03717,
-        "delta": 0.02226
+        "delta": 0.02226,
+        "mass_reference": 0.01752,
+        "mass_candidate": 0.02904,
+        "mass_delta": 0.01152,
+        "mass_ratio": 1.6575
       },
       "crop_px": [
         794,
@@ -1985,10 +2230,15 @@
       "ssim_inked": 0.5163,
       "ssim_inked_blocks": 597,
       "iou": 0.1744,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.02136,
         "candidate": 0.01308,
-        "delta": -0.00828
+        "delta": -0.00828,
+        "mass_reference": 0.03057,
+        "mass_candidate": 0.01417,
+        "mass_delta": -0.0164,
+        "mass_ratio": 0.4636
       },
       "crop_px": [
         794,
@@ -2034,10 +2284,15 @@
       "ssim_inked": 0.2003,
       "ssim_inked_blocks": 150,
       "iou": 0.5239,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.0265,
         "candidate": 0.04551,
-        "delta": 0.01901
+        "delta": 0.01901,
+        "mass_reference": 0.02771,
+        "mass_candidate": 0.03898,
+        "mass_delta": 0.01127,
+        "mass_ratio": 1.4066
       },
       "crop_px": [
         794,
@@ -2073,10 +2328,15 @@
       "ssim_inked": 0.2396,
       "ssim_inked_blocks": 96,
       "iou": 0.5348,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00124,
         "candidate": 0.00202,
-        "delta": 0.00078
+        "delta": 0.00078,
+        "mass_reference": 0.00123,
+        "mass_candidate": 0.00159,
+        "mass_delta": 0.00036,
+        "mass_ratio": 1.292
       },
       "crop_px": [
         794,
@@ -2112,10 +2372,15 @@
       "ssim_inked": 0.0835,
       "ssim_inked_blocks": 918,
       "iou": 0.2884,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00378,
         "candidate": 0.00741,
-        "delta": 0.00363
+        "delta": 0.00363,
+        "mass_reference": 0.00453,
+        "mass_candidate": 0.00706,
+        "mass_delta": 0.00253,
+        "mass_ratio": 1.5599
       },
       "crop_px": [
         1123,
@@ -2151,10 +2416,15 @@
       "ssim_inked": 0.1105,
       "ssim_inked_blocks": 1632,
       "iou": 0.3435,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00956,
         "candidate": 0.02001,
-        "delta": 0.01045
+        "delta": 0.01045,
+        "mass_reference": 0.01178,
+        "mass_candidate": 0.01966,
+        "mass_delta": 0.00787,
+        "mass_ratio": 1.6683
       },
       "crop_px": [
         794,
@@ -2190,10 +2460,15 @@
       "ssim_inked": 0.1528,
       "ssim_inked_blocks": 49,
       "iou": 0.1528,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00115,
         "candidate": 0.01014,
-        "delta": 0.009
+        "delta": 0.009,
+        "mass_reference": 0.00477,
+        "mass_candidate": 0.0066,
+        "mass_delta": 0.00183,
+        "mass_ratio": 1.3848
       },
       "crop_px": [
         794,
@@ -2229,10 +2504,15 @@
       "ssim_inked": 0.1539,
       "ssim_inked_blocks": 21,
       "iou": 0.1559,
+      "iou_tolerance_px": 1,
       "ink": {
         "reference": 0.00072,
         "candidate": 0.00376,
-        "delta": 0.00304
+        "delta": 0.00304,
+        "mass_reference": 0.00161,
+        "mass_candidate": 0.00265,
+        "mass_delta": 0.00103,
+        "mass_ratio": 1.6412
       },
       "crop_px": [
         794,

@@ -35,14 +35,21 @@ machine_checks:
     kind: python
     description: >-
       own_render 를 Hancom 참조 PDF와 기능 블록 단위로 채점하고, verdict tally가
-      docs/research/render-check-01.md 에 기록된 측정치(3 match · 38 close ·
-      8 differs · 2 unsupported, 페이지 9)에서 회귀하지 않았는가.
+      회귀하지 않았는가. floor는 개별 버킷(match, close 각각의 최소치)이 아니라
+      순서(ordering)로 건다: match와 close 어느 쪽으로 잡히든 "틀리지 않은" 판정의
+      합은 41 아래로 못 내려가야 하고, differs/unsupported는 그 이상으로 못
+      늘어나야 한다. close 단독 최소치(>= 38)는 쓰지 않는다 — close에서 match로
+      승격되는 진짜 개선(#236)이 close 총량을 줄여서 그 floor를 깨뜨리기
+      때문이다(사실상 상한선을 하한선으로 잘못 건 것과 같다). tally.match >= 3 은
+      match를 하나도 안 잃는 회귀(모두 close로 강등)까지 잡아내기 위해 별도로 남긴
+      최소치. 측정치는 docs/research/render-check-01.md 참고 (현재 6 match ·
+      37 close · 6 differs · 2 unsupported, 페이지 9; match+close 43).
     argv: ["engine/scripts/render_check.py", "${INPUTS}/render-check-01.hwpx", "${INPUTS}/render-check-01.pdf", "--blocks", "${INPUTS}/render-check-01.blocks.json", "--dpi", "96", "--report", "${WORK}/render_check.report.json"]
     expect_exit: 0
     json_file: "${WORK}/render_check.report.json"
     assert_json:
       - "tally.match >= 3"
-      - "tally.close >= 38"
+      - "tally.match + tally.close >= 41"
       - "tally.differs <= 8"
       - "tally.unsupported <= 2"
       - "pages.reference == 9"

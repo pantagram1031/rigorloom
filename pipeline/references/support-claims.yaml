@@ -230,10 +230,15 @@ claims:
       engine/scripts/render_check.py locates each of the 51 [Fnn] feature
       blocks independently on both sides (own_render's block_layout sidecar
       vs a text search of Hancom's pinned reference PDF) and grades each one
-      match/close/differs/unsupported, gated against the measured floor of
-      3 match, 38 close, 8 differs, 2 unsupported over 51 features
-      (docs/research/render-check-01.md, page 9) so a regression below that
-      floor is caught rather than described. It does not touch Hancom COM at
+      match/close/differs/unsupported, gated on quality ORDERING rather than
+      on any one bucket's count: tally.match + tally.close >= 41 (not a
+      close-alone floor, which a genuine match promotion would break by
+      moving items out of close), tally.differs <= 8, tally.unsupported <= 2,
+      and tally.match >= 3 so a regression cannot lose exact matches while
+      swelling close. Measured at 3 match, 38 close, 8 differs, 2 unsupported
+      over 51 features (docs/research/render-check-01.md, page 9) so a
+      regression below that floor is caught rather than described. It does
+      not touch Hancom COM at
       check time — the reference PDF was captured once and is committed read
       only — so the check itself runs on any platform. What it is not: a
       certification. The match/close/differs bounds were set against the
