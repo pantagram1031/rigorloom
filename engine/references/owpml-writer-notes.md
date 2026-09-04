@@ -245,7 +245,60 @@ output can vary with the zlib build while member content cannot.
   byte-identical, which is all the corpus needs; nothing parses or re-encodes
   them.
 
-## 9. Reproducing the numbers
+## 9. Section head control order
+
+Measured on the writer line's own render-check evidence
+(`docs/research/render-check-01.md` note 4 and
+`engine/tests/test_column_ctrl_order.py`,
+`origin/claude/engine-e2-columns-f49`, `gh pr view 222`): the OWPML schema
+(`ParaList XML schema.xml`) lets the section-head paragraph carry its
+`hp:ctrl` children in any order — `colCount="2"` survives a Hancom
+round-trip whatever the order is — but **Hancom only lays a section out in
+columns when the `hp:colPr` control is not preceded by a header or footer
+control in that same paragraph.** No attribute changes this: `type`
+(NEWSPAPER / BALANCED_NEWSPAPER), `layout`, `sameSz`, `sameGap` and explicit
+`hp:colSz` children all move nothing across the line.
+
+Ten probe documents, one section per case, official Automation (Hwp 2024
+13.0.0.2986), PDF export read back for the x-extent of the text
+(`colCount="2"` declared in every case):
+
+| case | section-head control order | Hancom renders |
+|---|---|---|
+| `P1` | `secPr`, header, footer, `colPr` `sameGap=0` | one column |
+| `P2` | `secPr`, header, footer, `colPr` `sameGap=1134` | one column |
+| `P3` | `secPr`, header, footer, `colPr` `sameSz=0` + 2×`colSz` | one column |
+| `P6` | `secPr`, header, footer, `colPr` `BALANCED_NEWSPAPER` | one column |
+| `P7` | `secPr`, header, footer, `colPr` `sameSz="true"` | one column |
+| `Q1` | `secPr`, header, `colPr`, footer | one column |
+| `Q3` | `secPr`, footer, `colPr` | one column |
+| `Q2` | `secPr`, `colPr` | **two columns** |
+| `P4`/`Q4` | `secPr`, `colPr`, header, footer | **two columns** |
+| `P5` | `secPr`, header, footer; `colPr` in the *next* paragraph | **two columns** |
+
+The rule: Hancom honours an `hp:colPr` that comes straight after `hp:secPr`
+(`Q2`, `Q4`), and it honours one carried by a later paragraph (`P5`) — but a
+header or footer control anywhere between `hp:secPr` and `hp:colPr` in the
+*same* paragraph shadows it, silently. There is no repair dialog and no
+warning; the document opens fine and simply renders full width. Valid
+orders for a section that wants columns are therefore `secPr, colPr, …`
+(furniture after) or `colPr` deferred to the paragraph following the
+section head.
+
+**Consequence for any emitter, this one included:** `blank_package()`'s
+`_BLANK_SECTION` template already emits `secPr` then `colPr` with no
+furniture in between, so it is not exposed to this — but it carries no
+header/footer today and nothing here assembles a section head from parts
+(see §7). Any future path that adds header/footer controls to a section
+that also wants `hp:colPr` must place `colPr` immediately after `secPr` and
+put the furniture after it, never between. `engine/scripts/hwpx_lint.py
+--section-order` checks this over a built `.hwpx` (read-only — it warns, it
+never reorders a document handed to it) and is covered by
+`engine/tests/test_hwpx_lint.py`, including a run against both sides of the
+F49 fix (`origin/claude/engine-e2-columns-f49`, commit `350ee56` and its
+parent) via `git show`.
+
+## 10. Reproducing the numbers
 
 ```
 python -m pytest engine/tests/test_hwpx_roundtrip.py -q      # 104 tests
