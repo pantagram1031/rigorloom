@@ -57,7 +57,20 @@ DEFAULT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
 _ENV_KEYS_COMMON = ("PATH", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL")
 _ENV_KEYS_WINDOWS = ("SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT",
                      "SYSTEMDRIVE", "WINDIR", "USERPROFILE", "APPDATA",
-                     "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
+                     "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+                     # ProgramData: DCOM local-server activation for Hancom's
+                     # HWPFrame.HwpObject fails with CO_E_SERVER_EXEC_FAILURE
+                     # without it. Bisected on an operator bench (T130): the
+                     # allowlist above alone reproduces the failure every time;
+                     # adding ONLY ProgramData back makes the same convert
+                     # succeed every time. USERNAME/USERDOMAIN/SESSIONNAME and
+                     # ProgramFiles/ProgramFiles(x86)/HOMEDRIVE/HOMEPATH were
+                     # each tried too and are NOT required — Hancom's own
+                     # security-module registration (see
+                     # engine/scripts/com_backend.py:151 "보안모듈 자동 등록")
+                     # reads %ProgramData% during Hwp() construction, before
+                     # any document is touched.
+                     "ProgramData")
 _ENV_KEYS_POSIX = ("HOME",)
 
 
