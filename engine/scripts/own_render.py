@@ -1571,6 +1571,11 @@ class Paragraph:
     pairs; inline objects occupy exactly one slot, matching how ``textpos``
     counts them.  ``objects`` records those slots so a placeholder or nested
     table can be positioned at the right line.
+
+    ``empty_runs`` is ``[(char_index, charPrIDRef)]`` for every ``<hp:run>``
+    that puts nothing into that stream.  A run with an empty ``<hp:t>`` draws
+    no glyph but still declares a character shape, and the line it sits on is
+    as tall as that shape — see ``_line_metrics``.
     """
 
     def __init__(self, el, para_pr):
@@ -1580,9 +1585,11 @@ class Paragraph:
         self.chars = []
         self.objects = []      # [(char_index, element_local_name, element, charpr)]
         self.object_at = {}    # char_index -> (name, element, charpr, floating)
+        self.empty_runs = []   # [(char_index, charPrIDRef)]
         self.tabs = 0
         for run in _kids(el, "run"):
             charpr = run.get("charPrIDRef")
+            before = len(self.chars)
             for child in run:
                 name = _local(child.tag)
                 if name == "t":
@@ -1624,6 +1631,8 @@ class Paragraph:
                     self.objects.append((index, name, child, charpr))
                     self.object_at[index] = (name, child, charpr, floating)
                     self.chars.append((OBJECT_SLOT, charpr))
+            if len(self.chars) == before:
+                self.empty_runs.append((before, charpr))
         self.linesegs = []
         la = _kid(el, "linesegarray")
         if la is not None:
@@ -3861,10 +3870,33 @@ class OwnRenderer:
         worst residual 0.019 pt).  Reading ``PERCENT`` against the face's own
         ascent+descent, or against a fixed 1.2 line, misses by 2.1 to 12.0 pt
         and is rejected.
+
+        A run that puts **no character** on the line still declares one.  An
+        ``<hp:run charPrIDRef="…"><hp:t></hp:t></hp:run>`` draws nothing, but
+        ``hh:charPr@height`` is a property of the run and the authoring engine
+        sizes the line by it — the paragraph mark has to be somewhere, and it
+        is as tall as the shape the last run declares.  Measured over the
+        2370 cached lines of the ten corpus forms: reading the empty runs
+        makes ``vertsize`` exact on **2370 of 2370** against 2365 without
+        them, and moves no line the other way.  The line it costs otherwise
+        is admrul's inline table: the table's own box is 6618 HWPUNIT tall
+        and the run holding it is 14 pt, but the paragraph's second run is an
+        empty 24 pt one, and 24 pt is what the cached 200% ``spacing`` of
+        2400 is a percentage of.  Ignoring it left every block below that
+        table 1000 HWPUNIT (10 pt) too high under computed layout.
         """
         pr = para.para_pr
         heights = []
         pitch = []
+        for index, cid in para.empty_runs:
+            # The last line owns an empty run sitting at the very end of the
+            # character stream; every other one belongs to the line its
+            # position falls inside.
+            if start <= index < end or (index == end == len(para.chars)):
+                height = (self._charpr(cid).get("height_pt") or 10.0) \
+                    * HWPUNIT_PER_PT
+                heights.append(height)
+                pitch.append(height)
         for offset, (ch, cid) in enumerate(para.chars[start:end]):
             char_height = (self._charpr(cid).get("height_pt") or 10.0) \
                 * HWPUNIT_PER_PT
