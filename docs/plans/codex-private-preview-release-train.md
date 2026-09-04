@@ -367,10 +367,35 @@ tree and installer.
   installer build, installed preview, or acceptance claim is allowed while it
   remains red. Further investigation is paused by the user's no-security-work
   instruction; ask for separate direction rather than assuming scope.
-- Current C: free space is approximately 0.31 GiB. Do not start a final
-  sidecar/Tauri build until adequate headroom is available; prior build docs
-  record multi-gigabyte pressure. E: test basetemp was deleted after the failed
-  run and is not a persistent build destination.
+- **Disk recovery, 2026-09-04:** C: had fallen to approximately 0.28 GiB free.
+  Read-only accounting found `C:/Users/SAMSUNG/dev` at 9.67 GiB logical,
+  `.codex` at 10.67 GiB (including 7.61 GiB of session JSONL), `.cache` at
+  2.78 GiB, and `Documents/Codex` at 2.91 GiB. The old
+  `rigorloom-private-desktop-preview/desktop/src-tauri/target` alone was a
+  1,469 MiB ignored Rust cache.
+- Space was recovered without deleting user documents or current task data:
+  130 Codex session/archive JSONL files older than 2026-09-01 and at least
+  10 MiB (6.006 GiB logical) were NTFS-compressed in place, 130/130 successful,
+  one 809.8 MiB sample hash unchanged, reclaiming 0.538 GiB. The verified
+  ignored old-preview Rust target reclaimed 1.303 GiB; five other verified
+  ignored old-preview build caches (`.venv`, PyInstaller build/dist/resources,
+  node_modules) reclaimed 0.295 GiB; four disposable archive extraction trees
+  reclaimed 0.131 GiB while their source ZIPs and logs/JUnit stayed. C: ended
+  at approximately 6.145 GiB free. About 3.6 GiB had also returned between
+  observations after interrupted pytest/measurement processes ended; its exact
+  owner is not claimed.
+- Google Drive now contains one non-shared, read-back-verified 44,805-byte
+  source/compliance evidence ZIP under `Rigorloom private preview evidence`:
+  `rigorloom-private-preview-evidence-e08007b.zip`, Drive file id
+  `1Oq_6PsLCA3NQ5u1sSF3pPa1xXNLf9BtW`, local/source SHA-256
+  `CF53AD8633F572B50CA80E22909627B8D44400DFEB866A92AB39010A85CF04AE`.
+  It contains no installer, Codex session log, credential, or private source
+  document. GitHub was not used for storage: pushing does not free local build
+  bytes and the integration branch is still red/unpublished by policy.
+- Disk headroom is no longer the immediate blocker. For any later final build,
+  prefer a dedicated E: `CARGO_TARGET_DIR` and TEMP/TMP root so Rust/PyInstaller
+  intermediates do not refill C:, while keeping the private final evidence in
+  the repository's gitignored output tree.
 
 ## Next executable actions
 
