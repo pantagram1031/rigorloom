@@ -1,0 +1,16 @@
+{
+  "schema": "rigorloom/conversion-record/v1",
+  "tool": "com_backend.py convert",
+  "created_utc": "2026-09-04T00:46:59Z",
+  "source": "tests/corpus/forms/converted/gianmun-byeolji-2ho.hwpx",
+  "source_sha256": "03bc49f20ec712c462c0efafa6747c4fc2d74abda29b66cb09f97f64afd8003e",
+  "pdf": "engine/references/render-1to1/gianmun-byeolji-2ho.pdf",
+  "pdf_sha256": "881eac14dae38acfef85aa39ab7c1e5625b96437e2915652017d54b7874d85b6",
+  "source_print_method": 4,
+  "print_method_normalized": {
+    "from": 4,
+    "to": 0
+  },
+  "pages_document": 1,
+  "pages_pdf": 1
+}
