@@ -1408,6 +1408,110 @@ def test_relsz_scales_the_character_size(typo_probe):
         renderer._measure(draw, text, plain) * 0.5, rel=0.02)
 
 
+def _object_line_paragraph(renderer, cid, height, out_v, value=160,
+                           line_type="PERCENT", text=""):
+    """A one-line paragraph whose line carries ONE inline object.
+
+    ``height`` is the object's own ``hh:sz@height``; ``out_v`` is the
+    ``hp:outMargin`` declared on its top AND bottom.  ``text`` is optional
+    text sharing the line with it.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__ol_%s_%s__" % (line_type, value)
+    renderer.defs["para_pr"][pid] = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": line_type, "line_spacing_value": value,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    }
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s">'
+           '<hp:tbl rowCnt="1" colCnt="1">'
+           '<hp:sz width="20000" height="%d"/>'
+           '<hp:pos treatAsChar="1"/>'
+           '<hp:outMargin left="0" right="0" top="%d" bottom="%d"/>'
+           '</hp:tbl>'
+           '%s</hp:run></hp:p>'
+           % (pid, cid, height, out_v, out_v,
+              ("<hp:t>%s</hp:t>" % text) if text else ""))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_inline_objects_line_box_is_its_extent_plus_its_own_out_margin(
+        typo_probe):
+    """``hp:outMargin`` top+bottom grows the LINE, not just the object's seat.
+
+    MEASURED against the authoring engine's own cached ``hp:lineseg`` over the
+    79 object lines of the ten converted corpus forms:
+    ``textheight == hh:sz@height + outMargin@top + outMargin@bottom`` on
+    **79 of 79**, residual 0; the extent alone is exact on 16 of 79 and misses
+    by up to 566 HWPUNIT.  See docs/research/object-line-box.md §1.
+    """
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ol10__", height=1000)
+    for out_v in (0, 141, 283):
+        para = _object_line_paragraph(renderer, cid, 7200, out_v)
+        textheight, vertsize, baseline, _sp = renderer._line_metrics(
+            para, 0, len(para.chars))
+        assert textheight == 7200 + 2 * out_v, out_v
+        assert vertsize == textheight
+        assert baseline == round(own_render.BASELINE_RATIO * textheight)
+
+
+def test_an_object_lines_leading_comes_from_the_runs_character_size(
+        typo_probe):
+    """The percent leading is the TEXT's, not the object's.
+
+    MEASURED, same 79 cached object lines: ``spacing == round(charPr@height *
+    value/100) - charPr@height`` is exact on 66 and within 2 HWPUNIT
+    (0.02 pt) on 12 more; taking the leading off the object-sized line box —
+    what this renderer did — is exact on 4 and misses by up to 98266 HWPUNIT.
+    Independently: Hancom's own render of render-check-01 advances 80.73 pt
+    over its ``F27`` 72 pt table on a 160% / 10 pt paragraph, against the
+    80.82 this rule predicts and the 115.20 the old one did
+    (docs/research/object-line-box.md §2).
+    """
+    renderer, _image, _draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ol10b__", height=1000)
+    para = _object_line_paragraph(renderer, cid, 7200, 141)
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert vertsize == 7482
+    assert spacing == 600                       # 10 pt x (160% - 100%)
+    assert vertsize + spacing == 8082           # measured 8073 off the PDF
+    # A text-only line of the same paragraph is untouched by the split.
+    plain = _metrics_paragraph(renderer, cid, "가나다")
+    th, vs, _b, sp = renderer._line_metrics(plain, 0, len(plain.chars))
+    assert (th, vs, sp) == (1000, 1000, 600)
+
+
+def test_the_largest_character_on_an_object_line_still_sets_its_leading(
+        typo_probe):
+    """Text sharing the line with an object contributes to the pitch.
+
+    The rule is "the leading is the largest DECLARED character size on the
+    line, object slots excluded", so a 14 pt word beside a 72 pt table leads
+    by 14 pt's worth and not by 10 pt's.  Directly measured on the corpus'
+    nine mixed object+text lines only as far as the 66/79 above; the
+    max-over-the-line half is the same rule text lines already obey.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__ol_s__", height=1000)
+    para = _object_line_paragraph(renderer, small, 7200, 0, text="가나")
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert (vertsize, spacing) == (7200, 600)
+    big = _synthetic_charpr(renderer, "__ol_b__", height=1400)
+    para = _object_line_paragraph(renderer, big, 7200, 0, text="가나")
+    _th, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert (vertsize, spacing) == (7200, 840)
+
+
 def _ink_top(renderer, piece, baseline=300.0):
     """Topmost inked row of ``piece`` drawn on its own canvas."""
     canvas = renderer.Image.new("RGB", (400, 400), (255, 255, 255))
