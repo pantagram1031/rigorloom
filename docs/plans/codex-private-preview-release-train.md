@@ -363,10 +363,17 @@ tree and installer.
   release, or GitHub metadata change requires the applicable user authority.
 - A live provider leg needs legitimate user credentials; otherwise it remains
   `NOT RUN` while fake-server and boundary tests continue.
-- The all-modules general regression run is red with adequate disk space. No
-  installer build, installed preview, or acceptance claim is allowed while it
-  remains red. Further investigation is paused by the user's no-security-work
-  instruction; ask for separate direction rather than assuming scope.
+- The interrupted all-modules JUnit was recovered as valid XML: 2,299 tests
+  reached, 9 failures, 1 interruption error, and 11 skips. All nine test
+  failures are in `pipeline.tests.test_renderer_runtime_v2` and concern
+  directory binding, forged process evidence, publication cleanup, or related
+  Runtime refusal behavior. They are therefore inside the user's paused
+  security scope and were not reproduced, diagnosed, or fixed. A Luna Max
+  clean-archive rerun excluding only that file reached 11% with every observed
+  test passing, but was stopped when the broader collection entered
+  `tests/test_runtime_authority.py`; one-file exclusion was not enough to honor
+  the no-security-work boundary. This partial run is not a substitute for the
+  required full all-modules gate.
 - **Disk recovery, 2026-09-04:** C: had fallen to approximately 0.28 GiB free.
   Read-only accounting found `C:/Users/SAMSUNG/dev` at 9.67 GiB logical,
   `.codex` at 10.67 GiB (including 7.61 GiB of session JSONL), `.cache` at
@@ -396,18 +403,45 @@ tree and installer.
   prefer a dedicated E: `CARGO_TARGET_DIR` and TEMP/TMP root so Rust/PyInstaller
   intermediates do not refill C:, while keeping the private final evidence in
   the repository's gitignored output tree.
+- **Non-foreground packaging resume, 2026-09-04, `774b325...`:** `npm ci`
+  installed 72 locked packages and exited 0; `npm run build` ran
+  `tsc --noEmit` plus Vite and exited 0; `desktop/sidecar/build.ps1` exited 0
+  against CPython 3.12.10/PyInstaller 6.22.2 and its frozen-binary role checks
+  proved initialize, PyMuPDF geometry, cell borders, character offsets, six
+  module declarations, Agent Host, and `candidate/compare`; `cargo test
+  --release` used `E:/rigorloom-preview-cargo-774b325` and passed 11/11;
+  `npx tauri build --no-bundle` exited 0 and produced the release shell at
+  `E:/rigorloom-preview-cargo-774b325/release/rigorloom-desktop.exe` (8,919,552
+  bytes, SHA-256
+  `4FE3E38193222D9594FA713E9AD75D831BEA286AAA9675FD91BEFBB1AF35ECF0`).
+  This deliberately did not create an NSIS installer.
+- `private/epoch-0/774b325/packaging/build-artifact-and-source-baseline.json`
+  records a clean tracked status, the shell and sidecar hashes, and three smoke
+  corpus HWPX baselines. Each worktree blob matched its exact `HEAD:<path>` Git
+  blob; their SHA-256 values are `52232388...`, `03BC49F2...`, and
+  `8335DC71...`. Recheck the same bytes after any later Desktop acceptance.
+- The Tauri target is an ignored junction to the dedicated E: Cargo target.
+  C: nevertheless fell to about 3.4 GiB during the release link. Read-only
+  accounting found approximately 0.78 GiB in a currently active Claude temp
+  directory and 0.15 GiB in pytest temp plus dynamic pagefile pressure; none
+  of Claude's files or processes were changed or deleted.
 
 ## Next executable actions
 
-1. Do not perform further security diagnosis or fixes. The all-modules failure
-   is a release blocker awaiting user direction; do not build or present an
-   installer from this red snapshot.
-2. The non-security source-only C6 draft is complete; defer installer-content
-   finalization until a passing build exists.
-3. After the blocker is separately authorized and resolved, rebuild sidecar/
-   installer and rerun the full Python, archive privacy, compile, Runtime, Agent
-   Host, and package gates on the then-final tracked HEAD.
-4. Generate the C6 compliance/provenance pack against the actual final
+1. Do not perform further security diagnosis, security scans, or negative
+   authority tests. The nine `renderer_runtime_v2` failures remain a release
+   blocker awaiting separate user reauthorization; do not build or present an
+   NSIS installer from this red snapshot.
+2. The non-security source-only C6 draft is complete. `npm ci`, TypeScript/Vite,
+   the packaged sidecar, Rust release tests, and a no-bundle Tauri release shell
+   are freshly green at `774b325...`; preserve their logs under
+   `private/epoch-0/774b325/packaging/`.
+3. Keep GUI smoke, Korean IME, install/uninstall, and live client acceptance
+   deferred while Claude is using the same interactive Windows session, unless
+   an explicitly coordinated foreground window is available. Do not treat the
+   no-bundle shell as an installed preview.
+4. After the security blocker is separately authorized and resolved, rerun the
+   full all-modules gate, build the NSIS installer, and run the complete Desktop
+   smoke on the then-final tracked HEAD.
+5. Generate the C6 compliance/provenance pack against the actual final
    installer contents; keep it private and do not claim legal clearance.
-5. Keep foreground smoke/IME/install acceptance deferred while the operator is
-   using the shared desktop; continue only non-security compliance work.
