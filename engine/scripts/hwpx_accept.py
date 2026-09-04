@@ -66,6 +66,7 @@ CHECK_NAMES = (
     "close",
     "reopen",
     "edit_preserved",
+    "edit_preserved_text_export",
     "structures_preserved",
     "bindings_valid",
 )
@@ -240,6 +241,93 @@ def _qname_counts(package):
     return counts
 
 
+def _header_qname_counts(package):
+    """Element-qname counts of ``Contents/header.xml`` alone.
+
+    That member is OWPML's style/reference catalog (fonts, paragraph/char
+    shapes, border-fills, ...) -- not a page header; see
+    ``hwpx_lint.py``'s ``header``/``footer`` control tags for that separate,
+    unrelated thing. Scoped apart from :func:`_qname_counts` because Hancom
+    is known to normalise/de-duplicate this specific catalog on save
+    (``engine/references/hancom-acceptance-02.md`` run 02 (d)), so its delta
+    must be reported apart from the body-structure counts that actually gate
+    ``structures_preserved``.
+    """
+    counts = Counter()
+    if package.has("Contents/header.xml"):
+        for node in package.part("Contents/header.xml").tree().iter():
+            counts[node.qname] += 1
+    return counts
+
+
+#: Local names of ``hp:ctrl`` children whose own ``hp:subList`` paragraphs
+#: are a separate paragraph flow that Automation's plain-text export does
+#: not include. Measured: ``engine/references/hancom-acceptance-02.md`` run
+#: 02 (d) -- ``GetTextFile("TEXT", "")`` on a reopened candidate did not
+#: contain a marker planted inside a ``hp:header`` control, even though the
+#: marker was present byte-for-byte in the saved candidate's section XML.
+_UNEXPORTED_CONTAINER_KIND = {
+    "header": "header",
+    "footer": "footer",
+    "footNote": "footnote",
+    "endNote": "endnote",
+}
+
+
+def _own_paragraph_text(node):
+    """``node``'s own text, like :meth:`XmlNode.text_content` but not
+    descending into a header/footer/footnote/endnote control's own
+    ``hp:subList``.
+
+    That subtree is a separate paragraph flow with its own ``hp:p``
+    elements, walked (and hit-tested) on its own by :func:`_locate_marker`;
+    without this cutoff, an outer body paragraph's ``text_content()`` would
+    fold in every nested container's text too (``itertext`` recurses through
+    everything), so a marker planted only inside e.g. a header would
+    spuriously also read back as present in the enclosing body paragraph.
+    """
+    parts = [node.text] if node.text else []
+    for child in node.children:
+        if child.local not in _UNEXPORTED_CONTAINER_KIND:
+            parts.append(_own_paragraph_text(child))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
+
+
+def _locate_marker(package, marker):
+    """Every ``Contents/section*.xml`` paragraph whose own text contains
+    ``marker``.
+
+    Walks each section's own parsed tree (not the flattened
+    ``XmlNode.iter_local``, which drops ancestry) so every hit can report
+    which paragraph flow held it: the body, or a header/footer/footnote/
+    endnote control's own ``hp:subList`` -- the containers
+    ``GetTextFile("TEXT", "")`` does not export (see
+    ``_UNEXPORTED_CONTAINER_KIND``). Returns a list of ``{"member", "kind",
+    "para_index", "text"}`` dicts in document order; ``para_index`` counts
+    paragraphs within their own ``kind``, per member, from 0.
+    """
+    hits = []
+    for name in package.section_names():
+        para_index = {}
+
+        def walk(node, kind):
+            new_kind = _UNEXPORTED_CONTAINER_KIND.get(node.local, kind)
+            if node.local == "p":
+                index = para_index.get(new_kind, 0)
+                para_index[new_kind] = index + 1
+                text = _own_paragraph_text(node)
+                if marker in text:
+                    hits.append({"member": name, "kind": new_kind,
+                                "para_index": index, "text": text})
+            for child in node.children:
+                walk(child, new_kind)
+
+        walk(package.part(name).tree().root, "body")
+    return hits
+
+
 def _section_local_count(package, local):
     total = 0
     for name in package.section_names():
@@ -257,38 +345,58 @@ def compare_structures(source_path, candidate_path):
     preview regeneration — see owpml-writer-notes.md sec. 5 and 8) so long as
     the document's element inventory and body structure do not drift.
 
-    Policy, stated because it is a choice and not a measurement (no live
-    Hancom acceptance run exists yet to calibrate it against): table and
-    paragraph counts across ``Contents/section*.xml`` must match exactly
-    between source and candidate. The full per-qname count delta is always
-    attached to the result, pass or fail, so a human reading a FAIL can tell
-    whether the drift is the edit itself or this policy being too strict.
+    Two-part report, because these two claims carry different weight:
+
+    ``body_structure`` — ``hp:tbl``/``hp:p``/``hp:tc`` counts across
+    ``Contents/section*.xml``, source vs candidate. This is the claim that
+    matters (the document's visible content flow) and the only thing that
+    gates this check's overall pass/fail, stated as policy because it is a
+    choice and not a measurement.
+
+    ``style_catalog_delta`` — the per-qname element-count delta of
+    ``Contents/header.xml`` alone (see :func:`_header_qname_counts`).
+    Reported always, pass or fail, never gated: run 02 (d)
+    (``engine/references/hancom-acceptance-02.md``) measured Hancom
+    substantially restructuring this style/reference catalog on save even
+    when the body round-tripped intact, so a delta here is not evidence of
+    anything lost.
     """
     source_pkg = hwpx_write.HwpxPackage.read(source_path)
     candidate_pkg = hwpx_write.HwpxPackage.read(candidate_path)
 
-    source_counts = _qname_counts(source_pkg)
-    candidate_counts = _qname_counts(candidate_pkg)
-    all_qnames = set(source_counts) | set(candidate_counts)
-    qname_delta = {
-        qname: candidate_counts.get(qname, 0) - source_counts.get(qname, 0)
-        for qname in all_qnames
-        if candidate_counts.get(qname, 0) != source_counts.get(qname, 0)
+    counts = {
+        local: (_section_local_count(source_pkg, local),
+                _section_local_count(candidate_pkg, local))
+        for local in ("tbl", "p", "tc")
+    }
+    body_structure = {
+        "source_tables": counts["tbl"][0], "candidate_tables": counts["tbl"][1],
+        "source_paragraphs": counts["p"][0], "candidate_paragraphs": counts["p"][1],
+        "source_table_cells": counts["tc"][0], "candidate_table_cells": counts["tc"][1],
+    }
+    body_ok = all(source == candidate for source, candidate in counts.values())
+    body_structure["status"] = "pass" if body_ok else "fail"
+
+    source_header_counts = _header_qname_counts(source_pkg)
+    candidate_header_counts = _header_qname_counts(candidate_pkg)
+    all_qnames = set(source_header_counts) | set(candidate_header_counts)
+    style_catalog_delta = {
+        "qname_count_delta": {
+            qname: candidate_header_counts.get(qname, 0) - source_header_counts.get(qname, 0)
+            for qname in all_qnames
+            if candidate_header_counts.get(qname, 0) != source_header_counts.get(qname, 0)
+        },
+        "note": ("Contents/header.xml is Hancom's style/reference catalog "
+                 "(fonts, paragraph/char shapes, border-fills, ...), not a "
+                 "page header. Hancom is known to normalise/de-duplicate it "
+                 "on save (hancom-acceptance-02.md run 02 (d)); this delta "
+                 "is informational and never gates this check."),
     }
 
-    source_tables = _section_local_count(source_pkg, "tbl")
-    candidate_tables = _section_local_count(candidate_pkg, "tbl")
-    source_paras = _section_local_count(source_pkg, "p")
-    candidate_paras = _section_local_count(candidate_pkg, "p")
-
-    extra = {
-        "source_tables": source_tables, "candidate_tables": candidate_tables,
-        "source_paragraphs": source_paras, "candidate_paragraphs": candidate_paras,
-        "qname_count_delta": qname_delta,
-    }
-    if source_tables == candidate_tables and source_paras == candidate_paras:
+    extra = {"body_structure": body_structure, "style_catalog_delta": style_catalog_delta}
+    if body_ok:
         return _pass(**extra)
-    return _fail("table_or_paragraph_count_drift", **extra)
+    return _fail("table_paragraph_or_cell_count_drift", **extra)
 
 
 def _full_text(hwp):
@@ -421,19 +529,59 @@ def run(source, out_dir, edit_marker=None):
             return verdict
 
         # (5) edited content preserved
+        #
+        # Two signals, reported separately, because they prove different
+        # things. ``edit_preserved`` reads the reopened-and-saved candidate
+        # through the repo's own lexical reader (hwpx_write.HwpxPackage),
+        # which sees every paragraph flow in Contents/section*.xml —
+        # body, and every header/footer/footnote/endnote control's own
+        # hp:subList. ``edit_preserved_text_export`` is the older Automation
+        # GetTextFile("TEXT", "") signal, kept as a secondary check: it does
+        # not export header/footer/footnote/endnote content (measured,
+        # hancom-acceptance-02.md run 02 (d)), so its absence there is
+        # honestly reported as "skipped, not exported" rather than a
+        # fabricated fail once the lexical check has already located the
+        # marker in one of those containers.
         if edit_marker is None:
             verdict["checks"]["edit_preserved"] = _skip("no_edit_description")
+            verdict["checks"]["edit_preserved_text_export"] = _skip(
+                "no_edit_description")
         else:
+            hits = None
+            try:
+                candidate_pkg = hwpx_write.HwpxPackage.read(candidate_path)
+                hits = _locate_marker(candidate_pkg, edit_marker)
+            except Exception as exc:
+                verdict["checks"]["edit_preserved"] = _fail(
+                    "lexical_read_failed", error=repr(exc))
+            else:
+                if hits:
+                    primary = next((h for h in hits if h["kind"] == "body"), hits[0])
+                    verdict["checks"]["edit_preserved"] = _pass(
+                        member=primary["member"], kind=primary["kind"],
+                        para_index=primary["para_index"], hit_count=len(hits))
+                else:
+                    verdict["checks"]["edit_preserved"] = _fail(
+                        "edit_marker_not_found")
+
             try:
                 full_text = _full_text(hwp2)
             except Exception as exc:
-                verdict["checks"]["edit_preserved"] = _fail(
+                verdict["checks"]["edit_preserved_text_export"] = _fail(
                     "text_read_failed", error=repr(exc))
             else:
                 if edit_marker in full_text:
-                    verdict["checks"]["edit_preserved"] = _pass()
+                    verdict["checks"]["edit_preserved_text_export"] = _pass()
+                elif hits and all(hit["kind"] != "body" for hit in hits):
+                    verdict["checks"]["edit_preserved_text_export"] = _skip(
+                        "not_exported",
+                        note=("marker is anchored in a %s control; "
+                              "GetTextFile(\"TEXT\", \"\") does not export "
+                              "header/footer/footnote/endnote content "
+                              "(hancom-acceptance-02.md run 02 (d))"
+                              % hits[0]["kind"]))
                 else:
-                    verdict["checks"]["edit_preserved"] = _fail(
+                    verdict["checks"]["edit_preserved_text_export"] = _fail(
                         "edit_marker_not_found")
 
         _quit_quietly(hwp2)
