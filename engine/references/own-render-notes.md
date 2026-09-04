@@ -997,6 +997,27 @@ a note.
   page and allowed to overflow — the same answer this tier already gives a
   block taller than a page.
 
+**Where an endnote is set is `hp:endNotePr/hp:placement@place`, and it is
+MEASURED.** `END_OF_DOCUMENT` means the end of the DOCUMENT: every section
+that is not the last hands its endnotes forward, and the last section sets
+the lot, in spine order, after its own last page. `END_OF_SECTION` keeps the
+old behaviour — each section sets its own. Until this was measured both
+readings collapsed to "end of the section that authors the note", which cost
+a page on `render-check-01`: its one `hp:endNote` is authored in section 0,
+did not fit under the `F47` table that already overflows the body box, and
+took a page of its own — candidate 10 pages against Hancom's 9. Hancom sets
+that note on page 9 of 9, the last page of the document, under the page's
+last inked line (separator y=464.5 pt, note body y=470.5–478.5 pt, last body
+line ending 456.3 pt). With the rule in, `render-check-01` is **9 pages
+against 9, exact for the first time**, and its page agreement is 51/51
+(docs/research/render-check-01.md note 1). Still NOT honoured: Hancom sets
+the note in the FIRST COLUMN of that two-column section (separator
+x 85.0–297.7 pt) and this renderer sets it at the body box's full width —
+declared in the sidecar, a band difference and not a page-count one. No
+corpus form and no holdout carries an endnote, so the corpus render is
+byte-identical (52/52 page PNGs, sha256) and the holdout stays 18/18 exact
+with every scoreboard channel unchanged.
+
 ### Corpus coverage: none of the four is exercised
 
 `grep`-equivalent scan of every `Contents/section*.xml` inside the ten
@@ -1198,6 +1219,8 @@ not only here.
    restart-or-continue, and its own `hp:colPr`; a section always starts a new
    page. Declared, not measured: footnote/endnote `CONTINUOUS` numbering
    restarts at 1 in every section rather than carrying on from the last, and
+   a document mixing `END_OF_DOCUMENT` and `END_OF_SECTION` across sections
+   is untested (one document, one note, measured); and
    a section with real columns is ALWAYS placed by the computed flow pass
    (never seeded from the cache) — so an unedited multi-column section does
    NOT render byte-identical the way every single-column section on this
