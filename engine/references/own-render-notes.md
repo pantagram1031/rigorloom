@@ -2667,3 +2667,111 @@ HWPUNIT and reads declared sizes only; `_object_extent` is HWPUNIT;
 equation extent is already measured at a fixed 600 dpi and scaled. The break
 positions were the whole of it, and everything else in the digest moved
 because the breaks did.
+
+### The fix
+
+Every advance the layout uses is now measured off the face at a fixed
+`LAYOUT_REFERENCE_PX = 1024` em and scaled analytically into HWPUNIT:
+
+    advance_hwpunit = em_width(face, chunk) x declared_pt x 100 x ratio/100
+
+`_em_width` is the only place a font is measured for layout, and its answer
+is a property of the outlines and the kern table alone. The raster now enters
+exactly once, at the end, when a glyph is drawn — `_font_for` still builds an
+integer-pixel font, and the drawn pixel advance is `pxf()` of the HWPUNIT one,
+so the drawing cursor and the breaker cannot disagree.
+
+Everything the breaker compares moved to HWPUNIT with it:
+`_char_advance_tables`, `span_width`, `_tab_advance`, `compute_lines`'s
+`avail`/`width`/`slack`, and the `hh:spacing` gap (a pure proportion, correct
+in either unit, so `_spacing_gap_px` became `_spacing_gap`). `_half_cell_hwp`
+is the space cell in the document's units and `_half_cell_px` is now derived
+from it. A line record gained `width_hwpunit`; `width_px` stays for the
+drawing side.
+
+**Which hinting story this is.** Not unhinted metrics — Pillow does not expose
+them, and FreeType rounds a hinted advance to a whole pixel. This is the
+large-reference-size story: at a 1024 px em that rounding is under 0.1% per
+glyph and, decisively, it is the *same* 0.1% at every output resolution.
+Stated in the constant's own comment so no reader has to infer it.
+
+### After
+
+`layout_digest` is byte-identical at 96 / 144 / 192 / 288 dpi on the
+render-check document and on all ten corpus forms, asserted by
+`test_the_layout_is_identical_at_every_dpi` (11 parametrised cases) and, for
+the mechanism alone, by
+`test_an_advance_is_the_same_fraction_of_an_em_at_every_dpi`. `F06`–`F08` now
+read 46 · 44 · 11 at every dpi. The private report-class holdout is identical
+across the ladder too (661 lines, 18 pages, at all four).
+
+**Line breaker against the authoring engine's own cache**, corpus-wide,
+144 dpi:
+
+| channel | before | after |
+| --- | --- | --- |
+| break positions matched | 68 / 216 | **80 / 216** |
+| per-decision exact (`conditional_breaks`) | 65 / 216 | **77 / 216** |
+| — of the misses, `late` | 78 | 65 |
+| paragraphs, exact break sequence | 2014 / 2148 | **2030 / 2148** |
+| paragraphs, exact line count | 2105 | **2116** |
+
+**What moved at the default 144 dpi.** Five of the eleven documents are
+byte-identical before and after (`admrul`, `gianmun-1ho`, `gianmun-2ho`,
+`jeongbo`, `nrf`) — their declared sizes already landed on integer pixels at
+144. The six that move:
+
+| document | paragraphs rebroken | lines | pages |
+| --- | --- | --- | --- |
+| `moel-2013` | 24 of 264 | 327 → 317 | 9 → 7 |
+| `moel-2025` | 4 of 314 | 349 → 353 | 7 |
+| `saeopja-deungnok` | 3 of 765 | 794 | 6 |
+| `jumin-deungchobon` | 1 of 133 | 170 | 3 |
+| `kstartup` | 2 of 462 | 509 | 22 |
+| `render-check-01` | 1 of 227 | 281 → 282 | 7 |
+
+`moel-2013` going 9 → 7 pages is a move *toward* the cached pagination, which
+reads 7.
+
+**Corpus scoreboard against the Hancom reference PDFs**, 144 dpi, `auto`
+layout. Every form still comparable, every verdict still `pass`, every page
+count unchanged. Means over the ten: `ssim_mean` +0.00078,
+`ssim_inked_mean` +0.0021, `text_line_iou_mean` +0.00024. Per form, the
+extremes: `gianmun-1ho` `ssim_inked` +0.0150 and `jumin` +0.0106 the good way;
+`nrf` `ssim_inked` −0.0160 and `text_line_iou` −0.0128 the other. `nrf` is the
+one regression worth naming — its faces happened to be better served by the
+old 144 dpi rounding.
+
+**render-check-01 tally**, 9/9 pages exact at both resolutions:
+
+| dpi | before | after |
+| --- | --- | --- |
+| 96 | 3 match · 38 close · 8 differs · 2 unsupported | **6 · 37 · 6 · 2** |
+| 144 | 7 · 38 · 4 · 2 | **14 · 31 · 4 · 2** |
+
+The 144 dpi tally the ink-residual slice recorded but would not claim is now
+claimable, and it is the better of the two.
+
+**Private holdout (aggregate only).** 18/18 pages exact, before and after.
+`ssim_mean` 0.8132 → 0.8206, `ssim_inked_mean` 0.2927 → 0.3158,
+`text_line_iou_mean` 0.7641 → 0.7651. Its lineseg break recall is unmoved at
+59/252, but the per-decision accuracy goes 0.4365 → 0.4603 and the `late`
+misses collapse 38 → 15: the breaker measures a line 0.9794 → 0.9840 as full
+as the authoring engine did, which is the same 2% narrowness closing.
+
+### Not proven
+
+- **One machine, one font stack.** Every number here resolves faces against
+  this machine's installed index. The em measurement removes the *resolution*
+  dependence, not the face dependence.
+- **1024 px is not zero.** Hinting still rounds each glyph advance to 1/1024
+  em. It is identical at every dpi, which is what was asked, but it is not
+  the unhinted outline advance and no test asserts a bound against one.
+- **`line_boxes` reports the advance, not the ink.** A space that hangs past
+  a line end moves the reported box (7.677 px on the relayout fixture) with no
+  pixel drawn there. `test_a_relaid_out_paragraph_stays_inside_its_column`
+  now checks the page raster instead, and names this as a follow-up: closing
+  it moves `text_line_iou` on eight of the ten forms in both directions and
+  needs its own measurement.
+- **The dpi ladder is four rungs**, 96–288. Nothing was measured below 96 or
+  above 288, and `pt_to_px`'s `max(1, ...)` floor still exists for the raster.
