@@ -227,26 +227,77 @@ line breaker can be graded without a reference render.
 
 ### Which engine laid out which paragraph, and why
 
-Two policies, declared per render in `line_layout.policy`, and per paragraph
-in `line_layout.paragraphs_relaid_out`:
+**The unit the cache is trusted in is the DOCUMENT, not the paragraph.**
+`docs/research/lineseg-on-save-01.md` measured Hancom saving three corpus
+forms twice each, untouched and with one character appended. Untouched, all
+223 cached line boxes came back byte-identical in all 9 `hp:lineseg` fields —
+Hancom recomputes line layout on every save, but the recomputation is
+idempotent. With one character appended, the *edited* paragraph did not move
+at all, while a paragraph **534 positions downstream** shifted its `vertpos`
+from 0 to 70884 and two never-laid-out paragraphs elsewhere gained line boxes.
+So a per-paragraph test cannot decide anything: it cannot name the paragraphs
+a layout pass would also have moved.
 
-- **`auto`** (default, and what ships). A paragraph keeps its cached
-  `hp:lineseg` boxes unless they provably no longer describe its text.
-- **`computed`** (`--line-layout computed`). Every paragraph is relaid out by
-  this breaker. This is how the breaker is *measured*; it is not how a
-  document is rendered most faithfully, and the scoreboard below says by how
-  much.
+What can decide it is **provenance** — is this package the direct, unedited
+output of Hancom's own most recent save? The renderer answers from
+`version.xml@application`, the only writer signature an HWPX carries, and
+declares the answer in the sidecar (`layout_policy`, `layout_policy_reason`,
+`layout_provenance`):
 
-Under `auto`, `computed` wins for exactly five named reasons, each counted in
+| `layout_provenance.writer` | what decides it | `layout_policy` |
+| --- | --- | --- |
+| `hancom_untouched` | `application` starts with Hancom's product name | `cache` |
+| `rigorloom_written` | `application` is `Rigorloom` | `computed` |
+| `unknown_writer` | any other value, or no `version.xml`/attribute | `computed` |
+
+Two things override the file: a caller that names an edited paragraph in
+`relayout_paragraphs` (an edited package is not an untouched one, wherever
+the edit landed), and `--line-layout computed`. `--layout-policy cache|computed`
+pins either policy for MEASUREMENT — pinning `cache` on an edited package is
+unsound and is declared as an override in the reason string.
+
+`computed` means the **whole** document: `line_layout` and `block_layout` both.
+There is no half-computed document under `auto` any more.
+
+**The stamp, and why it lives in `version.xml`.** `hwpx_write.blank_package`
+has always written `application="Rigorloom"`; `xml_backend.HwpxDocument.save`
+now does too, through `hwpx_write.stamp_writer_application`, which rewrites
+only the `application` and `appVersion` attribute values and leaves every
+other byte of the member alone. Without it the edit path — which copies
+`version.xml` forward verbatim, as it does every member it did not change —
+would keep claiming Hancom wrote the package last, and `auto` would trust a
+cache describing the text from before the edit. `version.xml` is the right
+home because Hancom overwrites the whole member on its own save, so the marker
+**clears itself** the moment Hancom is the last writer again. A marker parked
+in `Contents/content.hpf` would not: whether Hancom preserves an unknown
+`opf:meta` across a resave is NOT MEASURED here, and a marker that survived
+would pin the package to `computed` forever.
+
+This does make a Rigorloom-edited package trivially distinguishable from a
+Hancom-edited one, which is what E3 is otherwise trying to eliminate
+(`hwpx_write.canonical_from_elementtree`). The tension is deliberate and
+resolved the same way every time in this repo: an honest, declared marker
+beats a silent mimicry that would make `auto` draw a stale box.
+
+Under `auto`, `computed` wins for exactly three named reasons, each counted in
 `line_layout.computed_reasons`:
 
 | reason | what it means |
 | --- | --- |
+| `policy` | the whole document is computed — the caller asked, or provenance said so. `layout_policy_reason` says which |
 | `cache_absent` | the paragraph carries no `hp:linesegarray` at all |
-| `textpos_past_end` | a cached line starts past the end of the character stream, so the text is *shorter* than the cache describes |
-| `stale_line_width` | a cached line's font-independent lower-bound width exceeds its own cached `horzsize`, so the text is *longer* than that line could hold |
-| `caller_marked_edited` | the caller passed the paragraph in `relayout_paragraphs` |
-| `policy` | the whole render was asked for computed lines |
+| `textpos_past_end` | a cached line starts past the end of the character stream, so no character range lines up with that box |
+| `caller_marked_edited` | the caller passed the paragraph in `relayout_paragraphs`, under a pinned `cache` policy |
+
+`cache_absent` and `textpos_past_end` are **not** staleness inferences and are
+not affected by the policy: they describe a cache this reader cannot *read*,
+so there is nothing to draw from either way. `textpos_past_end` earns that
+reading by measurement — it fires on exactly one paragraph of each of three
+**unedited** corpus forms (moel-2013 #159, saeopja #321, kstartup #264), all
+three carrying an `hp:ctrl` this reader gives no character cell (a HYPERLINK
+`hp:fieldBegin`/`fieldEnd` pair, an `hp:colPr`) where the authoring engine
+counted one. That is a reader gap, named and **not fixed here**; it is
+emphatically not evidence that somebody edited a government form template.
 
 `stale_line_width` is the interesting one. The bound counts only full-width
 cells (Hangul, Hanja, kana, CJK punctuation, an inline object slot — whose
@@ -264,13 +315,96 @@ paragraph of any of the ten corpus forms (the worst unedited line reaches
 It is also **incomplete**, and the sidecar says so in those words: an edit
 that leaves every line still fitting is invisible in the file. An editor that
 knows it changed a paragraph must declare it through `relayout_paragraphs`
-rather than rely on detection. A paragraph is named there by its document-order
+rather than rely on detection.
+
+Since this slice it **decides no paragraph**. `_scan_stale_cache` runs it once
+over the whole document at load, reports every hit in
+`line_layout.stale_diagnostics`, and uses it for exactly one thing: because it
+raises no false positive, a hit *falsifies* a `cache` policy. A package
+claiming to be Hancom's own untouched save that carries a line box too narrow
+for the text on it is not that package, so the WHOLE document goes computed
+and `layout_policy_reason` starts `stale_cache_contradicts_provenance`. That
+is what catches an edit applied by something that did not stamp its own
+signature — the case the notes could otherwise only hope did not happen. (The
+sweep skips a lineseg carrying no `horzsize`, having no column width to fall
+back on; zero corpus linesegs are shaped that way.) A paragraph is named there by its document-order
 position among every `hp:p` in `section0`, counting from 0 — `hp:p@id` is not
 unique (moel-2025 gives `2147483648` to 329 of its 330 paragraphs), and the
 caller can compute the ordinal from the same file without asking the renderer.
 
 Every line box in the sidecar carries `mode: "lineseg" | "computed"`, so a
 reader can tell per line which engine broke it.
+
+### What the computed default costs, measured
+
+An edited document is now always drawn computed, so the question is what that
+costs where the cache *would* have been usable. Every number below is
+`render_scoreboard.py` at 96 dpi against the forms' own Hancom reference PDFs,
+the same document scored twice — `--layout-policy cache` against
+`--line-layout computed --block-layout computed` — so nothing but the policy
+moves. Columns are **computed minus cache**; negative is worse.
+
+| form | pages cache / computed / ref | Δssim | Δssim_inked | Δtext_line_iou | Δpair_rate |
+| --- | --- | --- | --- | --- | --- |
+| admrul-gajokdolbom-hyuga-sinchengseo | 1 / 1 / 1 | −0.0864 | −0.2741 | **−0.4088** | 0.0000 |
+| gianmun-byeolji-1ho | 1 / 1 / 1 | −0.0037 | −0.0170 | −0.0116 | 0.0000 |
+| gianmun-byeolji-2ho | 1 / 1 / 1 | +0.0007 | +0.0033 | +0.0032 | 0.0000 |
+| jeongbo-gonggae-cheongguseo | 1 / 1 / 1 | +0.0007 | +0.0019 | +0.0008 | 0.0000 |
+| jumin-deungchobon-sinchengseo | 3 / 3 / 3 | −0.0072 | −0.0011 | −0.0032 | 0.0000 |
+| kstartup-jiwon-…-saeopgyehoekseo | 21 / **22** / 22 | +0.0547 | +0.1268 | **+0.3616** | +0.1428 |
+| moel-pyojun-geunrogyeyakseo-2013 | 7 / 7 / 7 | −0.0119 | −0.0143 | −0.0453 | +0.0061 |
+| moel-pyojun-geunrogyeyakseo-2025 | 7 / 7 / 7 | −0.0734 | −0.0834 | −0.2128 | −0.0214 |
+| nrf-gyeolgwa-bogoseo-yangsik | 4 / 4 / 4 | −0.0232 | −0.0402 | −0.1576 | −0.0089 |
+| saeopja-deungnok-sinchengseo | 6 / 6 / 6 | −0.0231 | −0.0326 | −0.0768 | −0.0024 |
+
+Corpus means, cache → computed: `ssim` 0.8006 → 0.7833 (−0.0173),
+`ssim_inked` 0.2779 → 0.2449 (−0.0331), `text_line_iou` 0.6319 → 0.5768
+(−0.0550), `text_line_pair_rate` 0.8362 → 0.8478 (**+0.0116**),
+`changed_channel_ratio` 0.1132 → 0.1145 (+0.0013). **Page count exact against
+the reference: 9 of 10 under cache, 10 of 10 under computed** — the one form
+that changes is kstartup, which is *the form where the cache is wrong* (see
+*kstartup is the form where the CACHE is wrong, not the flow pass*), and
+computed fixes it.
+
+Line breaking, the same corpus, conditional-break agreement (the breaker
+restarted at each line start the authoring engine chose, asked only where it
+would put the next break): **77 / 216 decisions exact, 0.356**, worst
+moel-2025 at 7/47 and best gianmun-2ho at 2/2. Block flow agreement against
+the cache is *identical* whether the lines under it are cached or computed —
+all ten forms score the same page-assignment hits either way (kstartup
+46/165, nrf 51/53, the other eight 100%), so the flow pass's error is its own
+and not the breaker's leaking into it.
+
+`render-check-01` is the one document where the policy flip costs **nothing at
+all**: its renders are byte-identical under both policies (9 pages either
+way), because all 216 of its paragraphs are already excluded from the cache —
+`hwpx_write` wrote its `hp:lineseg` and every one of them trips
+`textpos_past_end`, so 238 of 238 paragraphs were laid out by this breaker
+before the policy existed. Its scoreboard cannot be taken: its sections
+declare different page sizes and `render_scoreboard.ssim` refuses operands of
+different sizes. Pre-existing, named, not fixed here.
+
+The private report-class holdout (E2.1's, aggregate only) is the sharpest
+version of the same answer: 18 reference pages, and **18 pages under both
+policies**, while every geometry channel falls — `ssim` 0.6963 → 0.6108,
+`ssim_inked` 0.1834 → 0.0982, `text_line_iou` 0.5680 → **0.2311**,
+`text_line_pair_rate` 0.9150 → 0.7804, `changed_channel_ratio` 0.1400 →
+0.1633. It is a Hancom-saved package, so the policy keeps it on `cache`; the
+computed column is what an edit to it would now cost.
+
+**So: is computed good enough to be the default for edited documents?** For
+*pagination*, yes and better — page counts hold on 10 of 10 corpus forms and
+on the holdout, and the one disagreement it fixes is a real one. For *line
+geometry*, no: it is measurably worse wherever the cache is valid, by −0.055
+mean IoU on the corpus and −0.337 on the holdout, and on one form (admrul) by
+−0.409. That is the honest shape of the trade, and it is the right trade only
+because the policy routes a document to computed exactly when its cache is
+*not* valid — where the alternative is not this table's cache column but a
+layout describing text the document no longer has. What the table really
+prices is a **misclassification**: what it costs to call an untouched Hancom
+package edited. Nothing here argues for computed as a general default, and
+E2.1's *Where it fails, and why* still names the advance-width gap that this
+column is mostly measuring.
 
 ### What the breaker honours
 
@@ -667,13 +801,20 @@ honest way to grade a flow pass without a reference render is to run it on an
 
 ### Two policies, and why an unedited render is byte-identical
 
-- **`auto`** (default, and what ships). Nothing is placed by the flow pass
-  until some paragraph has to be relaid out. `flow_plan()` returns `None` on a
-  document where no paragraph is stale and none is named in
-  `relayout_paragraphs`, and `render()` then takes exactly the path it took
+- **`auto`** (default, and what ships). On a package provenance says is
+  Hancom's own untouched save, nothing is placed by the flow pass at all:
+  `flow_plan()` returns `None` and `render()` takes exactly the path it took
   before E2.5. Measured, not asserted: all ten corpus forms, 51 pages, render
   to **byte-identical PNGs** before and after this slice, and the seven
   comparable scoreboards are unchanged to every decimal place they carry.
+  (Still true after the provenance policy: the ten forms plus
+  `render-check-01` are byte-identical at 96 dpi against pre-policy HEAD.)
+  On any other package `auto` resolves to `computed` for the whole document —
+  see *Which engine laid out which paragraph* — so the incremental
+  "seed the flow at the edited block" path below is reached only under a
+  pinned `cache` policy. It is kept, and kept measured, because it is the
+  right answer once an edited package can be trusted paragraph by paragraph
+  again; it is not the shipping answer today.
 - **`computed`** (`--block-layout computed`). The flow pass places every block
   from the top of the document. This is how the flow pass is *measured*.
 
@@ -1284,9 +1425,19 @@ not only here.
     the one that matches Hancom. It is used only where the cached layout
     cannot be, which on an unedited document is nowhere — but it is what
     everything after an edit gets.
-15. **The staleness detector is sound but incomplete.** It cannot see an edit
-    that leaves every line still fitting; `relayout_paragraphs` is the channel
-    an editor must use instead. See *Which engine laid out which paragraph*.
+15. **The staleness detector is sound but incomplete, and decides nothing
+    per paragraph.** It cannot see an edit that leaves every line still
+    fitting; `relayout_paragraphs` is the channel an editor must use instead.
+    Since the provenance policy it only diagnoses, and falsifies a `cache`
+    policy document-wide. See *Which engine laid out which paragraph*.
+15a. **Provenance is a claim about the last writer, not a proof of
+    integrity.** `version.xml@application` says which program wrote the
+    package; it cannot detect a third program that edited a Hancom-saved file
+    while leaving Hancom's signature in place. `stale_line_width` catches such
+    an edit only when it makes some line overflow its own box. And whether
+    Hancom preserves this repo's stamp across its own resave is NOT MEASURED —
+    if it did, an edited-then-Hancom-saved package would stay on `computed`,
+    which is the safe direction but not the accurate one.
 16. **A split table does not repeat its header row.** `hp:tbl@repeatHeader` is
     set on all 81 corpus tables and is parsed, counted and skipped: the
     continuation page starts at the row the split cut at. Declared in every
