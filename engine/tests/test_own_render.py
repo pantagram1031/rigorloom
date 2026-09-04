@@ -1361,9 +1361,43 @@ def test_gianmun_resolves_every_face_it_declares(gianmun_render):
 def test_a_face_the_machine_does_not_have_is_named_as_substituted(tmp_path):
     """The substitution path, driven without depending on a missing font.
 
-    An empty font index cannot resolve anything, so every declared face has to
-    come back substituted — and every one of them has to appear in
-    ``elements_skipped``, not just in the fonts block.
+    An empty font index AND an empty bundled family map cannot resolve
+    anything between them, so every declared face has to come back
+    substituted — and every one of them has to appear in
+    ``elements_skipped``, not just in the fonts block.  (An empty font index
+    alone is not enough to force this any more: GIANMUN declares several
+    faces ``BundledFontMap`` now maps to a bundled OFL family regardless of
+    what is installed — see the bundled-resolution test below — so this test
+    blanks both.)
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    renderer.font_family_map = own_render.BundledFontMap(
+        tmp_path / "no-such-repo-root")
+    renderer._face_cache.clear()
+    _images, report = renderer.render()
+    fonts = report["fonts"]
+    assert fonts["characters_on_a_resolved_face"] == 0
+    assert fonts["characters_on_an_installed_face"] == 0
+    assert fonts["characters_on_a_bundled_face"] == 0
+    assert fonts["characters_on_a_substituted_face"] > 0
+    assert fonts["resolved_character_share"] == 0.0
+    assert all(f["source"] == "system" for f in fonts["faces"])
+    named = {e["element"] for e in report["elements_skipped"]}
+    assert any(e.startswith("hh:fontface[") for e in named), named
+
+
+def test_a_declared_face_falls_back_to_the_bundled_family_map(tmp_path):
+    """No installed match, but a mapped one: BundledFontMap answers.
+
+    Of GIANMUN's declared faces, the characters actually set in 돋움 /
+    돋움체 / 한양중고딕 (confirmed by reading ``report["fonts"]["faces"]``
+    with the installed index forced empty) are in the table (-> Nanum
+    Gothic / Nanum Gothic Coding); 한양견고딕 is not ("HY견고딕" is the
+    table's literal entry, not the 한양-prefixed HWP spelling) and must
+    still fall through to the generic substitute even with the installed
+    index blanked.
     """
     renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
     renderer.font_index = own_render.SystemFontIndex(directories=[
@@ -1371,11 +1405,84 @@ def test_a_face_the_machine_does_not_have_is_named_as_substituted(tmp_path):
     renderer._face_cache.clear()
     _images, report = renderer.render()
     fonts = report["fonts"]
-    assert fonts["characters_on_a_resolved_face"] == 0
+    faces = {f["declared"]: f for f in fonts["faces"] if not f["bold"]}
+    assert faces["돋움"]["source"] == "bundled"
+    assert faces["돋움"]["installed_family"] == "Nanum Gothic"
+    assert faces["돋움"]["family_map"] == "Nanum Gothic"
+    assert faces["돋움"]["file"] == "NanumGothic-Regular.ttf"
+    assert faces["돋움체"]["source"] == "bundled"
+    assert faces["돋움체"]["installed_family"] == "Nanum Gothic Coding"
+    assert faces["돋움체"]["file"] == "NanumGothicCoding-Regular.ttf"
+    assert faces["한양중고딕"]["source"] == "bundled"
+    assert faces["한양중고딕"]["installed_family"] == "Nanum Gothic"
+    # Not in the table (the table has "HY견고딕", not this 한양-prefixed
+    # spelling): still the generic fallback, even with nothing installed.
+    assert faces["한양견고딕"]["source"] == "system"
+    assert "substituted_with" in faces["한양견고딕"]
+    assert fonts["characters_on_an_installed_face"] == 0
+    assert fonts["characters_on_a_bundled_face"] > 0
     assert fonts["characters_on_a_substituted_face"] > 0
-    assert fonts["resolved_character_share"] == 0.0
-    named = {e["element"] for e in report["elements_skipped"]}
-    assert any(e.startswith("hh:fontface[") for e in named), named
+    assert (fonts["characters_on_a_bundled_face"]
+            == fonts["characters_on_a_resolved_face"])
+    assert fonts["bundled_character_share"] == fonts["resolved_character_share"]
+    assert fonts["installed_character_share"] == 0.0
+
+
+def test_an_installed_face_is_tried_before_the_bundled_family_map(tmp_path):
+    """Resolution order: installed exact face, THEN the bundled fallback.
+
+    A fake installed entry for 돋움 — a name BundledFontMap also maps, and
+    the previous test confirms GIANMUN actually sets characters in — must
+    win, proving the bundled table is only consulted once the installed
+    lookup itself has already failed.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    fake = str(tmp_path / "fake-dotum.ttf")
+    own_render.Path(fake).write_bytes(b"")
+    renderer.font_index.families["돋움"] = {
+        "regular": (fake, 0), "bold": None, "italic": None,
+        "bold_italic": None, "family": "FAKE-INSTALLED-DOTUM",
+    }
+    renderer._face_cache.clear()
+    _images, report = renderer.render()
+    faces = {f["declared"]: f for f in report["fonts"]["faces"]
+             if not f["bold"]}
+    assert faces["돋움"]["source"] == "installed"
+    assert faces["돋움"]["installed_family"] == "FAKE-INSTALLED-DOTUM"
+    assert faces["돋움"]["family_map"] is None
+    # 돋움체, not faked, still falls through to the bundled map.
+    assert faces["돋움체"]["source"] == "bundled"
+
+
+def test_bundled_font_map_covers_every_table_entry_and_only_the_table():
+    """``_FAMILY_MAP_TABLE`` is complete data: every declared name in it
+    resolves to an existing, licensed file, and a name outside it resolves
+    to nothing."""
+    repo_root = own_render.Path(__file__).resolve().parents[2]
+    fmap = own_render.BundledFontMap(repo_root)
+    seen_families = set()
+    for family, reg_rel, bold_rel, declared_names in own_render._FAMILY_MAP_TABLE:
+        assert (repo_root / reg_rel).is_file(), reg_rel
+        assert (repo_root / bold_rel).is_file(), bold_rel
+        seen_families.add(family)
+        for name in declared_names:
+            hit = fmap.lookup(name)
+            assert hit is not None, name
+            assert hit["family"] == family
+            assert hit["regular"][0] == str(repo_root / reg_rel)
+            assert hit["bold"][0] == str(repo_root / bold_rel)
+    # A licence entry exists for every bundled family, and every bundled
+    # family's licence entry exists — neither list drifts from the other.
+    licenses = (repo_root / "engine" / "references" / "fonts"
+               / "LICENSES.md").read_text(encoding="utf-8")
+    for family in seen_families:
+        assert family in licenses, family
+    assert (repo_root / "engine" / "references" / "fonts" / "family-map"
+           / "OFL.txt").is_file()
+    assert fmap.lookup("HCI Poppy") is None
+    assert fmap.lookup("이런이름은없음") is None
 
 
 def test_pinning_one_face_turns_per_face_resolution_off(monkeypatch, tmp_path):
@@ -1896,9 +2003,9 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-2ho": (20, 19, 19, 2, 1, 2, 1),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 133, 117, 27, 27, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 434, 415, 29, 26, 44, 13),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 242, 222, 34, 26, 49, 10),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 296, 271, 37, 27, 47, 7),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 435, 416, 29, 26, 44, 13),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 247, 227, 34, 28, 49, 12),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 284, 37, 27, 47, 12),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
     "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
 }
@@ -1950,9 +2057,9 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
                 a["break_positions_cached"], a["break_positions_matched"])):
             totals[index] += value
     # 2148 paragraphs carry a usable cache; the breaker reproduces the
-    # authoring engine's line COUNT on 2083 of them and its exact break
-    # SEQUENCE on 1985.  Restricted to the 158 paragraphs that actually break
-    # (the rest cannot disagree), it reproduces the line count on 133 and 58
+    # authoring engine's line COUNT on 2097 of them and its exact break
+    # SEQUENCE on 2004.  Restricted to the 158 paragraphs that actually break
+    # (the rest cannot disagree), it reproduces the line count on 135 and 65
     # of the 216 individual break positions.
     #
     # The break-position column moved 43 -> 58 when the space stopped being
@@ -1965,7 +2072,16 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # cannot break cannot disagree — and the scoreboard against the Hancom
     # rasters moved with it (ssim +0.0035, ssim_inked +0.0087, line-box IoU
     # +0.0105, means over the corpus), which the paragraph columns cannot say.
-    assert totals == [2148, 2083, 1985, 158, 133, 216, 58], totals
+    #
+    # 2083 -> 2097, 1985 -> 2004, 133 -> 135, 58 -> 65 on the bundled-font-map
+    # slice (this one): kstartup, moel-2013 and moel-2025 declare 돋움 /
+    # 돋움체 / 한양중고딕 / ... runs that this machine (no Hancom Office) used
+    # to fall through to the single generic system fallback (Malgun); those
+    # names now resolve to the bundled Nanum family instead — see
+    # ``BundledFontMap`` — whose hmtx advances happen to agree with the
+    # authoring engine's more often than Malgun's did. A machine WITH those
+    # Hancom faces installed is unaffected: installed is still tried first.
+    assert totals == [2148, 2097, 2004, 158, 135, 216, 65], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
