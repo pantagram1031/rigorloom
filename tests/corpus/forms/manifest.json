@@ -429,6 +429,30 @@
       "provenance": "Rigorloom-authored synthetic",
       "license": "Rigorloom-authored; no third-party content",
       "notes": "Hancom reference render of ../render-check/render-check-01.hwpx via com_backend.py convert (Hwp 2024 13.0.0.2986, Hancom PDF 1.3.0.550); 8 document pages == 8 PDF pages; render_scoreboard.reference_geometry_scale = 0.995 (1:1, within the 0.05 tolerance)."
+    },
+    {
+      "slug": "table-break-probe",
+      "family": "render-check",
+      "path": "../render-check/table-break-probe.hwpx",
+      "format": "hwpx",
+      "bytes": 28612,
+      "sha256": "44c5efd4dbec89fa624fe764c172e1e8f9b62260cdfe6b5c6b0089d3896bfda1",
+      "kind": "render_check_document",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Eleven table-placement variants ([T01]-[T11]: hp:tbl@pageBreak CELL/TABLE/NONE x repeatHeader x a table that does not fit the room left / does not fit a whole page), built by tests/corpus/render-check/build_table_break_probe.py. Every string is a case label or synthetic filler, so it carries no personal data. The document behind docs/research/table-page-break-rule.md."
+    },
+    {
+      "slug": "table-break-probe-reference",
+      "family": "render-check",
+      "path": "../render-check/table-break-probe.pdf",
+      "format": "pdf",
+      "bytes": 61541,
+      "sha256": "d2e03d1e6db9089519b371189c1292858dc49fe909ee2c89b1933d6d6b302577",
+      "kind": "render_check_reference_pdf",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Hancom reference render of ../render-check/table-break-probe.hwpx via com_backend.py convert (Hwp 2024 13.0.0.2986, Hancom PDF 1.3.0.550); 23 document pages == 23 PDF pages. This is the measurement: not one of the eleven tables is split."
     }
   ],
   "skipped": [
