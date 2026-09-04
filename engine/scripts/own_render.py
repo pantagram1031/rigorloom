@@ -3453,11 +3453,59 @@ class OwnRenderer:
                 return LINE_LAYOUT_COMPUTED, "stale_line_width"
         return "lineseg", None
 
+    @staticmethod
+    def _object_out_margin(el):
+        """``hp:outMargin`` — the object's 바깥 여백, ``(left, top, right, bottom)``.
+
+        Schema: ``DevDoc/OWPML SCHEMA/ParaList XML schema.xml`` gives every
+        ``ShapeObject`` an ``outMargin`` alongside its ``sz`` and ``pos``.  It
+        is the gap *outside* the object's own box, so the box's own top-left
+        sits ``(left, top)`` in from the slot the object occupies, and the
+        slot is ``left + width + right`` wide.  Measured against the corpus
+        reference PDFs, that is exactly what the authoring engine does: every
+        form whose tables declare ``outMargin=0`` registers on its reference
+        to within a tenth of a point, and every form that declares 140/141/283
+        drew 1.40/1.41/2.83 pt up and to the left of it — see
+        ``engine/references/own-render-notes.md``.
+        """
+        margin = _kid(el, "outMargin")
+        if margin is None:
+            return (0, 0, 0, 0)
+        return (_iattr(margin, "left"), _iattr(margin, "top"),
+                _iattr(margin, "right"), _iattr(margin, "bottom"))
+
+    def _object_origin(self, el, origin_hwp):
+        """The object box's own top-left, given the slot's top-left."""
+        left, top, _right, _bottom = self._object_out_margin(el)
+        if left or top:
+            self.applied["hp:outMargin"] = self.applied.get("hp:outMargin", 0) + 1
+        return (origin_hwp[0] + left, origin_hwp[1] + top)
+
     def _object_extent(self, el):
+        """The object's inline slot: its box, plus the outer margin's WIDTH.
+
+        Horizontally this is a footprint and not just a box, and that is
+        measured: ``moel-2013`` centres a table that declares
+        ``outMargin=283`` on all four sides, and its reference PDF draws that
+        table centred on the body box to within a tenth of a point.  That only
+        comes out right if the slot the line centres is ``left + width +
+        right`` wide and the box sits ``left`` inside it — insetting the box
+        alone would put it 2.83 pt right of centre.
+
+        **Vertically the outer margin is NOT added, and that is a declared
+        limit, not a finding.**  Nothing in the reference set measures the
+        line *height* an inline object claims — the cached ``hp:lineseg``
+        carries it on every corpus form — so growing it here would be a guess
+        that only shows up in ``block_layout=computed``, where it costs
+        ``kstartup`` a 23rd page against a 21-page reference.  The box is
+        still drawn ``top`` down from the slot (``_object_origin``), which is
+        the part the references do measure.
+        """
         if _local(el.tag) in ("footNote", "endNote"):
             return self._note_mark_extent(el)
         sz = _kid(el, "sz")
-        return (_iattr(sz, "width") if sz is not None else 0,
+        left, _top, right, _bottom = self._object_out_margin(el)
+        return ((_iattr(sz, "width") if sz is not None else 0) + left + right,
                 _iattr(sz, "height") if sz is not None else 0)
 
     def _line_pieces(self, draw, items, split_for_justification):
@@ -3612,7 +3660,8 @@ class OwnRenderer:
                 continue
             if piece["kind"] == "obj":
                 name, el, _charpr, _floating = piece["payload"]
-                origin = (self.hwp_from_px(cursor), line_top_hwp)
+                origin = self._object_origin(
+                    el, (self.hwp_from_px(cursor), line_top_hwp))
                 if name in ("footNote", "endNote"):
                     self._draw_note_mark(draw, el, cursor, baseline_px)
                 elif name == "tbl":
@@ -3979,18 +4028,19 @@ class OwnRenderer:
                        f"anchored object (treatAsChar=0, horzRelTo={hrel}, "
                        f"vertRelTo={vrel}) placed at its declared offset; "
                        "text wrap around it is not computed")
+            origin = self._object_origin(el, (x, y))
             if name == "tbl":
                 if is_split_target:
                     row_range = (auto_range if auto_range is not None
                                 else (split["row_start"], split["row_end"]))
                     self._table_splits[id(el)] = row_range
                 try:
-                    self._render_table(draw, el, (x, y))
+                    self._render_table(draw, el, origin)
                 finally:
                     if is_split_target:
                         self._table_splits.pop(id(el), None)
             else:
-                self._render_placeholder(draw, el, name, (x, y))
+                self._render_placeholder(draw, el, name, origin)
 
     def _binary_bytes(self, item_id):
         """The bytes of one ``BinData/`` entry, read on demand and cached."""
