@@ -405,6 +405,54 @@
       "sha256": "43d21f266ee6dffeb59acf24d20aaec43615c50ef1aded965e1050f81c72afa8",
       "kind": "xc1_render_pdf",
       "notes": "W6.1 XC-1 rendered PDF of converted/moel-pyojun-geunrogyeyakseo-2025.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "render-check-01",
+      "family": "render-check",
+      "path": "../render-check/render-check-01.hwpx",
+      "format": "hwpx",
+      "bytes": 20112,
+      "sha256": "3bab531ac97bd2b990f8425bab21c3052c3392e9be27eca0f5359609785868df",
+      "kind": "render_check_document",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Synthetic renderer feature-comparison document, one labelled [Fnn] block per Tier-1/Tier-2 feature of docs/research/hangul-feature-catalog.md. Built by tests/corpus/render-check/build_render_check.py on top of engine/scripts/hwpx_write.py; every string is a feature label or synthetic filler, so it carries no personal data. Hancom 13.0.0.2986 accepts it (COM open+save round-trip keeps all 51 feature elements)."
+    },
+    {
+      "slug": "render-check-01-reference",
+      "family": "render-check",
+      "path": "../render-check/render-check-01.pdf",
+      "format": "pdf",
+      "bytes": 119694,
+      "sha256": "4dd685be81ed2a0bdfbf849312e244686497576c30d18d9af6616d425ec15059",
+      "kind": "render_check_reference_pdf",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Hancom reference render of ../render-check/render-check-01.hwpx via com_backend.py convert (Hwp 2024 13.0.0.2986, Hancom PDF 1.3.0.550); 8 document pages == 8 PDF pages; render_scoreboard.reference_geometry_scale = 0.995 (1:1, within the 0.05 tolerance)."
+    },
+    {
+      "slug": "table-break-probe",
+      "family": "render-check",
+      "path": "../render-check/table-break-probe.hwpx",
+      "format": "hwpx",
+      "bytes": 28612,
+      "sha256": "44c5efd4dbec89fa624fe764c172e1e8f9b62260cdfe6b5c6b0089d3896bfda1",
+      "kind": "render_check_document",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Eleven table-placement variants ([T01]-[T11]: hp:tbl@pageBreak CELL/TABLE/NONE x repeatHeader x a table that does not fit the room left / does not fit a whole page), built by tests/corpus/render-check/build_table_break_probe.py. Every string is a case label or synthetic filler, so it carries no personal data. The document behind docs/research/table-page-break-rule.md."
+    },
+    {
+      "slug": "table-break-probe-reference",
+      "family": "render-check",
+      "path": "../render-check/table-break-probe.pdf",
+      "format": "pdf",
+      "bytes": 61541,
+      "sha256": "d2e03d1e6db9089519b371189c1292858dc49fe909ee2c89b1933d6d6b302577",
+      "kind": "render_check_reference_pdf",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Hancom reference render of ../render-check/table-break-probe.hwpx via com_backend.py convert (Hwp 2024 13.0.0.2986, Hancom PDF 1.3.0.550); 23 document pages == 23 PDF pages. This is the measurement: not one of the eleven tables is split."
     }
   ],
   "skipped": [

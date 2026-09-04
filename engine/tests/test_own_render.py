@@ -39,6 +39,13 @@ import own_render  # noqa: E402
 CORPUS = os.path.join(ROOT, "tests", "corpus", "forms", "converted")
 GIANMUN = os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")
 PICTURE_FORM = os.path.join(CORPUS, "jeongbo-gonggae-cheongguseo.hwpx")
+# A form this tier still cannot draw every element of.  It used to be
+# PICTURE_FORM, whose last unhandled element was its dashed borders; those are
+# drawn now (``border_dash_run``) and it skips nothing at all, so the
+# "nothing is dropped silently" contract needs a form that still has
+# something to drop — moel-2013's CIRCLE borders and its four unresolved
+# faces.
+SKIPS_SOMETHING = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2013.hwpx")
 
 pytestmark = pytest.mark.skipif(
     not own_render.pillow_available(),
@@ -120,7 +127,7 @@ def test_skipped_elements_are_named_not_dropped(tmp_path):
     render rather than on one named tag: every entry carries a non-empty
     reason and a positive count, and nothing is dropped silently.
     """
-    result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
+    result = own_render.render_to_dir(_need(SKIPS_SOMETHING), tmp_path, dpi=144)
     report = result["report"]
     assert report["elements_skipped"], "a form with unhandled elements said nothing"
     for entry in report["elements_skipped"]:
@@ -1354,9 +1361,43 @@ def test_gianmun_resolves_every_face_it_declares(gianmun_render):
 def test_a_face_the_machine_does_not_have_is_named_as_substituted(tmp_path):
     """The substitution path, driven without depending on a missing font.
 
-    An empty font index cannot resolve anything, so every declared face has to
-    come back substituted — and every one of them has to appear in
-    ``elements_skipped``, not just in the fonts block.
+    An empty font index AND an empty bundled family map cannot resolve
+    anything between them, so every declared face has to come back
+    substituted — and every one of them has to appear in
+    ``elements_skipped``, not just in the fonts block.  (An empty font index
+    alone is not enough to force this any more: GIANMUN declares several
+    faces ``BundledFontMap`` now maps to a bundled OFL family regardless of
+    what is installed — see the bundled-resolution test below — so this test
+    blanks both.)
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    renderer.font_family_map = own_render.BundledFontMap(
+        tmp_path / "no-such-repo-root")
+    renderer._face_cache.clear()
+    _images, report = renderer.render()
+    fonts = report["fonts"]
+    assert fonts["characters_on_a_resolved_face"] == 0
+    assert fonts["characters_on_an_installed_face"] == 0
+    assert fonts["characters_on_a_bundled_face"] == 0
+    assert fonts["characters_on_a_substituted_face"] > 0
+    assert fonts["resolved_character_share"] == 0.0
+    assert all(f["source"] == "system" for f in fonts["faces"])
+    named = {e["element"] for e in report["elements_skipped"]}
+    assert any(e.startswith("hh:fontface[") for e in named), named
+
+
+def test_a_declared_face_falls_back_to_the_bundled_family_map(tmp_path):
+    """No installed match, but a mapped one: BundledFontMap answers.
+
+    Of GIANMUN's declared faces, the characters actually set in 돋움 /
+    돋움체 / 한양중고딕 (confirmed by reading ``report["fonts"]["faces"]``
+    with the installed index forced empty) are in the table (-> Nanum
+    Gothic / Nanum Gothic Coding); 한양견고딕 is not ("HY견고딕" is the
+    table's literal entry, not the 한양-prefixed HWP spelling) and must
+    still fall through to the generic substitute even with the installed
+    index blanked.
     """
     renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
     renderer.font_index = own_render.SystemFontIndex(directories=[
@@ -1364,11 +1405,84 @@ def test_a_face_the_machine_does_not_have_is_named_as_substituted(tmp_path):
     renderer._face_cache.clear()
     _images, report = renderer.render()
     fonts = report["fonts"]
-    assert fonts["characters_on_a_resolved_face"] == 0
+    faces = {f["declared"]: f for f in fonts["faces"] if not f["bold"]}
+    assert faces["돋움"]["source"] == "bundled"
+    assert faces["돋움"]["installed_family"] == "Nanum Gothic"
+    assert faces["돋움"]["family_map"] == "Nanum Gothic"
+    assert faces["돋움"]["file"] == "NanumGothic-Regular.ttf"
+    assert faces["돋움체"]["source"] == "bundled"
+    assert faces["돋움체"]["installed_family"] == "Nanum Gothic Coding"
+    assert faces["돋움체"]["file"] == "NanumGothicCoding-Regular.ttf"
+    assert faces["한양중고딕"]["source"] == "bundled"
+    assert faces["한양중고딕"]["installed_family"] == "Nanum Gothic"
+    # Not in the table (the table has "HY견고딕", not this 한양-prefixed
+    # spelling): still the generic fallback, even with nothing installed.
+    assert faces["한양견고딕"]["source"] == "system"
+    assert "substituted_with" in faces["한양견고딕"]
+    assert fonts["characters_on_an_installed_face"] == 0
+    assert fonts["characters_on_a_bundled_face"] > 0
     assert fonts["characters_on_a_substituted_face"] > 0
-    assert fonts["resolved_character_share"] == 0.0
-    named = {e["element"] for e in report["elements_skipped"]}
-    assert any(e.startswith("hh:fontface[") for e in named), named
+    assert (fonts["characters_on_a_bundled_face"]
+            == fonts["characters_on_a_resolved_face"])
+    assert fonts["bundled_character_share"] == fonts["resolved_character_share"]
+    assert fonts["installed_character_share"] == 0.0
+
+
+def test_an_installed_face_is_tried_before_the_bundled_family_map(tmp_path):
+    """Resolution order: installed exact face, THEN the bundled fallback.
+
+    A fake installed entry for 돋움 — a name BundledFontMap also maps, and
+    the previous test confirms GIANMUN actually sets characters in — must
+    win, proving the bundled table is only consulted once the installed
+    lookup itself has already failed.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    fake = str(tmp_path / "fake-dotum.ttf")
+    own_render.Path(fake).write_bytes(b"")
+    renderer.font_index.families["돋움"] = {
+        "regular": (fake, 0), "bold": None, "italic": None,
+        "bold_italic": None, "family": "FAKE-INSTALLED-DOTUM",
+    }
+    renderer._face_cache.clear()
+    _images, report = renderer.render()
+    faces = {f["declared"]: f for f in report["fonts"]["faces"]
+             if not f["bold"]}
+    assert faces["돋움"]["source"] == "installed"
+    assert faces["돋움"]["installed_family"] == "FAKE-INSTALLED-DOTUM"
+    assert faces["돋움"]["family_map"] is None
+    # 돋움체, not faked, still falls through to the bundled map.
+    assert faces["돋움체"]["source"] == "bundled"
+
+
+def test_bundled_font_map_covers_every_table_entry_and_only_the_table():
+    """``_FAMILY_MAP_TABLE`` is complete data: every declared name in it
+    resolves to an existing, licensed file, and a name outside it resolves
+    to nothing."""
+    repo_root = own_render.Path(__file__).resolve().parents[2]
+    fmap = own_render.BundledFontMap(repo_root)
+    seen_families = set()
+    for family, reg_rel, bold_rel, declared_names in own_render._FAMILY_MAP_TABLE:
+        assert (repo_root / reg_rel).is_file(), reg_rel
+        assert (repo_root / bold_rel).is_file(), bold_rel
+        seen_families.add(family)
+        for name in declared_names:
+            hit = fmap.lookup(name)
+            assert hit is not None, name
+            assert hit["family"] == family
+            assert hit["regular"][0] == str(repo_root / reg_rel)
+            assert hit["bold"][0] == str(repo_root / bold_rel)
+    # A licence entry exists for every bundled family, and every bundled
+    # family's licence entry exists — neither list drifts from the other.
+    licenses = (repo_root / "engine" / "references" / "fonts"
+               / "LICENSES.md").read_text(encoding="utf-8")
+    for family in seen_families:
+        assert family in licenses, family
+    assert (repo_root / "engine" / "references" / "fonts" / "family-map"
+           / "OFL.txt").is_file()
+    assert fmap.lookup("HCI Poppy") is None
+    assert fmap.lookup("이런이름은없음") is None
 
 
 def test_pinning_one_face_turns_per_face_resolution_off(monkeypatch, tmp_path):
@@ -1889,9 +2003,9 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-2ho": (20, 19, 19, 2, 1, 2, 1),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 133, 117, 27, 27, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 434, 415, 29, 26, 44, 13),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 242, 222, 34, 26, 49, 10),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 296, 271, 37, 27, 47, 7),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 435, 416, 29, 26, 44, 13),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 247, 227, 34, 28, 49, 12),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 284, 37, 27, 47, 12),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
     "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
 }
@@ -1943,9 +2057,9 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
                 a["break_positions_cached"], a["break_positions_matched"])):
             totals[index] += value
     # 2148 paragraphs carry a usable cache; the breaker reproduces the
-    # authoring engine's line COUNT on 2083 of them and its exact break
-    # SEQUENCE on 1985.  Restricted to the 158 paragraphs that actually break
-    # (the rest cannot disagree), it reproduces the line count on 133 and 58
+    # authoring engine's line COUNT on 2097 of them and its exact break
+    # SEQUENCE on 2004.  Restricted to the 158 paragraphs that actually break
+    # (the rest cannot disagree), it reproduces the line count on 135 and 65
     # of the 216 individual break positions.
     #
     # The break-position column moved 43 -> 58 when the space stopped being
@@ -1958,7 +2072,16 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # cannot break cannot disagree — and the scoreboard against the Hancom
     # rasters moved with it (ssim +0.0035, ssim_inked +0.0087, line-box IoU
     # +0.0105, means over the corpus), which the paragraph columns cannot say.
-    assert totals == [2148, 2083, 1985, 158, 133, 216, 58], totals
+    #
+    # 2083 -> 2097, 1985 -> 2004, 133 -> 135, 58 -> 65 on the bundled-font-map
+    # slice (this one): kstartup, moel-2013 and moel-2025 declare 돋움 /
+    # 돋움체 / 한양중고딕 / ... runs that this machine (no Hancom Office) used
+    # to fall through to the single generic system fallback (Malgun); those
+    # names now resolve to the bundled Nanum family instead — see
+    # ``BundledFontMap`` — whose hmtx advances happen to agree with the
+    # authoring engine's more often than Malgun's did. A machine WITH those
+    # Hancom faces installed is unaffected: installed is still tried first.
+    assert totals == [2148, 2097, 2004, 158, 135, 216, 65], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -2423,24 +2546,27 @@ def test_the_flow_pass_is_deterministic(tmp_path):
             == second["report"]["block_layout"]["blocks"])
 
 
-def test_a_table_only_splits_across_a_page_when_it_says_it_may():
-    """hp:tbl@pageBreak is the whole permission, and it is checked, not
-    assumed: the corpus declares CELL on 62 tables and NONE on 19."""
+def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():
+    """The split permission has two halves, and BOTH are checked.
+
+    ``hp:tbl@pageBreak="CELL"`` is the declared half.  The measured half is
+    글자처럼 취급 (``hp:pos@treatAsChar``): Hancom never splits an inline
+    table, whatever ``pageBreak`` says — twelve probe variants and two
+    Hancom-authored tables, no exception
+    (``docs/research/table-page-break-rule.md``).
+    """
     renderer = own_render.OwnRenderer(
         _need(os.path.join(CORPUS, "saeopja-deungnok-sinchengseo.hwpx")),
         dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
-    draw = renderer._scratch_draw()
     seen = {"CELL": 0, "other": 0}
     for element in renderer.sections[0].iter():
         if own_render._local(element.tag) != "tbl":
             continue
-        splittable, ys = renderer._table_split_rows(draw, element)
         declared = (element.get("pageBreak") or "").upper()
-        assert splittable == (declared == "CELL"), declared
+        inline = renderer._table_is_inline(element)
+        assert renderer._table_may_split(element) == (
+            declared == "CELL" and not inline), (declared, inline)
         seen["CELL" if declared == "CELL" else "other"] += 1
-        if not splittable:
-            # Room for every row but the last, and it still refuses to split.
-            assert renderer._split_table_row(draw, element, ys[-2]) is None
     assert seen["CELL"] and seen["other"], "fixture drifted"
 
 
@@ -2893,12 +3019,127 @@ def test_a_double_border_too_narrow_to_resolve_stays_solid_and_declared():
 
 
 def test_other_non_solid_border_types_are_still_declared_as_solid():
-    """DASH is in the corpus and is still stroked solid — say so."""
-    renderer, runs = _border_probe("DASH", 283.46456692913387)
+    """CIRCLE is in the corpus (moel-2013) and is still stroked solid."""
+    renderer, runs = _border_probe("CIRCLE", 283.46456692913387)
     assert len(runs) == 1, runs
     reasons = [e["reason"] for e in renderer.skipped.values()
-               if "DASH" in e["element"]]
+               if "CIRCLE" in e["element"]]
     assert any("stroked as solid" in r for r in reasons), reasons
+
+
+def _dash_runs(btype, width_hwp, dpi=1200, length_hwp=6000):
+    """Ink/gap run lengths along one horizontal border of ``btype``.
+
+    Rendered at 1200 dpi so the pattern is resolved well past the 144 dpi the
+    corpus is scored at — the geometry under test is in HWPUNIT, and at 144
+    dpi a 0.12 mm dash is under a pixel wide.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"]["probe"] = {
+        "top": {"type": btype, "width_hwp": width_hwp, "color": (0, 0, 0)},
+        "bottom": {"type": "NONE"}, "left": {"type": "NONE"},
+        "right": {"type": "NONE"},
+    }
+    span = renderer.px(length_hwp)
+    row = renderer.px(1000)
+    image = renderer.Image.new("RGB", (span + 40, row + 40), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    tc = ET.fromstring('<hp:tc xmlns:hp="urn:x" borderFillIDRef="probe"/>')
+    renderer._draw_cell_borders(draw, {"tc": tc}, 0, 1000, length_hwp, 2000)
+    grey = image.convert("L").load()
+    ink, gap, runs = [], [], []
+    x, state, start = 0, None, 0
+    while x < span:
+        dark = grey[x, row] < 160
+        if state is None:
+            state, start = dark, x
+        elif dark != state:
+            (ink if state else gap).append(x - start)
+            runs.append((state, x - start))
+            state, start = dark, x
+        x += 1
+    return renderer, ink, gap, runs
+
+
+def test_a_dashed_border_is_drawn_dashed_at_the_measured_period():
+    """DASH: 0.12 mm measures 0.480 pt of ink on a 1.200 pt period.
+
+    Measured black-box off the Hancom reference PDFs (see
+    ``own_render.border_dash_run``): the 0.12 mm class is 43 of the corpus's
+    55 DASH sides and every one of them is that period.
+    """
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer, ink, gap, _runs = _dash_runs("DASH", width)
+    assert len(ink) > 20, len(ink)
+    # 1200 dpi: 1 pt = 16.667 px.
+    per_pt = 1200 / 72.0
+    body_ink = sorted(ink)[1:-1]
+    body_gap = sorted(gap)[1:-1]
+    mean_ink = sum(body_ink) / len(body_ink) / per_pt
+    mean_gap = sum(body_gap) / len(body_gap) / per_pt
+    assert abs(mean_ink - 0.480) < 0.02, mean_ink
+    assert abs(mean_gap - 0.720) < 0.02, mean_gap
+    # ...and it is no longer declared as "stroked as solid".
+    assert not [e for e in renderer.skipped.values()
+                if "DASH" in e["element"]], renderer.skipped
+
+
+def test_a_dashed_border_runs_the_same_phase_in_both_directions():
+    """The pin: a vertical DASH edge dashes exactly like a horizontal one."""
+    from xml.etree import ElementTree as ET
+
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=1200)
+    for side in ("top", "left"):
+        renderer.defs["border_fill"][side] = {
+            "top": {"type": "NONE"}, "bottom": {"type": "NONE"},
+            "left": {"type": "NONE"}, "right": {"type": "NONE"},
+        }
+        renderer.defs["border_fill"][side][side] = {
+            "type": "DASH", "width_hwp": width, "color": (0, 0, 0)}
+    span = renderer.px(6000)
+    counts = {}
+    for side in ("top", "left"):
+        image = renderer.Image.new("RGB", (span + 40, span + 40),
+                                   (255, 255, 255))
+        draw = renderer.ImageDraw.Draw(image)
+        tc = ET.fromstring(
+            f'<hp:tc xmlns:hp="urn:x" borderFillIDRef="{side}"/>')
+        renderer._draw_cell_borders(draw, {"tc": tc}, 1000, 1000, 6000, 6000)
+        grey = image.convert("L").load()
+        line = renderer.px(1000)
+        counts[side] = [
+            i for i in range(span)
+            if (grey[i, line] < 160 if side == "top" else grey[line, i] < 160)]
+    assert counts["top"], counts
+    assert counts["top"] == counts["left"], (
+        len(counts["top"]), len(counts["left"]))
+
+
+def test_the_unmeasured_dash_family_members_say_they_are_unmeasured():
+    """DOT / DASH_DOT / DASH_DOT_DOT / LONG_DASH: no corpus, no reference."""
+    width = own_render._mm_to_hwp("0.12 mm")
+    for btype, periods in (("DOT", 1), ("DASH_DOT", 2),
+                           ("DASH_DOT_DOT", 3), ("LONG_DASH", 1)):
+        renderer, ink, _gap, _runs = _dash_runs(btype, width)
+        assert len(ink) > 10, (btype, len(ink))
+        assert len(own_render.border_dash_run(btype, width)) == periods, btype
+        reasons = [e["reason"] for e in renderer.skipped.values()
+                   if btype in e["element"]]
+        assert any("not measured itself" in r for r in reasons), (btype, reasons)
+
+
+def test_a_dot_is_square_and_a_long_dash_is_twice_a_dash():
+    """The declared shape of the two unmeasured single-kind patterns."""
+    width = own_render._mm_to_hwp("0.7 mm")
+    dash = own_render.border_dash_run("DASH", width)[0]
+    dot = own_render.border_dash_run("DOT", width)[0]
+    longd = own_render.border_dash_run("LONG_DASH", width)[0]
+    assert abs(dot[0] - width) < 1e-6, dot
+    assert abs(longd[0] - 2 * dash[0]) < 1e-6, (longd, dash)
+    assert dot[1] == dash[1] == longd[1]
 
 
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
@@ -3898,3 +4139,341 @@ def test_a_single_column_document_is_unaffected_by_column_geometry(
     counters = report["block_layout"].get("flow_counters")
     if counters is not None:
         assert "column_breaks_honored" in counters
+
+
+def _page_split_fixture(tmp_path, name="split-para.hwpx", tail_lines=2):
+    """A document whose ONE body paragraph's cached ``vertpos`` restarts.
+
+    Built from a corpus form's own last paragraph so every id it references
+    is valid against that form's ``header.xml``: the paragraph is given a
+    ``hp:linesegarray`` that walks down the page and then jumps back to the
+    top, which is exactly the shape the authoring engine caches for a
+    paragraph it ran off the bottom of a page.  No corpus form has one -- all
+    ten are one-block-per-page government forms -- so this is a synthetic
+    fixture, not a measured reference.
+    """
+    import copy
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+    with zipfile.ZipFile(_need(GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    body = own_render._kids(root, "p")
+    source = body[-1]
+    # Paragraph 0 carries the section's own hp:secPr (and with it hp:pagePr),
+    # so it stays -- emptied of text and of its cached lines, so it draws
+    # nothing and the only line boxes on the page are the split paragraph's.
+    keep = body[0]
+    for run in own_render._kids(keep, "run"):
+        for child in list(run):
+            # Drop the form's own text and its anchored grid -- both draw
+            # line boxes, and this probe counts line boxes.  Everything else
+            # (hp:ctrl, hp:secPr and what hangs off them) stays: the section's
+            # hp:pagePr is in there.
+            if own_render._local(child.tag) in ("t", "tbl", "pic"):
+                run.remove(child)
+    seg_array = own_render._kid(keep, "linesegarray")
+    if seg_array is not None:
+        keep.remove(seg_array)
+    for para in body[1:]:
+        root.remove(para)
+    para = copy.deepcopy(source)
+    seg_array = own_render._kid(para, "linesegarray")
+    if seg_array is not None:
+        para.remove(seg_array)
+    run = own_render._kid(para, "run")
+    for child in list(run):
+        if own_render._local(child.tag) == "t":
+            run.remove(child)
+    head_lines = 3
+    per_line = 6
+    total = head_lines + tail_lines
+    text = ET.SubElement(run, HP + "t")
+    text.text = "가나다라마바" * total
+    seg_array = ET.SubElement(para, HP + "linesegarray")
+    for index in range(total):
+        # Head lines walk down the page; the tail restarts from the next
+        # page's own body top, which is what makes vertpos jump backwards.
+        step = index if index < head_lines else index - head_lines
+        seg = ET.SubElement(seg_array, HP + "lineseg")
+        seg.set("textpos", str(index * per_line))
+        seg.set("vertpos", str(step * 2000))
+        seg.set("vertsize", "1800")
+        seg.set("textheight", "1800")
+        seg.set("baseline", "1500")
+        seg.set("spacing", "200")
+        seg.set("horzpos", "0")
+        seg.set("horzsize", "40000")
+        seg.set("flags", "0")
+    root.append(para)
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for n in names:
+            archive.writestr(n, payload[n])
+    return target
+
+
+def test_a_paragraph_whose_own_vertpos_restarts_is_split_into_page_runs(
+        tmp_path):
+    """``vertpos`` restarts WITHIN a paragraph the authoring engine split."""
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    paras = [own_render.Paragraph(el, renderer.defs["para_pr"])
+             for el in own_render._kids(renderer.sections[0], "p")]
+    body = [p for p in paras if len(p.linesegs) == 5]
+    assert body, [len(p.linesegs) for p in paras]
+    assert body[0].page_runs() == [(0, 3), (3, 5)]
+    # ...and the same paragraph with a monotonic vertpos is ONE run.
+    monotonic = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(monotonic.linesegs):
+        seg.set("vertpos", str(index * 2000))
+    assert monotonic.page_runs() == [(0, 5)]
+    # A three-page paragraph is three runs, not two.
+    triple = own_render.Paragraph(body[0].el, renderer.defs["para_pr"])
+    for index, seg in enumerate(triple.linesegs):
+        seg.set("vertpos", str((index % 2) * 2000))
+    assert triple.page_runs() == [(0, 2), (2, 4), (4, 5)]
+
+
+def test_a_split_paragraphs_tail_draws_on_the_next_page_not_over_its_head(
+        tmp_path):
+    """The defect: the tail was drawn at vertpos 0 of the page the head is on.
+
+    Found on a private report-class holdout, whose page 1 carried a stray
+    one-word line ("있다.", the tail of a body paragraph) above the title
+    where the Hancom reference starts with the title.  Every line of the
+    paragraph was drawn on the head's page, and the tail's cached ``vertpos``
+    -- measured from the NEXT page's body top, so near zero -- put it at the
+    very top.
+    """
+    path = _page_split_fixture(tmp_path, tail_lines=2)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    pages = renderer.paginate()
+    runs = [[getattr(p, "rows", None) for p in page if p.linesegs]
+            for page in pages]
+    assert len(pages) == 2, runs
+    assert runs[0][-1] == (0, 3), runs
+    assert runs[1][0] == (3, 5), runs
+    images, sidecar = renderer.render()
+    assert len(images) == 2
+    boxes = sidecar["line_boxes"]
+    top = renderer.px(renderer.page_geometry()["body_top"])
+    first_page = sorted(b["y0"] for b in boxes if b["page"] == 1)
+    second_page = sorted(b["y0"] for b in boxes if b["page"] == 2)
+    assert len(first_page) == 3, first_page
+    assert len(second_page) == 2, second_page
+    # The tail sits at its own cached vertpos on page 2 -- at the body top,
+    # not rebased onto it and not stacked under the head's last line.
+    assert abs(second_page[0] - first_page[0]) < 2, (first_page, second_page)
+    assert first_page[0] >= top - 2, (first_page, top)
+    # The paragraph is counted once, not once per page it spans.
+    assert sidecar["elements_rendered"]["paragraphs"] == len(
+        own_render._kids(renderer.sections[0], "p"))
+
+
+def test_no_corpus_paragraph_is_split_across_a_page(gianmun_render):
+    """The split is a no-op for every corpus form -- pinned, not assumed."""
+    import glob
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(path, dpi=144)
+        for section in renderer.sections:
+            for el in own_render._kids(section, "p"):
+                para = own_render.Paragraph(el, renderer.defs["para_pr"])
+                assert len(para.page_runs()) == 1, (
+                    os.path.basename(path),
+                    [own_render._iattr(s, "vertpos") for s in para.linesegs])
+
+
+# ------------------------------------------------- hp:outMargin registration
+
+MOEL_2013 = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2013.hwpx")
+
+
+def _out_margin_fixture(tmp_path, name, left, top, right, bottom,
+                        source=None):
+    """A corpus form with every object's ``hp:outMargin`` rewritten.
+
+    The forms themselves only ever declare 0, 138, 140, 141 or 283 in all four
+    slots, so an asymmetric fixture is the only way to tell "the box is inset
+    by @left/@top" from "the box is inset by half of its own footprint".
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(_need(source or GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    for entry in names:
+        if not (entry.startswith("Contents/section")
+                and entry.endswith(".xml")):
+            continue
+        root = ET.fromstring(payload[entry])
+        for el in root.iter():
+            if own_render._local(el.tag) != "outMargin":
+                continue
+            el.set("left", str(left))
+            el.set("top", str(top))
+            el.set("right", str(right))
+            el.set("bottom", str(bottom))
+        payload[entry] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for entry in names:
+            archive.writestr(entry, payload[entry])
+    return target
+
+
+def _table_origins(path, monkeypatch):
+    """``[(x, y), ...]`` in HWPUNIT, in draw order, for every table drawn."""
+    seen = []
+    original = own_render.OwnRenderer._render_table
+
+    def record(self, draw, tbl, origin_hwp):
+        seen.append(tuple(origin_hwp))
+        return original(self, draw, tbl, origin_hwp)
+
+    monkeypatch.setattr(own_render.OwnRenderer, "_render_table", record)
+    own_render.OwnRenderer(path, dpi=144).render()
+    monkeypatch.undo()
+    return seen
+
+
+def test_an_objects_box_is_inset_by_its_own_out_margin(tmp_path, monkeypatch):
+    """``hp:outMargin@left``/``@top`` move the box, and nothing else does.
+
+    Measured, not assumed: across the ten corpus forms this renderer drew
+    every table exactly ``outMargin@top`` above and ``outMargin@left`` left of
+    where its Hancom reference PDF draws it -- 0.00 pt on the forms that
+    declare 0, 1.38/1.40/1.41 pt on those that declare 138/140/141, 2.83 pt on
+    those that declare 283.  See ``engine/references/own-render-notes.md``.
+    """
+    zero = _out_margin_fixture(tmp_path, "om-zero.hwpx", 0, 0, 0, 0)
+    inset = _out_margin_fixture(tmp_path, "om-inset.hwpx", 300, 500, 300, 500)
+    before = _table_origins(zero, monkeypatch)
+    after = _table_origins(inset, monkeypatch)
+    assert before and len(before) == len(after)
+    # gianmun-1ho carries inline tables AND an anchored one; every one moves,
+    # and a table nested in another table's cell moves by its own outer margin
+    # on top of its parent's -- so the shift is a whole multiple of it, never
+    # a fraction and never a form-wide constant.
+    shifts = [(ax - bx, ay - by) for (bx, by), (ax, ay) in zip(before, after)]
+    # The outermost table -- the one whose slot is the body box -- moves by
+    # exactly the declared margin.
+    assert shifts[0] == (300, 500), shifts
+    # A table nested in another table's cell also carries its parent's inset
+    # (and its parent's grown row), so it moves by at least as much again.
+    for dx, dy in shifts:
+        assert dx >= 300 and dy >= 500, shifts
+
+
+def test_out_margin_is_a_footprint_not_a_shift(tmp_path):
+    """The slot grows by @left+@right and the box sits @left/@top inside it.
+
+    Horizontal footprint is what keeps a *centred* object centred: were the
+    outer margin only a shift of the box, a symmetric margin would push every
+    centred table right by half of itself.  The line HEIGHT deliberately does
+    not grow — see ``_object_extent``'s declared limit.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    path = _out_margin_fixture(tmp_path, "om-extent.hwpx", 300, 500, 700, 900)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("Contents/section0.xml"))
+    tables = [el for el in root.iter() if own_render._local(el.tag) == "tbl"]
+    assert tables
+    for tbl in tables:
+        sz = own_render._kid(tbl, "sz")
+        width = own_render._iattr(sz, "width")
+        height = own_render._iattr(sz, "height")
+        assert renderer._object_out_margin(tbl) == (300, 500, 700, 900)
+        assert renderer._object_extent(tbl) == (width + 300 + 700, height)
+        assert renderer._object_origin(tbl, (1000, 2000)) == (1300, 2500)
+
+
+def test_an_object_declaring_no_out_margin_is_drawn_where_it_always_was(
+        tmp_path, monkeypatch):
+    """Zero, and no ``hp:outMargin`` element at all, are both no-ops.
+
+    The rule must not move anything on a document that does not ask for it --
+    which is also why no per-form constant can be involved.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    zero = _out_margin_fixture(tmp_path, "om-zero2.hwpx", 0, 0, 0, 0)
+    with zipfile.ZipFile(zero) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    for parent in root.iter():
+        for child in list(parent):
+            if own_render._local(child.tag) == "outMargin":
+                parent.remove(child)
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    absent = tmp_path / "om-absent.hwpx"
+    with zipfile.ZipFile(absent, "w", zipfile.ZIP_DEFLATED) as archive:
+        for entry in names:
+            archive.writestr(entry, payload[entry])
+    assert _table_origins(zero, monkeypatch) == _table_origins(
+        absent, monkeypatch)
+    zero_png = own_render.render_to_dir(zero, tmp_path / "z", dpi=144)["pngs"]
+    absent_png = own_render.render_to_dir(
+        absent, tmp_path / "a", dpi=144)["pngs"]
+    assert len(zero_png) == len(absent_png)
+    for one, two in zip(zero_png, absent_png):
+        with open(one, "rb") as handle_a, open(two, "rb") as handle_b:
+            assert handle_a.read() == handle_b.read()
+
+
+def test_a_centred_corpus_table_stays_centred_in_the_body_box(monkeypatch):
+    """moel-2013's page-1 table is centred and declares ``outMargin=283``.
+
+    Its reference PDF draws it centred on the body box; a renderer that added
+    the outer margin to the box without growing the slot would push it 2.83 pt
+    right of centre.
+    """
+    path = _need(MOEL_2013)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    geometry = renderer.page_geometry()
+    origins = _table_origins(path, monkeypatch)
+    assert origins
+    tbl = next(el for el in renderer.sections[0].iter()
+               if own_render._local(el.tag) == "tbl")
+    width = own_render._iattr(own_render._kid(tbl, "sz"), "width")
+    centre = origins[0][0] + width / 2.0
+    body_centre = geometry["body_left"] + geometry["usable_width"] / 2.0
+    assert abs(centre - body_centre) <= 100          # 1 pt
+
+
+def test_out_margin_changes_no_corpus_page_count():
+    """Registration is a within-page move: the regression floor is the count.
+
+    Pinned per form so a later change to the outer-margin rule cannot pay for
+    registration with a repagination.
+    """
+    import glob
+
+    expected = {
+        "admrul-gajokdolbom-hyuga-sinchengseo": 1,
+        "gianmun-byeolji-1ho": 1,
+        "gianmun-byeolji-2ho": 1,
+        "jeongbo-gonggae-cheongguseo": 1,
+        "jumin-deungchobon-sinchengseo": 3,
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 21,
+        "moel-pyojun-geunrogyeyakseo-2013": 7,
+        "moel-pyojun-geunrogyeyakseo-2025": 7,
+        "nrf-gyeolgwa-bogoseo-yangsik": 4,
+        "saeopja-deungnok-sinchengseo": 6,
+    }
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem not in expected:
+            continue
+        images, _sidecar = own_render.OwnRenderer(path, dpi=144).render()
+        assert len(images) == expected[stem], stem

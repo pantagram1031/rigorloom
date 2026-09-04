@@ -1,0 +1,327 @@
+{
+  "schema": "rigorloom/render-check-blocks/v1",
+  "document": "render-check-01.hwpx",
+  "provenance": "Rigorloom-authored synthetic",
+  "sections": [
+    {
+      "index": 0,
+      "block_count": 100
+    },
+    {
+      "index": 1,
+      "block_count": 2
+    },
+    {
+      "index": 2,
+      "block_count": 5
+    }
+  ],
+  "features": [
+    {
+      "id": "F01",
+      "label": "정렬 — 왼쪽 (align LEFT)",
+      "section": 0,
+      "block_ordinal": 1
+    },
+    {
+      "id": "F02",
+      "label": "정렬 — 가운데 (align CENTER)",
+      "section": 0,
+      "block_ordinal": 3
+    },
+    {
+      "id": "F03",
+      "label": "정렬 — 오른쪽 (align RIGHT)",
+      "section": 0,
+      "block_ordinal": 5
+    },
+    {
+      "id": "F04",
+      "label": "정렬 — 양쪽 (align JUSTIFY)",
+      "section": 0,
+      "block_ordinal": 7
+    },
+    {
+      "id": "F05",
+      "label": "정렬 — 배분 (align DISTRIBUTE)",
+      "section": 0,
+      "block_ordinal": 9
+    },
+    {
+      "id": "F06",
+      "label": "줄간격 — 130% (PERCENT)",
+      "section": 0,
+      "block_ordinal": 11
+    },
+    {
+      "id": "F07",
+      "label": "줄간격 — 160% (PERCENT)",
+      "section": 0,
+      "block_ordinal": 13
+    },
+    {
+      "id": "F08",
+      "label": "줄간격 — 200% (PERCENT)",
+      "section": 0,
+      "block_ordinal": 15
+    },
+    {
+      "id": "F09",
+      "label": "줄간격 — 고정 24pt (FIXED)",
+      "section": 0,
+      "block_ordinal": 17
+    },
+    {
+      "id": "F10",
+      "label": "첫줄 들여쓰기 (first-line indent)",
+      "section": 0,
+      "block_ordinal": 19
+    },
+    {
+      "id": "F11",
+      "label": "내어쓰기 (hanging indent)",
+      "section": 0,
+      "block_ordinal": 21
+    },
+    {
+      "id": "F12",
+      "label": "좌우 여백 (left/right margin)",
+      "section": 0,
+      "block_ordinal": 23
+    },
+    {
+      "id": "F13",
+      "label": "자간 (hh:spacing −15 / 0 / +30)",
+      "section": 0,
+      "block_ordinal": 25
+    },
+    {
+      "id": "F14",
+      "label": "장평 (hh:ratio 50 / 100 / 150)",
+      "section": 0,
+      "block_ordinal": 27
+    },
+    {
+      "id": "F15",
+      "label": "상대 크기 (hh:relSz 60 / 100 / 140)",
+      "section": 0,
+      "block_ordinal": 29
+    },
+    {
+      "id": "F16",
+      "label": "글자 위치 (hh:offset +40 / 0 / −40)",
+      "section": 0,
+      "block_ordinal": 31
+    },
+    {
+      "id": "F17",
+      "label": "진하게 (bold)",
+      "section": 0,
+      "block_ordinal": 33
+    },
+    {
+      "id": "F18",
+      "label": "기울임 (italic)",
+      "section": 0,
+      "block_ordinal": 35
+    },
+    {
+      "id": "F19",
+      "label": "밑줄 (underline)",
+      "section": 0,
+      "block_ordinal": 37
+    },
+    {
+      "id": "F20",
+      "label": "취소선 (strikeout)",
+      "section": 0,
+      "block_ordinal": 39
+    },
+    {
+      "id": "F21",
+      "label": "위첨자 (superscript)",
+      "section": 0,
+      "block_ordinal": 41
+    },
+    {
+      "id": "F22",
+      "label": "아래첨자 (subscript)",
+      "section": 0,
+      "block_ordinal": 43
+    },
+    {
+      "id": "F23",
+      "label": "글꼴 — 바탕 (declared face 바탕)",
+      "section": 0,
+      "block_ordinal": 45
+    },
+    {
+      "id": "F24",
+      "label": "글꼴 — 돋움 (declared face 돋움)",
+      "section": 0,
+      "block_ordinal": 47
+    },
+    {
+      "id": "F25",
+      "label": "글꼴 — 궁서 (declared face 궁서)",
+      "section": 0,
+      "block_ordinal": 49
+    },
+    {
+      "id": "F26",
+      "label": "글자 크기 8 / 10 / 12 / 14 / 18 / 24 pt",
+      "section": 0,
+      "block_ordinal": 51
+    },
+    {
+      "id": "F27",
+      "label": "표 — 기본 격자 (plain grid 3×3)",
+      "section": 0,
+      "block_ordinal": 53
+    },
+    {
+      "id": "F28",
+      "label": "표 — 셀 병합 (colSpan 2 + rowSpan 2)",
+      "section": 0,
+      "block_ordinal": 55
+    },
+    {
+      "id": "F29",
+      "label": "표 — 셀 음영 (cell shading #D9D9D9)",
+      "section": 0,
+      "block_ordinal": 57
+    },
+    {
+      "id": "F30",
+      "label": "캡션 — 표 (table caption)",
+      "section": 0,
+      "block_ordinal": 59
+    },
+    {
+      "id": "F31",
+      "label": "표 — 테두리 종류 (SOLID / DASH / DOT / DOUBLE / 굵기)",
+      "section": 0,
+      "block_ordinal": 61
+    },
+    {
+      "id": "F32",
+      "label": "표 — 셀 세로 정렬 (TOP / CENTER / BOTTOM)",
+      "section": 0,
+      "block_ordinal": 63
+    },
+    {
+      "id": "F33",
+      "label": "그림 — 본문 안 (inline, treatAsChar)",
+      "section": 0,
+      "block_ordinal": 65
+    },
+    {
+      "id": "F34",
+      "label": "캡션 — 그림 (image caption)",
+      "section": 0,
+      "block_ordinal": 67
+    },
+    {
+      "id": "F35",
+      "label": "그림 — 어울림 TOP_AND_BOTTOM (anchored, text wrap)",
+      "section": 0,
+      "block_ordinal": 69
+    },
+    {
+      "id": "F36",
+      "label": "수식 — 분수 (fraction)",
+      "section": 0,
+      "block_ordinal": 72
+    },
+    {
+      "id": "F37",
+      "label": "수식 — 근호 (sqrt)",
+      "section": 0,
+      "block_ordinal": 74
+    },
+    {
+      "id": "F38",
+      "label": "수식 — 총합·상하한 (sum with limits)",
+      "section": 0,
+      "block_ordinal": 76
+    },
+    {
+      "id": "F39",
+      "label": "수식 — 행렬 (matrix)",
+      "section": 0,
+      "block_ordinal": 78
+    },
+    {
+      "id": "F40",
+      "label": "개요 번호 — 3수준 (numbered outline, 1. / 1.1 / 1.1.1)",
+      "section": 0,
+      "block_ordinal": 80
+    },
+    {
+      "id": "F41",
+      "label": "글머리표 (bullets)",
+      "section": 0,
+      "block_ordinal": 85
+    },
+    {
+      "id": "F42",
+      "label": "각주 (footnote)",
+      "section": 0,
+      "block_ordinal": 88
+    },
+    {
+      "id": "F43",
+      "label": "미주 (endnote)",
+      "section": 0,
+      "block_ordinal": 90
+    },
+    {
+      "id": "F44",
+      "label": "하이퍼링크 (hyperlink field)",
+      "section": 0,
+      "block_ordinal": 92
+    },
+    {
+      "id": "F45",
+      "label": "글상자 / 그리기 개체 사각형 (text box)",
+      "section": 0,
+      "block_ordinal": 94
+    },
+    {
+      "id": "F46",
+      "label": "쪽 나누기 (page break, pageBreakBefore)",
+      "section": 0,
+      "block_ordinal": 96
+    },
+    {
+      "id": "F47",
+      "label": "표 — 쪽을 넘기는 표 (table split across a page)",
+      "section": 0,
+      "block_ordinal": 98
+    },
+    {
+      "id": "F48",
+      "label": "구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)",
+      "section": 1,
+      "block_ordinal": 0
+    },
+    {
+      "id": "F49",
+      "label": "다단 — 2단 구역 (two-column section)",
+      "section": 2,
+      "block_ordinal": 0
+    },
+    {
+      "id": "F50",
+      "label": "머리말 (header)",
+      "section": 0,
+      "band": "header"
+    },
+    {
+      "id": "F51",
+      "label": "꼬리말 + 쪽 번호 (footer with page number)",
+      "section": 0,
+      "band": "footer"
+    }
+  ]
+}
