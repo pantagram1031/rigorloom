@@ -1,0 +1,97 @@
+{
+  "ok": false,
+  "exit_code": 3,
+  "source": "<scratchpad>\\run02-rerun2\\d-render-check-edited.hwpx",
+  "candidate": "<scratchpad>\\run02-rerun2\\out\\d-render-check-edited.accept-candidate.hwpx",
+  "source_sha256": "2b9e097de5cf123a9885ca116f0acb6962ff8536b5d972cf379124ca5e2fc096",
+  "candidate_sha256": "5effd3ea6ca95458fd11523f512ad037d31570b89a17d30615dc3f26263986fe",
+  "edit_marker": "RIGORLOOM-E3-ACCEPT-RENDERCHECK-02",
+  "closed_reason": null,
+  "checks": {
+    "open_no_repair": {
+      "status": "pass",
+      "title": "d-render-check-edited.hwpx [<scratchpad>\\run02-rerun2\\] - 한글"
+    },
+    "save_new_path": {
+      "status": "pass",
+      "candidate_sha256": "5effd3ea6ca95458fd11523f512ad037d31570b89a17d30615dc3f26263986fe"
+    },
+    "close": {
+      "status": "pass"
+    },
+    "reopen": {
+      "status": "pass",
+      "title": "d-render-check-edited.accept-candidate.hwpx [<scratchpad>\\run02-rerun2\\out\\] - 한글"
+    },
+    "edit_preserved": {
+      "status": "pass",
+      "member": "Contents/section0.xml",
+      "kind": "header",
+      "para_index": 0,
+      "hit_count": 1
+    },
+    "edit_preserved_text_export": {
+      "status": "skipped",
+      "reason": "not_exported",
+      "note": "marker is anchored in a header control; GetTextFile(\"TEXT\", \"\") does not export header/footer/footnote/endnote content (hancom-acceptance-02.md run 02 (d))"
+    },
+    "structures_preserved": {
+      "status": "pass",
+      "body_structure": {
+        "source_tables": 6,
+        "candidate_tables": 6,
+        "source_paragraphs": 227,
+        "candidate_paragraphs": 227,
+        "source_table_cells": 111,
+        "candidate_table_cells": 111,
+        "status": "pass"
+      },
+      "style_catalog_delta": {
+        "qname_count_delta": {
+          "hc:intent": 14,
+          "hc:left": 14,
+          "hh:margin": 14,
+          "hh:strikeout": -3,
+          "hh:underline": -3,
+          "hh:heading": -5,
+          "hp:switch": 19,
+          "hh:charPr": -3,
+          "hh:numberings": -1,
+          "hh:typeInfo": 7,
+          "hh:bullets": -1,
+          "hh:spacing": -3,
+          "hp:case": 19,
+          "hh:bullet": -1,
+          "hh:autoSpacing": 19,
+          "hh:paraHead": -11,
+          "hh:font": 7,
+          "hc:prev": 14,
+          "hc:next": 14,
+          "hc:right": 14,
+          "hh:img": -1,
+          "hh:offset": -3,
+          "hh:border": -5,
+          "hh:breakSetting": -5,
+          "hh:outline": -3,
+          "hh:trackchageConfig": 1,
+          "hh:paraPr": -5,
+          "hh:relSz": -3,
+          "hh:numbering": -1,
+          "hh:shadow": -3,
+          "hh:ratio": -3,
+          "hh:fontRef": -3,
+          "hh:lineSpacing": 14,
+          "hh:align": -5,
+          "hp:default": 19
+        },
+        "note": "Contents/header.xml is Hancom's style/reference catalog (fonts, paragraph/char shapes, border-fills, ...), not a page header. Hancom is known to normalise/de-duplicate it on save (hancom-acceptance-02.md run 02 (d)); this delta is informational and never gates this check."
+      }
+    },
+    "bindings_valid": {
+      "status": "pass",
+      "source_sha256": "2b9e097de5cf123a9885ca116f0acb6962ff8536b5d972cf379124ca5e2fc096",
+      "candidate_sha256": "5effd3ea6ca95458fd11523f512ad037d31570b89a17d30615dc3f26263986fe"
+    }
+  },
+  "notes": []
+}
