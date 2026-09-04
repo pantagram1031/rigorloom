@@ -157,6 +157,13 @@ has not been pushed.
   pagination, Hancom-fidelity algorithms, or proof thresholds.
 - Do not merge main, publish/tag/release/upload, alter branch protection, send
   the Hancom inquiry, or use real credentials/private documents.
+- **User boundary, 2026-09-04:** do no further security work for now. Preserve
+  the already completed E0-S1/E0-S2/E0-S3 fixes and evidence, but do not add,
+  investigate, or iterate on further security findings. Continue only the
+  non-security release train: packaging, ordinary regression verification,
+  installed-preview acceptance when the desktop is available, and licensing/
+  provenance work. Running the repository's unchanged general test suites is
+  verification, not authorization for new security development.
 - At most one draft integration PR may be created after evidence is complete;
   none exists now.
 - The earlier `codex/private-desktop-preview` installer and its logs are prior
