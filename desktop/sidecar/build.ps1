@@ -72,6 +72,22 @@ if ($LASTEXITCODE -ne 0) { exit 3 }
 & $VenvPy -m pip install --disable-pip-version-check --quiet 'pymupdf==1.27.2.3'
 if ($LASTEXITCODE -ne 0) { exit 3 }
 
+# TIER 3's imaging library, and the same argument one more time.
+#
+# `engine/scripts/own_render.py` draws with Pillow, imported lazily inside
+# `_require_pillow` so a bare interpreter reports its absence rather than
+# failing at import. Left out of the bundle, the third tier would be dead in
+# every packaged install — and dead in exactly the case it exists for, since
+# the sidecar carries no pyhwpx and `renderPrepare` therefore refuses on any
+# machine without the office suite. deps.py now names PIL as a hidden import;
+# this is what puts the wheel in front of PyInstaller to collect.
+#
+# Pinned to the version the dev interpreter carries, for the same reason
+# PyMuPDF is: a packaged run and a --dev run must not disagree about what was
+# drawn. The role checks below prove it landed.
+& $VenvPy -m pip install --disable-pip-version-check --quiet 'pillow==12.3.0'
+if ($LASTEXITCODE -ne 0) { exit 3 }
+
 # --- freeze ------------------------------------------------------------------
 # The Runtime is stdlib-only and resolves its siblings through sys.path the way
 # every repo script does, so the runtime modules go in as hidden imports and the
@@ -106,6 +122,19 @@ foreach ($module in $engineDeps) {
 # the native libraries alongside.
 $hidden += '--hidden-import'; $hidden += 'pymupdf'
 $hidden += '--hidden-import'; $hidden += 'fitz'
+
+# Pillow's SUBMODULES, and why a hidden import is not enough for this one.
+#
+# deps.py reports TOP-LEVEL names, because that is what `--hidden-import`
+# usually wants. For Pillow it is not: own_render does
+# `from PIL import Image, ImageDraw, ImageFont`, and `--hidden-import PIL`
+# collects the package and whatever the analysis can statically reach from it —
+# which was `PIL.Image` and not the other two. The first build after wiring
+# tier 3 in produced exactly that: `_internal/PIL` on disk, `import PIL` fine,
+# `from PIL import ImageDraw` an ImportError, and the renderer answering
+# `Pillow is not installed`. Caught by the role check below, which is the
+# reason that check renders a real page instead of asking for --version.
+$hidden += '--collect-submodules'; $hidden += 'PIL'
 Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
     (Get-ChildItem -Path $runtimeScripts -Filter '*.py').Count, $engineDeps.Count)
 
@@ -234,7 +263,67 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host 'interpreter role: module registry list ok'
 
+# TIER 3, in the interpreter role. The own renderer is what a fresh install
+# without Hancom actually sees, so a bundle that cannot spawn it ships a
+# product whose page view is a refusal card on every machine but this one.
+# `--version` is the cheapest call that proves both the script and its imports
+# landed; the serve-role check below proves the server knows about it.
+$ownRender = Join-Path $OutDir '_internal\repo\engine\scripts\own_render.py'
+if (-not (Test-Path $ownRender)) {
+    Write-Error "bundled own renderer missing at $ownRender — a machine without Hancom would have no page at all."
+    exit 3
+}
+& $exe $ownRender '--version' > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "the frozen binary cannot run own_render.py as a child (exit $LASTEXITCODE). Tier 3 would be dead in every packaged install."
+    exit 3
+}
+
+# And it must actually DRAW. `--version` proves the script and its eager
+# imports landed; it says nothing about Pillow, which own_render imports lazily
+# inside _require_pillow and which is therefore invisible to PyInstaller unless
+# deps.py named it. A bundle missing the wheel would pass every check above and
+# then answer `renderer_unavailable` on the first page of every install that
+# has no Hancom — which is all of them. So one real page, from the corpus, with
+# the sidecar's own interpreter.
+$ownProbeForm = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx'
+if (Test-Path $ownProbeForm) {
+    $ownProbeOut = Join-Path $env:TEMP ('rigorloom-own-probe-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $ownProbeOut | Out-Null
+    # Start-Process, and NOT `& $exe ... 2>&1`, for the reason the serve-role
+    # probe below documents: under $ErrorActionPreference = 'Stop' PowerShell
+    # turns any native stderr output into a terminating NativeCommandError. The
+    # renderer writes a DeprecationWarning from ElementTree on every run, so the
+    # call operator failed this check on a build where the render had in fact
+    # succeeded and written its PNG. Keeping the streams apart is the fix.
+    $ownProc = Start-Process -FilePath $exe `
+        -ArgumentList @($ownRender, $ownProbeForm, '--out-dir', $ownProbeOut,
+                        '--dpi', '96', '--stem', 'probe') `
+        -RedirectStandardOutput (Join-Path $ownProbeOut 'out.json') `
+        -RedirectStandardError (Join-Path $ownProbeOut 'err.log') `
+        -NoNewWindow -PassThru -Wait
+    $ownProbeCode = $ownProc.ExitCode
+    $ownProbePng = Join-Path $ownProbeOut 'probe-p1.png'
+    $drew = (Test-Path $ownProbePng)
+    Remove-Item -Recurse -Force $ownProbeOut -ErrorAction SilentlyContinue
+    if ($ownProbeCode -ne 0 -or -not $drew) {
+        Write-Error ("the frozen binary ran own_render.py but drew no page (exit $ownProbeCode). " +
+            "Pillow is the usual cause: it is a lazy import and only reaches the bundle " +
+            "through deps.py. Tier 3 would answer renderer_unavailable in every install.")
+        exit 3
+    }
+    Write-Host 'interpreter role: own_render.py drew a real corpus page'
+} else {
+    Write-Warning "no corpus form at $ownProbeForm; tier 3 was not exercised for real in this build"
+}
+
 # Role 1: a real initialize handshake over stdio against the frozen server.
+#
+# Every rigorloomd already running belongs to somebody else — a dev session, an
+# installed app. Remembered here so the reap below can kill what THIS script
+# started and nothing else. See the reap for why a pid is not enough.
+$foreignSidecars = @(Get-Process -Name rigorloomd -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.Id })
 $probeRoot = Join-Path $env:TEMP ('rigorloomd-probe-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $probeRoot | Out-Null
 # Two frames, not one. `initialize` proves the server answers; `capabilities/list`
@@ -267,7 +356,18 @@ $serveExit = $proc.ExitCode
 # then keeps the build script's process tree open: a caller that waits on the
 # tree (a CI runner, or a background shell) sees a build that printed "exit 0"
 # and then hung for a quarter of an hour. Reap it explicitly.
+#
+# And reaping the pid is NOT enough, which is what the last two builds on this
+# bench proved: PyInstaller's one-dir bootloader is the process Start-Process
+# waits on, and the real interpreter is its CHILD. Killing the bootloader
+# leaves that child alive and reparented, holding the build script's tree open
+# exactly as the paragraph above describes — the symptom this comment was
+# written about, still happening. So anything named rigorloomd that was not
+# running before this probe started is ours, and goes.
 Get-Process -Id $proc.Id -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name rigorloomd -ErrorAction SilentlyContinue |
+    Where-Object { $foreignSidecars -notcontains $_.Id } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $probeRoot -ErrorAction SilentlyContinue
 if ($serveExit -ne 0) {
@@ -304,6 +404,32 @@ if ($caps.geometry.state -ne 'yes') {
 }
 Write-Host ("serve role: rasterizer present (module {0}, geometry state {1})" -f `
     $caps.render.rasterizer.module, $caps.geometry.state)
+
+# TIER 3, from the frozen server's own mouth. This is the row that decides what
+# a fresh install sees: Hancom is absent from the packaged sidecar (no pyhwpx),
+# so `prepare` is `no` on every machine that has not installed the office suite
+# and `render.own` is the only thing standing between the user and a refusal
+# card. A bundle whose server does not know about the third tier is a bundle
+# that ships the old behaviour, and it would pass every other check here.
+if ($caps.render.own.state -ne 'yes') {
+    Write-Error ("the frozen server reports render.own state '" + $caps.render.own.state +
+        "' (" + $caps.render.own.reason + "). Tier 3 did not make it into the bundle, " +
+        "so a machine without Hancom would see no page at all.")
+    exit 3
+}
+if ($caps.render.grades -notcontains 'own-uncertified') {
+    Write-Error ("the frozen server does not publish the 'own-uncertified' grade. " +
+        "The Desktop switches on that word to draw its badge; without it a page " +
+        "our own renderer drew could be shown unlabelled. Grades: " +
+        ($caps.render.grades -join ', '))
+    exit 3
+}
+if ($caps.render.own.certified -ne $false) {
+    Write-Error "the frozen server claims the own renderer is certified. It is not."
+    exit 3
+}
+Write-Host ("serve role: tier 3 present (grade {0}, backend {1}, grades {2})" -f `
+    $caps.render.own.grade, $caps.render.own.backend, ($caps.render.grades -join '/'))
 
 # The SEAT derivation, from the frozen runtime's own mouth. `document/pageGeometry`
 # existed before cell_borders did and answered without placing a single seat on

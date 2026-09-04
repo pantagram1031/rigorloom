@@ -1,0 +1,3040 @@
+{
+  "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+  "corpus_totals": {
+    "all_paragraphs": {
+      "break_position_recall": 0.268519,
+      "break_positions_cached": 216,
+      "break_positions_computed": 243,
+      "break_positions_matched": 58,
+      "break_sequence_agreement": 0.924115,
+      "cached_lines": 2364,
+      "computed_lines": 2391,
+      "first_line_box_exact": 1943,
+      "line_count_agreement": 0.969739,
+      "paragraphs_break_sequence_exact": 1985,
+      "paragraphs_excluded": 12,
+      "paragraphs_line_count_exact": 2083,
+      "paragraphs_scored": 2148
+    },
+    "conditional_breaks": {
+      "accuracy": 0.24537,
+      "decisions": 216,
+      "early": 82,
+      "exact": 53,
+      "late": 81
+    },
+    "multiline_paragraphs": {
+      "break_positions_cached": 216,
+      "break_positions_computed": 203,
+      "break_positions_matched": 58,
+      "break_sequence_agreement": 0.221519,
+      "cached_lines": 374,
+      "computed_lines": 361,
+      "first_line_box_exact": 139,
+      "line_count_agreement": 0.841772,
+      "paragraphs_break_sequence_exact": 35,
+      "paragraphs_line_count_exact": 133,
+      "paragraphs_scored": 158
+    }
+  },
+  "dpi": 144,
+  "forms": [
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.5,
+        "break_positions_cached": 2,
+        "break_positions_computed": 2,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.954545,
+        "cached_lines": 24,
+        "computed_lines": 24,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 22,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 21,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 22,
+        "paragraphs_scored": 22
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.5,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 1.031087,
+          "n": 2,
+          "p10": 0.901276,
+          "p90": 1.031087
+        },
+        "decisions": 2,
+        "early": 1,
+        "exact": 1,
+        "late": 0,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            40
+          ],
+          "characters": 53,
+          "computed": [
+            0,
+            38
+          ],
+          "paragraph": 13,
+          "text": "   본인은 가족 돌봄을 위하여 (□휴직, □휴가)을 하고자 하오니 허가하여 주시기 바랍니다. "
+        }
+      ],
+      "document": "admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.5,
+        "break_positions_cached": 2,
+        "break_positions_computed": 2,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.5,
+        "cached_lines": 4,
+        "computed_lines": 4,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 2,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 1,
+        "paragraphs_line_count_exact": 2,
+        "paragraphs_scored": 2
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.0,
+        "break_positions_cached": 2,
+        "break_positions_computed": 2,
+        "break_positions_matched": 0,
+        "break_sequence_agreement": 0.96875,
+        "cached_lines": 34,
+        "computed_lines": 34,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 32,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 31,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 32,
+        "paragraphs_scored": 32
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.0,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 1.005362,
+          "n": 2,
+          "p10": 0.979223,
+          "p90": 1.005362
+        },
+        "decisions": 2,
+        "early": 2,
+        "exact": 0,
+        "late": 0,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            65,
+            122
+          ],
+          "characters": 154,
+          "computed": [
+            0,
+            59,
+            112
+          ],
+          "paragraph": 63,
+          "text": " - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\","
+        }
+      ],
+      "document": "gianmun-byeolji-1ho.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.0,
+        "break_positions_cached": 2,
+        "break_positions_computed": 2,
+        "break_positions_matched": 0,
+        "break_sequence_agreement": 0.0,
+        "cached_lines": 3,
+        "computed_lines": 3,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 1,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 0,
+        "paragraphs_line_count_exact": 1,
+        "paragraphs_scored": 1
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.5,
+        "break_positions_cached": 2,
+        "break_positions_computed": 1,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.95,
+        "cached_lines": 22,
+        "computed_lines": 21,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 20,
+        "line_count_agreement": 0.95,
+        "paragraphs_break_sequence_exact": 19,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 19,
+        "paragraphs_scored": 20
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.5,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.986732,
+          "n": 2,
+          "p10": 0.924231,
+          "p90": 0.986732
+        },
+        "decisions": 2,
+        "early": 0,
+        "exact": 1,
+        "late": 1,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 56,
+          "computed": [
+            0
+          ],
+          "paragraph": 1,
+          "text": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제2호서식] <개정 2016. 7. 11.>"
+        }
+      ],
+      "document": "gianmun-byeolji-2ho.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.5,
+        "break_positions_cached": 2,
+        "break_positions_computed": 1,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.5,
+        "cached_lines": 4,
+        "computed_lines": 3,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 2,
+        "line_count_agreement": 0.5,
+        "paragraphs_break_sequence_exact": 1,
+        "paragraphs_line_count_exact": 1,
+        "paragraphs_scored": 2
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.285714,
+        "break_positions_cached": 7,
+        "break_positions_computed": 7,
+        "break_positions_matched": 2,
+        "break_sequence_agreement": 0.913793,
+        "cached_lines": 65,
+        "computed_lines": 65,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 58,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 53,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 58,
+        "paragraphs_scored": 58
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.285714,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 1.008167,
+          "n": 7,
+          "p10": 0.951862,
+          "p90": 1.030633
+        },
+        "decisions": 7,
+        "early": 2,
+        "exact": 2,
+        "late": 3,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 94,
+          "computed": [
+            0,
+            70
+          ],
+          "paragraph": 45,
+          "text": "※ 「공공기관의 정보공개에 관한 법률 시행령」 제17조제3항에 따라 수수료 감면 대상에 해당하는 경우에만 적으며,감면 사유를 증명할 수 있는 서류를 첨부하시기 바랍니다."
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            57
+          ],
+          "characters": 70,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 47,
+          "text": "「공공기관의 정보공개에 관한 법률」 제10조제1항 및 같은 법 시행령 제6조제1항에 따라 위와 같이 정보의 공개를 청구합니다."
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 103,
+          "computed": [
+            0,
+            66
+          ],
+          "paragraph": 73,
+          "text": "1. 공개 청구된 공개 대상 정보의 전부 또는 일부가 제3자와 관련이 있다고 인정되는 경우에는 「공공기관의 정보공개에 관한 법률」 제11조제3항에 따라 청구사실이 제3자에게 통지됩니다."
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            62,
+            123
+          ],
+          "characters": 163,
+          "computed": [
+            0,
+            62,
+            127
+          ],
+          "paragraph": 74,
+          "text": "2. 정보공개를 청구한 날로부터 20일이 경과하도록 정보공개 결정이 없는 경우에는 「공공기관의 정보공개에 관한 법률」 제18조부터 제20조까지의 규정에 따라 해당 공공기관에 이의신청을 하거나, 행정심판(서면 또는 온"
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            62
+          ],
+          "characters": 94,
+          "computed": [
+            0,
+            59
+          ],
+          "paragraph": 76,
+          "text": "4. 본인확인이 필요한 정보를 청구하는 경우「공공기관의 정보공개에 관한 법률」 제10조제1항제2호에 따라 공공기관에서 청구인의 주민등록번호를 추가로 요구할 수 있습니다."
+        }
+      ],
+      "document": "jeongbo-gonggae-cheongguseo.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.285714,
+        "break_positions_cached": 7,
+        "break_positions_computed": 7,
+        "break_positions_matched": 2,
+        "break_sequence_agreement": 0.166667,
+        "cached_lines": 13,
+        "computed_lines": 13,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 6,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 1,
+        "paragraphs_line_count_exact": 6,
+        "paragraphs_scored": 6
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.388889,
+        "break_positions_cached": 36,
+        "break_positions_computed": 36,
+        "break_positions_matched": 14,
+        "break_sequence_agreement": 0.879699,
+        "cached_lines": 169,
+        "computed_lines": 169,
+        "first_line_box_agreement": 0.962406,
+        "first_line_box_exact": 128,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 117,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 133,
+        "paragraphs_scored": 133
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.388889,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.977916,
+          "n": 36,
+          "p10": 0.95161,
+          "p90": 0.995307
+        },
+        "decisions": 36,
+        "early": 15,
+        "exact": 14,
+        "late": 7,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            28
+          ],
+          "characters": 39,
+          "computed": [
+            0,
+            30
+          ],
+          "paragraph": 2,
+          "text": "본인인 경우 정부24(www.gov.kr) 에서도 신청할 수 있습니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            44
+          ],
+          "characters": 53,
+          "computed": [
+            0,
+            43
+          ],
+          "paragraph": 34,
+          "text": "※ 신청인이 본인의 주민등록표를 열람하거나 등ㆍ초본 교부를 신청하는 경우에는 작성하지 않습니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            59
+          ],
+          "characters": 118,
+          "computed": [
+            0,
+            61
+          ],
+          "paragraph": 46,
+          "text": "※ 개인 정보 보호를 위해 아래의 등ㆍ초본 사항 중 필요한 사항만 선택하여 신청할 수 있습니다. 포함 여부를 선택 하지 않을 경우 신청인 또는 교부 대상자의 성명, 생년월일, 주소 등 기본적인 사항만 제공됩니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            63
+          ],
+          "characters": 112,
+          "computed": [
+            0,
+            106
+          ],
+          "paragraph": 83,
+          "text": "9. 국내거소신고번호 / 외국인등록번호                                                                                     [  ]포함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            73
+          ],
+          "characters": 88,
+          "computed": [
+            0,
+            70
+          ],
+          "paragraph": 101,
+          "text": " 「민원 처리에 관한 법률」 제10조의2, 「민원 처리에 관한 법률 시행령」 제7조의3 및 제7조의4에 따라 공동이용을 위한 본인정보를 위와 같이 신청합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            74
+          ],
+          "characters": 116,
+          "computed": [
+            0,
+            70
+          ],
+          "paragraph": 108,
+          "text": "[   ] 1. 본인은 이 건 업무 처리와 관련하여 「민원 처리에 관한 법률」 제10조의2에 따른 본인정보 제공 요구를 통해 민원처리기관의 담당자가 전자적으로 본인에 관한 행정정보를 확인하는 것에 동의합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            70
+          ],
+          "characters": 114,
+          "computed": [
+            0,
+            69
+          ],
+          "paragraph": 110,
+          "text": "※ 신청인이 본인정보 공동이용 또는 행정정보의 공동이용에 동의하지 않거나 본인정보 공동이용 또는 행정정보의 공동이용을 통해 확인할 수 있는 서류가 아닌 경우에는 신청인이 직접 해당 서류를 제출해야 합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            59,
+            115,
+            170,
+            225
+          ],
+          "characters": 244,
+          "computed": [
+            0,
+            54,
+            112,
+            162,
+            213
+          ],
+          "paragraph": 116,
+          "text": "1. 주민등록표 열람 또는 등ㆍ초본 교부 신청인은 주민등록증(모바일 주민등록증을 포함합니다) 등 신분증명서를 제시하여야 하며, 신청인이 「출입국관리법」 제31조에 따라 등록한 외국인 또는 「재외동포의 출입국과 법적 "
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            57,
+            113
+          ],
+          "characters": 141,
+          "computed": [
+            0,
+            57,
+            112
+          ],
+          "paragraph": 117,
+          "text": "2. 본인ㆍ세대원이 본인ㆍ세대원의 주민등록표 열람 또는 등ㆍ초본 교부를 주민등록증(모바일 주민등록증을 포함합니다) 등 신분증명서만을 제시하여 신청하는 경우에는 “전자 이미지 서명 입력기”에 자필 한글 성명으로 서명하"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            59
+          ],
+          "characters": 71,
+          "computed": [
+            0,
+            58
+          ],
+          "paragraph": 118,
+          "text": "3. ｢주민등록법 시행규칙｣ 제18조제1항에 따른 주민등록표 열람 또는 등ㆍ초본 교부 신청 수수료 면제 대상은 다음과 같습니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            58
+          ],
+          "characters": 94,
+          "computed": [
+            0,
+            55
+          ],
+          "paragraph": 130,
+          "text": "   타. 미성년자인 자녀(가족관계등록부 기록을 기준으로 하고, 조부모와 손자녀로만 구성된 가족의 경우에는 손자녀를 말합니다) 2명 이상을 양육하는 사람이 신청하는 경우"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            57
+          ],
+          "characters": 85,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 134,
+          "text": "5. 상속 등기 대위 신청을 위하여 채무자의 주민등록초본 교부를 신청하는 경우에는 과거의 주소 변동 사항을 포함하여 열람하게 하거나 발급할 수 있습니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64,
+            119,
+            179,
+            238
+          ],
+          "characters": 272,
+          "computed": [
+            0,
+            63,
+            122,
+            182,
+            242
+          ],
+          "paragraph": 136,
+          "text": "7. 초본 교부를 신청할 때 “3. 과거의 주소 변동 사항 중 세대주의 성명과 세대주와의 관계” 항목은 대상자가 성년인 경우에는 본인 또는 본인의 위임을 받은 사람, 대상자가 미성년자인 경우에는 세대주 또는 직계존속"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            59
+          ],
+          "characters": 112,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 138,
+          "text": "9. 「주민등록법」 제37조제5호에 따라 거짓이나 그 밖의 부정한 방법으로 다른 사람의 주민등록표를 열람하거나 등ㆍ초본을 교부받은 경우에는 3년 이하의 징역형이나 3천만원 이하의 벌금형을 받게 됩니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            60,
+            113
+          ],
+          "characters": 171,
+          "computed": [
+            0,
+            59,
+            113
+          ],
+          "paragraph": 139,
+          "text": "10. 한 신청자가 하나의 증명 자료를 가지고 같은 목적으로 여러 사람의 주민등록표를 열람하거나 등ㆍ초본 교부를 신청하는 경우에는 별지 제7호서식과 별지 제8호서식을 함께 사용하여 일괄적으로 신청할 수 있으며, 이 "
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            61,
+            115
+          ],
+          "characters": 136,
+          "computed": [
+            0,
+            60,
+            115
+          ],
+          "paragraph": 140,
+          "text": "11. 신청인이 「출입국관리법」 제31조에 따라 등록한 외국인 또는 「재외동포의 출입국과 법적 지위에 관한 법률」 제6조에 따라 국내거소신고를 한 외국국적동포인 경우에는 주민등록번호칸에 외국인등록번호 또는 국내거소신"
+        }
+      ],
+      "document": "jumin-deungchobon-sinchengseo.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.388889,
+        "break_positions_cached": 36,
+        "break_positions_computed": 36,
+        "break_positions_matched": 14,
+        "break_sequence_agreement": 0.407407,
+        "cached_lines": 63,
+        "computed_lines": 63,
+        "first_line_box_agreement": 0.962963,
+        "first_line_box_exact": 26,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 11,
+        "paragraphs_line_count_exact": 27,
+        "paragraphs_scored": 27
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.295455,
+        "break_positions_cached": 44,
+        "break_positions_computed": 61,
+        "break_positions_matched": 13,
+        "break_sequence_agreement": 0.916115,
+        "cached_lines": 497,
+        "computed_lines": 514,
+        "first_line_box_agreement": 0.715232,
+        "first_line_box_exact": 324,
+        "line_count_agreement": 0.958057,
+        "paragraphs_break_sequence_exact": 415,
+        "paragraphs_excluded": 9,
+        "paragraphs_line_count_exact": 434,
+        "paragraphs_scored": 453
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.340909,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.966338,
+          "n": 44,
+          "p10": 0.867609,
+          "p90": 1.008948
+        },
+        "decisions": 44,
+        "early": 14,
+        "exact": 15,
+        "late": 15,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            7
+          ],
+          "characters": 12,
+          "computed": [
+            0,
+            8
+          ],
+          "paragraph": 129,
+          "text": "창업아이템, 이전기술의"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            7
+          ],
+          "characters": 12,
+          "computed": [
+            0,
+            8
+          ],
+          "paragraph": 138,
+          "text": "창업아이템, 이전기술의"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            7
+          ],
+          "characters": 12,
+          "computed": [
+            0,
+            8
+          ],
+          "paragraph": 150,
+          "text": "창업아이템, 이전기술의"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 4,
+          "computed": [
+            0,
+            3
+          ],
+          "paragraph": 266,
+          "text": "지원분야"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 4,
+          "computed": [
+            0,
+            3
+          ],
+          "paragraph": 273,
+          "text": "기획지원"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 3,
+          "computed": [
+            0,
+            2
+          ],
+          "paragraph": 274,
+          "text": "전문가"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            3
+          ],
+          "characters": 5,
+          "computed": [
+            0,
+            2,
+            4
+          ],
+          "paragraph": 280,
+          "text": "기술료이전"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 283,
+          "text": "10,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 285,
+          "text": "10,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 299,
+          "text": "16,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 301,
+          "text": "16,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 4,
+          "computed": [
+            0,
+            3
+          ],
+          "paragraph": 303,
+          "text": "지원분야"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            4
+          ],
+          "characters": 6,
+          "computed": [
+            0,
+            2,
+            5
+          ],
+          "paragraph": 311,
+          "text": "시제품 제작"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 314,
+          "text": "10,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 316,
+          "text": "10,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 3,
+          "computed": [
+            0,
+            2
+          ],
+          "paragraph": 322,
+          "text": "마케팅"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 335,
+          "text": "14,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 337,
+          "text": "19,000,000"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            44
+          ],
+          "characters": 62,
+          "computed": [
+            0,
+            42
+          ],
+          "paragraph": 546,
+          "text": "2. 아울러 아래의 기술이 원활하고 신속하게 이전되고, 이를 사업화 하는데 지속적인 지원을 할 것을 확인합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 7,
+          "computed": [
+            0,
+            6
+          ],
+          "paragraph": 550,
+          "text": "기관(기업)명"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 7,
+          "computed": [
+            0,
+            5
+          ],
+          "paragraph": 569,
+          "text": "(기술도입자)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            56,
+            109
+          ],
+          "characters": 149,
+          "computed": [
+            0,
+            59,
+            111
+          ],
+          "paragraph": 643,
+          "text": "제15조 제1항 제1호, 제17조 제1항 제1호, 제23조 제1호, 제24조 제1항 제1호 및「신용정보의 이용 및 보호에 관한 법률」제32조제1항, 제33조, 제34조에 따라 아래와 같이 개인정보의 수집 · 이용 및"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54
+          ],
+          "characters": 73,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 655,
+          "text": "   ◦ 위 개인정보는 수집․이용에 관한 동의일로부터 보유목적 달성 시 또는 정보주체가 개인정보 삭제를 요청할 경우 지체 없이 파기"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            51
+          ],
+          "characters": 83,
+          "computed": [
+            0,
+            46
+          ],
+          "paragraph": 657,
+          "text": "   ◦ 단, 사업 종료일 후에는 향후 정부지원사업 신청 시의 이력관리만을 위하여 보유․이용되며 보유기간은 3년(공공기록물 관리에 관한 법률 시행령)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            50,
+            95
+          ],
+          "characters": 117,
+          "computed": [
+            0,
+            46,
+            92
+          ],
+          "paragraph": 660,
+          "text": "   ◦ 위 개인정보 중 필수항목의 수집․이용에 관한 동의는 본사업의 수행을 위해 필수적이므로 이에 동의하셔야 이후 절차를 진행가능(단, 동의하지 않으시는 경우 본 지원 사업 주관기관 참여인력으로 신청이 불가)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 75,
+          "computed": [
+            0,
+            46
+          ],
+          "paragraph": 681,
+          "text": "   ◦ 위 개인정보는 제공된 날부터 3년간 보유·이용되며 보유목적 달성 시 또는 정보주체가개인정보 삭제를 요청할 경우 지체 없이 파기"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            51
+          ],
+          "characters": 56,
+          "computed": [
+            0,
+            47
+          ],
+          "paragraph": 684,
+          "text": "   ◦ 위 개인정보의 제공 동의를 거부할 권리가 있으며, 동의를 거부 시 본 지원 사업에신청이 불가"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            47
+          ],
+          "characters": 65,
+          "computed": [
+            0,
+            42
+          ],
+          "paragraph": 702,
+          "text": "본 「개인정보 활용 동의서」는 “기술이전 예비창업가 지원 사업”과 관련하여 발생하는 개인정보의 수집 및 활용에 한함."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            55,
+            107,
+            153,
+            198
+          ],
+          "characters": 220,
+          "computed": [
+            0,
+            55,
+            111,
+            158,
+            206
+          ],
+          "paragraph": 715,
+          "text": "     이름, 주민등록번호 또는 여권번호, 전화번호, 직장주소, 자택주소, 전자우편, 팩스번호, 학력(학교, 전공, 학위, 연구분야 등), 경력(기간, 직위 등), 특허/프로그램 출원, 등록실적, 연구논문 발표실적"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            49,
+            93
+          ],
+          "characters": 137,
+          "computed": [
+            0,
+            49,
+            96
+          ],
+          "paragraph": 719,
+          "text": "  4. 본인은 제1항의 정보를 비롯하여 과제 수행과정에서 추가적으로 제공되는 참여제한 정보 등을 과학기술기본법, 산업기술혁신촉진법 등 관련 법령 및 국가연구개발사업 관련 규정에 따라 각 중앙행정기관의 장이나 유관기"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            48,
+            92,
+            137,
+            178
+          ],
+          "characters": 184,
+          "computed": [
+            0,
+            48,
+            96,
+            140
+          ],
+          "paragraph": 721,
+          "text": "  5. 본인은 상기 개인정보의 수집에 대하여 거부할 권리를 보유하고 있으며, 동의를 거부하면 “기술이전 예비창업가 지원 사업” 관련 사업의 참여에 신청자격 검토, 평가, 선정, 협약, 사업운영, 사후관리 등이 불가"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45,
+            85,
+            130
+          ],
+          "characters": 158,
+          "computed": [
+            0,
+            45,
+            84,
+            127
+          ],
+          "paragraph": 736,
+          "text": "기술이전 예비창업가 지원 사업을 신청한 당 예비창업자는 본 사업을 수행함에 있어 여타 정부/지자체 예비창업자 유사 창업지원사업에 중복적인 지원을 받지 않았으며, 사업 중복 확인 및 이에 따른 사업비 환수 조치 등 사"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            41,
+            79
+          ],
+          "characters": 108,
+          "computed": [
+            0,
+            41,
+            81
+          ],
+          "paragraph": 740,
+          "text": " 본인(또는 본 수행기업)은 광주테크노파크에서 주관하여 시행하는 기업지원 사업에 선정되어 사업을 수행함에 있어 신의성실의 원칙에 입각한 상호 신뢰를 바탕으로 다음 사항을 준수할 것을 선언합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 42,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 749,
+          "text": "    윤리경영에 앞장서 국민으로부터 신뢰받는 청렴한 사업을 수행하겠습니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52,
+            100,
+            147
+          ],
+          "characters": 177,
+          "computed": [
+            0,
+            51,
+            99,
+            146
+          ],
+          "paragraph": 772,
+          "text": "󰊱 중소기업기본법 제20조의2에 따른 기업 소재지, 업종, 매출액, 납입자본금, 자산총액, 부채총액, 영업이익, 당기순이익, 개업일·휴업일·폐업일, 전자계산서 발급액, 전자지급 거래액, 일반연구ˑ인력개발비, 현금영수"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54
+          ],
+          "characters": 58,
+          "computed": [
+            0,
+            52
+          ],
+          "paragraph": 790,
+          "text": "본인은 위 목적으로 동의서에 적시된 정보 및 기관에 한해 기업정보를 수집‧이용‧제공하는 것에 동의합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            63
+          ],
+          "characters": 112,
+          "computed": [
+            0,
+            62
+          ],
+          "paragraph": 792,
+          "text": " ※ 본 동의서 징구는 민법 제114조의 행정행위의 대리권 행사방식의 현명주의를 적용하여, 중소기업 지원사업의 효율적 운영을 위해 본 사업의 소관부처 및 수행기관이 대신하여 받는 것임을 알려 드립니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            63
+          ],
+          "characters": 79,
+          "computed": [
+            0,
+            61
+          ],
+          "paragraph": 793,
+          "text": " ※ 귀하는 기업정보 제공에 대한 동의를 거부할 권리가 있습니다. 동의를 거부할 경우 지원사업 맞춤형 서비스 이용에 제한을 받을 수 있습니다."
+        }
+      ],
+      "document": "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.295455,
+        "break_positions_cached": 44,
+        "break_positions_computed": 45,
+        "break_positions_matched": 13,
+        "break_sequence_agreement": 0.241379,
+        "cached_lines": 73,
+        "computed_lines": 74,
+        "first_line_box_agreement": 0.862069,
+        "first_line_box_exact": 25,
+        "line_count_agreement": 0.896552,
+        "paragraphs_break_sequence_exact": 7,
+        "paragraphs_line_count_exact": 26,
+        "paragraphs_scored": 29
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.204082,
+        "break_positions_cached": 49,
+        "break_positions_computed": 63,
+        "break_positions_matched": 10,
+        "break_sequence_agreement": 0.844106,
+        "cached_lines": 312,
+        "computed_lines": 326,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 263,
+        "line_count_agreement": 0.920152,
+        "paragraphs_break_sequence_exact": 222,
+        "paragraphs_excluded": 1,
+        "paragraphs_line_count_exact": 242,
+        "paragraphs_scored": 263
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.163265,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.891913,
+          "n": 49,
+          "p10": 0.682896,
+          "p90": 1.035898
+        },
+        "decisions": 49,
+        "early": 19,
+        "exact": 8,
+        "late": 22,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            60
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 2,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 67,
+          "computed": [
+            0,
+            66
+          ],
+          "paragraph": 13,
+          "text": "    ·                          원,                                 원"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 67,
+          "computed": [
+            0,
+            66
+          ],
+          "paragraph": 14,
+          "text": "    ·                          원,                                 원"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 47,
+          "computed": [
+            0,
+            44
+          ],
+          "paragraph": 15,
+          "text": "  - 임금지급일 : 매월(매주 또는 매일)       일(휴일의 경우는 전일 지급)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 51,
+          "computed": [
+            0,
+            43
+          ],
+          "paragraph": 16,
+          "text": "  - 지급방법 : 근로자에게 직접지급(    ),  근로자 명의 예금통장에 입금(    )"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            41
+          ],
+          "characters": 76,
+          "computed": [
+            0,
+            36,
+            73
+          ],
+          "paragraph": 20,
+          "text": "  - 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            58
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 34,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 67,
+          "computed": [
+            0,
+            66
+          ],
+          "paragraph": 45,
+          "text": "    ·                          원,                                 원"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 67,
+          "computed": [
+            0,
+            66
+          ],
+          "paragraph": 46,
+          "text": "    ·                          원,                                 원"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 47,
+          "computed": [
+            0,
+            44
+          ],
+          "paragraph": 47,
+          "text": "  - 임금지급일 : 매월(매주 또는 매일)       일(휴일의 경우는 전일 지급)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            43
+          ],
+          "paragraph": 48,
+          "text": "  - 지급방법 : 근로자에게 직접지급(    ),  근로자 명의 예금통장에 입금(    ) "
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            47
+          ],
+          "characters": 59,
+          "computed": [
+            0,
+            46
+          ],
+          "paragraph": 88,
+          "text": "   본인은 위 연소근로자             가  위 사업장에서  근로를 하는 것에 대하여 동의합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            60
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 98,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 47,
+          "computed": [
+            0,
+            44
+          ],
+          "paragraph": 109,
+          "text": "  - 기타 제수당(시간외․야간․휴일근로수당 등):          원(내역별 기재)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 47,
+          "computed": [
+            0,
+            44
+          ],
+          "paragraph": 113,
+          "text": "  - 임금지급일 : 매월(매주 또는 매일)       일(휴일의 경우는 전일 지급)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 51,
+          "computed": [
+            0,
+            43
+          ],
+          "paragraph": 114,
+          "text": "  - 지급방법 : 근로자에게 직접지급(    ),  근로자 명의 예금통장에 입금(    )"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 82,
+          "computed": [
+            0,
+            38,
+            74
+          ],
+          "paragraph": 118,
+          "text": "  - “사업주”는 근로계약을 체결함과 동시에 본 계약서를 사본하여 “근로자”의 교부요구와 관계없이 “근로자”에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            60
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 131,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 57,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 141,
+          "text": "  - 기타급여(제수당 등) :  있음 :            원(내역별 기재), 없음 (    ), "
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 47,
+          "computed": [
+            0,
+            44
+          ],
+          "paragraph": 143,
+          "text": "  - 임금지급일 : 매월(매주 또는 매일)       일(휴일의 경우는 전일 지급)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            53
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            43,
+            82
+          ],
+          "paragraph": 144,
+          "text": "  - 지급방법 : 근로자에게 직접지급(    ),  근로자 명의 예금통장에 입금(    )  7. 연차유급휴가: 통상근로자의 근로시간에 비례하여 연차유급휴가 부여"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 82,
+          "computed": [
+            0,
+            38,
+            74
+          ],
+          "paragraph": 146,
+          "text": "  - “사업주”는 근로계약을 체결함과 동시에 본 계약서를 사본하여 “근로자”의 교부요구와 관계없이 “근로자”에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            78
+          ],
+          "characters": 107,
+          "computed": [
+            0,
+            84
+          ],
+          "paragraph": 195,
+          "text": "- Probation period: [ ]Included (For [ ]1 month  [ ]2 months [ ]3 months from entry date)   [ ]Not included"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            26
+          ],
+          "characters": 41,
+          "computed": [
+            0,
+            21
+          ],
+          "paragraph": 214,
+          "text": "  - 1일 평균 시간외 근로시간:  시간(사업장 사정에 따라 변동 가능)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            33
+          ],
+          "characters": 44,
+          "computed": [
+            0,
+            28
+          ],
+          "paragraph": 215,
+          "text": "  - 교대제([ ]2조2교대, [ ]3조3교대, [ ]4조3교대, [ ]기타)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            22,
+            41
+          ],
+          "characters": 57,
+          "computed": [
+            0,
+            20,
+            39
+          ],
+          "paragraph": 218,
+          "text": "※ 가사사용인, 개인간병인, 농업, 축산업 및 어업에 종사하는 사람의 경우에는 기재를 생략할 수 있음."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            28,
+            52,
+            83,
+            112
+          ],
+          "characters": 119,
+          "computed": [
+            0,
+            37,
+            79
+          ],
+          "paragraph": 220,
+          "text": "※ An employer of workers in domestic help, nursing, agriculture and livestock, and fishery can omit the working hours. "
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            20,
+            41,
+            61
+          ],
+          "characters": 79,
+          "computed": [
+            0,
+            19,
+            41,
+            60
+          ],
+          "paragraph": 222,
+          "text": "※ 「근로기준법」 제63조에 따른 농림, 축산, 양잠, 수산 사업의 경우 같은 법에 따른 근로시간, 휴게, 휴일에 관한 규정은 적용받지 않음."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            33
+          ],
+          "characters": 49,
+          "computed": [
+            0,
+            41
+          ],
+          "paragraph": 224,
+          "text": "<Manufacturing, construction and service sectors>"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            37,
+            66
+          ],
+          "characters": 89,
+          "computed": [
+            0,
+            37,
+            79
+          ],
+          "paragraph": 226,
+          "text": "  - average daily over time:   hours (changeable depending on the condition of a company)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            38,
+            69
+          ],
+          "characters": 86,
+          "computed": [
+            0,
+            29,
+            69
+          ],
+          "paragraph": 227,
+          "text": "  - shift system ([ ]2groups 2shifts, [ ]3groups 3shifts, [ ]4groups 3shifts, [ ]etc.)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            39,
+            75,
+            106,
+            140,
+            174
+          ],
+          "characters": 212,
+          "computed": [
+            0,
+            39,
+            82,
+            117,
+            166
+          ],
+          "paragraph": 236,
+          "text": "※ In pursuant to the Article 63 of the Labor Standards Act, working hours, recess hours, off-days are not applied to agr"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            36
+          ],
+          "characters": 83,
+          "computed": [
+            0,
+            45
+          ],
+          "paragraph": 243,
+          "text": "[ ]Sunday [ ]legal holiday [ ]every Saturday [ ]every other Saturday [ ]etc.(     )"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            73
+          ],
+          "characters": 133,
+          "computed": [
+            0,
+            82
+          ],
+          "paragraph": 259,
+          "text": "(            ) of every month/every week. If the payment date falls on a holiday, payment will be made on the day before"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            43
+          ],
+          "characters": 90,
+          "computed": [
+            0,
+            39,
+            85
+          ],
+          "paragraph": 261,
+          "text": "임금 및 수당은 “근로자”에게 직접 지불하거나 “근로자”의 명의로 된 예금통장에 입금한다. \"사업주\"는 근로자의 명의로 된 예금통장, 도장을 관리해서는 안 된다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            79,
+            157
+          ],
+          "characters": 164,
+          "computed": [
+            0,
+            86
+          ],
+          "paragraph": 264,
+          "text": "Wages and benefits will be paid to the worker or deposited to the bank account of the worker. The employer will not reta"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            49
+          ],
+          "characters": 57,
+          "computed": [
+            0,
+            48
+          ],
+          "paragraph": 272,
+          "text": "※ 숙식 제공의 범위와 근로자 부담 비용의 수준은 입국 후 사업주와 근로자 간 협의에 따라 별도로 결정"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            67,
+            138
+          ],
+          "characters": 185,
+          "computed": [
+            0,
+            76,
+            155
+          ],
+          "paragraph": 280,
+          "text": "※ The scope of the room and board and the amount of the cost to be borne by the worker will be decided by mutual consult"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            55
+          ],
+          "characters": 94,
+          "computed": [
+            0,
+            54
+          ],
+          "paragraph": 282,
+          "text": "  ※ 가사서비스업 및 개인간병인에 종사하는 외국인근로자의 경우 근로시간, 휴일ㆍ휴가, 그 밖에 모든 근로조건에 대해 사용자와 자유롭게 계약을 체결하는 것이 가능합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            96
+          ],
+          "characters": 169,
+          "computed": [
+            0,
+            106
+          ],
+          "paragraph": 285,
+          "text": "  ※ The terms and conditions of the labor contract for workers in domestic help and nursing can be freely decided throug"
+        }
+      ],
+      "document": "moel-pyojun-geunrogyeyakseo-2013.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.204082,
+        "break_positions_cached": 49,
+        "break_positions_computed": 50,
+        "break_positions_matched": 10,
+        "break_sequence_agreement": 0.176471,
+        "cached_lines": 83,
+        "computed_lines": 84,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 34,
+        "line_count_agreement": 0.764706,
+        "paragraphs_break_sequence_exact": 6,
+        "paragraphs_line_count_exact": 26,
+        "paragraphs_scored": 34
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.148936,
+        "break_positions_cached": 47,
+        "break_positions_computed": 40,
+        "break_positions_matched": 7,
+        "break_sequence_agreement": 0.863057,
+        "cached_lines": 361,
+        "computed_lines": 354,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 314,
+        "line_count_agreement": 0.942675,
+        "paragraphs_break_sequence_exact": 271,
+        "paragraphs_excluded": 0,
+        "paragraphs_line_count_exact": 296,
+        "paragraphs_scored": 314
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.042553,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.906761,
+          "n": 47,
+          "p10": 0.130738,
+          "p90": 1.030277
+        },
+        "decisions": 47,
+        "early": 17,
+        "exact": 2,
+        "late": 28,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            60
+          ],
+          "paragraph": 2,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            50
+          ],
+          "paragraph": 7,
+          "text": "5. 근무일/휴일 : 매주   일 근무(필요시, 근무요일       ), 주휴일 매주   요일"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 50,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 20,
+          "text": "  - 4대 사회보험(고용보험, 산재보험, 국민연금, 건강보험) 적용(가입)을 원칙으로 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            47
+          ],
+          "characters": 92,
+          "computed": [
+            0,
+            56
+          ],
+          "paragraph": 21,
+          "text": "    ※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 기재(예외 사유 해당 여부는 근로복지공단, 국민연금공단, 국민건강보험공단 누리집 참조)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            43
+          ],
+          "characters": 76,
+          "computed": [
+            0,
+            41
+          ],
+          "paragraph": 23,
+          "text": "  - 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 25,
+          "text": "  - 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54,
+            63
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            63
+          ],
+          "paragraph": 29,
+          "text": "(사업주) 사업체명 :                   (전화 :                )주    소 :대 표 자 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            15,
+            24
+          ],
+          "characters": 53,
+          "computed": [
+            0
+          ],
+          "paragraph": 30,
+          "text": "(근로자) 주    소 :연 락 처 : 성    명 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            60
+          ],
+          "paragraph": 33,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            50
+          ],
+          "paragraph": 38,
+          "text": "5. 근무일/휴일 : 매주   일 근무(필요시, 근무요일       ), 주휴일 매주   요일"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 50,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 51,
+          "text": "  - 4대 사회보험(고용보험, 산재보험, 국민연금, 건강보험) 적용(가입)을 원칙으로 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 97,
+          "computed": [
+            0,
+            55
+          ],
+          "paragraph": 52,
+          "text": "    ※ (참고) 적용(가입) 예외에 해당하는 경우에는 적용(가입) 항목 등을 명확히 기재(예외 사유 해당 여부는 근로복지공단, 국민연금공단, 국민건강보험공단 누리집 참조)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            43
+          ],
+          "characters": 76,
+          "computed": [
+            0,
+            41
+          ],
+          "paragraph": 54,
+          "text": "  - 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 56,
+          "text": "  - 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54,
+            63
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            63
+          ],
+          "paragraph": 60,
+          "text": "(사업주) 사업체명 :                   (전화 :                )주    소 :대 표 자 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            15,
+            24
+          ],
+          "characters": 53,
+          "computed": [
+            0
+          ],
+          "paragraph": 61,
+          "text": "(근로자) 주    소 :연 락 처 : 성    명 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            60
+          ],
+          "paragraph": 64,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            50
+          ],
+          "paragraph": 71,
+          "text": "5. 근무일/휴일 : 매주   일 근무(필요시, 근무요일       ), 주휴일 매주   요일"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            8
+          ],
+          "characters": 59,
+          "computed": [
+            0,
+            52
+          ],
+          "paragraph": 73,
+          "text": "6. 임  금   ※ (참고) 연소근로자의 경우에도 고용노동부장관이 매년 고시하는 최저임금을 준수하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 50,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 86,
+          "text": "  - 4대 사회보험(고용보험, 산재보험, 국민연금, 건강보험) 적용(가입)을 원칙으로 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 97,
+          "computed": [
+            0,
+            55
+          ],
+          "paragraph": 87,
+          "text": "    ※ (참고) 적용(가입) 예외에 해당하는 경우에는 적용(가입) 항목 등을 명확히 기재(예외 사유 해당 여부는 근로복지공단, 국민연금공단, 국민건강보험공단 누리집 참조)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            43
+          ],
+          "characters": 82,
+          "computed": [
+            0,
+            41
+          ],
+          "paragraph": 89,
+          "text": "  - 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부요구와 관계없이 근로자에게 교부함(근로기준법 제17조, 제67조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 91,
+          "text": "  - 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54,
+            63
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            63
+          ],
+          "paragraph": 95,
+          "text": "(사업주) 사업체명 :                   (전화 :                )주    소 :대 표 자 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            15,
+            24
+          ],
+          "characters": 53,
+          "computed": [
+            0
+          ],
+          "paragraph": 96,
+          "text": "(근로자) 주    소 :연 락 처 : 성    명 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            51
+          ],
+          "characters": 59,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 119,
+          "text": "   본인은 위 연소근로자             가  위 사업장에서  근로를 하는 것에 대하여 동의합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            62
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            60
+          ],
+          "paragraph": 128,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 50,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 147,
+          "text": "  - 4대 사회보험(고용보험, 산재보험, 국민연금, 건강보험) 적용(가입)을 원칙으로 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 97,
+          "computed": [
+            0,
+            55
+          ],
+          "paragraph": 148,
+          "text": "    ※ (참고) 적용(가입) 예외에 해당하는 경우에는 적용(가입) 항목 등을 명확히 기재(예외 사유 해당 여부는 근로복지공단, 국민연금공단, 국민건강보험공단 누리집 참조)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            47
+          ],
+          "characters": 82,
+          "computed": [
+            0,
+            45
+          ],
+          "paragraph": 150,
+          "text": "  - “사업주”는 근로계약을 체결함과 동시에 본 계약서를 사본하여 “근로자”의 교부요구와 관계없이 “근로자”에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 152,
+          "text": "  - 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54,
+            63
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            63
+          ],
+          "paragraph": 156,
+          "text": "(사업주) 사업체명 :                   (전화 :                )주    소 :대 표 자 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            15,
+            24
+          ],
+          "characters": 53,
+          "computed": [
+            0
+          ],
+          "paragraph": 157,
+          "text": "(근로자) 주    소 :연 락 처 : 성    명 :                   (서명)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            64
+          ],
+          "characters": 78,
+          "computed": [
+            0,
+            60
+          ],
+          "paragraph": 160,
+          "text": "                (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            50
+          ],
+          "characters": 97,
+          "computed": [
+            0,
+            48
+          ],
+          "paragraph": 217,
+          "text": "    ※ 단시간근로자와 사용자 사이에 근로하기로 정한 시간을 초과하여 근로하면 법정 근로시간 내라도 통상임금의 100분의 50 이상의 가산임금 지급(’14.9.19. 시행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 50,
+          "computed": [
+            0,
+            49
+          ],
+          "paragraph": 222,
+          "text": "  - 4대 사회보험(고용보험, 산재보험, 국민연금, 건강보험) 적용(가입)을 원칙으로 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            52
+          ],
+          "characters": 97,
+          "computed": [
+            0,
+            55
+          ],
+          "paragraph": 223,
+          "text": "    ※ (참고) 적용(가입) 예외에 해당하는 경우에는 적용(가입) 항목 등을 명확히 기재(예외 사유 해당 여부는 근로복지공단, 국민연금공단, 국민건강보험공단 누리집 참조)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            47
+          ],
+          "characters": 82,
+          "computed": [
+            0,
+            45
+          ],
+          "paragraph": 225,
+          "text": "  - “사업주”는 근로계약을 체결함과 동시에 본 계약서를 사본하여 “근로자”의 교부요구와 관계없이 “근로자”에게 교부함(근로기준법 제17조 이행)"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 52,
+          "computed": [
+            0,
+            40
+          ],
+          "paragraph": 227,
+          "text": "  - 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            54,
+            63
+          ],
+          "characters": 91,
+          "computed": [
+            0,
+            63
+          ],
+          "paragraph": 231,
+          "text": "(사업주) 사업체명 :                   (전화 :                )주    소 :대 표 자 :                   (서명)"
+        }
+      ],
+      "document": "moel-pyojun-geunrogyeyakseo-2025.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.148936,
+        "break_positions_cached": 47,
+        "break_positions_computed": 32,
+        "break_positions_matched": 7,
+        "break_sequence_agreement": 0.054054,
+        "cached_lines": 84,
+        "computed_lines": 69,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 37,
+        "line_count_agreement": 0.72973,
+        "paragraphs_break_sequence_exact": 2,
+        "paragraphs_line_count_exact": 27,
+        "paragraphs_scored": 37
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.333333,
+        "break_positions_cached": 3,
+        "break_positions_computed": 3,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.977528,
+        "cached_lines": 92,
+        "computed_lines": 92,
+        "first_line_box_agreement": 0.898876,
+        "first_line_box_exact": 80,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 87,
+        "paragraphs_excluded": 1,
+        "paragraphs_line_count_exact": 89,
+        "paragraphs_scored": 89
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.333333,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.981915,
+          "n": 3,
+          "p10": 0.969022,
+          "p90": 0.988427
+        },
+        "decisions": 3,
+        "early": 2,
+        "exact": 1,
+        "late": 0,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            45
+          ],
+          "characters": 60,
+          "computed": [
+            0,
+            41
+          ],
+          "paragraph": 25,
+          "text": "   ◦ 결과보고서는 외부에 공개될 예정이므로 전화번호나 주민번호와 같은 개인정보가 포함되지 않도록 주의요망"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            50
+          ],
+          "characters": 93,
+          "computed": [
+            0,
+            45
+          ],
+          "paragraph": 30,
+          "text": "   ◦ 온라인으로 결과보고서 탑재 시, 「연구결과개요보고서」, 「연구요약문」, 「결과보고서원문파일」,「제출완료」로 구성되어 있으며, 각 사항 누락 시 재단 승인 불가"
+        }
+      ],
+      "document": "nrf-gyeolgwa-bogoseo-yangsik.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.333333,
+        "break_positions_cached": 3,
+        "break_positions_computed": 3,
+        "break_positions_matched": 1,
+        "break_sequence_agreement": 0.333333,
+        "cached_lines": 6,
+        "computed_lines": 6,
+        "first_line_box_agreement": 1.0,
+        "first_line_box_exact": 3,
+        "line_count_agreement": 1.0,
+        "paragraphs_break_sequence_exact": 1,
+        "paragraphs_line_count_exact": 3,
+        "paragraphs_scored": 3
+      },
+      "renderer": "rigorloom-own/0.1"
+    },
+    {
+      "all_paragraphs": {
+        "break_position_recall": 0.375,
+        "break_positions_cached": 24,
+        "break_positions_computed": 28,
+        "break_positions_matched": 9,
+        "break_sequence_agreement": 0.980366,
+        "cached_lines": 788,
+        "computed_lines": 792,
+        "first_line_box_agreement": 0.918848,
+        "first_line_box_exact": 702,
+        "line_count_agreement": 0.992147,
+        "paragraphs_break_sequence_exact": 749,
+        "paragraphs_excluded": 1,
+        "paragraphs_line_count_exact": 758,
+        "paragraphs_scored": 764
+      },
+      "caveat": "this number depends on which faces this machine has installed: an unresolved face is measured with a substitute whose advance widths differ from the authoring engine's, and a line then breaks in a different place for a reason that has nothing to do with the breaking rules. See fonts.",
+      "conditional_breaks": {
+        "accuracy": 0.375,
+        "cached_line_fill": {
+          "meaning": "how full the authoring engine's own line is when this renderer measures it, as a fraction of that line's own cached horzsize. 1.0 would mean the two agree exactly about advance widths; below 1.0 says this renderer measures the same text narrower than the authoring engine did, and will therefore fit more of the next word onto the line.",
+          "median": 0.982963,
+          "n": 24,
+          "p10": 0.946994,
+          "p90": 1.011269
+        },
+        "decisions": 24,
+        "early": 10,
+        "exact": 9,
+        "late": 5,
+        "meaning": "the breaker restarted at each line start the authoring engine chose, asked only where it would put the NEXT break, and compared. 'early' means this renderer would break sooner (it measures the authoring engine's own line as already overflowing the box); 'late' means it would break further on (the next word still fits by its reckoning)."
+      },
+      "disagreements": [
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 14,
+          "computed": [
+            0,
+            9
+          ],
+          "paragraph": 94,
+          "text": "[  ]여    [  ]부"
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            13
+          ],
+          "characters": 16,
+          "computed": [
+            0,
+            12
+          ],
+          "paragraph": 96,
+          "text": "(투자조합인 경우에만 해당함)"
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            8
+          ],
+          "paragraph": 101,
+          "text": "허가 등 사업 여부"
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0
+          ],
+          "characters": 30,
+          "computed": [
+            0,
+            28
+          ],
+          "paragraph": 102,
+          "text": "[  ]신고 [  ]등록 [  ]허가 [  ]해당 없음"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            69,
+            135
+          ],
+          "characters": 157,
+          "computed": [
+            0,
+            68,
+            135
+          ],
+          "paragraph": 162,
+          "text": "  1) 조세의 회피 및 강제집행의 면탈을 목적으로 자신의 성명을 사용하여 타인에게 사업자등록을 할 것을 허락하거나 자신 명의의 사업자등록을 타인이 이용하여 사업을 영위하도록 한 자는 「조세범 처벌법」 제11조제2항"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            68,
+            135
+          ],
+          "characters": 138,
+          "computed": [
+            0,
+            68
+          ],
+          "paragraph": 166,
+          "text": "  1) 조세의 회피 또는 강제집행의 면탈을 목적으로 타인의 성명을 사용하여 사업자등록을 하거나 타인 명의의 사업자등록을 이용하여 사업을 영위한 자는 「조세범 처벌법」 제11조제1항에 따라 2년 이하의 징역 또는 2"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            69
+          ],
+          "characters": 109,
+          "computed": [
+            0,
+            67
+          ],
+          "paragraph": 167,
+          "text": "  2) 「부가가치세법」 제60조제1항제2호에 따라 사업 개시일부터 실제 사업을 하는 것으로 확인되는 날의 직전일까지의 공급가액 합계액의 2%에 해당하는 금액을 납부세액에 더하여 납부해야 합니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            69,
+            137
+          ],
+          "characters": 181,
+          "computed": [
+            0,
+            71,
+            142
+          ],
+          "paragraph": 169,
+          "text": "다. 귀하가 재화 또는 용역을 공급하지 않거나 공급받지 않고 세금계산서 또는 계산서를 발급하거나 발급받은 경우 또는 이와 같은 행위를 알선ㆍ중개한 경우에는 「조세범 처벌법」 제10조제3항 또는 제4항에 따라 3년 이"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            67,
+            133
+          ],
+          "characters": 137,
+          "computed": [
+            0,
+            67,
+            131
+          ],
+          "paragraph": 170,
+          "text": "라. 신용카드 가맹 및 이용은 반드시 사업자 본인 명의로 해야 하며 사업상 결제목적 외의 용도로 신용카드를 이용할 경우 「여신전문금융업법」 제70조제3항제2호부터 제6호까지의 규정에 따라 3년 이하의 징역 또는 2천"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            70,
+            142
+          ],
+          "characters": 210,
+          "computed": [
+            0,
+            64,
+            134,
+            204
+          ],
+          "paragraph": 189,
+          "text": "   위에서 작성한 내용과 실제 사업자 및 사업내용 등이 일치함을 확인하며, 「부가가치세법」 제8조제1항ㆍ제3항, 제61조제3항, 같은 법 시행령 제11조제1항ㆍ제2항, 제109조제4항, 같은 법 시행규칙 제9조제1"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            58
+          ],
+          "characters": 99,
+          "computed": [
+            0,
+            57
+          ],
+          "paragraph": 201,
+          "text": "  나. 사업장을 전차한 경우: 전대차계약서 사본 및 임대인의 전차동의서(임대차계약서에 전차를 할 때 임대인의 동의가 필요 없다는 특약이 있는 경우 해당 임대차계약서) 사본 1부"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            59,
+            117
+          ],
+          "characters": 159,
+          "computed": [
+            0,
+            57,
+            117
+          ],
+          "paragraph": 203,
+          "text": "4. 자금출처명세서 1부(금지금 도매ㆍ소매업, 과세유흥장소에서의 영업, 액체연료 및 관련제품 도매업, 기체연료 및 관련제품 도매업, 차량용 주유소 운영업, 차량용 가스 충전업, 가정용 액체연료 소매업, 가정용 가스연"
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            69
+          ],
+          "characters": 105,
+          "computed": [
+            0,
+            71
+          ],
+          "paragraph": 284,
+          "text": "  ※ 주민등록상 주소를 선택한 경우 「주민등록법」 제16조에 따라 주소가 이전되면 송달주소가 이전된 주소로 자동으로 변경되는 것에 동의하는 경우 아래의 동의함에 체크하여 주시기 바랍니다."
+        },
+        {
+          "break_latin": "KEEP_WORD",
+          "break_non_latin": "KEEP_WORD",
+          "cached": [
+            0,
+            84,
+            149
+          ],
+          "characters": 172,
+          "computed": [
+            0,
+            78,
+            145
+          ],
+          "paragraph": 382,
+          "text": "* 거주지국 코드란: 국제표준화기구(ISO)가 정한 국가별 ISO코드(ISO-3166, 알파벳 두 글자)를 적습니다. 국내 거주자의 경우는 기재하지 않으며, 조합원의 거주지가 말레이시아 라부안인 경우는 라부안 코드("
+        },
+        {
+          "break_latin": "BREAK_WORD",
+          "break_non_latin": "BREAK_WORD",
+          "cached": [
+            0,
+            7
+          ],
+          "characters": 10,
+          "computed": [
+            0,
+            5,
+            9
+          ],
+          "paragraph": 393,
+          "text": "02～06의 배우자"
+        }
+      ],
+      "document": "saeopja-deungnok-sinchengseo.hwpx",
+      "dpi": 144,
+      "method": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly.",
+      "multiline_paragraphs": {
+        "break_position_recall": 0.375,
+        "break_positions_cached": 24,
+        "break_positions_computed": 25,
+        "break_positions_matched": 9,
+        "break_sequence_agreement": 0.294118,
+        "cached_lines": 41,
+        "computed_lines": 42,
+        "first_line_box_agreement": 0.176471,
+        "first_line_box_exact": 3,
+        "line_count_agreement": 0.823529,
+        "paragraphs_break_sequence_exact": 5,
+        "paragraphs_line_count_exact": 14,
+        "paragraphs_scored": 17
+      },
+      "renderer": "rigorloom-own/0.1"
+    }
+  ],
+  "renderer": "rigorloom-own/0.1",
+  "slice": "E2.1 line breaking from metrics",
+  "what_this_is": "the breaker is run on each paragraph's unedited character stream inside the line box the authoring engine itself used (the paragraph's cached first hp:lineseg horzpos+horzsize, plus the declared right margin), and its line starts are compared to the cached hp:lineseg@textpos values. break_position_recall is the share of the authoring engine's own break positions this breaker also chose; break_sequence_agreement is the share of paragraphs where every line start matches exactly."
+}

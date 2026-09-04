@@ -193,7 +193,7 @@ class RuntimeCore:
                 "maxRegionBytes": MAX_REGION_BYTES,
                 "maxSourceBytes": MAX_SOURCE_BYTES,
             },
-            "render": render_capability(),
+            "render": render_capability(self.tools),
             "geometry": geometry_capability(),
             "modules": module_capability(self.tools.root),
             "childPython": child_python_facts(),
@@ -517,7 +517,7 @@ class RuntimeCore:
         from rt_codes import DEFAULT_RENDER_DPI
         return render_page(session, page=page,
                            dpi=DEFAULT_RENDER_DPI if dpi is None else dpi,
-                           run_id=run_id, inline=inline)
+                           run_id=run_id, inline=inline, tools=self.tools)
 
     def document_render_prepare(self, session_id, *, run_id=None,
                                 timeout: float | None = None) -> dict:
@@ -562,7 +562,8 @@ class RuntimeCore:
             # not the geometry, and page_geometry says which.
             profile = None
         return page_geometry(session, page=page, run_id=run_id,
-                             profile=profile, cache=self._geometry_cache)
+                             profile=profile, cache=self._geometry_cache,
+                             tools=self.tools)
 
     # -- distribution modules -------------------------------------------------
     def module_list(self) -> dict:

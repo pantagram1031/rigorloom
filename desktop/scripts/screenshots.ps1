@@ -126,6 +126,19 @@ try {
         # row is a candidate on disk; nothing is staged.
         @{ phase = 'hold-shot-history';       name = 'history-reversal';     scale = 1.0 },
         @{ phase = 'hold-shot-page';          name = 'page-view';            scale = 1.0 },
+        # TIER 3 — the page a fresh install actually gets. Nothing staged and
+        # nothing substituted: no Hancom on this machine, so our own renderer
+        # draws it and the badge says 자체 렌더 · 미인증. The 무엇을 못 그렸나
+        # list is open, because a closed disclosure photographs as a caption.
+        @{ phase = 'hold-shot-own';           name = 'page-own-render';      scale = 1.0 },
+        @{ phase = 'hold-shot-own-zoom';      name = 'page-own-render-150pct'; scale = 1.0 },
+        # The band: the five actions of the ordinary loop in one row, with the
+        # 서식 and 화면 menus holding what used to compete with them for the
+        # same strip. The phase asks both menus to open and neither does in the
+        # capture — a `<details open>` set from script does not survive to the
+        # frame the shot lands on, and chasing it was not worth another build.
+        # So this is the band CLOSED, which is also how a person first meets it.
+        @{ phase = 'hold-shot-toolbar';       name = 'toolbar';              scale = 1.0 },
         # 한글 오버레이. The first is a real raster with the runtime's own rects
         # on it and the candidate chooser open over a real ambiguity; the second
         # is this machine with nothing substituted, which is a refusal.

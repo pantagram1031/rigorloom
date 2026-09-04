@@ -48,7 +48,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from rt_codes import RpcError  # noqa: E402
+from rt_codes import DEFAULT_RENDER_DPI, RpcError  # noqa: E402
 from rt_render import (  # noqa: E402
     RASTERIZABLE_SUFFIXES,
     UNAVAILABLE_REASONS,
@@ -190,6 +190,17 @@ def geometry_capability() -> dict:
                        "imported, so page matching and the residue gate cannot "
                        "disagree about what the same string is"),
         "mappingSource": "the session's form scan (anchors and table cells)",
+        # Which renderer's layout an answer can come from, and what each one
+        # costs. Advertised so a client knows before the first page that an
+        # own-rendered page has rects and no addresses.
+        "sources": {
+            "pdf": ("read out of a PDF's text objects: rects, text, addresses, "
+                    "seats and per-character offsets"),
+            "own": ("read out of engine/scripts/own_render.py's line boxes: "
+                    "rects only. The sidecar carries where each line was drawn "
+                    "and not what it said, so no address is claimed and no "
+                    "caret offset is emitted"),
+        },
         "absenceReasons": list(ABSENCE_REASONS),
         "limits": {
             "truncatedCells": ("a cell whose text_preview is truncated is "
@@ -947,8 +958,127 @@ def derive_seats(profile: dict, spans: list, drawn: list, width: float,
 
 # --- the call ---------------------------------------------------------------------
 
+def own_page_geometry(session, tools, *, subject: Path, subject_facts: dict,
+                      page: int, run_id) -> dict | None:
+    """Geometry for a page TIER 3 drew, out of the same sidecar the raster came
+    from — or None when there is no tier-3 render to read.
+
+    WHAT IS REAL HERE AND WHAT IS NOT, because the overlay's whole value is that
+    its rectangles are measurements:
+
+      * The rects ARE real. ``line_boxes`` is every text line the renderer
+        actually drew, in device pixels at the render's dpi, and dividing by the
+        page's own pixel size gives exactly the normalized rect a PDF read
+        gives. An overlay drawn from these sits on the text.
+      * The TEXT is not carried. The sidecar records where each line was drawn,
+        not what it said, so there is nothing to run the residue normalizer
+        against — which means no address, no seat, and no candidate list. That
+        is reported as ``mapping.state = "unavailable"`` with the reason, and
+        NOT worked around by re-reading the document and guessing which line is
+        which: a wrong address is the one failure this whole subsystem is built
+        to avoid.
+      * ``charOffsets`` is ``unavailable`` for the same reason. A caret cannot
+        be placed mid-line against a line whose characters were never measured
+        one by one, and saying so beats interpolating an average advance.
+
+    ``geometrySource: "own"`` is on the answer so a client can say which of the
+    two it is looking at, and the smoke asserts the badge and the geometry agree.
+    """
+    from rt_own import (OWN_GRADE, any_own_for, line_boxes_for_page,
+                        read_sidecar, sidecar_page_size)
+
+    subject_sha = subject_facts.get("sha256")
+    if not isinstance(subject_sha, str) or not subject_sha:
+        return None
+    # Deliberately only the CACHE. Geometry never triggers a render: the raster
+    # call is the one that decides whether tier 3 runs, and a geometry request
+    # that spawned its own renderer could hand back boxes for a page the user is
+    # not looking at. Any dpi will do — the rects are page fractions.
+    record = any_own_for(session, subject_sha256=subject_sha)
+    if record is None:
+        return None
+
+    sidecar = read_sidecar(session, record)
+    count = len(record.get("pages") or [])
+    if page >= count:
+        raise RpcError("page_out_of_range",
+                       f"page {page} does not exist; our own renderer drew "
+                       f"{count}", page=page, pageCount=count)
+    size = sidecar_page_size(sidecar, page)
+    if size is None:
+        return None
+    width_px, height_px = size
+    dpi = int(record.get("dpi") or DEFAULT_RENDER_DPI)
+
+    spans = []
+    for index, box in enumerate(line_boxes_for_page(sidecar, page)):
+        try:
+            rect = _norm_rect((box["x0"], box["y0"], box["x1"], box["y1"]),
+                              float(width_px), float(height_px))
+        except (KeyError, TypeError, ValueError):
+            continue
+        spans.append({
+            "index": index,
+            # Empty, not omitted, and not invented. A client that prints span
+            # text gets nothing to print rather than something to mistrust.
+            "text": "",
+            "rect": rect,
+            "address": None,
+            "confidence": "unmapped",
+            # WHICH line breaker placed this box. `lineseg` is the authoring
+            # engine's own cached layout, `computed` is our breaker's; they are
+            # not equally trustworthy and the sidecar already distinguishes them.
+            "lineMode": box.get("mode"),
+        })
+
+    return {
+        "sessionId": session.id,
+        "available": True,
+        "source": {"kind": "own_render", "sha256": subject_sha,
+                   "bytes": subject_facts.get("bytes"),
+                   **({"runId": run_id} if run_id else {}),
+                   "producedBy": record["producedBy"]},
+        "page": page,
+        "pageCount": count,
+        "pageSize": {"widthPt": round(width_px / dpi * 72.0, 2),
+                     "heightPt": round(height_px / dpi * 72.0, 2)},
+        "unit": GEOMETRY_UNIT,
+        "origin": GEOMETRY_ORIGIN,
+        "spanUnit": "line",
+        # The field the whole tier exists to make answerable.
+        "geometrySource": "own",
+        "grade": OWN_GRADE,
+        "tier": 3,
+        "charOffsets": {
+            "state": "unavailable",
+            "reason": ("this page was drawn by our own renderer, whose line "
+                       "boxes record where each LINE was drawn and not where "
+                       "each character was; a caret placed from an averaged "
+                       "advance would be a guess wearing a measurement's "
+                       "authority"),
+            "lines": 0,
+            "of": len(spans),
+            "chars": 0,
+        },
+        "spans": spans,
+        "seats": [],
+        "seatDerivations": {method: 0 for method in DERIVATION_METHODS},
+        "seatAbsences": {reason: 0 for reason in ABSENCE_REASONS},
+        "drawnCells": 0,
+        "mapping": {
+            "state": "unavailable",
+            "reason": ("our own renderer's sidecar carries line POSITIONS and "
+                       "not line TEXT, so there is nothing to match against "
+                       "the form scan. The rectangles are real; no address on "
+                       "this page is claimed"),
+        },
+        "cache": {"hit": True, "key": f"own:{subject_sha[:16]}:{page}"},
+    }
+
+
 def page_geometry(session, *, page: int = 0, run_id=None,
-                  profile: dict | None, cache: dict | None = None) -> dict:
+                  profile: dict | None, cache: dict | None = None,
+                  tools=None) -> dict:
     """Spans, addresses and seat rects for one page — or an honest absence."""
     if not isinstance(page, int) or isinstance(page, bool) or page < 0:
         raise RpcError("invalid_params", "page must be a non-negative integer",
@@ -959,6 +1089,14 @@ def page_geometry(session, *, page: int = 0, run_id=None,
     document_kind = session.meta.get("ingress", {}).get("documentKind", "opaque")
     if suffix not in RASTERIZABLE_SUFFIXES:
         if document_kind == "hwpx" or suffix in (".hwpx", ".hwp"):
+            # TIER 3's geometry, from the sidecar of the render the page view
+            # is already showing. Only from cache — see own_page_geometry.
+            own = own_page_geometry(session, tools, subject=path,
+                                    subject_facts=facts, page=page,
+                                    run_id=run_id)
+            if own is not None:
+                return own
+
             from rt_convert import prepare_capability
 
             prepare = prepare_capability()
@@ -1053,6 +1191,10 @@ def page_geometry(session, *, page: int = 0, run_id=None,
         "unit": GEOMETRY_UNIT,
         "origin": GEOMETRY_ORIGIN,
         "spanUnit": "line",
+        # Read out of a PDF's own text objects. The counterpart value is
+        # "own" (own_page_geometry), and a client that draws a caret needs to
+        # know which of the two it has before it trusts a character offset.
+        "geometrySource": "pdf",
         # SUB-LINE ADDRESSING, and its honest absence. A span is still a line
         # (`spanUnit`), but a line now carries where each of its characters
         # begins, so a click resolves to an offset within it instead of to its
