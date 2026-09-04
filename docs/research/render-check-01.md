@@ -29,7 +29,7 @@ python engine/scripts/render_check.py \
 | Reference | Hwp 2024 13.0.0.2986 / Hancom PDF 1.3.0.550, via `com_backend.py convert` |
 | Candidate | `rigorloom-own` 0.1.0, grade `own-uncertified`, `--dpi 96`, default `auto` layout policy |
 | 1:1 | `render_scoreboard.reference_geometry_scale` = **0.995** (declared median 10.00 pt vs reference median 9.95 pt, tolerance 0.05) — comparable, no scale correction applied |
-| Page count | reference **9**, candidate **10** — *not* exact; see note 1 |
+| Page count | reference **9**, candidate **9** — exact; see note 1 |
 | Hancom acceptance | a COM open+save round-trip of the document keeps all 51 feature elements |
 
 Regions are derived, never hand-placed, and the two sides are located
@@ -75,8 +75,9 @@ has been scored with them.
 `F49` 다단 is the one row that moved since the line-metrics measurement
 (**3 · 37 · 9 · 2**), and it moved because *the document* was fixed, not the
 renderer: see note 4. Page agreement is **49/51** — unchanged by the document
-fix (which moves no page), carried forward from the equation-extent slice
-below.
+fix (which moves no page). Page agreement is now **51/51** and the page
+count is **exact** — see the endnote-placement measurement at the end of
+note 1.
 
 Measured on the E2 line-metrics tree (`claude/engine-e2-line-metrics`), which
 adds the character- and line-metric rules of
@@ -177,8 +178,8 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 | `F45` [글상자 / 그리기 개체 사각형 (text box)](render-check-01/F45.png) | 0.854 | 0.516 | 0.174 | -0.0083 | 5 | **unsupported** |
 | `F46` [쪽 나누기 (page break, pageBreakBefore)](render-check-01/F46.png) | 0.798 | 0.200 | 0.524 | +0.0190 | 6 | **close** |
 | `F47` [표 — 쪽을 넘기는 표 (table split across a page)](render-check-01/F47.png) | 0.993 | 0.240 | 0.535 | +0.0008 | 6 | **close** |
-| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8/9 | **differs** |
-| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.871 | 0.117 | 0.355 | +0.0092 | 9/10 | **close** |
+| `F48` [구역 나누기 — 가로 용지 + 다른 여백 (section break, landscape)](render-check-01/F48.png) | 0.947 | 0.084 | 0.288 | +0.0036 | 8 | **differs** |
+| `F49` [다단 — 2단 구역 (two-column section)](render-check-01/F49.png) | 0.864 | 0.111 | 0.344 | +0.0092 | 9 | **close** |
 | `F50` [머리말 (header)](render-check-01/F50.png) | 0.940 | 0.153 | 0.153 | +0.0090 | 1 | **differs** |
 | `F51` [꼬리말 + 쪽 번호 (footer with page number)](render-check-01/F51.png) | 0.974 | 0.154 | 0.156 | +0.0030 | 1 | **unsupported** |
 
@@ -259,6 +260,29 @@ contribution, block heights running tall.
 > come back onto Hancom's page. The table above carries the post-fix numbers.
 > The one page left in section 0 is 4.7 pt of unattributed block drift;
 > note 4's two-column section is the other.
+
+> **Neither guess was right, and the last page is measured and closed.** It
+> was not block drift and not the two-column section: it was **where an
+> endnote is set**. Every section of this document declares
+> `hp:endNotePr/hp:placement@place="END_OF_DOCUMENT"`, and the one
+> `hp:endNote` is authored in section 0. This renderer read
+> `END_OF_DOCUMENT` and `END_OF_SECTION` as the same thing — the end of the
+> section that authors the note — so it set the note at the end of section 0,
+> where the `F47` table already overflows the body box, and gave it a page of
+> its own. That page WAS the gap. Hancom sets the same note on page 9 of 9,
+> the last page of the document (section 2's only page), under that page's
+> last inked line: separator at y=464.5 pt, note body at y=470.5–478.5 pt,
+> the last body line ending at 456.3 pt. With `END_OF_DOCUMENT` deferred to
+> the last section, the candidate is **9 pages against Hancom's 9 — exact for
+> the first time** — section 0 runs 7 pages to Hancom's 7, page agreement
+> 49 → **51 / 51**, and the tally is unchanged at 3 · 38 · 8 · 2. `F49`'s
+> band now ends where the endnote begins rather than at the foot of the body
+> box, which is the whole of `iou` 0.4217 → 0.4214 and `ssim` 0.7994 →
+> 0.7993. What Hancom does that this renderer still does not: it sets the
+> note in the **first column** of the two-column section (separator
+> x 85.0–297.7 pt, one column wide), where we set it at the body box's full
+> width. That is a width difference on one line, not a page-count one, and it
+> is declared rather than fixed here.
 
 ### 2. `F47` 표 — 쪽을 넘기는 표 (IoU 0.025, the largest gap)
 
@@ -349,9 +373,11 @@ furniture; the document, its reference PDF and their manifest hashes are
 re-pinned on that. `own_render`'s column logic is unchanged — it was already
 laying the section out the way Hancom does once the document says so.
 
-What is left in this row is the pagination drift of note 1, not columns:
-`F49` still lands on our page 11 against Hancom's page 9, which is why it
-reads `close` rather than `match`.
+What was left in this row was the pagination drift of note 1, not columns,
+and that is closed too: `F49` now lands on page 9 in both engines. It reads
+`close` rather than `match` on its band, not on its page — Hancom sets the
+document's endnote inside `F49`'s own column and we set it at full body
+width, so the band's foot differs by one line.
 
 ### 5. `F50` 머리말 / `F51` 꼬리말 (IoU 0.153 / 0.156)
 
@@ -406,9 +432,29 @@ declares landscape A4 (84188×59528 HWPUNIT) and the COM round-trip preserves
 it. We emit 1123×794. The verdict for this feature measures the export path,
 not the renderer, and cannot be improved from the renderer side.
 
-Hancom's own `PageCount` reports 10 for a PDF it exports as 9 pages; the
-export is complete (every section, page numbers 1–9), so the extra page is
-Hancom's count, not lost content.
+Hancom's own `PageCount` reports 10 for a PDF it exports as 9 pages, and
+**both numbers are true of the layout each describes.** Read through
+Automation (`PageCount`, `GetPageText`, `goto_page` + `KeyIndicator` +
+`GetPos` per page), the editing layout is stable at 10 pages before the
+export, after forcing a full pagination pass to the end of the document, and
+again after the export. Its page 6 holds exactly one paragraph — para 95,
+whose caret control name is `사각형` — and that paragraph's only content is
+`F45`'s anchored `hp:rect`; page 5 ends at para 71 and page 7 begins at
+para 96. The exported PDF puts the same rect on page 5 at y=675.2–684.2 pt,
+inside a body box that ends at 756.84 pt, and renumbers nothing: its own
+`hp:pageNum` fields evaluate 1–9 with no gap, so the export path laid out
+nine pages rather than dropping a tenth. The extra page is therefore a
+screen-vs-print divergence in Hancom around one anchored drawing object, not
+a trailing empty page and not lost content — the "exporter suppresses a
+furniture-only trailing page" hypothesis is **falsified** here, and no
+suppression rule was adopted.
+
+This is also not the page this renderer was adding. Ours agreed with the PDF
+on `F45` (page 5) and `F46`/`F47` (page 6) all along; our extra page was the
+endnote, at the end of note 1. Measuring the two against each other: the
+reference PDF is what render-check scores, the editing layout is a second
+Hancom answer, and the two disagree with each other by one page on a
+document neither engine here authored.
 
 ### 8. Declared limits the report carries but does not penalise
 
@@ -446,7 +492,8 @@ size of the gap:
    paragraph (note 4); `render-check-01` emitted exactly that order.
    `build_render_check` now emits `secPr`, `colPr`, furniture, and `F49` reads
    `close` against a two-column Hancom reference. The renderer was not
-   changed. What is left of this row is item 7's pagination drift.
+   changed, and item 7's pagination drift is closed as well: this row is
+   now a band difference only.
 4. Header/footer horizontal placement (`F50`, `F51`).
 5. ~~`hh:spacing` over-condenses on negative values (`F13`).~~ **Measured and
    fixed** — the gap is a percent of the character's own advance
@@ -464,7 +511,13 @@ size of the gap:
    disagrees with by 1 to 15 pt per equation and which costs section 0 its
    extra page; and the two-column section of item 3, whose column definition
    Hancom now honours as well, so the page it disagrees on is pagination and
-   nothing else.
+   nothing else. **Both are closed.** The equation extent went first
+   ([equation-line-box.md](equation-line-box.md), 11 → 10 pages), and the
+   second was not the two-column section at all: it was
+   `hp:endNotePr/hp:placement@place`, read as end-of-section where it says
+   END_OF_DOCUMENT, which gave section 0's one endnote a page of its own
+   (note 1). Page count is now **9 = 9, exact**, and page agreement
+   **51/51**.
 8. `hh:tabPr`'s stops are never read: the corpus declares them as
    `hh:tabItem` inside the same MCE `hp:switch` the paraPr geometry uses, and
    the reader looks for `hh:tab` outside it, finds none, and falls back to its
@@ -509,3 +562,23 @@ drawn.
   still drifting. Adding the paraPr switch-unit rule gives the 3 · 37 · 9 · 2
   above. Attribution per feature in the table is by mechanism, not by a
   per-feature isolating run.
+
+- **The endnote rule is one document, one note.** `END_OF_DOCUMENT` is
+  honoured by deferring to the last section, measured on a document with one
+  endnote authored in the first of three sections. Nothing here measures two
+  sections that each carry notes, a document whose last section declares
+  `END_OF_SECTION` while an earlier one declares `END_OF_DOCUMENT`, or note
+  numbering across such a hand-off — the order is spine order and the numbers
+  are each section's own, by construction, not by measurement. No corpus form
+  and no holdout carries an endnote at all.
+- **The endnote's column is not fixed.** Hancom sets this document's endnote
+  inside the first column of the two-column last section (separator
+  x 85.0–297.7 pt); we set it at the body box's full width. Measured, named
+  in the sidecar, and left — it costs `F49` band accuracy, not a page.
+- **Hancom disagrees with itself by one page on this document, and that is
+  unexplained.** The editing layout is 10 pages and the export is 9; the
+  difference is `F45`'s anchored `hp:rect`, which the editor puts alone on
+  its own page and the exporter fits on the previous one. Which layout is
+  "right" is not decided here — render-check scores the PDF, so the PDF is
+  what the renderer is measured against. Whether the same divergence appears
+  on any other document, or on any other Hancom build, is unmeasured.
