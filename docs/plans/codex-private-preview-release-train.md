@@ -247,6 +247,37 @@ Completed for this epoch:
     `plan_stale`, and no candidate appeared; equal-byte cross-session receipt
     reuse refused `receipt_body_mismatch`, and candidate byte drift refused
     `candidate_hash_mismatch`.
+- C2 clean-archive verification on exact HEAD
+  `d9800f4e52c4f84df00b5a7768c3f325106d0b59`, archive
+  `private/epoch-0/d9800f4/source-d9800f4.zip` (14,121,455 bytes, SHA-256
+  `B7BE0132A84CBD384CAAF9C272F3AD836DD44DDF23A2BD4B8065AAF46E445726`):
+  - archive privacy exit 0, `HARD=0 / WARN=43`;
+  - compile sweep exit 0, 125 files / 0 failures;
+  - explicit core-only enablement wrote zero enabled modules;
+  - explicit all-modules enablement discovered/enabled all six modules and
+    resolved `report -> style`;
+  - core-only full suite exit 0: 3,437 passed / 1,199 skipped / 63 subtests,
+    pytest 3,180.98 s, wrapper 3,203.56 s. Full skip reasons and JUnit are in
+    `pytest-core.txt` and `pytest-core.xml`.
+
+C2 blocker on the same exact HEAD:
+
+- The first all-modules run reached 4% with multiple failures/errors while C:
+  reported zero free bytes. It was stopped; the partial log/XML are preserved
+  as `pytest-all-disk-full-partial.*`. Only this run's five verified
+  `pytest-of-SAMSUNG/pytest-*` temporary directories and the temporary current
+  link were removed; no user documents or other application data were touched.
+- A second run used the fresh dedicated basetemp
+  `E:/rigorloom-epoch0-pytest-all-d9800f4` with 8.26 GiB still free. It passed
+  the first run's 4% failure point, then emitted multiple genuine failures at
+  45% (continued to 47% before interruption). The partial log is
+  `pytest-all.txt`. The basetemp was removed after the process stopped; the log
+  remains. No failure node/root-cause claim is made because the interrupted
+  quiet run produced no traceback summary.
+- Per the user's 2026-09-04 no-further-security-work boundary, do not diagnose
+  or modify the newly exposed regression now. The all-modules gate is red and
+  Epoch 0 is not packageable/acceptable until that boundary is lifted or the
+  user gives separate direction.
 
 Not yet complete on the final Epoch 0 HEAD:
 
@@ -290,9 +321,15 @@ tree and installer.
 
 ## Next executable actions
 
-1. Rebuild sidecar/installer and rerun the full Python, archive privacy, compile,
-   Runtime, Agent Host, and package gates on the final tracked HEAD.
-2. Generate the C6 compliance/provenance pack against the actual final
+1. Do not perform further security diagnosis or fixes. The all-modules failure
+   is a release blocker awaiting user direction; do not build or present an
+   installer from this red snapshot.
+2. Generate the non-security C6 compliance/provenance draft against the current
+   source tree; defer installer-content finalization until a passing build exists.
+3. After the blocker is separately authorized and resolved, rebuild sidecar/
+   installer and rerun the full Python, archive privacy, compile, Runtime, Agent
+   Host, and package gates on the then-final tracked HEAD.
+4. Generate the C6 compliance/provenance pack against the actual final
    installer contents; keep it private and do not claim legal clearance.
-3. Keep foreground smoke/IME/install acceptance deferred while the operator is
-   using the shared desktop; continue headless security and compliance work.
+5. Keep foreground smoke/IME/install acceptance deferred while the operator is
+   using the shared desktop; continue only non-security compliance work.
