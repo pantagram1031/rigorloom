@@ -7233,6 +7233,99 @@ class OwnRenderer:
 # Output
 # --------------------------------------------------------------------------
 
+def layout_digest(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
+    """Every layout decision this renderer makes, with the raster removed.
+
+    Line breaks as character offsets, line boxes and vertical positions in
+    HWPUNIT, and the flow pass's page assignment - the three channels the
+    question "is the layout a function of the document alone?" is about.
+    Not one field is in device pixels, so the JSON this returns MUST be
+    byte-identical at every ``--dpi``.
+    ``test_the_layout_is_identical_at_every_dpi`` asserts exactly that, and
+    before the resolution-independence slice it was false: the breaker
+    measured its advances off a font rasterised at ``round(pt * dpi / 72)``
+    pixels, so the integer pixel size and FreeType's hinting at that size
+    both leaked into the break positions.
+
+    Both layout passes are forced to ``computed`` - the cached ``hp:lineseg``
+    boxes are dpi-free whatever the renderer does with them, so reading them
+    would measure nothing.
+    """
+    renderer = OwnRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                           line_layout=LINE_LAYOUT_COMPUTED,
+                           block_layout=BLOCK_LAYOUT_COMPUTED)
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    renderer._quiet += 1
+
+    paragraphs = []
+    for section_index, root in enumerate(renderer.sections):
+        renderer._current_section = section_index
+        fallback = int(renderer.page_geometry()["usable_width"])
+        for element in root.iter():
+            if _local(element.tag) != "p":
+                continue
+            para = Paragraph(element, renderer.defs["para_pr"])
+            if not para.chars:
+                continue
+            # The paragraph's own cached first line box where the document
+            # carries one, so a disagreement is the breaker's and not the
+            # track solver's; the section's usable width where it does not,
+            # so a freshly built document (render-check-01 carries no
+            # linesegarray at all) is still covered.  Both are read straight
+            # out of the file, so neither depends on the raster.
+            column = fallback
+            if para.linesegs:
+                first = para.linesegs[0]
+                cached = (_iattr(first, "horzpos") + _iattr(first, "horzsize")
+                          + max(0, para.para_pr.get("margin_right", 0)))
+                if cached > 0:
+                    column = cached
+            if column <= 0:
+                continue
+            lines = renderer.compute_lines(draw, para, column)
+            paragraphs.append({
+                "section": section_index,
+                "paragraph": renderer.paragraph_index.get(id(element)),
+                "characters": len(para.chars),
+                "column_hwpunit": column,
+                "lines": len(lines),
+                "breaks": [line["start"] for line in lines],
+                "vertpos_hwpunit": [line["vertpos"] for line in lines],
+                "horzpos_hwpunit": [line["horzpos"] for line in lines],
+                "horzsize_hwpunit": [line["horzsize"] for line in lines],
+                "vertsize_hwpunit": [line["vertsize"] for line in lines],
+                "baseline_hwpunit": [line["baseline"] for line in lines],
+            })
+
+    renderer._current_section = 0
+    placements, pages, counters = renderer.flow()
+    seen = {}
+    for record in placements:
+        seen.setdefault(record["block"], record)
+    blocks = [{"block": block, "page": record["page"],
+               "top_hwpunit": record["top"]}
+              for block, record in sorted(seen.items())]
+    return {
+        "document": Path(hwpx_path).name,
+        "line_layout": LINE_LAYOUT_COMPUTED,
+        "block_layout": BLOCK_LAYOUT_COMPUTED,
+        "paragraphs_scored": len(paragraphs),
+        "lines_total": sum(p["lines"] for p in paragraphs),
+        "pages": len(pages),
+        "flow_counters": counters,
+        "paragraphs": paragraphs,
+        "blocks": blocks,
+        "meaning": (
+            "the whole layout, in the document's own units. dpi is "
+            "deliberately absent from this report: a renderer whose layout "
+            "is a function of the document alone produces the same bytes "
+            "here at every resolution."
+        ),
+    }
+
+
 def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
     """Measure this renderer's line breaker against the authoring engine's.
 
@@ -7607,6 +7700,12 @@ def build_parser():
              "against the document's own cached hp:lineseg layout and "
              "print the report as JSON")
     parser.add_argument(
+        "--layout-digest", action="store_true",
+        help="do not render: print every layout decision (line breaks, line "
+             "boxes, vertical positions, page assignment) in the document's "
+             "own units. The output carries no dpi and must be identical at "
+             "every --dpi.")
+    parser.add_argument(
         "--flow-agreement", action="store_true",
         help="do not render: run the E2.5 block flow pass over the "
              "document's UNEDITED text and measure its page assignment and "
@@ -7639,6 +7738,19 @@ def main(argv=None):
     if not args.input:
         print("own_render: an input .hwpx is required", file=sys.stderr)
         return 2
+    if args.layout_digest:
+        try:
+            report = layout_digest(args.input, dpi=args.dpi)
+        except RendererUnavailable as exc:
+            print(f"own_render: unavailable - {exc}", file=sys.stderr)
+            return 3
+        except (ValueError, OSError, zipfile.BadZipFile,
+                ET.ParseError) as exc:
+            print(f"own_render: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2,
+                         sort_keys=True))
+        return 0
     if args.flow_agreement:
         try:
             report = flow_agreement(args.input, dpi=args.dpi,
