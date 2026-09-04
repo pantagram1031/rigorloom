@@ -3426,6 +3426,22 @@ class OwnRenderer:
           advances 15.950 pt (10 pt x 160%), not 22.40.
         * ``F14``'s line carrying a ``ratio="150"`` run advances 15.949 pt.
 
+        A line that carries an **inline object** is the one place where the
+        line box and the pitch part company, and both halves are measured
+        against the authoring engine's own cached ``hp:lineseg`` over the 79
+        object lines of the ten converted corpus forms
+        (``docs/research/object-line-box.md``):
+
+        * the box is the object's extent **plus its own vertical
+          ``hp:outMargin``** — ``cached textheight == height + top + bottom``
+          on **79 of 79**, residual 0, against 16/79 for the extent alone;
+        * the ``spacing`` is the leading of the **run's declared character
+          size**, not of that box — exact on 66 of 79, and 12 of the 13
+          misses are within 2 HWPUNIT (0.02 pt) of it.  Taking the leading
+          off the box, as this renderer did, is exact on 4 of 79 and misses
+          by up to 98266 HWPUNIT: a 72 pt table on a 160% paragraph claimed
+          115.2 pt of the column instead of 80.8.
+
         The line pitch itself was measured over 17 baseline-to-baseline steps
         in ``F01``–``F09``: ``PERCENT`` is ``value / 100`` times the declared
         character size (130% → 13.00, 160% → 16.00, 200% → 20.00, worst
@@ -3436,7 +3452,10 @@ class OwnRenderer:
         """
         pr = para.para_pr
         heights = []
+        pitch = []
         for offset, (ch, cid) in enumerate(para.chars[start:end]):
+            char_height = (self._charpr(cid).get("height_pt") or 10.0) \
+                * HWPUNIT_PER_PT
             if ch == OBJECT_SLOT:
                 # An inline object occupies a character cell whose height is
                 # the OBJECT's, not the run's point size.  Measured defect
@@ -3444,32 +3463,47 @@ class OwnRenderer:
                 # has a cached vertsize of ~63000 HWPUNIT and a charPr height
                 # of 1000, so taking the run's size shrank the paragraph by a
                 # whole page and pushed everything after it up the sheet.
+                #
+                # The object's cell is its box PLUS its own vertical
+                # hp:outMargin, and the LEADING the paragraph's line spacing
+                # adds is computed from the run's character size and not from
+                # that cell.  Both measured against the authoring engine's own
+                # cached hp:lineseg over the corpus' 79 object lines; see the
+                # docstring and docs/research/object-line-box.md.
                 record = para.object_at.get(start + offset)
                 if record is not None and not record[3]:
-                    heights.append(self._object_extent(record[1])[1])
+                    _l, top, _r, bottom = self._object_out_margin(record[1])
+                    heights.append(self._object_extent(record[1])[1]
+                                   + top + bottom)
+                    pitch.append(char_height)
                     continue
             # hh:relSz, hh:ratio and hh:offset are all EXCLUDED here: the line
             # height is the declared character size, whatever the character
             # metrics do to the drawn glyph.  See the docstring.
-            pt = self._charpr(cid).get("height_pt") or 10.0
-            heights.append(pt * HWPUNIT_PER_PT)
+            heights.append(char_height)
+            pitch.append(char_height)
         if not heights:
             cid = para.chars[0][1] if para.chars else None
             heights.append((self._charpr(cid).get("height_pt") or 10.0)
                            * HWPUNIT_PER_PT)
+            pitch.append(heights[-1])
         if pr.get("font_line_height"):
             self._skip("hp:paraPr@fontLineHeight",
                        "line height from the font's own ascent/descent is not "
                        "implemented; the declared character size is used")
         textheight = int(round(max(heights)))
         vertsize = textheight
+        # The height the line SPACING is computed from.  Identical to
+        # ``textheight`` on every line that carries no inline object, which is
+        # every line the pitch rules above were measured on.
+        pitchheight = int(round(max(pitch)))
         baseline = int(round(textheight * BASELINE_RATIO))
         kind = pr.get("line_spacing_type", "PERCENT")
         value = pr.get("line_spacing_value", 100)
         if kind == "PERCENT":
-            spacing = int(round(textheight * value / 100.0)) - vertsize
+            spacing = int(round(pitchheight * value / 100.0)) - pitchheight
         elif kind == "FIXED":
-            spacing = value - vertsize
+            spacing = value - pitchheight
         elif kind in ("BETWEEN_LINES", "ATLEAST", "AT_LEAST"):
             spacing = max(0, value)
         else:
@@ -3732,14 +3766,12 @@ class OwnRenderer:
         right`` wide and the box sits ``left`` inside it — insetting the box
         alone would put it 2.83 pt right of centre.
 
-        **Vertically the outer margin is NOT added, and that is a declared
-        limit, not a finding.**  Nothing in the reference set measures the
-        line *height* an inline object claims — the cached ``hp:lineseg``
-        carries it on every corpus form — so growing it here would be a guess
-        that only shows up in ``block_layout=computed``, where it costs
-        ``kstartup`` a 23rd page against a 21-page reference.  The box is
-        still drawn ``top`` down from the slot (``_object_origin``), which is
-        the part the references do measure.
+        Vertically the outer margin is deliberately NOT added **here**: this
+        is the object's own box, and the extra vertical room belongs to the
+        LINE that holds it.  ``_line_metrics`` adds ``top + bottom`` to the
+        line box, which is where it was measured (79/79 against the cached
+        ``hp:lineseg@textheight``); adding it twice would double it.  The box
+        is still drawn ``top`` down from the slot (``_object_origin``).
         """
         if _local(el.tag) in ("footNote", "endNote"):
             return self._note_mark_extent(el)
