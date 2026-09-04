@@ -405,6 +405,18 @@
       "sha256": "43d21f266ee6dffeb59acf24d20aaec43615c50ef1aded965e1050f81c72afa8",
       "kind": "xc1_render_pdf",
       "notes": "W6.1 XC-1 rendered PDF of converted/moel-pyojun-geunrogyeyakseo-2025.hwpx via com_backend.py convert (Hancom 13.0.0.2986); T25 render-honesty check (text length > 0) passed."
+    },
+    {
+      "slug": "render-check-01",
+      "family": "render-check",
+      "path": "../render-check/render-check-01.hwpx",
+      "format": "hwpx",
+      "bytes": 21227,
+      "sha256": "35133ac584face0b4eec4f45308cf8b7a9f87182aed1bc72cf83e8e7c7ff3b05",
+      "kind": "render_check_document",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Synthetic renderer feature-comparison document, one labelled [Fnn] block per Tier-1/Tier-2 feature of docs/research/hangul-feature-catalog.md. Built by tests/corpus/render-check/build_render_check.py on top of engine/scripts/hwpx_write.py; every string is a feature label or synthetic filler, so it carries no personal data. Hancom 13.0.0.2986 accepts it (COM open+save round-trip keeps all 51 feature elements)."
     }
   ],
   "skipped": [
