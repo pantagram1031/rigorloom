@@ -76,6 +76,7 @@ export function VerificationBar({
   const pageCount = useWorkspace((s) => s.render?.pageCount ?? 1);
   const selection = useWorkspace((s) => s.selection);
   const overlayPick = useWorkspace((s) => s.overlayPick);
+  const geometry = useWorkspace((s) => s.geometry);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const caret = inlineEdit?.kind === "run" ? inlineEdit : null;
 
@@ -172,6 +173,33 @@ export function VerificationBar({
           )
         }
       />
+      {/* WHOSE LAYOUT the seats and the caret are standing on. It matters now
+          in a way it did not before: a tier-3 page used to be visibly inert —
+          rectangles and nothing else — so nobody could mistake it for a page
+          read out of a Hancom render. It is editable now, with the same seats
+          and the same caret, and the only thing separating the two is that our
+          own raster is 검증 안 됨. So the bar says which one it is, always,
+          rather than leaving it to the render badge above the paper. */}
+      {mode === "page" && geometry?.available ? (
+        <Fact
+          k="지면 출처"
+          nonce={geometry.geometrySource ?? "pdf"}
+          title={
+            geometry.geometrySource === "own"
+              ? "이 지면은 자체 렌더러가 그렸습니다. 자리와 커서는 서식 스캔으로 같은 규칙에 따라 맞춘 것이고, 렌더러가 스스로 밝힌 주소는 그 스캔과 맞을 때만 확정으로 칩니다. 그림 자체는 검증되지 않았습니다."
+              : "이 지면은 한컴이 만든 PDF에서 읽은 것입니다. 글자 위치는 그 PDF 자신의 것입니다."
+          }
+          v={
+            <span
+              className={geometry.geometrySource === "own" ? "mono warnish" : "mono"}
+              data-testid="status-geometry-source"
+              data-geometry-source={geometry.geometrySource ?? "pdf"}
+            >
+              {geometry.geometrySource === "own" ? "자체 렌더 · 미검증" : "한컴 PDF"}
+            </span>
+          }
+        />
+      ) : null}
       {/* What the last click ON THE PAGE resolved to. Only in 페이지 보기,
           because that is the only mode where a click has a rectangle to have
           landed in — and an ambiguous one says 후보 N개 rather than an
