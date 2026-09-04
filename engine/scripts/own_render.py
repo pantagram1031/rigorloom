@@ -601,6 +601,82 @@ def _mm_to_hwp(raw):
 
 
 # --------------------------------------------------------------------------
+# Non-solid border geometry (``hh:borderFill`` ``@type``)
+# --------------------------------------------------------------------------
+#
+# MEASURED, black-box, off the Hancom reference PDFs themselves: none of them
+# carries a PDF ``d`` (dash-array) operator, so Hancom emits every dash as its
+# own path piece, and the pattern can be read straight out of the geometry.
+# Collinear pieces were merged per rule and the run/gap lengths taken as
+# medians, over every corpus reference that declares a DASH side:
+#
+#   declared    stroke      dash      gap     period   dash/w   gap/w  forms
+#   0.10 mm     0.240 pt   0.360    0.480    0.840     1.270   1.693   nrf
+#   0.12 mm     0.360 pt   0.480    0.720    1.200     1.411   2.116   gianmun-2ho,
+#                                                                      jumin,
+#                                                                      kstartup,
+#                                                                      moel-2025
+#   0.15 mm     0.480 pt   0.600    0.840    1.440     1.411   1.976   jeongbo
+#   0.70 mm     2.039 pt   2.879    4.318    7.197     1.451   2.176   jeongbo
+#
+# ``dash/w`` and ``gap/w`` are against the *declared* width (0.12 mm =
+# 34.02 HWPUNIT = 0.3402 pt), not the width Hancom actually strokes -- the
+# stroked width is quantised onto what looks like a 600 dpi device grid
+# (0.240/0.360/0.480/2.039 pt are 2/3/4/17 units of 1/600 in) and the dash
+# geometry tracks the declared width, not the quantised one.
+#
+# The 0.12 mm class is 43 of the corpus's 55 DASH sides, so the constants
+# below are its measurement exactly (1.412 x 0.3402 pt = 0.4804, measured
+# 0.4800; 2.118 x 0.3402 = 0.7206, measured 0.7200).  They land within 3% on
+# the 0.70 mm class and within 0.05 pt on 0.15 mm; 0.10 mm is the loosest fit
+# (predicted 0.400/0.600 against 0.360/0.480) and nothing in the corpus
+# distinguishes "Hancom uses a per-width-class table" from "the 0.10 mm rule
+# is quantised harder", so one ratio is used for every class and the residual
+# is stated here rather than curve-fitted away.  At 144 dpi one 0.12 mm dash
+# is 0.96 px on a 2.4 px pitch, so the residual is well under the pixel.
+BORDER_DASH_PERIOD = 3.53      # x declared border width, measured
+BORDER_DASH_DUTY = 0.40        # ink fraction of the period, measured
+
+# DECLARED, NOT MEASURED.  No corpus form declares DOT, DASH_DOT,
+# DASH_DOT_DOT or LONG_DASH on any border side, and there is therefore no
+# Hancom reference for them at all.  They are built out of the DASH family's
+# own measured period so the four read as one system, and every side drawn
+# with one says so in the sidecar.  A square dot is the width of the stroke.
+BORDER_DOT_INK = 1.0           # x declared border width, declared
+BORDER_LONG_DASH_INK = 2.0     # x the measured dash length, declared
+
+BORDER_DASH_VOCABULARY = {
+    "DASH": ("dash",),
+    "LONG_DASH": ("long_dash",),
+    "DOT": ("dot",),
+    "DASH_DOT": ("dash", "dot"),
+    "DASH_DOT_DOT": ("dash", "dot", "dot"),
+}
+# Which of the above this renderer has actually measured against Hancom.
+BORDER_DASH_MEASURED = frozenset({"DASH"})
+
+
+def border_dash_run(btype, width_hwp):
+    """``[(ink, gap), ...]`` in HWPUNIT for one period, or ``None`` if solid.
+
+    ``None`` means "this type is not a dash family member" -- SOLID, NONE,
+    DOUBLE_SLIM, CIRCLE and everything else keep whatever path they had.
+    """
+    kinds = BORDER_DASH_VOCABULARY.get((btype or "").upper())
+    if not kinds or width_hwp <= 0:
+        return None
+    period = BORDER_DASH_PERIOD * width_hwp
+    dash = BORDER_DASH_DUTY * period
+    gap = period - dash
+    ink_of = {
+        "dash": dash,
+        "long_dash": BORDER_LONG_DASH_INK * dash,
+        "dot": BORDER_DOT_INK * width_hwp,
+    }
+    return [(ink_of[kind], gap) for kind in kinds]
+
+
+# --------------------------------------------------------------------------
 # Header definitions (Contents/header.xml)
 # --------------------------------------------------------------------------
 
@@ -4868,6 +4944,20 @@ class OwnRenderer:
                               fill=colour, width=stroke)
                 self.counts["borders"] += 1
                 continue
+            run = border_dash_run(btype, spec.get("width_hwp") or 0)
+            if run is not None:
+                # 파선/점선.  The period is measured off the Hancom reference
+                # PDFs' own path geometry — see ``border_dash_run``.
+                if btype not in BORDER_DASH_MEASURED:
+                    self._skip(
+                        f"hh:{side}Border@type={btype}",
+                        "no corpus form and no Hancom reference declares this "
+                        "type; drawn from the measured DASH period, not "
+                        "measured itself")
+                self._stroke_dashed(draw, (ax, ay), (bx, by), colour, width,
+                                    run)
+                self.counts["borders"] += 1
+                continue
             if btype != "SOLID":
                 reason = ("non-solid border stroked as solid"
                           if btype != "DOUBLE_SLIM" else
@@ -4877,6 +4967,55 @@ class OwnRenderer:
             draw.line([(ax_px, ay_px), (bx_px, by_px)],
                       fill=colour, width=width)
             self.counts["borders"] += 1
+
+    def _stroke_dashed(self, draw, p0_hwp, p1_hwp, colour, width_px, run_hwp):
+        """Stroke one axis-aligned edge as a dash run.  Returns piece count.
+
+        The phase is anchored to the PAGE origin, not to the edge's own start:
+        a table rule is drawn once per cell it crosses, and a per-edge phase
+        would restart the pattern at every column boundary, which is not what
+        the reference does — Hancom's dashed rules run the whole width of the
+        table on one uninterrupted phase.  Anchoring at the origin makes every
+        collinear piece agree without any of them knowing about the others.
+        """
+        (ax, ay), (bx, by) = p0_hwp, p1_hwp
+        vertical = ax == bx
+        lo, hi = (ay, by) if vertical else (ax, bx)
+        if hi < lo:
+            lo, hi = hi, lo
+        period = sum(ink + gap for ink, gap in run_hwp)
+        if period <= 0:
+            draw.line([(self.px(ax), self.px(ay)), (self.px(bx), self.px(by))],
+                      fill=colour, width=width_px)
+            return 1
+        cursor = math.floor(lo / period) * period
+        pieces = index = 0
+        cross = self.px(ax if vertical else ay)
+        while cursor < hi:
+            ink, gap = run_hwp[index % len(run_hwp)]
+            index += 1
+            start, end = max(cursor, lo), min(cursor + ink, hi)
+            cursor += ink + gap
+            if end <= start:
+                continue
+            s_px, e_px = self.px(start), self.px(end)
+            if e_px <= s_px:
+                # A dash shorter than a device pixel is still a dash: dropping
+                # it would silently turn the rule into a blank at low dpi.
+                e_px = s_px + 1
+            # ``draw.line`` includes BOTH endpoints, so the last pixel of a
+            # dash belongs to the following gap: a dash drawn s..e would be
+            # one pixel longer than it measures.  A solid rule keeps both
+            # endpoints — its ends are the cell's own corners.
+            e_px -= 1
+            if vertical:
+                draw.line([(cross, s_px), (cross, e_px)],
+                          fill=colour, width=width_px)
+            else:
+                draw.line([(s_px, cross), (e_px, cross)],
+                          fill=colour, width=width_px)
+            pieces += 1
+        return pieces
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         margin = cell["margin"]

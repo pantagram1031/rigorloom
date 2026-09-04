@@ -39,6 +39,13 @@ import own_render  # noqa: E402
 CORPUS = os.path.join(ROOT, "tests", "corpus", "forms", "converted")
 GIANMUN = os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")
 PICTURE_FORM = os.path.join(CORPUS, "jeongbo-gonggae-cheongguseo.hwpx")
+# A form this tier still cannot draw every element of.  It used to be
+# PICTURE_FORM, whose last unhandled element was its dashed borders; those are
+# drawn now (``border_dash_run``) and it skips nothing at all, so the
+# "nothing is dropped silently" contract needs a form that still has
+# something to drop — moel-2013's CIRCLE borders and its four unresolved
+# faces.
+SKIPS_SOMETHING = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2013.hwpx")
 
 pytestmark = pytest.mark.skipif(
     not own_render.pillow_available(),
@@ -120,7 +127,7 @@ def test_skipped_elements_are_named_not_dropped(tmp_path):
     render rather than on one named tag: every entry carries a non-empty
     reason and a positive count, and nothing is dropped silently.
     """
-    result = own_render.render_to_dir(_need(PICTURE_FORM), tmp_path, dpi=144)
+    result = own_render.render_to_dir(_need(SKIPS_SOMETHING), tmp_path, dpi=144)
     report = result["report"]
     assert report["elements_skipped"], "a form with unhandled elements said nothing"
     for entry in report["elements_skipped"]:
@@ -2893,12 +2900,127 @@ def test_a_double_border_too_narrow_to_resolve_stays_solid_and_declared():
 
 
 def test_other_non_solid_border_types_are_still_declared_as_solid():
-    """DASH is in the corpus and is still stroked solid — say so."""
-    renderer, runs = _border_probe("DASH", 283.46456692913387)
+    """CIRCLE is in the corpus (moel-2013) and is still stroked solid."""
+    renderer, runs = _border_probe("CIRCLE", 283.46456692913387)
     assert len(runs) == 1, runs
     reasons = [e["reason"] for e in renderer.skipped.values()
-               if "DASH" in e["element"]]
+               if "CIRCLE" in e["element"]]
     assert any("stroked as solid" in r for r in reasons), reasons
+
+
+def _dash_runs(btype, width_hwp, dpi=1200, length_hwp=6000):
+    """Ink/gap run lengths along one horizontal border of ``btype``.
+
+    Rendered at 1200 dpi so the pattern is resolved well past the 144 dpi the
+    corpus is scored at — the geometry under test is in HWPUNIT, and at 144
+    dpi a 0.12 mm dash is under a pixel wide.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=dpi)
+    renderer.defs["border_fill"]["probe"] = {
+        "top": {"type": btype, "width_hwp": width_hwp, "color": (0, 0, 0)},
+        "bottom": {"type": "NONE"}, "left": {"type": "NONE"},
+        "right": {"type": "NONE"},
+    }
+    span = renderer.px(length_hwp)
+    row = renderer.px(1000)
+    image = renderer.Image.new("RGB", (span + 40, row + 40), (255, 255, 255))
+    draw = renderer.ImageDraw.Draw(image)
+    tc = ET.fromstring('<hp:tc xmlns:hp="urn:x" borderFillIDRef="probe"/>')
+    renderer._draw_cell_borders(draw, {"tc": tc}, 0, 1000, length_hwp, 2000)
+    grey = image.convert("L").load()
+    ink, gap, runs = [], [], []
+    x, state, start = 0, None, 0
+    while x < span:
+        dark = grey[x, row] < 160
+        if state is None:
+            state, start = dark, x
+        elif dark != state:
+            (ink if state else gap).append(x - start)
+            runs.append((state, x - start))
+            state, start = dark, x
+        x += 1
+    return renderer, ink, gap, runs
+
+
+def test_a_dashed_border_is_drawn_dashed_at_the_measured_period():
+    """DASH: 0.12 mm measures 0.480 pt of ink on a 1.200 pt period.
+
+    Measured black-box off the Hancom reference PDFs (see
+    ``own_render.border_dash_run``): the 0.12 mm class is 43 of the corpus's
+    55 DASH sides and every one of them is that period.
+    """
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer, ink, gap, _runs = _dash_runs("DASH", width)
+    assert len(ink) > 20, len(ink)
+    # 1200 dpi: 1 pt = 16.667 px.
+    per_pt = 1200 / 72.0
+    body_ink = sorted(ink)[1:-1]
+    body_gap = sorted(gap)[1:-1]
+    mean_ink = sum(body_ink) / len(body_ink) / per_pt
+    mean_gap = sum(body_gap) / len(body_gap) / per_pt
+    assert abs(mean_ink - 0.480) < 0.02, mean_ink
+    assert abs(mean_gap - 0.720) < 0.02, mean_gap
+    # ...and it is no longer declared as "stroked as solid".
+    assert not [e for e in renderer.skipped.values()
+                if "DASH" in e["element"]], renderer.skipped
+
+
+def test_a_dashed_border_runs_the_same_phase_in_both_directions():
+    """The pin: a vertical DASH edge dashes exactly like a horizontal one."""
+    from xml.etree import ElementTree as ET
+
+    width = own_render._mm_to_hwp("0.12 mm")
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=1200)
+    for side in ("top", "left"):
+        renderer.defs["border_fill"][side] = {
+            "top": {"type": "NONE"}, "bottom": {"type": "NONE"},
+            "left": {"type": "NONE"}, "right": {"type": "NONE"},
+        }
+        renderer.defs["border_fill"][side][side] = {
+            "type": "DASH", "width_hwp": width, "color": (0, 0, 0)}
+    span = renderer.px(6000)
+    counts = {}
+    for side in ("top", "left"):
+        image = renderer.Image.new("RGB", (span + 40, span + 40),
+                                   (255, 255, 255))
+        draw = renderer.ImageDraw.Draw(image)
+        tc = ET.fromstring(
+            f'<hp:tc xmlns:hp="urn:x" borderFillIDRef="{side}"/>')
+        renderer._draw_cell_borders(draw, {"tc": tc}, 1000, 1000, 6000, 6000)
+        grey = image.convert("L").load()
+        line = renderer.px(1000)
+        counts[side] = [
+            i for i in range(span)
+            if (grey[i, line] < 160 if side == "top" else grey[line, i] < 160)]
+    assert counts["top"], counts
+    assert counts["top"] == counts["left"], (
+        len(counts["top"]), len(counts["left"]))
+
+
+def test_the_unmeasured_dash_family_members_say_they_are_unmeasured():
+    """DOT / DASH_DOT / DASH_DOT_DOT / LONG_DASH: no corpus, no reference."""
+    width = own_render._mm_to_hwp("0.12 mm")
+    for btype, periods in (("DOT", 1), ("DASH_DOT", 2),
+                           ("DASH_DOT_DOT", 3), ("LONG_DASH", 1)):
+        renderer, ink, _gap, _runs = _dash_runs(btype, width)
+        assert len(ink) > 10, (btype, len(ink))
+        assert len(own_render.border_dash_run(btype, width)) == periods, btype
+        reasons = [e["reason"] for e in renderer.skipped.values()
+                   if btype in e["element"]]
+        assert any("not measured itself" in r for r in reasons), (btype, reasons)
+
+
+def test_a_dot_is_square_and_a_long_dash_is_twice_a_dash():
+    """The declared shape of the two unmeasured single-kind patterns."""
+    width = own_render._mm_to_hwp("0.7 mm")
+    dash = own_render.border_dash_run("DASH", width)[0]
+    dot = own_render.border_dash_run("DOT", width)[0]
+    longd = own_render.border_dash_run("LONG_DASH", width)[0]
+    assert abs(dot[0] - width) < 1e-6, dot
+    assert abs(longd[0] - 2 * dash[0]) < 1e-6, (longd, dash)
+    assert dot[1] == dash[1] == longd[1]
 
 
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
