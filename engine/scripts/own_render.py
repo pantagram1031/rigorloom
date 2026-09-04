@@ -1684,6 +1684,24 @@ class OwnRenderer:
         # engine/scripts/render_scoreboard.py.  E1's caret work needs the same
         # record.
         self.line_boxes = []
+        # Every table cell rectangle this render actually DREW, in the same
+        # device pixels, carrying the cell's own OWPML address.  The runtime's
+        # tier-1 path has to rebuild a grid out of stroked segments and then
+        # align it against the declared table before it dares call a rectangle
+        # a seat (rt_geometry.align_drawn_grid); here the renderer drew the box
+        # FROM the declared cell, so the address is not inferred at all.  That
+        # is why the seats derived from these are declared ``own_cell`` and not
+        # ``cell_borders``: a different provenance deserves a different word.
+        self.cell_boxes = []
+        # The OWPML address whatever is being drawn right now belongs to.
+        # ``_line_para`` is set by the two line renderers immediately before
+        # each ``_draw_line``; ``_cell_stack`` is pushed around a cell's own
+        # content so a nested table's cells do not inherit their parent's
+        # address.  Both are read at the TOP of ``_draw_line`` — an inline
+        # table drawn from inside a line re-enters both, and a value read
+        # after that re-entry would be the nested table's, not this line's.
+        self._line_para = None
+        self._cell_stack = []
         # Every hp:pageNum value actually stamped, absolute-page-indexed —
         # ``{absolute_page: number}``.  Not carried in the sidecar (the drawn
         # digits are already in line_boxes/the raster); this is what a
@@ -1824,6 +1842,23 @@ class OwnRenderer:
             for index, el in enumerate(
                 e for section in self.sections for e in section.iter()
                 if _local(e.tag) == "p")
+        }
+        # Table identity, on exactly the convention the rest of the repo
+        # already addresses a table by: document order of every ``<hp:tbl``
+        # OPENING tag, sections walked in spine order, nested tables counted
+        # in place and given their own index, from 0.  That is what
+        # ``engine/scripts/hwpx_tables.scan_tables`` produces, which is what
+        # ``form_inspect._table_map`` numbers ``index`` from and what
+        # ``preedit fill-cells --table N`` means.  ``Element.iter()`` is a
+        # pre-order walk, so it visits opening tags in exactly that order.
+        # Parity with the form scan is not assumed here — it is asserted in
+        # engine/tests/test_own_render.py and, at runtime, every address this
+        # produces is cross-checked against the scan before it is believed.
+        self.table_index = {
+            id(el): index
+            for index, el in enumerate(
+                e for section in self.sections for e in section.iter()
+                if _local(e.tag) == "tbl")
         }
         self._current_section = 0
         self._furniture_by_section = {}
@@ -3718,6 +3753,63 @@ class OwnRenderer:
         self._image.paste(piece["colour"], (int(round(x)),
                                             int(round(y - ascent))), mask)
 
+    def _current_address(self):
+        """The OWPML address the thing being drawn right now belongs to.
+
+        ``None`` where the renderer genuinely does not know — page furniture
+        stamped from a spec rather than a paragraph, for one.  Absent beats a
+        placeholder: the runtime treats a missing address as "the sidecar has
+        no opinion" and falls back to the form scan alone, which is exactly
+        what it did before this field existed.
+
+        A line inside a table cell is named by the CELL and not by its
+        paragraph, because that is the address the form scan, the plan and the
+        seat all use for it.  ``atPara`` rides along either way — it is the
+        same global paragraph number ``relayout_paragraphs`` is keyed on, and
+        an edit to a body line needs it.
+        """
+        at_para = None
+        para = self._line_para
+        if para is not None:
+            at_para = self.paragraph_index.get(id(para.el))
+        if self._cell_stack:
+            table, row, col = self._cell_stack[-1]
+            if table is None or row is None or col is None:
+                return None
+            address = {"kind": "cell", "table": table, "row": row, "col": col}
+            if at_para is not None:
+                address["atPara"] = at_para
+            return address
+        if at_para is None:
+            return None
+        return {"kind": "para", "atPara": at_para}
+
+    @staticmethod
+    def _char_edges_into(draw, edges, piece, cursor):
+        """Append one left edge per character of ``piece``.  False if it could
+        not be measured, which drops the whole line's offsets rather than
+        leaving a partial run a caret could still index into.
+
+        The edges are measured the same way the piece's own advance was —
+        ``textlength`` of the prefix, times ``hh:ratio`` — so the last one
+        plus the last character's width lands exactly on ``cursor + advance``.
+        Measuring each character alone instead would drop the kern Pillow
+        applied when it measured (and drew) the run whole.
+        """
+        text = piece["text"]
+        ratio = piece["ratio"]
+        font = piece["font"]
+        for index in range(len(text)):
+            if index == 0:
+                edges.append(cursor)
+                continue
+            try:
+                width = float(draw.textlength(text[:index], font=font))
+            except Exception:  # noqa: BLE001 - an unmeasurable run has no caret
+                return False
+            edges.append(cursor + width * ratio / 100.0)
+        return True
+
     def _draw_line(self, draw, items, x_hwp, line_top_hwp, baseline_hwp,
                    align, avail_hwp, last_line=True, stretch_avail_hwp=None):
         """Draw one line box: text pieces and inline objects, in order.
@@ -3771,9 +3863,19 @@ class OwnRenderer:
         x_px = self.pxf(x_hwp)
         cursor = x_px + self._align_offset(align, avail_px, total)
         baseline_px = self.pxf(baseline_hwp)
+        # READ NOW, not at append time.  An inline object in this line can
+        # re-enter `_render_table` -> `_render_paragraphs` -> `_draw_line`,
+        # which moves both of these; the address of THIS line is the one that
+        # was current before any of that happened.
+        address = self._current_address()
         drew_text = False
         text_x0 = text_x1 = None
         ascent = descent = 0
+        text_parts = []
+        edges = []
+        edges_ok = True
+        last_glyph_end = None
+        sizes = set()
         for piece in pieces:
             w = piece["advance"]
             if piece["kind"] == "gap":
@@ -3793,6 +3895,19 @@ class OwnRenderer:
                 continue
             font = piece["font"]
             self._draw_glyph_piece(draw, piece, cursor, baseline_px)
+            if piece["text"]:
+                # The line's TEXT and where each of its characters begins —
+                # the two things the sidecar used to withhold, and the reason
+                # a page this renderer drew could carry an overlay but no
+                # address and no caret.  Recorded for every character drawn,
+                # including the whitespace ones: an offset into `text` has to
+                # be an offset into `char_x`, or a caret indexes the wrong
+                # glyph.
+                text_parts.append(piece["text"])
+                sizes.add(piece["size_px"])
+                if edges_ok:
+                    edges_ok = self._char_edges_into(draw, edges, piece, cursor)
+                last_glyph_end = cursor + w
             # A run of nothing but whitespace draws no visible ink at all, so
             # it must not inflate the box below: "every text line box drawn"
             # (the sidecar's own words for this list) has to mean drew INK,
@@ -3824,14 +3939,49 @@ class OwnRenderer:
             # The box is the *text* extent, not the item extent: an inline
             # placeholder sharing the line must not inflate a box that is
             # about to be paired against a reference PDF's text lines.
-            self.line_boxes.append({
+            box = {
                 "page": self._page,
                 "mode": self._furniture_mode or self._line_mode,
                 "x0": round(text_x0, 3),
                 "y0": round(baseline_px - ascent, 3),
                 "x1": round(text_x1, 3),
                 "y1": round(baseline_px + descent, 3),
-            })
+            }
+            self._annotate_line_box(box, "".join(text_parts), edges,
+                                    edges_ok, last_glyph_end, sizes, address)
+            self.line_boxes.append(box)
+
+    def _annotate_line_box(self, box, text, edges, edges_ok, last_glyph_end,
+                           sizes, address):
+        """Attach ``text`` / ``char_x`` / ``size_pt`` / ``address`` to a line
+        box — each only where it was actually measured.
+
+        Every one of these is ADDITIVE and every one is optional.  A consumer
+        reading an older sidecar, or a box this renderer stamped from a spec
+        rather than from a paragraph, sees exactly the box it saw before, and
+        the runtime reports the absence rather than filling it in.
+        """
+        if not text:
+            return
+        box["text"] = text
+        if address is not None:
+            box["address"] = address
+        if len(sizes) == 1:
+            # ONE size, or none.  A line set in two sizes has no single size,
+            # and picking one of them would be a pick — same rule tier 1 holds
+            # to in rt_geometry.line_size.
+            box["size_pt"] = round(sizes.pop() / self.dpi * 72.0, 2)
+        if not edges_ok or last_glyph_end is None:
+            return
+        edges = list(edges) + [last_glyph_end]
+        if len(edges) != len(text) + 1:
+            # One box per character, or none: an offset into `text` that is
+            # not an offset into `char_x` puts the caret at the wrong glyph.
+            return
+        for before, after in zip(edges, edges[1:]):
+            if after < before - 0.5:
+                return
+        box["char_x"] = [round(edge, 3) for edge in edges]
 
     def _render_paragraphs(self, draw, paragraphs, origin_hwp, avail_w_hwp,
                            block_offset_hwp=0):
@@ -3955,6 +4105,10 @@ class OwnRenderer:
             chunk = para.chars[line["start"]:line["end"]]
             if not chunk:
                 continue
+            # Per iteration, not once before the loop: an inline table drawn
+            # from inside one of these lines re-enters this method and leaves
+            # its own paragraph behind.
+            self._line_para = para
             self._draw_line(
                 draw,
                 self._line_items(para, chunk, line["start"]),
@@ -3994,6 +4148,7 @@ class OwnRenderer:
             chunk = para.chars[start:end]
             if not chunk:
                 continue
+            self._line_para = para
             horzpos = _iattr(seg, "horzpos")
             horzsize = _iattr(seg, "horzsize") or avail_w_hwp
             # The cached box, not the paragraph's true available width: see
@@ -5185,8 +5340,30 @@ class OwnRenderer:
                                 self.px(x1), self.px(y1)], fill=bf["fill"])
         for cell, x0, y0, x1, y1 in rects:
             self._draw_cell_borders(draw, cell, x0, y0, x1, y1)
+        table = self.table_index.get(id(tbl))
         for cell, x0, y0, x1, y1 in rects:
-            self._render_cell_content(draw, cell, x0, y0, x1, y1)
+            # The box the renderer itself drew for a cell whose address it read
+            # out of the tree.  Nothing here is reconstructed and nothing is
+            # aligned: this IS the rectangle the borders above were stroked on.
+            if table is not None and cell["row"] is not None \
+                    and cell["col"] is not None:
+                self.cell_boxes.append({
+                    "page": self._page,
+                    "table": table,
+                    "row": cell["row"],
+                    "col": cell["col"],
+                    "rowSpan": cell["rspan"],
+                    "colSpan": cell["cspan"],
+                    "x0": round(self.pxf(x0), 3),
+                    "y0": round(self.pxf(y0), 3),
+                    "x1": round(self.pxf(x1), 3),
+                    "y1": round(self.pxf(y1), 3),
+                })
+            self._cell_stack.append((table, cell["row"], cell["col"]))
+            try:
+                self._render_cell_content(draw, cell, x0, y0, x1, y1)
+            finally:
+                self._cell_stack.pop()
 
     def _draw_cell_borders(self, draw, cell, x0, y0, x1, y1):
         bf = self.defs["border_fill"].get(cell["tc"].get("borderFillIDRef") or "")
@@ -6799,7 +6976,30 @@ class OwnRenderer:
                 "baseline, x bounds are the measured text extent (inline "
                 "objects excluded). The comparison channel "
                 "engine/scripts/render_scoreboard.py pairs these against a "
-                "reference PDF's text lines."
+                "reference PDF's text lines. A box that drew characters also "
+                "carries `text` (the string drawn, in draw order), `char_x` "
+                "(one left edge per character plus the last right edge, same "
+                "device pixels, present only where every character was "
+                "measured and they run left to right), `size_pt` (only where "
+                "the whole line is set in ONE size) and `address` (the OWPML "
+                "the line was drawn FROM: {kind: para, atPara} or {kind: "
+                "cell, table, row, col, atPara}, where atPara is the global "
+                "hp:p document-order index and table is the global hp:tbl "
+                "document-order index). Each of the four is absent where it "
+                "was not measured rather than guessed, and `address` is a "
+                "claim about provenance, not a verdict: the runtime "
+                "cross-checks it against the form scan before any client is "
+                "told an address is certain."
+            ),
+            "cell_boxes": list(self.cell_boxes),
+            "cell_boxes_meaning": (
+                "every table cell rectangle drawn, in the same device pixels, "
+                "with the cell's own hp:cellAddr and its table's global "
+                "document-order index. Unlike a rectangle rebuilt from a "
+                "reference PDF's stroked segments, this box was drawn FROM "
+                "the declared cell, so its address is read and not inferred — "
+                "which is why a seat derived from one is reported as "
+                "`own_cell` and not as `cell_borders`."
             ),
             "page_furniture": self._page_furniture_report(geo),
             "sections": section_infos,
