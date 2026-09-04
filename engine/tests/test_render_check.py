@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(ENGINE, "scripts"))
 
 import own_render  # noqa: E402
 import render_check as rc  # noqa: E402
+import render_scoreboard as rs  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not own_render.pillow_available(),
                                 reason="Pillow is not installed")
@@ -365,3 +366,116 @@ def test_the_markdown_table_has_one_row_per_feature():
     assert len(table) == 4          # header, rule, two rows
     assert "`F01`" in table[2] and "match" in table[2]
     assert "`F02`" in table[3] and "differs" in table[3]
+
+
+# ---------------------------------------------------------------------------
+# table-break-probe — the measured table placement rule
+# (docs/research/table-page-break-rule.md)
+# ---------------------------------------------------------------------------
+PROBE = os.path.join(CORPUS, "table-break-probe.hwpx")
+PROBE_REFERENCE = os.path.join(CORPUS, "table-break-probe.pdf")
+PROBE_CASES = os.path.join(CORPUS, "table-break-probe.cases.json")
+
+#: The eleven cases, in document order.  Read from the sidecar so the test
+#: fails loudly if the builder and the committed document ever disagree.
+PROBE_CASE_IDS = ["T%02d" % n for n in range(1, 12)]
+
+
+def _probe_reference_pages():
+    """``{case id: (label page, first table row page)}`` read out of Hancom's
+    own PDF export — the reference side, located independently of ours."""
+    import re
+    fitz = rs._require_fitz()
+    label = re.compile(r"\[(T\d\d)\]")
+    first_row = re.compile(r"(T\d\d) R01 C1")
+    labels, rows = {}, {}
+    with fitz.open(PROBE_REFERENCE) as document:
+        for index, page in enumerate(document):
+            text = page.get_text()
+            for match in label.finditer(text):
+                labels.setdefault(match.group(1), index)
+            for match in first_row.finditer(text):
+                rows.setdefault(match.group(1), index)
+    return {cid: (labels.get(cid), rows.get(cid)) for cid in PROBE_CASE_IDS}
+
+
+def _probe_table_block_pages():
+    """``[page, ...]`` for the eleven table-carrying blocks, in document
+    order, from ``own_render``'s own computed flow pass."""
+    renderer = own_render.OwnRenderer(
+        _need(PROBE), dpi=96,
+        block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    _images, sidecar = renderer.render()
+    layout = sidecar["block_layout"]
+    section = layout[0] if isinstance(layout, list) else layout
+    # ``blocks[*]["block"]`` is the renderer's own paragraph index, which
+    # counts cell paragraphs too — so the handle has to come from
+    # ``paragraph_index``, not from the top-level ordinal.
+    carries_table = []
+    for element in own_render._kids(renderer.sections[0], "p"):
+        if any(own_render._local(child.tag) == "tbl"
+               for child in element.iter()):
+            carries_table.append(renderer.paragraph_index[id(element)])
+    by_block = {}
+    for record in section["blocks"]:
+        by_block.setdefault(record["block"], record["page"])
+    return sidecar, section, [by_block[i] for i in carries_table]
+
+
+def test_the_probe_document_declares_the_eleven_cases_it_is_pinned_for():
+    with open(_need(PROBE_CASES), encoding="utf-8") as handle:
+        cases = json.load(handle)
+    assert [c["id"] for c in cases] == PROBE_CASE_IDS
+    # The geometry the rule turns on: 25 rows of 2600 fit the 65 764 HWPUNIT
+    # body box and 26 do not.
+    assert [c["rows"] for c in cases] == [25, 26, 30, 55, 15, 15, 15,
+                                          30, 30, 30, 27]
+    assert [c["pageBreak"] for c in cases] == [
+        "CELL", "CELL", "CELL", "CELL", "CELL", "TABLE", "NONE",
+        "TABLE", "NONE", "CELL", "CELL"]
+
+
+def test_every_probe_table_is_inline_and_therefore_unsplittable():
+    """The measured half of the permission, on the document that measured it:
+    all eleven tables are 글자처럼 취급, seven of them declare ``CELL``, and
+    not one of them may split."""
+    renderer = own_render.OwnRenderer(_need(PROBE), dpi=96)
+    tables = [element for element in renderer.sections[0].iter()
+              if own_render._local(element.tag) == "tbl"]
+    assert len(tables) == 11
+    assert all(renderer._table_is_inline(t) for t in tables)
+    assert sum((t.get("pageBreak") or "").upper() == "CELL"
+               for t in tables) == 7
+    assert not any(renderer._table_may_split(t) for t in tables)
+
+
+def test_the_flow_pass_places_every_probe_table_where_hancom_does():
+    """The rule, end to end, against Hancom's own export.
+
+    Neither side is hand-placed: ours is the flow pass's page for the block
+    that carries the table, Hancom's is the page its ``Tnn R01 C1`` cell text
+    lands on.  Eleven cases, no exception — and no table split on either
+    side, which is the whole finding
+    (``docs/research/table-page-break-rule.md``).
+    """
+    _need(PROBE_REFERENCE)
+    reference = _probe_reference_pages()
+    sidecar, section, ours = _probe_table_block_pages()
+
+    assert sidecar["pages"] == 23, sidecar["pages"]
+    counters = section["flow_counters"]
+    # Nothing splits.  Three tables move whole: T05/T06/T07, the three that
+    # differ only in pageBreak and land identically.  The other eight already
+    # start a page of their own, so they have nowhere to move to.
+    assert counters["tables_split"] == 0, counters
+    assert counters["tables_moved_whole"] == 3, counters
+
+    mismatch = []
+    for case, ourpage in zip(PROBE_CASE_IDS, ours):
+        label_page, ref_page = reference[case]
+        if ref_page is None or ourpage != ref_page:
+            mismatch.append((case, ourpage, ref_page, label_page))
+        # Every table starts the page after its own label: the moved ones
+        # because they moved, the rest because they carry the page break.
+        assert label_page is not None and ref_page == label_page + 1, case
+    assert mismatch == [], mismatch
