@@ -234,6 +234,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host 'interpreter role: module registry list ok'
 
+# TIER 3, in the interpreter role. The own renderer is what a fresh install
+# without Hancom actually sees, so a bundle that cannot spawn it ships a
+# product whose page view is a refusal card on every machine but this one.
+# `--version` is the cheapest call that proves both the script and its imports
+# landed; the serve-role check below proves the server knows about it.
+$ownRender = Join-Path $OutDir '_internal\repo\engine\scripts\own_render.py'
+if (-not (Test-Path $ownRender)) {
+    Write-Error "bundled own renderer missing at $ownRender — a machine without Hancom would have no page at all."
+    exit 3
+}
+& $exe $ownRender '--version' > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "the frozen binary cannot run own_render.py as a child (exit $LASTEXITCODE). Tier 3 would be dead in every packaged install."
+    exit 3
+}
+Write-Host 'interpreter role: own_render.py --version ok'
+
 # Role 1: a real initialize handshake over stdio against the frozen server.
 $probeRoot = Join-Path $env:TEMP ('rigorloomd-probe-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $probeRoot | Out-Null
@@ -304,6 +321,32 @@ if ($caps.geometry.state -ne 'yes') {
 }
 Write-Host ("serve role: rasterizer present (module {0}, geometry state {1})" -f `
     $caps.render.rasterizer.module, $caps.geometry.state)
+
+# TIER 3, from the frozen server's own mouth. This is the row that decides what
+# a fresh install sees: Hancom is absent from the packaged sidecar (no pyhwpx),
+# so `prepare` is `no` on every machine that has not installed the office suite
+# and `render.own` is the only thing standing between the user and a refusal
+# card. A bundle whose server does not know about the third tier is a bundle
+# that ships the old behaviour, and it would pass every other check here.
+if ($caps.render.own.state -ne 'yes') {
+    Write-Error ("the frozen server reports render.own state '" + $caps.render.own.state +
+        "' (" + $caps.render.own.reason + "). Tier 3 did not make it into the bundle, " +
+        "so a machine without Hancom would see no page at all.")
+    exit 3
+}
+if ($caps.render.grades -notcontains 'own-uncertified') {
+    Write-Error ("the frozen server does not publish the 'own-uncertified' grade. " +
+        "The Desktop switches on that word to draw its badge; without it a page " +
+        "our own renderer drew could be shown unlabelled. Grades: " +
+        ($caps.render.grades -join ', '))
+    exit 3
+}
+if ($caps.render.own.certified -ne $false) {
+    Write-Error "the frozen server claims the own renderer is certified. It is not."
+    exit 3
+}
+Write-Host ("serve role: tier 3 present (grade {0}, backend {1}, grades {2})" -f `
+    $caps.render.own.grade, $caps.render.own.backend, ($caps.render.grades -join '/'))
 
 # The SEAT derivation, from the frozen runtime's own mouth. `document/pageGeometry`
 # existed before cell_borders did and answered without placing a single seat on
