@@ -7,7 +7,7 @@
   "reference_pdf": "render-check-01.pdf",
   "dpi": 96,
   "pages": {
-    "candidate": 11,
+    "candidate": 10,
     "reference": 9,
     "exact": false
   },
@@ -97,6 +97,11 @@
       "element": "hp:equation",
       "reason": "laid out from its hp:script inside the declared hp:sz extent; identifier tokens (single Latin letters and Latin identifiers) are set in italic — synthetic — see fonts.faces[slot=equation].italic; numbers, operators, function names, Hangul and symbols (including Greek) stay upright",
       "count": 4
+    },
+    {
+      "element": "hp:equation@equation_scaled",
+      "reason": "this renderer's metrics laid the equation out larger than its declared hp:sz; it was scaled to fit rather than allowed to overflow the box",
+      "count": 1
     },
     {
       "element": "hp:footNotePr/hp:noteLine@length=-1",
@@ -1567,7 +1572,7 @@
         "candidate": {
           "page": 5,
           "top": 0.18197,
-          "bottom": 0.24802
+          "bottom": 0.24745
         },
         "reference": {
           "page": 5,
@@ -1576,29 +1581,34 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.955,
+      "ssim": 0.9543,
       "ssim_blocks": 891,
-      "ssim_inked": 0.2963,
+      "ssim_inked": 0.2852,
       "ssim_inked_blocks": 57,
-      "iou": 0.6011,
+      "iou": 0.5972,
       "ink": {
-        "reference": 0.00707,
-        "candidate": 0.01172,
-        "delta": 0.00465
+        "reference": 0.00717,
+        "candidate": 0.01188,
+        "delta": 0.00471
       },
       "crop_px": [
         794,
-        75
+        74
       ],
       "band_px": {
         "reference": 72,
-        "candidate": 75
+        "candidate": 74
       },
       "declared_limits": [
         {
           "element": "hp:equation",
           "reason": "laid out from its hp:script inside the declared hp:sz extent; identifier tokens (single Latin letters and Latin identifiers) are set in italic — synthetic — see fonts.faces[slot=equation].italic; numbers, operators, function names, Hangul and symbols (including Greek) stay upright",
           "count": 4
+        },
+        {
+          "element": "hp:equation@equation_scaled",
+          "reason": "this renderer's metrics laid the equation out larger than its declared hp:sz; it was scaled to fit rather than allowed to overflow the box",
+          "count": 1
         }
       ],
       "verdict": "match",
@@ -1612,8 +1622,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.24802,
-          "bottom": 0.31406
+          "top": 0.24745,
+          "bottom": 0.30346
         },
         "reference": {
           "page": 5,
@@ -1622,29 +1632,34 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9328,
-      "ssim_blocks": 891,
-      "ssim_inked": 0.1799,
-      "ssim_inked_blocks": 72,
-      "iou": 0.4227,
+      "ssim": 0.932,
+      "ssim_blocks": 693,
+      "ssim_inked": 0.2527,
+      "ssim_inked_blocks": 63,
+      "iou": 0.4809,
       "ink": {
-        "reference": 0.00628,
-        "candidate": 0.01123,
-        "delta": 0.00495
+        "reference": 0.00738,
+        "candidate": 0.01309,
+        "delta": 0.00572
       },
       "crop_px": [
         794,
-        74
+        63
       ],
       "band_px": {
         "reference": 60,
-        "candidate": 74
+        "candidate": 63
       },
       "declared_limits": [
         {
           "element": "hp:equation",
           "reason": "laid out from its hp:script inside the declared hp:sz extent; identifier tokens (single Latin letters and Latin identifiers) are set in italic — synthetic — see fonts.faces[slot=equation].italic; numbers, operators, function names, Hangul and symbols (including Greek) stay upright",
           "count": 4
+        },
+        {
+          "element": "hp:equation@equation_scaled",
+          "reason": "this renderer's metrics laid the equation out larger than its declared hp:sz; it was scaled to fit rather than allowed to overflow the box",
+          "count": 1
         }
       ],
       "verdict": "close",
@@ -1658,8 +1673,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.31406,
-          "bottom": 0.39436
+          "top": 0.30346,
+          "bottom": 0.37179
         },
         "reference": {
           "page": 5,
@@ -1668,29 +1683,34 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8712,
-      "ssim_blocks": 1089,
-      "ssim_inked": 0.1202,
-      "ssim_inked_blocks": 159,
-      "iou": 0.3368,
+      "ssim": 0.8796,
+      "ssim_blocks": 891,
+      "ssim_inked": 0.1775,
+      "ssim_inked_blocks": 130,
+      "iou": 0.434,
       "ink": {
-        "reference": 0.01188,
-        "candidate": 0.02184,
-        "delta": 0.00996
+        "reference": 0.01371,
+        "candidate": 0.02521,
+        "delta": 0.0115
       },
       "crop_px": [
         794,
-        90
+        78
       ],
       "band_px": {
         "reference": 78,
-        "candidate": 90
+        "candidate": 77
       },
       "declared_limits": [
         {
           "element": "hp:equation",
           "reason": "laid out from its hp:script inside the declared hp:sz extent; identifier tokens (single Latin letters and Latin identifiers) are set in italic — synthetic — see fonts.faces[slot=equation].italic; numbers, operators, function names, Hangul and symbols (including Greek) stay upright",
           "count": 4
+        },
+        {
+          "element": "hp:equation@equation_scaled",
+          "reason": "this renderer's metrics laid the equation out larger than its declared hp:sz; it was scaled to fit rather than allowed to overflow the box",
+          "count": 1
         }
       ],
       "verdict": "close",
@@ -1704,8 +1724,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.39436,
-          "bottom": 0.47465
+          "top": 0.37179,
+          "bottom": 0.4374
         },
         "reference": {
           "page": 5,
@@ -1714,29 +1734,34 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.935,
-      "ssim_blocks": 1089,
-      "ssim_inked": 0.1369,
-      "ssim_inked_blocks": 82,
-      "iou": 0.4188,
+      "ssim": 0.9244,
+      "ssim_blocks": 891,
+      "ssim_inked": 0.1257,
+      "ssim_inked_blocks": 77,
+      "iou": 0.4363,
       "ink": {
-        "reference": 0.00729,
-        "candidate": 0.01234,
-        "delta": 0.00505
+        "reference": 0.00899,
+        "candidate": 0.01522,
+        "delta": 0.00623
       },
       "crop_px": [
         794,
-        90
+        73
       ],
       "band_px": {
         "reference": 70,
-        "candidate": 90
+        "candidate": 73
       },
       "declared_limits": [
         {
           "element": "hp:equation",
           "reason": "laid out from its hp:script inside the declared hp:sz extent; identifier tokens (single Latin letters and Latin identifiers) are set in italic — synthetic — see fonts.faces[slot=equation].italic; numbers, operators, function names, Hangul and symbols (including Greek) stay upright",
           "count": 4
+        },
+        {
+          "element": "hp:equation@equation_scaled",
+          "reason": "this renderer's metrics laid the equation out larger than its declared hp:sz; it was scaled to fit rather than allowed to overflow the box",
+          "count": 1
         }
       ],
       "verdict": "close",
@@ -1750,8 +1775,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.47465,
-          "bottom": 0.58108
+          "top": 0.4374,
+          "bottom": 0.54383
         },
         "reference": {
           "page": 5,
@@ -1789,8 +1814,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.58108,
-          "bottom": 0.6495
+          "top": 0.54383,
+          "bottom": 0.61225
         },
         "reference": {
           "page": 5,
@@ -1815,7 +1840,7 @@
       ],
       "band_px": {
         "reference": 77,
-        "candidate": 76
+        "candidate": 77
       },
       "verdict": "close",
       "png": "F41.png"
@@ -1828,8 +1853,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.6495,
-          "bottom": 0.69891
+          "top": 0.61225,
+          "bottom": 0.66166
         },
         "reference": {
           "page": 5,
@@ -1838,23 +1863,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8495,
-      "ssim_blocks": 693,
-      "ssim_inked": 0.1038,
-      "ssim_inked_blocks": 115,
-      "iou": 0.431,
+      "ssim": 0.8365,
+      "ssim_blocks": 594,
+      "ssim_inked": 0.1451,
+      "ssim_inked_blocks": 113,
+      "iou": 0.4669,
       "ink": {
-        "reference": 0.01518,
-        "candidate": 0.02834,
-        "delta": 0.01316
+        "reference": 0.01546,
+        "candidate": 0.02885,
+        "delta": 0.0134
       },
       "crop_px": [
         794,
-        56
+        55
       ],
       "band_px": {
         "reference": 55,
-        "candidate": 56
+        "candidate": 55
       },
       "verdict": "close",
       "png": "F42.png"
@@ -1867,8 +1892,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.69891,
-          "bottom": 0.74833
+          "top": 0.66166,
+          "bottom": 0.71108
         },
         "reference": {
           "page": 5,
@@ -1893,7 +1918,7 @@
       ],
       "band_px": {
         "reference": 56,
-        "candidate": 55
+        "candidate": 56
       },
       "verdict": "close",
       "png": "F43.png"
@@ -1906,8 +1931,8 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.74833,
-          "bottom": 0.79774
+          "top": 0.71108,
+          "bottom": 0.76049
         },
         "reference": {
           "page": 5,
@@ -1916,23 +1941,23 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8808,
-      "ssim_blocks": 693,
-      "ssim_inked": 0.2472,
-      "ssim_inked_blocks": 108,
-      "iou": 0.4609,
+      "ssim": 0.8651,
+      "ssim_blocks": 594,
+      "ssim_inked": 0.244,
+      "ssim_inked_blocks": 106,
+      "iou": 0.4784,
       "ink": {
-        "reference": 0.01457,
-        "candidate": 0.03657,
-        "delta": 0.022
+        "reference": 0.01484,
+        "candidate": 0.03717,
+        "delta": 0.02233
       },
       "crop_px": [
         794,
-        56
+        55
       ],
       "band_px": {
         "reference": 55,
-        "candidate": 56
+        "candidate": 55
       },
       "verdict": "close",
       "png": "F44.png"
@@ -1945,7 +1970,7 @@
       "region": {
         "candidate": {
           "page": 5,
-          "top": 0.79774,
+          "top": 0.76049,
           "bottom": 0.89899
         },
         "reference": {
@@ -1955,11 +1980,11 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.843,
+      "ssim": 0.8541,
       "ssim_blocks": 1980,
-      "ssim_inked": 0.4837,
-      "ssim_inked_blocks": 602,
-      "iou": 0.209,
+      "ssim_inked": 0.5163,
+      "ssim_inked_blocks": 597,
+      "iou": 0.1744,
       "ink": {
         "reference": 0.02136,
         "candidate": 0.01308,
@@ -1971,7 +1996,7 @@
       ],
       "band_px": {
         "reference": 162,
-        "candidate": 114
+        "candidate": 156
       },
       "declared_limits": [
         {
@@ -1993,7 +2018,7 @@
       "block_ordinal": 96,
       "region": {
         "candidate": {
-          "page": 7,
+          "page": 6,
           "top": 0.11783,
           "bottom": 0.16487
         },
@@ -2003,7 +2028,7 @@
           "bottom": 0.16494
         }
       },
-      "page_agreement": false,
+      "page_agreement": true,
       "ssim": 0.7981,
       "ssim_blocks": 594,
       "ssim_inked": 0.2003,
@@ -2032,7 +2057,7 @@
       "block_ordinal": 98,
       "region": {
         "candidate": {
-          "page": 7,
+          "page": 6,
           "top": 0.16487,
           "bottom": 0.89899
         },
@@ -2042,7 +2067,7 @@
           "bottom": 0.89899
         }
       },
-      "page_agreement": false,
+      "page_agreement": true,
       "ssim": 0.9928,
       "ssim_blocks": 10197,
       "ssim_inked": 0.2396,
@@ -2071,7 +2096,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 10,
+          "page": 9,
           "top": 0.11484,
           "bottom": 0.89524
         },
@@ -2110,7 +2135,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 11,
+          "page": 10,
           "top": 0.12496,
           "bottom": 0.89899
         },
@@ -2237,5 +2262,5 @@
     "match": 3,
     "unsupported": 2
   },
-  "png_bytes": 1119182
+  "png_bytes": 1118530
 }
