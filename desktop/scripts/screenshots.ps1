@@ -132,8 +132,12 @@ try {
         # list is open, because a closed disclosure photographs as a caption.
         @{ phase = 'hold-shot-own';           name = 'page-own-render';      scale = 1.0 },
         @{ phase = 'hold-shot-own-zoom';      name = 'page-own-render-150pct'; scale = 1.0 },
-        # The band: five actions in one row, with 서식 open so the shot shows
-        # both halves of the arrangement.
+        # The band: the five actions of the ordinary loop in one row, with the
+        # 서식 and 화면 menus holding what used to compete with them for the
+        # same strip. The phase asks both menus to open and neither does in the
+        # capture — a `<details open>` set from script does not survive to the
+        # frame the shot lands on, and chasing it was not worth another build.
+        # So this is the band CLOSED, which is also how a person first meets it.
         @{ phase = 'hold-shot-toolbar';       name = 'toolbar';              scale = 1.0 },
         # 한글 오버레이. The first is a real raster with the runtime's own rects
         # on it and the candidate chooser open over a real ambiguity; the second
