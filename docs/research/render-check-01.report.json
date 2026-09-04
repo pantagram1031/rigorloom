@@ -967,15 +967,15 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.9163,
+      "ssim": 0.9162,
       "ssim_blocks": 693,
-      "ssim_inked": 0.1625,
+      "ssim_inked": 0.1612,
       "ssim_inked_blocks": 68,
-      "iou": 0.5582,
+      "iou": 0.5546,
       "ink": {
-        "reference": 0.01214,
+        "reference": 0.01212,
         "candidate": 0.02053,
-        "delta": 0.00839
+        "delta": 0.00841
       },
       "crop_px": [
         794,
@@ -1318,15 +1318,15 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.6684,
+      "ssim": 0.6673,
       "ssim_blocks": 1287,
-      "ssim_inked": 0.1247,
+      "ssim_inked": 0.123,
       "ssim_inked_blocks": 487,
-      "iou": 0.4325,
+      "iou": 0.4307,
       "ink": {
-        "reference": 0.03583,
+        "reference": 0.03571,
         "candidate": 0.05945,
-        "delta": 0.02362
+        "delta": 0.02373
       },
       "crop_px": [
         794,
@@ -1399,15 +1399,15 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8056,
+      "ssim": 0.8055,
       "ssim_blocks": 1485,
-      "ssim_inked": 0.0938,
+      "ssim_inked": 0.0936,
       "ssim_inked_blocks": 318,
-      "iou": 0.5093,
+      "iou": 0.5096,
       "ink": {
-        "reference": 0.02328,
+        "reference": 0.02333,
         "candidate": 0.03161,
-        "delta": 0.00833
+        "delta": 0.00828
       },
       "crop_px": [
         794,
@@ -1916,15 +1916,15 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8808,
+      "ssim": 0.8802,
       "ssim_blocks": 693,
-      "ssim_inked": 0.2472,
+      "ssim_inked": 0.2437,
       "ssim_inked_blocks": 108,
-      "iou": 0.4609,
+      "iou": 0.4584,
       "ink": {
-        "reference": 0.01457,
+        "reference": 0.01464,
         "candidate": 0.03657,
-        "delta": 0.022
+        "delta": 0.02193
       },
       "crop_px": [
         794,
@@ -2121,15 +2121,15 @@
         }
       },
       "page_agreement": false,
-      "ssim": 0.816,
+      "ssim": 0.8708,
       "ssim_blocks": 10692,
-      "ssim_inked": 0.0473,
-      "ssim_inked_blocks": 2060,
-      "iou": 0.1405,
+      "ssim_inked": 0.1171,
+      "ssim_inked_blocks": 1561,
+      "iou": 0.3551,
       "ink": {
-        "reference": 0.01019,
+        "reference": 0.00956,
         "candidate": 0.01872,
-        "delta": 0.00852
+        "delta": 0.00916
       },
       "crop_px": [
         794,
@@ -2139,7 +2139,7 @@
         "reference": 869,
         "candidate": 870
       },
-      "verdict": "differs",
+      "verdict": "close",
       "png": "F49.png"
     },
     {
@@ -2232,10 +2232,10 @@
     }
   ],
   "tally": {
-    "close": 37,
-    "differs": 9,
+    "close": 38,
+    "differs": 8,
     "match": 3,
     "unsupported": 2
   },
-  "png_bytes": 1119182
+  "png_bytes": 1120769
 }
