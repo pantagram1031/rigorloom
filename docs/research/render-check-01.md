@@ -379,6 +379,31 @@ and that is closed too: `F49` now lands on page 9 in both engines. It reads
 document's endnote inside `F49`'s own column and we set it at full body
 width, so the band's foot differs by one line.
 
+### 4a. `F06`/`F07`/`F08` 줄간격, `F13` 자간, `F15` 상대 크기 — the rows match and the ink does not
+
+These five are the `differs` rows that survive every layout fix on this page.
+Their bands are right: `F06`/`F07`/`F08` measure 121/121, 140/140 and 94/94 px
+against Hancom's own bands, their six, six and four lines have baselines that
+agree to **0.1 px**, and every one of their 182/182/136 glyphs pairs against
+the reference by its own character.
+
+**The residual is our rasteriser's weight, and it is measured rather than
+tuned away** ([ink-residual.md](ink-residual.md)). Per glyph, on the same
+resolved face and size, our coverage is **1.80×** the reference's at 96 dpi
+(dark-pixel count 2.60×, stems 78 % heavier at a 13 px em), falling to 1.16×
+at 144 dpi and to ~1.0 by 192. The excess is multiplicative, so a band's ink
+delta is its own reference ink fraction times (ratio − 1) — and these are
+three of the densest glyph-text bands in the document. The same 1.71–1.83
+ratio is measured on `F01`, which reads `close`. Across the 48 inked features
+Pearson(band ink fraction, `ssim`) = **−0.801**.
+
+Three other explanations were tested and refuted: no left-side-bearing is
+dropped (line origins land within **0.008 px** of the reference's span x), no
+face is substituted (돋움 resolves to `gulim.ttc` face **2** = Dotum, and
+`substituted_character_share` is 0.0), and the scorer's regions are not
+displaced. What did change is the harness's two resolution-dependent bounds,
+each an exact no-op at 96 dpi; the tally above is unmoved.
+
 ### 5. `F50` 머리말 / `F51` 꼬리말 (IoU 0.153 / 0.156)
 
 Both are drawn — contradicting the catalog, which lists header/footer as
