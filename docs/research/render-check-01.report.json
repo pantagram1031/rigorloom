@@ -7,7 +7,7 @@
   "reference_pdf": "render-check-01.pdf",
   "dpi": 96,
   "pages": {
-    "candidate": 10,
+    "candidate": 11,
     "reference": 9,
     "exact": false
   },
@@ -49,13 +49,8 @@
   },
   "elements_skipped": [
     {
-      "element": "hh:bottomBorder@type=DASH",
-      "reason": "non-solid border stroked as solid",
-      "count": 1
-    },
-    {
       "element": "hh:bottomBorder@type=DOT",
-      "reason": "non-solid border stroked as solid",
+      "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
       "count": 1
     },
     {
@@ -64,13 +59,8 @@
       "count": 1
     },
     {
-      "element": "hh:leftBorder@type=DASH",
-      "reason": "non-solid border stroked as solid",
-      "count": 1
-    },
-    {
       "element": "hh:leftBorder@type=DOT",
-      "reason": "non-solid border stroked as solid",
+      "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
       "count": 1
     },
     {
@@ -79,13 +69,8 @@
       "count": 1
     },
     {
-      "element": "hh:rightBorder@type=DASH",
-      "reason": "non-solid border stroked as solid",
-      "count": 1
-    },
-    {
       "element": "hh:rightBorder@type=DOT",
-      "reason": "non-solid border stroked as solid",
+      "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
       "count": 1
     },
     {
@@ -94,13 +79,8 @@
       "count": 1
     },
     {
-      "element": "hh:topBorder@type=DASH",
-      "reason": "non-solid border stroked as solid",
-      "count": 1
-    },
-    {
       "element": "hh:topBorder@type=DOT",
-      "reason": "non-solid border stroked as solid",
+      "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
       "count": 1
     },
     {
@@ -1182,11 +1162,11 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.76,
+      "ssim": 0.7731,
       "ssim_blocks": 2178,
-      "ssim_inked": -0.044,
-      "ssim_inked_blocks": 499,
-      "iou": 0.1537,
+      "ssim_inked": 0.003,
+      "ssim_inked_blocks": 493,
+      "iou": 0.2942,
       "ink": {
         "reference": 0.01183,
         "candidate": 0.02933,
@@ -1221,10 +1201,10 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.7397,
+      "ssim": 0.7474,
       "ssim_blocks": 1782,
-      "ssim_inked": 0.0513,
-      "ssim_inked_blocks": 489,
+      "ssim_inked": 0.0524,
+      "ssim_inked_blocks": 475,
       "iou": 0.1373,
       "ink": {
         "reference": 0.00574,
@@ -1260,11 +1240,11 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.748,
+      "ssim": 0.8943,
       "ssim_blocks": 1584,
-      "ssim_inked": 0.2854,
-      "ssim_inked_blocks": 558,
-      "iou": 0.3093,
+      "ssim_inked": 0.7001,
+      "ssim_inked_blocks": 556,
+      "iou": 0.757,
       "ink": {
         "reference": 0.02794,
         "candidate": 0.03635,
@@ -1338,15 +1318,15 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.6737,
+      "ssim": 0.7225,
       "ssim_blocks": 1584,
-      "ssim_inked": -0.0307,
-      "ssim_inked_blocks": 501,
-      "iou": 0.222,
+      "ssim_inked": 0.1166,
+      "ssim_inked_blocks": 497,
+      "iou": 0.3761,
       "ink": {
         "reference": 0.03008,
-        "candidate": 0.05083,
-        "delta": 0.02075
+        "candidate": 0.04992,
+        "delta": 0.01983
       },
       "crop_px": [
         794,
@@ -1358,13 +1338,8 @@
       },
       "declared_limits": [
         {
-          "element": "hh:bottomBorder@type=DASH",
-          "reason": "non-solid border stroked as solid",
-          "count": 1
-        },
-        {
           "element": "hh:bottomBorder@type=DOT",
-          "reason": "non-solid border stroked as solid",
+          "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
           "count": 1
         },
         {
@@ -1373,13 +1348,8 @@
           "count": 1
         },
         {
-          "element": "hh:leftBorder@type=DASH",
-          "reason": "non-solid border stroked as solid",
-          "count": 1
-        },
-        {
           "element": "hh:leftBorder@type=DOT",
-          "reason": "non-solid border stroked as solid",
+          "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
           "count": 1
         },
         {
@@ -1388,13 +1358,8 @@
           "count": 1
         },
         {
-          "element": "hh:rightBorder@type=DASH",
-          "reason": "non-solid border stroked as solid",
-          "count": 1
-        },
-        {
           "element": "hh:rightBorder@type=DOT",
-          "reason": "non-solid border stroked as solid",
+          "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
           "count": 1
         },
         {
@@ -1403,13 +1368,8 @@
           "count": 1
         },
         {
-          "element": "hh:topBorder@type=DASH",
-          "reason": "non-solid border stroked as solid",
-          "count": 1
-        },
-        {
           "element": "hh:topBorder@type=DOT",
-          "reason": "non-solid border stroked as solid",
+          "reason": "no corpus form and no Hancom reference declares this type; drawn from the measured DASH period, not measured itself",
           "count": 1
         },
         {
@@ -1418,7 +1378,7 @@
           "count": 1
         }
       ],
-      "verdict": "differs",
+      "verdict": "close",
       "png": "F31.png"
     },
     {
@@ -1439,11 +1399,11 @@
         }
       },
       "page_agreement": true,
-      "ssim": 0.8223,
+      "ssim": 0.836,
       "ssim_blocks": 1881,
-      "ssim_inked": -0.0471,
-      "ssim_inked_blocks": 319,
-      "iou": 0.2054,
+      "ssim_inked": 0.0314,
+      "ssim_inked_blocks": 318,
+      "iou": 0.4788,
       "ink": {
         "reference": 0.01868,
         "candidate": 0.02537,
@@ -1457,7 +1417,7 @@
         "reference": 126,
         "candidate": 157
       },
-      "verdict": "differs",
+      "verdict": "close",
       "png": "F32.png"
     },
     {
@@ -2083,15 +2043,15 @@
         }
       },
       "page_agreement": false,
-      "ssim": 0.6856,
+      "ssim": 0.9928,
       "ssim_blocks": 10197,
-      "ssim_inked": 0.018,
-      "ssim_inked_blocks": 3265,
-      "iou": 0.025,
+      "ssim_inked": 0.2396,
+      "ssim_inked_blocks": 96,
+      "iou": 0.5348,
       "ink": {
         "reference": 0.00123,
-        "candidate": 0.04185,
-        "delta": 0.04063
+        "candidate": 0.00201,
+        "delta": 0.00078
       },
       "crop_px": [
         794,
@@ -2101,7 +2061,7 @@
         "reference": 824,
         "candidate": 829
       },
-      "verdict": "differs",
+      "verdict": "close",
       "png": "F47.png"
     },
     {
@@ -2111,7 +2071,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 9,
+          "page": 10,
           "top": 0.1098,
           "bottom": 0.89524
         },
@@ -2150,7 +2110,7 @@
       "block_ordinal": 0,
       "region": {
         "candidate": {
-          "page": 10,
+          "page": 11,
           "top": 0.12139,
           "bottom": 0.89899
         },
@@ -2272,10 +2232,10 @@
     }
   ],
   "tally": {
-    "close": 32,
-    "differs": 16,
+    "close": 35,
+    "differs": 13,
     "match": 1,
     "unsupported": 2
   },
-  "png_bytes": 1198364
+  "png_bytes": 1142425
 }
