@@ -4167,3 +4167,194 @@ def test_no_corpus_paragraph_is_split_across_a_page(gianmun_render):
                 assert len(para.page_runs()) == 1, (
                     os.path.basename(path),
                     [own_render._iattr(s, "vertpos") for s in para.linesegs])
+
+
+# ------------------------------------------------- hp:outMargin registration
+
+MOEL_2013 = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2013.hwpx")
+
+
+def _out_margin_fixture(tmp_path, name, left, top, right, bottom,
+                        source=None):
+    """A corpus form with every object's ``hp:outMargin`` rewritten.
+
+    The forms themselves only ever declare 0, 138, 140, 141 or 283 in all four
+    slots, so an asymmetric fixture is the only way to tell "the box is inset
+    by @left/@top" from "the box is inset by half of its own footprint".
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(_need(source or GIANMUN)) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    for entry in names:
+        if not (entry.startswith("Contents/section")
+                and entry.endswith(".xml")):
+            continue
+        root = ET.fromstring(payload[entry])
+        for el in root.iter():
+            if own_render._local(el.tag) != "outMargin":
+                continue
+            el.set("left", str(left))
+            el.set("top", str(top))
+            el.set("right", str(right))
+            el.set("bottom", str(bottom))
+        payload[entry] = ET.tostring(root, encoding="utf-8")
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for entry in names:
+            archive.writestr(entry, payload[entry])
+    return target
+
+
+def _table_origins(path, monkeypatch):
+    """``[(x, y), ...]`` in HWPUNIT, in draw order, for every table drawn."""
+    seen = []
+    original = own_render.OwnRenderer._render_table
+
+    def record(self, draw, tbl, origin_hwp):
+        seen.append(tuple(origin_hwp))
+        return original(self, draw, tbl, origin_hwp)
+
+    monkeypatch.setattr(own_render.OwnRenderer, "_render_table", record)
+    own_render.OwnRenderer(path, dpi=144).render()
+    monkeypatch.undo()
+    return seen
+
+
+def test_an_objects_box_is_inset_by_its_own_out_margin(tmp_path, monkeypatch):
+    """``hp:outMargin@left``/``@top`` move the box, and nothing else does.
+
+    Measured, not assumed: across the ten corpus forms this renderer drew
+    every table exactly ``outMargin@top`` above and ``outMargin@left`` left of
+    where its Hancom reference PDF draws it -- 0.00 pt on the forms that
+    declare 0, 1.38/1.40/1.41 pt on those that declare 138/140/141, 2.83 pt on
+    those that declare 283.  See ``engine/references/own-render-notes.md``.
+    """
+    zero = _out_margin_fixture(tmp_path, "om-zero.hwpx", 0, 0, 0, 0)
+    inset = _out_margin_fixture(tmp_path, "om-inset.hwpx", 300, 500, 300, 500)
+    before = _table_origins(zero, monkeypatch)
+    after = _table_origins(inset, monkeypatch)
+    assert before and len(before) == len(after)
+    # gianmun-1ho carries inline tables AND an anchored one; every one moves,
+    # and a table nested in another table's cell moves by its own outer margin
+    # on top of its parent's -- so the shift is a whole multiple of it, never
+    # a fraction and never a form-wide constant.
+    shifts = [(ax - bx, ay - by) for (bx, by), (ax, ay) in zip(before, after)]
+    # The outermost table -- the one whose slot is the body box -- moves by
+    # exactly the declared margin.
+    assert shifts[0] == (300, 500), shifts
+    # A table nested in another table's cell also carries its parent's inset
+    # (and its parent's grown row), so it moves by at least as much again.
+    for dx, dy in shifts:
+        assert dx >= 300 and dy >= 500, shifts
+
+
+def test_out_margin_is_a_footprint_not_a_shift(tmp_path):
+    """The slot grows by @left+@right and the box sits @left/@top inside it.
+
+    Horizontal footprint is what keeps a *centred* object centred: were the
+    outer margin only a shift of the box, a symmetric margin would push every
+    centred table right by half of itself.  The line HEIGHT deliberately does
+    not grow — see ``_object_extent``'s declared limit.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    path = _out_margin_fixture(tmp_path, "om-extent.hwpx", 300, 500, 700, 900)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("Contents/section0.xml"))
+    tables = [el for el in root.iter() if own_render._local(el.tag) == "tbl"]
+    assert tables
+    for tbl in tables:
+        sz = own_render._kid(tbl, "sz")
+        width = own_render._iattr(sz, "width")
+        height = own_render._iattr(sz, "height")
+        assert renderer._object_out_margin(tbl) == (300, 500, 700, 900)
+        assert renderer._object_extent(tbl) == (width + 300 + 700, height)
+        assert renderer._object_origin(tbl, (1000, 2000)) == (1300, 2500)
+
+
+def test_an_object_declaring_no_out_margin_is_drawn_where_it_always_was(
+        tmp_path, monkeypatch):
+    """Zero, and no ``hp:outMargin`` element at all, are both no-ops.
+
+    The rule must not move anything on a document that does not ask for it --
+    which is also why no per-form constant can be involved.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    zero = _out_margin_fixture(tmp_path, "om-zero2.hwpx", 0, 0, 0, 0)
+    with zipfile.ZipFile(zero) as archive:
+        names = archive.namelist()
+        payload = {n: archive.read(n) for n in names}
+    root = ET.fromstring(payload["Contents/section0.xml"])
+    for parent in root.iter():
+        for child in list(parent):
+            if own_render._local(child.tag) == "outMargin":
+                parent.remove(child)
+    payload["Contents/section0.xml"] = ET.tostring(root, encoding="utf-8")
+    absent = tmp_path / "om-absent.hwpx"
+    with zipfile.ZipFile(absent, "w", zipfile.ZIP_DEFLATED) as archive:
+        for entry in names:
+            archive.writestr(entry, payload[entry])
+    assert _table_origins(zero, monkeypatch) == _table_origins(
+        absent, monkeypatch)
+    zero_png = own_render.render_to_dir(zero, tmp_path / "z", dpi=144)["pngs"]
+    absent_png = own_render.render_to_dir(
+        absent, tmp_path / "a", dpi=144)["pngs"]
+    assert len(zero_png) == len(absent_png)
+    for one, two in zip(zero_png, absent_png):
+        with open(one, "rb") as handle_a, open(two, "rb") as handle_b:
+            assert handle_a.read() == handle_b.read()
+
+
+def test_a_centred_corpus_table_stays_centred_in_the_body_box(monkeypatch):
+    """moel-2013's page-1 table is centred and declares ``outMargin=283``.
+
+    Its reference PDF draws it centred on the body box; a renderer that added
+    the outer margin to the box without growing the slot would push it 2.83 pt
+    right of centre.
+    """
+    path = _need(MOEL_2013)
+    renderer = own_render.OwnRenderer(path, dpi=144)
+    geometry = renderer.page_geometry()
+    origins = _table_origins(path, monkeypatch)
+    assert origins
+    tbl = next(el for el in renderer.sections[0].iter()
+               if own_render._local(el.tag) == "tbl")
+    width = own_render._iattr(own_render._kid(tbl, "sz"), "width")
+    centre = origins[0][0] + width / 2.0
+    body_centre = geometry["body_left"] + geometry["usable_width"] / 2.0
+    assert abs(centre - body_centre) <= 100          # 1 pt
+
+
+def test_out_margin_changes_no_corpus_page_count():
+    """Registration is a within-page move: the regression floor is the count.
+
+    Pinned per form so a later change to the outer-margin rule cannot pay for
+    registration with a repagination.
+    """
+    import glob
+
+    expected = {
+        "admrul-gajokdolbom-hyuga-sinchengseo": 1,
+        "gianmun-byeolji-1ho": 1,
+        "gianmun-byeolji-2ho": 1,
+        "jeongbo-gonggae-cheongguseo": 1,
+        "jumin-deungchobon-sinchengseo": 3,
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 21,
+        "moel-pyojun-geunrogyeyakseo-2013": 7,
+        "moel-pyojun-geunrogyeyakseo-2025": 7,
+        "nrf-gyeolgwa-bogoseo-yangsik": 4,
+        "saeopja-deungnok-sinchengseo": 6,
+    }
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem not in expected:
+            continue
+        images, _sidecar = own_render.OwnRenderer(path, dpi=144).render()
+        assert len(images) == expected[stem], stem
