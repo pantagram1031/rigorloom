@@ -281,14 +281,22 @@ C2 blocker on the same exact HEAD:
 - Source-only C6 draft on exact source HEAD `020d0b8…` (private and gitignored):
   - `private/epoch-0/020d0b8/compliance/source-inventory.json`, 129 npm / 242
     Windows-target Cargo / 9 sidecar-build Python packages, SHA-256
-    `7550FE7D5E4C419134A0C7B8C91E8B5AF3EE6E6F18FA011BEA1B7F02C9839338`;
+    `B0FDD7DB27879F73B539DA8EB1EBF199585DA493A113D6BE912081D0CB42C9AE`;
+    all nine Python rows now carry their effective license and recorded
+    license-file list, including the split standard/runtime-hook terms for
+    `pyinstaller-hooks-contrib`;
   - `provenance-table.csv`, 57 item-level rows (32 corpus + 25 screenshots),
     SHA-256
     `2B389CB01109E437ECDC32E3245B732E2B496045BBF1CBF273D13F960C7FC683`;
   - `licensing-audit-draft.md`, SHA-256
-    `AA38AA961B7AC12049F706DF2D7EBF04861CA28AC4E3C0B260C60C6628775FBC`;
+    `5FF6A7FA45674AECC68B0C46D1283C8D10CE7DB66EA24F815ADEC8D16462B2DA`;
   - `THIRD_PARTY_NOTICES.draft.txt`, SHA-256
-    `A453A32859C3F5A39654C48EDEF9A845340079CDA8D6C106C0046D858F778EB8`.
+    `A453A32859C3F5A39654C48EDEF9A845340079CDA8D6C106C0046D858F778EB8`;
+  - `evidence-index.json`, 2,335 bytes, SHA-256
+    `6A10F51DA7EE50B356F7FC9C2B382125067C0E546807131A02A37730C71E2262`;
+    all four indexed artifacts rehashed with zero mismatches, and the 57-row
+    provenance table revalidated against current tracked bytes with zero
+    path/hash/size mismatches.
   The audit is not legal clearance and the notice is explicitly blocked/incomplete
   until a green final installer is unpacked and reconciled.
 - C6 stop-ship draft findings: the exact Hancom public-format attribution is
