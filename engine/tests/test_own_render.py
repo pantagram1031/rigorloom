@@ -1450,6 +1450,205 @@ def test_justification_stretches_spaces_when_the_line_has_them():
     assert own_render.OwnRenderer._elastic_slots(hangul) == [1, 3]
 
 
+# ---------------------------------------- cached-lineseg justify box (this slice)
+#
+# A private report-class holdout measured this exactly: 123 body paragraphs'
+# interior JUSTIFY lines all stretched to their cached hp:lineseg@horzsize,
+# which was a document-wide-constant 853 HWPUNIT short of the paragraph's own
+# available width — the reference PDF's line right-edges land on the WIDER
+# figure. Right-edge agreement (nearest reference line, 0.5 em tolerance)
+# measured 29/239 (12.1%) before this fix and 208/239 (87.0%) after, on that
+# holdout at 144 dpi. `_draw_line`'s ``stretch_avail_hwp`` is the fix: a
+# second, separately-computed box, used ONLY to size JUSTIFY/DISTRIBUTE
+# slack, that can only ever be as wide as or wider than the cached box.
+
+def test_draw_line_stretches_into_the_wider_stretch_avail_hwp():
+    """``stretch_avail_hwp`` — not ``avail_hwp`` — sizes JUSTIFY/DISTRIBUTE slack.
+
+    ``avail_hwp`` still governs everything else: a line's own box for
+    LEFT/CENTER/RIGHT offset and for the ``line_boxes`` bookkeeping other
+    code reads. Passing a wider ``stretch_avail_hwp`` must not move a CENTER
+    line and must not touch a JUSTIFY *last* line.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__stretch__", height=1000)
+    items = [("text", own_render.Segment("가나다라", cid))]
+    narrow_hwp = 20000
+    wide_hwp = 40000
+
+    # JUSTIFY, interior line: slack is sized against stretch_avail_hwp.
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "JUSTIFY", narrow_hwp,
+                        last_line=False, stretch_avail_hwp=wide_hwp)
+    assert len(renderer.line_boxes) == 1
+    stretched = renderer.line_boxes[0]
+    assert stretched["x1"] == pytest.approx(renderer.pxf(wide_hwp), abs=0.5)
+    assert renderer.applied.get("hh:align@JUSTIFY") == 1
+
+    # Omitting stretch_avail_hwp keeps today's behaviour: the cached box.
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "JUSTIFY", narrow_hwp,
+                        last_line=False)
+    assert renderer.line_boxes[0]["x1"] == pytest.approx(
+        renderer.pxf(narrow_hwp), abs=0.5)
+
+    # A narrower stretch_avail_hwp never shrinks below the cached box either
+    # — _draw_line takes max(avail_px, stretch_avail_px).
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "JUSTIFY", wide_hwp,
+                        last_line=False, stretch_avail_hwp=narrow_hwp)
+    assert renderer.line_boxes[0]["x1"] == pytest.approx(
+        renderer.pxf(wide_hwp), abs=0.5)
+
+    # JUSTIFY's last line is never stretched, wide box or not.
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "JUSTIFY", narrow_hwp,
+                        last_line=True, stretch_avail_hwp=wide_hwp)
+    used_x1 = renderer.line_boxes[0]["x1"]
+    assert used_x1 < renderer.pxf(narrow_hwp)
+    assert "hh:align@JUSTIFY" not in renderer.applied
+
+    # DISTRIBUTE stretches even the (only, "last") line — into the wide box.
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "DISTRIBUTE", narrow_hwp,
+                        last_line=True, stretch_avail_hwp=wide_hwp)
+    assert renderer.line_boxes[0]["x1"] == pytest.approx(
+        renderer.pxf(wide_hwp), abs=0.5)
+
+    # CENTER ignores stretch_avail_hwp entirely: it is not a stretch align,
+    # so the offset is still computed from avail_hwp alone.
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._draw_line(draw, items, 0, 0, 20000, "CENTER", narrow_hwp,
+                        stretch_avail_hwp=wide_hwp)
+    used = renderer._measure(draw, "가나다라", cid)
+    expected_x0 = (renderer.pxf(narrow_hwp) - used) / 2.0
+    assert renderer.line_boxes[0]["x0"] == pytest.approx(expected_x0, abs=0.5)
+
+
+def _cached_paragraph(renderer, text, cid, para_id, align, horzsize,
+                      line_count=2, char_height=1000):
+    """An ``hp:p`` with a real ``hp:linesegarray`` — the cached-mode path.
+
+    ``line_count`` lines all share ``horzsize`` and split ``text`` in half,
+    so line 0 is always "interior" (not last) and line ``line_count - 1`` is
+    always "last" — exactly the split JUSTIFY treats differently.
+    """
+    from xml.etree import ElementTree as ET
+
+    renderer.defs["para_pr"][para_id] = {
+        "align": align, "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 0, "tab_pr": None, "line_spacing_type": "PERCENT",
+        "line_spacing_value": 100, "line_spacing_unit": "HWPUNIT",
+        "margin_left": 0, "margin_right": 0, "indent": 0,
+    }
+    half = max(1, len(text) // line_count)
+    baseline = int(char_height * 0.85)
+    segs = []
+    for i in range(line_count):
+        segs.append(
+            f'<hp:lineseg textpos="{i * half}" vertpos="{i * 2000}" '
+            f'vertsize="{char_height}" textheight="{char_height}" '
+            f'baseline="{baseline}" spacing="0" horzpos="0" '
+            f'horzsize="{horzsize}" flags="0"/>')
+    xml = (
+        f'<hp:p xmlns:hp="urn:x" paraPrIDRef="{para_id}">'
+        f'<hp:run charPrIDRef="{cid}"><hp:t>{text}</hp:t></hp:run>'
+        f'<hp:linesegarray>{"".join(segs)}</hp:linesegarray></hp:p>')
+    element = ET.fromstring(xml)
+    return own_render.Paragraph(element, renderer.defs["para_pr"])
+
+
+def test_render_cached_lines_widens_justify_stretch_to_the_paragraphs_own_width():
+    """The production path (``_render_cached_lines``), not just ``_draw_line``.
+
+    A cached ``horzsize`` narrower than the container it is rendered into
+    (``avail_w_hwp``) is exactly the shape of the holdout bug: the interior
+    line must stretch to the container, and the last line must stay put.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__cached_justify__", height=1000)
+    cached_horzsize = 20000
+    container_hwp = 40000               # the paragraph's TRUE available width
+    para = _cached_paragraph(renderer, "가나다라마바사아", cid,
+                             "__cjpara__", "JUSTIFY", cached_horzsize,
+                             line_count=2)
+
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._render_cached_lines(draw, para, (0, 0), container_hwp)
+    assert len(renderer.line_boxes) == 2
+    interior, last = renderer.line_boxes
+    # The interior line reaches the paragraph's real width, not the
+    # narrower cached box.
+    assert interior["x1"] == pytest.approx(renderer.pxf(container_hwp),
+                                           abs=0.5)
+    assert interior["x1"] > renderer.pxf(cached_horzsize) + 1.0
+    # The last line is untouched — still short of even the cached box,
+    # since JUSTIFY never stretches a paragraph's last line.
+    assert last["x1"] < renderer.pxf(cached_horzsize)
+    assert renderer.applied.get("hh:align@JUSTIFY") == 1
+
+
+def test_render_cached_lines_distribute_stretches_every_line_including_last():
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__cached_distribute__", height=1000)
+    cached_horzsize = 20000
+    container_hwp = 40000
+    para = _cached_paragraph(renderer, "가나다라마바사아", cid,
+                             "__cdpara__", "DISTRIBUTE", cached_horzsize,
+                             line_count=2)
+
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._render_cached_lines(draw, para, (0, 0), container_hwp)
+    assert len(renderer.line_boxes) == 2
+    for line in renderer.line_boxes:
+        assert line["x1"] == pytest.approx(renderer.pxf(container_hwp),
+                                           abs=0.5)
+    assert renderer.applied.get("hh:align@DISTRIBUTE") == 2
+
+
+def test_render_cached_lines_never_narrows_a_box_wider_than_its_container():
+    """The corpus's own shape: a table cell whose cached box is WIDER than
+    ``avail_w_hwp`` (seen on several corpus forms) must render exactly as it
+    did before this slice — ``max()`` only ever widens, never narrows."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__wide_cell__", height=1000)
+    cached_horzsize = 40000
+    container_hwp = 20000               # narrower than the cached box
+    para = _cached_paragraph(renderer, "가나다라마바사아", cid,
+                             "__wcpara__", "JUSTIFY", cached_horzsize,
+                             line_count=2)
+
+    renderer.line_boxes = []
+    renderer.applied = {}
+    renderer._render_cached_lines(draw, para, (0, 0), container_hwp)
+    interior, _last = renderer.line_boxes
+    assert interior["x1"] == pytest.approx(renderer.pxf(cached_horzsize),
+                                           abs=0.5)
+
+
 # ------------------------------------------------- line breaking (E2.1)
 #
 # The breaker is graded twice over.  Its *mechanics* — which positions the
