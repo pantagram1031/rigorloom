@@ -30,11 +30,19 @@
                              renderer is the DEFAULT page here, not a
                              fallback: the badge text, the 무엇을 못 그렸나
                              list compared entry by entry against the runtime's
-                             own, an overlay click on a page whose lines carry
-                             no addresses, and both zooms — page fit, and the
-                             Ctrl+= / Ctrl+− / Ctrl+0 bindings as real key
-                             events. The second run is cold and asserts the app
-                             zoom came back.
+                             own, and — since gap 34 closed — the WHOLE editing
+                             loop on a page nothing but this repo has rendered:
+                             seats drawn against the runtime's count and all of
+                             them `own_cell`, a seat clicked and typed into and
+                             followed to a plan op naming that cell, a caret on
+                             a body line, an ambiguous line that asks and
+                             queues nothing, an unmapped line that says so, and
+                             the cross-check counts that prove the renderer's
+                             own addresses were checked rather than trusted.
+                             Then both zooms — page fit, and the Ctrl+= /
+                             Ctrl+− / Ctrl+0 bindings as real key events. The
+                             second run is cold and asserts the app zoom came
+                             back.
 
     run 5 (phase "page")     페이지 보기 against what this machine can really
                              do. The Hancom COM server here is broken, so
