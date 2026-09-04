@@ -155,34 +155,33 @@ def test_pairing_respects_the_distance_cap():
 
 # -------------------------------------------------- reference honesty gate
 
-@pytest.mark.parametrize("slug", [
-    "gianmun-byeolji-1ho",
-    "gianmun-byeolji-2ho",
-    "nrf-gyeolgwa-bogoseo-yangsik",
-])
-def test_the_three_reduced_references_are_detected_and_refused(slug):
-    """These three reference PDFs are ~1/sqrt(2) renders of their documents.
+def test_no_reference_is_a_known_print_reduction_any_more():
+    """Historical marker, kept so the fixed defect stays named in the suite.
 
-    Measured: their text is drawn at ~70.7% of the ``hh:charPr@height`` the
-    file declares, while the documents' own embedded ``Preview/PrvImage.png``
-    shows content filling the page.  Scoring against them would grade the
-    reference facility, so the detector must fire.
+    Through 2026-09-03 ``gianmun-byeolji-1ho``, ``gianmun-byeolji-2ho`` and
+    ``nrf-gyeolgwa-bogoseo-yangsik`` were ~1/sqrt(2) renders of their
+    documents (``settings.xml`` PrintInfo/PrintMethod=4, 2-up imposition
+    applied even to a single-page document) — see
+    ``engine/references/own-render-notes.md`` and
+    ``engine/references/render-1to1/NOTES.md``.  Re-pinned 2026-09-04 to 1:1
+    renders produced by ``com_backend.py``'s existing PrintMethod-
+    normalization staging.  This function stays empty on purpose: the real
+    assertion is that all ten slugs below now pass
+    ``test_the_one_to_one_references_are_accepted`` and
+    ``test_every_render_reference_matches_its_declared_charpr_height``.
     """
-    _need_fitz()
-    hwpx, pdf = _form(slug)
-    record = render_scoreboard.reference_geometry_scale(hwpx, pdf)
-    assert record["comparable"] is False, record
-    assert record["scale"] == pytest.approx(0.7071, abs=0.02), record
-    assert record["reason"]
 
 
 @pytest.mark.parametrize("slug", [
     "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
     "jeongbo-gonggae-cheongguseo",
     "jumin-deungchobon-sinchengseo",
     "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
     "moel-pyojun-geunrogyeyakseo-2013",
     "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
     "saeopja-deungnok-sinchengseo",
 ])
 def test_the_one_to_one_references_are_accepted(slug):
@@ -192,6 +191,58 @@ def test_the_one_to_one_references_are_accepted(slug):
     record = render_scoreboard.reference_geometry_scale(hwpx, pdf)
     assert record["comparable"] is True, record
     assert record["scale"] == pytest.approx(1.0, abs=0.05), record
+
+
+@pytest.mark.parametrize("slug", [
+    "admrul-gajokdolbom-hyuga-sinchengseo",
+    "gianmun-byeolji-1ho",
+    "gianmun-byeolji-2ho",
+    "jeongbo-gonggae-cheongguseo",
+    "jumin-deungchobon-sinchengseo",
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+    "moel-pyojun-geunrogyeyakseo-2013",
+    "moel-pyojun-geunrogyeyakseo-2025",
+    "nrf-gyeolgwa-bogoseo-yangsik",
+    "saeopja-deungnok-sinchengseo",
+])
+def test_every_render_reference_matches_its_declared_charpr_height(slug):
+    """A 0.707 print-reduced reference must never enter the corpus silently.
+
+    ``reference_geometry_scale``'s own ``SCALE_TOLERANCE`` (0.05) only gates
+    the per-form ``comparable`` verdict against a document-declaring-its-own-
+    print-reduction failure mode; this test pins a tighter [0.97, 1.03] band
+    across the glyph-weighted census of EVERY pinned render reference in the
+    corpus (the same census ``reference_geometry_scale`` samples spans from),
+    so a future replacement PDF that regresses toward the historical 0.707
+    print reduction — or any other silent rescale — fails here, at commit
+    time, rather than surfacing only as an unexplained scoreboard delta.
+    """
+    _need_fitz()
+    hwpx, pdf = _form(slug)
+    declared = render_scoreboard._declared_character_sizes(hwpx)
+    reference = render_scoreboard._reference_character_sizes(pdf)
+    assert declared, f"no declared character sizes for {slug}"
+    assert reference, f"no reference character sizes for {slug}"
+    # Sample the size buckets that carry most of the document's own text —
+    # the top 3 declared sizes by glyph count — matched against the nearest
+    # reference bucket. Restricted to the dominant sizes (rather than every
+    # bucket) on purpose: a handful of glyphs in a rare small-caps/subscript
+    # size class can sit a real few percent off its nominal declared size for
+    # reasons that have nothing to do with page scale, while the sizes that
+    # carry most of a form's running text cannot — a uniform print reduction
+    # (the 0.707 defect) moves every one of them together.
+    top_sizes = sorted(declared.items(), key=lambda kv: kv[1], reverse=True)[:3]
+    sampled = 0
+    for declared_size, glyph_count in top_sizes:
+        nearest = min(reference, key=lambda r: abs(r - declared_size))
+        ratio = nearest / declared_size
+        assert 0.97 <= ratio <= 1.03, (
+            f"{slug}: declared {declared_size}pt ({glyph_count} glyphs) "
+            f"matched reference {nearest}pt (ratio {ratio:.4f}) — outside "
+            f"[0.97, 1.03]; looks like a print-reduced reference "
+            f"(declared={declared}, reference={reference})")
+        sampled += 1
+    assert sampled > 0, f"no declared size buckets found for {slug}"
 
 
 def test_a_blocked_verdict_is_not_a_failing_verdict():
