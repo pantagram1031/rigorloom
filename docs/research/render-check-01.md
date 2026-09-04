@@ -29,7 +29,7 @@ python engine/scripts/render_check.py \
 | Reference | Hwp 2024 13.0.0.2986 / Hancom PDF 1.3.0.550, via `com_backend.py convert` |
 | Candidate | `rigorloom-own` 0.1.0, grade `own-uncertified`, `--dpi 96`, default `auto` layout policy |
 | 1:1 | `render_scoreboard.reference_geometry_scale` = **0.995** (declared median 10.00 pt vs reference median 9.95 pt, tolerance 0.05) — comparable, no scale correction applied |
-| Page count | reference **9**, candidate **11** — *not* exact; see note 1 |
+| Page count | reference **9**, candidate **10** — *not* exact; see note 1 |
 | Hancom acceptance | a COM open+save round-trip of the document keeps all 51 feature elements |
 
 Regions are derived, never hand-placed, and the two sides are located
@@ -74,7 +74,9 @@ has been scored with them.
 
 `F49` 다단 is the one row that moved since the line-metrics measurement
 (**3 · 37 · 9 · 2**), and it moved because *the document* was fixed, not the
-renderer: see note 4. Page agreement is unchanged at **47/51**.
+renderer: see note 4. Page agreement is **49/51** — unchanged by the document
+fix (which moves no page), carried forward from the equation-extent slice
+below.
 
 Measured on the E2 line-metrics tree (`claude/engine-e2-line-metrics`), which
 adds the character- and line-metric rules of
@@ -149,7 +151,7 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 | `F19` [밑줄 (underline)](render-check-01/F19.png) | 0.806 | 0.127 | 0.429 | +0.0199 | 3 | **close** |
 | `F20` [취소선 (strikeout)](render-check-01/F20.png) | 0.797 | 0.106 | 0.447 | +0.0135 | 3 | **close** |
 | `F21` [위첨자 (superscript)](render-check-01/F21.png) | 0.896 | 0.255 | 0.554 | +0.0077 | 3 | **close** |
-| `F22` [아래첨자 (subscript)](render-check-01/F22.png) | 0.916 | 0.163 | 0.558 | +0.0084 | 3 | **match** |
+| `F22` [아래첨자 (subscript)](render-check-01/F22.png) | 0.916 | 0.161 | 0.555 | +0.0084 | 3 | **match** |
 | `F23` [글꼴 — 바탕 (declared face 바탕)](render-check-01/F23.png) | 0.783 | 0.105 | 0.418 | +0.0175 | 3 | **close** |
 | `F24` [글꼴 — 돋움 (declared face 돋움)](render-check-01/F24.png) | 0.801 | 0.161 | 0.484 | +0.0092 | 3 | **close** |
 | `F25` [글꼴 — 궁서 (declared face 궁서)](render-check-01/F25.png) | 0.807 | 0.204 | 0.501 | +0.0012 | 3 | **close** |
@@ -158,8 +160,8 @@ page boundary. The candidate still runs 11 pages to Hancom's 9.
 | `F28` [표 — 셀 병합 (colSpan 2 + rowSpan 2)](render-check-01/F28.png) | 0.945 | 0.276 | 0.613 | +0.0060 | 3 | **match** |
 | `F29` [표 — 셀 음영 (cell shading #D9D9D9)](render-check-01/F29.png) | 0.725 | 0.413 | 0.555 | +0.0104 | 4 | **close** |
 | `F30` [캡션 — 표 (table caption)](render-check-01/F30.png) | 0.921 | 0.364 | 0.529 | +0.0120 | 4 | **close** |
-| `F31` [표 — 테두리 종류 (SOLID / DASH / DOT / DOUBLE / 굵기)](render-check-01/F31.png) | 0.668 | 0.125 | 0.432 | +0.0236 | 4 | **close** |
-| `F32` [표 — 셀 세로 정렬 (TOP / CENTER / BOTTOM)](render-check-01/F32.png) | 0.806 | 0.094 | 0.509 | +0.0083 | 4 | **close** |
+| `F31` [표 — 테두리 종류 (SOLID / DASH / DOT / DOUBLE / 굵기)](render-check-01/F31.png) | 0.667 | 0.123 | 0.431 | +0.0237 | 4 | **close** |
+| `F32` [표 — 셀 세로 정렬 (TOP / CENTER / BOTTOM)](render-check-01/F32.png) | 0.805 | 0.094 | 0.510 | +0.0083 | 4 | **close** |
 | `F33` [그림 — 본문 안 (inline, treatAsChar)](render-check-01/F33.png) | 0.838 | 0.353 | 0.497 | +0.0057 | 4 | **close** |
 | `F34` [캡션 — 그림 (image caption)](render-check-01/F34.png) | 0.833 | 0.117 | 0.455 | +0.0144 | 4 | **close** |
 | `F35` [그림 — 어울림 TOP_AND_BOTTOM (anchored, text wrap)](render-check-01/F35.png) | 0.675 | 0.212 | 0.227 | +0.0056 | 4 | **differs** |
