@@ -161,6 +161,16 @@ the number overstates how wrong the *table* drawing is.
 the split rule. `own_render`'s own `block_not_honored` list already names
 `hp:tbl@repeatHeader`; this is a neighbouring, unnamed rule.
 
+> **Measured since, and the guess was wrong.** There is no keep-with rule.
+> `pageBreak` is only half the permission: Hancom splits a table at a row
+> boundary only when it is *anchored*, and this one is 글자처럼 취급
+> (`treatAsChar="1"`), so it can never split — it moves whole and, on a page
+> that is still too short for it, overflows. Eleven probe variants and three
+> Hancom-authored controls, no exception:
+> [table-page-break-rule.md](table-page-break-rule.md). Fixed there; `F47`
+> now reads `close` (IoU 0.025 → 0.535) and the numbers in the table above
+> are the pre-fix ones this page was written against.
+
 ### 3. Every table block is vertically compressed (`F27` 0.154, `F32` 0.205, `F31` 0.222)
 
 The grids are drawn correctly — right columns, right merges, right shading —
@@ -238,8 +248,12 @@ declared extent, with the text inside not rendered.
 This pass measures; it changes nothing in the renderer. In backlog order by
 size of the gap:
 
-1. Table start/split policy — a table that does not fit is split in place
-   rather than moved (`F47`).
+1. ~~Table start/split policy — a table that does not fit is split in place
+   rather than moved (`F47`).~~ **Measured and fixed** —
+   [table-page-break-rule.md](table-page-break-rule.md). With it out of the
+   way, item 7 below is the whole of the remaining page-count gap, and it
+   grew rather than shrank: the candidate now runs 11 pages to Hancom's 9,
+   because the extra page and the unmoved table used to cancel out.
 2. Table row height ignores the declared `hp:cellSz@height` floor
    (`F27`, `F28`, `F31`, `F32`).
 3. `hp:colPr` applied from the head of the section where Hancom does not

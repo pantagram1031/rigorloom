@@ -243,8 +243,15 @@ PARA_MARGIN_SCALE = 0.5
 
 # hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
 # (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
-# "the whole table moves", the same as NONE.  Only ``CELL`` makes a table
-# splittable across a page boundary; anything else moves the table whole.
+# "the whole table moves", the same as NONE.
+#
+# MEASURED (docs/research/table-page-break-rule.md): ``pageBreak`` is only
+# half the permission.  The other half is 글자처럼 취급 —
+# ``hp:tbl/hp:pos@treatAsChar``.  Hancom splits a table at a row boundary
+# only when the table is ANCHORED (``treatAsChar="0"``) *and* declares
+# ``CELL``.  An INLINE table (``treatAsChar="1"``) is a character-like object
+# in its line: it never splits, whatever ``pageBreak`` says.  Twelve probe
+# variants plus two Hancom-authored tables agree with no exception.
 TABLE_SPLIT_AT_ROWS = "CELL"
 
 # How far the flow pass will back a block up to satisfy ``keepWithNext``.
@@ -1861,6 +1868,9 @@ class OwnRenderer:
             "content overflows the usable box; split at a row boundary the "
             "same way the computed flow pass would, instead of drawing the "
             "overflow")
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
         queue.append((0, cut))
@@ -1919,12 +1929,14 @@ class OwnRenderer:
         rows = []
         if mode == LINE_LAYOUT_COMPUTED and para.chars:
             for line in self.compute_lines(draw, para, column_hwp):
+                table = self._flowing_table(
+                    para, line["start"], line["end"])
                 rows.append({
                     "advance": line["vertsize"] + line["spacing"],
-                    "extent": line["baseline"],
+                    "extent": self._row_extent(line["baseline"],
+                                               line["vertsize"], table),
                     "start": line["start"], "end": line["end"],
-                    "table": self._flowing_table(
-                        para, line["start"], line["end"]),
+                    "table": table,
                 })
             return mode, rows
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
@@ -1935,28 +1947,52 @@ class OwnRenderer:
             vertsize = _iattr(seg, "vertsize")
             baseline = _iattr(seg, "baseline") or int(round(
                 BASELINE_RATIO * vertsize))
+            table = self._flowing_table(para, start, end)
             rows.append({
                 "advance": vertsize + _iattr(seg, "spacing"),
-                "extent": baseline,
+                "extent": self._row_extent(baseline, vertsize, table),
                 "start": start, "end": end,
-                "table": self._flowing_table(para, start, end),
+                "table": table,
             })
         return mode, rows
 
-    def _table_split_rows(self, draw, tbl):
-        """Cumulative row bottoms of ``tbl``, and whether it may be split.
+    @staticmethod
+    def _row_extent(baseline, vertsize, table):
+        """The height a page-bottom test has to clear for one line.
 
-        A table is splittable at a row boundary only when it says so —
-        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔).  ``NONE`` (나누지 않음)
-        and ``TABLE`` (표 단위로 나눔) both mean the whole table moves.
+        ``baseline`` for a line of text: the descender below it may cross the
+        margin, and refusing that costs 3 of 47 corpus pages
+        (``docs/research/line-fit-rule.md``).  A line whose content is an
+        inline TABLE has no descender, and Hancom's own placement was
+        measured against the table's WHOLE height
+        (``docs/research/table-page-break-rule.md``): a table that does not
+        clear the room left on the page moves whole, it does not hang 15% of
+        itself past the margin and then get cut.
         """
-        splittable = (tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
-        self._quiet += 1
-        try:
-            _xs, ys, _cells = self._table_tracks(draw, tbl)
-        finally:
-            self._quiet -= 1
-        return splittable, ys
+        return max(baseline, vertsize) if table is not None else baseline
+
+    @staticmethod
+    def _table_is_inline(tbl):
+        """True when ``tbl`` is 글자처럼 취급 (``hp:pos@treatAsChar="1"``).
+
+        The measured half of the split permission: an inline table never
+        splits at a page boundary, whatever ``hp:tbl@pageBreak`` says.
+        """
+        pos = _kid(tbl, "pos")
+        if pos is None:
+            return False
+        return (pos.get("treatAsChar") or "0") not in ("0", "false", "FALSE")
+
+    def _table_may_split(self, tbl):
+        """May ``tbl`` be cut at a row boundary across a page?
+
+        Both halves, measured (docs/research/table-page-break-rule.md):
+        ``hp:tbl@pageBreak="CELL"`` (셀 단위로 나눔) AND the table anchored
+        rather than 글자처럼 취급.  ``NONE`` (나누지 않음), ``TABLE``
+        (표 단위로 나눔) and every inline table move whole instead.
+        """
+        return ((tbl.get("pageBreak") or "").upper() == TABLE_SPLIT_AT_ROWS
+                and not self._table_is_inline(tbl))
 
     # hp:tbl/@textWrap — 본문과의 배치.  Only these reserve vertical room in
     # the flow: TOP_AND_BOTTOM (위/아래 배치) puts the text below the object,
@@ -2033,7 +2069,7 @@ class OwnRenderer:
             wrap = (el.get("textWrap") or "").upper()
             if wrap not in self.FLOW_RESERVING_WRAPS:
                 continue
-            if (el.get("pageBreak") or "").upper() != TABLE_SPLIT_AT_ROWS:
+            if not self._table_may_split(el):
                 continue
             pos = _kid(el, "pos")
             vrel = ((pos.get("vertRelTo") or "PARA").upper()
@@ -2077,8 +2113,8 @@ class OwnRenderer:
     def _row_cut_for_room(ys, start, room):
         """Largest row boundary at/after ``start`` whose height above
         ``ys[start]`` still fits ``room`` — or ``start`` when not even the
-        next row fits.  Same rule ``_split_table_row`` uses for an inline
-        table, generalised to a boundary that need not be zero.
+        next row fits — the row-boundary cut generalised to a boundary that
+        need not be zero.
         """
         cut = start
         for row_index in range(start + 1, len(ys) - 1):
@@ -2106,6 +2142,9 @@ class OwnRenderer:
         cut = self._row_cut_for_room(ys, 0, room)
         if cut == 0:
             return None
+        self._skip("hp:tbl@repeatHeader",
+                   "a table split across a page boundary does not repeat its "
+                   "header row on the continuation page")
         self._mark_natural_height(tbl_el)
         counters["tables_split"] += 1
         # The paragraph itself is a one-slot placeholder for the anchored
@@ -2186,8 +2225,11 @@ class OwnRenderer:
         * ``@keepWithNext`` (다음 문단과 함께) — this block starts on the page
           its successor starts on, backed up at most
           ``KEEP_WITH_NEXT_MAX_CHAIN`` blocks.
-        * ``hp:tbl@pageBreak`` — a table splits at a row boundary only when it
-          declares ``CELL``; otherwise the whole table moves.
+        * ``hp:tbl@pageBreak`` + ``hp:pos@treatAsChar`` — a table splits at a
+          row boundary only when it declares ``CELL`` AND is anchored;
+          otherwise the whole table moves to the next page, and a table
+          taller than a whole page is drawn from the top of that page and
+          allowed to overflow (measured: Hancom does the same).
 
         Columns.  A page whose section declares real columns (equal widths,
         ``hp:colPr@sameSz=true``, ``colCount>1``) is modelled as
@@ -2435,25 +2477,14 @@ class OwnRenderer:
                 seg_height += row["advance"]
                 index += 1
                 continue
-            split = (self._split_table_row(draw, row["table"], room)
-                     if row["table"] is not None else None)
-            if split is not None:
-                counters["tables_split"] += 1
-                out.append(self._flow_record(
-                    block, page, seg_top, seg_height + split["height"],
-                    (seg_first, index + 1), kind="table",
-                    split=split["first"]))
-                page += 1
-                tail = row["advance"] - split["height"]
-                out.append(self._flow_record(
-                    block, page, 0, tail, (index, index + 1), kind="table",
-                    split=split["rest"]))
-                cursor = tail
-                seg_top = tail
-                seg_height = 0
-                index += 1
-                seg_first = index
-                continue
+            # An INLINE (글자처럼 취급) table never splits — measured, see
+            # ``TABLE_SPLIT_AT_ROWS`` above and
+            # docs/research/table-page-break-rule.md.  ``row["table"]`` is by
+            # construction inline (``_flowing_table`` excludes anchored
+            # tables), so the only answer here is "the whole table moves",
+            # and a table taller than a whole page is then drawn from the top
+            # of the next page and allowed to overflow — which is exactly
+            # what Hancom does with its own.
             if row["table"] is not None:
                 counters["tables_moved_whole"] += 1
             if seg_height:
@@ -2484,33 +2515,6 @@ class OwnRenderer:
             cursor += row["advance"]
             count += 1
         return count
-
-    def _split_table_row(self, draw, tbl, room):
-        """Split a table at the last row boundary that fits in ``room``.
-
-        ``None`` when the table does not declare itself splittable, or when no
-        row boundary fits — in both cases the whole table moves instead.
-        """
-        splittable, ys = self._table_split_rows(draw, tbl)
-        if not splittable or len(ys) < 3:
-            return None
-        cut = 0
-        for row_index in range(1, len(ys) - 1):
-            if ys[row_index] <= room:
-                cut = row_index
-            else:
-                break
-        if cut == 0:
-            return None
-        self._skip("hp:tbl@repeatHeader",
-                   "a table split across a page boundary does not repeat its "
-                   "header row on the continuation page")
-        return {
-            "height": ys[cut],
-            "first": {"table": id(tbl), "row_start": 0, "row_end": cut},
-            "rest": {"table": id(tbl), "row_start": cut,
-                     "row_end": len(ys) - 1},
-        }
 
     def _apply_keep_with_next(self, blocks, placements, counters, usable,
                               from_block):
