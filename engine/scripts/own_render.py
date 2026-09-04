@@ -808,7 +808,7 @@ def _normalise_face(name):
 
 
 def _sfnt_name_records(path):
-    """``[(face_index, {nameID: {text, ...}})]`` from a font file's name table.
+    """``[(face_index, {nameID: {text, ...}}, italic_bit)]`` for a font file.
 
     Reads the OpenType ``name`` table straight out of the file — the public
     format spec, seeked rather than slurped so a 20 MB CJK face costs a few
@@ -816,6 +816,13 @@ def _sfnt_name_records(path):
     resolve at all: the faces carry their Korean family names in their own
     name records, and FreeType (hence Pillow) only ever exposes the English
     one.
+
+    ``italic_bit`` is read the same way a shaping engine would decide a face
+    is an italic cut: OS/2 ``fsSelection`` bit 0 (ITALIC) or ``head``
+    ``macStyle`` bit 1 (Italic), whichever the file carries.  The name-table
+    subfamily string ("Italic", "Oblique") is a THIRD signal a font can carry
+    without either bit set; the caller folds it in, because it lives in the
+    same ``names`` dict this function already returns.
     """
     import struct
     out = []
@@ -843,15 +850,34 @@ def _sfnt_name_records(path):
                 fh.seek(base + 12)
                 directory = fh.read(16 * tables)
                 offset = None
+                os2_offset = None
+                head_offset = None
                 for i in range(tables):
                     record = directory[16 * i:16 * i + 16]
                     if len(record) < 16:
                         break
-                    if record[:4] == b"name":
+                    tag = record[:4]
+                    if tag == b"name":
                         offset = struct.unpack_from(">I", record, 8)[0]
-                        break
+                    elif tag == b"OS/2":
+                        os2_offset = struct.unpack_from(">I", record, 8)[0]
+                    elif tag == b"head":
+                        head_offset = struct.unpack_from(">I", record, 8)[0]
                 if offset is None:
                     continue
+                italic_bit = False
+                if os2_offset is not None:
+                    fh.seek(os2_offset + 62)
+                    raw = fh.read(2)
+                    if len(raw) == 2:
+                        fs_selection = struct.unpack(">H", raw)[0]
+                        italic_bit = italic_bit or bool(fs_selection & 0x0001)
+                if head_offset is not None:
+                    fh.seek(head_offset + 44)
+                    raw = fh.read(2)
+                    if len(raw) == 2:
+                        mac_style = struct.unpack(">H", raw)[0]
+                        italic_bit = italic_bit or bool(mac_style & 0x0002)
                 fh.seek(offset)
                 header = fh.read(6)
                 if len(header) < 6:
@@ -882,7 +908,7 @@ def _sfnt_name_records(path):
                     if text:
                         names.setdefault(nid, set()).add(text)
                 if names:
-                    out.append((index, names))
+                    out.append((index, names, italic_bit))
     except (OSError, ValueError, IndexError):
         return []
     return out
@@ -916,11 +942,18 @@ class SystemFontIndex:
                 continue
             for path in paths:
                 self.scanned += 1
-                for index, names in _sfnt_name_records(path):
+                for index, names, italic_bit in _sfnt_name_records(path):
                     subfamilies = {t.casefold()
                                    for t in (names.get(2, set())
                                              | names.get(17, set()))}
                     bold = any("bold" in s for s in subfamilies)
+                    # A cut counts as italic on either signal: the OS/2 /
+                    # head bits a shaping engine trusts, OR a subfamily name
+                    # ("Italic", "Oblique") a face can carry without setting
+                    # either bit.  Either one is enough to call this file the
+                    # family's italic (or bold-italic) cut.
+                    italic = italic_bit or any(
+                        "italic" in s or "oblique" in s for s in subfamilies)
                     for nid in (16, 1, 4, 6):
                         for text in sorted(names.get(nid, ())):
                             key = _normalise_face(text)
@@ -928,8 +961,16 @@ class SystemFontIndex:
                                 continue
                             entry = self.families.setdefault(
                                 key, {"regular": None, "bold": None,
+                                      "italic": None, "bold_italic": None,
                                       "family": text})
-                            slot = "bold" if bold else "regular"
+                            if bold and italic:
+                                slot = "bold_italic"
+                            elif bold:
+                                slot = "bold"
+                            elif italic:
+                                slot = "italic"
+                            else:
+                                slot = "regular"
                             if entry[slot] is None:
                                 entry[slot] = (str(path), index)
 
@@ -1269,6 +1310,12 @@ _EQ_DESC = 0.22
 # parenthesis stops reading as a parenthesis and starts reading as a bracket
 # drawn by mistake.
 _EQ_FENCE_MAX_SCALE = 6.0
+# The slant a synthetic-oblique glyph is sheared by, in em of x per em of
+# height, when an equation face has no installed italic cut: tan(12 degrees),
+# this renderer's calibration of "reads as italic" against Hancom's reference
+# render, declared rather than measured off KS X 6101 (which does not publish
+# one).
+_EQ_ITALIC_SHEAR = 0.2126
 
 
 def _eq_word_head(node):
@@ -1295,7 +1342,7 @@ class _EqBox:
     """
 
     __slots__ = ("w", "asc", "desc", "text", "font", "children", "rules",
-                 "strokes")
+                 "strokes", "shear")
 
     def __init__(self, w=0.0, asc=0.0, desc=0.0, text=None, font=None):
         self.w = float(w)
@@ -1306,6 +1353,12 @@ class _EqBox:
         self.children = []      # (dx, dy_of_child_baseline, box)
         self.rules = []         # (x0, y0, x1, y1) filled rectangles
         self.strokes = []       # ([(x, y), ...], width) polylines
+        # Non-zero only on a leaf drawn with a synthetic-oblique face (no
+        # installed italic cut for the equation family): _eq_draw shears the
+        # glyph raster by this many em of x per em of height instead of
+        # drawing it through ``font`` directly.  Zero means "draw normally",
+        # including every non-italic leaf and every leaf on a real cut.
+        self.shear = 0.0
 
     @property
     def h(self):
@@ -1393,6 +1446,12 @@ class OwnRenderer:
         # rather than a claim in a docstring.
         self.eq_placements = []
         self._eq_face = None
+        # The italic (or synthetic-oblique) face for the current equation's
+        # identifier tokens, and how it was resolved — set alongside
+        # ``_eq_face`` by ``_equation_face``.  See ``_eq_italic_font``.
+        self._eq_face_italic = None
+        self._eq_italic_kind = "none"
+        self._eq_italic_cache = {}
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -3849,11 +3908,23 @@ class OwnRenderer:
         ``equation``: a maths face that is not installed has to be visible in
         the sidecar for exactly the reason a missing 바탕 is — the advances
         are then this machine's, not the authoring engine's.
+
+        Also resolves — and sets on ``self._eq_face_italic`` /
+        ``self._eq_italic_kind`` — the face identifier tokens draw in, as
+        Hancom sets equation variables in italic.  ``cut`` means the family
+        installs a real italic file; ``synthetic`` means none was found and
+        the regular cut is sheared at draw time instead (see
+        ``_eq_italic_font``); ``none`` means neither a cut nor a regular face
+        was resolvable to shear.  The single ``record`` this method declares
+        carries both facts, so ``characters`` is still counted once per
+        equation, not once per face variant.
         """
         key = ("equation", face_name or "")
         hit = self._face_cache.get(key)
         if hit is not None:
             hit[1]["characters"] += 1
+            self._eq_face_italic, self._eq_italic_kind = \
+                self._eq_italic_cache[key]
             return hit[0]
         entry = (self.font_index.lookup(face_name)
                  if (self.font_index is not None and face_name) else None)
@@ -3862,14 +3933,33 @@ class OwnRenderer:
             chosen = entry["regular"] or entry["bold"]
         record = self._declare_face(face_name or None, "equation",
                                     entry if chosen else None, False)
+        italic_cut = entry.get("italic") if entry else None
+        if italic_cut is not None:
+            italic_face, italic_kind = italic_cut, "cut"
+        elif chosen is not None:
+            italic_face, italic_kind = chosen, "synthetic"
+        else:
+            italic_face, italic_kind = None, "none"
+        record["italic"] = italic_kind
+        self._eq_italic_cache[key] = (italic_face, italic_kind)
+        self._eq_face_italic, self._eq_italic_kind = italic_face, italic_kind
         self._face_cache[key] = (chosen, record)
         return chosen
 
-    def _eq_font(self, size_px, bold=False):
-        return self.fontbook.get(max(1, int(round(size_px))), bold,
-                                 self._eq_face)
+    def _eq_font(self, size_px, bold=False, italic=False):
+        """The face a leaf draws through.
 
-    def _eq_glyph(self, text, size_px, bold=False):
+        ``italic`` only ever changes anything when the equation's family
+        resolved a real italic cut (``self._eq_italic_kind == "cut"``): the
+        synthetic-oblique case draws through the SAME regular face and is
+        sheared afterwards instead, in ``_eq_draw`` — see ``_eq_glyph``.
+        """
+        face = self._eq_face
+        if italic and self._eq_italic_kind == "cut":
+            face = self._eq_face_italic
+        return self.fontbook.get(max(1, int(round(size_px))), bold, face)
+
+    def _eq_glyph(self, text, size_px, bold=False, italic=False):
         """A leaf box on the NOMINAL character cell, not the glyph's ink.
 
         Deliberate: stacking (a fraction, a limit) has to put two baselines a
@@ -3878,18 +3968,30 @@ class OwnRenderer:
         heights.  Ink extents are used where the ink is the thing being sized
         — a fence, an accent mark — and, once, for the whole equation, where
         the drawn extent is compared against the declared ``hp:sz``.
-        """
-        font = self._eq_font(size_px, bold)
-        width = float(font.getlength(text)) if text else 0.0
-        return _EqBox(width, size_px * _EQ_ASC, size_px * _EQ_DESC, text, font)
 
-    def _eq_ink(self, text, size_px, bold=False):
+        ``italic`` set with no installed cut (``self._eq_italic_kind ==
+        "synthetic"``) does not change the font used here — it flags the
+        returned box for ``_eq_draw`` to shear at draw time instead, so the
+        NOMINAL cell this box reports for stacking purposes stays the
+        upright face's, unaffected by the shear.
+        """
+        font = self._eq_font(size_px, bold, italic)
+        width = float(font.getlength(text)) if text else 0.0
+        box = _EqBox(width, size_px * _EQ_ASC, size_px * _EQ_DESC, text, font)
+        if italic and self._eq_italic_kind == "synthetic":
+            box.shear = _EQ_ITALIC_SHEAR
+        return box
+
+    def _eq_ink(self, text, size_px, bold=False, italic=False):
         """A leaf box whose ascent/descent are the drawn glyph's ink bounds."""
-        font = self._eq_font(size_px, bold)
+        font = self._eq_font(size_px, bold, italic)
         ascent, _descent = font.getmetrics()
         box = font.getbbox(text)
-        return _EqBox(float(font.getlength(text)),
-                      ascent - box[1], box[3] - ascent, text, font)
+        eqbox = _EqBox(float(font.getlength(text)),
+                       ascent - box[1], box[3] - ascent, text, font)
+        if italic and self._eq_italic_kind == "synthetic":
+            eqbox.shear = _EQ_ITALIC_SHEAR
+        return eqbox
 
     def _eq_tight(self, text, size_px, nominal, bold=False):
         """A big glyph advanced on its INK width, not the face's advance.
@@ -3924,7 +4026,7 @@ class OwnRenderer:
         scale = min(_EQ_FENCE_MAX_SCALE, max(1.0, need / natural))
         return self._eq_tight(ch, size_px * scale, size_px)
 
-    def _eq_layout(self, node, size, bold=False):
+    def _eq_layout(self, node, size, bold=False, italic=None):
         """Lay one parse node out.  Pure: it never draws and never declares."""
         kind = node.kind
         if kind == "row":
@@ -3933,7 +4035,7 @@ class OwnRenderer:
             items = node.items
             x = 0.0
             for index, item in enumerate(items):
-                child = self._eq_layout(item, size, bold)
+                child = self._eq_layout(item, size, bold, italic)
                 atom = item if isinstance(item, hwpeqn_parse.Atom) else None
                 spaced = (atom is not None and atom.style == "op"
                           and atom.text in _EQ_SPACED_OPS)
@@ -3957,7 +4059,15 @@ class OwnRenderer:
                 scale = (_EQ_INTEGRAL_SCALE if node.text in _EQ_INTEGRALS
                          else _EQ_BIGOP_SCALE)
                 return self._eq_tight(node.text, size * scale, size, bold)
-            return self._eq_glyph(node.text, size, bold)
+            # ``var`` is the only style hwpeqn_parse assigns a bare Latin
+            # identifier — a single letter, or one letter of an unbraced run
+            # like ``sn`` — never a digit (``num``), an operator (``op``), a
+            # function name (``func``: sin/cos/log/lim...), or Greek/a symbol
+            # (``sym``, which is also where GREEK's uppercase letters live).
+            # ``italic`` not ``None`` means an enclosing ``rm``/``it`` set an
+            # explicit override that beats the per-style default.
+            atom_italic = (node.style == "var") if italic is None else italic
+            return self._eq_glyph(node.text, size, bold, atom_italic)
 
         if kind == "raw":
             return self._eq_glyph(node.text, size, bold)
@@ -3966,12 +4076,17 @@ class OwnRenderer:
             return _EqBox(node.em * size, 0.0, 0.0)
 
         if kind == "styled":
+            # ``rm``/``roman``/``font``/``face``/``text`` force upright,
+            # ``it`` forces italic, ``bold`` only ever changes ``bold`` — so
+            # it passes ``italic`` through unchanged rather than clearing it.
+            forced = {"upright": False, "italic": True}.get(node.style)
             return self._eq_layout(node.base, size,
-                                   bold or node.style == "bold")
+                                   bold or node.style == "bold",
+                                   italic if forced is None else forced)
 
         if kind == "frac":
-            num = self._eq_layout(node.num, size, bold)
-            den = self._eq_layout(node.den, size, bold)
+            num = self._eq_layout(node.num, size, bold, italic)
+            den = self._eq_layout(node.den, size, bold, italic)
             rule = max(1.0, round(size / 14.0))
             axis = -_EQ_AXIS * size
             gap = max(1.0, size * 0.14)
@@ -3988,10 +4103,12 @@ class OwnRenderer:
             return box
 
         if kind == "script":
-            base = self._eq_layout(node.base, size, bold)
+            base = self._eq_layout(node.base, size, bold, italic)
             small = max(_EQ_MIN_SCRIPT_PX, size * _EQ_SCRIPT_SCALE)
-            sub = self._eq_layout(node.sub, small, bold) if node.sub else None
-            sup = self._eq_layout(node.sup, small, bold) if node.sup else None
+            sub = (self._eq_layout(node.sub, small, bold, italic)
+                   if node.sub else None)
+            sup = (self._eq_layout(node.sup, small, bold, italic)
+                   if node.sup else None)
             gap = size * 0.10
             if node.limits:
                 width = max(base.w, sub.w if sub else 0.0,
@@ -4024,12 +4141,12 @@ class OwnRenderer:
             return box
 
         if kind == "radical":
-            rad = self._eq_layout(node.radicand, size, bold)
+            rad = self._eq_layout(node.radicand, size, bold, italic)
             rule = max(1.0, round(size / 16.0))
             gap = max(1.0, size * 0.12)
             hook = size * 0.55
-            index = (self._eq_layout(node.index,
-                                     max(_EQ_MIN_SCRIPT_PX, size * 0.55), bold)
+            index = (self._eq_layout(node.index, italic=italic,
+                                     size=max(_EQ_MIN_SCRIPT_PX, size * 0.55), bold=bold)
                      if node.index else None)
             lead = hook if index is None else max(hook, index.w + hook * 0.5)
             width = lead + rad.w + size * 0.12
@@ -4052,7 +4169,7 @@ class OwnRenderer:
             return box
 
         if kind == "fence":
-            body = self._eq_layout(node.body, size, bold)
+            body = self._eq_layout(node.body, size, bold, italic)
             left = self._eq_bracket(node.left, size, body.asc, body.desc)
             right = self._eq_bracket(node.right, size, body.asc, body.desc)
             centre = (body.desc - body.asc) / 2.0
@@ -4074,7 +4191,7 @@ class OwnRenderer:
             return box
 
         if kind == "accent":
-            base = self._eq_layout(node.base, size, bold)
+            base = self._eq_layout(node.base, size, bold, italic)
             gap = max(1.0, size * 0.06)
             rule = max(1.0, round(size / 16.0))
             box = _EqBox(base.w, base.asc, base.desc)
@@ -4099,7 +4216,7 @@ class OwnRenderer:
         if kind == "grid":
             gap_x = size * 0.6
             gap_y = size * 0.35
-            cells = [[self._eq_layout(cell, size, bold) for cell in row]
+            cells = [[self._eq_layout(cell, size, bold, italic) for cell in row]
                      for row in node.rows]
             cols = max((len(row) for row in cells), default=0)
             widths = [0.0] * cols
@@ -4229,10 +4346,13 @@ class OwnRenderer:
             merged.append((baseline, x0, y0, x1, y1))
         return merged
 
-    def _eq_draw(self, draw, box, x, baseline):
+    def _eq_draw(self, draw, image, box, x, baseline):
         if box.text and box.font is not None:
-            draw.text((x, baseline), box.text, font=box.font, fill=255,
-                      anchor="ls")
+            if box.shear:
+                self._eq_draw_sheared(image, box, x, baseline)
+            else:
+                draw.text((x, baseline), box.text, font=box.font, fill=255,
+                          anchor="ls")
         for x0, y0, x1, y1 in box.rules:
             draw.rectangle([x + x0, baseline + y0, x + x1, baseline + y1],
                            fill=255)
@@ -4240,7 +4360,63 @@ class OwnRenderer:
             draw.line([(x + px, baseline + py) for px, py in points],
                       fill=255, width=max(1, int(round(width))))
         for dx, dy, child in box.children:
-            self._eq_draw(draw, child, x + dx, baseline + dy)
+            self._eq_draw(draw, image, child, x + dx, baseline + dy)
+
+    def _eq_draw_sheared(self, image, box, x, baseline):
+        """Paste ``box``'s glyph onto ``image`` with a synthetic-oblique
+        shear — the fallback used only when the equation family has no
+        installed italic cut (``self._eq_italic_kind == "synthetic"``, see
+        ``_eq_font``).
+
+        The glyph is rasterised upright onto its own small mask, then
+        resampled through an affine transform that leaves its baseline row
+        in place and shifts every row above it right in proportion to
+        ``box.shear`` — the standard "fake italic" a renderer without italic
+        outlines falls back to — and pasted back at the same position.
+        """
+        font = box.font
+        text = box.text
+        # ``anchor="ls"`` throughout: (0, 0) is the LEFT edge of the glyph
+        # AT ITS BASELINE, the same convention ``_eq_draw``'s plain
+        # ``draw.text(..., anchor="ls")`` places (x, baseline) on. Reading
+        # this bbox with the default anchor ("la", ascender-relative) would
+        # give a ``top``/``bottom`` on a different origin than the paste
+        # math below assumes, pasting every glyph off by roughly the font's
+        # ascent — exactly the corruption a synthetic-oblique first cut of
+        # this produced (equation bodies smeared out of their brackets).
+        bbox = font.getbbox(text, anchor="ls")
+        if not text or bbox is None:
+            return
+        left, top, right, bottom = bbox
+        w = max(1, right - left)
+        h = max(1, bottom - top)
+        # The baseline's row in this small canvas: ``top`` is negative
+        # (ascender ink sits above the baseline), so ``-top`` is how far
+        # down from the canvas's top edge the baseline itself falls. A
+        # descender's ink runs BELOW that row, not off the canvas bottom —
+        # ``h`` is the ink's total span, not the baseline's position, and
+        # shearing about ``h`` instead (this method's first cut) pivoted
+        # every glyph around its descender line rather than its baseline.
+        shear = box.shear
+        base_row = -top
+        # A true oblique pivots on the baseline: rows ABOVE it shift right,
+        # rows BELOW it (a descender) shift left by the same slope. Room for
+        # each has to come from its own side of the canvas, or one of the
+        # two clips — a synthetic-italic descender (y, g, p, q, j...) is what
+        # this method's first cut clipped, having only ever padded the right.
+        pad_right = int(math.ceil(shear * base_row)) + 1
+        pad_left = int(math.ceil(shear * (h - base_row))) + 1
+        glyph = self.Image.new("L", (pad_left + w + pad_right, h), 0)
+        self.ImageDraw.Draw(glyph).text((pad_left - left, -top), text,
+                                        font=font, fill=255, anchor="ls")
+        sheared = glyph.transform(
+            glyph.size, self.Image.Transform.AFFINE,
+            (1, shear, -shear * base_row, 0, 1, 0),
+            resample=self.Image.Resampling.BICUBIC)
+        image.paste(sheared,
+                   (int(round(x + left - pad_left)),
+                    int(round(baseline + top))),
+                   sheared)
 
     def _render_equation(self, el, origin_hwp, w_hwp, h_hwp):
         """Draw an ``hp:equation``'s script inside its declared ``hp:sz``.
@@ -4295,7 +4471,7 @@ class OwnRenderer:
         ink_h = max(1, int(math.ceil(y1 - y0)) + 2)
         mask = self.Image.new("L", (ink_w, ink_h), 0)
         baseline_in_mask = 1.0 - y0
-        self._eq_draw(self.ImageDraw.Draw(mask), laid, 1.0 - x0,
+        self._eq_draw(self.ImageDraw.Draw(mask), mask, laid, 1.0 - x0,
                       baseline_in_mask)
         bands = self._eq_merge_bands(self._eq_bands(laid), size * 0.25)
         shrink = 1.0
@@ -4334,9 +4510,11 @@ class OwnRenderer:
                     "token text is drawn inside the equation box")
         self._skip("hp:equation",
                    "laid out from its hp:script inside the declared hp:sz "
-                   "extent; italic variable shaping is not applied, because "
-                   "the format names a family and this renderer resolves "
-                   "regular and bold cuts only")
+                   "extent; identifier tokens (single Latin letters and "
+                   "Latin identifiers) are set in italic — "
+                   f"{self._eq_italic_kind} — see fonts.faces[slot=equation]"
+                   ".italic; numbers, operators, function names, Hangul and "
+                   "symbols (including Greek) stay upright")
         if scale < 1.0:
             self.eq_scaled.append(round(scale, 4))
             self._skip("hp:equation@equation_scaled",
@@ -4772,9 +4950,20 @@ class OwnRenderer:
                 "declared extent is never overflowed."
             ),
             "over_binding": hwpeqn_parse.OVER_BINDING,
+            "italic": (
+                "identifier tokens (hwpeqn_parse style \"var\": single Latin "
+                "letters and Latin identifiers) are set in italic; numbers, "
+                "operators, function names, Hangul and symbols (including "
+                "Greek, upper- and lower-case) stay upright. The face used "
+                "is a real installed italic cut where the equation family "
+                "has one, per SystemFontIndex reading each font's OS/2 "
+                "fsSelection / head macStyle and name-table subfamily; "
+                "otherwise the regular cut is sheared ~12 degrees as a "
+                "synthetic oblique. Which one is declared per equation face "
+                "in fonts.faces[slot=equation].italic: cut, synthetic, or "
+                "none."
+            ),
             "not_applied": [
-                "italic variable shaping — OWPML names a family and this "
-                "renderer resolves regular and bold cuts only",
                 "hp:equation@lineMode / @textWrap — the equation is drawn at "
                 "the object box the paragraph already reserved for it; no "
                 "text is re-wrapped around it",

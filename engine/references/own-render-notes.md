@@ -1491,13 +1491,105 @@ reference on fewer channels than one carrying an equation a fraction of a pixel
 out of place. Every regression-floor check still passes, on this document and
 on every comparable corpus form.
 
+### Italic variable shaping
+
+Hancom sets equation variables in italic; until this slice this renderer set
+every equation glyph upright, because OWPML names a *family* and
+`SystemFontIndex` resolved regular and bold cuts only. Two things changed:
+
+1. **`SystemFontIndex` now reads italic cuts, not just bold ones.** Each
+   installed font file's OS/2 `fsSelection` bit 0 and `head` `macStyle` bit 1
+   are read directly out of the file (the same fields a shaping engine
+   trusts), OR'd with a third signal a face can carry without setting either
+   bit — its name-table subfamily string containing "Italic" or "Oblique".
+   Any one of the three is enough to file that face under the family's
+   `italic` (or `bold_italic`) slot. Checked against a real installed pair on
+   the dev machine: Times New Roman resolves its `italic` slot to
+   `timesi.ttf`, the file Windows itself ships as "Times New Roman Italic".
+2. **The equation lane resolves that per equation face and applies it to
+   identifier tokens only.** `hwpeqn_parse` already tags every drawn atom
+   with a style (`var`, `num`, `op`, `func`, `sym`, `text`, `bigop`); `var` is
+   the ONLY style a bare Latin word token — a single letter, or one letter of
+   an unbraced run like `sn` — ever gets, because `word()` routes anything
+   matched against `FUNCTIONS` / `GREEK` / `SYMBOLS` / etc. to a different
+   style first. So "apply italic to identifiers" reduces to "apply italic to
+   `var` atoms": numbers, operators, function names (`sin`/`cos`/`log`/
+   `lim`…), symbols (Greek included, upper- and lower-case — the grammar
+   never produces a `var` atom for a Greek letter), and quoted literals (the
+   only path a Hangul glyph can reach the tree by) all stay upright by
+   construction, not by a token-class exclusion list that could drift out of
+   sync with the parser. An explicit `rm`/`it` style word overrides the
+   default either way, on whatever it wraps.
+3. **Where the family has no installed italic cut, the regular cut is
+   sheared instead.** A ~12 degree synthetic oblique — the standard "fake
+   italic" a renderer without italic outlines falls back to — computed by
+   rasterising the glyph upright onto its own small mask and resampling it
+   through an affine transform that pins the baseline row and shifts every
+   row above it right in proportion to the shear (`_eq_draw_sheared`). The
+   NOMINAL character cell `_eq_glyph` reports for stacking purposes is the
+   upright face's either way, so this does not perturb fraction/limit
+   spacing — only the drawn pixels for that one leaf are sheared.
+
+Which of the three states applied is declared per equation face in the
+sidecar, `fonts.faces[slot=equation].italic`: `cut` (an installed italic
+file was used), `synthetic` (sheared), or `none`. `HancomEQN` — the font
+every corpus and fixture equation declares — is not installed on the
+machines this renderer has run on so far, so every measurement to date has
+exercised the `synthetic` path; the `cut` path is proven against Times New
+Roman in `test_a_real_italic_cut_is_used_without_a_shear` and
+`test_system_font_index_finds_an_installed_italic_cut`, not against an
+equation face.
+
+**Measured, after all, on the private report-class holdout.** No corpus form
+carries an `hp:equation` (unchanged from the *Equations* section above), but
+the holdout named in *One holdout document* turned out to have equations too
+— 14 of them, its own `Preview`-verified original. Scored with
+`render_scoreboard.score_form` at 144 dpi, before (the pre-italic commit) and
+after (this slice), aggregate only, nothing quoted:
+
+| channel | before | after |
+| --- | --- | --- |
+| whole-page `ssim_mean` | 0.728998 | 0.729013 |
+| whole-page `ssim_inked_mean` | 0.129474 | 0.129458 |
+| whole-page `text_line_iou_mean` | 0.538851 | 0.538851 |
+| whole-page `text_line_pair_rate_mean` | 0.904137 | 0.904137 |
+| equation-region `ssim_mean` (14 crops, `hp:sz` boxes) | 0.433831 | 0.435337 |
+| equation-region `ssim_inked_mean` | 0.028416 | 0.028776 |
+| equation-region ink-mask IoU mean | 0.039072 | 0.037703 |
+
+The whole-page row barely moves, for the reason mechanisms 1 and 4 already
+established: the same 14 equations are ~1.5% of 18 pages, so a fraction-of-a
+percent change on them is arithmetic noise on the page-level mean.
+Text-line geometry is exactly unchanged (italic does not move a line box).
+On the equations themselves, `ssim` and `ssim_inked` move a hair positive;
+a from-scratch ink-mask IoU built for this measurement (candidate vs.
+reference pixels both thresholded below 128, on the `hp:sz` box, no
+`render_scoreboard` region support exists to call instead) moves a hair
+negative. Read honestly, none of the three channels moves enough to call
+the shear proven — `HancomEQN` is not installed on this machine either, so
+before and after both substitute the same fallback face; italic only
+changes *whether that fallback's letterforms lean*, not *which* letterforms
+they are, and the corpus fonts a rasterised IoU is actually sensitive to are
+Hancom's math-italic glyphs, not this renderer's stand-in's. What the
+measurement rules out is a large regression: no channel moved by more than
+0.0014.
+
+Visual check on the crop the largest equation region scores from (page 11,
+`Q_r^{2025}(\ell) = \sum_x a_x h_{2025}(x) K_\ell(d(x,S_r)) / \sum_x a_x
+h_{2025}(x)`, `K_\ell(d)=\exp(-d/\ell)\ (d\le3\ell)`): the reference sets
+every one of `Q, a, h, K, d, S, x, ℓ` in a visibly slanted italic and
+`exp`/digits/operators upright, exactly the token-class split this slice
+implements; this renderer's synthetic-oblique render reproduces the same
+split with a visible (if shallower, this-machine-font-dependent) lean —
+**after a bug this same check caught and a follow-up commit fixed**: the
+first cut of `_eq_draw_sheared` read the glyph bbox with the wrong Pillow
+anchor and pivoted the shear on the wrong row, which did not just look
+less italic — it broke the layout outright, smearing equation bodies out
+of their brackets. That regression is what the crop check is for; the
+`ssim`/`ssim_inked`/IoU numbers above are already the fixed version's.
+
 ### What an equation still does not get
 
-- **Italic variable shaping.** Hancom sets equation variables in italic; this
-  renderer sets them upright, because OWPML names a *family* and
-  `SystemFontIndex` resolves regular and bold cuts only. This is the largest
-  remaining visual difference on the reference comparison — the geometry lines
-  up, the letterforms do not.
 - `hp:equation@lineMode` and `@textWrap`. The equation is drawn at the object
   box the paragraph already reserved for it; no text is re-wrapped around it.
 - Integral limits are tucked less tightly against the sign than Hancom tucks
@@ -1788,7 +1880,13 @@ false` on both; the grade stays `own-uncertified` on every class.
    claimable and the scoreboard stops depending on which faces this machine has.
 7. `kstartup` pagination (limit 12) — now diagnosed and computable; what is
    left is the policy decision, not the mechanism.
-8. Italic (and other non-regular) cuts in `SystemFontIndex`, which is what
-   equations and emphasised prose both now wait on.
+8. ~~**Italic cuts in `SystemFontIndex`, for equations.**~~ Done — see
+   *Italic variable shaping*. `SystemFontIndex` now reads a real italic cut
+   where a family installs one and applies it (or a synthetic shear) to
+   equation identifier tokens. What is left: bold-italic cuts are recorded
+   but nothing yet asks for one, the shear angle is not measured against a
+   reference, and emphasised PROSE (`hh:charPr@italic`, distinct from the
+   equation lane) still has no italic-cut resolution of its own — `_face_for`
+   only ever asks for `"bold" if bold else "regular"`.
 9. Only then ask `render_cert` for a per-document-class grade. Until it
    answers, the grade stays `own-uncertified`.
