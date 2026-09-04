@@ -884,6 +884,91 @@ def _normalise_face(name):
     return re.sub(r"[\s\-_]+", "", str(name)).casefold()
 
 
+# A document declares one of Hancom's own faces (바탕, 함초롬돋움, HY견고딕, ...)
+# and a machine without Hancom Office has none of them installed — the
+# document then fell all the way through to the single generic system
+# fallback (Malgun on Windows), which is a DIFFERENT face from what any other
+# machine's fallback happens to be, so the same file drew different pixels
+# depending on what else was installed.  This table is the fix: a fixed,
+# family-by-family map from the Hancom/HWP face names a document actually
+# declares to an OFL-licensed family bundled in the repo, so those names
+# resolve to the SAME bundled face everywhere, Hancom Office or not.
+#
+# Only the declared names listed below are mapped; every other declared name
+# (HCI Poppy, 한컴바탕, 신명 신문명조, HY울릉도M, 필기, ...) is unaffected and
+# still falls through to "system" exactly as before — this table is scoped to
+# the plain body serif/sans/monospace families a report-class document sets
+# its running text in, not to Hancom's decorative or display faces, which a
+# generic serif/sans substitute would misrepresent.
+#
+# Licence for every bundled family: engine/references/fonts/LICENSES.md.
+_FAMILY_MAP_TABLE = (
+    ("Nanum Myeongjo",
+     "engine/references/fonts/family-map/NanumMyeongjo-Regular.ttf",
+     "engine/references/fonts/family-map/NanumMyeongjo-Bold.ttf",
+     ("바탕", "함초롬바탕", "휴먼명조", "신명조", "한양신명조", "궁서")),
+    ("Nanum Gothic",
+     "engine/references/fonts/family-map/NanumGothic-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothic-Bold.ttf",
+     ("돋움", "굴림", "함초롬돋움", "맑은 고딕", "한양중고딕", "HY견고딕")),
+    ("Nanum Gothic Coding",
+     "engine/references/fonts/family-map/NanumGothicCoding-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothicCoding-Bold.ttf",
+     ("돋움체", "굴림체")),
+)
+
+
+class BundledFontMap:
+    """The Hancom-face -> bundled-OFL-family map, keyed by normalised name.
+
+    Shaped like a ``SystemFontIndex`` lookup result (``regular``/``bold`` as
+    ``(path, face_index)``, plus ``family``) so ``_face_for`` can treat a
+    bundled hit exactly like an installed one once the installed lookup has
+    already failed.  Built from the fixed table above, not a directory scan —
+    resolving it is a dict lookup, but the entries are built once per
+    ``repo_root`` and shared, the same reasoning as ``SystemFontIndex.shared``.
+    A family whose files are not present on disk (a slim checkout) is simply
+    absent from the map, so its declared names fall through to ``system``
+    rather than raising.
+    """
+
+    _shared = {}
+
+    def __init__(self, repo_root):
+        self.entries = {}
+        for family, reg_rel, bold_rel, declared_names in _FAMILY_MAP_TABLE:
+            reg = Path(repo_root) / reg_rel
+            bold = Path(repo_root) / bold_rel
+            if not reg.is_file():
+                continue
+            entry = {
+                "family": family,
+                "regular": (str(reg), 0),
+                "bold": (str(bold), 0) if bold.is_file() else (str(reg), 0),
+                "italic": None,
+                "bold_italic": None,
+            }
+            for name in declared_names:
+                key = _normalise_face(name)
+                if key:
+                    self.entries[key] = entry
+
+    @classmethod
+    def shared(cls, repo_root):
+        key = str(repo_root)
+        hit = cls._shared.get(key)
+        if hit is None:
+            hit = cls(repo_root)
+            cls._shared[key] = hit
+        return hit
+
+    def lookup(self, face_name):
+        key = _normalise_face(face_name)
+        if not key:
+            return None
+        return self.entries.get(key)
+
+
 def _sfnt_name_records(path):
     """``[(face_index, {nameID: {text, ...}}, italic_bit)]`` for a font file.
 
@@ -1532,14 +1617,20 @@ class OwnRenderer:
         #                pass against the authoring engine's own cache.
         self.block_layout = block_layout
         self.Image, self.ImageDraw, self._ImageFont = _require_pillow()
-        self.fonts_meta = resolve_fonts(repo_root)
+        self.repo_root = Path(repo_root) if repo_root else Path(
+            __file__).resolve().parents[2]
+        self.fonts_meta = resolve_fonts(self.repo_root)
         self.fontbook = FontBook(self.fonts_meta)
         # A pinned face means "rasterise everything with this one", which is
         # what a machine-independent certification run wants; otherwise the
-        # document's own declared faces are resolved against the system.
+        # document's own declared faces are resolved against the system,
+        # then against the bundled family map (BundledFontMap) — see
+        # _face_for.
         self.pinned_face = self.fonts_meta.get("source") == "env"
         self.font_index = (None if self.pinned_face
                            else SystemFontIndex.shared())
+        self.font_family_map = (None if self.pinned_face
+                                else BundledFontMap.shared(self.repo_root))
         self.face_resolution = {}
         self._face_cache = {}
         self.skipped = {}
@@ -2768,13 +2859,26 @@ class OwnRenderer:
         return self.defs["char_pr"].get(cid or "", {})
 
     def _face_for(self, cid, slot, bold):
-        """The installed face this run's ``hh:fontRef`` names for ``slot``.
+        """The face this run's ``hh:fontRef`` names for ``slot``.
 
         ``hh:charPr/hh:fontRef`` carries one font id *per language slot*, and
         ``hh:fontfaces`` resolves each id per slot to a face name.  That name
-        is matched against the system font index by the family names the
-        installed faces themselves declare — including their Korean ones,
-        which is what makes 함초롬돋움 / 바탕 / HY신명조 resolvable at all.
+        is resolved in a fixed order, each declared per face in the sidecar
+        as ``source``:
+
+        1. ``installed``  — matched against the system font index by the
+           family names the installed faces themselves declare, including
+           their Korean ones, which is what makes 함초롬돋움 / 바탕 / HY신명조
+           resolvable at all when Hancom Office (or the matching face) is on
+           this machine.
+        2. ``bundled``    — the declared name is not installed here, but it
+           is one of the plain body serif/sans/monospace names
+           ``BundledFontMap`` maps to an OFL family shipped in the repo
+           (see ``_FAMILY_MAP_TABLE``), so the SAME bundled face answers for
+           it on every machine, Hancom Office or not.
+        3. ``system``     — neither matched; the run falls back to
+           ``self.fonts_meta``, the single machine-dependent fallback face
+           (see ``resolve_fonts``).
 
         Returns ``(path, index)`` or ``None`` for "use the fallback face".
         Every answer is recorded in ``face_resolution`` so the sidecar can
@@ -2804,28 +2908,37 @@ class OwnRenderer:
             if face_name:
                 break
         if not face_name:
-            record = self._declare_face(None, slot, None, bold)
+            record = self._declare_face(None, slot, None, bold, "system")
             self._face_cache[key] = (None, record)
             return None
         entry = self.font_index.lookup(face_name)
+        source = "installed"
+        if entry is None:
+            entry = (self.font_family_map.lookup(face_name)
+                     if self.font_family_map is not None else None)
+            source = "bundled" if entry is not None else "system"
         chosen = None
         if entry is not None:
             chosen = entry["bold" if bold else "regular"] or entry["regular"] \
                 or entry["bold"]
+        if chosen is None:
+            source = "system"
         # A family with no bold cut installed — 바탕 / Batang is one, and it is
         # the face a report-class document is set in — hands back its regular
         # face here.  HWP does not then draw regular text: it fakes the weight.
         # Record that this face has to be emboldened by hand, so the drawing
         # side can do the same rather than silently losing every bold run.
+        # Every bundled family carries a real bold cut, so this never fires
+        # for source == "bundled".
         self._synthetic_bold[key] = bool(
             bold and chosen is not None and entry is not None
             and not entry["bold"])
         record = self._declare_face(face_name, slot,
-                                    entry if chosen else None, bold)
+                                    entry if chosen else None, bold, source)
         self._face_cache[key] = (chosen, record)
         return chosen
 
-    def _declare_face(self, face_name, slot, entry, bold):
+    def _declare_face(self, face_name, slot, entry, bold, source="system"):
         key = (face_name or "(no hh:fontRef for this slot)", slot, bold)
         record = self.face_resolution.get(key)
         if record is None:
@@ -2834,7 +2947,11 @@ class OwnRenderer:
                 "slot": slot,
                 "bold": bold,
                 "resolved": entry is not None,
+                "source": source,
                 "installed_family": entry["family"] if entry else None,
+                "family_map": (entry["family"]
+                               if entry is not None and source == "bundled"
+                               else None),
                 "file": None,
                 "characters": 0,
             }
@@ -4164,8 +4281,13 @@ class OwnRenderer:
         chosen = None
         if entry is not None:
             chosen = entry["regular"] or entry["bold"]
-        record = self._declare_face(face_name or None, "equation",
-                                    entry if chosen else None, False)
+        # Equation faces are not looked up in BundledFontMap: that table maps
+        # plain body serif/sans/monospace names, and an equation's declared
+        # face is a maths-specific one (see the italic-cut discussion below),
+        # so a body substitute would misrepresent it rather than help it.
+        record = self._declare_face(
+            face_name or None, "equation", entry if chosen else None, False,
+            "installed" if chosen else "system")
         italic_cut = entry.get("italic") if entry else None
         if italic_cut is not None:
             italic_face, italic_kind = italic_cut, "cut"
@@ -5270,29 +5392,40 @@ class OwnRenderer:
         }
 
     def _font_report(self):
-        """Per declared face: resolved against the system, or substituted.
+        """Per declared face: installed, bundled-mapped, or substituted.
 
         The honesty rule in its sharpest form.  Before this the sidecar said
         "every HWP face is rasterised with one family" — true, and useless for
         judging a page, because it could not say *which* of the document's
         faces the reader was actually looking at.  Now every declared face is
-        listed with the installed file that answered for it, or with the
-        substitute that stood in, and both are counted in characters.
+        listed with the file that answered for it — installed, or the
+        deterministic bundled fallback (``BundledFontMap``), or the generic
+        machine-dependent one that stood in for neither — and all three are
+        counted in characters.  ``resolved_character_share`` counts installed
+        AND bundled together (neither is the generic substitute); the
+        ``installed``/``bundled``/``substituted`` counts below break that
+        back apart, because a bundled hit is still not the exact declared
+        face and its advance widths still differ from the authoring engine's.
         """
         faces = sorted(self.face_resolution.values(),
                        key=lambda f: (not f["resolved"],
                                       f["declared"] or "", f["slot"],
                                       f["bold"]))
-        resolved = sum(f["characters"] for f in faces if f["resolved"])
-        substituted = sum(f["characters"] for f in faces if not f["resolved"])
+        installed = sum(f["characters"] for f in faces
+                        if f["source"] == "installed")
+        bundled = sum(f["characters"] for f in faces
+                     if f["source"] == "bundled")
+        substituted = sum(f["characters"] for f in faces
+                          if f["source"] == "system")
+        resolved = installed + bundled
         total = resolved + substituted
         for face in faces:
             if not face["resolved"] and face["declared"]:
                 self._skip(
                     f"hh:fontface[{face['declared']}]",
-                    "declared face is not installed on this machine; "
-                    "substituted, so advance widths differ from the "
-                    "authoring engine's")
+                    "declared face is not installed on this machine and not "
+                    "in the bundled family map; substituted, so advance "
+                    "widths differ from the authoring engine's")
         return {
             "fallback_regular": self.fonts_meta["regular"],
             "fallback_bold": self.fonts_meta["bold"],
@@ -5300,22 +5433,39 @@ class OwnRenderer:
             "pinned_single_face": self.pinned_face,
             "system_font_files_scanned": (
                 self.font_index.scanned if self.font_index else 0),
+            "characters_on_an_installed_face": installed,
+            "characters_on_a_bundled_face": bundled,
             "characters_on_a_resolved_face": resolved,
             "characters_on_a_substituted_face": substituted,
             "resolved_character_share": (
                 round(resolved / total, 6) if total else None),
+            "installed_character_share": (
+                round(installed / total, 6) if total else None),
+            "bundled_character_share": (
+                round(bundled / total, 6) if total else None),
             "faces": faces,
             "note": (
-                "declared faces are matched against the installed faces' own "
-                "family names, read from each font's OpenType name table "
-                "(including its Korean records, which FreeType does not "
-                "expose). A face that is not installed is substituted with "
-                "the fallback and named here and in elements_skipped; its "
-                "advance widths then differ from the authoring engine's. "
-                "This makes a render machine-dependent BY DESIGN: the same "
-                "document on a machine without these faces will not produce "
-                "the same pixels. Set RIGORLOOM_OWN_RENDER_FONT to pin one "
-                "face and take that variable out of the measurement."
+                "declared faces are matched, in order, against (1) the "
+                "installed faces' own family names, read from each font's "
+                "OpenType name table (including its Korean records, which "
+                "FreeType does not expose), (2) BundledFontMap — a fixed "
+                "table mapping plain body serif/sans/monospace Hancom face "
+                "names to an OFL family shipped in the repo (engine/"
+                "references/fonts/family-map/, licences in engine/"
+                "references/fonts/LICENSES.md), so those names render "
+                "identically whether or not Hancom Office is installed, and "
+                "(3) the single generic fallback face if neither matched. "
+                "Every non-installed answer is named here and in "
+                "elements_skipped; its advance widths differ from the "
+                "authoring engine's — bundled less unpredictably than the "
+                "generic fallback, but still not byte-identical to it. "
+                "A declared name outside the bundled table (HCI Poppy, "
+                "한컴바탕, 필기, ...) still falls through to the generic "
+                "fallback and is machine-dependent BY DESIGN: the same "
+                "document on a machine without those faces will not produce "
+                "the same pixels there. Set RIGORLOOM_OWN_RENDER_FONT to pin "
+                "one face and take that variable out of the measurement "
+                "entirely."
             ),
         }
 

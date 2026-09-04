@@ -48,6 +48,20 @@ from pathlib import Path
 BINARY_EXTS = {
     ".hwp", ".hwpx", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 }
+# --- Known non-document binary assets ----------------------------------------
+# A font or image identified by its magic signature is not text. The codec
+# ladder below ends in cp949-strict and then utf-8 errors='ignore'; cp949
+# accepts most byte pairs, so decoding a 2 MB WOFF2 "succeeds" and the email
+# regex then matches byte noise (two-character mailbox at a two-letter
+# nonsense host). These formats carry
+# no user prose, so their CONTENT is exempt from the text passes; every
+# name/extension/size rule still applies. Documents are deliberately absent:
+# anything in BINARY_EXTS keeps the W5.2 allowlist + extraction backstop, and a
+# zip signature (PK) is a document container, never an asset.
+ASSET_MAGIC = (
+    b"wOF2", b"wOFF", b"OTTO", b"ttcf", b"\x00\x01\x00\x00",   # fonts (sfnt family)
+    b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a",  # images
+)
 EXCLUDED_DIRS = {".git", "__pycache__", "node_modules"}
 # "me" is a generic placeholder profile name that shows up in doc examples.
 USER_PATH_EXCEPTIONS = {"<user>", "username", "%userprofile%", "example", "me"}
@@ -215,9 +229,19 @@ def _read_text(path: Path) -> str | None:
     return None
 
 
+#: "128x128@2x.png" is a retina-asset filename, not a mailbox: no mail TLD is
+#: an image/icon file extension, so an @ in front of one is a scale marker,
+#: never routing. Closed set; extend only with extensions that cannot be TLDs.
+_FILENAME_TLD_EXEMPT = {
+    "png", "jpg", "jpeg", "gif", "ico", "svg", "webp", "bmp", "avif", "icns",
+}
+
+
 def _email_is_exempt(local: str, domain: str) -> bool:
     local_l = local.lower()
     domain_l = domain.lower()
+    if domain_l.rsplit(".", 1)[-1] in _FILENAME_TLD_EXEMPT:
+        return True
     if local_l.startswith("noreply"):
         return True
     if domain_l.endswith("users.noreply.github.com"):
@@ -546,6 +570,23 @@ def _scan_allowlisted_binary(rel: str, path: Path, suffix: str,
     return findings
 
 
+def _is_binary_asset(path: Path, suffix: str) -> bool:
+    """True when the file's magic bytes name a known font/image format.
+
+    Never true for a document extension: BINARY_EXTS keeps its allowlist +
+    extraction path regardless of what the leading bytes claim, so a document
+    cannot dress up as an asset to skip content scanning.
+    """
+    if suffix in BINARY_EXTS:
+        return False
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return False  # unreadability surfaces as its own finding downstream
+    return head.startswith(ASSET_MAGIC)
+
+
 def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | None,
                binary_allowlist: dict[Path, str] | None = None) -> list[dict]:
     findings: list[dict] = []
@@ -599,6 +640,8 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
         # regex on a huge single-line blob is quadratic, so we scan in bounded
         # chunks with per-line truncation instead of skipping content entirely.
         findings.append(_finding(rel, None, "large_file", "WARN", f"{size} bytes"))
+        if _is_binary_asset(path, suffix):
+            return findings  # font/image bytes are not prose; see ASSET_MAGIC
         stream_findings = _scan_large_file(rel, path, denylist_terms)
         findings.extend(stream_findings)
         already_unreadable = any(f["rule"] == "unreadable_file" for f in stream_findings)
@@ -620,6 +663,8 @@ def _scan_file(root: Path, path: Path, denylist_terms: list[tuple[str, str]] | N
                     rel, ".jsonl", "\n".join(head_lines)))
         return findings
 
+    if _is_binary_asset(path, suffix):
+        return findings  # font/image bytes are not prose; see ASSET_MAGIC
     try:
         text = _read_text(path)
     except OSError as exc:
