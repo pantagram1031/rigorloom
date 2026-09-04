@@ -2564,6 +2564,14 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   // disclosure photographs as a caption; `own-zoom` is the same page at 150%,
   // which is the claim that a zoom changes the drawn size and nothing else.
   if (stop === "own" || stop === "own-zoom") {
+    // OPEN THE CORPUS EXPLICITLY. Every other stop is happy to photograph
+    // whatever session the last launch left in prefs; this one must not. The
+    // first capture reattached to the session the overlay shots had staged a
+    // Hancom PDF into and photographed tier 2 under a caption promising tier 3
+    // — a screenshot of the wrong renderer, which is the one thing this shot
+    // exists to prevent.
+    if (config.corpus) await openPath(config.corpus);
+    await settled(250);
     setCenterMode("page");
     await renderCurrentPage(1);
     for (let i = 0; i < 120 && getState().renderPhase === "starting"; i += 1) {
@@ -2583,18 +2591,30 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     return;
   }
 
-  // The band. One row of actions, with 서식 open so the shot shows both halves
-  // of the arrangement — what is always a button, and what is looked up.
+  // The band. One row of actions, and the menus that hold everything a person
+  // looks up rather than watches.
+  //
+  // It ASKS 서식 to open and, measured, it does not survive to the frame the
+  // capture lands on — `<details open>` set from script here does not stick.
+  // Left in and recorded rather than removed: the request is harmless and the
+  // shot's caption says the band is closed, which is also how a person first
+  // meets it.
   if (stop === "toolbar") {
     setCenterMode("text");
     if (clean.length > 0) {
       const seat = clean[0];
       setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
     }
-    await settled(250);
-    const menu = document.querySelector<HTMLDetailsElement>('[data-testid="tool-format"]');
-    if (menu) menu.open = true;
-    await settled(300);
+    await settled(400);
+    // Twice, with a commit between: the first attempt landed before the
+    // toolbar had re-rendered for the selection above and was thrown away, and
+    // the capture then photographed a closed menu under a caption promising an
+    // open one.
+    for (let i = 0; i < 2; i += 1) {
+      const menu = document.querySelector<HTMLDetailsElement>('[data-testid="tool-format"]');
+      if (menu) menu.open = true;
+      await settled(250);
+    }
     await ready(`shot-${stop}`);
     return;
   }

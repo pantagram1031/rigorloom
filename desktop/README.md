@@ -1163,6 +1163,64 @@ document tool that glows looks like a marketing page.
 
 ## Evidence
 
+### 자체 렌더 — the tier-3 slice
+
+| Step | Result |
+| --- | --- |
+| `tsc --noEmit` | 0 |
+| sidecar build (all role checks) | 0 |
+| `npm run tauri build` | 0 |
+| `smoke.ps1` | **499 passed, 0 failed** across 14 phases |
+| new phases | `own` 40 · `own-reattach` 3 |
+| runtime suites + `tests/test_agenthost_compile.py` | 457 passed |
+| `py_compile` sweep | 0 |
+| privacy gate (`git archive HEAD` → `privacy_scan.py`) | HARD=0, WARN=45 (all pre-existing test fixtures) |
+
+Screenshots: `page-own-render.png` (the badge, the open 무엇을 못 그렸나 list),
+`page-own-render-150pct.png`, `toolbar.png`.
+
+**Three defects the evidence found, all in the packaging and all invisible to
+the checks that existed before it.**
+
+1. **`--hidden-import PIL` does not collect Pillow's submodules.** The bundle
+   had `_internal/PIL` on disk and `import PIL` worked; `from PIL import
+   ImageDraw` raised, and the renderer answered *Pillow is not installed* — the
+   exact shape of a tier that is present, advertised and dead. Fixed with
+   `--collect-submodules PIL`. This is why the new role check renders a real
+   corpus page rather than asking for `--version`: a smoke test of the import
+   surface would have passed.
+2. **`render_capability` built the tier-3 row without the engine root it was
+   given.** It fell back to a path derived from `rt_engine.__file__`, which is
+   correct in a checkout and outside the bundle in a frozen build, so a shipped
+   install would have advertised `own.state: "no"` while carrying the renderer.
+   Threaded from `RuntimeCore`; the regression test points a core at an empty
+   root and requires it to say so, because no test that only runs from a
+   checkout can see this.
+3. **The `unmapped → draw nothing` overlay rule erased the whole overlay.** It
+   was written when an unmapped line was a rare miss on a PDF page; on an
+   own-rendered page every line is unmapped by construction, so the rule
+   deleted all 30 line boxes and left a page that looked like one nothing had
+   been measured on. Own-rendered lines are now drawn silently — no fill, no
+   seat vocabulary, a hit target that states its own limit.
+
+Two build-script fixes came out of the same run: the own-render probe goes
+through `Start-Process`, because `$ErrorActionPreference = 'Stop'` turns the
+renderer's ElementTree `DeprecationWarning` into a terminating error and failed
+a build where the page had in fact been drawn; and the serve-role reap now
+kills the one-dir bootloader's CHILD as well as the bootloader — the orphan the
+existing comment in that file warned about, still holding build trees open
+twenty minutes at a time.
+
+**What this evidence does not cover.** The `toolbar.png` capture asks the 서식
+menu to open and it does not survive to the captured frame, so the shot shows
+the band closed. No tier-1 page was produced on this machine: `renderPrepare`
+answers `needs_hancom` (the packaged sidecar carries no `pyhwpx`), so the
+`hancom` grade is exercised only by the prepare suite with a substituted
+converter, never live. The staged overlay session grades `pdf` rather than
+`hancom` — correct, because a PDF a script staged is not one this machine's
+Hancom produced — which means the 한컴 렌더 badge text has never been
+photographed.
+
 ### Phase 3 (commit `2f27d3e`), reproduced from a clean build
 
 | Step | Exit | Seconds |
