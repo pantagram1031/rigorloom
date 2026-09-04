@@ -151,13 +151,22 @@ Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
 #                      build can only say it has no packs.
 #   pyproject.toml     module_registry gates each manifest's `requires.rigorloom`
 #                      against the project version, which it reads from here.
+#
+# The converged renderer (E2) adds a fourth: engine/references/fonts/family-map,
+# the OFL faces BundledFontMap maps Hancom face names onto when the declared
+# face is not installed. Left out, own_render.py's lookup falls straight to
+# the generic system substitute on every machine without Hancom — the exact
+# defect PIL's missing submodules was, one directory over. 15 MiB, and the
+# role check below proves a real face resolves through it rather than trusting
+# the file copy.
 $addData = @(
     "$RepoRoot\engine\scripts;repo\engine\scripts",
     "$RepoRoot\pipeline\scripts;repo\pipeline\scripts",
     "$RepoRoot\runtime\scripts;repo\runtime\scripts",
     "$RepoRoot\agenthost\scripts;repo\agenthost\scripts",
     "$RepoRoot\modules;repo\modules",
-    "$RepoRoot\pyproject.toml;repo"
+    "$RepoRoot\pyproject.toml;repo",
+    "$RepoRoot\engine\references\fonts\family-map;repo\engine\references\fonts\family-map"
 )
 $dataArgs = @()
 foreach ($entry in $addData) { $dataArgs += '--add-data'; $dataArgs += $entry }
@@ -315,6 +324,62 @@ if (Test-Path $ownProbeForm) {
     Write-Host 'interpreter role: own_render.py drew a real corpus page'
 } else {
     Write-Warning "no corpus form at $ownProbeForm; tier 3 was not exercised for real in this build"
+}
+
+# The bundled font family map, drawn on rather than merely present on disk.
+# admrul-gajokdolbom-hyuga-sinchengseo.hwpx declares 한양신명조/한양중고딕/
+# 휴먼명조 — Hancom-only faces, not Windows system fonts — so a machine with no
+# Hancom Office can answer for them only if BundledFontMap resolved them,
+# which requires engine/references/fonts/family-map to have made it into the
+# bundle as DATA. `own_render.py --version` says nothing about this: the map
+# is read lazily, keyed off `--engine-root`, and a bundle missing the fonts
+# directory would still draw the earlier probe form's page (its faces
+# resolve some other way) and only fail silently — every Hancom face
+# substituted for the generic system one — on a document like this one.
+$fontProbeForm = Join-Path $RepoRoot 'tests\corpus\forms\converted\admrul-gajokdolbom-hyuga-sinchengseo.hwpx'
+if (Test-Path $fontProbeForm) {
+    $fontProbeOut = Join-Path $env:TEMP ('rigorloom-font-probe-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $fontProbeOut | Out-Null
+    $fontProc = Start-Process -FilePath $exe `
+        -ArgumentList @($ownRender, $fontProbeForm, '--out-dir', $fontProbeOut,
+                        '--dpi', '96', '--stem', 'fontprobe') `
+        -RedirectStandardOutput (Join-Path $fontProbeOut 'out.json') `
+        -RedirectStandardError (Join-Path $fontProbeOut 'err.log') `
+        -NoNewWindow -PassThru -Wait
+    $fontProbeCode = $fontProc.ExitCode
+    $fontSidecarPath = Join-Path $fontProbeOut 'fontprobe.render.json'
+    $bundledFace = $null
+    if (Test-Path $fontSidecarPath) {
+        # [IO.File]::ReadAllText, not Get-Content -Raw: Windows PowerShell 5.1
+        # guesses this file's encoding from the console codepage rather than
+        # its own UTF-8 (no BOM, exactly as Path.write_text produced it), and
+        # on a Korean-locale machine that guess is cp949 -- it silently
+        # mangles the multi-byte face names ConvertFrom-Json is about to
+        # parse and turns a passing build into an unhandled ArgumentException.
+        # Reading the bytes as UTF-8 explicitly is what the rest of this
+        # script already does for text it writes itself.
+        $fontJsonText = [IO.File]::ReadAllText($fontSidecarPath, [Text.Encoding]::UTF8)
+        try {
+            $fontSidecar = $fontJsonText | ConvertFrom-Json
+            $bundledFace = $fontSidecar.fonts.faces |
+                Where-Object { $_.source -eq 'bundled' } | Select-Object -First 1
+        } catch {
+            Write-Warning "could not parse $fontSidecarPath as JSON: $($_.Exception.Message)"
+        }
+    }
+    Remove-Item -Recurse -Force $fontProbeOut -ErrorAction SilentlyContinue
+    if ($fontProbeCode -ne 0 -or -not $bundledFace) {
+        Write-Error ("the frozen binary drew admrul-gajokdolbom-hyuga-sinchengseo.hwpx but no " +
+            "declared face resolved through the bundled font family map (exit " +
+            "$fontProbeCode). engine/references/fonts/family-map did not make it into the " +
+            "bundle as data, so a machine without Hancom would silently substitute a generic " +
+            "system face for every Hancom face this document declares.")
+        exit 3
+    }
+    Write-Host ("interpreter role: bundled font map resolved '{0}' to {1}" -f `
+        $bundledFace.declared, $bundledFace.family_map)
+} else {
+    Write-Warning "no corpus form at $fontProbeForm; the bundled font family map was not exercised for real in this build"
 }
 
 # Role 1: a real initialize handshake over stdio against the frozen server.
