@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import math
@@ -1314,6 +1315,56 @@ class Paragraph:
         la = _kid(el, "linesegarray")
         if la is not None:
             self.linesegs = _kids(la, "lineseg")
+        # ``(first, last)`` when this object is one page's worth of a
+        # paragraph the cache carries across a page break; ``None`` — every
+        # corpus paragraph — when it is the whole paragraph.
+        self.rows = None
+
+    def page_runs(self):
+        """``[(first, last), ...]`` — this paragraph's linesegs split wherever
+        its own cached ``vertpos`` jumps BACKWARDS.
+
+        ``vertpos`` is measured from the top of the body box of the page the
+        line is on and restarts on every page, which is the rule ``paginate``
+        already applies BETWEEN top-level paragraphs and ``_restart_segments``
+        applies between the paragraphs of a container.  It applies just as
+        much WITHIN one paragraph: a body paragraph long enough to run off the
+        bottom of a page has its continuation lines cached from the next
+        page's top, so its ``vertpos`` sequence drops back to (near) zero
+        part-way through.
+
+        No corpus form contains such a paragraph — all ten are one-block-per-
+        page government forms — so every corpus paragraph returns a single
+        run and nothing downstream changes for them.  A report-class document
+        has them routinely: the private windpath holdout has five, and before
+        this split each one drew its whole tail at the TOP of the page its
+        head is on, over the title (one stray "있다." above the page-1 title,
+        where the Hancom reference starts with the title).
+        """
+        if len(self.linesegs) < 2:
+            return [(0, len(self.linesegs))]
+        runs = []
+        start = 0
+        prev = _iattr(self.linesegs[0], "vertpos")
+        for i in range(1, len(self.linesegs)):
+            vertpos = _iattr(self.linesegs[i], "vertpos")
+            if vertpos < prev:
+                runs.append((start, i))
+                start = i
+            prev = vertpos
+        runs.append((start, len(self.linesegs)))
+        return runs
+
+    def page_run(self, first, last):
+        """A view of this paragraph limited to linesegs ``[first, last)``.
+
+        Shares the element, the character stream and the lineseg list — only
+        ``rows`` differs — so ``paragraph_index`` still names one paragraph
+        however many pages it is drawn across.
+        """
+        view = copy.copy(self)
+        view.rows = (first, last)
+        return view
 
     @property
     def text(self):
@@ -1846,6 +1897,13 @@ class OwnRenderer:
         ``@pageBreak`` is deliberately *not* consulted: on this corpus it is
         also set on paragraphs whose ``vertpos`` does not restart, so honouring
         it would invent pages the cached layout does not have.
+
+        The same backward-jump rule applies WITHIN one paragraph
+        (``Paragraph.page_runs``): a body paragraph long enough to run off the
+        page has its continuation lines cached from the next page's top, and
+        each run after the first starts a page here just as a restart between
+        two paragraphs does.  No corpus paragraph has more than one run, so
+        this changes nothing for any of the ten forms.
         """
         usable = max(1, self.page_geometry()["usable_height"])
         pages = []
@@ -1854,6 +1912,7 @@ class OwnRenderer:
         prev_bottom = -1
         for el in _kids(self.sections[self._current_section], "p"):
             para = Paragraph(el, self.defs["para_pr"])
+            runs = para.page_runs()
             if para.linesegs:
                 first = _iattr(para.linesegs[0], "vertpos")
                 last = para.linesegs[-1]
@@ -1863,8 +1922,23 @@ class OwnRenderer:
                 if restart and current:
                     pages.append(current)
                     current = []
-                prev_first, prev_bottom = first, bottom
-            current.append(para)
+                # The paragraph after this one continues below its LAST run,
+                # not below the run it started on — with a split, vertpos[0]
+                # belongs to an earlier page and would make the comparison
+                # against the next paragraph meaningless.
+                prev_first = _iattr(para.linesegs[runs[-1][0]], "vertpos")
+                prev_bottom = bottom
+            if len(runs) == 1:
+                current.append(para)
+                continue
+            # This paragraph's own cache carries it across a page break: each
+            # run after the first STARTS a page, exactly as a restart between
+            # two paragraphs does.
+            for index, (lo, hi) in enumerate(runs):
+                if index:
+                    pages.append(current)
+                    current = []
+                current.append(para.page_run(lo, hi))
         if current or not pages:
             pages.append(current)
         return pages
@@ -3604,23 +3678,45 @@ class OwnRenderer:
         oy += block_offset_hwp
         shift = 0
         for para in paragraphs:
-            self.counts["paragraphs"] += 1
-            self.counts["runs"] += len(_kids(para.el, "run"))
-            if para.tabs:
-                self._skip("hp:tab", "hp:tab elements inside a run are not "
-                                     "placed in the character stream, so the "
-                                     "line they sit on is measured without "
-                                     "them")
-            self._render_floating(draw, para, (ox, oy + shift))
+            # A paragraph the cache carries across a page break arrives here
+            # once per page, as a view over its own lineseg range
+            # (``Paragraph.page_runs``).  Everything that belongs to the
+            # PARAGRAPH rather than to the lines on this page — the counts,
+            # its anchored objects, the layout record — happens on the first
+            # view only, or it would be done once per page it spans.
+            head = para.rows is None or para.rows[0] == 0
+            if head:
+                self.counts["paragraphs"] += 1
+                self.counts["runs"] += len(_kids(para.el, "run"))
+                if para.tabs:
+                    self._skip("hp:tab", "hp:tab elements inside a run are "
+                                         "not placed in the character stream, "
+                                         "so the line they sit on is measured "
+                                         "without them")
+                self._render_floating(draw, para, (ox, oy + shift))
             if not para.chars:
                 continue
             index = self.paragraph_index.get(id(para.el))
             mode, reason = self.line_layout_mode(para, avail_w_hwp, index)
-            self._layout_counts[mode] += 1
+            if para.rows is not None and mode != "lineseg":
+                # A split paragraph IS a cached-layout fact: the split is read
+                # out of the cache, so the halves have to be drawn from it too.
+                # Reflowing one across a page boundary is the flow pass's job
+                # (``--block-layout computed``), not this path's.
+                mode = "lineseg"
+                reason = ("the cache carries this paragraph across a page "
+                          "break; its halves are drawn from the cache rather "
+                          "than relaid out on this path")
+                if head:
+                    self._skip("hp:p (split across a page)", reason)
+            if head:
+                self._layout_counts[mode] += 1
             if mode == "lineseg":
-                self._record_layout(index, para, mode, reason, None)
+                if head:
+                    self._record_layout(index, para, mode, reason, None)
                 self._render_cached_lines(draw, para, (ox, oy + shift),
-                                          avail_w_hwp)
+                                          avail_w_hwp, rows=para.rows,
+                                          rebase=False)
                 continue
             self._layout_reasons[reason] = self._layout_reasons.get(reason, 0) + 1
             lines = self.compute_lines(draw, para, avail_w_hwp)
@@ -3701,11 +3797,22 @@ class OwnRenderer:
             )
 
     def _render_cached_lines(self, draw, para, origin_hwp, avail_w_hwp,
-                             rows=None):
+                             rows=None, rebase=True):
+        """Draw ``para``'s cached line boxes, optionally only rows
+        ``[first, last)``.
+
+        ``rebase`` pulls the range's first line onto ``origin`` — what the
+        computed flow pass wants, because it has decided where the range goes
+        and the cached ``vertpos`` is stale.  The cached path passes
+        ``rebase=False``: there the cached ``vertpos`` IS the answer on both
+        halves of a paragraph the authoring engine split (a continuation's
+        own ``vertpos`` is already measured from its new page's body top),
+        and rebasing would slam it against the top margin instead.
+        """
         ox, oy = origin_hwp
         positions = [_iattr(s, "textpos") for s in para.linesegs]
         first, last = rows if rows is not None else (0, len(para.linesegs))
-        if rows is not None and first < len(para.linesegs):
+        if rows is not None and rebase and first < len(para.linesegs):
             oy -= _iattr(para.linesegs[first], "vertpos")
         self._line_mode = "lineseg"
         margin_right = para.para_pr.get("margin_right", 0) or 0
