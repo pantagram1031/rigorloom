@@ -231,16 +231,13 @@ BLOCK_LAYOUT_AUTO = "auto"
 BLOCK_LAYOUT_COMPUTED = "computed"
 BLOCK_LAYOUT_MODES = (BLOCK_LAYOUT_AUTO, BLOCK_LAYOUT_COMPUTED)
 
-# 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next), and the one number
-# in this slice that had to be MEASURED rather than read.  Every corpus
-# hh:prev carries unit="HWPUNIT" (771 of 774), yet the advance the authoring
-# engine actually leaves between two adjacent top-level paragraphs is HALF the
-# declared value from each side: 774 corpus paraPr, gaps of 200/600/1000/2000
-# declared against 100/300/500/1000 laid out, on every form that declares one.
-# Reading the declared value at face value scores 334 of 539 adjacent
-# top-level pairs; halving each side scores 534.  Declared as this renderer's
-# measured reading of the unit, not as something KS X 6101 publishes.
-PARA_MARGIN_SCALE = 0.5
+# 문단 위/아래 간격 (hh:margin/hh:prev, hh:margin/hh:next) used to be halved
+# here by a PARA_MARGIN_SCALE constant.  That halving was real but was
+# attributed to the wrong thing: it is the UNIT of the hh:paraPr MCE switch's
+# `default` branch, which every corpus form uses and which states every length
+# in half a HWPUNIT.  `_para_pr_geometry_source` now converts at the parse, so
+# the flow pass adds the declared gap at face value and `left`/`right`/
+# `intent` — which the old constant never touched — are no longer doubled.
 
 # hp:tbl@pageBreak — 쪽 경계에서의 표 나누기.  The corpus declares only CELL
 # (62 tables) and NONE (19); TABLE is in the enumeration and is treated as
@@ -348,11 +345,21 @@ def break_opportunities(text, break_latin="KEEP_WORD",
 LANG_SLOTS = ("hangul", "latin", "hanja", "japanese", "other", "symbol",
               "user")
 
-# The neutral value of each metric, i.e. what "no typography" means.
-#   ratio   — horizontal glyph scale, percent
-#   spacing — letter spacing, percent of the character size
-#   relSz   — relative character size, percent
-#   offset  — baseline shift, percent of the character size (positive = up)
+# The neutral value of each metric, i.e. what "no typography" means.  Each
+# reading below was MEASURED off the Hancom reference render of
+# tests/corpus/render-check/render-check-01.hwpx (its `F13`–`F16` blocks), and
+# the measurement is written up in docs/research/line-and-character-metrics.md.
+#   ratio   — horizontal glyph scale, percent.  Scales the advance and the
+#             glyph horizontally; the character's HEIGHT is untouched, so it
+#             never enters the line height (F14: a line carrying a ratio=150
+#             run still advances 10 pt x 160% = 15.95 pt measured).
+#   spacing — letter spacing, percent of the character's OWN ADVANCE (not of
+#             the character size).  See ``_spacing_gap_px``.
+#   relSz   — relative character size, percent.  Scales the drawn size and the
+#             advance, and does NOT enter the line height (see
+#             ``_line_metrics``).
+#   offset  — baseline shift, percent of the DECLARED hh:charPr@height (not of
+#             the relSz-scaled size).  POSITIVE MOVES THE GLYPH DOWN the page.
 TYPOGRAPHY_DEFAULTS = {"ratio": 100, "spacing": 0, "relSz": 100, "offset": 0}
 NEUTRAL_TYPOGRAPHY = (100, 0, 100, 0)
 
@@ -555,22 +562,43 @@ def _kid(el, name):
 
 
 def _para_pr_geometry_source(pp):
-    """The ``hh:paraPr`` branch a reader without the 2016 extension must take.
+    """``(branch, length_scale)`` for one ``hh:paraPr``'s geometry.
 
     Every corpus ``hh:paraPr`` wraps its ``hh:margin`` and ``hh:lineSpacing``
     in ``<hh:switch><hh:case hp:required-namespace="…/2016/HwpUnitChar">…
-    </hh:case><hh:default>…</hh:default></hh:switch>`` — the MCE pattern.  The
-    ``case`` branch states the same quantities in the 2016 *character* unit
-    (measured: its margins are consistently half the default branch's), so a
-    renderer that does not implement that namespace takes ``default``.  774 of
-    774 corpus paraPr carry the switch; 477 of them differ between the two
-    branches, so picking the wrong one is not cosmetic.
+    </hh:case><hh:default>…</hh:default></hh:switch>`` — the MCE pattern.  A
+    reader that does not implement the 2016 namespace takes ``default``, and
+    that is still the branch this reads.
+
+    MEASURED: the two branches carry the same LENGTH in two different units,
+    and ``default`` is in a unit exactly HALF the size of ``case``'s.  Over the
+    twelve corpus forms' 811 paraPr — every one of which carries the switch —
+    the ratio ``default / case`` is 2.0 with no exception on every length that
+    is non-zero in both: ``intent`` 328/328, ``left`` 116/116, ``right``
+    54/54, ``prev`` 143/143, ``next`` 11/11, and the one ``FIXED``
+    ``lineSpacing`` value.  A ``PERCENT`` ``lineSpacing`` value is a percent,
+    not a length, and is identical in both branches on all 806 of them —
+    which is what makes "different unit" the reading rather than "different
+    value".  The ``case`` branch's elements are the ones that carry
+    ``unit="HWPUNIT"``.
+
+    So a length read out of ``default`` is halved to reach HWPUNIT.  A
+    ``hh:paraPr`` with no switch (an ``.hwpx`` authored directly rather than
+    converted, such as ``tests/corpus/render-check/render-check-01.hwpx``)
+    declares ``unit="HWPUNIT"`` outright and is read at face value: Hancom's
+    own render of that document leaves exactly the declared 6.00 pt after a
+    ``<hc:prev value="600" unit="HWPUNIT"/>`` — see
+    docs/research/line-and-character-metrics.md §6.  This one rule replaces the
+    old ``PARA_MARGIN_SCALE`` constant, which halved 문단 위/아래 간격 only and
+    left ``left``/``right``/``intent`` doubled.
     """
     switch = _kid(pp, "switch")
     if switch is None:
-        return pp
+        return pp, 1.0
     default = _kid(switch, "default")
-    return default if default is not None else pp
+    if default is None:
+        return pp, 1.0
+    return default, 0.5
 
 
 def _iattr(el, name, default=0):
@@ -771,14 +799,14 @@ def parse_header(header_xml: bytes) -> dict:
         if pid is None:
             continue
         align = _kid(pp, "align")
-        geometry = _para_pr_geometry_source(pp)
+        geometry, length_scale = _para_pr_geometry_source(pp)
         margin = _kid(geometry, "margin")
         spacing = _kid(geometry, "lineSpacing")
         brk = _kid(pp, "breakSetting")
 
         def _margin(name):
             el = _kid(margin, name) if margin is not None else None
-            return _iattr(el, "value", 0)
+            return int(round(_iattr(el, "value", 0) * length_scale))
 
         def _brk(name, default):
             raw = brk.get(name) if brk is not None else None
@@ -806,7 +834,13 @@ def parse_header(header_xml: bytes) -> dict:
             "line_spacing_type": (
                 (spacing.get("type") if spacing is not None else None)
                 or "PERCENT").upper(),
-            "line_spacing_value": _iattr(spacing, "value", 100),
+            # PERCENT is a percent and is branch-invariant; every other type
+            # states a LENGTH and takes the branch's unit scale.
+            "line_spacing_value": (
+                _iattr(spacing, "value", 100)
+                if ((spacing.get("type") if spacing is not None else None)
+                    or "PERCENT").upper() == "PERCENT"
+                else int(round(_iattr(spacing, "value", 100) * length_scale))),
             "line_spacing_unit": (
                 (spacing.get("unit") if spacing is not None else None)
                 or "HWPUNIT").upper(),
@@ -814,7 +848,8 @@ def parse_header(header_xml: bytes) -> dict:
             "margin_right": _margin("right"),
             "indent": _margin("intent"),
             # 문단 위/아래 간격.  Block-level, so it is the flow pass that acts
-            # on them; see PARA_MARGIN_SCALE for the half that was measured.
+            # on them; `_para_pr_geometry_source` has already put them in
+            # HWPUNIT, and the flow pass adds them at face value.
             "margin_prev": _margin("prev"),
             "margin_next": _margin("next"),
         }
@@ -1535,6 +1570,14 @@ _EQ_FENCE_MAX_SCALE = 6.0
 # render, declared rather than measured off KS X 6101 (which does not publish
 # one).
 _EQ_ITALIC_SHEAR = 0.2126
+# The resolution the room an equation reserves is measured at, PINNED so that
+# the reserve — and therefore the pagination — is the same number whatever
+# ``--dpi`` the page is drawn at.  It is a measurement grid, not a tuned
+# constant, but it is not free either: `fontbook` rasterises at an integer
+# pixel size, so the same equation laid out at 300 / 600 / 1200 dpi measures
+# up to 14 HWPUNIT (0.14 pt) apart.  Pinning one of them is what makes the
+# reserve deterministic; 600 is the middle of that sweep.
+EQUATION_EXTENT_DPI = 600
 
 
 def _eq_word_head(node):
@@ -1677,6 +1720,12 @@ class OwnRenderer:
         self._eq_face_italic = None
         self._eq_italic_kind = "none"
         self._eq_italic_cache = {}
+        # The vertical room each inline hp:equation reserves, per element, in
+        # HWPUNIT.  Cached because ``_object_extent`` is asked for it once per
+        # line-breaking pass and laying an equation out is not free — and
+        # because the number must not drift between the line box and the box
+        # the equation is then drawn in.  See ``_equation_extent_height``.
+        self._eq_extent = {}
         # Every text line box this render drew, in device pixels, page-indexed.
         # Emitted in the sidecar because it is the only channel on which this
         # renderer can be compared to a Hancom reference *geometrically* (the
@@ -1776,7 +1825,14 @@ class OwnRenderer:
             "document exercised and typography_slot_model for how a character "
             "is assigned to a slot",
             "hh:spacing opens a gap BETWEEN characters (n-1 gaps per line, no "
-            "trailing gap), measured against the Hancom reference render",
+            "trailing gap) whose width is that character's OWN advance times "
+            "the declared percent, NOT a flat percent of the character size; "
+            "hh:offset shifts a glyph DOWN the page for a positive value, by "
+            "the declared percent of hh:charPr@height (not of the relSz-"
+            "scaled size); neither hh:relSz nor hh:ratio nor hh:offset enters "
+            "the line height. All four measured off the Hancom reference "
+            "render of render-check-01 (blocks F13-F16, F21-F22) -- see "
+            "docs/research/line-and-character-metrics.md",
             "a space (U+0020, U+00A0) advances by HALF the declared character "
             "size times hh:ratio -- the half-width counterpart of HWP's "
             "full-width cell -- and NOT by the resolved face's own hmtx "
@@ -1798,7 +1854,9 @@ class OwnRenderer:
             "--block-layout computed the flow pass shortens the page by the "
             "block it reserves, and under the auto policy it cannot, so a "
             "collision with the cached body layout is DECLARED per render",
-            "endnotes ARE drawn, at the end of section0, continuing onto new "
+            "endnotes ARE drawn where hp:endNotePr/hp:placement@place says — "
+            "END_OF_DOCUMENT after the last section's last page, "
+            "END_OF_SECTION after each section's own — continuing onto new "
             "pages at a NOTE boundary; a single endnote taller than the body "
             "box is set from the top of its own page and declared",
             "every line box carries the piece of furniture that drew it in "
@@ -2584,8 +2642,7 @@ class OwnRenderer:
         i = from_block
         while i < len(blocks):
             block = blocks[i]
-            gap = int((prev_next_margin + block["margin_prev"])
-                      * PARA_MARGIN_SCALE)
+            gap = prev_next_margin + block["margin_prev"]
             forced_col = block["column_break"] and not block["page_break_before"]
             forced = (block["page_break_before"] or block["column_break"])
             if forced and (placements or y > 0):
@@ -3102,7 +3159,7 @@ class OwnRenderer:
             pieces.append({
                 "kind": "glyph", "advance": width, "text": chunk, "cid": cid,
                 "font": font, "ratio": ratio, "size_px": size_px,
-                "offset_px": size_px * offset / 100.0,
+                "offset_px": self._offset_px(cid, offset),
                 "embolden": self._embolden_px(cid, slot, font),
             })
             run.clear()
@@ -3140,7 +3197,8 @@ class OwnRenderer:
             if spacing:
                 pieces.append({
                     "kind": "gap",
-                    "advance": self._spacing_px(cid, rel_sz, spacing),
+                    "advance": self._spacing_gap_px(pieces[-1]["advance"],
+                                                    spacing),
                 })
         flush()
         return pieces
@@ -3170,17 +3228,63 @@ class OwnRenderer:
         pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
         return (pt * self.dpi / 72.0 * ratio / 100.0 * SPACE_CELL_FRACTION)
 
-    def _spacing_px(self, cid, rel_sz, spacing):
-        """``hh:spacing`` in pixels: a percent of the *character size*.
+    def _offset_px(self, cid, offset):
+        """``hh:offset`` as pixels the glyph is RAISED off its baseline.
 
-        Not of the ratio-scaled advance — ``hh:ratio`` scales the glyph, 자간
-        is declared against the character height.  Measured against the Hancom
-        reference: gianmun's four-character 발신명의 run, 15 pt with
-        ``spacing="50"``, is drawn 5.5 em wide (4 advances + 3 gaps of 0.5 em),
-        and the reference PDF reports 5.496 em.
+        Two readings were MEASURED off the Hancom reference render of
+        ``render-check-01``, and the code had both of them backwards.
+
+        *Sign.*  A POSITIVE ``hh:offset`` moves the glyph DOWN the page, so the
+        raise this returns is negated.  ``F16`` declares ``offset="40"`` on its
+        first run and ``offset="-40"`` on its third: the +40 run is drawn
+        3.962 pt BELOW the neutral run's baseline and the −40 run 3.952 pt
+        above it.  ``F21``/``F22`` say the same at ±35 (+3.482 / −3.602 pt),
+        which is also why the document's 위첨자 sits below its base line in
+        Hancom's own render.
+
+        *Reference size.*  The percent is of the DECLARED ``hh:charPr@height``,
+        not of the ``hh:relSz``-scaled size.  ``F21``'s run declares
+        ``relSz="65"`` on a 10 pt charPr and shifts 3.482 pt: 35% of 10 pt is
+        3.50 pt, 35% of the scaled 6.5 pt would be 2.275 pt.
+
+        Worst residual over the four runs is 0.102 pt, inside the reference
+        PDF's own 1/600 in positioning grid.
         """
-        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-        return pt * self.dpi / 72.0 * spacing / 100.0
+        if not offset:
+            return 0.0
+        pt = self._charpr(cid).get("height_pt") or 10.0
+        return -(pt * self.dpi / 72.0 * offset / 100.0)
+
+    @staticmethod
+    def _spacing_gap_px(advance_px, spacing):
+        """``hh:spacing`` gap after a character: a percent of ITS OWN advance.
+
+        MEASURED off the Hancom reference render of ``render-check-01`` (block
+        ``F13``, three runs of the same text at ``spacing`` −15 / 0 / +30, 10 pt
+        바탕).  A full-width Hangul cell advances by 1 em, so it cannot tell a
+        gap proportional to the advance from a gap that is a flat percent of
+        the character size; the Latin runs and the half-width space can, and
+        they say proportional, with no exception:
+
+          span                     measured   ∝ advance    flat % of size
+          ``ABCdef`` spacing −15    31.077 pt  31.106 pt     27.595 pt
+          ``ABCdef␣`` spacing +30   54.236 pt  54.074 pt     62.595 pt
+          space (0.5 em) −15         4.319 pt   4.250 pt      3.500 pt
+          space (0.5 em) +30         6.479 pt   6.500 pt      8.000 pt
+
+        Residual against the proportional reading is at most 0.16 pt, which is
+        the reference PDF's own 1/600 in (0.12 pt) positioning grid; against
+        the flat reading it reaches 8.36 pt.  The earlier flat reading was
+        fitted to gianmun's 발신명의 run — four *Hangul* cells at 15 pt with
+        ``spacing="50"``, drawn 5.5 em wide — which both readings satisfy
+        exactly, so nothing there is contradicted.
+
+        ``advance_px`` is the character's advance with ``hh:ratio`` and
+        ``hh:relSz`` already applied, so the gap composes after both.  That
+        ordering is the natural reading of "percent of the advance" but is NOT
+        measured: ``F13`` declares ``ratio=100`` and ``relSz=100`` throughout.
+        """
+        return advance_px * spacing / 100.0
 
     def _line_items(self, para, chars, base_index):
         """Ordered ``("text", Segment)`` / ``("obj", record)`` items for a line.
@@ -3276,9 +3380,9 @@ class OwnRenderer:
                 advances.append(0.0)              # resolved against tab stops
                 gaps.append(0.0)
                 continue
-            _ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
+            _ratio, spacing, _rel_sz, _offset = self._typography(cid, ch)
             advances.append(self._measure(draw, ch, cid))
-            gaps.append(self._spacing_px(cid, rel_sz, spacing)
+            gaps.append(self._spacing_gap_px(advances[-1], spacing)
                         if spacing else 0.0)
         return advances, gaps
 
@@ -3359,10 +3463,50 @@ class OwnRenderer:
         ``BASELINE_RATIO``: ``vertsize == textheight`` (3214/3214),
         ``baseline == round(0.85 * textheight)``, and for a ``PERCENT``
         paragraph ``vertsize + spacing == textheight * value / 100``.
+
+        ``textheight`` is the largest DECLARED ``hh:charPr@height`` on the
+        line.  The character metrics do not enter it — MEASURED against the
+        Hancom render of ``render-check-01``:
+
+        * ``F15``'s second line is drawn entirely at ``relSz="140"`` on a 10 pt
+          charPr, and the gap from it to the next block's first baseline is
+          22.906 pt — the same, to three decimals, as the gap after ``F13``'s
+          and ``F14``'s 10 pt last lines.  A 14 pt line at this paragraph's
+          160% would have advanced 22.40 pt instead of 16.00.
+        * ``F15``'s first line carries a ``relSz="140"`` character and still
+          advances 15.950 pt (10 pt x 160%), not 22.40.
+        * ``F14``'s line carrying a ``ratio="150"`` run advances 15.949 pt.
+
+        A line that carries an **inline object** is the one place where the
+        line box and the pitch part company, and both halves are measured
+        against the authoring engine's own cached ``hp:lineseg`` over the 79
+        object lines of the ten converted corpus forms
+        (``docs/research/object-line-box.md``):
+
+        * the box is the object's extent **plus its own vertical
+          ``hp:outMargin``** — ``cached textheight == height + top + bottom``
+          on **79 of 79**, residual 0, against 16/79 for the extent alone;
+        * the ``spacing`` is the leading of the **run's declared character
+          size**, not of that box — exact on 66 of 79, and 12 of the 13
+          misses are within 2 HWPUNIT (0.02 pt) of it.  Taking the leading
+          off the box, as this renderer did, is exact on 4 of 79 and misses
+          by up to 98266 HWPUNIT: a 72 pt table on a 160% paragraph claimed
+          115.2 pt of the column instead of 80.8.
+
+        The line pitch itself was measured over 17 baseline-to-baseline steps
+        in ``F01``–``F09``: ``PERCENT`` is ``value / 100`` times the declared
+        character size (130% → 13.00, 160% → 16.00, 200% → 20.00, worst
+        residual 0.091 pt) and ``FIXED`` is the declared value (24.00 pt,
+        worst residual 0.019 pt).  Reading ``PERCENT`` against the face's own
+        ascent+descent, or against a fixed 1.2 line, misses by 2.1 to 12.0 pt
+        and is rejected.
         """
         pr = para.para_pr
         heights = []
+        pitch = []
         for offset, (ch, cid) in enumerate(para.chars[start:end]):
+            char_height = (self._charpr(cid).get("height_pt") or 10.0) \
+                * HWPUNIT_PER_PT
             if ch == OBJECT_SLOT:
                 # An inline object occupies a character cell whose height is
                 # the OBJECT's, not the run's point size.  Measured defect
@@ -3370,30 +3514,47 @@ class OwnRenderer:
                 # has a cached vertsize of ~63000 HWPUNIT and a charPr height
                 # of 1000, so taking the run's size shrank the paragraph by a
                 # whole page and pushed everything after it up the sheet.
+                #
+                # The object's cell is its box PLUS its own vertical
+                # hp:outMargin, and the LEADING the paragraph's line spacing
+                # adds is computed from the run's character size and not from
+                # that cell.  Both measured against the authoring engine's own
+                # cached hp:lineseg over the corpus' 79 object lines; see the
+                # docstring and docs/research/object-line-box.md.
                 record = para.object_at.get(start + offset)
                 if record is not None and not record[3]:
-                    heights.append(self._object_extent(record[1])[1])
+                    _l, top, _r, bottom = self._object_out_margin(record[1])
+                    heights.append(self._object_extent(record[1])[1]
+                                   + top + bottom)
+                    pitch.append(char_height)
                     continue
-            _ratio, _spacing, rel_sz, _offset = self._typography(cid, ch)
-            pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-            heights.append(pt * HWPUNIT_PER_PT)
+            # hh:relSz, hh:ratio and hh:offset are all EXCLUDED here: the line
+            # height is the declared character size, whatever the character
+            # metrics do to the drawn glyph.  See the docstring.
+            heights.append(char_height)
+            pitch.append(char_height)
         if not heights:
             cid = para.chars[0][1] if para.chars else None
             heights.append((self._charpr(cid).get("height_pt") or 10.0)
                            * HWPUNIT_PER_PT)
+            pitch.append(heights[-1])
         if pr.get("font_line_height"):
             self._skip("hp:paraPr@fontLineHeight",
                        "line height from the font's own ascent/descent is not "
                        "implemented; the declared character size is used")
         textheight = int(round(max(heights)))
         vertsize = textheight
+        # The height the line SPACING is computed from.  Identical to
+        # ``textheight`` on every line that carries no inline object, which is
+        # every line the pitch rules above were measured on.
+        pitchheight = int(round(max(pitch)))
         baseline = int(round(textheight * BASELINE_RATIO))
         kind = pr.get("line_spacing_type", "PERCENT")
         value = pr.get("line_spacing_value", 100)
         if kind == "PERCENT":
-            spacing = int(round(textheight * value / 100.0)) - vertsize
+            spacing = int(round(pitchheight * value / 100.0)) - pitchheight
         elif kind == "FIXED":
-            spacing = value - vertsize
+            spacing = value - pitchheight
         elif kind in ("BETWEEN_LINES", "ATLEAST", "AT_LEAST"):
             spacing = max(0, value)
         else:
@@ -3555,12 +3716,20 @@ class OwnRenderer:
             ratio, spacing, rel_sz, _offset = self._typography(cid, ch)
             size = ((self._charpr(cid).get("height_pt") or 10.0)
                     * rel_sz / 100.0 * HWPUNIT_PER_PT)
+            cell = size * ratio / 100.0
             if is_full_width(ch):
-                total += size * ratio / 100.0
+                total += cell
             # n-1 gaps: the gap after the last character of the span is not
             # drawn, exactly as `_measure` drops it.
             if spacing and offset < len(window) - 1:
-                total += size * spacing / 100.0
+                gap = cell * spacing / 100.0
+                # The gap is a percent of the character's OWN advance
+                # (``_spacing_gap_px``).  For a full-width cell that advance is
+                # exactly ``cell``, so the gap is exact.  For a proportional
+                # character the advance is unknown and no larger than a full
+                # cell, so a POSITIVE gap has to be dropped to keep this a
+                # lower bound, while a NEGATIVE one is counted at its worst.
+                total += gap if (is_full_width(ch) or gap < 0) else 0.0
         return total
 
     def line_layout_mode(self, para, column_hwp, paragraph_index=None):
@@ -3648,21 +3817,119 @@ class OwnRenderer:
         right`` wide and the box sits ``left`` inside it — insetting the box
         alone would put it 2.83 pt right of centre.
 
-        **Vertically the outer margin is NOT added, and that is a declared
-        limit, not a finding.**  Nothing in the reference set measures the
-        line *height* an inline object claims — the cached ``hp:lineseg``
-        carries it on every corpus form — so growing it here would be a guess
-        that only shows up in ``block_layout=computed``, where it costs
-        ``kstartup`` a 23rd page against a 21-page reference.  The box is
-        still drawn ``top`` down from the slot (``_object_origin``), which is
-        the part the references do measure.
+        Vertically the outer margin is deliberately NOT added **here**: this
+        is the object's own box, and the extra vertical room belongs to the
+        LINE that holds it.  ``_line_metrics`` adds ``top + bottom`` to the
+        line box, which is where it was measured (79/79 against the cached
+        ``hp:lineseg@textheight``); adding it twice would double it.  The box
+        is still drawn ``top`` down from the slot (``_object_origin``).
         """
         if _local(el.tag) in ("footNote", "endNote"):
             return self._note_mark_extent(el)
         sz = _kid(el, "sz")
         left, _top, right, _bottom = self._object_out_margin(el)
+        height = _iattr(sz, "height") if sz is not None else 0
+        if height and _local(el.tag) == "equation":
+            height = self._equation_extent_height(el, height)
         return ((_iattr(sz, "width") if sz is not None else 0) + left + right,
-                _iattr(sz, "height") if sz is not None else 0)
+                height)
+
+    def _equation_extent_height(self, el, declared):
+        """The vertical room an inline ``hp:equation`` takes, in HWPUNIT.
+
+        **It is not the declared ``hp:sz@height``.**  Hancom re-lays the
+        script out on open and reserves what its own layout needs; the stored
+        extent is a cache it refreshes, not an instruction it obeys.  Measured
+        on ``render-check-01``, whose four equations were authored by
+        `build_render_check.py` with round declared heights that Hancom never
+        agreed to (``tests/corpus/render-check/measure_equation_extent.py``,
+        written up in ``docs/research/equation-line-box.md``):
+
+        | script | declared | Hancom reserves |
+        | --- | --- | --- |
+        | ``a over b`` | 2400 | 2252 |
+        | ``sqrt {x^{2} + y^{2}}`` | 2400 | 1304 |
+        | ``sum _{i=1} ^{n} … over 6`` | 3600 | 2696 |
+        | ``left [ matrix{…} right ]`` | 3600 | 2108 |
+
+        Two equal declared heights reserving 2252 and 1304 rule out every
+        function of the declared extent alone — no factor, no padding, no
+        attribute.  **There is no "size to content" flag**: all four declare
+        ``heightRelTo="ABSOLUTE"``, ``protect="0"``, ``lineMode="CHAR"``,
+        ``baseUnit="1000"`` and ``Equation Version 60``, i.e. exactly what
+        every equation of the Hancom-authored holdout declares, and those two
+        documents disagree about whether the stored height is honoured.  The
+        one attribute that *does* vary is ``baseLine``, which the fixture
+        leaves at a flat 85 and Hancom writes per equation (59…76) — a tell
+        that the fixture's extents were never Hancom's, not a rule.
+
+        So the reserve is **this renderer's own layout of the script**,
+        clamped to the declared box:
+
+            ``min(declared, max(nominal, ink))``
+
+        ``nominal`` is the layout tree's ascent + descent on the
+        ``_EQ_ASC``/``_EQ_DESC`` stacking cells and is the term that carries
+        the rule — it alone scores worst +256 HWPUNIT (17.0%), mean 170,
+        against +1492 (84.0%) and mean 910 for the declared height, and the
+        drawn-ink extent alone is the rejected alternative at worst −494
+        (19.3%), mean 346.  ``ink`` (``_eq_bounds``) joins it as a floor and
+        not as a fit: a fence grown around a fraction, or an accent, marks
+        outside its own cell, and a line may not reserve less room than the
+        equation puts glyphs in.  It costs the fit nothing measurable —
+        worst +256 (19.3%), mean 178.
+
+        Rejected outright, on this evidence: any function of the declared
+        height (two equal declared heights, two different reserves); a
+        constant factor on the content (the best one is 0.99 and removes
+        none of the spread); a constant padding (``reserve − content`` runs
+        −1786…+222 HWPUNIT).
+
+        The clamp is not a tolerance.  ``_render_equation`` guarantees an
+        equation is drawn *inside* its declared box, scaling down where this
+        renderer's metrics do not fit, so the drawn extent can never exceed
+        the declared one and the line reserves exactly what is drawn.  Where
+        the layout is the larger number this is byte-for-byte today's
+        behaviour.
+
+        Cross-checked on a private Hancom-authored holdout, 14 equations,
+        where the declared extent *is* Hancom's own measurement of the same
+        quantity: nominal / declared has mean 0.9934 (min 0.8828, max 1.1089,
+        sd 0.0748) and the adopted expression 0.9650 (min 0.8828, max 1.0).
+        n = 18 in all.  What is left is this renderer's equation layout
+        disagreeing with Hancom's by up to 19%, which is a layout question
+        and not a line-box one.
+
+        Anything that cannot be laid out — no script, a script past the
+        parser's recursion budget, no Pillow — falls back to the declared
+        height, which is also what such an equation is *drawn* as (a
+        placeholder box at the declared extent).
+        """
+        key = id(el)
+        cached = self._eq_extent.get(key)
+        if cached is not None:
+            return cached
+        height = declared
+        script_el = _kid(el, "script")
+        script = "".join(script_el.itertext()) if script_el is not None else ""
+        if script.strip():
+            try:
+                tree, _info = hwpeqn_parse.parse(script)
+                saved = self._eq_face
+                self._eq_face = self._equation_face(el.get("font"), count=False)
+                size = max(2.0, (_iattr(el, "baseUnit") or 1000)
+                           * EQUATION_EXTENT_DPI / HWPUNIT_PER_INCH)
+                laid = self._eq_layout(tree, size)
+                _x0, y0, _x1, y1 = self._eq_bounds(laid)
+                self._eq_face = saved
+                scale = HWPUNIT_PER_INCH / float(EQUATION_EXTENT_DPI)
+                extent = max((laid.asc + laid.desc) * scale,
+                             (y1 - y0) * scale)
+                height = min(declared, int(round(extent)))
+            except (RecursionError, OSError, AttributeError, ValueError):
+                height = declared
+        self._eq_extent[key] = height
+        return height
 
     def _line_pieces(self, draw, items, split_for_justification):
         """Flatten a line's items into positioned-in-order drawable pieces.
@@ -4409,8 +4676,13 @@ class OwnRenderer:
         return True
 
     # -- equations -------------------------------------------------------
-    def _equation_face(self, face_name):
+    def _equation_face(self, face_name, count=True):
         """The installed face an ``hp:equation@font`` names.
+
+        ``count=False`` resolves the face without counting a character
+        against it: ``_equation_extent_height`` has to lay the equation out
+        to measure it, and that measurement must not show up in the sidecar
+        as a second equation drawn in the same face.
 
         Resolved through the same ``SystemFontIndex`` and declared through the
         same ``face_resolution`` record as every text face, under the slot
@@ -4431,7 +4703,8 @@ class OwnRenderer:
         key = ("equation", face_name or "")
         hit = self._face_cache.get(key)
         if hit is not None:
-            hit[1]["characters"] += 1
+            if count:
+                hit[1]["characters"] += 1
             self._eq_face_italic, self._eq_italic_kind = \
                 self._eq_italic_cache[key]
             return hit[0]
@@ -4447,6 +4720,8 @@ class OwnRenderer:
         record = self._declare_face(
             face_name or None, "equation", entry if chosen else None, False,
             "installed" if chosen else "system")
+        if not count:
+            record["characters"] -= 1
         italic_cut = entry.get("italic") if entry else None
         if italic_cut is not None:
             italic_face, italic_kind = italic_cut, "cut"
@@ -4989,12 +5264,19 @@ class OwnRenderer:
                       baseline_in_mask)
         bands = self._eq_merge_bands(self._eq_bands(laid), size * 0.25)
         shrink = 1.0
-        if ink_w > box_w or ink_h > box_h:
+        # ``ink_w``/``ink_h`` carry the mask's 1 px antialias margin on each
+        # side, and that margin is blank: it must not count against the box,
+        # or an equation drawn in a box sized to its OWN extent
+        # (``_equation_extent_height``) would be shrunk by two pixels' worth
+        # at every resolution — 13% of it at 96 dpi.  The comparison is
+        # therefore against the box plus that margin, which is the same test
+        # as "does the INK fit", and the margin is what hangs outside.
+        if ink_w > box_w + 2 or ink_h > box_h + 2:
             # Rounding, or a face whose metrics simply will not fit: the
             # promise is that the box is never overflowed, so the last
             # reduction is on the raster.  LANCZOS is pinned for the same
             # reason it is in _render_picture.
-            shrink = min(box_w / ink_w, box_h / ink_h)
+            shrink = min((box_w + 2) / ink_w, (box_h + 2) / ink_h)
             ink_w = max(1, int(ink_w * shrink))
             ink_h = max(1, int(ink_h * shrink))
             mask = mask.resize((ink_w, ink_h), self.Image.Resampling.LANCZOS)
@@ -5007,8 +5289,11 @@ class OwnRenderer:
         percent = _iattr(el, "baseLine")
         fraction = (percent / 100.0) if 0 < percent < 100 else BASELINE_RATIO
         top = int(round(by0 + box_h * fraction - baseline_in_mask))
-        top = max(by0, min(top, by1 - ink_h))
-        left = bx0 + max(0, (box_w - ink_w) // 2)
+        # The clamp is on the INK, not on the mask: the mask's blank margin
+        # is allowed to hang one pixel outside the box on each side, which is
+        # what makes a box sized to the equation's own extent hold it.
+        top = max(by0 - 1, min(top, by1 + 1 - ink_h))
+        left = bx0 + max(-1, (box_w - ink_w) // 2)
         colour = _colour(el.get("textColor")) or (0, 0, 0)
         self._image.paste(self.Image.new("RGB", (ink_w, ink_h), colour),
                           (left, top), mask)
@@ -5039,7 +5324,10 @@ class OwnRenderer:
         self.eq_placements.append({
             "page": self._page,
             "box_px": [bx0, by0, bx1, by1],
-            "ink_px": [left, top, left + ink_w, top + ink_h],
+            # The INK rectangle, which is the mask minus its 1 px antialias
+            # margin — that margin carries no glyph and is the one part of
+            # the raster allowed to sit outside ``box_px``.
+            "ink_px": [left + 1, top + 1, left + ink_w - 1, top + ink_h - 1],
             "scale": round(scale, 4),
             "baselines": len(bands),
         })
@@ -5064,9 +5352,14 @@ class OwnRenderer:
         if name == "pic" and extent_known and self._render_picture(
                 el, origin_hwp, w, h):
             return
-        if name == "equation" and extent_known and self._render_equation(
-                el, origin_hwp, w, h):
-            return
+        if name == "equation" and extent_known:
+            # The box drawn in is the box the LINE reserved, or the equation
+            # would spill the slot it was measured into; where the two differ
+            # the declared height was the larger one, so this only ever
+            # tightens the box.  See ``_equation_extent_height``.
+            if self._render_equation(el, origin_hwp, w,
+                                     self._equation_extent_height(el, h)):
+                return
         if not extent_known:
             w = w or 6000
             h = h or 3000
@@ -5707,10 +6000,10 @@ class OwnRenderer:
         "of the page that block starts on, and the block's own usable height "
         "is reduced by exactly that reserve, so the note travels WITH its "
         "reference the way the standard's continuation rule requires",
-        "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), each at "
-        f"{PARA_MARGIN_SCALE:g} of its declared value — see the constant, "
-        "which records why that halving is a measurement and not a reading "
-        "of the schema",
+        "hh:margin/hh:prev and hh:margin/hh:next (문단 위/아래 간격), at face "
+        "value in HWPUNIT; where the paraPr wraps its geometry in the MCE "
+        "hp:switch, every LENGTH in the default branch is halved first to "
+        "reach HWPUNIT — see _para_pr_geometry_source for the measurement",
         "hp:tbl@textWrap=TOP_AND_BOTTOM / SQUARE / TIGHT / THROUGH on an "
         "ANCHORED object — the object's declared extent is reserved in the "
         "flow, so the next block starts below it",
@@ -5831,7 +6124,10 @@ class OwnRenderer:
                 "flowed": sum(1 for b in blocks if b["placement"] == "flowed"),
             },
             "flow_counters": counters,
-            "para_margin_scale": PARA_MARGIN_SCALE,
+            "para_margin_unit": (
+                "hh:margin lengths are read in HWPUNIT at face value; a "
+                "paraPr that carries the MCE hp:switch has every length in "
+                "its default branch halved at the parse to reach HWPUNIT"),
             "measured_against_the_authoring_engine": (
                 "own_render.py --flow-agreement runs this same pass over an "
                 "UNEDITED document and reports how often it puts a block on "
@@ -5905,8 +6201,11 @@ class OwnRenderer:
                 "spacing": ("PERCENT: vertsize + spacing == round(textheight "
                             "* value / 100); FIXED: vertsize + spacing == "
                             "value"),
-                "textheight": ("max declared hh:charPr@height x hh:relSz over "
-                               "the characters on the line"),
+                "textheight": ("max declared hh:charPr@height over the "
+                               "characters on the line; the character metrics "
+                               "(hh:relSz, hh:ratio, hh:offset) do NOT enter "
+                               "it -- measured off the Hancom render of "
+                               "render-check-01 F14/F15"),
             },
             "prohibition_table": {
                 "line_start_forbidden": "".join(sorted(LINE_START_PROHIBITED)),
@@ -6600,7 +6899,7 @@ class OwnRenderer:
         return int(round(used))
 
     def _render_endnotes(self, images, geo, page_w, page_h, page_offset=0,
-                         first_number_override=None):
+                         first_number_override=None, entries=None):
         """Set 미주 at the end of THIS section, continuing onto new pages.
 
         Unlike a footnote, an endnote block is not bound to one page, so the
@@ -6610,16 +6909,23 @@ class OwnRenderer:
         its own page and allowed to overflow, which is the same answer this
         tier already gives a block taller than a page, and it is counted.
 
-        ``images`` is THIS SECTION's own page list — one call per section, in
-        ``render``'s per-section loop — so END_OF_SECTION and END_OF_DOCUMENT
-        are drawn identically here (both mean "at the end of the pages this
-        call was given"), which is what the sidecar note below still says.
+        ``images`` is one section's own page list — one call per section, in
+        ``render``'s per-section loop — so this method always means "at the
+        end of the pages this call was given".  WHICH section gets the call
+        is ``render``'s decision: under END_OF_SECTION every section sets its
+        own notes, and under END_OF_DOCUMENT every earlier section hands its
+        notes forward and only the last section is called, with ``entries``
+        carrying the whole document's notes in spine order.  Measured against
+        Hancom on ``render-check-01``: the document's one endnote is authored
+        in section 0 and Hancom sets it under the last inked line of page 9,
+        the last page of section 2, not at the end of section 0.
         ``page_offset`` is how many pages precede this section in the whole
         document, so ``self._page``/``line_boxes`` stay absolute while
         ``local_page_number`` (passed to header/footer/page-number) stays
         section-relative.
         """
-        entries = self._furniture_scan()["endnote"]
+        if entries is None:
+            entries = self._furniture_scan()["endnote"]
         if not entries:
             return images
         pr = self._note_pr("endnote")
@@ -6803,6 +7109,7 @@ class OwnRenderer:
         first_geo = None
         display_counter = None
         absolute_page = 0
+        deferred_endnotes = []
         for si in range(len(self.sections)):
             self._current_section = si
             geo = self.page_geometry()
@@ -6897,10 +7204,26 @@ class OwnRenderer:
                 if pagenum_spec is not None:
                     self._render_page_number(draw, geo, local_idx,
                                              section_first_number)
-            section_images = self._render_endnotes(
-                section_images, geo, page_w, page_h,
-                page_offset=absolute_page,
-                first_number_override=section_first_number)
+            # hp:endNotePr/hp:placement@place=END_OF_DOCUMENT means the end of
+            # the DOCUMENT, not the end of the section that authors the note.
+            # A section that is not the last one therefore hands its endnotes
+            # forward instead of setting them, which is the whole of the
+            # render-check-01 page-count gap: the one endnote is authored in
+            # section 0, did not fit under the F47 table that already
+            # overflows the body box, and took a page of its own — a page
+            # Hancom's reference PDF does not have.
+            own_endnotes = self._furniture_scan()["endnote"]
+            last_section = (si == len(self.sections) - 1)
+            if (self._note_pr("endnote")["place"] == "END_OF_DOCUMENT"
+                    and not last_section):
+                deferred_endnotes.extend(own_endnotes)
+            else:
+                section_images = self._render_endnotes(
+                    section_images, geo, page_w, page_h,
+                    page_offset=absolute_page,
+                    first_number_override=section_first_number,
+                    entries=deferred_endnotes + own_endnotes)
+                deferred_endnotes = []
             if pagenum_spec is not None:
                 display_counter = (section_first_number
                                    + len(section_images) - 1)
@@ -7092,9 +7415,14 @@ class OwnRenderer:
         "the reference mark's own character cell is this renderer's reading "
         "of how hp:lineseg@textpos counts a note control, not a measurement — "
         "no document in reach of this repo carries a note to measure it on",
-        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT and "
-        "END_OF_SECTION are the same thing here (E2.7): both mean the end of "
-        "the CURRENT section's own pages, not the whole document",
+        "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT sets every "
+        "section's notes after the LAST section's last page, in spine order; "
+        "END_OF_SECTION sets each section's own after its own pages "
+        "(measured on render-check-01: Hancom sets section 0's endnote on "
+        "the document's last page, and that one page was the whole 10-vs-9 "
+        "page-count gap). The note block is still set at the body box's full "
+        "width even in a multi-column section, where Hancom sets it in the "
+        "first column — a width difference, not a page-count one",
         "the endnote cursor is the bottom of the page's INKED body text, not "
         "a layout cursor: a page whose last block draws no ink is treated as "
         "ending where its ink ends",

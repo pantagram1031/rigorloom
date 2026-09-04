@@ -166,21 +166,32 @@ script belongs to.
 
 | element | meaning | applied as |
 | --- | --- | --- |
-| `hh:ratio` | horizontal glyph scale, % | advance scales, and so does the ink: the piece is rasterised to its own mask at natural width, resampled horizontally (LANCZOS, pinned), composited in the run colour |
-| `hh:spacing` | letter spacing, % **of the character size** | a gap *between* characters — n−1 per line, no trailing gap |
-| `hh:relSz` | relative character size, % | scales the point size before rasterisation |
-| `hh:offset` | baseline shift, % of the character size | raises/lowers the glyph, and the recorded line box follows |
+| `hh:ratio` | horizontal glyph scale, % | advance scales, and so does the ink: the piece is rasterised to its own mask at natural width, resampled horizontally (LANCZOS, pinned), composited in the run colour. **Vertically inert** — it never enters the line height |
+| `hh:spacing` | letter spacing, % **of the character's own advance** | a gap *between* characters — n−1 per line, no trailing gap |
+| `hh:relSz` | relative character size, % | scales the point size before rasterisation, and the advance with it. **Does not enter the line height** |
+| `hh:offset` | baseline shift, % of the **declared** `hh:charPr@height` | **positive lowers** the glyph; the recorded line box follows |
 
-Two of those readings were forced by measurement rather than chosen.
+Every one of those readings was forced by measurement rather than chosen, and
+three of them were wrong until `render-check-01` was measured character by
+character — `docs/research/line-and-character-metrics.md`, reproduced by
+`python tests/corpus/render-check/measure_metrics.py`.
+
 gianmun's `발신명의` is `charPr` id 8 — 15 pt, `ratio="100"`, `spacing="50"` —
 and Hancom's own render draws that span 58.65 pt at a reported size of
 10.67 pt, i.e. **5.496 em**. Four advances plus three half-em gaps is 5.5 em;
-four advances plus *four* gaps would be 6.0. So the gap count is n−1, and the
-percentage is of the character size rather than of the ratio-scaled advance.
-Em is the unit because gianmun's reference PDF is one of the three the
-scoreboard rejects as a ~0.707 print reduction — the ratio is scale-free, the
-absolute pixels are not. `test_the_spread_run_matches_the_hancom_reference_in_em`
-pins it.
+four advances plus *four* gaps would be 6.0. So the gap count is n−1. What that
+run could *not* settle is what the percent is a percent **of**: a Hangul cell
+advances by exactly 1 em, so "% of the character size" and "% of this
+character's advance" predict the same 0.5 em. `render-check-01`'s `F13` draws
+Latin and spaces at the same 자간 and separates them — `ABCdef` at −15 measures
+31.077 pt against 31.106 proportional and 27.595 flat; a half-width space at
++30 measures 6.479 against 6.500 and 8.000. Proportional, with no exception.
+Em is the unit for the gianmun figure because its reference PDF is one of the
+three the scoreboard rejects as a ~0.707 print reduction — the ratio is
+scale-free, the absolute pixels are not.
+`test_the_spread_run_matches_the_hancom_reference_in_em` pins gianmun;
+`test_the_spacing_gap_is_a_percent_of_the_characters_own_advance` pins what it
+could not say.
 
 **The slot table is ours, not the standard's.** KS X 6101 names the seven slots
 and says a character is metered by its script's slot; it does not publish the
@@ -240,8 +251,11 @@ Under `auto`, `computed` wins for exactly five named reasons, each counted in
 `stale_line_width` is the interesting one. The bound counts only full-width
 cells (Hangul, Hanja, kana, CJK punctuation, an inline object slot — whose
 advance in HWP is exactly the declared character size × `hh:ratio`, whatever
-face draws them) plus the declared `hh:spacing` gaps; Latin and spaces
-contribute nothing. It can therefore never exceed the width the authoring
+face draws them) plus their `hh:spacing` gaps, which are exact because the gap
+is a percent of that same cell advance. Latin and spaces contribute no width;
+their gaps count only when **negative**, since a positive gap on a
+proportional character is a percent of an advance the bound does not know and
+cannot be assumed to be a full cell's worth. It can therefore never exceed the width the authoring
 engine actually fitted, which makes the detector **sound**: it fires on no
 paragraph of any of the ten corpus forms (the worst unedited line reaches
 0.901 of its box by this bound, against a 1% tolerance), and
@@ -299,9 +313,14 @@ implemented, and re-measured by
 
 The 0.85 is HWP's baseline convention and is a **measured constant of this
 corpus**, not a number the standard publishes. `textheight` is the maximum
-declared `hh:charPr@height × hh:relSz` over the characters on the line — and
-over any inline object's `hp:sz@height`, which was a measured defect before it
-was a rule (see below). Against the cache, the computed `textheight` is exact
+declared `hh:charPr@height` over the characters on the line — and over any
+inline object's `hp:sz@height`, which was a measured defect before it was a
+rule (see below). The **character metrics stay out of it**: `hh:relSz`,
+`hh:ratio` and `hh:offset` change the drawn glyph, not the line's advance.
+No corpus form declares any of the three away from neutral, so the corpus
+could not have said; `render-check-01`'s `F15` line of `relSz="140"` text on a
+10 pt charPr advances 15.950 pt, not the 22.40 a 14 pt line would
+(`docs/research/line-and-character-metrics.md` §2). Against the cache, the computed `textheight` is exact
 on 2303 of the 2370 comparable lines, `baseline` on 2303, and `spacing` on
 1421; almost every `spacing` miss is ±2 HWPUNIT, i.e. 0.04 px at 144 dpi.
 
@@ -664,23 +683,38 @@ moves, everything after it is re-placed.** The sidecar's `block_layout` says
 so per block (`placement: cached | flowed`) and per page (`page_reflowed`),
 alongside `first_flowed_block` and the `flow_counters` below.
 
-### The inter-paragraph advance is a half, and that was measured
+### The inter-paragraph advance is the declared margin — in the right unit
 
 Where the next top-level paragraph starts:
 
 ```
 next.first.vertpos == prev.last.vertpos + prev.last.vertsize
                     + prev.last.spacing
-                    + (prev.margin_next + next.margin_prev) / 2
+                    + prev.margin_next + next.margin_prev
 ```
 
-Every corpus `hh:margin/hh:prev` carries `unit="HWPUNIT"` (771 of 774), and
-yet the advance the authoring engine actually leaves is **half** the declared
-value from each side — 200/600/1000/2000 declared against 100/300/500/1000 laid
-out. Taken at face value the relation holds on 334 of the 539 adjacent
-top-level pairs the corpus has; halving each side it holds on **534**. The
-halving is therefore this renderer's *measured reading of the unit*, recorded
-as such in `PARA_MARGIN_SCALE`, and it is not something KS X 6101 publishes.
+with both margins **in HWPUNIT**. This used to read `/ 2`, because the advance
+the authoring engine leaves really is half of what the corpus paraPr appear to
+declare — 200/600/1000/2000 declared against 100/300/500/1000 laid out; face
+value held on 334 of the corpus's 539 adjacent top-level pairs, halving each
+side on 534.
+
+The half was the **unit**, not the rule. Every corpus `hh:paraPr` wraps its
+`hh:margin` and `hh:lineSpacing` in the MCE `hp:switch`, and a length in the
+`hp:default` branch — the branch a reader without the 2016 `HwpUnitChar`
+namespace must take — is in a unit exactly half a HWPUNIT: over 811 corpus
+paraPr the ratio `default / case` is 2.0 without exception on `intent` (328),
+`left` (116), `right` (54), `prev` (143), `next` (11) and the one `FIXED`
+`lineSpacing`, and 1.0 on all 806 `PERCENT` values, a percent being no length.
+`_para_pr_geometry_source` now converts at the parse; `PARA_MARGIN_SCALE` is
+gone, and `left`/`right`/`intent` — which the old constant never touched, so
+they were being read doubled — are right for the first time.
+
+The reference-side half of this is Hancom's own render of
+`tests/corpus/render-check/render-check-01.hwpx`, an `.hwpx` authored with no
+switch at all: its bare `<hc:prev value="600" unit="HWPUNIT"/>` leaves exactly
+6.00 pt. One rule now fits both, with corpus flow agreement unchanged at
+542/590 blocks. See `docs/research/line-and-character-metrics.md` §6.
 
 ### An anchored object reserves its extent, and that was the whole of kstartup
 
@@ -768,6 +802,16 @@ breaker's. `dy` is HWPUNIT from the top of the body box, the same origin
 Read honestly: **0.793**, and the median `|dy|` is 0 on every one of the ten
 forms — where the flow pass puts a block on the right page, it puts it at
 exactly the cached vertical position. 117 of the 122 misses are one form.
+
+`--flow-agreement --line-layout computed` compounds the two errors instead of
+isolating the block model, and it is the channel `_line_metrics` is graded on.
+The object-line rules (`docs/research/object-line-box.md`) move it from
+**344 / 590** pages and 119 / 590 exact `dy` to **392 / 590** and
+**216 / 590**, with no form worse on either count: `kstartup` computes 22
+pages (its reference's own count) where it computed 27, and `gianmun-1ho`,
+`gianmun-2ho` and `admrul` each drop from 2 to their cached 1. The `auto`
+column above does not move at all — it reads the cached line boxes — which is
+what keeps the shipping render byte-identical on 51 of the corpus's 52 pages.
 
 ### kstartup is the form where the CACHE is wrong, not the flow pass
 
@@ -952,6 +996,27 @@ a note.
 - A single endnote taller than the body box is set from the top of its own
   page and allowed to overflow — the same answer this tier already gives a
   block taller than a page.
+
+**Where an endnote is set is `hp:endNotePr/hp:placement@place`, and it is
+MEASURED.** `END_OF_DOCUMENT` means the end of the DOCUMENT: every section
+that is not the last hands its endnotes forward, and the last section sets
+the lot, in spine order, after its own last page. `END_OF_SECTION` keeps the
+old behaviour — each section sets its own. Until this was measured both
+readings collapsed to "end of the section that authors the note", which cost
+a page on `render-check-01`: its one `hp:endNote` is authored in section 0,
+did not fit under the `F47` table that already overflows the body box, and
+took a page of its own — candidate 10 pages against Hancom's 9. Hancom sets
+that note on page 9 of 9, the last page of the document, under the page's
+last inked line (separator y=464.5 pt, note body y=470.5–478.5 pt, last body
+line ending 456.3 pt). With the rule in, `render-check-01` is **9 pages
+against 9, exact for the first time**, and its page agreement is 51/51
+(docs/research/render-check-01.md note 1). Still NOT honoured: Hancom sets
+the note in the FIRST COLUMN of that two-column section (separator
+x 85.0–297.7 pt) and this renderer sets it at the body box's full width —
+declared in the sidecar, a band difference and not a page-count one. No
+corpus form and no holdout carries an endnote, so the corpus render is
+byte-identical (52/52 page PNGs, sha256) and the holdout stays 18/18 exact
+with every scoreboard channel unchanged.
 
 ### Corpus coverage: none of the four is exercised
 
@@ -1154,6 +1219,8 @@ not only here.
    restart-or-continue, and its own `hp:colPr`; a section always starts a new
    page. Declared, not measured: footnote/endnote `CONTINUOUS` numbering
    restarts at 1 in every section rather than carrying on from the last, and
+   a document mixing `END_OF_DOCUMENT` and `END_OF_SECTION` across sections
+   is untested (one document, one note, measured); and
    a section with real columns is ALWAYS placed by the computed flow pass
    (never seeded from the cache) — so an unedited multi-column section does
    NOT render byte-identical the way every single-column section on this
@@ -1448,10 +1515,44 @@ back to the placeholder box and says which.
    decided on the **drawn ink** instead (`_eq_bounds`), which is also what
    makes the containment claim below checkable.
 
-### `hp:sz` is the ground truth, and scale-to-fit is a declared fallback
+### The line reserves the equation's own extent, not `hp:sz@height`
 
-The declared extent is what the authoring engine measured the equation to be,
-and it is what the paragraph's line box was sized around. So the equation is
+**Hancom does not honour the declared height.** It re-lays the script out on
+open and reserves what its own layout needs; the stored `hp:sz` is a cache it
+refreshes. Measured on `render-check-01`, whose declared extents were written
+by `build_render_check.py` and never by Hancom:
+
+| script | declared | Hancom reserves |
+| --- | --- | --- |
+| `a over b` | 2400 | 2252 |
+| `sqrt {x^{2} + y^{2}}` | 2400 | 1304 |
+| `sum _{i=1} ^{n} i^{2} = … over 6` | 3600 | 2696 |
+| `left [ matrix{ 1 & 2 # 3 & 4 } right ]` | 3600 | 2108 |
+
+Two equal declared heights reserving 2252 and 1304 rule out every function of
+the declared extent. **No attribute says "size to content"**: all four declare
+`heightRelTo="ABSOLUTE"`, `protect="0"`, `lineMode="CHAR"`, `baseUnit="1000"`
+and `Equation Version 60` — exactly what every equation of the Hancom-authored
+holdout declares, and those two documents disagree about whether the stored
+height is honoured. The rule adopted is this renderer's own layout of the
+script, clamped to the declared box:
+
+    reserve = min(declared, max(nominal, ink))
+
+`nominal` (the `_EQ_ASC`/`_EQ_DESC` stacking cells) carries it — worst
+residual +256 HWPUNIT (17.0%), mean 170, against +1492 (84.0%) and mean 910
+for the declared height; the ink extent alone scores −494 (19.3%) and is
+rejected, but joins as a **floor** so a line never reserves less room than the
+equation puts glyphs in. n = 18: 4 measured off the reference PDF, 14 against
+a Hancom-authored holdout's own declared extents (nominal / declared mean
+0.9934, sd 0.0748). Pinned at `EQUATION_EXTENT_DPI` so the reserve does not
+move with `--dpi`. Full derivation and what it is worth:
+[`docs/research/equation-line-box.md`](../../docs/research/equation-line-box.md).
+
+### `hp:sz` is the ceiling, and scale-to-fit is a declared fallback
+
+The declared extent is the ceiling the equation is drawn inside, and where the
+layout is smaller it is also what the line reserves. So the equation is
 laid out *inside* it. Where this renderer's metrics do not fit — a substituted
 maths face advances differently — the equation is re-laid out smaller, and if
 rounding still leaves it over, the raster is reduced. Either way the scaling
@@ -2088,6 +2189,22 @@ the cached `hp:lineseg` carries it on every corpus form — and adding
 `block_layout=computed`, where it cost `kstartup` a 23rd page against a
 21-page reference. The box still moves down by `top`, which is the half the
 references do measure.
+
+> **The limit was wrong twice over, and both halves are now measured**
+> (`docs/research/object-line-box.md`). The cached `hp:lineseg` *is* the
+> measurement — it was simply never read on the lines that carry an object.
+> Over the ten forms' **79 object lines**, `vertsize` (and `textheight`) is
+> `hh:sz@height + outMargin@top + outMargin@bottom` on **79 of 79**, exactly,
+> against 16/79 for the extent alone. The 23rd page it used to cost was the
+> *other* defect masking this one: the paragraph's `PERCENT` leading was being
+> taken off the object-sized line box, so kstartup's full-page inline tables
+> each claimed a further 40% of a page. With the leading taken off the run's
+> own character size instead — exact on 66 of 79 cached lines, within
+> 2 HWPUNIT on 12 more — `kstartup` computes **22** pages against its 22-page
+> reference (it was 27 under `line_layout=computed`), and `gianmun-1ho`,
+> `gianmun-2ho` and `admrul` each drop from 2 to their cached 1.
+> `_line_metrics` adds the vertical margin; `_object_extent` still does not,
+> so it is added exactly once.
 
 ### The measurement, after
 
