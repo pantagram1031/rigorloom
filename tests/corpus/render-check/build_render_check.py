@@ -723,8 +723,38 @@ def sec_pr(*, width: int, height: int, landscape: str, margin: dict,
           ' colCount="%d" sameSz="1" sameGap="0"/></hp:ctrl>' % col_count)
 
 
+#: Ship the document with NO cached line layout.
+#:
+#: Measured on this document's first Hancom round-trip: Hancom's HWPX reader
+#: *trusts* ``hp:linesegarray`` when it is present and its ``horzsize`` agrees
+#: with the paragraph's available width.  A generator cannot know where the
+#: lines will fall before Hancom lays them out, so the one-lineseg cache the
+#: builders below emit made Hancom draw each whole paragraph as a single
+#: justified line of overlapping glyphs — every alignment and line-spacing
+#: block looked identical and wrong.  Paragraphs whose own margins made the
+#: cached ``horzsize`` stale (내어쓰기, 좌우 여백) were the only ones Hancom
+#: relaid out, which is what identified the mechanism.
+#:
+#: With no cache, both engines run their own line breaker, which is the only
+#: state in which their output is comparable.  The builders keep emitting a
+#: cache so the code still documents the full paragraph shape; this is the one
+#: place it is dropped, and flipping the flag restores the trusted-cache
+#: behaviour for anyone who wants to study it.
+EMIT_LINE_CACHE = False
+
+_LINESEG_RE = None
+
+
 def section_xml(sec: "Section") -> bytes:
-    return W._xml_bytes('<hs:sec' + NS + '>' + "".join(sec.blocks) + '</hs:sec>')
+    global _LINESEG_RE
+    body = "".join(sec.blocks)
+    if not EMIT_LINE_CACHE:
+        import re
+        if _LINESEG_RE is None:
+            _LINESEG_RE = re.compile(
+                r"<hp:linesegarray>.*?</hp:linesegarray>", re.S)
+        body = _LINESEG_RE.sub("", body)
+    return W._xml_bytes('<hs:sec' + NS + '>' + body + '</hs:sec>')
 
 
 # ---------------------------------------------------------------------------
