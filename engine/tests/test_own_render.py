@@ -24,6 +24,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -2233,10 +2234,12 @@ def test_condense_lets_a_line_keep_what_its_spaces_can_give_up(typo_probe):
     text = "가나 다라 마바 사아"
     para = _synthetic_paragraph(renderer, text, cid, para_id="__condmeasure__")
     full = renderer.span_width(draw, para, 0, len(text))
-    space = renderer._measure(draw, " ", cid)
+    space = renderer._measure_hwp(draw, " ", cid)
     # A box narrower than the line by less than what its three spaces can give
     # up at condense=75: the line breaks without that budget and holds with it.
-    column = int(renderer.hwp_from_px(full - 1.5 * space))
+    # Both quantities are HWPUNIT, which is what the breaker fits in -- see
+    # ``LAYOUT_REFERENCE_PX``; there is no pixel anywhere in this decision.
+    column = int(full - 1.5 * space)
     tight, _ = _breaks(renderer, draw, text, cid, column, condense=0)
     loose, _ = _breaks(renderer, draw, text, cid, column, condense=75)
     assert len(tight) == 2, tight
@@ -2329,11 +2332,93 @@ LINESEG_AGREEMENT = {
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
     "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 450, 432, 29, 28, 44, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 243, 223, 34, 27, 49, 12),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 301, 281, 37, 27, 47, 12),
+    "moel-pyojun-geunrogyeyakseo-2013": (263, 258, 243, 34, 30, 49, 23),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 12),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 8),
+    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
 }
+
+
+RENDER_CHECK = os.path.join(ROOT, "tests", "corpus", "render-check",
+                            "render-check-01.hwpx")
+
+DPI_LADDER = (96, 144, 192, 288)
+
+
+@pytest.mark.parametrize(
+    "name", ["render-check-01"] + sorted(LINESEG_AGREEMENT))
+def test_the_layout_is_identical_at_every_dpi(name):
+    """Layout is a function of the DOCUMENT, never of the output resolution.
+
+    ``layout_digest`` reports every layout decision in the document's own
+    units -- line breaks as character offsets, line boxes and vertical
+    positions in HWPUNIT, the flow pass's page assignment -- so the JSON has
+    to be byte-identical at 96, 144, 192 and 288 dpi.  It was not: the
+    breaker measured its advances off a font rasterised at
+    ``round(pt * dpi / 72)`` pixels, so both the rounded pixel size and
+    FreeType's hinting at that size decided where lines broke.
+    ``render-check-01``'s ``F06`` fitted 50 characters on its second line at
+    96 dpi and 44 at 144; ``moel-2013`` gained two whole pages.  See
+    ``LAYOUT_REFERENCE_PX`` for what replaced it.
+
+    This is the assertion the whole slice exists for, so it runs on every
+    corpus form and on the render-check document, not on a sample.
+    """
+    path = (RENDER_CHECK if name == "render-check-01"
+            else os.path.join(CORPUS, name + ".hwpx"))
+    _need(path)
+    reference = None
+    for dpi in DPI_LADDER:
+        digest = json.dumps(own_render.layout_digest(path, dpi=dpi),
+                            sort_keys=True, ensure_ascii=False)
+        if reference is None:
+            reference = digest
+            continue
+        if digest == reference:
+            continue
+        first = json.loads(reference)
+        other = json.loads(digest)
+        moved = [p["paragraph"] for p, q
+                 in zip(first["paragraphs"], other["paragraphs"])
+                 if p["breaks"] != q["breaks"]]
+        raise AssertionError(
+            f"{name}: layout at {dpi} dpi differs from {DPI_LADDER[0]} dpi -- "
+            f"{first['lines_total']} -> {other['lines_total']} lines, "
+            f"{first['pages']} -> {other['pages']} pages, "
+            f"paragraphs rebroken: {moved[:12]}")
+
+
+def test_an_advance_is_the_same_fraction_of_an_em_at_every_dpi():
+    """The mechanism under the digest, isolated.
+
+    ``_em_width`` is where resolution independence is won or lost: it must
+    return the same number whatever the renderer's dpi, because it is a
+    property of the face's outlines and of nothing else.  The old code had no
+    such function -- it called ``draw.textlength`` on a font built at
+    ``pt_to_px(pt)``, which this test also shows moving, so the two readings
+    are side by side rather than asserted in the abstract.
+    """
+    _need(GIANMUN)
+    # 10 pt is the size to ask at: it is 13.33 px at 96 dpi, 20 at 144, 26.67
+    # at 192 and 40 at 288, so ``pt_to_px`` rounds it three different ways
+    # along the ladder.  Latin, because a Hangul cell is exactly 1 em at every
+    # size and could not show the difference either way.
+    text = "ABCdef gh"
+    ems = {}
+    rastered = {}
+    for dpi in DPI_LADDER:
+        renderer = own_render.OwnRenderer(GIANMUN, dpi=dpi)
+        image = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+        draw = renderer.ImageDraw.Draw(image)
+        font = renderer.fontbook.get(renderer.pt_to_px(10.0), False, None)
+        ems[dpi] = renderer._em_width(font, text)
+        # what the layout used to be measured with: the RASTER font, whose
+        # size is an integer number of pixels, expressed back in em
+        rastered[dpi] = float(draw.textlength(text, font=font)) / font.size
+    assert len(set(ems.values())) == 1, ems
+    assert len(set(rastered.values())) > 1, (
+        "fixture drifted: the old raster measurement no longer moves with "
+        "dpi, so this test is no longer showing anything")
 
 
 @pytest.mark.parametrize("name", sorted(LINESEG_AGREEMENT))
@@ -2416,7 +2501,18 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # read doubled out of the paraPr MCE switch's default branch (measured,
     # `_para_pr_geometry_source`), which more than pays it back — kstartup
     # alone goes 435 -> 450 / 416 -> 432 / 13 -> 16.
-    assert totals == [2148, 2105, 2014, 158, 136, 216, 68], totals
+    #
+    # 2105 -> 2116, 2014 -> 2030, 136 -> 139, 68 -> 80 on the
+    # resolution-independence slice: advances stopped being measured off a
+    # font rasterised at ``round(pt * dpi / 72)`` integer pixels and are now
+    # scaled analytically from face metrics into HWPUNIT, so the breaker
+    # finally fits the size the document declares rather than the size the
+    # raster rounded it to.  Every column moved the same way.  Three forms
+    # move at the default 144 dpi -- moel-2013 (12 -> 23 break positions),
+    # moel-2025 (301 -> 297 line counts) and saeopja (8 -> 9); the other
+    # seven are unchanged there because their declared sizes already landed
+    # on integer pixels at 144.
+    assert totals == [2148, 2116, 2030, 158, 139, 216, 80], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -2544,7 +2640,28 @@ def test_every_line_box_says_which_engine_broke_it(edited_render):
 
 
 def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
-    """No computed line may run out of the text column it was broken for."""
+    """No computed line may put INK outside the column it was broken for.
+
+    Two claims, and they are not the same claim.
+
+    The reported box may hang past the column edge, because a space that
+    lands at a line end hangs there rather than forcing a break -- real
+    behaviour, and ``line_boxes`` measures the advance rather than the ink,
+    so it reports the hang.  The bound on it is one half-width space cell,
+    and half the line's own height is a conservative stand-in for that (a
+    cell is 0.5 em, the box is ascent+descent, about 1.2 em).  On this
+    fixture the hang is 7.677 px of a 19 px line.
+
+    What may NOT happen is ink outside the column, and that is checked
+    directly against the rendered page: every pixel right of the column edge
+    is white.  Before the resolution-independence slice this test bounded the
+    box at one pixel, which held only because the breaker was measuring the
+    text 2.5% narrow at 96 dpi and the break happened to land off a space.
+    That the box can exceed the ink by a whole space is a REPORTING gap in
+    ``line_boxes`` -- named here, not fixed here: closing it moves
+    ``text_line_iou`` on eight of the ten corpus forms in both directions,
+    which is a different slice's measurement to make.
+    """
     report = edited_render["report"]
     geo = report["page_geometry_hwpunit"]
     dpi = report["dpi"]
@@ -2553,12 +2670,20 @@ def test_a_relaid_out_paragraph_stays_inside_its_column(edited_render):
              / own_render.HWPUNIT_PER_INCH)
     computed = [b for b in report["line_boxes"] if b["mode"] == "computed"]
     assert computed
+    pages = set()
     for box in computed:
         assert box["x0"] >= left - 1.0, box
-        # One pixel of tolerance, and no more: a space that lands at a line
-        # end hangs outside the box rather than forcing a break, so the drawn
-        # advance can exceed the fitted width by that space.
-        assert box["x1"] <= right + 1.0, box
+        assert box["x1"] <= right + (box["y1"] - box["y0"]) / 2.0, box
+        pages.add(box["page"])
+
+    from PIL import Image
+    out = pathlib.Path(edited_render["pngs"][0]).parent
+    for page in sorted(pages):
+        image = Image.open(out / f"edited-p{page}.png").convert("L")
+        width, height = image.size
+        margin = image.crop((int(right) + 1, 0, width, height))
+        assert min(margin.getdata()) == 255, (
+            f"page {page} draws ink right of the column edge")
 
 
 def test_the_caller_can_declare_an_edit_the_file_cannot_show(tmp_path):
