@@ -552,8 +552,18 @@ def _median(values):
 def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
                out_dir=None, stem=None,
                line_layout=own_render.LINE_LAYOUT_AUTO,
-               block_layout=own_render.BLOCK_LAYOUT_AUTO):
-    """Render the form and score it against its Hancom reference PDF."""
+               block_layout=own_render.BLOCK_LAYOUT_AUTO,
+               layout_policy=None):
+    """Render the form and score it against its Hancom reference PDF.
+
+    ``layout_policy`` pins own_render's provenance policy.  It is what lets
+    the two policies be scored against the SAME reference on a document whose
+    provenance would otherwise pick one of them -- a Rigorloom-written
+    package can be scored on its cached layout, and a Hancom-saved one on a
+    fully computed layout, which is the comparison this scoreboard exists to
+    make.  The pin is carried into the scoreboard next to the policy it
+    produced.
+    """
     Image, _ = _require_pillow()
     hwpx_path = Path(hwpx_path)
     reference_pdf = Path(reference_pdf)
@@ -564,7 +574,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
 
     renderer = own_render.OwnRenderer(hwpx_path, dpi=dpi,
                                       line_layout=line_layout,
-                                      block_layout=block_layout)
+                                      block_layout=block_layout,
+                                      layout_policy=layout_policy)
     images, sidecar = renderer.render()
     if out_dir is not None:
         out_dir = Path(out_dir)
@@ -672,6 +683,8 @@ def score_form(hwpx_path, reference_pdf, dpi=DEFAULT_DPI, label=None,
             "renderer until it emits a PDF text layer."
         ),
         "label": label,
+        "layout_policy": sidecar.get("layout_policy"),
+        "layout_policy_reason": sidecar.get("layout_policy_reason"),
         "line_layout": sidecar.get("line_layout", {}).get("policy"),
         "line_layout_paragraphs": (
             sidecar.get("line_layout", {}).get("paragraphs")),
@@ -800,11 +813,20 @@ def build_parser():
              "on the seat the cached hp:lineseg@vertpos gave it; computed "
              "scores it with the E2.5 flow pass placing every block, which "
              "is the channel that grades the flow pass against Hancom")
+    parser.add_argument(
+        "--layout-policy", choices=["auto"] + list(own_render.LAYOUT_POLICIES),
+        default="auto",
+        help="auto (default): the package provenance decides whether the "
+             "cached layout is used. cache/computed pin it for measurement.")
     parser.add_argument("--corpus", action="store_true",
                         help="score every corpus form that has a reference PDF")
     parser.add_argument("--save-pages", action="store_true",
                         help="also write the candidate page PNGs into --out")
     return parser
+
+
+def _policy(args):
+    return None if args.layout_policy == "auto" else args.layout_policy
 
 
 def main(argv=None):
@@ -819,7 +841,8 @@ def main(argv=None):
                     hwpx, pdf, dpi=args.dpi, label=args.label,
                     out_dir=args.out if args.save_pages else None,
                     line_layout=args.line_layout,
-                    block_layout=args.block_layout)
+                    block_layout=args.block_layout,
+                    layout_policy=_policy(args))
                 report["document_class"] = family
                 write_scoreboard(report, args.out, hwpx.stem, args.label)
                 reports.append({
@@ -844,7 +867,8 @@ def main(argv=None):
                             label=args.label,
                             out_dir=args.out if args.save_pages else None,
                             line_layout=args.line_layout,
-                            block_layout=args.block_layout)
+                            block_layout=args.block_layout,
+                            layout_policy=_policy(args))
         path = write_scoreboard(report, args.out, Path(args.input).stem,
                                 args.label)
         print(json.dumps({"scoreboard": str(path), "report": report},
