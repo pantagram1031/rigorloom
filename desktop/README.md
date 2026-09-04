@@ -1177,7 +1177,10 @@ document tool that glows looks like a marketing page.
 | privacy gate (`git archive HEAD` → `privacy_scan.py`) | HARD=0, WARN=45 (all pre-existing test fixtures) |
 
 Screenshots: `page-own-render.png` (the badge, the open 무엇을 못 그렸나 list),
-`page-own-render-150pct.png`, `toolbar.png`.
+`page-own-render-150pct.png`, `page-own-render-seat-edit.png` (gap 34's answer:
+a seat open in the inline editor on a page no Hancom drew — 지면 출처 자체 렌더 ·
+미검증 in the status bar, `own_cell` as the derivation, and the legend's
+렌더러 대조 — 확인 5 · 불일치 0 · 미확인 4), `toolbar.png`.
 
 **Renderer at #215.** The sidecar in this build carries
 `claude/engine-e2-converge` merged to its tip (#215) — table/box registration,
@@ -2479,20 +2482,36 @@ rest stand.
 
 ### New with the own renderer (tier 3)
 
-34. **An own-rendered page carries no addresses, so it cannot be edited on.**
-    The sidecar records where each line was drawn and not what it said, so
-    `document/pageGeometry` returns real rects with `mapping.state:
-    "unavailable"` — no address, no seat, no caret offset. The overlay draws
-    the lines and a click states the limit instead of opening an editor. This
-    is the honest floor of the tier, not a bug: reconstructing which line is
-    which by reopening the document and matching text would put a caret on the
-    wrong line with the authority of a measurement, which is the one failure
-    §12 exists to prevent.
-    *Suggested shape:* the renderer already knows the text it drew — it laid
-    the glyphs out. Emitting `text` and per-character x on each `line_box`
-    would let the existing `map_spans` / `derive_seats` path run unchanged and
-    would close this gap without a single new concept on the wire. That is an
-    engine change, not a desktop one.
+34. ~~**An own-rendered page carries no addresses, so it cannot be edited
+    on.**~~ **CLOSED**, and along the shape this entry predicted: the renderer
+    laid the glyphs out, so it knows the text and the per-character x, and it
+    drew every line out of the tree, so it knows the paragraph or cell it came
+    from. `line_boxes` carries `text`, `char_x`, `size_pt` and `address` now,
+    and `cell_boxes` carries every drawn cell rectangle with its own
+    `hp:cellAddr`. `document/pageGeometry` reshapes those into the shape
+    `base_span` / `map_spans` already speak and runs the SAME form scan a
+    PDF-read page runs — same normalizer, same unique/ambiguous/unmapped
+    verdicts — so no new concept reached the wire and the Desktop consumed it
+    without a new consumer.
+
+    What did NOT happen is the renderer being believed. Its own address is a
+    cross-check that can only confirm or demote (`mapping.crossCheck`):
+    agreement makes a span `unique`; a contradiction makes it `ambiguous`
+    carrying both; a line the scan matched nothing for keeps `address: null`
+    with the renderer's answer recorded beside it and NOT applied. Across the
+    ten corpus forms, 2,271 spans: **393 agree, 0 disagree**, 1,205 where the
+    renderer named one of an already-ambiguous line's candidates (marked in the
+    chooser, never taken — T41 does not lapse for a second witness), 3 where it
+    named one the scan's list lacked, 670 recorded and not claimed. Seats come
+    from the boxes the renderer drew, under their own derivation `own_cell`:
+    **473 across the corpus**, on the same fill cells tier 1 places.
+
+    Getting to 0 disagreements took one correction worth recording. The scan
+    calls a paragraph inside a table cell an `anchor` at paragraph N; the
+    renderer calls it that cell AND paragraph N. Comparing the full address key
+    read 256 of 393 scan-unique lines as contradictions — a numbering bug that
+    did not exist. `addresses_agree` treats an identical `atPara` as agreement
+    across kinds, and the disagreement count went to zero.
 
 35. **Tier 3 is not certified against anything, and cannot be from here.**
     `render_cert` scores a renderer against a Hancom reference render, and the

@@ -1495,10 +1495,15 @@ async function phasePage(config: SmokeConfig) {
  * 2. **It says what it could not draw**, and the list on screen is the
  *    runtime's own — compared entry by entry against `elementsSkipped`, not
  *    merely counted.
- * 3. **A click on the page still resolves.** Every span on an own-rendered
- *    page is unmapped (the sidecar carries line positions, not line text), so
- *    the assertion is that a click produces a STATED outcome naming the line
- *    rather than the silence the old code returned.
+ * 3. **The page is EDITABLE.** Gap 34's old assertion was that every span on
+ *    an own-rendered page is unmapped by construction. It is not any more: the
+ *    sidecar carries each line's text, its per-character x and the paragraph or
+ *    cell it was drawn from, so this page maps and seats exactly as a PDF-read
+ *    page does. What is asserted now is the whole loop — seats drawn match the
+ *    runtime's count, a seat click queues a plan naming the cell, a caret lands
+ *    on a body line and types a `set_run`, an ambiguous line opens the chooser
+ *    and queues NOTHING, and an unmapped line still resolves to a stated
+ *    outcome and queues nothing.
  * 4. **Zoom.** The keyboard route (Ctrl+= / Ctrl+− / Ctrl+0) as real key
  *    events, and 폭 맞춤 changing the drawn width without asking the runtime
  *    for anything — `geometryFetches` before and after is the proof, because
@@ -1612,6 +1617,13 @@ async function phaseOwn(config: SmokeConfig) {
     domText('[data-testid="font-substitution"]').slice(0, 200));
 
   // --- 3. the overlay, on OUR page ------------------------------------------
+  //
+  // Gap 34 closed. This used to assert the LIMIT — real rectangles, every span
+  // unmapped, zero seats, `mapping.state: "unavailable"` — because the sidecar
+  // carried where each line was drawn and not what it said. It carries the
+  // text, the per-character x and the paragraph or cell each line came from
+  // now, so the page maps and seats like any other and the assertions are the
+  // ones the tier-1 phase makes, on OUR raster.
   await loadGeometry(1);
   await settled(200);
   const geometry = getState().geometry;
@@ -1620,45 +1632,174 @@ async function phaseOwn(config: SmokeConfig) {
   if (geometry?.available) {
     check("and it says whose layout it is", geometry.geometrySource === "own",
       String(geometry.geometrySource));
+    checkDom("and the status bar prints which renderer the seats stand on",
+      document
+        .querySelector('[data-testid="status-geometry-source"]')
+        ?.getAttribute("data-geometry-source") === "own" &&
+        domText('[data-testid="status-geometry-source"]').includes("미검증"),
+      domText('[data-testid="status-geometry-source"]'));
+    const ownSpans = geometry.spans ?? [];
+    const ownSeats = geometry.seats ?? [];
+    const ownMapping: GeometryMapping = geometry.mapping ?? { state: "absent" };
     check("the line boxes are real rectangles",
-      (geometry.spans ?? []).length > 0 &&
-        (geometry.spans ?? []).every(
+      ownSpans.length > 0 &&
+        ownSpans.every(
           (s: GeometrySpan) =>
             s.rect[0] >= 0 && s.rect[2] <= 1 && s.rect[2] >= s.rect[0] &&
             s.rect[1] >= 0 && s.rect[3] <= 1 && s.rect[3] >= s.rect[1]),
-      `${(geometry.spans ?? []).length} spans`);
-    // The honest limit, asserted as the absence it is.
-    check("no address is invented on a page whose text we did not measure",
-      (geometry.spans ?? []).every((s: GeometrySpan) => s.address === null) &&
-        (geometry.seats ?? []).length === 0 &&
-        geometry.mapping?.state === "unavailable",
-      JSON.stringify(geometry.mapping ?? null).slice(0, 200));
-    checkDom("the overlay draws the lines it was given",
-      document.querySelectorAll('[data-testid="overlay-span"]').length ===
-        (geometry.spans ?? []).length,
-      `${document.querySelectorAll('[data-testid="overlay-span"]').length} drawn vs ${(geometry.spans ?? []).length} sent`);
+      `${ownSpans.length} spans`);
+    check("the mapping ran against this session's own form scan",
+      ownMapping.state === "ran" &&
+        ownMapping.normalizer === "pipeline/scripts/check_residue.normalize_text",
+      `${ownMapping.state} / ${ownMapping.normalizer}`);
 
-    // A CLICK STILL RESOLVES. Not into an edit — there is no address to edit —
-    // but into a stated outcome, which is the difference between a limit and a
-    // dead page.
-    const target = document.querySelector<HTMLElement>('[data-testid="overlay-span"]');
-    check("there is a line on the page to click", !!target);
-    if (target) {
-      target.click();
+    const ownUnique = ownSpans.filter((s: GeometrySpan) => s.confidence === "unique");
+    const ownAmbiguous = ownSpans.filter((s: GeometrySpan) => s.confidence === "ambiguous");
+    const ownUnmapped = ownSpans.filter((s: GeometrySpan) => s.confidence === "unmapped");
+    check("the runtime's confidence counts add up to its own span list",
+      (ownMapping.unique ?? -1) === ownUnique.length &&
+        (ownMapping.ambiguous ?? -1) === ownAmbiguous.length &&
+        (ownMapping.unmapped ?? -1) === ownUnmapped.length,
+      `u=${ownUnique.length} a=${ownAmbiguous.length} un=${ownUnmapped.length} of ${ownSpans.length}`);
+
+    // THE CROSS-CHECK, and the fact that it is a check. Our renderer knows the
+    // address of every line it drew; the assertion is that knowing did not
+    // become claiming.
+    const cross = ownMapping.crossCheck ?? {};
+    check("the renderer's own addresses were cross-checked, not trusted",
+      (cross.declared ?? 0) > 0 && (cross.agree ?? -1) === ownUnique.length,
+      `declared=${cross.declared} agree=${cross.agree} disagree=${cross.disagree} ` +
+        `among=${cross.amongCandidates} notAmong=${cross.notAmongCandidates} ` +
+        `sidecarOnly=${cross.sidecarOnly}`);
+    check("a line only the renderer can place is recorded and NOT claimed",
+      ownUnmapped.every((s: GeometrySpan) => s.address === null) &&
+        ownUnmapped.every(
+          (s: GeometrySpan) => !s.sidecarAddress || s.addressBasis === "sidecar_only"),
+      `${ownUnmapped.filter((s: GeometrySpan) => !!s.sidecarAddress).length} of ` +
+        `${ownUnmapped.length} unmapped lines carry a renderer address`);
+    checkDom("and the page shows those numbers rather than hiding the check",
+      domText('[data-testid="overlay-crosscheck"]').includes(String(cross.agree ?? -1)),
+      domText('[data-testid="overlay-crosscheck"]').slice(0, 200));
+
+    // SEATS, from the cell boxes our renderer drew — the derivation that only
+    // exists on this tier.
+    check("seats were placed on a page WE drew",
+      ownSeats.length > 0, `${ownSeats.length} seats`);
+    check("and every one of them says our renderer drew that very cell",
+      ownSeats.every((s) => s.derivation === "own_cell") &&
+        (geometry.seatDerivations?.own_cell ?? -1) === ownSeats.length,
+      JSON.stringify(geometry.seatDerivations ?? null));
+    await settled(200);
+    const drawnOwnSeats = document.querySelectorAll('[data-testid="overlay-seat"]').length;
+    const drawnOwnSpans = document.querySelectorAll('[data-testid="overlay-span"]').length;
+    const drawnOwnAmbiguous =
+      document.querySelectorAll('[data-testid="overlay-ambiguous"]').length;
+    checkDom("every seat the runtime placed is drawn, and no others",
+      drawnOwnSeats === ownSeats.length,
+      `${drawnOwnSeats} drawn / ${ownSeats.length} returned`);
+    checkDom("every ambiguous span is drawn, and no others",
+      drawnOwnAmbiguous === ownAmbiguous.length,
+      `${drawnOwnAmbiguous} drawn / ${ownAmbiguous.length} returned`);
+    checkDom("the unique and unmapped lines are drawn as one hit target each",
+      drawnOwnSpans === ownUnique.length + ownUnmapped.length,
+      `${drawnOwnSpans} drawn / ${ownUnique.length + ownUnmapped.length} returned`);
+
+    // A SEAT CLICK, all the way to a plan. The same `<input>`, the same queue,
+    // the same plan path a tree edit takes — on a page nothing but this repo
+    // has ever rendered.
+    const ownSeatTarget = document.querySelector<HTMLButtonElement>(
+      '[data-testid="overlay-seat"][data-editable="true"][data-derivation="own_cell"]',
+    );
+    check("there is an editable seat on our own page to click", !!ownSeatTarget,
+      `${document.querySelectorAll('[data-testid="overlay-seat"]').length} seats drawn`);
+    if (ownSeatTarget) {
+      const seatAddress = ownSeatTarget.getAttribute("data-address") ?? null;
+      ownSeatTarget.click();
+      await settled(240);
+      const opened = getState().inlineEdit;
+      const cellEdit = opened?.kind === "cell" ? opened : null;
+      checkDom("it opened the SAME inline editor the tree mounts, inside the rectangle",
+        !!document
+          .querySelector('[data-testid="seat-input"]')
+          ?.closest('[data-testid="page-overlay"]'),
+        String(cellEdit?.table));
+      check("on the address the seat carries, not a neighbour",
+        !!cellEdit && `${cellEdit.table}-${cellEdit.row}-${cellEdit.col}` === seatAddress,
+        `${cellEdit ? `${cellEdit.table}-${cellEdit.row}-${cellEdit.col}` : "none"} vs ${seatAddress}`);
+      await commitEdit("자체 렌더 지면에서 입력");
+      await settled(400);
+      const ownOp = fillOps().find((o) => o.text === "자체 렌더 지면에서 입력");
+      check("the edit landed in the same review queue as a tree edit",
+        !!ownOp && ownOp.kind === "fill_cell" && ownOp.origin === "user",
+        JSON.stringify(ownOp ?? null));
+      check("and the queued op names the seat that was clicked",
+        !!ownOp && `${ownOp.table}-${ownOp.row}-${ownOp.col}` === seatAddress,
+        `${ownOp ? `${ownOp.table}-${ownOp.row}-${ownOp.col}` : "none"} vs ${seatAddress}`);
+      const ownPlan = getState().draft.plan;
+      const ownPlanned = (ownPlan?.ops ?? []).map((o) => {
+        const p = o.params as Record<string, unknown>;
+        return `${p.table ?? 0}-${p.row}-${p.col}`;
+      });
+      check("and the plan the runtime returned names that same cell",
+        !!seatAddress && ownPlanned.includes(seatAddress),
+        `${ownPlanned.join(", ") || "no ops"} vs ${seatAddress}`);
+    }
+
+    // AMBIGUITY. Same refusal as tier 1, and the renderer's own pick is shown
+    // in the chooser without being taken.
+    const ownQueued = getState().draft.ops.length;
+    const ambiguousTarget = document.querySelector<HTMLButtonElement>(
+      '[data-testid="overlay-ambiguous"]',
+    );
+    check("there is an ambiguous line on our own page to exercise T41 with",
+      !!ambiguousTarget, `${ownAmbiguous.length} ambiguous spans`);
+    if (ambiguousTarget) {
+      ambiguousTarget.click();
+      await settled(240);
+      const ambiguousPick = getState().overlayPick;
+      check("clicking it resolved to candidates, not an address",
+        ambiguousPick?.kind === "ambiguous" &&
+          (ambiguousPick.candidates?.length ?? 0) > 1 &&
+          ambiguousPick.address == null,
+        `${ambiguousPick?.kind} with ${ambiguousPick?.candidates?.length ?? 0} candidates`);
+      checkDom("the chooser marks the candidate OUR renderer named, and picks none",
+        document.querySelectorAll('[data-testid="overlay-candidate"]').length ===
+          (ambiguousPick?.candidates?.length ?? -1) &&
+          document.querySelectorAll(
+            '[data-testid="overlay-candidate"][data-sidecar-pick="true"]',
+          ).length <= 1,
+        `${document.querySelectorAll('[data-testid="overlay-candidate"][data-sidecar-pick="true"]').length} marked of ` +
+          `${document.querySelectorAll('[data-testid="overlay-candidate"]').length} rows`);
+      check("and it queued NOTHING",
+        getState().draft.ops.length === ownQueued, String(getState().draft.ops.length));
+      document.querySelector<HTMLButtonElement>('[data-testid="overlay-chooser-dismiss"]')?.click();
+      await settled(160);
+    }
+
+    // UNMAPPED. Still a stated outcome, still nothing queued — and now it says
+    // what the renderer thought and why that was not enough.
+    const unmappedTarget = document.querySelector<HTMLElement>(
+      '[data-testid="overlay-span"][data-confidence="unmapped"]',
+    );
+    check("there is an unmapped line on our own page", !!unmappedTarget,
+      `${ownUnmapped.length} unmapped spans`);
+    if (unmappedTarget) {
+      unmappedTarget.click();
       await settled(200);
-      const pick = getState().overlayPick;
-      checkDom("a click on an own-rendered line resolves to a stated outcome",
-        pick?.kind === "unmapped" && (pick.label ?? "").length > 0,
-        JSON.stringify(pick ?? null).slice(0, 240));
-      checkDom("and the status bar prints it",
-        domText('[data-testid="status-overlay-pick"]').length > 0 &&
+      const unmappedPick = getState().overlayPick;
+      checkDom("a click on it resolves to a stated outcome and no address",
+        unmappedPick?.kind === "unmapped" && (unmappedPick.label ?? "").length > 0 &&
           document
             .querySelector('[data-testid="status-overlay-pick"]')
             ?.getAttribute("data-pick-kind") === "unmapped",
         domText('[data-testid="status-overlay-pick"]').slice(0, 200));
       check("and nothing was queued by a click that had no address",
-        getState().draft.ops.length === 0, String(getState().draft.ops.length));
+        getState().draft.ops.length === ownQueued, String(getState().draft.ops.length));
     }
+
+    // THE CARET, on a body line of a page we drew ourselves. Same walk the
+    // tier-1 phase makes, same `set_run`, same refusals.
+    await caretChecks(ownSpans);
   }
 
   // --- 4. zoom --------------------------------------------------------------
@@ -1845,10 +1986,20 @@ async function phaseOverlay(config: SmokeConfig) {
       live.geometrySource === "own" || live.geometrySource === "pdf",
       String(live.geometrySource));
     if (live.geometrySource === "own") {
-      check("an own-rendered page still claims no address it did not measure",
-        (live.spans ?? []).every((s: GeometrySpan) => s.address === null) &&
-          (live.seats ?? []).length === 0,
+      // The anti-fabrication claim moves again now that gap 34 is closed. An
+      // own-rendered page DOES carry addresses and seats — mapped by the same
+      // form scan a PDF-read page is mapped by — so "claims no address" is no
+      // longer the right assertion. What still holds, and is what this phase
+      // has always been about, is that nothing is claimed WITHOUT that scan:
+      // an address exists only where the mapping reached one, and every seat
+      // is a box the renderer actually drew.
+      check("an own-rendered page still claims no address the scan did not reach",
+        (live.spans ?? []).every(
+          (s: GeometrySpan) => s.confidence === "unique" || s.address === null),
         `${(live.spans ?? []).length} spans, ${(live.seats ?? []).length} seats`);
+      check("and every seat on it came from a cell our renderer really drew",
+        (live.seats ?? []).every((s) => s.derivation === "own_cell"),
+        JSON.stringify(live.seatDerivations ?? null));
       checkDom("and the page says which renderer drew it",
         document.querySelector('[data-testid="render-grade"]')?.getAttribute("data-grade") ===
           "own-uncertified",
@@ -2585,6 +2736,38 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     if (stop === "own-zoom") {
       const { setZoom } = await import("./store");
       setZoom(1.5);
+    }
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  // TIER 3, BEING EDITED. The claim gap 34 used to deny: a seat open on a page
+  // no Hancom drew, in the same inline editor a tree click opens, with a value
+  // part-typed. Nothing is staged and nothing is substituted — the same corpus
+  // form, the same own renderer, and the seat is found by asking the runtime
+  // which cells it placed rather than by picking a rectangle.
+  if (stop === "own-seat") {
+    if (config.corpus) await openPath(config.corpus);
+    await settled(250);
+    setCenterMode("page");
+    await renderCurrentPage(1);
+    for (let i = 0; i < 120 && getState().renderPhase === "starting"; i += 1) {
+      await settled(500);
+    }
+    const { loadGeometry } = await import("./actions");
+    await loadGeometry(1);
+    await settled(500);
+    const target = document.querySelector<HTMLButtonElement>(
+      '[data-testid="overlay-seat"][data-editable="true"][data-derivation="own_cell"]',
+    );
+    target?.click();
+    await settled(300);
+    const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
+    if (field) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(field, "행정안전부");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
     }
     await settled(400);
     await ready(`shot-${stop}`);

@@ -4477,3 +4477,109 @@ def test_out_margin_changes_no_corpus_page_count():
             continue
         images, _sidecar = own_render.OwnRenderer(path, dpi=144).render()
         assert len(images) == expected[stem], stem
+
+
+# ------------------------------------------- what a line box says about itself
+#
+# Desktop gap 34: the sidecar used to record where each line was DRAWN and not
+# what it said, so the runtime could overlay a tier-3 page and address nothing
+# on it. These four fields are what closed that, and each is additive -- a box
+# that measured none of them is exactly the box it was before.
+
+def _boxed(sidecar, page=1):
+    return [b for b in sidecar["line_boxes"] if b["page"] == page]
+
+
+def test_a_drawn_line_carries_the_text_it_drew(gianmun_render):
+    boxes = _boxed(gianmun_render["report"])
+    assert boxes, "fixture drifted: the corpus form draws text"
+    assert all("text" in box and box["text"] for box in boxes)
+    # The strings are the document's own, not a summary of them.
+    joined = "".join(box["text"] for box in boxes)
+    assert any("가" <= ch <= "힣" for ch in joined), joined[:120]
+
+
+def test_every_character_has_an_x_and_they_run_left_to_right(gianmun_render):
+    boxes = _boxed(gianmun_render["report"])
+    assert all("char_x" in box for box in boxes)
+    for box in boxes:
+        edges = box["char_x"]
+        # One left edge per character plus the last right edge -- the contract
+        # rt_geometry.char_edges holds a PDF read to, so a caret offset means
+        # the same thing on both tiers.
+        assert len(edges) == len(box["text"]) + 1, box["text"]
+        assert edges == sorted(edges), box["text"]
+        # and they sit inside the box the same line reports
+        assert edges[0] >= box["x0"] - 0.5
+        assert edges[-1] <= box["x1"] + 0.5
+
+
+def test_a_line_box_names_the_owpml_it_was_drawn_from(gianmun_render):
+    boxes = _boxed(gianmun_render["report"])
+    assert all("address" in box for box in boxes)
+    kinds = {box["address"]["kind"] for box in boxes}
+    assert kinds <= {"para", "cell"}
+    for box in boxes:
+        address = box["address"]
+        assert isinstance(address["atPara"], int)
+        if address["kind"] == "cell":
+            assert isinstance(address["table"], int)
+            assert isinstance(address["row"], int)
+            assert isinstance(address["col"], int)
+
+
+def test_the_table_index_is_the_one_the_form_scan_uses():
+    """Parity with ``form_inspect._table_map``'s ``index``, on the corpus.
+
+    The renderer's address is worth nothing if it numbers tables differently
+    from the scan it is cross-checked against. Asserted rather than assumed:
+    a silent mismatch would look exactly like a renderer that mislays cells.
+    """
+    import glob
+
+    sys.path.insert(0, os.path.join(ENGINE, "scripts"))
+    import form_inspect
+
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(path, dpi=96)
+        profile = form_inspect.analyze(path)[0]
+        declared = [t["index"] for t in profile["table_map"]]
+        assert sorted(renderer.table_index.values()) == declared, path
+
+
+def test_a_cell_box_is_recorded_for_every_cell_drawn(gianmun_render):
+    sidecar = gianmun_render["report"]
+    cells = sidecar["cell_boxes"]
+    assert cells, "the corpus form is one big table"
+    assert len(cells) == sidecar["elements_rendered"]["cells"]
+    for cell in cells:
+        assert cell["x0"] < cell["x1"] and cell["y0"] < cell["y1"]
+        assert isinstance(cell["table"], int)
+    # A cell box and the lines drawn inside it agree about the address.
+    boxed = {(c["table"], c["row"], c["col"]) for c in cells}
+    for box in _boxed(sidecar):
+        address = box["address"]
+        if address["kind"] == "cell":
+            assert (address["table"], address["row"],
+                    address["col"]) in boxed
+
+
+def test_the_new_line_box_fields_are_deterministic():
+    """Same document twice: text, offsets, addresses and cell boxes alike."""
+    import json
+
+    first = own_render.OwnRenderer(_need(GIANMUN), dpi=144).render()[1]
+    second = own_render.OwnRenderer(_need(GIANMUN), dpi=144).render()[1]
+    for key in ("line_boxes", "cell_boxes"):
+        assert (json.dumps(first[key], sort_keys=True, ensure_ascii=False)
+                == json.dumps(second[key], sort_keys=True,
+                              ensure_ascii=False)), key
+
+
+def test_the_geometry_of_a_line_box_did_not_move(gianmun_render):
+    """The fields are ADDITIVE: the four numbers that were on a box before
+    this slice are still exactly the four numbers on it."""
+    for box in _boxed(gianmun_render["report"]):
+        assert set(box) >= {"page", "mode", "x0", "y0", "x1", "y1"}
+        assert box["x0"] < box["x1"] and box["y0"] < box["y1"]
+        assert round(box["x0"], 3) == box["x0"]

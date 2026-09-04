@@ -198,16 +198,18 @@ function SpanOverlay({
   // the text was read and matched nothing, and drawing a target over it would
   // promise an edit that is not available.
   //
-  // An own-rendered page is a different fact wearing the same word. There every
-  // line is unmapped BY CONSTRUCTION — the sidecar records where each line was
-  // drawn and not what it said — so the same rule deletes the entire overlay
-  // and leaves a page that looks like one nothing was measured on. The measured
-  // thing here is the RECTANGLE, and it is real. So the line is drawn, silently:
-  // no fill, no seat vocabulary, nothing that reads as "type here". It is a
-  // hit target that answers the one question it can answer, which the status
-  // bar then prints — 자체 렌더 지면이라 이 줄이 어느 자리인지 붙이지 못합니다.
+  // An own-rendered page keeps its unmapped lines DRAWN, and the reason is no
+  // longer "every line here is unmapped by construction" — the sidecar carries
+  // the text now, and these lines went through the same scan the rest did and
+  // matched nothing. What is different is that on such a line the renderer
+  // itself usually knows the address and was deliberately not believed
+  // (`addressBasis: "sidecar_only"`). That is a fact worth a hit target: the
+  // click prints what the renderer thought and why it was not applied, where
+  // deleting the rectangle would leave a page that looks unmeasured. Still no
+  // fill and no seat vocabulary — nothing that reads as "type here".
   if (span.confidence === "unmapped") {
     if (source !== "own") return null;
+    const knows = !!span.sidecarAddress;
     return (
       <button
         type="button"
@@ -217,10 +219,15 @@ function SpanOverlay({
         data-confidence="unmapped"
         data-editable="false"
         data-caret-target="false"
-        data-has-offsets="false"
+        data-has-offsets={span.charX ? "true" : "false"}
+        data-address-basis={span.addressBasis ?? ""}
         data-line-mode={span.lineMode ?? ""}
         data-span-index={span.index}
-        title="자체 렌더러가 이 줄을 그린 자리입니다. 어느 주소인지는 알지 못합니다."
+        title={
+          knows
+            ? "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다. 자체 렌더러는 어디서 그렸는지 알지만, 서식 스캔이 확인해 주지 않은 주소는 쓰지 않습니다."
+            : "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다."
+        }
         onClick={(e) => {
           e.stopPropagation();
           void clickOverlaySpan(span);
@@ -362,6 +369,13 @@ function CandidateChooser() {
           // says WHICH kind of typing rather than marking the paragraph half
           // 값 자리 아님 — which was right until the caret existed.
           const caretRow = !editable && addressIsCaretTarget(candidate);
+          // The one OUR renderer says it drew this line from. It is MARKED and
+          // it is not preselected, does not sort first, and is not a default:
+          // the panel exists because nothing may pick for the user, and a
+          // second witness does not change that. It is shown because a person
+          // choosing between identical labels deserves the one piece of
+          // evidence the runtime declined to act on.
+          const drawnHere = pick.sidecarPick === index;
           return (
             <li key={`${addressLabel(candidate)}-${index}`}>
               <button
@@ -370,9 +384,18 @@ function CandidateChooser() {
                 data-testid="overlay-candidate"
                 data-editable={editable ? "true" : "false"}
                 data-caret-target={caretRow ? "true" : "false"}
+                data-sidecar-pick={drawnHere ? "true" : "false"}
                 onClick={() => void chooseCandidate(candidate)}
               >
                 <span className="mono">{addressLabel(candidate)}</span>
+                {drawnHere ? (
+                  <Tag
+                    tone="none"
+                    title="자체 렌더러는 이 줄을 여기서 그렸다고 말합니다. 서식 스캔이 확인해 주지 않았으므로 자동으로 고르지는 않습니다."
+                  >
+                    렌더러 지목
+                  </Tag>
+                ) : null}
                 {candidate.classification ? (
                   <span className="dim tiny">{candidate.classification}</span>
                 ) : null}
@@ -433,6 +456,21 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
         확정 {mapping.unique ?? 0} · 후보 {mapping.ambiguous ?? 0} · 대응 없음{" "}
         {mapping.unmapped ?? 0} · 자리 {seats.length}
       </span>
+      {/* The cross-check, in the runtime's own numbers. On an own-rendered page
+          the renderer knows where it drew every line, and this row is how a
+          person sees that the knowledge was CHECKED rather than taken: 확인
+          means both witnesses said the same thing, 불일치 means neither was
+          used, 미확인 means the renderer knew and was not believed. */}
+      {mapping.crossCheck && (mapping.crossCheck.declared ?? 0) > 0 ? (
+        <span
+          className="mono tiny dim"
+          data-testid="overlay-crosscheck"
+          title="자체 렌더러가 스스로 밝힌 주소를 서식 스캔과 대조한 결과입니다. 렌더러 말만으로 주소를 정하지는 않습니다."
+        >
+          렌더러 대조 — 확인 {mapping.crossCheck.agree ?? 0} · 불일치{" "}
+          {mapping.crossCheck.disagree ?? 0} · 미확인 {mapping.crossCheck.sidecarOnly ?? 0}
+        </span>
+      ) : null}
       {editableSeats + editableSpans === 0 ? (
         <span className="dim">
           이 쪽에서 런타임이 값을 넣을 자리를 잡아 주지 못했습니다. 그런 자리는 본문 보기에서

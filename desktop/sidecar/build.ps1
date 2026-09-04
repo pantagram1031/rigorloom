@@ -314,6 +314,39 @@ if (Test-Path $ownProbeForm) {
     $ownProbeCode = $ownProc.ExitCode
     $ownProbePng = Join-Path $ownProbeOut 'probe-p1.png'
     $drew = (Test-Path $ownProbePng)
+    # The sidecar's ADDRESSABILITY, not merely its existence. A page this
+    # renderer draws is editable only because each line box carries the text it
+    # drew, a per-character x and the paragraph or cell it came from, and each
+    # drawn cell carries its own address (desktop gap 34). A bundle that drew
+    # the PNG but emitted boxes without those fields would pass every check
+    # above and then serve an own-rendered page with no seat and no caret in
+    # every install — exactly the state this slice closed. Read here.
+    $ownSidecarPath = Join-Path $ownProbeOut 'probe.render.json'
+    $addressable = $false
+    $addressableWhy = 'no sidecar was written'
+    if (Test-Path $ownSidecarPath) {
+        # [IO.File]::ReadAllText for the encoding reason the font probe below
+        # documents: this file carries the document's own Hangul now.
+        $ownJsonText = [IO.File]::ReadAllText($ownSidecarPath, [Text.Encoding]::UTF8)
+        try {
+            $ownSidecar = $ownJsonText | ConvertFrom-Json
+            $textBox = $ownSidecar.line_boxes |
+                Where-Object { $_.text -and $_.char_x -and $_.address } | Select-Object -First 1
+            $cellBox = $ownSidecar.cell_boxes | Select-Object -First 1
+            if (-not $textBox) {
+                $addressableWhy = 'no line box carried text, char_x and address together'
+            } elseif ($textBox.char_x.Count -ne ($textBox.text.Length + 1)) {
+                $addressableWhy = ("char_x has {0} edges for {1} characters" -f `
+                    $textBox.char_x.Count, $textBox.text.Length)
+            } elseif (-not $cellBox) {
+                $addressableWhy = 'cell_boxes was empty on a form that is one big table'
+            } else {
+                $addressable = $true
+            }
+        } catch {
+            $addressableWhy = "could not parse the sidecar as JSON: $($_.Exception.Message)"
+        }
+    }
     Remove-Item -Recurse -Force $ownProbeOut -ErrorAction SilentlyContinue
     if ($ownProbeCode -ne 0 -or -not $drew) {
         Write-Error ("the frozen binary ran own_render.py but drew no page (exit $ownProbeCode). " +
@@ -321,7 +354,14 @@ if (Test-Path $ownProbeForm) {
             "through deps.py. Tier 3 would answer renderer_unavailable in every install.")
         exit 3
     }
-    Write-Host 'interpreter role: own_render.py drew a real corpus page'
+    if (-not $addressable) {
+        Write-Error ("the frozen binary drew a page but its sidecar is not addressable: " +
+            "$addressableWhy. document/pageGeometry maps an own-rendered page out of " +
+            "line_boxes[].text / .char_x / .address and seats it out of cell_boxes; without " +
+            "them every install would serve a tier-3 page with no seat and no caret.")
+        exit 3
+    }
+    Write-Host 'interpreter role: own_render.py drew a real corpus page, with addressable line and cell boxes'
 } else {
     Write-Warning "no corpus form at $ownProbeForm; tier 3 was not exercised for real in this build"
 }
