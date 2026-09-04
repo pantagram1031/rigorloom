@@ -3342,3 +3342,105 @@ and the three surviving shapes are different mechanisms:
 - **The holdout is not in these numbers.** The private report-class document
   was not opened; whether the same empty-run line exists in it, and what it
   is worth there, is the operator's measurement to make.
+
+## The classification is a tool now: `layout_divergence.py`
+
+The A/B/C table above was produced by an ad-hoc pass that was never
+committed, which is the whole reason the private holdout could not be
+measured the same way: only the operator may open it, and there was nothing
+to hand them. `engine/scripts/layout_divergence.py` is that pass, committed.
+
+    python engine/scripts/layout_divergence.py FORM.hwpx --out DIR [--dpi 144] [--no-text]
+    python engine/scripts/layout_divergence.py --corpus --out DIR [--iou]
+
+It renders the document twice in one process through a subclass of
+`OwnRenderer` that tags every `line_boxes` record with the `address` of the
+paragraph that drew it — own_render's own global `paragraph_index`, so the
+identity comes from the XML tree and is the same under both policies — and
+with that line's text. Lines pair by ordinal inside a paragraph. Each pair is
+class **A** if it is unpaired or the text differs, else **C** if the page
+differs, else **B** if `|dy|` exceeds `--y-tol` (default 0.01 px, i.e. exact
+up to the sidecar's rounding), else `agree`. The module docstring carries the
+rule and the precedence argument; `engine/tests/test_layout_divergence.py`
+pins them.
+
+`DIR/<stem>.divergence.json` holds the per-class counts (per line and per
+paragraph), each divergent paragraph's first divergent line, and a histogram
+of rounded class-B `dy` — the channel on which a constant per-document offset
+shows up as one tall bar. Line text is truncated to 12 characters and
+`--no-text` omits the field entirely, which is what a holdout run should use.
+
+### What it measures on the corpus, at this tip
+
+144 dpi, paragraphs (a paragraph is counted under every class one of its
+lines lands in), 17 s for the whole corpus:
+
+| form | agree | A | B | C | A&B | IoU delta |
+| --- | --- | --- | --- | --- | --- | --- |
+| `admrul` | 17 | 1 | 1 | 0 | 0 | −0.00567 |
+| `gianmun-1ho` | 27 | 1 | 0 | 0 | 0 | −0.00367 |
+| `gianmun-2ho` | 16 | 0 | 0 | 0 | 0 | +0.00317 |
+| `jeongbo` | 50 | 5 | 0 | 0 | 0 | +0.00092 |
+| `jumin` | 110 | 17 | 2 | 0 | 0 | −0.00464 |
+| `kstartup` | 43 | 31 | 98 | **233** | 1 | **+0.37000** |
+| `moel-2013` | 127 | 20 | 112 | 0 | 2 | −0.04396 |
+| `moel-2025` | 36 | 43 | **225** | 0 | 0 | −0.22322 |
+| `nrf` | 55 | 2 | 29 | 0 | 0 | −0.11984 |
+| `saeopja` | 673 | 16 | 71 | 0 | 3 | −0.09167 |
+
+The IoU column is `--iou` (`render_scoreboard.score_form` on both policies
+against the same reference PDF, 78 s for the corpus) and it reproduces the
+"After" section above exactly, form by form: `admrul` −0.40016 + 0.39449 =
+−0.00567, `nrf` −0.16632 + 0.04648 = −0.11984, `saeopja` −0.09131 − 0.00036 =
+−0.09167, `kstartup` +0.37000 unchanged. The render path this tool traces is
+therefore the same render the scoreboard scores.
+
+### It does NOT reproduce the A/B/C table above, and here is the whole of why
+
+Read against "Where the computed layout diverges, before":
+
+* **That table is the state before `c16a93a`.** The empty-run height fix
+  landed between it and this tool, and the "What is left" section already
+  records what it moved: class B on `admrul` 14 → 0 and on `nrf` 42 → 29.
+  At `--y-tol 0.5` this tool gives `admrul` 0 and `nrf` 29 — the post-fix
+  numbers, exactly. The IoU column above says the same thing more sharply.
+* **The tolerance.** The default 0.01 px counts the ±2 HWPUNIT `PERCENT`
+  spacing residual (0.02–0.08 px per line) as class B; the ad-hoc pass did
+  not. That residual is most of the excess: at `--y-tol 0.5` the B column
+  falls to `admrul` 0, `jumin` 1, `kstartup` 28, `moel-2013` **23**,
+  `moel-2025` 173, `nrf` **29**, `saeopja` 68 — and 23 and 29 are the
+  earlier table's numbers on the nose. The default stays exact: the residual
+  is real ink displacement, it accumulates down a column, and burying it
+  under a tolerance is how it stopped being visible the first time.
+* **The A rule is not the earlier one, and the earlier one is not
+  recoverable.** The table above defines A as "the paragraph produced a
+  different number of lines". Implemented literally that gives `admrul` 0 and
+  `jeongbo` 0 against the table's 1 and 12, so the ad-hoc pass was not using
+  its own stated test either. This tool uses text inequality on the paired
+  ordinal — a superset of the count test, since it also catches a re-break
+  that preserves the line count — and gets `jumin` 17 against 57 and
+  `saeopja` 16 against 55. Neither rule lands on those numbers, the script
+  that produced them is not in the repo, and nothing here was bent to close
+  the gap.
+* **The denominator differs.** The earlier rows sum to fewer lines than the
+  corpus draws (`saeopja` 705 against 782 boxes here), so its scope was a
+  subset — paragraphs that drew a line under *both* policies, which drops
+  exactly the unpaired population this tool books as class A.
+
+`moel-2025` (225 against 145) and `saeopja` (71 against 22) do not close at
+any tolerance. Both are downstream of class A: once one line re-breaks, every
+later line in the paragraph moves, and a text-based A/B split books that tail
+differently from a count-based one.
+
+### Not proven, for this tool
+
+- **The corpus is the training set for the rule and the holdout is not in
+  it.** The private report-class document was not opened here either. The
+  tool exists so the operator can run it, with `--no-text`, and get the same
+  four columns without handing anyone the document.
+- **Class A still mixes the breaker with the font stack.** Nothing here
+  separates a break the rules moved from a break a substituted advance moved,
+  and `jumin`'s 41 class-A lines are the population where that matters most.
+- **The pairing assumes draw order is line order within a paragraph.** It is,
+  for every path in this renderer today — including a paragraph split across
+  a page, which draws its halves in page order — but nothing enforces it.
