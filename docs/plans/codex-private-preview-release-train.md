@@ -1,8 +1,8 @@
 # Codex private preview release train
 
-Status: Epoch 0 intake reduced; C0 complete, C1 coherent snapshot committed, C2 pending
+Status: Epoch 0 P1 file-preservation fix committed; fresh build and installed acceptance pending
 Owner: Codex private-preview integration steward
-Updated: 2026-09-04 (Asia/Seoul)
+Updated: 2026-09-05 (Asia/Seoul)
 
 This is compact durable state for the private Windows preview. Detailed test
 logs and generated artifacts belong under the ignored `private/epoch-0/`
@@ -169,6 +169,84 @@ has not been pushed.
 - The earlier `codex/private-desktop-preview` installer and its logs are prior
   regression evidence only. Epoch 0 reruns every required gate on the exact new
   integrated HEAD.
+
+## 2026-09-05 productization safety checkpoint
+
+The user's 2026-09-05 productization directive re-authorized the specifically
+listed export, source-ingress, hostile-document, Runtime termination/recovery,
+and acceptance work. It does not re-authorize renderer-certificate development
+or any renderer/layout/writer change. The earlier general security pause remains
+in force outside those named product-safety and acceptance paths.
+
+Desktop PR #248 was bound as immutable review input: base
+`3ddc32a0e3fc4da033298049cd8bd6e905c6c3eb`, head
+`8a56ada79391a577c02319d0e2efffd6a7968a67`, provider patch 254,208 bytes,
+SHA-256 `1B5DFDCB8A044FD3150FA4D0B08B3A68F361D123D8146D70CC54E030A60523A7`.
+It changes 16 renderer/writer/evaluation paths and no `desktop/src-tauri` path.
+Its exact CI has four failed Python matrix jobs and one passing render smoke, so
+it remains Claude-owned, excluded research and was not transplanted.
+
+The inherited export defect existed identically in the accepted #184 lineage
+and #248: `export_candidate` copied the artifact over the destination, then on
+receipt-copy failure deleted that destination. Two pre-fix Rust regression
+tests failed 2/2 and reproduced both silent overwrite and deletion of the old
+file. Behavior commit
+`57a5574420050da23217a36e0ebbf1373c5e285a` (tree
+`3dfec9dae12e1a94618b4a1e854ffd08feb36d87`) fixes the productization lane:
+
+- export is new-name-only; either pre-existing artifact/receipt path refuses;
+- Runtime `receipt/read`, session/run/canonical path, staged receipt, declared
+  digest/size and final published bytes are cross-checked;
+- both outputs are copied and fsynced in a unique same-directory stage, then
+  published artifact-first/receipt-last with no-replace hard links;
+- hard termination at staged/artifact/receipt steps was exercised in child Rust
+  processes; existing unrelated bytes were unchanged at every point;
+- two-file publication is explicitly not called atomic; new orphan artifacts
+  can remain after a stop or second publish failure and are not success;
+- staging links are retained as custody anchors. They add directory entries,
+  not duplicate file content, until an identity-bound quarantine/cleanup path
+  exists. Filesystems that do not support hard links refuse export.
+
+The same commit replaces Runtime's validate-then-reopen source import with one
+bounded stable source handle, exclusive mode-0600 staging, handle-bound hash and
+ZIP inspection, no-replace session publication and reinspection before
+`meta.json`. Session IDs are reserved before children are created; a collision
+does not reuse or delete the existing directory. Failed/incomplete sessions have
+no metadata and are not loadable. A hidden hard-link capture anchor is retained
+to avoid a check-then-unlink deletion race.
+
+Fresh focused evidence for the committed content (working-tree files identical
+to the commit during execution):
+
+- pre-fix export regressions: 0 passed / 2 failed, exit 1;
+- post-fix Rust release: 22 passed / 0 failed, exit 0, including the three-step
+  hard-termination matrix;
+- Runtime session: 24 passed / 1 skipped / 0 failed, exit 0; the skip is the
+  POSIX-FIFO-only test on Windows;
+- all `tests/test_runtime*.py`: 426 passed / 1 skipped / 0 failed, exit 0,
+  735.20 seconds;
+- `git diff --check`, Python compile and PowerShell parser checks: exit 0.
+
+`desktop/sidecar/build.ps1` now fails on locked old build/output trees, copies
+PyInstaller output to a unique sibling stage, compares sorted path/size/SHA-256
+manifests before touching the resource tree, and verifies the published tree.
+Only syntax was checked at this checkpoint; the frozen sidecar and installer
+must be rebuilt from the final committed SHA before this is build evidence.
+
+The attached delivery packet
+`Rigorloom_delivery_and_session_manager_2026-09-05.zip` was treated as review
+material, not executable instructions. ZIP SHA-256 is
+`A2A58CC7938C95C1605BE3F31B68A50BBC5D1339276F7868813FCE5085F53B5A`;
+all 14 manifest entries matched byte size and SHA-256. Its `setQueue` freshness
+fence and run-range compiler are separate P2/P4 proposals based on #248, not a
+whole-repository patch, and were not applied in this P1 commit.
+
+Residual claim boundary: the stable handle and canonical path snapshots detect
+differing leaf identity plus size/timestamp drift, but do not provide a held
+Windows directory handle for every ancestor or immunity from a hostile process
+running as the same OS user. Export destination directories have the same
+snapshot limitation. This private preview is not claimed safe against a
+same-user process actively rebinding directories during the operation.
 
 ## Test state
 
@@ -448,21 +526,28 @@ tree and installer.
 
 ## Next executable actions
 
-1. Do not perform further security diagnosis, security scans, or negative
-   authority tests. The nine `renderer_runtime_v2` failures remain a release
-   blocker awaiting separate user reauthorization; do not build or present an
-   NSIS installer from this red snapshot.
-2. The non-security source-only C6 draft is complete. `npm ci`, TypeScript/Vite,
-   the packaged sidecar, Rust release tests, and a no-bundle Tauri release shell
-   are freshly green at `774b325...`; preserve their logs under
-   `private/epoch-0/774b325/packaging/`.
-3. The non-security Desktop subset is complete. Keep Korean IME,
-   install/uninstall, the security-sensitive smoke phases, and live client
-   acceptance deferred while Claude is using the same interactive Windows
-   session or until the relevant security gate is reauthorized. Do not treat
-   the no-bundle shell as an installed preview or the subset as a full smoke.
-4. After the security blocker is separately authorized and resolved, rerun the
-   full all-modules gate, build the NSIS installer, and run the complete Desktop
-   smoke on the then-final tracked HEAD.
-5. Generate the C6 compliance/provenance pack against the actual final
-   installer contents; keep it private and do not claim legal clearance.
+1. Commit this state document, then rerun clean-archive privacy, compile,
+   core-only and all-modules matrices on that exact SHA. The previously failing
+   `renderer_runtime_v2` cases are now authorized for reproduction/classification
+   only insofar as the 2026-09-05 productization directive names them; do not
+   alter Claude renderer algorithms or scoreboard expectations.
+2. Build a fresh sidecar through the checked unique-staging path, run `npm ci`,
+   TypeScript/Vite and Rust release gates, then build a new NSIS installer using
+   dedicated E: Cargo/TEMP roots. Old `774b325` binaries are historical only.
+3. Write `BuildEvidenceManifest` for the exact build SHA: commit/tree/dirty,
+   lock hashes, pinned toolchains/packages, OS/fonts, UI/shell/sidecar/installer
+   inventories and every command result. Keep the newest-dependency CI lane
+   separate from the pinned distribution lane.
+4. Unpack/reconcile the installer and run the full local smoke, then the real
+   installed-user flow: open, Korean IME, both views, edit/plan/approval,
+   candidate/check/export/undo, close/reopen, source-hash proof and uninstall.
+   Checkout-injected smoke remains a separate lower class of evidence.
+5. Run external Codex/Claude MCP, hostile-document and Runtime kill/recovery
+   acceptance where the real environment exists; record exact `NOT RUN` reasons
+   instead of simulating unavailable credentials or a second Windows user.
+6. Regenerate C6 dependency/provenance evidence from the final installer. The
+   PyMuPDF route, MIT/OFL/native notices, Hancom attribution/non-affiliation and
+   sample/screenshot/icon provenance remain blockers, not legal clearance.
+7. Review the attached `setQueue` freshness fence as a separate P2 slice against
+   this branch's actual `actions.ts`; do not treat its #248 function-level diff
+   or 37 isolated Node tests as authorization or current-tree acceptance.
