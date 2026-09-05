@@ -5608,3 +5608,87 @@ def test_render_check_01_pages_match_the_reference_count():
     boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
     assert boxes and min(b["page"] for b in boxes) == 9, [
         b["page"] for b in boxes]
+
+
+# --------------------------------------------- an anchored object's own slot
+
+def _anchored_object_paragraph(renderer, height, out_v, vert_offset=0,
+                               vert_rel_to="PARA", wrap="TOP_AND_BOTTOM"):
+    """A paragraph whose only content is ONE anchored table.
+
+    ``treatAsChar="0"`` is what makes it anchored: it does not sit on a line,
+    it reserves its own slot from the paragraph's seat down.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__anchor__"
+    renderer.defs["para_pr"].setdefault(pid, {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": "PERCENT", "line_spacing_value": 160,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    })
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="0">'
+           '<hp:tbl rowCnt="1" colCnt="1" textWrap="%s">'
+           '<hp:sz width="20000" height="%d"/>'
+           '<hp:pos treatAsChar="0" vertRelTo="%s" vertOffset="%d"/>'
+           '<hp:outMargin left="0" right="0" top="%d" bottom="%d"/>'
+           '</hp:tbl>'
+           '<hp:t/></hp:run></hp:p>'
+           % (pid, wrap, height, vert_rel_to, vert_offset, out_v, out_v))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_anchored_objects_reserved_extent_includes_its_own_out_margin(
+        typo_probe):
+    """``hp:outMargin`` is the gap OUTSIDE the box, so the slot the anchor
+    reserves is ``vertOffset + top + height + bottom``.
+
+    The same reading the renderer already applies everywhere else it touches
+    the tag: ``_object_origin`` draws the box ``top`` down inside the slot,
+    ``_object_extent`` widens an inline slot by ``left + right``, and
+    ``_line_metrics`` grows an INLINE object's line by ``top + bottom``.
+
+    MEASURED against the authoring engine's own cached seats.  nrf's
+    paragraph 0 anchors a table of ``hh:sz@height=63674`` with
+    ``outMargin=138`` at ``vertOffset=0``, and the cache seats the next
+    top-level paragraph at 63950 = 0 + 138 + 63674 + 138; kstartup's
+    paragraph 148 anchors 69352 with ``outMargin=140`` and its successor is
+    cached at 69632.  The box height alone misses both by exactly
+    ``top + bottom``.
+    """
+    renderer, _image, _draw = typo_probe
+    for out_v in (0, 138, 140, 283):
+        para = _anchored_object_paragraph(renderer, 63674, out_v)
+        assert renderer._anchor_extent(para, body_top=0) == \
+            63674 + 2 * out_v, out_v
+
+
+def test_an_anchored_objects_slot_starts_at_its_declared_offset(typo_probe):
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 141, vert_offset=2000)
+    assert renderer._anchor_extent(para, body_top=0) == 2000 + 141 + 10000 + 141
+
+
+def test_a_page_relative_anchor_measures_its_slot_from_the_body_box(
+        typo_probe):
+    """The offset is measured from the sheet and the flow cursor from the
+    body box, so the body top comes off the slot bottom — and the outer
+    margin is still inside it."""
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 141, vert_offset=5000,
+                                      vert_rel_to="PAGE")
+    assert renderer._anchor_extent(para, body_top=4000) == \
+        5000 + 141 + 10000 + 141 - 4000
+
+
+def test_an_anchor_that_reserves_no_room_still_reserves_none(typo_probe):
+    """``BEHIND_TEXT`` takes the text with it, so there is no slot to widen."""
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 283,
+                                      wrap="BEHIND_TEXT")
+    assert renderer._anchor_extent(para, body_top=0) == 0
