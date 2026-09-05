@@ -73,10 +73,35 @@ under?  A boundary whose ``borderFill`` is ``NONE`` is drawn nowhere, so
 scoring the other way would count every deliberately borderless row edge as
 a miss.
 
+``--overflow`` AND ``--paginated``
+---------------------------------
+Two questions the total oracle above cannot reach.
+
+``--overflow`` prints, row by row, every table whose solved rows do NOT sum
+to its declared ``hp:sz@height``: what each row declares, what its cells ask
+for, what the table draws after ``own_render.clip_tracks``, and what the cell
+that drives the row holds (paragraphs, cached lines, empty paragraphs,
+objects, rowSpan).  On the corpus there are exactly two, both ``kstartup``,
+both anchored -- the +78 and +282 #273 left open.  Table 5's is the file's own
+arithmetic (its rows declare 62560 and its table declares 62482, the only
+corpus table where the rows declare MORE); table 36's is content the cache
+itself recorded.  Hancom's export draws both at the declared height, and
+table 5's interior rules say the excess comes off the LAST row.
+
+``--paginated`` prints how the cache encodes each table -- the holder
+paragraph's every ``hp:lineseg``, ``hp:pos@treatAsChar``,
+``hp:tbl@pageBreak``, ``@repeatHeader`` -- beside the fragments this render
+actually drew (page, row range, height) and the cached seat of the paragraph
+that follows.  The answer on this corpus is that a split table is not encoded
+at all: every holder caches ONE lineseg for its table, an inline table's
+carries the whole table however many pages it takes, ``pageBreak`` is a
+static authoring setting and ``repeatHeader`` is ``"1"`` on all 81.
+
 Usage::
 
     python engine/scripts/row_height_probe.py FORM.hwpx
     python engine/scripts/row_height_probe.py --corpus
+    python engine/scripts/row_height_probe.py --corpus --overflow --paginated
     python engine/scripts/row_height_probe.py --corpus --pdf --json out.json --no-text
 
 This is measurement.  It changes nothing in ``own_render.py``.
@@ -150,6 +175,16 @@ class RowHeightRenderer(own_render.OwnRenderer):
         #: ``{id(first hp:p element): content height}``
         self._content = {}
         self._index = None
+        #: Every ``_table_tracks`` call, in the order the render makes them:
+        #: ``[(table index, natural_rows, declared total, solved total)]``.
+        #: A table is solved more than once -- ``_anchor_table_geometry``
+        #: measures an anchored table's own content before the fit test and
+        #: ``_render_table`` solves it again to draw it -- and the two do not
+        #: have to agree, so ``--overflow`` reads them all rather than the
+        #: first.
+        self.solves = []
+        #: Every ``_render_table`` call: one entry per FRAGMENT drawn.
+        self.fragments = []
 
     def _indexes(self):
         """``({id(hp:tbl): n}, {id(hp:p): n})`` in document order."""
@@ -175,6 +210,15 @@ class RowHeightRenderer(own_render.OwnRenderer):
         xs, ys, cells = super()._table_tracks(draw, tbl, natural_rows)
         tbl_index, _paras = self._indexes()
         key = tbl_index.get(id(tbl))
+        size = own_render._kid(tbl, "sz")
+        self.solves.append({
+            "table": key,
+            "natural_rows": bool(natural_rows),
+            "declared_total": (own_render._iattr(size, "height")
+                               if size is not None else None),
+            "solved_total": ys[-1] if ys else 0,
+            "heights": [ys[i + 1] - ys[i] for i in range(len(ys) - 1)],
+        })
         if key is not None and key not in self.tables:
             self.tables[key] = {
                 "tbl": tbl,
@@ -201,16 +245,31 @@ class RowHeightRenderer(own_render.OwnRenderer):
                             if paras else 0),
             "linesegs": _cell_linesegs(cell["tc"]),
             "first_vertpos": _first_vertpos(cell["tc"]),
+            "shape": _cell_shape(cell),
         }
 
     def _render_table(self, draw, tbl, origin_hwp):
         tbl_index, _paras = self._indexes()
         key = tbl_index.get(id(tbl))
+        before = len(self.solves)
         result = super()._render_table(draw, tbl, origin_hwp)
         record = self.tables.get(key)
         if record is not None and "origin" not in record:
             record["origin"] = tuple(origin_hwp)
             record["page"] = self._page
+        solve = self.solves[before] if len(self.solves) > before else None
+        rows = self._table_splits.get(id(tbl))
+        heights = solve["heights"] if solve else []
+        row_from, row_to = rows if rows else (0, len(heights))
+        self.fragments.append({
+            "table": key,
+            "page": self._page,
+            "origin": tuple(origin_hwp),
+            "rows": [row_from, min(row_to, len(heights))],
+            "split": rows is not None,
+            "height": sum(heights[row_from:min(row_to, len(heights))]),
+            "natural_rows": bool(solve["natural_rows"]) if solve else None,
+        })
         return result
 
 
@@ -380,6 +439,186 @@ def table_total_oracle(renderer):
 
 
 # --------------------------------------------------------------------------
+# The overflow oracle (``--overflow``)
+# --------------------------------------------------------------------------
+
+def _cell_shape(cell):
+    """What the cell holds, in the terms a row-height disagreement needs."""
+    paras = _cell_paragraphs(cell["tc"])
+    lines = empty = 0
+    objects = Counter()
+    for para in paras:
+        array = own_render._kid(para, "linesegarray")
+        segs = own_render._kids(array, "lineseg") if array is not None else []
+        lines += len(segs)
+        text = 0
+        for run in own_render._kids(para, "run"):
+            for kid in run:
+                name = own_render._local(kid.tag)
+                if name == "t":
+                    text += len("".join(kid.itertext()))
+                elif name not in ("ctrl", "secPr", "colPr"):
+                    objects[name] += 1
+        if not text and not objects:
+            empty += 1
+    return {"paras": len(paras), "lines": lines, "empty_paras": empty,
+            "objects": dict(objects)}
+
+
+def overflow_report(tables, solves, name="max"):
+    """Every table whose rows do not sum to its declared ``hp:sz@height``.
+
+    The row rule is #273's: a row is as tall as the tallest thing its cells
+    ask for, and a cell asks for the larger of its declared ``cellSz@height``
+    and its content height plus the cell inset.  Where that overflows the
+    table's own declared height, ``own_render.clip_tracks`` takes the excess
+    off the LAST row, and this prints the reconciliation row by row: what
+    each row declares, what its cells ask, what the table draws, and what the
+    cells that drive it hold.
+    """
+    #: A table this render only ever solves with ``natural_rows=True`` is
+    #: split across a page, and ``_expand_segmented_rows`` has turned one of
+    #: its rows into several by then, so its row list no longer lines up with
+    #: the file's own and a residual against ``hp:sz@height`` is not a
+    #: disagreement about anything.  ``--paginated`` is where those belong.
+    drawn_compressible = {solve["table"] for solve in solves
+                          if not solve["natural_rows"]}
+    out = []
+    for table in tables:
+        heights = table["heights"][name]
+        declared_total = table["declared_total"]
+        if not declared_total or table["table"] not in drawn_compressible:
+            continue
+        natural = sum(heights)
+        if natural == declared_total:
+            continue
+        drawn = (own_render.clip_tracks(heights, declared_total)
+                 if natural > declared_total
+                 else list(table["heights_compressed"][name]))
+        rows = []
+        for index, height in enumerate(heights):
+            cells = [c for c in table["cells"] if c["row"] == index]
+            rows.append({
+                "row": index,
+                "declared": table["declared_rows"].get(index),
+                "asks": height,
+                "drawn": drawn[index] if index < len(drawn) else None,
+                "cells": [{
+                    "col": c["col"], "rspan": c["rspan"], "cspan": c["cspan"],
+                    "declared": c["declared"], "content": c["content"],
+                    "inset": c["inset"],
+                    "ask": cell_height(c, name),
+                    "shape": c["shape"],
+                } for c in sorted(cells, key=lambda c: c["col"])],
+            })
+        out.append({
+            "table": table["table"],
+            "page": table["page"],
+            "natural_rows": table["natural_rows"],
+            "declared_total": declared_total,
+            "declared_row_sum": sum(v for v in table["declared_rows"].values()),
+            "natural_total": natural,
+            "residual": natural - declared_total,
+            "drawn_total": sum(drawn),
+            "rows": rows,
+        })
+    return out
+
+
+# --------------------------------------------------------------------------
+# The pagination oracle (``--paginated``)
+# --------------------------------------------------------------------------
+
+def paginated_report(renderer, tables):
+    """How the cache encodes a table, and how this render fragments it.
+
+    The question this answers is whether a table the cache split across two
+    pages is cached as two ``hp:lineseg`` -- one per page, each with its own
+    ``vertpos``/``vertsize`` -- so that a split table's fragment heights could
+    be read off the file the way #261 reads a whole inline object's height off
+    one.  Per table it records the holder paragraph's every lineseg, the
+    table's ``hp:pos@treatAsChar`` / ``hp:tbl@pageBreak`` / ``@repeatHeader``,
+    and the fragments this render actually drew (page, row range, height),
+    with the seat of the paragraph that follows the holder.
+    """
+    tbl_index, _paras = renderer._indexes()
+    holders = {}
+    for root in renderer.sections:
+        paras = [p for p in root.iter() if own_render._local(p.tag) == "p"]
+        for index, para in enumerate(paras):
+            found = [kid for run in own_render._kids(para, "run")
+                     for kid in run
+                     if own_render._local(kid.tag) == "tbl"]
+            if not found:
+                continue
+            array = own_render._kid(para, "linesegarray")
+            segs = own_render._kids(array, "lineseg") \
+                if array is not None else []
+            following = paras[index + 1] if index + 1 < len(paras) else None
+            next_seg = None
+            if following is not None:
+                next_array = own_render._kid(following, "linesegarray")
+                next_segs = own_render._kids(next_array, "lineseg") \
+                    if next_array is not None else []
+                if next_segs:
+                    next_seg = (own_render._iattr(next_segs[0], "vertpos"),
+                                own_render._iattr(next_segs[0], "vertsize"))
+            for tbl in found:
+                key = tbl_index.get(id(tbl))
+                pos = own_render._kid(tbl, "pos")
+                size = own_render._kid(tbl, "sz")
+                out_margin = own_render._kid(tbl, "outMargin")
+                vertical = (own_render._iattr(out_margin, "top")
+                            + own_render._iattr(out_margin, "bottom"))
+                holders[key] = {
+                    "tables_on_holder": len(found),
+                    "linesegs": [
+                        (own_render._iattr(s, "textpos"),
+                         own_render._iattr(s, "vertpos"),
+                         own_render._iattr(s, "vertsize"),
+                         own_render._iattr(s, "spacing")) for s in segs],
+                    "treat_as_char": (pos.get("treatAsChar")
+                                      if pos is not None else None),
+                    "page_break": tbl.get("pageBreak"),
+                    "repeat_header": tbl.get("repeatHeader"),
+                    "declared_total": (own_render._iattr(size, "height")
+                                       if size is not None else None),
+                    "out_margin_vertical": vertical,
+                    "next_paragraph_seat": next_seg,
+                }
+    fragments = defaultdict(list)
+    for fragment in renderer.fragments:
+        fragments[fragment["table"]].append(fragment)
+
+    rows = []
+    for table in tables:
+        key = table["table"]
+        holder = holders.get(key, {})
+        drawn = fragments.get(key, [])
+        segs = holder.get("linesegs") or []
+        inline = (holder.get("treat_as_char") or "0") not in ("0", "false",
+                                                              "FALSE")
+        cached = None
+        if inline and len(segs) == 1 and holder.get("tables_on_holder") == 1:
+            cached = segs[0][2] - holder.get("out_margin_vertical", 0)
+        rows.append({
+            "table": key,
+            "inline": inline,
+            "page_break": holder.get("page_break"),
+            "repeat_header": holder.get("repeat_header"),
+            "declared_total": table["declared_total"],
+            "holder_linesegs": len(segs),
+            "cached_total": cached,
+            "next_paragraph_seat": holder.get("next_paragraph_seat"),
+            "fragments": [{"page": f["page"], "rows": f["rows"],
+                           "height": f["height"], "split": f["split"]}
+                          for f in drawn],
+            "split_by_render": any(f["split"] for f in drawn),
+        })
+    return rows
+
+
+# --------------------------------------------------------------------------
 # The PDF oracle
 # --------------------------------------------------------------------------
 
@@ -497,6 +736,7 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
             "rows_ambiguous": ambiguous,
             "natural_rows": record["natural_rows"],
             "cache_total": totals.get(key),
+            "cells": record["cells"],
             "heights": {}, "heights_compressed": {},
         }
         for name in CANDIDATES:
@@ -520,6 +760,9 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         "vertpos_oracle": vertpos_oracle,
         "total_oracle": total_oracle_summary(tables),
         "scores": scored,
+        "overflow": overflow_report(tables, renderer.solves),
+        "paginated": paginated_report(renderer, tables),
+        "solves": renderer.solves,
     }
     if pdf_path is not None:
         report["pdf"] = pdf_rule_oracle(renderer, report, pdf_path)
@@ -617,6 +860,69 @@ def worst_tables(stem, report, name="max", limit=6):
     return "\n".join(out)
 
 
+def overflow_block(stem, report):
+    """The per-row reconciliation of every table that does not add up."""
+    entries = report.get("overflow") or []
+    if not entries:
+        return f"  {stem}: no table's rows disagree with its hp:sz@height"
+    out = []
+    for entry in entries:
+        out.append(
+            f"  {stem} table {entry['table']} (page {entry['page']}, "
+            f"natural_rows={entry['natural_rows']}): declared "
+            f"{entry['declared_total']}, declared rows sum "
+            f"{entry['declared_row_sum']}, rows ask {entry['natural_total']} "
+            f"({entry['residual']:+}), drawn {entry['drawn_total']}")
+        out.append(f"    {'row':>3} {'declared':>9} {'asks':>8} {'drawn':>8}"
+                   f"   the cell that asks for it")
+        for row in entry["rows"]:
+            driver = max(row["cells"], key=lambda c: c["ask"], default=None)
+            note = "-"
+            if driver is not None:
+                shape = driver["shape"]
+                note = (f"col{driver['col']} rspan={driver['rspan']} "
+                        f"decl={driver['declared']} "
+                        f"content={driver['content']}+inset {driver['inset']}"
+                        f" -> {driver['ask']}; {shape['paras']} paras, "
+                        f"{shape['lines']} cached lines, "
+                        f"{shape['empty_paras']} empty")
+                if shape["objects"]:
+                    note += f", objects {shape['objects']}"
+            declared = row["declared"]
+            out.append(f"    {row['row']:>3} "
+                       f"{'-' if declared is None else declared:>9} "
+                       f"{row['asks']:>8} {row['drawn']:>8}   {note}")
+    return "\n".join(out)
+
+
+def paginated_block(stem, report):
+    """What the cache says about a table's pagination, and what we drew."""
+    rows = report.get("paginated") or []
+    out = [f"  {stem}: {len(rows)} tables; "
+           f"{sum(1 for r in rows if r['inline'])} inline "
+           f"(treatAsChar=1), {sum(1 for r in rows if not r['inline'])} "
+           f"anchored; holder lineseg counts "
+           f"{dict(sorted(Counter(r['holder_linesegs'] for r in rows).items()))}"
+           f"; pageBreak {dict(sorted(Counter(str(r['page_break']) for r in rows).items()))}"
+           f"; repeatHeader {dict(sorted(Counter(str(r['repeat_header']) for r in rows).items()))}"]
+    split = [r for r in rows if r["split_by_render"] or len(r["fragments"]) > 1]
+    if not split:
+        out.append("    this render drew every table in one fragment")
+        return "\n".join(out)
+    out.append(f"    {'tbl':>4} {'declared':>9} {'cached':>8} {'segs':>5}"
+               f"  fragments this render drew (page, rows, height)"
+               f" | cached seat of the next paragraph")
+    for row in split:
+        pieces = "  ".join(
+            f"p{f['page']}:{f['rows'][0]}-{f['rows'][1]}={f['height']}"
+            for f in row["fragments"])
+        out.append(f"    {row['table']:>4} {row['declared_total']:>9} "
+                   f"{'-' if row['cached_total'] is None else row['cached_total']:>8} "
+                   f"{row['holder_linesegs']:>5}  {pieces}"
+                   f" | {row['next_paragraph_seat']}")
+    return "\n".join(out)
+
+
 def pdf_table(report):
     pdf = report.get("pdf")
     if not pdf:
@@ -674,6 +980,15 @@ def build_parser():
     parser.add_argument("--pdf", action="store_true",
                         help="also score every candidate's row boundaries "
                              "against the reference PDF's horizontal rules")
+    parser.add_argument("--overflow", action="store_true",
+                        help="print the row-by-row reconciliation of every "
+                             "table whose rows do not sum to its declared "
+                             "hp:sz@height")
+    parser.add_argument("--paginated", action="store_true",
+                        help="print how the cache encodes each table "
+                             "(holder linesegs, treatAsChar, pageBreak, "
+                             "repeatHeader) and the fragments this render "
+                             "drew for it")
     parser.add_argument("--json", help="write the full per-table report")
     parser.add_argument("--no-text", action="store_true",
                         help="write only the JSON report")
@@ -703,6 +1018,10 @@ def main(argv=None):
                 worst = worst_tables(stem, report)
                 if worst:
                     print(worst)
+                if args.overflow:
+                    print(overflow_block(stem, report))
+                if args.paginated:
+                    print(paginated_block(stem, report))
                 block = pdf_table(report)
                 if block:
                     print(block)
@@ -731,6 +1050,10 @@ def main(argv=None):
         worst = worst_tables(hwpx.stem, report)
         if worst:
             print(worst)
+        if args.overflow:
+            print(overflow_block(hwpx.stem, report))
+        if args.paginated:
+            print(paginated_block(hwpx.stem, report))
         block = pdf_table(report)
         if block:
             print(block)
