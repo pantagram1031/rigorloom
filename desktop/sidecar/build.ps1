@@ -169,10 +169,11 @@ if (-not (Test-Path (Join-Path $built 'rigorloomd.exe'))) {
 # build failure: copying on top of it can silently combine two sidecar versions.
 function Get-TreeManifest([string]$Root) {
     $rootFull = [System.IO.Path]::GetFullPath($Root)
+    $rootPrefix = $rootFull.TrimEnd('\') + '\'
     return @(
         Get-ChildItem -LiteralPath $rootFull -Recurse -File | ForEach-Object {
             [pscustomobject]@{
-                path = [System.IO.Path]::GetRelativePath($rootFull, $_.FullName).Replace('\', '/')
+                path = $_.FullName.Substring($rootPrefix.Length).Replace('\', '/')
                 bytes = $_.Length
                 sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
             }
