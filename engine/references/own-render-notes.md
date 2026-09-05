@@ -8575,3 +8575,348 @@ all 454 of its scored paragraphs. No break position was lost.
   `moel-2025` and 22 `moel-2013` paragraphs are substituted-face paragraphs.
 - **The corpus is the training set, again.** Every number here was read off
   the same ten forms and the same machine's installed fonts.
+
+## The anonymous Type 3 fonts are HWP's own HFT faces — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#267 found that where our resolved face is the one Hancom drew with the
+advance ratio is exactly 1.0000, and #281 closed the bold half of what was
+left. Both stopped at the same wall: `moel-2013`'s two `text_rebreak:width`
+carriers have their punctuation drawn by **anonymous Type 3 fonts** the export
+calls `T2`, `T6`, `T19`, whose `)` is 0.332 em where our `H2MJSM.TTF` gives
+0.495, and neither slice could say what those fonts are. This one asks the
+export directly.
+
+They are **HWP's own HFT faces**. The export says so in three independent
+places, the file says so in a fourth, and the advances they carry are the HFT
+face's own `hmtx` — one number per (family, code point), not a fraction of the
+em per character class. Nothing shipped: the fixed-fraction rule the task set
+a gate for reaches 93.0% of the corpus's Type 3 code points and the gate is
+99%.
+
+### The instrument
+
+`engine/scripts/pdf_face_probe.py REFERENCE.pdf [--hwpx FORM.hwpx]`, or
+`--corpus`; `--json OUT` writes the whole record and `--no-text` keeps the
+document's text out of it. `--no-identify` skips the face-identification pass,
+which is the slow one (492 faces × the sampled glyphs, about two minutes over
+the corpus).
+
+It enumerates every font object of a reference PDF — name, subtype, whether
+the file carries the outlines, `FontDescriptor`, units per em — and for each
+Type 3 font reads its `FontMatrix`, `FontBBox`, `Widths`, `CharProcs` and the
+`Encoding`'s `Differences`, then:
+
+* the code points it draws, off its own `ToUnicode` CMap;
+* the advance per code point, `Widths[code] × FontMatrix[0]`, in em;
+* an outline fingerprint of every `CharProcs` entry — the glyph procedures are
+  real vector paths, so the fingerprint is a hash of the coordinate stream
+  with the paint operator and its stroke width taken out;
+* which HWPX runs those spans belong to — paragraph, `hh:charPr` id, slot,
+  declared face name and that face's `hh:font@type` — through
+  `lineseg_vs_pdf`'s pairing, the one #258 measured and #267 and #281 read
+  their advances out of. `advance_probe`'s `read_pdf_chars`,
+  `merge_lines_with_boxes` and `align` are reused verbatim; the payload is
+  different and the pairing is not.
+
+`own_render.py` and `advance_probe.py` are byte-identical to
+`origin/claude/engine-e2-punct-advance`.
+
+### The glyphs are named `HFT1`, `HFT2`, `HFT3` …
+
+The first answer is the plainest one and it needed no measurement at all. Every
+Type 3 font in this corpus carries an `Encoding` whose `Differences` array
+names its glyphs `HFT<n>`, numbered sequentially across the whole document and
+split between the font objects — `moel-2013`'s `T2` holds `HFT1`–`HFT8`,
+`HFT34`–`HFT42`, `HFT45`–`HFT47`, `HFT53`, `HFT70`, and its `T3` holds most of
+the rest up to `HFT68`. HFT is Hancom's own font format. The export is telling
+the reader, in the glyph names, which faces these are.
+
+The file agrees. `Contents/header.xml` declares each face's format in
+`hh:font@type`, and the corpus's ten forms carry **148 `HFT` declarations
+beside 457 `TTF` ones** — 13 distinct HFT faces against 32 TrueType ones, each
+declared once per language slot per form. The thirteen are 한양신명조,
+한양중고딕, 한양견고딕, 명조, 고딕, 필기, 산세리프, HCI Poppy, HCI Hollyhock,
+신명 신명조, 신명 신문명조, 신명 중고딕, 신명 디나루. That is the 한양 HFT set
+plus HWP's own aliases, and an HFT face is
+not a TrueType file — there is no font program to embed, so a PDF export can
+only emit it as Type 3. `hh:substFont` appears three times in the corpus
+(한컴바탕, 함초롬바탕, 함초롬돋움) and never on an HFT face.
+
+### Every HFT run was drawn from a Type 3 font, and no other run was
+
+`--corpus`, on the 8566 characters the pairing anchors, spaces excluded,
+asking per character whether the drawing font was Type 3 and whether the
+declared face for the slot HWP uses says `HFT`:
+
+| class | the slot that predicts it | n | HFT → Type 3 | other → sfnt | agrees |
+| --- | --- | ---: | ---: | ---: | ---: |
+| hangul | `hangul` | 6548 | 842 | 5706 | **100.0%** |
+| punct | `latin` | 1513 | 1072 | 441 | **100.0%** |
+| digit | `latin` | 242 | 182 | 60 | **100.0%** |
+| fw_punct | `symbol` | 211 | 120 | 91 | **100.0%** |
+| latin | `latin` | 37 | 3 | 34 | **100.0%** |
+| hanja / other | any | 15 | 0 | 15 | **100.0%** |
+
+**8566 of 8566.** `hh:font@type="HFT"` on the right slot predicts, without a
+single exception on this corpus, that Hancom drew the character from its own
+face and therefore metered it from one this machine does not have. The
+converse holds too: not one HFT-declared character reached the export through
+an embedded TrueType font.
+
+### The right slot for ASCII punctuation is `latin`, and ours is `symbol`
+
+That table has a second reading. `own_render.script_slot` files ASCII
+punctuation under `symbol`; HWP files it under `latin`, and the two disagree
+on 22 characters — `( ) . :` in `admrul` ¶28–30 and `kstartup` ¶81 / 753 / 755
+/ 759, whose `hh:charPr` names 바탕 (TTF) for `symbol` and HCI Poppy (HFT) for
+`latin`. Hancom drew all 22 from the HFT face. Read through the `symbol` slot
+the prediction is 1050 of 1072 on punctuation, 98.5%; read through `latin` it
+is 1072 of 1072. Full-width punctuation goes the other way and is the `symbol`
+slot's, 211 of 211.
+
+So the slot table is per class: `hangul` for a syllable, **`latin` for ASCII
+punctuation, digits and letters**, `symbol` for full-width marks. On this
+corpus that costs nothing on the 1491 punctuation characters both slots agree
+about and is the whole story on the other 22.
+
+### The glyph procedures are outlines, and the bold cut is one of them stroked
+
+37 Type 3 font objects across the ten forms, 844 code points between them, and
+772 of those code points carry a path. The 72 that do not are the 34 space
+glyphs and the whole of three fonts — `admrul`'s `T4` and `T5` and
+`kstartup`'s `T17` — whose every procedure is `d1` and a bare `f`: an advance
+and a bounding box and no ink, the selectable text layer over marks the page
+draws as plain paths. Their `Widths` are still the advances the reader
+positions that text with.
+
+A procedure looks like this, and it is `moel-2013`'s `(`:
+
+```
+332.000000 0.000000 0.000000 -199.000000 1000.000000 1000.000000 d1
+285 726 m
+132 589 70 402 70 226 c
+70 0 160 -152 281 -269 c
+304 -242 l
+...
+h
+f
+```
+
+`T6`'s `(` is the same path, to the coordinate, and ends `h / 20 w / B`
+instead of `h / f` — filled AND stroked with a 20-unit pen. **That is HWP
+faking a bold cut out of the regular outline**, and the fingerprint sees it:
+151 of the 487 distinct (code point, outline) pairs in the corpus are drawn by
+more than one font object, and of the **47 outlines that reach the export both
+filled and stroked, all 47 carry the SAME advance on both sides.** 진하게 does
+not move the pen on an HFT face either, which is #281's rule arrived at from
+the other direction and on a different font technology.
+
+### No face on this machine is any of them
+
+The identification pass rasterises each Type 3 glyph into a fixed em frame —
+x from −0.1 to 1.1 em, y from −0.35 to 1.05, 64 px/em, origin on the baseline
+— and scores the overlap against the same character drawn by each of the 492
+faces the machine and the repo can offer, and separately asks whether the
+candidate's own advances reproduce the `Widths` for every code point at once.
+
+**21 of the 37 Type 3 fonts have no candidate face that reproduces every
+width.** Every one of the 21 is a font that carries proportional Latin, which
+is where the whole disagreement lives: `moel-2013`'s `T2` best fit is 7 of its
+22 code points (Book Antiqua), `moel-2025`'s `T2` 9 of 24, `kstartup`'s `T5` 4
+of 12, `admrul`'s `T8` 3 of 7. The best outline overlap seen anywhere is
+0.782, on `moel-2013`'s `T6` against Book Antiqua, which is what a serif `(`
+scores against another serif `(`. This is #283's result on the embedded
+휴먼명조 — 0 of 400 — in a different place.
+
+The 16 that DO have an exact-width match are the half-width designs and the
+Hangul-only subsets, and their match is not an identification: 14 faces
+reproduce all 39 of `admrul`'s `T5` widths, and they are `BatangChe`,
+`GulimChe`, `DotumChe` and the bundled `NanumGothicCoding` — every
+fixed-pitch CJK face agrees with a design whose every Latin advance is half
+an em and every Hangul advance is one em.
+
+### What the HFT faces advance by
+
+Off the `Widths` arrays, grouped by the declared face the paired runs name:
+
+| code point | 명조 | 고딕 | 한양신명조 | 한양중고딕 | HCI Poppy |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Hangul syllable | | 1.0000 | | 1.0000 | |
+| `0`–`9` | | | 0.4980 | 0.5000 | 0.4980 |
+| `o` | | 0.5000 | | | |
+| `(` | 0.5000 | | 0.3320 | 0.2880 | |
+| `)` | 0.5000 | | 0.3320 | 0.2810 | |
+| `,` | 0.5000 | | 0.2480 | 0.2460 | |
+| `.` | 0.5000 | | 0.2480 | 0.2450 | |
+| `:` | 0.5000 | | 0.2480 | | |
+| `-` `[` `]` | | | 0.3320 | | |
+| `/` `~` | | | 0.6050 | | |
+| `%` | | | 0.8390 | | |
+| `“` `”` | | | 0.4980 | 0.3750 | |
+| `·` | | | 0.3840 | | |
+| `※` `○` `□` `․` | 1.0000 | | 1.0000 | 1.0000 | |
+
+Two designs, and the difference between them is the whole question.
+**명조 and 고딕 are half-width**: every non-Hangul code point is exactly 0.5 em
+and every Hangul one is 1.0, which is a 전각/반각 face and is what the
+fixed-pitch CJK faces above reproduce. **한양신명조, 한양중고딕 and HCI Poppy
+are proportional**, and inside one of them `(` and `)` are not the same width
+(0.2880 against 0.2810 on 한양중고딕). No fraction of the em produces that, and
+no rule keyed on a character class can either.
+
+Priced as the task asks — within ONE Type 3 font, does one width per character
+class cover every code point it carries — over all 844:
+
+| class | fonts | fonts split | code points | covered | fit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hangul | 18 | 0 | 597 | 597 | 100.0% |
+| digit | 14 | 0 | 75 | 75 | 100.0% |
+| space | 34 | 0 | 34 | 34 | 100.0% |
+| fw_punct | 16 | 2 | 27 | 25 | 92.6% |
+| punct | 20 | 15 | 92 | 48 | **52.2%** |
+| latin | 3 | 2 | 18 | 5 | **27.8%** |
+| hanja | 1 | 0 | 1 | 1 | 100.0% |
+| **all** | | | **844** | **785** | **93.0%** |
+
+**93.0%, against a gate of 99%.** Fifteen of the twenty fonts that carry
+punctuation carry more than one punctuation width. The weaker rule — one width
+per (declared face, code point) — is 350 of 350 on the code points the pairing
+can attribute, but that is an inventory of this corpus read off this corpus and
+it says nothing about a code point none of these ten forms happens to use.
+
+### `moel-2013` 118 and 141, per character
+
+`--corpus` runs the reconciliation on the two carriers. `ours` is
+`_measure_hwp` plus the `hh:spacing` gap; `hancom` is the pen distance between
+two aligned glyph origins; `cov` is how many of our characters a segment
+covers, because a segment wider than one character swallowed a character
+Hancom never drew.
+
+¶141, one cached line, `horzsize` 45128, our width over it by **+815**
+(45943 / 45128 = 1.0181):
+
+| cp | n | cov | declared | our metric | pdf | T3 em | ours | hancom | delta |
+| --- | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: |
+| `(` | 3 | 7 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.3320 | 4504 | 3850 | **+655** |
+| `)` | 3 | 3 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.3320 | 1930 | 1282 | **+649** |
+| `-` | 1 | 1 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.3320 | 1072 | 430 | **+642** |
+| `:` | 2 | 16 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.2480 | 9866 | 9595 | +271 |
+| `,` | 1 | 1 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.2480 | 375 | 321 | +53 |
+| a space | 1 | 1 | 한양신명조 | `H2MJSM.TTF` | `T2` | 0.2500 | 644 | 637 | +6 |
+| Hangul | 20 | 24 | 휴먼명조 | `NanumMyeongjo-Regular.ttf` | 휴먼명조 | | | | **−1128** |
+| **all** | | 53 | | | | | **44265** | **43117** | **+1148** |
+
+¶118 has two cached lines. Line 0 is a JUSTIFY non-last line and carries no
+comparable width, but its anchored terms read the same way: `T2` **+3078 over
+6 characters** (`“` and `”` +1235 each at 0.4980 em against our full em, `-`
++610), 휴먼명조 **−1823 over 35**, net +1255. Line 1: `T2` +1660 over 5,
+휴먼명조 −1658 over 31, **net +2**.
+
+That last line is the finding this section turns on. **The two errors cancel.**
+Substituting the Type 3 `Widths` for the punctuation and leaving the Hangul
+substitution alone does not close either carrier — it overshoots them:
+
+| line | ours − hancom | with the Type 3 `Widths` |
+| --- | ---: | ---: |
+| ¶118 line 0 | +1255 | **−2162** |
+| ¶118 line 1 | +2 | **−1659** |
+| ¶141 line 0 | +1148 | **−1390** |
+
+The HFT metric and the 휴먼명조 substitution are one problem with two terms of
+opposite sign, and a fix to either alone makes the carrier worse than a fix to
+both. `NanumMyeongjo-Regular.ttf` measures a syllable at 0.9502 em where the
+embedded 휴먼명조 advances 0.9964 (#267), which is the −1128 / −1823 / −1658
+above; the HFT punctuation is the +2276 / +3078 / +1660.
+
+### Nothing was changed
+
+The fixed-fraction rule does not reach its gate, and the per-code-point table
+that does is an inventory. `own_render.py` is untouched, so every measurement
+below is the one #281 recorded and none of it moved.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| channel | `cache` | `computed` |
+| --- | ---: | ---: |
+| `text_line_iou_mean` | 0.737467 | 0.665054 |
+| `ssim_mean` | 0.860650 | 0.840196 |
+| `ssim_inked_mean` | 0.388099 | 0.351454 |
+| `text_line_pair_rate_mean` | 0.850991 | 0.847426 |
+
+Page counts 10 of 10 exact under both policies: `admrul` 1/1, `gianmun-1ho`
+1/1, `gianmun-2ho` 1/1, `jeongbo` 1/1, `jumin` 3/3, `kstartup` 22/22,
+`moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6.
+`lineseg_vs_pdf.py --corpus` is 411 / 411 with 8566/8566 characters in
+agreeing lines. `advance_probe.py --corpus --punct` is +15013.0 HWPUNIT of
+punctuation over-measure on 545 installed advances, installed lines median abs
+10.56 and median +8.72, 23 of 103 installed lines and 25 of 411 exact within 2
+HWPUNIT, substituted lines 256.69, 49 of 2272 cached lines proven too wide,
+cached breaks 48 / 113 installed and 12 / 47 other.
+`layout_divergence.py --corpus` is 1635 / 111 / 279 / 28. `class_b_probe.py
+--corpus` roots: `text_rebreak:width` 165, `table_row_heights` 63,
+`empty_paragraph` 29, `cell_valign` 15, `forced_break` 7. `render_check.py` on
+`render-check-01` is 6 · 37 · 6 · 2 at 96 dpi and 14 · 31 · 4 · 2 at 144, 9 of
+9 pages exact both times.
+
+### What this costs the standing proposals
+
+* **The face question is now two questions, not one.** #267 called it "the
+  face": 308 of 411 comparable lines carry a stand-in. It splits. A run whose
+  declared face is `TTF` and not installed wants a metric-compatible
+  substitute — that is the 휴먼명조 case and #283's business. A run whose
+  declared face is `HFT` has no TrueType metric anywhere, because there is no
+  TrueType file: 한양신명조 is installed here as `H2MJSM.TTF`, and
+  `H2MJSM.TTF` is a DIFFERENT face from the HFT one Hancom drew with, whose
+  `(` is 0.5000 em against the HFT 0.3320. Resolving an HFT name to the
+  same-named TTF is not a substitution that can be made metric-compatible; it
+  is the wrong face.
+* **The population is 2197 of 8566 anchored characters, 25.6%**, and on the
+  punctuation class alone it is 1072 of 1513, 71%.
+* **What a fix would need is the HFT advance tables**, per family, per code
+  point. Nothing in this repo has them and nothing measured here derives them
+  from anything smaller: two of the six families in this corpus are 0.5 em
+  flat and three are proportional, and inside a proportional one `(` and `)`
+  differ.
+
+### Not proven
+
+- **The fixed-fraction rule is refuted, not merely unproven.** 93.0% is not a
+  near miss that more data would close: 15 of the 20 punctuation-carrying
+  fonts hold more than one punctuation width, and `(` ≠ `)` inside one face.
+  What is unproven is the opposite claim — that no OTHER parameterisation
+  fits. Only the per-class one was scored.
+- **Only 350 of 844 Type 3 code points can be attributed to a declared face.**
+  `lineseg_vs_pdf` pairs top-level paragraphs only, so most of a form's Type 3
+  glyphs — every one inside a table cell — never reach a run. The per-face
+  width table above is read off the 350; the 93.0% class fit is read off all
+  844 and needs no attribution.
+- **`HFT` is read off `hh:font@type` and trusted.** Nothing here opens an HFT
+  file or checks that HWP would resolve the name the way the attribute says.
+  A machine WITH the HFT faces installed might export them as TrueType
+  subsets and move every number in this section.
+- **The slot table is measured on one corpus and one disagreement.** The 22
+  characters that separate `latin` from `symbol` on ASCII punctuation are all
+  `( ) . :` on one declared pair (바탕 for `symbol`, HCI Poppy for `latin`) in
+  two forms. Every other punctuation character in the corpus has both slots
+  agreeing, so the rule is carried by 22 observations and the rest is
+  consistency, not evidence.
+- **The `Widths` are the export's declared advances, not glyph positions.**
+  They are the numbers a reader positions the text with and #258 measured that
+  the export reproduces the saved `hp:lineseg`, but the reconciliation above
+  still reads Hancom's side through MuPDF, exactly as #267 did.
+- **The outline score is a similarity and never a proof.** Both sides are
+  flattened to polygons and filled by an even-odd rule, and the frame is
+  64 px/em; two faces that differ in a hairline would score alike. It is used
+  here only to say that nothing installed is close, which is a negative claim
+  and the one the score can carry.
+- **`admrul`'s `T5` has no outlines at all**, so its identification rests on
+  widths alone, and 14 faces reproduce those widths because a half-width
+  design is not distinctive.
+- **The two carriers were not closed and are further from closing.** ¶118 line
+  1 agreed to +2 HWPUNIT before this slice because two errors of opposite sign
+  cancelled on it. Any change that fixes one of them alone will show as a
+  regression on that line.
+- **The corpus is the training set, again.** Every number here was read off
+  the same ten forms and the same machine's installed fonts.
