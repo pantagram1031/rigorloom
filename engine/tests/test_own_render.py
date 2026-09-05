@@ -4667,22 +4667,38 @@ def test_a_rowspan_cell_constrains_the_rows_it_spans_together():
     assert sum(_solve_rows(spanning)) == 1000 + 5000
 
 
-def test_the_declared_table_height_is_a_floor_on_the_rows_not_a_ceiling():
-    """A table whose content overflows grows; its other rows do not shrink.
+def test_an_overflowing_table_is_cut_at_its_declared_height_on_the_last_row():
+    """A table ends where ``hp:sz@height`` says, and the last row pays for it.
 
-    This is the whole of the change #271 makes.  The old reading rescaled
-    every row proportionally to keep the table at its declared height, which
-    on the corpus moved 50 rows to pay for the 8 cells whose computed content
-    is taller than the cache's.  Nothing licenses that: on the height the
-    cache states, the max rule already sums to the declared height on 70 of
-    70 tables, so the rescale never fires on a Hancom save at all.
+    Two things are being pinned at once, and the corpus witnesses them
+    separately.  That the table ends at the declared height: ``kstartup``
+    tables 5 and 36 overflow theirs by 78 and 282 HWPUNIT and Hancom's own
+    export draws both at the declared box (62416 and 66431 HWPUNIT measured
+    at the reference PDF's 841.0/841.89 page scale, against 62417 and 66435
+    predicted from the declaration and 62494 and 66717 from the overflow).
+    That the LAST row pays: table 5 draws its three interior rules, and its
+    first three rows keep the height they declare while the fourth is 78
+    short.  A proportional rescale -- what #273 removed, because it moved
+    forty innocent rows to pay for one -- would have moved all four.
     """
     overflowing = _row_table([(1000, None, 1), (1000, 4000, 1)],
-                             declared_total=2000)
+                             declared_total=5000)
     heights = _solve_rows(overflowing)
     assert heights[0] == 1000, "an innocent row was shrunk to pay for row 1"
-    assert heights[1] == 4000 + 200 + 300
-    assert sum(heights) > 2000
+    assert heights[1] == 4000, "the last row did not absorb the whole excess"
+    assert sum(heights) == 5000
+
+
+def test_a_row_the_excess_would_drive_negative_carries_into_the_one_above():
+    """The tracks always sum to the declared total and none goes negative.
+
+    No corpus table needs the carry -- the largest overflow is 2339 HWPUNIT
+    against a 3577 last row -- so this pins the arithmetic rather than a
+    measurement.
+    """
+    assert own_render.clip_tracks([1000, 2000, 500], 2600) == [1000, 1600, 0]
+    assert own_render.clip_tracks([1000, 2000, 500], 900) == [900, 0, 0]
+    assert own_render.clip_tracks([1000, 2000], 5000) == [1000, 2000]
 
 
 def test_a_table_whose_rows_fall_short_still_reaches_its_declared_height():
