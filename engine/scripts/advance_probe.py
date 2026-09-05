@@ -39,6 +39,16 @@ Usage::
     python engine/scripts/advance_probe.py FORM.hwpx REFERENCE.pdf
     python engine/scripts/advance_probe.py --corpus
     python engine/scripts/advance_probe.py --corpus --json out.json --no-text
+    python engine/scripts/advance_probe.py --corpus --punct
+
+``--punct`` adds the #281 punctuation pass, restricted to advances whose own
+face and whose successor's face are both the DECLARED, installed one: the
+advance of every punctuation CODE POINT against Hancom's, in HWPUNIT and in
+em; the inter-class boundary (Hangul→Latin and the rest) as Hancom's pen move
+minus the same class's own same-class baseline, split by the paragraph's
+``autoSpaceEAsianEng`` / ``autoSpaceEAsianNum``; and ``break_scoreboard``, the
+two-sided score ``fit_scoreboard`` cannot be — the cached break positions
+against ``compute_lines``' own, all-or-nothing per paragraph.
 
 WHAT IS MEASURED, AND WHAT IS NOT
 ---------------------------------
@@ -183,6 +193,40 @@ def char_class(ch):
 
 
 # -- the PDF side --------------------------------------------------------
+
+#: ``hp:paraPr`` attributes that would switch Hancom's 한글-영문 / 한글-숫자
+#: automatic spacing on.  Read off the file rather than assumed, because the
+#: OWPML default when the attribute is absent is not stated in the schema
+#: this repo holds and the corpus turns out to omit both everywhere.
+AUTOSPACE_ATTRS = ("autoSpaceEAsianEng", "autoSpaceEAsianNum")
+
+
+def autospace_flags(hwpx_path):
+    """``{paraPr id: {attr: value or None}}`` straight out of ``header.xml``.
+
+    ``own_render`` parses neither attribute, so this reads the header itself
+    rather than adding an unused field to the renderer's ``para_pr``.  A
+    ``None`` value means the attribute is ABSENT on that paragraph shape,
+    which is a different statement from it being ``"0"``.
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    out = {}
+    try:
+        with zipfile.ZipFile(hwpx_path) as archive:
+            data = archive.read("Contents/header.xml")
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return out
+    for el in ET.fromstring(data).iter():
+        if _local(el.tag) != "paraPr":
+            continue
+        pid = el.get("id")
+        if pid is None:
+            continue
+        out[pid] = {name: el.get(name) for name in AUTOSPACE_ATTRS}
+    return out
+
 
 def read_pdf_chars(pdf_path):
     """``lineseg_vs_pdf.PdfLines``, with every line's characters attached.
@@ -471,9 +515,28 @@ def analyse_line(ours, boxes, metrics, keep_text=True):
                                for _p, ch, cid in covered}),
         })
         if singleton and not has_tab:
+            # The character that FOLLOWS this one in our own text, and its
+            # class.  A singleton segment's Hancom distance is the pen move
+            # from this glyph's origin to the next one's, so it is this
+            # glyph's advance PLUS whatever Hancom inserts at the boundary
+            # between the two classes -- which is the quantity the
+            # inter-class gap table reads.  Recorded here because this is
+            # the only place both sides of the boundary are in hand.
+            nxt = ours[i2] if i2 < len(ours) else None
+            nxt_run = metrics.run(nxt[1], nxt[2]) if nxt is not None else None
             chars.append({
                 "char": covered[0][1] if keep_text else None,
                 "class": head["class"],
+                "slot": head["slot"],
+                "source": head["source"],
+                "next_char": (nxt[1] if (nxt is not None and keep_text)
+                              else None),
+                "next_class": nxt_run["class"] if nxt_run else None,
+                "next_source": nxt_run["source"] if nxt_run else None,
+                # The full-width cell this advance is a fraction of: the
+                # declared point size times ``hh:ratio``.  Dividing by it
+                # turns every advance into em and makes sizes comparable.
+                "cell_hwp": head["declared"],
                 "declared": head["declared"],
                 "resolved": head["resolved"],
                 # What Hancom's own exporter embedded for this glyph.  The
@@ -559,6 +622,7 @@ def probe_document(hwpx_path, pdf_path, repo_root=None, keep_text=True):
     renderer = own_render.OwnRenderer(hwpx_path, repo_root=repo_root)
     metrics = OurMetrics(renderer)
     pdf = read_pdf_chars(pdf_path)
+    flags = autospace_flags(hwpx_path)
     cursor = 0
     paragraphs = []
     skipped = defaultdict(int)
@@ -584,6 +648,11 @@ def probe_document(hwpx_path, pdf_path, repo_root=None, keep_text=True):
                 "section": section,
                 "paragraph": order,
                 "address": renderer.paragraph_index.get(id(el)),
+                "para_pr": el.get("paraPrIDRef"),
+                "autospace": flags.get(el.get("paraPrIDRef") or "",
+                                       {name: None
+                                        for name in AUTOSPACE_ATTRS}),
+                "condense": para.para_pr.get("condense"),
                 "cached_lines": len(para.linesegs),
                 "pdf_lines": len(pdf_run),
                 "lines": pair_lines(para, cells, pdf_run, metrics, keep_text),
@@ -666,6 +735,145 @@ def class_table(reports):
         })
     rows.sort(key=lambda row: -row["n"])
     return rows
+
+
+#: The two classes ``char_class`` puts a punctuation mark in.  ``fw_punct``
+#: is everything outside ASCII that is not a syllable, so it also holds the
+#: CJK brackets and the general-punctuation quotation marks.
+PUNCT_CLASSES = frozenset({"punct", "fw_punct"})
+
+
+def installed_chars(reports, classes=None):
+    """Every anchored single-character advance drawn in an INSTALLED face.
+
+    Restricted on BOTH sides of the boundary: the character's own face is the
+    declared one and so is its successor's, because a segment's distance is a
+    pen move whose far end is the next glyph's origin and a substituted
+    successor can be positioned by a metric that is not the declared face's.
+    The fallback slice is measuring the other half of this population; the
+    filter here is what keeps the two disjoint.
+    """
+    out = []
+    for report in reports:
+        for para in report["paragraphs"]:
+            auto = para.get("autospace") or {}
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    if entry.get("source") != "installed":
+                        continue
+                    if entry.get("next_source") not in (None, "installed"):
+                        continue
+                    if abs(entry["hancom_hwp"]) < 1e-9:
+                        continue
+                    if not entry.get("cell_hwp"):
+                        continue
+                    if classes is not None and entry["class"] not in classes:
+                        continue
+                    row = dict(entry)
+                    row["form"] = Path(report["document"]).stem
+                    row["autospace"] = auto
+                    out.append(row)
+    return out
+
+
+def punct_char_table(reports):
+    """Per punctuation CODE POINT, on installed faces: Hancom's em vs ours.
+
+    Grouped by the character itself rather than by class, because the class
+    is the hypothesis under test: #267 found ``fw_punct`` and ``punct``
+    over-measuring in aggregate, and an aggregate over a class cannot say
+    whether every mark in it is wrong by the same amount or one mark is
+    wrong by all of it.
+
+    ``em`` is the advance over the run's full-width cell (declared size times
+    ``hh:ratio``), so 1.0 is a full-width cell and 0.5 a half-width one.
+    """
+    buckets = defaultdict(list)
+    for row in installed_chars(reports, PUNCT_CLASSES):
+        buckets[(row["char"], row["class"], row["resolved"])].append(row)
+    rows = []
+    for (ch, klass, face), group in buckets.items():
+        hancom = [g["hancom_hwp"] for g in group]
+        ours = [g["ours_hwp"] for g in group]
+        cells = [g["cell_hwp"] for g in group]
+        rows.append({
+            "char": ch,
+            "codepoint": f"U+{ord(ch):04X}" if ch else None,
+            "class": klass,
+            "slot": group[0]["slot"],
+            "resolved": face,
+            "pdf_fonts": sorted({str(g["pdf_font"]) for g in group}),
+            "forms": sorted({g["form"] for g in group}),
+            "n": len(group),
+            "hancom_median_hwp": statistics.median(hancom),
+            "ours_median_hwp": statistics.median(ours),
+            "hancom_em": statistics.median(h / c for h, c
+                                           in zip(hancom, cells)),
+            "ours_em": statistics.median(o / c for o, c in zip(ours, cells)),
+            "ratio": statistics.median(o / h for o, h in zip(ours, hancom)),
+            "delta_median_hwp": statistics.median(o - h for o, h
+                                                  in zip(ours, hancom)),
+            "total_delta_hwp": sum(o - h for o, h in zip(ours, hancom)),
+        })
+    rows.sort(key=lambda row: -abs(row["total_delta_hwp"]))
+    return rows
+
+
+def gap_table(reports):
+    """The inter-class boundary, on installed faces, in em.
+
+    A singleton segment's Hancom distance is the pen move from one glyph's
+    origin to the next one's: the first glyph's own advance PLUS anything
+    Hancom inserts at the boundary.  The first glyph's own advance is not
+    separately observable in a PDF, so the baseline is measured rather than
+    assumed: for the same (character class, face, size) the median distance
+    when the SUCCESSOR IS OF THE SAME CLASS, where no inter-class rule can
+    apply.  The gap is the difference of the two medians, and the same
+    subtraction is done on our side so the two columns answer the same
+    question.
+
+    ``autoSpaceEAsianEng`` / ``autoSpaceEAsianNum`` are carried through from
+    the paragraph so the table can be split by them.  On this corpus both
+    attributes are ABSENT from every ``hp:paraPr``, which the formatter says
+    out loud rather than reporting a split that does not exist.
+    """
+    rows = installed_chars(reports)
+    baseline = defaultdict(list)
+    for row in rows:
+        if row["next_class"] == row["class"]:
+            key = (row["class"], row["resolved"], row["size_pt"])
+            baseline[key].append((row["hancom_hwp"] / row["cell_hwp"],
+                                  row["ours_hwp"] / row["cell_hwp"]))
+    base_med = {k: (statistics.median(h for h, _o in v),
+                    statistics.median(o for _h, o in v))
+                for k, v in baseline.items()}
+    pairs = defaultdict(list)
+    for row in rows:
+        if row["next_class"] is None or row["next_class"] == row["class"]:
+            continue
+        key = (row["class"], row["resolved"], row["size_pt"])
+        if key not in base_med:
+            continue
+        h_base, o_base = base_med[key]
+        flags = row["autospace"]
+        pairs[(row["class"], row["next_class"],
+               flags.get("autoSpaceEAsianEng"),
+               flags.get("autoSpaceEAsianNum"))].append(
+            (row["hancom_hwp"] / row["cell_hwp"] - h_base,
+             row["ours_hwp"] / row["cell_hwp"] - o_base,
+             row["hancom_hwp"] - row["ours_hwp"]))
+    out = []
+    for (left, right, eng, num), group in pairs.items():
+        out.append({
+            "from": left, "to": right,
+            "autoSpaceEAsianEng": eng, "autoSpaceEAsianNum": num,
+            "n": len(group),
+            "hancom_gap_em": statistics.median(h for h, _o, _d in group),
+            "ours_gap_em": statistics.median(o for _h, o, _d in group),
+            "gap_delta_em": statistics.median(h - o for h, o, _d in group),
+        })
+    out.sort(key=lambda row: -row["n"])
+    return out
 
 
 def comparable_lines(reports):
@@ -915,6 +1123,88 @@ def fit_scoreboard(hwpx_path, repo_root=None):
     return rows
 
 
+def break_scoreboard(hwpx_path, dpi=144, repo_root=None):
+    """Does our breaker put the line ends where the cache put them?
+
+    ``fit_scoreboard`` is one-sided -- it can only prove an over-measurement.
+    This is the two-sided score and it is the one a candidate advance rule
+    has to pass: for every paragraph the cache broke into more than one line,
+    the cached break positions in ``chars`` index against the ones
+    ``compute_lines`` produced on the real column.  A paragraph counts as
+    reproduced only when every break matches, so a rule that fixes one break
+    and breaks another scores worse, not the same.
+
+    Split by whether EVERY face on the paragraph is the declared, installed
+    one, because that is the only half of the corpus this slice may move:
+    a paragraph carrying a stand-in is the fallback slice's population and a
+    change that moved it would be measuring the other worker's subject.
+    """
+    renderer = BreakRecordingRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                                      layout_policy="computed")
+    renderer.render()
+    metrics = OurMetrics(renderer)
+    rows = []
+    for section in renderer.sections:
+        for el in section.iter():
+            if _local(el.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(el))
+            call = renderer.break_calls.get(address)
+            if call is None:
+                continue
+            para = own_render.Paragraph(el, renderer.defs["para_pr"])
+            if len(para.linesegs) < 2 or para.objects:
+                continue
+            cells = lineseg_vs_pdf.character_cells(para)
+            if _iattr(para.linesegs[-1], "textpos") > len(cells):
+                continue
+            spans = lineseg_vs_pdf.cached_split(para, cells)
+            cache_breaks = []
+            for _lo, hi in spans[:-1]:
+                cut = len(para.chars)
+                for index in range(len(para.chars)):
+                    if para.cell_start[index] >= hi:
+                        cut = index
+                        break
+                cache_breaks.append(cut)
+            computed = [end for _start, end in call["spans"][:-1]]
+            sources = {metrics.run(ch, cid)["source"]
+                       for ch, cid in para.chars}
+            rows.append({
+                "address": address,
+                "installed": sources <= {"installed"},
+                "cache_breaks": cache_breaks,
+                "computed_breaks": computed,
+                "match": cache_breaks == computed,
+            })
+    return rows
+
+
+def format_breaks(rows_by_form):
+    out = ["", "cached break positions reproduced by our own breaker, "
+                "multi-line paragraphs", ""]
+    out.append(f"{'form':<14} {'installed ¶':>12} {'match':>7} "
+               f"{'other ¶':>9} {'match':>7}")
+    out.append("-" * 54)
+    tot = [0, 0, 0, 0]
+    for stem, rows in rows_by_form:
+        inst = [r for r in rows if r["installed"]]
+        rest = [r for r in rows if not r["installed"]]
+        hit_i = sum(1 for r in inst if r["match"])
+        hit_r = sum(1 for r in rest if r["match"])
+        tot[0] += len(inst)
+        tot[1] += hit_i
+        tot[2] += len(rest)
+        tot[3] += hit_r
+        out.append(f"{stem[:14]:<14} {len(inst):>12} {hit_i:>7} "
+                   f"{len(rest):>9} {hit_r:>7}")
+    out.append("-" * 54)
+    share = f"{tot[1] / tot[0]:.4f}" if tot[0] else "n/a"
+    out.append(f"{'all':<14} {tot[0]:>12} {tot[1]:>7} {tot[2]:>9} {tot[3]:>7}"
+               f"   installed share {share}")
+    return "\n".join(out)
+
+
 def format_fit(rows_by_form):
     out = ["", "cached lines our own metrics say do NOT fit their own "
                 "hp:lineseg@horzsize", "(Hancom fitted them, so every one is "
@@ -1133,6 +1423,61 @@ def format_classes(rows):
     return "\n".join(out)
 
 
+def format_punct(rows, limit=40):
+    out = ["", "punctuation advance per CODE POINT, installed faces only "
+                "(em = advance / declared cell)", ""]
+    if not rows:
+        out.append("  (no punctuation advance is anchored on an installed "
+                   "face in this run)")
+        return "\n".join(out)
+    out.append(f"{'cp':<8} {'ch':<3} {'class':<9} {'slot':<8} "
+               f"{'n':>5} {'hancom':>8} {'h_em':>7} {'ours':>8} {'o_em':>7} "
+               f"{'ratio':>7} {'sum d':>9}  {'resolved':<26}")
+    out.append("-" * 118)
+    for row in rows[:limit]:
+        out.append(f"{row['codepoint'] or '?':<8} {row['char'] or '?':<3} "
+                   f"{row['class']:<9} {row['slot']:<8} {row['n']:>5} "
+                   f"{row['hancom_median_hwp']:>8.1f} {row['hancom_em']:>7.4f} "
+                   f"{row['ours_median_hwp']:>8.1f} {row['ours_em']:>7.4f} "
+                   f"{row['ratio']:>7.4f} {row['total_delta_hwp']:>9.1f}  "
+                   f"{row['resolved'][:26]:<26}")
+    if len(rows) > limit:
+        out.append(f"  ... {len(rows) - limit} further code points")
+    out.append(f"  total over-measure on installed punctuation: "
+               f"{sum(r['total_delta_hwp'] for r in rows):+.1f} HWPUNIT over "
+               f"{sum(r['n'] for r in rows)} advances")
+    return "\n".join(out)
+
+
+def format_gaps(rows, limit=24):
+    out = ["", "inter-class boundary, installed faces only: Hancom's pen "
+                "move minus the same class's same-class baseline, in em", ""]
+    if not rows:
+        out.append("  (no inter-class boundary is anchored on an installed "
+                   "face in this run)")
+        return "\n".join(out)
+    flagged = [row for row in rows
+               if row["autoSpaceEAsianEng"] is not None
+               or row["autoSpaceEAsianNum"] is not None]
+    out.append(f"{'from':<9} {'to':<9} {'eng':>6} {'num':>6} {'n':>6} "
+               f"{'hancom em':>10} {'ours em':>9} {'delta em':>9}")
+    out.append("-" * 70)
+    for row in rows[:limit]:
+        eng = "-" if row["autoSpaceEAsianEng"] is None \
+            else row["autoSpaceEAsianEng"]
+        num = "-" if row["autoSpaceEAsianNum"] is None \
+            else row["autoSpaceEAsianNum"]
+        out.append(f"{row['from']:<9} {row['to']:<9} {eng:>6} {num:>6} "
+                   f"{row['n']:>6} {row['hancom_gap_em']:>10.4f} "
+                   f"{row['ours_gap_em']:>9.4f} {row['gap_delta_em']:>9.4f}")
+    if not flagged:
+        out.append("  `-` in both flag columns: hp:paraPr declares NEITHER "
+                   "autoSpaceEAsianEng NOR autoSpaceEAsianNum anywhere in "
+                   "this run, so the split has one bucket and nothing here "
+                   "is evidence about what either flag does.")
+    return "\n".join(out)
+
+
 def format_pdf_sizes(rows, limit=18):
     out = ["", "the reference PDF's own font size against 1/600 inch "
                 "(no metric of ours enters this)", ""]
@@ -1262,6 +1607,10 @@ def build_parser():
                         help="skip the #265 carrier pass")
     parser.add_argument("--no-fit", action="store_true",
                         help="skip the cache-only overflow scoreboard")
+    parser.add_argument("--punct", action="store_true",
+                        help="the punctuation pass: per code point and per "
+                             "inter-class boundary, INSTALLED faces only, "
+                             "plus the candidate-rule scoreboard")
     return parser
 
 
@@ -1289,10 +1638,22 @@ def main(argv=None):
     line_stats = line_delta_stats(reports)
     counts = comparability_counts(reports)
     sizes = pdf_size_table(reports)
+    puncts = punct_char_table(reports) if args.punct else []
+    gaps = gap_table(reports) if args.punct else []
     print(format_runs(rows, undrawn, zero_hancom, limit=args.runs))
     print(format_classes(classes))
+    if args.punct:
+        print(format_punct(puncts))
+        print(format_gaps(gaps))
     print(format_pdf_sizes(sizes))
     print(format_grids(residual, rounding, line_stats, counts))
+    breaks = []
+    if args.punct:
+        for hwpx, _pdf in targets:
+            breaks.append((Path(hwpx).stem,
+                           break_scoreboard(hwpx, dpi=args.dpi,
+                                            repo_root=repo_root)))
+        print(format_breaks(breaks))
     fits = []
     if not args.no_fit:
         for hwpx, _pdf in targets:
@@ -1315,6 +1676,10 @@ def main(argv=None):
         payload = {
             "runs": rows,
             "classes": classes,
+            "punctuation": puncts,
+            "inter_class_gaps": gaps,
+            "break_scoreboard": [{"form": stem, "paragraphs": rows}
+                                 for stem, rows in breaks],
             "pdf_font_sizes": sizes,
             "hancom_grid_residual": residual,
             "rounding_hypotheses": rounding,
