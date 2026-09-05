@@ -5936,3 +5936,206 @@ currently mis-labelled `text_rebreak:width`.
   installed fonts. A machine with 휴먼명조 installed would move most of this
   table, which is precisely the point being made and also the reason none of
   it has been fitted to.
+
+## Which margin insets a table cell — measured, 2026-09-05
+
+#267 closed on two paragraphs whose class-B divergence it could show was
+*not* an advance failure: on `jumin` 46 the text column this renderer hands a
+cell's paragraphs is 631 HWPUNIT narrower than the `hp:lineseg@horzsize`
+Hancom saved for the same lines, on `saeopja` 166 it is 803 wider, and every
+cached line on both fits our own measurement of its text. It named the two
+numbers and stopped there. This run asks which attribute they are made of,
+over every cell on the corpus rather than two.
+
+### The instrument
+
+`engine/scripts/cell_column_probe.py FORM.hwpx [--corpus] [--json] [--no-text]
+[--paragraph N]` renders each form under the cache policy through a subclass
+that wraps `_render_cell_content` and `_render_paragraphs`. The column it
+records is the `avail_w_hwp` argument the first of those passes the second —
+the renderer's own number, not a second derivation of it that could be wrong
+in its own way. A stack of pending cells keeps the reading right for a table
+nested inside a cell: the innermost pending cell is always the one whose
+paragraphs are about to be laid out.
+
+Two deltas are reported, and the difference between them is load-bearing.
+`delta_cell` is `column - max(horzsize)` over the cell's cached lines — the
+quantity #267 named. `delta_line` is per line, `_line_box(para, i, column)[1]
+- horzsize`: the paragraph's own `hh:margin` and `intent` enter our line box
+and the cached one alike and cancel, so this one isolates the CELL's geometry
+from the paragraph's. A cell whose lines disagree on a value is reported
+`ragged` and left out of the fit.
+
+Six candidate terms are read per cell — the cell's `hp:cellMargin`
+left+right, the table's `hp:inMargin` left+right, those two selected by
+`hp:tc@hasMargin`, the left+right border widths of the cell's
+`hh:borderFill`, `hp:tbl@cellSpacing`, and the solved track sum minus the
+declared `cellSz@width` — and every signed combination in `{-1,0,+1}^6` is
+scored by how many cells it drives to zero. Scored twice, in fact: exactly,
+and to within 8 HWPUNIT (0.03 mm, a third of a pixel at 600 dpi), because a
+rule that is right but rounds differently from Hancom is otherwise
+indistinguishable from a rule that is simply wrong.
+
+### What the corpus says
+
+Over 1609 compared cells, 1599 of them measurable:
+
+| combination subtracted from the delta | exact | within 8 HWPUNIT |
+| --- | ---: | ---: |
+| nothing — the renderer as #267 left it | 63 | 716 |
+| `-margins +inmargin` | 160 | 1062 |
+| `-margins +inset` (`inmargin` or `margins` per `hasMargin`) | 165 | 1102 |
+| `+solved` | 218 | 996 |
+| `-margins +inmargin +solved` | 311 | 1359 |
+| **`-margins +inset +solved`** | **322** | **1406** |
+
+No combination carrying a border-width or `cellSpacing` term ever scored
+above one carrying neither. The corpus declares `cellSpacing="0"` on every
+table, so that is what "no evidence" looks like here rather than a claim that
+a non-zero one would be ignored.
+
+The residuals of the winner are not scattered: 1401 of the 1599 land in
+`[0, 4)`, 322 at 0, 348 at 1, 404 at 2, 327 at 3. That is a floor, and the
+probe checks the obvious candidate directly — **3164 of the 3177 cached
+in-cell `horzsize` values are exact multiples of 4 HWPUNIT**. So the cache's
+line box is the column quantised down onto the same 4 HWPUNIT grid #263
+measured the PERCENT leading on, and the last three units of every delta
+above are that quantiser and not a rule.
+
+### The rule
+
+**A cell's content inset is the table's `hp:inMargin` unless the cell's
+`hp:tc@hasMargin` says otherwise.** `hasMargin` — 셀 여백 사용 — is the
+override flag: with it set the cell's own `hp:cellMargin` applies, and with
+it clear (`"0"`, or absent) the table's default is in force and the cell's
+stored `hp:cellMargin` is a value the editor left behind. This is the OWPML
+table model's own arrangement and the HWP 5.0 table record's: the table
+record carries one default cell margin for every cell it owns, and a cell
+carries an override plus the flag that arms it.
+
+This renderer read `hp:cellMargin` unconditionally, which is right on the 56
+corpus cells that declare `hasMargin="1"` and wrong on the other 1553.
+
+### The two named cells
+
+**`jumin` 46** (table 1, row 2, col 1, `colSpan="4"`, `hasMargin="0"`) is the
+clean case, and its −631 is three terms:
+
+| term | HWPUNIT |
+| --- | ---: |
+| `cellMargin` 510+510 read where `inMargin` 283+510 was in force | −227 |
+| solved track sum 43561 against the declared `cellSz` 43968 | −407 |
+| the 4 HWPUNIT floor on the cached `horzsize` | +3 |
+| **total** | **−631** |
+
+Both its lines carry the same delta, its paragraph declares no left or right
+margin, and `delta_cell` and `delta_line` agree — it is cell geometry end to
+end. After the fix its column is 42768 and its delta is −404, all of it the
+second term.
+
+**`saeopja` 166 is not a cell-geometry failure at all, and #267's +803 is a
+measurement artefact of comparing a column against `max(horzsize)`.** Its
+cell's `cellMargin` and `inMargin` are both 141+141, so nothing here moves.
+The paragraph declares `margin_left=400`, `margin_right=400`,
+`indent=-1900`, and per line:
+
+| line | cached `horzpos` / `horzsize` | ours | delta |
+| ---: | --- | --- | ---: |
+| 0 | 400 / 46672 | 0 / 47075 | +403 |
+| 1 | 400 / 46672 | 400 / 46675 | +3 |
+| 2 | 400 / 46672 | 400 / 46675 | +3 |
+
+Lines 1 and 2 are the 4 HWPUNIT floor and nothing else: the column is right.
+The +803 of the cell-level delta is `400 + 400 + 3` — the paragraph's own two
+margins, which narrow the cached line box and not our column. What IS wrong
+on this paragraph is line 0: a negative `intent` of −1900 moves our first
+line box to `horzpos` 0 and Hancom left it at 400. That is `_line_box`'s
+negative-intent reading, already recorded above as a measured choice between
+three readings within 35 boxes of each other on 3214 — and this cell is one
+of the boxes that separates them. It is not touched here.
+
+### What changed in the code
+
+`own_render.cell_inset(tc, tbl)` is new and `_table_tracks` calls it where it
+used to read `hp:cellMargin` off the cell. It resolves all four sides
+together, because the flag governs the margin and not one axis of it; a table
+declaring no `hp:inMargin` leaves the cell's own margin standing, since
+overriding it with zero would invent a column. Seven unit tests on synthetic
+tables cover inherited against overridden, an absent flag, either side of the
+pair missing, `colSpan` (which widens the box and never the inset), and
+`cellSpacing` and border widths (which do not enter it).
+
+The 4 HWPUNIT floor is **not** applied. It is a property of the saved
+`hp:lineseg`, worth at most 3 HWPUNIT, and nothing here shows it is also a
+property of the column Hancom broke lines in.
+
+### After
+
+Against the reference PDFs, `render_scoreboard.py --corpus --dpi 144`, means
+over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8311 | 0.2766 | 0.6453 | 52 / 53 |
+| `cache` after | **0.8420** | **0.3283** | **0.6729** | 52 / 53 |
+| `computed` before | 0.8243 | 0.2773 | 0.6339 | 53 / 53 |
+| `computed` after | **0.8336** | **0.3246** | **0.6595** | 53 / 53 |
+
+Every form improved or held; no page count moved on either policy. The
+largest single move is `gianmun-2ho`, whose inked SSIM goes 0.0563 → 0.3621
+in cache mode — a one-page table document whose cells were all inset by
+510/510 where 283/283 was in force. `jumin` 0.6917 → 0.7109, `moel-2013`
+0.7937 → 0.8193, `saeopja` 0.7710 → 0.7893. `lineseg_vs_pdf.py --corpus`
+stays 411/411 with 8566/8566 characters, as it must: it reads the cache
+against the PDF and never through this renderer's cell layout.
+`render_check.py` on `render-check-01` is unchanged at both 96 dpi
+(6 match / 37 close / 6 differ / 2 unsupported, 9 pages) and 144 dpi
+(14 / 31 / 4 / 2, 9 pages) — its tables declare the same value in both
+margins, so the fix cannot move them.
+
+**`layout_divergence.py --corpus` went the other way, and the reason is worth
+recording rather than hiding.** Class B rose 320 → 350, agreement fell 1371 →
+1350, class A fell 135 → 118, class C rose 233 → 243. `class_b_probe.py
+--corpus` says where: `text_rebreak:width`, the mechanism this whole line of
+work is chasing, is **167 before and 167 after — unchanged**. The entire rise
+is `table_row_heights` 82 → 109 and `cell_valign` 14 → 17, and it is
+concentrated on `moel-2013` (class B 22 → 78, `table_row_heights` 0 → 53)
+while `moel-2025` falls (170 → 142, `table_row_heights` 28 → 0).
+
+That measures a real thing. Class B is cache-policy against computed-policy —
+this renderer against itself — and a narrower cell column re-breaks more of
+its own text, so a column that used to be 284 HWPUNIT too wide on `moel-2013`
+was absorbing an advance error that now shows. The channel that grades
+against Hancom rather than against ourselves improved on both policies and on
+every form. The fix removed a compensating error; it did not create one.
+
+### Not proven
+
+- **The solved track sum is still wrong, and it is not an attribute-handling
+  error.** `+solved` is worth 1359 → 1406 cells on its own, and after this fix
+  it is the *only* term left in the winning combination. What it names is
+  structural: `solve_tracks` forces one global column set on a table whose
+  rows do not agree on one. `jumin`'s table 1 declares `hp:sz@width` 50897 and
+  its row 0 spans five columns totalling exactly that, while rows 31–38 span
+  the same five columns totalling 48067 and rows 33/34/38 split them 29386 +
+  18681. Those constraints are mutually contradictory, the even-split and
+  proportional-rescale fallbacks distribute the contradiction across every
+  column, and the known columns come out 5.87% wide — 6929 declared, 7336
+  solved. Hancom evidently lays each row out from its own cells' declared
+  `cellSz@width`; reproducing that means giving up the single global track
+  set, which changes where every table draws and is not a surgical fix. Left
+  alone. The bands it leaves are `jumin` −683 on 19 cells and −407 on 4,
+  `kstartup` −156 on 60, `gianmun-1ho` −874 on 2, and on `saeopja` a spread of
+  +13 to +20 on 132 cells that is small, dense and unexplained by any of the
+  six terms.
+- **Whether the 4 HWPUNIT floor belongs in the column.** Measured on the
+  saved `horzsize` (3164/3177), not on the breaker's input. Applying it would
+  take 1401 cells to exact and move no break by more than 3 HWPUNIT, which is
+  precisely why the corpus cannot decide it.
+- **`cellSpacing` and border insets are untested, not disproven.** Every
+  corpus table declares `cellSpacing="0"`, so the fit had no signal to find.
+- **Ten cells are ragged** — their lines disagree on a delta — and are outside
+  the fit: 5 on `saeopja`, 4 on `kstartup`, 1 on `jumin`. `saeopja` 166's cell
+  is one of them, and its raggedness is the negative-`intent` reading above.
+- **The corpus is the training set.** 1609 cells from ten government forms,
+  and the `hasMargin="1"` arm of the rule rests on 56 of them.
