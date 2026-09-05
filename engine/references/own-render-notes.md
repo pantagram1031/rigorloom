@@ -4888,3 +4888,210 @@ breaker about `<hp:lineBreak/>` is a separate change and is not made here.
   line box's end moving with the character that moved. No per-line
   attribution was made, and `admrul`'s −0.0056 is the largest single move on
   the board.
+
+## An empty paragraph is one line — measured, 2026-09-05
+
+PR #255 found the defect and priced nothing: `_flow_lines` takes its computed
+branch only `if mode == LINE_LAYOUT_COMPUTED and para.chars`, so a paragraph
+with no characters falls through to its cached `hp:lineseg`, and a package
+this repo wrote carries none. The block came out **0 high**, and the seat
+probe read the whole of it as a constant 1600 HWPUNIT that every case sat
+above its analytic seat. The three rows where the probe changed the empty
+paragraph's line spacing and character height and the read-out moved by
+nothing were the same fact seen from the side: there was no line for those
+declarations to scale.
+
+That path is every empty paragraph in every edited document, which is the
+whole population this renderer exists to draw. This is what the height should
+be, measured against the one oracle there is.
+
+### The oracle, and what it says
+
+A Hancom save DOES cache a lineseg for an empty paragraph, so the authoring
+engine's own answer is in the corpus. Ten converted forms, every top-level
+`hp:p` whose character stream is empty:
+
+* **101 empty top-level paragraphs**, every one with exactly **one** cached
+  `hp:lineseg` and exactly **one** `hp:run` — an `<hp:t></hp:t>` that draws
+  nothing and declares a shape;
+* **none of them carries an object.** An inline picture, table or equation
+  occupies a character cell, so a paragraph holding one is not empty by this
+  test at all and takes the computed branch already. Its box was measured
+  separately and is unchanged here: on the 63 top-level corpus paragraphs
+  whose whole character stream is one inline object, the cached `vertsize`
+  is the object's `hp:sz` height plus its own vertical `hp:outMargin`, exact
+  on **63 of 63**.
+
+**The rule.** An empty paragraph is ONE line, and it is the same line every
+other paragraph gets: `vertsize` is the tallest `hh:charPr@height` its runs
+declare, and the advance is that height put through the paragraph's own
+`hh:lineSpacing` exactly as a text line's is. In code it is
+`_line_metrics(para, 0, 0)` — the empty-run pass #247 grew already owns a run
+sitting at the end of the character stream, and for a paragraph with no
+characters that is every run it has.
+
+Against the cache, all 101:
+
+| quantity | exact |
+| --- | --- |
+| `vertsize` == the run's declared height | **101 / 101** |
+| `textheight` == `vertsize` | 101 / 101 |
+| `baseline` == `round(0.85 * vertsize)` | 101 / 101 |
+| `spacing` from `hh:lineSpacing` | **91 / 101** |
+
+**There is no counter-example to the rule.** The ten `spacing` misses are all
+`PERCENT` and all inside 2 HWPUNIT — the cache four times 2 above the rule and
+six times 1 below it, 0.02 pt, 0.0004 px at 144 dpi — which is the same
+rounding residual #247 measured on 883 of
+the corpus' 2370 cached TEXT lines. It is one residual on both kinds of line,
+not a second rule for empty ones. The misses, for the record:
+
+| form | para | spacing | cached | rule | residual |
+| --- | --- | --- | ---: | ---: | ---: |
+| `gianmun-1ho` | 1 | PERCENT 150 on 900 | 452 | 450 | +2 |
+| `kstartup` | 1, 41 | PERCENT 135 on 700 | 244 | 245 | −1 |
+| `kstartup` | 3 | PERCENT 130 on 1500 | 452 | 450 | +2 |
+| `kstartup` | 72 | PERCENT 143 on 700 | 300 | 301 | −1 |
+| `kstartup` | 149 | PERCENT 135 on 1100 | 384 | 385 | −1 |
+| `moel-2013` | 22 | PERCENT 145 on 1300 | 584 | 585 | −1 |
+| `moel-2013` | 24 | PERCENT 125 on 1300 | 324 | 325 | −1 |
+| `moel-2013` | 145 | PERCENT 150 on 1300 | 652 | 650 | +2 |
+| `nrf` | 10 | PERCENT 130 on 1300 | 392 | 390 | +2 |
+
+The declared spacings across the 101 are `PERCENT` only — 160 (46), 180 (24),
+140 (7), 135 (5), 130 (5), 150 (4), 200 (3), 120 (2), and one each of 100,
+125, 143, 145 and **0**. The `PERCENT 0` one is `admrul` paragraph 2: the
+cache gives it `vertsize` 400 and `spacing` −400, an advance of exactly zero,
+and the rule reproduces both. No corpus empty paragraph declares `FIXED` or
+`BETWEEN_LINES`; those two come from the probe below and from the arithmetic,
+not from Hancom.
+
+### What computed does for the same paragraphs, and why the corpus cannot move
+
+Ignoring the cache with `--layout-policy computed` does NOT reach the defect
+on any corpus form, because the fall-through reads the cached lineseg and
+every corpus empty paragraph has one. Measured block height, rule minus what
+the flow pass gives today, over all 101:
+
+| delta, HWPUNIT | paragraphs |
+| --- | --- |
+| 0 | 91 |
+| +1 | 6 |
+| −2 | 4 |
+
+which is the ±2 residual again and nothing else. Exactly one of the 101 is
+measured 0 high today and it is `admrul`'s `PERCENT 0` paragraph, whose height
+IS zero.
+
+So the fix is scoped to the case that has no answer: an empty paragraph **and**
+no cached lineseg. Where the authoring engine left a seat it is still read,
+not recomputed — which is what keeps the corpus untouched, and is also the
+honest reading, since the cache is the oracle the rule was fitted to.
+
+### The public probe
+
+`tests/corpus/render-check/measure_seat_probe.py` grows a grid on `P2`, its
+empty paragraph: `hh:charPr@height` 10 / 12 / 15 pt against `PERCENT` 160 /
+180 / 200, `FIXED 2400` and `BETWEEN_LINES 600`. `BETWEEN_LINES` and the 15 pt
+shape are new paraPr/charPr the probe registers itself; `build_render_check`
+declares neither. **Path A does not exist for this package and path C is NOT
+RUN**: the comparison is the analytic seat the probe computes from the values
+it authored, so this says the flow pass obeys the document's declarations, not
+that Hancom obeys them the same way.
+
+Before, every one of the 15 grid cases put the read-out paragraph at the same
+23800 HWPUNIT — the empty paragraph contributed nothing, whatever it declared.
+After, all 15 sit on their analytic seat:
+
+| charPr | PERCENT 160 | PERCENT 180 | PERCENT 200 | FIXED 2400 | BETWEEN_LINES 600 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10 pt | 1600 | 1800 | 2000 | 2400 | 1600 |
+| 12 pt | 1920 | 2160 | 2400 | 2400 | 1800 |
+| 15 pt | 2400 | 2700 | 3000 | 2400 | 2100 |
+
+Across the whole probe — 33 cases, 231 paragraph rows — the seats off their
+analytic value go **165 → 0**. That includes the 18 pre-existing cases, whose
+constant −1600 offset #255 recorded is gone: `baseline` reads 25400 against
+25400, and the empty paragraph's own `ls_130` / `ls_200` / `ls_fixed` /
+`pt8` / `pt14` / `pt24` rows now move the read-out by −300 / +400 / +800 /
+−320 / +640 / +2240, which is what the declarations predict and what #255
+listed as the analytic column those rows were failing.
+
+### After
+
+Nothing on the corpus moved, under either policy, and that is the intended
+result rather than a disappointment.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms, before
+and after, both policies:
+
+| policy | text_line_iou | ssim | ssim_inked | pair_rate |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` | 0.645275 | 0.831060 | 0.276567 | 0.836393 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 |
+
+Identical to six decimals on every channel, before and after, per form and in
+aggregate. Page counts are unchanged and exact on nine of ten forms under
+either policy: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1, `jeongbo`
+1/1, `jumin` 3/3, `moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6,
+and `kstartup` 21 against a reference 22 under `cache` and 22/22 under
+`computed`. Every verdict is unchanged, `kstartup`'s standing failure
+included.
+
+`layout_divergence.py --corpus` is byte-identical too, both printed tables and
+all ten per-form JSONs. The state it holds at: seats differing `admrul` 15,
+`gianmun-1ho` 3, `gianmun-2ho` 3, `jeongbo` 1, `jumin` 3, `kstartup` 165,
+`moel-2013` 154, `moel-2025` 187, `nrf` 53, `saeopja` 6; a first seat
+divergence on 32 pages across four forms, carried by `page_move` on
+`kstartup` (3 of its 20), `d_prev_advance_hwp` on `moel-2013` (4 of 4) and
+`moel-2025` (3 of 6), and `page_top` on `nrf` (1 of 2) — the corpus' only
+`page_top` carrier, and the trailing-empty-paragraph pagination #252 declined
+to touch. `nrf`'s own first divergence is `page_move`, −71630 HWPUNIT at
+page 1 paragraph 36.
+
+`render_check.py` on `render-check-01` is byte-identical at 96 dpi (match 6,
+close 37, differs 6, unsupported 2) and 144 dpi (match 14, close 31,
+differs 4, unsupported 2), 9 of 9 pages exact both times — and the reason is
+worth stating rather than assuming, because the change was expected to move
+it: **`render-check-01` has no empty paragraph.** All 227 of its `hp:p`,
+top-level and in cells, put at least one character down, and so does every one
+of `table-break-probe.hwpx`'s 979. The one Rigorloom-written document with a
+Hancom reference cannot ask this question, and the seat probe — which has no
+reference — is the only place the change shows.
+
+### Not proven
+
+- **No reference render says an empty line is drawn this tall.** The rule is
+  fitted to the authoring engine's own cache, and every one of the 101
+  paragraphs it was fitted to keeps that cache after the change. The only
+  documents the new code path actually runs on are ones nobody has a Hancom
+  export of. Path C is the measurement that would close this and it was not
+  run.
+- **`FIXED` and `BETWEEN_LINES` have no corpus witness for an EMPTY
+  paragraph.** All 101 declare `PERCENT`. Those two branches are
+  `_line_metrics`' existing arithmetic, measured on text lines, reused; the
+  probe and the unit tests pin the arithmetic, not the engine's agreement
+  with it.
+- **`BETWEEN_LINES` is unmeasured everywhere, not just here.** No corpus form
+  declares it on any paragraph, empty or not, so `spacing = max(0, value)` is
+  a reading of 여백만 지정 and not a measurement.
+- **Computed layout still reads the cache for an empty paragraph.** Under
+  `--layout-policy computed` a paragraph WITH a lineseg keeps it, which is
+  the inconsistency #247's branch already had and is why the corpus does not
+  move. Making computed recompute those too would cost at most 2 HWPUNIT on
+  10 of the 101 — the residual above — and it is not done, because the cache
+  is the oracle the rule was fitted to and overriding it with a fit to itself
+  buys nothing measurable.
+- **The ±2 HWPUNIT `PERCENT` residual is still unexplained.** #247 left it
+  open on 883 text lines; it is on 10 of 101 empty ones too, at the same
+  size, which is evidence it is one rounding rule rather than two, and no
+  more than that.
+- **Multiple runs on an empty paragraph is untested against Hancom.** Every
+  corpus empty paragraph has exactly one run, so "the tallest shape the runs
+  declare" is a max over one element there. The max is #247's rule carried
+  over, and the unit tests exercise it, but no cached empty paragraph in this
+  corpus has two runs to confirm it.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened. It is a Rigorloom-written report, so it is exactly the
+  population this change moves, and what it is worth there is the operator's
+  measurement to make.
