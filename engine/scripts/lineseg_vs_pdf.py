@@ -306,67 +306,57 @@ def merge_visual_lines(pieces):
     return merged
 
 
-# What ``hp:lineseg@textpos`` counts.  It indexes the paragraph's character
-# STREAM, and an inline control inside ``<hp:t>`` occupies a cell in that
-# stream even when it draws no glyph.  ``own_render.Paragraph.chars`` is built
-# from ``itertext()``, which walks straight past those elements, so slicing it
-# at a ``textpos`` runs one cell late for every control before the cut — which
-# is exactly what a ``<hp:lineBreak/>`` earlier in the paragraph does.  This
-# stream is built element by element instead.  Each control is given the
-# whitespace character it stands for, so ``normalise`` deletes it and the two
-# sides stay comparable.
-_T_CELL = {
-    "tab": "\t",
-    "lineBreak": "\n",
-    "fwSpace": "　",
-    "nbSpace": " ",
-    "hypen": "­",
-}
-# Formatting marks: a paired begin/end that wraps text and takes no cell.
-_T_NO_CELL = {"markpenBegin", "markpenEnd", "insertBegin", "insertEnd",
-              "deleteBegin", "deleteEnd", "titleMark", "bookmark"}
+# What ``hp:lineseg@textpos`` counts.  It indexes the paragraph's TEXT
+# STREAM, in which an inline control occupies cells even when it draws no
+# glyph: one for a char-type control such as ``<hp:lineBreak/>``, eight for an
+# inline or extended one such as ``<hp:tab/>`` or an ``<hp:fieldBegin>``.
+# ``own_render.Paragraph`` builds that stream alongside ``chars`` and the map
+# between the two (``cell_start``), so this module READS that map rather than
+# keeping a second model of the same thing: the comparison below then tests
+# the renderer's own reading of ``textpos`` and not a copy of it.
+#
+# Every cell no character sits in is filled with a space, which the matching
+# key deletes -- exactly as it deletes the whitespace a line break eats.
+_CONTROL_CELL = " "
 
-# The ``hp:run`` children that occupy one cell each, as
-# ``own_render.Paragraph`` reads them.
-_OBJECT_NAMES = ("tbl", "equation", "pic", "ole", "chart", "container",
-                 "rect", "ellipse", "line", "arc", "polygon", "curve",
-                 "connectLine", "textart", "video")
-
-
-def _t_cells(element, cells, unknown):
-    """Append one cell per character and per cell-taking control."""
-    for ch in element.text or "":
-        cells.append(ch)
-    for kid in element:
-        name = own_render._local(kid.tag)
-        if name in _T_CELL:
-            cells.append(_T_CELL[name])
-        elif name not in _T_NO_CELL:
-            # Not a control this tool knows.  It is counted as one cell,
-            # which is the common case, and reported so the guess is visible.
-            unknown[name] = unknown.get(name, 0) + 1
-            cells.append(own_render.OBJECT_SLOT)
-        _t_cells(kid, cells, unknown)
-        for ch in kid.tail or "":
-            cells.append(ch)
+# The inline elements whose cell width the renderer is not guessing at.  It
+# gives anything it does not name one control's worth of cells, and an
+# unnamed one is reported so the guess stays visible in the record.
+_NAMED_CONTROLS = (own_render.TEXTPOS_CELLS_CHAR
+                   | own_render.TEXTPOS_CELLS_MARK
+                   | frozenset({
+                       "tab", "tbl", "equation", "pic", "ole", "chart",
+                       "container", "rect", "ellipse", "line", "arc",
+                       "polygon", "curve", "connectLine", "textart", "video",
+                       "secPr", "colPr", "fieldBegin", "fieldEnd", "footNote",
+                       "endNote", "header", "footer", "autoNum", "newNum",
+                       "pageNum", "pageHiding", "bookmark", "indexmark",
+                       "hiddenComment"}))
 
 
 def character_cells(para, unknown=None):
     """The paragraph's ``textpos`` stream: one entry per cell it counts."""
     unknown = {} if unknown is None else unknown
-    cells = []
-    for run in own_render._kids(para.el, "run"):
+    cells = [_CONTROL_CELL] * para.cell_count
+    for index, (ch, _cid) in enumerate(para.chars):
+        cells[para.cell_start[index]] = ch
+    for name in _inline_names(para.el):
+        if name not in _NAMED_CONTROLS:
+            unknown[name] = unknown.get(name, 0) + 1
+    return cells
+
+
+def _inline_names(el):
+    """Every inline element name inside this paragraph's runs."""
+    for run in own_render._kids(el, "run"):
         for child in run:
             name = own_render._local(child.tag)
-            if name == "t":
-                _t_cells(child, cells, unknown)
-            elif name == "ctrl":
-                for note in child:
-                    if own_render._local(note.tag) in ("footNote", "endNote"):
-                        cells.append(own_render.OBJECT_SLOT)
-            elif name in _OBJECT_NAMES:
-                cells.append(own_render.OBJECT_SLOT)
-    return cells
+            if name in ("t", "ctrl"):
+                for sub in child.iter():
+                    if sub is not child:
+                        yield own_render._local(sub.tag)
+            else:
+                yield name
 
 
 def paragraph_text(cells):

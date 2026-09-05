@@ -19,10 +19,11 @@ Five things:
   * PyMuPDF's line records are regrouped into visual lines inside a matched
     run — a widely tracked line arrives as several records at one height —
     and never across a page or a height;
-  * ``hp:lineseg@textpos`` indexes a character stream in which an inline
-    control occupies a cell.  ``own_render.Paragraph.chars`` does not carry
-    those cells, so this module builds its own, and the difference is one
-    whole character per control.
+  * ``hp:lineseg@textpos`` indexes a text stream in which an inline control
+    occupies cells -- one for a char-type control, a control's worth for an
+    inline or extended one.  ``own_render.Paragraph`` carries that stream
+    beside ``chars`` and the map between them, and this module reads that map
+    rather than keeping a second copy of the model.
 """
 from __future__ import annotations
 
@@ -191,17 +192,29 @@ def test_an_inline_line_break_occupies_one_textpos_cell():
              '</hp:t></hp:run>')
     para = paragraph(inner, [0, 3])
     cells = LVP.character_cells(para)
-    assert "".join(cells) == "가나\n다라"
-    # own_render's own stream is the one that is short, and by exactly the
-    # control: this is why the split has to be read off `character_cells`.
+    assert LVP.normalise("".join(cells)) == "가나다라"
+    # own_render's CHARACTER stream is the one that is short, and by exactly
+    # the control: this is why the split is read over the cell stream.
     assert len(cells) - len(para.chars) == 1
+    assert cells[2] == LVP._CONTROL_CELL
 
 
-def test_a_tab_and_a_full_width_space_each_occupy_one_cell():
+def test_a_full_width_space_is_one_cell_and_a_tab_is_a_control_s_worth():
+    """One cell for a char-type control, eight for an inline one.
+
+    Which is what ``own_render.textpos_cells`` says, and this module reads
+    that rather than keeping its own table.
+    """
     inner = ('<hp:run charPrIDRef="0"><hp:t>가<hp:tab/>나<hp:fwSpace/>다'
              '</hp:t></hp:run>')
-    cells = LVP.character_cells(paragraph(inner, [0]))
-    assert "".join(cells) == "가\t나　다"
+    para = paragraph(inner, [0])
+    cells = LVP.character_cells(para)
+    assert LVP.normalise("".join(cells)) == "가나다"
+    assert len(cells) == 3 + own_render.CELL_PER_CONTROL + 1
+    # 가 at 0, the tab's cells next, then 나; the full-width space is one
+    # cell, so 다 follows immediately after it.
+    assert para.cell_start == [0, 1 + own_render.CELL_PER_CONTROL,
+                               3 + own_render.CELL_PER_CONTROL]
 
 
 def test_a_formatting_mark_occupies_no_cell():
@@ -211,12 +224,14 @@ def test_a_formatting_mark_occupies_no_cell():
     assert "".join(cells) == "가나다"
 
 
-def test_an_unknown_inline_control_is_counted_as_a_cell_and_reported():
+def test_an_unknown_inline_control_is_counted_as_a_control_and_reported():
     inner = ('<hp:run charPrIDRef="0"><hp:t>가<hp:somethingNew/>나'
              '</hp:t></hp:run>')
     unknown = {}
     cells = LVP.character_cells(paragraph(inner, [0]), unknown)
-    assert len(cells) == 3
+    # An element the renderer does not name gets a control's worth of cells,
+    # which is the common case, and the guess is reported.
+    assert len(cells) == 2 + own_render.CELL_PER_CONTROL
     assert unknown == {"somethingNew": 1}
 
 

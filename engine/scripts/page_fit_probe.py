@@ -108,10 +108,14 @@ def seg_facts(seg):
 
 
 def _has_text(para, lo, hi):
-    """Whether linesegs ``[lo, hi)`` of ``para`` carry any character."""
-    positions = [_iattr(seg, "textpos") for seg in para.linesegs]
-    start = positions[lo]
-    end = positions[hi] if hi < len(positions) else len(para.chars)
+    """Whether linesegs ``[lo, hi)`` of ``para`` carry any character.
+
+    Through the paragraph's cell map: ``textpos`` counts cells an inline
+    control occupies and ``chars`` has no entry for.
+    """
+    spans = para.lineseg_spans()
+    start = spans[lo][0]
+    end = spans[hi][0] if hi < len(spans) else len(para.chars)
     return any(ch.strip() for ch, _ in para.chars[start:end])
 
 
