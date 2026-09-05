@@ -4428,6 +4428,120 @@ def test_a_dot_is_square_and_a_long_dash_is_twice_a_dash():
     assert dot[1] == dash[1] == longd[1]
 
 
+# ------------------------------------------------- cell margins (hasMargin)
+
+def _synthetic_table(has_margin, cell_margin=(510, 510, 510, 510),
+                     in_margin=(283, 510, 141, 141), col_span=1,
+                     cell_spacing=0, border_fill=None, widths=(20000,)):
+    """A one-row table whose single cell declares both margins.
+
+    Everything the cell's text column could plausibly be inset by is present
+    and different from everything else, so a test that passes cannot be
+    passing by coincidence of two equal numbers.
+    """
+    from xml.etree import ElementTree as ET
+
+    flag = "" if has_margin is None else ' hasMargin="%s"' % has_margin
+    inner = ""
+    if in_margin is not None:
+        inner = ('<hp:inMargin left="%d" right="%d" top="%d" bottom="%d"/>'
+                 % in_margin)
+    own = ""
+    if cell_margin is not None:
+        own = ('<hp:cellMargin left="%d" right="%d" top="%d" bottom="%d"/>'
+               % cell_margin)
+    cells = "".join(
+        '<hp:tc%s%s>%s<hp:cellAddr colAddr="%d" rowAddr="0"/>'
+        '<hp:cellSpan colSpan="%d" rowSpan="1"/>'
+        '<hp:cellSz width="%d" height="1200"/>'
+        '<hp:subList vertAlign="TOP"/></hp:tc>'
+        % (flag,
+           ' borderFillIDRef="%s"' % border_fill if border_fill else "",
+           own, index, col_span, width)
+        for index, width in enumerate(widths))
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="1" colCnt="%d" cellSpacing="%d">'
+        '<hp:sz width="%d" height="1200"/>%s<hp:tr>%s</hp:tr></hp:tbl>'
+        % (len(widths), cell_spacing, sum(widths), inner, cells))
+
+
+def _first_cell(tbl):
+    return own_render._kids(own_render._kids(tbl, "tr")[0], "tc")[0]
+
+
+def test_a_cell_without_hasMargin_is_inset_by_the_tables_inMargin():
+    """hp:tc@hasMargin="0" means the stored hp:cellMargin is not in force.
+
+    The HWP 5.0 table record stores one default cell margin for the whole
+    table (hp:inMargin) and a cell overrides it only when its own flag says
+    so.  Reading hp:cellMargin unconditionally is what made jumin's
+    paragraph-46 cell 227 HWPUNIT narrower than the column Hancom laid it out
+    in — the same 510/510 against 283/510 this fixture declares.
+    """
+    tbl = _synthetic_table("0")
+    inset = own_render.cell_inset(_first_cell(tbl), tbl)
+    assert inset == {"left": 283, "right": 510, "top": 141, "bottom": 141}
+
+
+def test_a_cell_with_hasMargin_keeps_its_own_cellMargin():
+    tbl = _synthetic_table("1")
+    inset = own_render.cell_inset(_first_cell(tbl), tbl)
+    assert inset == {"left": 510, "right": 510, "top": 510, "bottom": 510}
+
+
+def test_an_absent_hasMargin_reads_as_no_override():
+    """Absent is not "1": the default is the table's, as the flag's own
+    default value says."""
+    tbl = _synthetic_table(None)
+    assert (own_render.cell_inset(_first_cell(tbl), tbl)
+            == own_render.cell_inset(_first_cell(_synthetic_table("0")),
+                                     _synthetic_table("0")))
+
+
+def test_a_table_with_no_inMargin_leaves_the_cells_own_margin_standing():
+    """The inherited value has to come from somewhere.  When the table
+    declares none, the cell's own margin is the only statement in the file
+    and overriding it with zero would invent a column."""
+    tbl = _synthetic_table("0", in_margin=None)
+    inset = own_render.cell_inset(_first_cell(tbl), tbl)
+    assert inset == {"left": 510, "right": 510, "top": 510, "bottom": 510}
+
+
+def test_an_overriding_cell_with_no_cellMargin_falls_back_to_the_table():
+    tbl = _synthetic_table("1", cell_margin=None)
+    inset = own_render.cell_inset(_first_cell(tbl), tbl)
+    assert inset == {"left": 283, "right": 510, "top": 141, "bottom": 141}
+
+
+def test_the_inset_is_the_same_whatever_the_cell_spans():
+    """colSpan widens the BOX, never the inset.
+
+    A spanning cell is inset once on each side, not once per column it
+    covers, so the inset must not scale with the span.
+    """
+    one = _synthetic_table("0", col_span=1)
+    three = _synthetic_table("0", col_span=3, widths=(20000, 8000, 6000))
+    assert (own_render.cell_inset(_first_cell(one), one)
+            == own_render.cell_inset(_first_cell(three), three))
+
+
+def test_cellSpacing_and_border_widths_do_not_enter_the_inset():
+    """Measured, not assumed.
+
+    Fitting the corpus's 1599 measurable in-cell line boxes against every
+    signed combination of cell margin, table inMargin, border width,
+    cellSpacing and the solved-versus-declared box, no combination carrying a
+    border or cellSpacing term scored above one carrying neither
+    (``engine/scripts/cell_column_probe.py --corpus``).  The corpus declares
+    cellSpacing=0 on every table, so this is what "no evidence for it" looks
+    like in a test rather than a claim that a non-zero one would be ignored.
+    """
+    plain = _synthetic_table("0")
+    dressed = _synthetic_table("0", cell_spacing=283, border_fill="7")
+    assert (own_render.cell_inset(_first_cell(plain), plain)
+            == own_render.cell_inset(_first_cell(dressed), dressed))
+
+
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
     """Row 0 holds a one-line cell and a two-line cell; it must fit both.
 
