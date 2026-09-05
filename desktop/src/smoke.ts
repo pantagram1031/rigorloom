@@ -3405,6 +3405,18 @@ async function phaseSettings() {
   await settled(300);
   checkDom("the settings pane is on screen", !!document.querySelector('[data-testid="settings"]'),
     domState());
+  const legal = domText('[data-testid="product-legal"]');
+  checkDom(
+    "the product carries the required HWP public-format attribution",
+    legal.includes("본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다."),
+    legal,
+  );
+  checkDom(
+    "the product states non-affiliation and bundles no Hancom Office",
+    legal.includes("제휴하거나 그 승인을 받은 제품이 아닙니다") &&
+      legal.includes("한컴오피스와 그 바이너리·SDK·글꼴·템플릿은 포함하지 않습니다"),
+    legal,
+  );
   checkDom("all three providers are offered",
     !!document.querySelector('[data-testid="provider-mock"]') &&
       !!document.querySelector('[data-testid="provider-router"]') &&

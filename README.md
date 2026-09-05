@@ -1,5 +1,11 @@
 # Rigorloom
 
+본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+Rigorloom은 한컴 또는 한컴오피스와 제휴하거나 그 승인을 받은 제품이 아니며,
+한컴오피스 바이너리·SDK·글꼴·템플릿을 배포하지 않습니다. 사용자가 설치한
+한컴오피스의 Automation 연동은 해당 설치와 이용 조건이 허용하는 경우에만
+사용해야 합니다.
+
 **A general HWP/HWPX document engine with deterministic gates, graded
 render proof, and installable capability modules — Hancom-free by
 default.**
