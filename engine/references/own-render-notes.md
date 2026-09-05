@@ -8812,3 +8812,216 @@ not moving is what a correctly gated rule has to do.
 - **The corpus is the training set, and now it is also the table.** The
   widths were read off the same ten forms every score above is computed on.
   A form outside the corpus gets the coverage it gets.
+
+## No public line crosses the body bottom — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#256 bracketed Hancom's page-bottom fit test off 41 cached page BREAKS and
+could not close it: the strictest surviving candidate kept a maximum overhang
+of −296 HWPUNIT, so no corpus page kept a line whose box crossed the body
+bottom and five candidates fitted every case equally. A private
+development-validation document has Hancom's editor keeping a 1000/800 line
+whose box crosses by **+566** and moving one at **+626** — one document, one
+page, not in this repository. This run asks whether the public corpus holds a
+sibling for that +566, and the answer is that **it does not, and the corpus
+is now tighter than #256 left it rather than looser.**
+
+Two populations #256 never looked at are the whole reason to ask again. It
+excluded breaks inside a table cell and pages carrying an anchored object,
+and it only ever measured the last line of a page that ends in a cached
+break. A line seated deep in a cell, or on a page with no break after it, was
+never measured at all.
+
+### The instrument: `--scan-all`
+
+`engine/scripts/page_fit_probe.py --corpus --scan-all` drops the event
+structure entirely and walks every cached `hp:lineseg` the cache path seats.
+A cell lineseg's `vertpos` is measured from its own cell's text origin, so
+the conversion to page coordinates needs the cell's seat, and `SeatScanner`
+rederives none of it: it renders the document under the cache policy and
+records the origin every `_render_paragraphs` call is handed — the body top
+for a top-level page, and for a cell the origin `_render_cell_content`
+computes from the table's own placement (`_render_floating` →
+`_object_origin`), the row offset (`_table_tracks`), the cell inset and the
+vertical alignment. The `shift` `_render_paragraphs` accumulates for a
+relaid-out paragraph is deliberately not applied: that is this renderer's
+correction to its own reflow, and the seat under measurement is Hancom's.
+
+**3209 linesegs, 2552 of them inside a table cell.** 629 carry kept-side
+evidence. Four exclusions account for the rest, and each is another rule that
+already explains the seat:
+
+| excluded | n | why |
+| --- | ---: | --- |
+| cell of a table that may not split | 1691 | `pageBreak` is not `CELL`, so the table moves whole or overflows; the table rule put the line there |
+| empty line | 842 | draws no ink |
+| line taller than the body box | 3 | `_place_block`'s `cursor > 0` guard places it without running the fit test |
+| seat off the sheet | 44 | kstartup's table 36 declares `hp:pos@vertOffset="4294967083"` — an unsigned wrap of a small negative — and seats its cells four thousand million HWPUNIT down the page. The same broken POSITION the wild-`vertOffset` guard (kstartup's own limit 12) already refuses to treat as content. |
+
+That last one is worth naming: read without the guard it is the largest
+overhang in the corpus by six orders of magnitude, off a coordinate no page
+has.
+
+### The top tail
+
+Every scanned line whose box, under `vertsize`, ends within 300 HWPUNIT of
+the body bottom — 21 of 3209. Overhang in HWPUNIT, positive meaning the box
+crosses.
+
+| form | pg | para | where | vertsize | `vsz−spc` | `baseline` | `vertsize` | evidence |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| moel-2013 | 5 | 157 | top-level, whole inline table | 74535 | +4027 | −6433 | **+4747** | no — taller than the page |
+| moel-2013 | 5 | 231 | tbl5 r19,c0 | 800 | +4323 | +4203 | **+4323** | no — table may not split |
+| moel-2013 | 6 | 232 | top-level, whole inline table | 73634 | +3126 | −7199 | +3846 | no — taller than the page |
+| moel-2013 | 5 | 230 | tbl5 r19,c0 | 800 | +3523 | +3403 | +3523 | no — empty |
+| moel-2013 | 6 | 294 | tbl6 r15,c0 | 1000 | +3422 | +3272 | +3422 | no — table may not split |
+| moel-2013 | 6 | 293 | tbl6 r15,c0 | 1000 | +2422 | +2272 | +2422 | no — table may not split |
+| nrf | 0 | 36 | top-level | 1600 | +834 | +1554 | +1794 | no — empty (the seats E2.6 measured) |
+| nrf | 0 | 37 | top-level | 1600 | +834 | +1554 | +1794 | no — empty |
+| moel-2013 | 6 | 292 | tbl6 r15,c0 | 1000 | +1422 | +1272 | +1422 | no — empty |
+| moel-2013 | 5 | 229 | tbl5 r18,c2 | 1000 | +1221 | +1171 | +1321 | no — table may not split |
+| saeopja | 1 | 157 | top-level, whole inline table | 76989 | −517 | −10245 | +1303 | no — taller than the page |
+| saeopja | 1 | 217 | tbl1 r20,c0 | 800 | +541 | +901 | +1021 | no — table may not split |
+| moel-2013 | 6 | 291 | tbl6 r15,c0 | 1000 | +422 | +272 | +422 | no — table may not split |
+| moel-2013 | 5 | 228 | tbl5 r18,c2 | 1000 | +121 | +71 | +221 | no — table may not split |
+| jeongbo | 0 | 0 | top-level, whole inline table | 75655 | −1151 | −11379 | **−31** | **yes** |
+| saeopja | 1 | 216 | tbl1 r19,c0 | 800 | −221 | −181 | −61 | no — table may not split |
+| kstartup | 18 | 698 | top-level | 1200 | −562 | −262 | −82 | no — empty |
+| kstartup | 7 | 397 | top-level | 1000 | −758 | −308 | −158 | no — empty |
+| kstartup | 6 | 393 | top-level | 1000 | −815 | −365 | −215 | no — empty |
+| kstartup | 9 | 422 | top-level, whole inline table | 63300 | −776 | −9791 | −296 | yes |
+| saeopja | 4 | 413 | top-level, whole inline table | 75387 | −2119 | −11607 | −299 | yes |
+
+Read the "evidence" column and the result is already there. **Fourteen lines
+in the corpus have a box that crosses the body bottom, and not one of them is
+a text line the fit test decided.** Seven are cells of a table declaring
+`pageBreak="NONE"` — a table Hancom may not cut, so it overflows rather than
+paginating, which is #257's reading of `moel-2013 +4747` confirmed row by
+row. Three are top-level linesegs whose `vertsize` is a whole inline table's
+height and which exceed the body box outright. Four are empty.
+
+And the three lines that DO carry evidence — jeongbo −31, kstartup −296,
+saeopja −299 — are all whole-inline-table linesegs too. **No line of text
+anywhere in the corpus comes within 396 HWPUNIT of the body bottom.**
+
+### The bracket after the scan
+
+`kept` is now per-line over 629 evidence lines rather than the deepest line
+of each break page. The event pass's own kept side is folded back in
+(`evt_MAX`) because the two disagree about exactly one line — #278's
+anchor-overflow fix rebases the page kstartup's table-7 holder paragraph sits
+on, which is the line #256 read `top` = −1368 off — and neither reading owns
+it, so the bound is the larger.
+
+| candidate | scan kept MAX | text-only MAX | evt MAX | **union MAX** | rejected MIN | fits |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `top` | −1696 | −1696 | −1368 | **−1368** | −445 | no (r! = 4) |
+| `vertsize − spacing` | −720 | −720 | −720 | **−720** | +395 | yes |
+| `vertsize // 2` | −1046 | −1046 | −868 | **−868** | +255 | yes |
+| `baseline` | −591 | −591 | −518 | **−518** | +731 | yes |
+| `textheight` | −31 | −396 | −296 | **−31** | +911 | yes |
+| `vertsize` | −31 | −396 | −296 | **−31** | +911 | yes |
+| `vertsize + spacing` | +1521 | +391 | +1521 | **+1521** | +1427 | no (k! = 13) |
+
+The rejected side is unchanged from #256: a line that was never seated cannot
+be scanned, and only the break pass knows about it. Nine of the 41 breaks
+move a line whose would-be overhang under `vertsize` is under +300, and every
+one of them is deeply negative — the closest is `moel-2025` page 2 at −193,
+and none is an unforced text line, so none adds rejected-side evidence. There
+is no near miss on the rejected side either.
+
+So the public bracket tightens on one end only: **`vertsize` and `textheight`
+go from −296 to −31**, and the five surviving candidates are still
+unseparated. −31 is the tightest public measurement of the fit boundary that
+exists, and it is still on the safe side of it.
+
+### The export draws the seat, including the ink below the box
+
+The scan reads the reference PDF for each tail line and locates its ink by
+text. Where the line has text of its own to find, **Hancom's export draws it
+where the cache seated it**, to within the glyph-box tightening a PDF bbox
+always costs:
+
+| form | pg | para | cache top | ink top | Δ | ink bottom vs body bottom |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| moel-2013 | 5 | 231 | 73311 | 73213 | −98 | **+4229** |
+| moel-2013 | 6 | 294 | 72210 | 72201 | −9 | +3409 |
+| moel-2013 | 6 | 293 | 71210 | 71205 | −5 | +2413 |
+| moel-2013 | 5 | 229 | 70109 | 70016 | −93 | +1223 |
+| saeopja | 1 | 217 | 75907 | 75889 | −18 | +1007 |
+| moel-2013 | 6 | 291 | 69210 | 69201 | −9 | +409 |
+| moel-2013 | 5 | 228 | 69009 | 68925 | −84 | +132 |
+| saeopja | 1 | 216 | 74825 | 74809 | −16 | −73 |
+
+Every one of them lands on the page the cache says, and none moved. So the
+public corpus DOES print ink below the derived body bottom — up to 4229
+HWPUNIT of it, measured in Hancom's own export rather than inferred from a
+seat — and every instance is a cell of a table that may not split. A whole
+inline table's lineseg has no text of its own, so the four `+tbl` rows report
+"text not found"; that is the matcher having nothing to match, not a
+disagreement.
+
+### kstartup table 9, the one place Hancom cut through a cell
+
+The cache path draws it as two fragments, rows [0, 3) and [3, 4) — #278's
+split, and this scan finds no other split table in the corpus. The deepest
+text line on the FIRST fragment sits at page-relative 64131 with `vertsize`
+1000 and `spacing` 800:
+
+| candidate | overhang |
+| --- | ---: |
+| `top` | −6869 |
+| `vertsize − spacing` | −6669 |
+| `vertsize // 2` | −6369 |
+| `baseline` | −6019 |
+| `textheight` / `vertsize` | −5869 |
+| `vertsize + spacing` | −5069 |
+
+Nearly six thousand HWPUNIT of clearance. Hancom cut that cell where its
+CONTENT ran out, not where the body bottom is: the fragment's own box reaches
+70624 (#278 measured it drawn) but its last line of text stops well short.
+The one corpus place where Hancom cut through a cell says nothing about the
+fit rule.
+
+### Is there a public witness?
+
+**No.** No page in the public corpus carries a Hancom-placed text line whose
+box crosses the body bottom under any candidate that survives #256's two
+refutations. The private +566 has no public sibling, and after this scan the
+public corpus says the opposite of it more firmly than before: the tightest
+kept box ends **31 HWPUNIT above** the boundary, and the tightest kept box
+belonging to an actual line of text ends 396 above.
+
+Nothing in the renderer changed in this slice. It is a probe-only pass, and
+`own_render.py` is untouched.
+
+### Not proven
+
+- **The scan measures where the CACHE PATH draws, not the raw cached
+  `vertpos`.** For a top-level page on nine of the ten forms those are the
+  same number. They are not the same for the one kstartup page #278 rebases,
+  and they are not the same for a cell, where the seat is the renderer's own
+  table geometry. If `_table_tracks` solves a row a few HWPUNIT tall, every
+  cell line under it moves with the error. The reference-PDF column is the
+  check on that and it agrees to under 100 HWPUNIT on every line it could
+  match — but only on the eight lines that had text to match.
+- **A vertically centred cell's seat is this renderer's estimate.** The
+  offset comes from `_paragraph_block_extent`, which is a computed height,
+  not one the file states. A `CENTER` or `BOTTOM` cell whose block extent we
+  get wrong moves its lines by half or all of the error.
+- **The `pageBreak="NONE"` exclusion is 1691 of 3209 lines.** It rests on
+  `docs/research/table-page-break-rule.md`, which is measured, but it is the
+  single largest exclusion in this run and everything it removes is exactly
+  the population with ink below the body bottom. If that reading is wrong,
+  the tail's top thirteen rows come back as evidence and every candidate
+  above `top` is refuted at once.
+- **The rejected side did not grow.** The scan adds 629 kept-side lines and
+  zero rejected-side ones, because a line the cache never seated has no seat
+  to scan. The `+395` upper bound on the surviving band is still five events
+  on two forms, all of them from #256.
+- **`vertsize == textheight` on every corpus lineseg**, so those two columns
+  remain indistinguishable. Unchanged from #256.
+- **The corpus still has no intra-paragraph page break.** The scan confirms
+  it rather than fixing it: nothing here manufactures the shape the private
+  holdout has.
