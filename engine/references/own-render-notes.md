@@ -9401,3 +9401,223 @@ not moving is what a correctly gated rule has to do.
 - **The corpus is the training set, and now it is also the table.** The
   widths were read off the same ten forms every score above is computed on.
   A form outside the corpus gets the coverage it gets.
+
+## Which stand-in rule wins the break test on top of the table — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#292 shipped the measured HFT width table alone and recorded what it costs:
+the substituted per-line median went −120 → −382 HWPUNIT, because the
+휴먼명조 stand-in's −60 per Hangul character stopped being cancelled by the
+HFT error the table had just fixed. It also recorded that `table + cell`
+closes those widths but loses the break test 19 / 47 against 21. This slice
+asks the question that leaves open: on top of the table, is there a FORM of
+#283's stand-in rule that keeps the breaks?
+
+**There is not, and the reason is 15 to 86 HWPUNIT.** Four forms of the rule
+were priced. Every one of them closes the substituted widths, every one of
+them leaves the installed control at 48 / 113, and every one of them loses
+the break test on the same one or two paragraphs — two `moel-2025`
+paragraphs whose line overflows its column by between 15 and 86 HWPUNIT out
+of 48190, which is 0.03% to 0.18% of the box and about a tenth of one
+character. **Nothing ships.**
+
+### The instrument
+
+`hft_width_table.py --standin`, which prices six variants where `--score`
+priced four. A variant is installed by rebinding `own_render.OwnRenderer` and
+`advance_probe.BreakRecordingRenderer` for the length of one measurement, so
+the break test is the REAL breaker on real column widths; `table` is the
+shipped renderer untouched and every other row is read against it.
+
+Two things had to be fixed to ask the question at all.
+
+`advance_probe.py --fallback-rules` was BROKEN on the tip. #292 gave
+`_advance_hwp` a `rel_sz` argument and `RuleRenderer` still declared six
+parameters, so every rule the probe scores raised `TypeError` on the first
+chunk. It also called `super()._advance_hwp` without putting the measured
+table in front, which would have scored each rule against a renderer that no
+longer exists. Both are fixed, and there is a test that compares the
+override's signature to the seam's rather than trusting it.
+
+`break_scoreboard`'s rows now carry the column, the line spans and the line
+widths the breaker actually had. Naming the paragraph that flipped is half an
+answer; the other half is the width that moved and the box it moved across.
+
+### The second measured table
+
+`measure_standin_scale`, for variant `scale`: Hancom's advance over ours per
+DECLARED face, median over every anchored character of that face, measured
+WITH the HFT table active so what is left is the stand-in's own error and not
+one the table has already answered. It carries one ratio per face and nothing
+else — no glyph, no outline, no font program.
+
+| declared face | n | scale |
+| --- | ---: | ---: |
+| 휴먼명조 | 3529 | **1.0494** |
+| HCI Poppy | 123 | 1.0004 |
+| HY울릉도M | 36 | 1.0023 |
+| 고딕 | 24 | 0.9970 |
+
+1.0494 is 1 / 0.9529, and #283 measured the stand-in at 0.9536 of Hancom on
+Hangul: the two agree, and the residual 0.0007 is the Latin and punctuation
+this median also covers. Only 휴먼명조 is materially off 1.
+
+### The five rules, priced
+
+`table` is #292's shipped tree. `cell` is #283's rule, a full-width cell
+advances by the declared cell. `bundled` is `cell` gated on `bundled` alone
+rather than on everything that is not `installed`. `fwchars` is `cell` per
+CHARACTER, so a Hangul run with one Latin character in it still gets full
+cells for its Hangul. `pen` is `cell` with the running total taken to the
+nearest whole 1/600 inch — #283's correction that the grid is on the pen —
+and `scale` is the table above.
+
+| variant | exact widths, installed | exact, substituted | installed ¶ | other ¶ | over-measurements |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **table** (baseline) | 24 / 103 | 0 / 308 | **48 / 113** | **21 / 47** | **30 / 2272** |
+| table + cell | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + bundled | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + fwchars | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + pen | 24 / 103 | **35 / 308** | 48 / 113 | 20 / 47 | 31 / 2272 |
+| table + scale | 24 / 103 | 23 / 308 | 48 / 113 | 20 / 47 | 31 / 2272 |
+
+| variant | installed median | med abs | substituted median | med abs |
+| --- | ---: | ---: | ---: | ---: |
+| table | +5.72 | 8.30 | −381.90 | 381.90 |
+| table + cell / bundled / fwchars | +5.72 | 8.30 | +24.83 | 25.62 |
+| table + pen | +5.72 | 8.30 | **−2.83** | **17.81** |
+| table + scale | +5.72 | 8.30 | −2.19 | 19.07 |
+
+The carriers, ours − Hancom in HWPUNIT:
+
+| line | table | cell / bundled / fwchars | pen | scale |
+| --- | ---: | ---: | ---: | ---: |
+| ¶118 line 0 | −1850.2 | −128.0 | −234.4 | −228.7 |
+| ¶118 line 1 | −1659.2 | +22.9 | −81.0 | −75.5 |
+| ¶141 line 0 | −1068.4 | +85.4 | **+14.1** | +18.0 |
+
+`table+cell` reproduces #292's published row to the digit — 7 / 308, 19 / 47,
+33 over-measurements, +24.83 median, and the three carriers at −128.0, +22.9
+and +85.4 — which is the instrument's control: the new scoring path is the
+old one with more rows in it.
+
+**Three of the five rules are the same rule.** `cell`, `bundled` and
+`fwchars` are identical on every channel measured, to the digit and on the
+carriers. That is two negative findings, not a coincidence:
+
+* the GATE does not matter on this corpus. The substituted population that is
+  not `bundled` is #283's 123 `HCI Poppy` digits plus 60 stray characters,
+  and `HCI Poppy` and 고딕 are HFT faces the measured table now answers for,
+  so the wider gate has almost nothing left to fire on.
+* the CHUNKING does not matter either. `cell` gives up on a chunk with one
+  Latin character in it and `fwchars` does not, and no line in the corpus is
+  decided by the difference: a Korean form's Hangul runs are not mixed at the
+  chunk level often enough to move a break.
+
+### The two paragraphs that flip, and by how much
+
+`moel-2025` ¶64 and ¶160, which are the same 78-character sentence twice —
+the contract preamble `(이하 "사업주"라 함)과(와) … (이하 "근로자"라 함)은
+다음과 같이 근로계약을 체결한다.`, sixteen leading blanks and twelve more in
+the middle where the two names are written in by hand. The cache breaks it
+after 64 characters. The column is 48190 HWPUNIT.
+
+Our own measurement of those 64 characters, found by binary-searching the
+column at which our breaker first puts the break where the cache put it, so
+the number below is the real breaker's own width and not a reconstruction:
+
+| variant | ¶64 | fill | ¶160 | fill |
+| --- | ---: | ---: | ---: | ---: |
+| table | 47020 | 0.9757 | 47083 | 0.9770 |
+| cell / bundled / fwchars | 48205 | 1.0003 | 48276 | **1.0018** |
+| pen | **48132** | 0.9988 | 48202 | 1.0003 |
+| scale | **48135** | 0.9989 | 48206 | 1.0003 |
+
+That is the whole of the break test's 21 → 20 → 19. The line carries about
+20 substituted Hangul characters; the rule adds roughly +60 HWPUNIT to each
+of them, +1185 in total, and the headroom the baseline had was 1170. **The
+rule is right about the width and the line was fitted with 2.4% to spare, so
+correcting a −1170 error puts it 15 over.** `pen` and `scale` add 74 less
+than `cell` does, which is enough to save ¶64 and not enough to save ¶160.
+
+Neither paragraph is evidence about the SHAPE of the stand-in rule. They are
+evidence that at this fill our width and Hancom's are the same number, and
+that whichever side of 48190 we land on is decided by a term smaller than the
+one we are still missing — #283's punctuation slot, +197.76 HWPUNIT per
+installed ASCII punctuation character, of which this line has six.
+
+### Nothing was changed
+
+The renderer is untouched: the four rules live in the probe, as #292's `cell`
+did, because pricing another slice's proposal is all this slice may do with
+it. Every corpus channel is #292's, re-measured on this branch.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms, `cache`
+0.736589 / 0.861944 / 0.393719 / 0.850991 and `computed` 0.684242 / 0.844732
+/ 0.358878 / 0.846045 for `text_line_iou_mean` / `ssim_mean` /
+`ssim_inked_mean` / `text_line_pair_rate_mean`. Page counts 10 of 10 exact
+under both policies: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1,
+`jeongbo` 1/1, `jumin` 3/3, `kstartup` 22/22, `moel-2013` 7/7, `moel-2025`
+7/7, `nrf` 4/4, `saeopja` 6/6.
+
+`lineseg_vs_pdf.py --corpus` **411 / 411** comparable paragraphs equal,
+8566 / 8566 characters in agreeing lines. `layout_divergence.py --corpus`
+classes A / B / C / D 1713 / 98 / 214 / 28. `class_b_probe.py --corpus`
+roots `text_rebreak:width` **100**, `table_row_heights` 63,
+`empty_paragraph` 29, `cell_valign` 15, `forced_break` 7.
+`advance_probe.py --corpus --punct`: total over-measure on installed
+punctuation +135.8 HWPUNIT over 545 advances, installed per-line median
++5.72 and median abs 8.30 with 24 of 103 exact, substituted −381.90 with
+0 of 308, cached breaks 48 / 113 installed and 21 / 47 other, proven
+over-measurements 30 of 2272.
+
+`render_check.py` on `render-check-01` is 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144, 9 of 9 pages exact both times. **It resolves 16
+faces and every one of them is `installed`**, over 18205 characters — it
+declares no HFT face (#292) and it carries no stand-in either, so it cannot
+test this slice's subject at all. Its not moving is a control and not a
+verdict.
+
+`advance_probe.py --corpus --fallback-rules` runs again, and with the table
+in front its own break test says the same thing from the other instrument:
+`current` (which is now table-alone) 21 / 47 substituted multi-line, `cell`
+19 / 47, and every `cell+grid` variant 20 / 47, with the installed column at
+48 / 113 throughout. The grid variants there quantise each ADVANCE where
+`pen` quantises the running total; both land on 20, which says the flip is a
+few tens of HWPUNIT either way and not the difference between two theories
+of the grid.
+
+### Not proven
+
+- **The pen rule's pen starts on the grid.** `_advance_hwp` is a per-chunk
+  seam with no line-level cursor, so `pen` rounds each chunk's total from
+  zero rather than the line's running position. On a line with twenty chunks
+  that is twenty roundings where Hancom does one. The variant is a lower
+  bound on what a true line-cumulative pen would be worth, and the gap
+  between them is at most half a grid step per chunk.
+- **The scale table is one ratio for a whole face.** It was measured over
+  every anchored character of that face — Hangul, Latin and punctuation
+  together — and applied to every character of a run. Per-class it would be
+  a different table, and #283 measured that substituted Latin is 131
+  characters in the whole corpus, which is not enough to build one.
+- **Three faces of the four carry fewer than 130 observations.** Only
+  휴먼명조's 1.0494 is a face metric; `HCI Poppy`, `HY울릉도M` and 고딕 are
+  within 0.3% of 1 and their rows change nothing, so the whole of `scale`'s
+  score is one number for one face.
+- **The gate and the chunking are untested, not proven equivalent.** `cell`,
+  `bundled` and `fwchars` agree on this corpus. A corpus with a substituted
+  face the table does not cover, or with mixed Hangul/Latin chunks, would
+  separate them, and none of the ten forms is that corpus.
+- **The two flipping paragraphs are one sentence.** ¶64 and ¶160 of
+  `moel-2025` are the same text at the same size in the same column, so the
+  break test's 21 / 47 → 19 / 47 is two instances of a single line, not two
+  independent observations.
+- **The baseline's agreement on them is not evidence it is right.** `table`
+  matches the cached break on ¶64 and ¶160 while under-measuring the line by
+  1170 HWPUNIT, and its substituted per-line median is −381.90. A rule can
+  make every width better and every one of these breaks worse, and on this
+  corpus it does.
+- **`render_check` cannot see any of this.** No HFT face and no stand-in, so
+  the only live test of a stand-in rule this repo has is the corpus the rule
+  was measured on.
