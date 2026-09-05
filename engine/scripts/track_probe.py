@@ -555,8 +555,16 @@ def row_height_shape(tables):
 # --------------------------------------------------------------------------
 
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
-               repo_root=None, pdf_path=None):
-    """Score the three column models on one form."""
+               repo_root=None, pdf_path=None, keep_renderer=False):
+    """Score the three column models on one form.
+
+    ``keep_renderer`` hands the rendered ``TrackRenderer`` back under the
+    report's ``renderer`` key, so a caller that wants the ELEMENTS behind a
+    cell — ``cell_column_probe --residuals`` does — can reach them through
+    ``renderer.cell_columns[cell["cell_id"]]`` instead of rendering the form
+    a second time and matching the two runs up by address.  The key is not
+    JSON-serialisable and the caller pops it.
+    """
     renderer = TrackRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
                              layout_policy=policy)
     renderer.render()
@@ -620,6 +628,7 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
             "rendered_box": rendered_box,
             "rendered_x0": box.get("x0"),
             "page": box.get("page"),
+            "cell_id": id(tc),
             "table": id(tbl),
             "col_walked": table["walked"].get(id(tc)),
             "row_total": (table["row_totals"][base["row"]]
@@ -705,6 +714,8 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
     report["horzpos"] = horzpos_oracle(renderer, cells)
     if pdf_path is not None:
         report["rules"] = pdf_rule_oracle(renderer, tables, cells, pdf_path)
+    if keep_renderer:
+        report["renderer"] = renderer
     return report
 
 
