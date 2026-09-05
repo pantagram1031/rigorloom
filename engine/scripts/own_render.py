@@ -6216,7 +6216,25 @@ class OwnRenderer:
                 cell["row"], cell["rspan"],
                 max(cell["declared_height"],
                     content_h + cell["margin"]["top"] + cell["margin"]["bottom"])))
-        heights = solve_tracks(rows, row_cons, decl_h)
+        # ``hp:tbl/hp:sz@height`` is a FLOOR on the rows and not a ceiling.
+        # ``row_height_probe.py --corpus`` measures both halves of that.  On
+        # the height the cache states -- the holder paragraph's own
+        # ``hp:lineseg@vertsize`` less the table's vertical ``hp:outMargin``,
+        # which #261 measured is an inline object's box -- the rule above
+        # already sums to the declared height on 70 of 70 corpus tables the
+        # cache does not paginate, so the compress step has no witness at all
+        # on a Hancom save and never fires there.  Where it DOES fire, the
+        # residual is positive on 4 of those 70 under computed layout and
+        # negative on none, so all it ever did was scale forty innocent rows
+        # down to pay for one cell this renderer measured taller than Hancom
+        # did -- the same "compress to a declared height the content does not
+        # fit in" that ``natural_rows`` above exists to stop.  A shortfall is
+        # still distributed, because nothing measured here says what a table
+        # whose rows fall short of its own declared height should do and the
+        # corpus has no such table.
+        heights = solve_tracks(rows, row_cons)
+        if decl_h and sum(heights) < decl_h:
+            heights = solve_tracks(rows, row_cons, decl_h)
         xs = [0]
         for w in widths:
             xs.append(xs[-1] + w)
