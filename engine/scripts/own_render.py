@@ -681,6 +681,26 @@ def script_slot(ch):
                 return slot
     return "other"
 
+
+def hwp_metric_slot(ch):
+    """Which slot HWP METERS ``ch`` off, which is not always ``script_slot``.
+
+    #288 measured the two apart.  ``script_slot`` files ASCII punctuation
+    under ``symbol``; HWP files it under ``latin``, and on the 22 corpus
+    characters whose ``hh:charPr`` names a different face for the two slots
+    (바탕 for ``symbol``, HCI Poppy for ``latin``) Hancom drew all 22 from
+    the ``latin`` one.  Read through ``latin``, the prediction that a
+    punctuation character came from an HFT face is 1072 of 1072; read
+    through ``symbol`` it is 1050.  Full-width punctuation goes the other
+    way and stays ``symbol``, 211 of 211.
+
+    Only the ADVANCE asks this.  Which face a glyph is DRAWN in is
+    ``script_slot``'s answer and nothing here changes it, so a document whose
+    two slots name the same face -- every character in this corpus but those
+    22 -- cannot tell the two functions apart.
+    """
+    return "latin" if ord(ch) < 0x80 else script_slot(ch)
+
 # Inline objects this tier draws as a named placeholder box instead of art.
 # The label is what a human sees on the page; the sidecar carries the element.
 PLACEHOLDER_LABELS = {
@@ -1010,14 +1030,23 @@ def parse_header(header_xml: bytes) -> dict:
     root = ET.fromstring(header_xml)
 
     fontfaces = {}
+    # ``hh:font@type`` beside the name.  OWPML declares a face as ``TTF``,
+    # ``HFT`` or ``UNKNOWN``, and #288 measured that ``HFT`` on the slot HWP
+    # meters a character off predicts, 8566 of 8566, that Hancom drew it from
+    # one of its own faces -- which is not a TrueType file and has no metric
+    # anywhere on this machine.  Kept apart from ``fontfaces`` so that every
+    # existing reader of the name table is untouched.
+    fontface_types = {}
     for ff in root.iter():
         if _local(ff.tag) != "fontface":
             continue
         lang = ff.get("lang") or "HANGUL"
         table = fontfaces.setdefault(lang, {})
+        types = fontface_types.setdefault(lang, {})
         for f in _kids(ff, "font"):
             if f.get("id") is not None:
                 table[f.get("id")] = f.get("face")
+                types[f.get("id")] = (f.get("face"), f.get("type"))
 
     char_pr = {}
     for cp in root.iter():
@@ -1160,6 +1189,7 @@ def parse_header(header_xml: bytes) -> dict:
         "para_pr": para_pr,
         "tab_pr": tab_pr,
         "fontfaces": fontfaces,
+        "fontface_types": fontface_types,
     }
 
 
@@ -1242,6 +1272,94 @@ _FAMILY_MAP_TABLE = (
      "engine/references/fonts/family-map/NanumGothicCoding-Bold.ttf",
      ("돋움체", "굴림체")),
 )
+
+
+#: The MEASURED advance table for HWP's own HFT faces, relative to the repo
+#: root.  Built by ``engine/scripts/hft_width_table.py``; the file's own
+#: header declares what it is and how it was measured.
+HFT_WIDTH_TABLE_REL = "engine/references/fonts/hft-widths.measured.json"
+
+
+class HftWidthTable:
+    """Advances, in em, for HWP's own HFT faces.  MEASURED, and declared so.
+
+    An HFT face is not a TrueType file.  There is no font program to embed
+    and no ``hmtx`` to read, so Hancom's PDF export emits one as a Type 3
+    font whose ``/Widths`` array carries the advances -- and #288 measured
+    that no face on this machine reproduces them (0 of 492 candidates) and
+    that no fixed fraction of the em per character class does either (93.0%).
+    Resolving 한양신명조 to the installed ``H2MJSM.TTF`` is not a substitution
+    that can be made metric-compatible; it is a different face, whose ``(``
+    is 0.4950 em against the HFT face's 0.3320.
+
+    So the only available metric for these runs is the one Hancom's own
+    output states, and this is it: numbers read out of public PDF exports,
+    grouped by the face the document declares.  It is black-box output of a
+    published pipeline -- no Hancom font file is opened, read or decompiled
+    anywhere in this repo -- and the emitted table says as much in its own
+    header, beside the coverage it was measured at.
+
+    A face the table does not know, or a code point it does not carry, is
+    simply absent: :meth:`advance_em` answers ``None`` and the caller falls
+    back to what it did before.  A slim checkout with no table file at all
+    behaves exactly like the renderer did before this existed.
+    """
+
+    _shared = {}
+
+    def __init__(self, repo_root):
+        self.path = Path(repo_root) / HFT_WIDTH_TABLE_REL
+        self.faces = {}
+        self.hangul = {}
+        self.measured_on = None
+        if not self.path.is_file():
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        self.measured_on = (payload.get("declaration") or {}).get(
+            "measured_on")
+        for face, seat in (payload.get("faces") or {}).items():
+            widths = {}
+            for entry in (seat.get("widths") or {}).values():
+                char = entry.get("char")
+                advance = entry.get("advance_em")
+                if char and advance is not None:
+                    widths[char] = float(advance)
+            if widths:
+                self.faces[face] = widths
+        for face, seat in (payload.get("hangul_em") or {}).items():
+            em = (seat or {}).get("em")
+            if em is not None:
+                self.hangul[face] = float(em)
+
+    @classmethod
+    def shared(cls, repo_root):
+        key = str(repo_root)
+        hit = cls._shared.get(key)
+        if hit is None:
+            hit = cls(repo_root)
+            cls._shared[key] = hit
+        return hit
+
+    def __bool__(self):
+        return bool(self.faces)
+
+    def advance_em(self, face, ch):
+        """``ch``'s advance in em on ``face``, or ``None`` if not measured."""
+        widths = self.faces.get(face)
+        return widths.get(ch) if widths else None
+
+    def full_width_em(self, face):
+        """The em a full-width cell was measured at on ``face``.
+
+        The declared cell, 1.0, unless this face's own covered syllables say
+        otherwise -- #288 read exactly 1.0000 for 고딕 and 한양중고딕 and the
+        emitted table records the observed value per face rather than
+        carrying that reading across to a face it was not taken on.
+        """
+        return self.hangul.get(face, 1.0)
 
 
 class BundledFontMap:
@@ -2286,6 +2404,11 @@ class OwnRenderer:
         self._bin_cache = {}
         self._synthetic_bold = {}
         self._metric_face_cache = {}
+        # An HFT-declared run has no metric on this machine; the table is the
+        # measured one, and a checkout without the file simply has none.
+        self.hft_widths = (None if self.pinned_face
+                           else HftWidthTable.shared(self.repo_root))
+        self._hft_face_cache = {}
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
@@ -3888,6 +4011,92 @@ class OwnRenderer:
             return drawn
         return self.fontbook.get(self.pt_to_px(pt), False, face)
 
+    def _declared_hft_face(self, cid, ch):
+        """The HFT face name metering ``ch`` on this run, or ``None``.
+
+        ``None`` means "not an HFT run": either ``hh:fontRef`` names no face
+        for the slot HWP would meter this character off, or the face it names
+        is declared ``TTF``.  The slot is :func:`hwp_metric_slot`'s, not
+        :func:`script_slot`'s, which is the whole of #288's slot correction
+        and matters only for ASCII punctuation.
+        """
+        slot = hwp_metric_slot(ch)
+        key = (cid, slot)
+        hit = self._hft_face_cache.get(key)
+        if hit is not None:
+            return hit[0]
+        answer = None
+        font_ids = self._charpr(cid).get("font_ids") or {}
+        types = self.defs.get("fontface_types") or {}
+        for slot_key in (slot, slot.upper()):
+            font_id = font_ids.get(slot_key)
+            if font_id is None:
+                continue
+            table = types.get(slot.upper()) or types.get(slot) or {}
+            entry = table.get(font_id)
+            if entry and entry[0]:
+                if (entry[1] or "").upper() == "HFT":
+                    answer = entry[0]
+                break
+        self._hft_face_cache[key] = (answer,)
+        return answer
+
+    def _hft_advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz):
+        """``chunk``'s advance off the MEASURED HFT table, or ``None``.
+
+        ``None`` is "this rule has nothing to say", and every character of
+        the chunk has to disagree before it is returned: a chunk with no
+        HFT-declared character in it, or one the table covers nothing of,
+        goes back to the face metric intact -- kern table included, since
+        that path still measures the whole chunk in one call.
+
+        Where the rule does fire it is per character, because an HFT face's
+        advances are per code point and not a fraction of the em per class
+        (#288: 93.0% against a 99% gate, and ``(`` 0.2880 against ``)``
+        0.2810 inside 한양중고딕).  Losing the kern table costs nothing here:
+        these are CJK faces and the characters they carry proportionally are
+        the punctuation, which kerns against nothing.
+
+        Three fallbacks, in order, for a code point the table does not carry:
+
+        * a full-width cell advances by :meth:`HftWidthTable.full_width_em`,
+          which is the declared cell unless that face's own measured
+          syllables said otherwise;
+        * a half-width cell keeps ``SPACE_CELL_FRACTION`` (a space normally
+          never reaches here -- ``_text_pieces`` gives it its own piece and
+          overwrites the advance -- but a chunk is not required to exclude
+          one);
+        * anything else keeps the face metric it would have had, which is
+          wrong in the way #288 measured and no worse than before.
+        """
+        table = self.hft_widths
+        if not table or not chunk:
+            return None
+        total = 0.0
+        measured = 0
+        metric = None
+        for ch in chunk:
+            face = self._declared_hft_face(cid, ch)
+            if face is None:
+                return None
+            em = table.advance_em(face, ch)
+            if em is not None:
+                measured += 1
+            elif is_full_width(ch):
+                em = table.full_width_em(face)
+            elif ch in HALF_WIDTH_CELL_CHARS:
+                em = SPACE_CELL_FRACTION
+            else:
+                if metric is None:
+                    metric = self._metric_font_for(cid, rel_sz, slot, font)
+                em = self._em_width(metric, ch)
+            total += em
+        if not measured:
+            return None
+        self.applied["hft_measured_advance"] = (
+            self.applied.get("hft_measured_advance", 0) + measured)
+        return total * pt * HWPUNIT_PER_PT * ratio / 100.0
+
     def _reference_font(self, font):
         """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
 
@@ -4051,7 +4260,8 @@ class OwnRenderer:
             pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
             # DRAWN in ``font``; the seam below is the one place an advance
             # is measured for it.
-            advance_hwp = self._advance_hwp(font, chunk, cid, slot, pt, ratio)
+            advance_hwp = self._advance_hwp(font, chunk, cid, slot, pt, ratio,
+                                            rel_sz)
             width = self.pxf(advance_hwp)
             size_px = font.size
             pieces.append({
@@ -4107,19 +4317,24 @@ class OwnRenderer:
         flush()
         return pieces
 
-    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio):
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz=100):
         """HWPUNIT advance of one same-``(charPr, slot)`` chunk of text.
 
         The whole chunk goes through ``_em_width`` in one call, so the face's
         kern table still applies; the declared point size and ``hh:ratio``
         scale the em the face reports.  Every advance the layout and the
         drawing cursor use comes through here, which makes it the one place a
-        rule about a particular face's advances can be stated.
+        rule about a particular face's advances can be stated -- and the one
+        rule stated here is :meth:`_hft_advance_hwp`, for the runs whose
+        declared face HWP will not have handed a TrueType metric to anybody.
 
         DRAWN in ``font``, ADVANCED by ``metric`` -- the two differ only for
         a bold run in an installed family with both cuts on this machine;
         see ``_installed_regular_cut``.
         """
+        hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if hft is not None:
+            return hft
         metric = self._metric_font_for_pt(cid, pt, slot, font)
         return (self._em_width(metric, chunk) * pt * HWPUNIT_PER_PT
                 * ratio / 100.0)
