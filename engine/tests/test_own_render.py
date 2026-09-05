@@ -2720,26 +2720,114 @@ def test_line_advance_follows_the_declared_line_spacing(typo_probe):
     assert fixed[0]["vertsize"] + fixed[0]["spacing"] == 2000
 
 
-def test_the_first_line_carries_the_declared_indent(typo_probe):
+def test_the_line_box_is_the_column_less_the_paragraphs_own_margins(
+        typo_probe):
+    """``hh:intent`` is not in the box — measured on all 3214 cached boxes.
+
+    ``engine/scripts/indent_probe.py --corpus``: every cached
+    ``hp:lineseg@horzpos`` on the corpus equals its paragraph's
+    ``margin_left``, first lines and continuations alike, and every
+    multi-line paragraph's lines share one right edge.
+    """
     renderer, _image, draw = typo_probe
     cid = _synthetic_charpr(renderer, "__ind__", height=1000)
-    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
-                            own_render.HWPUNIT_PER_PT * 10 * 5,
-                            break_non_latin="BREAK_WORD",
-                            margin_left=1000, margin_right=500, indent=2000)
-    assert lines[0]["horzpos"] == 3000
-    assert lines[1]["horzpos"] == 1000
     column = own_render.HWPUNIT_PER_PT * 10 * 5
-    assert lines[0]["horzsize"] == column - 3000 - 500
-    assert lines[1]["horzsize"] == column - 1000 - 500
-    # A negative intent (내어쓰기) moves no box — the corpus's cached boxes
-    # say so; see OwnRenderer._line_box.
+    for indent in (2000, 0, -2000):
+        _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                                column, break_non_latin="BREAK_WORD",
+                                margin_left=1000, margin_right=500,
+                                indent=indent)
+        assert len(lines) > 1
+        assert all(line["horzpos"] == 1000 for line in lines)
+        assert all(line["horzsize"] == column - 1000 - 500 for line in lines)
+
+
+def test_a_positive_intent_indents_the_first_line_inside_its_box(typo_probe):
+    """들여쓰기: the first line starts ``intent`` in, the rest at the margin."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in2__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 5
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            column, break_non_latin="BREAK_WORD",
+                            margin_left=1000, margin_right=500, indent=2000)
+    assert len(lines) > 1
+    assert lines[0]["indent"] == 2000
+    assert all(line["indent"] == 0 for line in lines[1:])
+
+
+def test_a_negative_intent_hangs_the_first_line_and_indents_the_rest(
+        typo_probe):
+    """내어쓰기, and the sign is the whole difference.
+
+    Hancom's own exported PDFs settle this against the "moves nothing"
+    reading the cache alone could not rule out: on
+    ``indent_probe.py --corpus --pdf`` the SECOND drawn line of a
+    negative-``intent`` paragraph is at ``left + |intent|`` on 39 of 39 and
+    at ``left`` on none of them.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in3__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 5
     _spans, hanging = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
                               column, break_non_latin="BREAK_WORD",
                               margin_left=1000, indent=-2000)
     assert len(hanging) > 1
-    assert hanging[0]["horzpos"] == 0        # 1000 + (-2000), clamped at 0
-    assert all(line["horzpos"] == 1000 for line in hanging[1:])
+    assert hanging[0]["indent"] == 0
+    assert all(line["indent"] == 2000 for line in hanging[1:])
+
+
+def test_an_indent_larger_than_the_left_margin_does_not_move_the_box(
+        typo_probe):
+    """The case #277 left standing: ``left + intent`` below zero.
+
+    ``kstartup`` p31 declares ``left`` 3600 against ``intent`` −3612 and
+    Hancom draws its first line at 3600, not at 0; the cache seats the box at
+    3600 too.  Nothing here clamps, because nothing here subtracts.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in4__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 6
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            column, break_non_latin="BREAK_WORD",
+                            margin_left=500, indent=-1308)
+    assert all(line["horzpos"] == 500 for line in lines)
+    assert lines[0]["indent"] == 0
+
+
+def test_a_hanging_indent_narrows_the_lines_it_indents(typo_probe):
+    """The indent is in the BREAK and not only in the draw.
+
+    A continuation line pushed in by |intent| has that much less room, so a
+    hanging paragraph breaks into more lines than the same text with no
+    indent in the same column.  If the offset were applied at draw time only,
+    these two would break identically and the text would run off the right.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in5__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 6
+    text = "가나다라마바사아자차카타파하거너더러머버서어저처"
+    _spans, flat = _breaks(renderer, draw, text, cid, column,
+                           break_non_latin="BREAK_WORD")
+    _spans, hung = _breaks(renderer, draw, text, cid, column,
+                           break_non_latin="BREAK_WORD", indent=-2000)
+    assert len(hung) > len(flat)
+    # And the first line, which is not indented, holds exactly as much as the
+    # unindented paragraph's first line does.
+    assert hung[0]["end"] == flat[0]["end"]
+
+
+def test_the_indent_is_the_same_inside_a_table_cell(typo_probe):
+    """The rule is the paragraph's, so a narrow column changes nothing."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in6__", height=1000)
+    cell_column = own_render.cell_text_width(9000, {"left": 141, "right": 141})
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            cell_column, break_non_latin="BREAK_WORD",
+                            margin_left=600, indent=-2180)
+    assert len(lines) > 1
+    assert all(line["horzpos"] == 600 for line in lines)
+    assert lines[0]["indent"] == 0
+    assert all(line["indent"] == 2180 for line in lines[1:])
 
 
 def test_line_vertpos_stacks_the_way_the_cached_layout_does(typo_probe):
@@ -2785,12 +2873,12 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
-    "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 451, 432, 30, 29, 45, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 244, 35, 31, 50, 24),
+    "jumin-deungchobon-sinchengseo": (133, 130, 117, 27, 24, 36, 12),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 452, 433, 30, 30, 45, 19),
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 247, 35, 31, 50, 29),
     "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (765, 759, 750, 18, 15, 25, 11),
+    "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
 }
 
 
@@ -2979,7 +3067,21 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # control precedes rather than one past it, and ``compute_lines`` has no
     # notion of a forced break at all -- it breaks on width.  Some of the old
     # agreement at those positions was the two errors cancelling.
-    assert totals == [2151, 2119, 2033, 161, 142, 219, 79], totals
+    #
+    # 2033 -> 2037 and 79 -> 82 on the hanging-indent slice, with the three
+    # other columns unmoved.  ``hh:intent`` left the line BOX -- measured, it
+    # is in none of the corpus's 3214 cached boxes -- and became an offset
+    # INSIDE it, so a 내어쓰기 paragraph's continuation lines are now as much
+    # narrower as the file says they are and break where Hancom broke them.
+    # Two forms carry the gain (moel-2013 24 -> 29 break positions,
+    # kstartup 16 -> 19) and two give some back (jumin 14 -> 12, saeopja
+    # 11 -> 8): those two are the forms whose hanging paragraphs sit in table
+    # cells, where the column is still the solved one and a narrower line
+    # exposes the column error instead of absorbing it.  The rasters agree
+    # with the direction on both policies and on every form (cache ssim
+    # +0.0063, inked +0.0187, line IoU +0.0124; computed +0.0018 / +0.0045 /
+    # +0.0074, means over the corpus).
+    assert totals == [2151, 2119, 2037, 161, 142, 219, 82], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
