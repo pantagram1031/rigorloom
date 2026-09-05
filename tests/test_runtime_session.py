@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -147,6 +148,23 @@ def test_open_path_does_not_delegate_to_path_reopening_copyfile(tmp_path, monkey
 
     assert session.source.read_bytes() == original
     assert session.meta["sourceSha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_ctime_change_during_open_is_not_an_identity_mismatch(tmp_path):
+    path = tmp_path / "source.bin"
+    path.write_bytes(b"same bytes")
+    before = path.lstat()
+    opened = SimpleNamespace(
+        st_dev=before.st_dev,
+        st_ino=before.st_ino,
+        st_nlink=before.st_nlink,
+        st_size=before.st_size,
+        st_mtime_ns=before.st_mtime_ns,
+        st_ctime_ns=before.st_ctime_ns + 10,
+    )
+
+    assert rt_session._open_binding(before) == rt_session._open_binding(opened)
+    assert rt_session._snapshot(before) != rt_session._snapshot(opened)
 
 
 def test_an_open_handle_keeps_the_original_bytes_when_the_path_is_replaced(
