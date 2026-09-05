@@ -1096,8 +1096,8 @@ def reconcile(hwpx_path, pdf_path, addresses, repo_root, keep_text=True):
                     # to read.
                     t3_em = type3.get((pdf_font, head_char))
                     hft_hwp = ours_hwp
-                    if t3_em is not None and run["declared"]:
-                        want = t3_em * run["declared"]
+                    if t3_em is not None and run["cell_hwp"]:
+                        want = t3_em * run["cell_hwp"]
                         gap = (renderer._spacing_gap(want, run["spacing"])
                                if run["spacing"] else 0.0)
                         hft_hwp = (ours_hwp - run["advance_hwp"]
@@ -1113,7 +1113,7 @@ def reconcile(hwpx_path, pdf_path, addresses, repo_root, keep_text=True):
                         "source": run["source"],
                         "pdf_font": pdf_font,
                         "type3_width_em": type3.get((pdf_font, head_char)),
-                        "cell_hwp": run["declared"],
+                        "cell_hwp": run["cell_hwp"],
                         "ours_hwp": ours_hwp,
                         "hft_hwp": hft_hwp,
                         "hancom_hwp": hancom_hwp,
