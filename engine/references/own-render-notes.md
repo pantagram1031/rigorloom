@@ -8920,3 +8920,484 @@ cached breaks 48 / 113 installed and 12 / 47 other.
   regression on that line.
 - **The corpus is the training set, again.** Every number here was read off
   the same ten forms and the same machine's installed fonts.
+
+## The last four cells are not a tie, and the PDF says the cache is right — measured, 2026-09-06
+
+#277 shipped `gridmax` — one column grid per table, ends pinned at 0 and
+`hp:tbl/hp:sz@width`, every interior boundary at the largest x any cell
+reaching it claims — and left nine cells off the cache's 4 HWPUNIT grid: five
+a paragraph's negative `hh:intent`, and four in `saeopja`'s 48027-wide table.
+#279 closed the five, and it also closed the eight near-misses in the
+47764-wide table that #277 had counted separately; on today's corpus
+`gridmax` is **1605 of 1609** and the whole remainder is those four cells,
+`saeopja` table 3 rows 7 and 8.
+
+This run asks what places them. The answer is that they are not the question
+they were filed as. The boundaries they hang off are claimed by ONE row shape
+and no other, so there is no tie to break, and every tie rule that could be
+written scores at best exactly what `gridmax` already scores. What the PDF
+adds is that the cache is not lying: Hancom really does draw those three
+rules 19 HWPUNIT right of where the declared widths put them.
+
+### The instrument
+
+`engine/scripts/track_probe.py` gains five models and the three boundary
+functions behind them, `GRID_RULES`:
+
+- `gridmin` — the SMALLEST claim at each boundary.
+- `gridexact` — the claim from a row whose declared widths sum to
+  `hp:sz@width`, and the envelope where no such row reaches.
+- `gridwide` — the claim from the cell spanning the most columns.
+- `gridback` — the inequality `x[b] >= x[a] + width` read BACKWARDS from
+  `x[colCnt]`, so every boundary sits as far right as the cells allow and a
+  short row's shortfall lands in its FIRST cell.
+- `gridsnap` — `gridmax` with every interior boundary rounded to a multiple
+  of 4, the reading in which the BOUNDARY is quantised and not only the
+  record of it.
+
+`grid_boundaries_pick` solves the max fixpoint first and then rewrites each
+interior boundary left to right by a `pick` over the claims reaching it, so
+all three tie rules read the same left edges and differ only in the choice.
+
+### The corpus has almost no ties to break
+
+| | count |
+| --- | ---: |
+| interior boundaries, all 81 corpus tables | 256 |
+| of those, claimed at two different x | **5** |
+| rows | 514 |
+| rows whose declared widths sum short of `hp:sz@width` | 122 |
+| of those, with more than one cell | 75 |
+| of those, placed by `gridmax` the way the cache does | **73** |
+
+Five contested boundaries in the whole corpus. That is the measurement that
+makes the tie-rule question small: `gridmax`, `gridexact`, `gridwide`,
+`gridmin` and `gridfirst` can only differ on those five and on what the
+differences propagate into, and the two that are not `gridmax` — the two
+cells of `saeopja`'s 47757-wide table where row 4 declares `c0+3` at 9890 and
+row 14 at 9759 — are the held-out evidence #277 already had. `max` wins them.
+
+### The four cells, and the three boundaries under them
+
+`saeopja` table 3: 12 columns, 24 rows, `sz@width` 48027, `cellSpacing="0"`,
+`hasMargin="0"` on every cell, `hp:inMargin` and every `hp:cellMargin`
+141/141 except row 0's 510/510. Every one of the 24 rows declares widths
+summing to 48008 — a uniform 19 HWPUNIT short, which is a table box widened
+by 19 without the columns following. The rows come in three shapes and, this
+is the whole difficulty, **their boundary sets are disjoint**:
+
+| rows | cells | edges written | declared widths |
+| --- | ---: | --- | --- |
+| 0-3, 5, 6, 9, 10, 22, 23 | 1 | — | 48008 |
+| 4 | 4 | 2, 5, 9 | 11921, 11921, 11921, 12245 |
+| **7, 8** | 4 | **3, 6, 10** | 12002, 12002, 12002, 12002 |
+| 11-21 | 6 | 1, 4, 7, 8, 11 | 5660, 12746, 7400, 7400, 7401, 7401 |
+
+So every interior boundary in this table is written by exactly one row shape,
+and rows 7 and 8 write the same three. Nothing is contested. `gridmax`,
+`gridfirst`, `gridlast`, `gridexact`, `gridwide` and `gridmin` return
+identical grids here.
+
+Inverting the cached `hp:lineseg@horzsize` — a cell's box lies in
+`[horzsize + inset, horzsize + inset + 4)`, and propagating those intervals
+along the columns — pins the table's grid to within a few HWPUNIT, and it
+disagrees with ours in three places and only three:
+
+| boundary | ours (`gridmax`) | cache says | written by |
+| --- | ---: | --- | --- |
+| x1 | 5660 | [5658, 5661] | r11-21 `c0+1` |
+| x2 | 11921 | [11920, 11921] | r4 `c0+2` |
+| **x3** | **12002** | **[12018, 12021]** | **r7/r8 `c0+3`** |
+| x4 | 18406 | [18404, 18410] | r11-21 `c1+3` |
+| x5 | 23842 | [23841, 23842] | r4 `c2+3` |
+| **x6** | **24004** | **[24020, 24023]** | **r7/r8 `c3+3`** |
+| x7 | 25806 | [25804, 25811] | r11-21 `c4+3` |
+| x8 | 33206 | [33205, 33211] | r11-21 `c7+1` |
+| x9 | 35763 | [35762, 35763] | r4 `c5+4` |
+| **x10** | **36006** | **[36022, 36025]** | **r7/r8 `c6+4`** |
+| x11 | 40607 | [40606, 40609] | r11-21 `c8+3` |
+
+Each of the three is exactly 19 high — the table's whole shortfall — and
+`12021 + 3 * 12002 = 48027` closes the row on the nose. Rows 7 and 8 are
+laid out from the RIGHT: their shortfall sits in the FIRST cell. Rows 4 and
+11-21 are laid out from the left, their shortfall in the LAST cell, and that
+is not an inference from a range — putting row 4's 19 in its first cell needs
+`c0+2` at 11940 and the cache's interval for it is [11918, 11922), and
+putting row 11's there needs `c0+1` at 5679 against [5658, 5662).
+
+The four off-grid cells are what falls out: `r7c0+3` and `r8c0+3` at box
+12002 against a cached box of 12018 (residual −16), and `r7c10+2` and
+`r8c10+2` at 12021 — the grid handing them the shortfall at the far end —
+against 12002 (residual +19).
+
+### The PDF draws the rules where the cache says
+
+Page 4 of the reference export, table origin at x = 5810 HWPUNIT. The
+vertical strokes sort themselves by the y band they cover, and the bands are
+the three row shapes:
+
+| y band | rows | stroke x, relative to the table's left edge |
+| --- | --- | --- |
+| 15235-17824 | 4 | 11905, 23826, 35736 |
+| **23027-28217** | **7 and 8** | **12012, 24006, 36000** |
+| 33408-62248 | 11-21 | 5644, 18393, 25781, 33181, 40581 |
+
+The absolute registration drifts across the page — the offset against our
+grid runs −13 to −27 — so the honest reading is the DIFFERENCE between two
+strokes a few hundred HWPUNIT apart, where whatever the offset is cancels:
+
+| gap | PDF | `gridmax` | cache interval |
+| --- | ---: | ---: | --- |
+| x3 − x2 | 107 | 81 | [97, 101] |
+| x6 − x5 | 180 | 162 | [178, 182] |
+| x10 − x9 | 264 | 243 | [259, 263] |
+
+Three for three with the cache and 19 to 26 away from ours. This is the first
+absolute statement in this line of work about these four cells: they are not
+a cache artefact, and the 19 is really on the page.
+
+### Six rules, and what each is worth
+
+`track_probe.py --corpus --models
+gridmax,gridmin,gridexact,gridwide,gridback,gridsnap,stretch,gridfirst,firstrow
+--residuals --pdf`, over 1609 measurable cells:
+
+| model | exact | on the grid | of the 1295 contested | regressions vs `global` | vs `stretch` | PDF rules at 50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `stretch` | 391 | 1574 | 1260 | 31 | 0 | 366 |
+| `firstrow` | 393 | 1576 | 1262 | 29 | 0 | 366 |
+| `gridfirst` | 393 | 1597 | 1283 | 8 | 1 | 364 |
+| **`gridmax`** | **404** | **1605** | **1291** | **0** | **0** | 364 |
+| `gridexact` | 404 | 1605 | 1291 | 0 | 0 | 364 |
+| `gridwide` | 395 | 1597 | 1283 | 8 | 1 | 364 |
+| `gridmin` | 388 | 1559 | 1245 | 46 | 27 | 363 |
+| `gridback` | 362 | 1427 | 1113 | 182 | 153 | 325 |
+| `gridsnap` | 276 | 1236 | 922 | 369 | 365 | 364 |
+
+No candidate reaches 1609. `gridexact` ties `gridmax` cell for cell and
+leaves the SAME four cells off the grid, which is the five contested
+boundaries saying that the row that adds up and the row that claims most are
+the same row wherever both exist. `gridwide` and `gridmin` lose the two
+47757-wide cells and six more. `gridback` is the right-anchored reading rows
+7 and 8 want, applied everywhere, and it costs 178 cells and 39 PDF strokes:
+the same table's other two row shapes go the other way, so the direction
+cannot be a table-wide constant, let alone a corpus-wide one.
+
+`gridsnap` settles the quantiser reading from the other side. #277 measured
+that snapping OUR COLUMN onto the 4 HWPUNIT grid cannot change a verdict,
+because `floor4(ours) == cached` already is the verdict. Snapping the
+BOUNDARY can, and it is a catastrophe — 369 regressions — because a boundary
+moved by up to 2 moves both cells that touch it and the corpus is full of
+cells already sitting at residual 0 or 3. The 4 HWPUNIT grid is the cache's
+record of the column, not the column.
+
+### The rule, restated, and the one thing left
+
+**A cell's `cellSz@width` is a lower bound and the grid is the envelope of
+the claims.** Unchanged from #277, and now with the tie question closed by a
+census rather than by argument: the corpus contests 5 of 256 interior
+boundaries, and `max` wins all five.
+
+What is left is not a tie rule. It is: **when a row is short of the table's
+box and the boundaries it writes are its own, which end of the row absorbs
+the shortfall?** The corpus answers "the last cell" 73 times out of 75 and
+"the first cell" twice, on two adjacent rows of one table, and no attribute
+in the file distinguishes them from the rows above and below that go the
+other way. `cellSpacing` is 0 for the whole table, `hasMargin` is 0 on every
+cell, every `cellMargin` in rows 4, 7, 8 and 11-21 is 141/141, no cell in the
+table has a `rowSpan`, no `colSpan` straddles a contested boundary because
+there is no contested boundary, and the only declared difference between rows
+7/8 and row 4 is that rows 7 and 8 are the only rows in the table whose four
+cells all declare the same width.
+
+That predicate was scored and is not shipped, because it cannot be tested:
+**the corpus holds exactly two short multi-cell rows whose declared widths
+are all equal, and they are rows 7 and 8.** A rule fitted to two rows and
+supported by two rows is not a rule. It is written down here so the next
+corpus can falsify it in one query.
+
+### Nothing was changed
+
+`own_render.py` is byte for byte what it was at `5a2fa49`; `column_grid` is
+untouched and so is `solve_tracks`. The change is `track_probe.py` — five
+models and their boundary functions, which is the instrument that says the
+rule cannot be found here.
+
+The measurements below are therefore the state of the branch, and the before
+and after are the same numbers. They are NOT #277's numbers: #278 through
+#290 moved the corpus underneath them — 1599 measurable cells became 1609,
+and `cache` mode went from 52 of 53 pages to 53 of 53.
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` | 0.8607 | 0.3881 | 0.7375 | 53 / 53 |
+| `computed` | 0.8402 | 0.3515 | 0.6651 | 53 / 53 |
+
+`lineseg_vs_pdf.py --corpus` 411/411 paragraphs, 8566/8566 characters.
+`cell_column_probe.py --corpus` 404 exact / 1605 near of 1609, and the
+winning correction term is still `(nothing)`. `layout_divergence.py --corpus`
+agreement 1635, class A 111, class B 279, class C 28. `render_check.py` on
+`render-check-01` 6 match / 37 close / 6 differ / 2 unsupported at 96 dpi and
+14 / 31 / 4 / 2 at 144, 9 pages both.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The four cells are still unexplained**, for the third run. What this run
+  adds is that they are not a tie: their boundaries are claimed by one row
+  shape and no other, so the six tie rules scored above are all the same rule
+  on them. The open question is narrower and better posed — which end of a
+  short row absorbs its shortfall — and it has 75 observations, 73 one way
+  and 2 the other.
+- **"All cells declare one width" is a two-point fit.** It separates rows 7
+  and 8 from every other row in their table and from every other short row in
+  the corpus, and there is no third instance to test it on. No mechanism is
+  offered for why equal widths would right-anchor a row, and the obvious one
+  — an even split of the table box, `round((i+1) * 48027 / 4)` — gives
+  12007 / 24014 / 36020 and is wrong at all three boundaries.
+- **The PDF's absolute registration was not solved.** The offset between our
+  boundaries and the drawn strokes runs −13 to −27 across one page and is not
+  a scale. The three gap comparisons above are differences between neighbours
+  a few hundred HWPUNIT apart and do not depend on it, but the residual drift
+  is unexplained and would matter to any run that wanted the strokes as an
+  absolute x oracle rather than a relative one.
+- **`stretch` still wins the PDF rule count by two**, 366 to 364, exactly as
+  #277 recorded. Both strokes are in the 48027-wide table, and `stretch`
+  gives up 31 cells elsewhere to buy them.
+- **`gridexact` was not chosen against `gridmax` on evidence**, because there
+  is none: the two are identical on all 1609 cells. `gridmax` is kept because
+  it is what ships and because it needs no notion of a row that adds up.
+- **The census counts the corpus's ten forms.** 256 interior boundaries and 5
+  contested is a statement about these files, and a corpus of hand-built
+  tables would contest far more.
+
+## The HFT advance table, measured off Hancom's own export — 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#288 identified the anonymous Type 3 fonts as HWP's own HFT faces, showed
+that `hh:font@type="HFT"` predicts 8566 of 8566 which characters Hancom drew
+from one, and stopped: no installed face reproduces their advances, no fixed
+fraction of the em per class does either (93.0% against a 99% gate), and the
+only thing left that fits is a table per (face, code point). This slice
+builds that table, prices it, and ships it.
+
+**It works, and the two carriers close as breaks.** `moel-2013` ¶118 and
+¶141 — the `text_rebreak:width` carriers #267 named, #281 could not close and
+#288 made worse — now break exactly where the cache broke them, the
+`text_rebreak:width` root falls **165 → 100**, the corpus's proven
+over-measurements fall **49 → 30**, and the installed-face control does not
+move: 48 / 113 cached break agreements before and after.
+
+### What was measured, and what it is legally
+
+`engine/references/fonts/hft-widths.measured.json`, built by
+`engine/scripts/hft_width_table.py --build`.
+
+A Type 3 font declares its advances in `/Widths`, in the font's own grid, and
+`Widths[code] × FontMatrix[0]` is that advance in em. Those numbers are the
+**output of Hancom Office's own PDF exporter on public government forms** —
+the same black-box output every other measurement in this repo reads. The
+emitted file declares in its own header that it is MEASURED, how, from what,
+when, and that it carries **advance widths only**: no glyph outline, no
+`CharProcs` stream, no font program, no byte of any Hancom font file. Nothing
+in this repo opens, reads or decompiles an HFT file, and nothing needs to —
+the widths are in the PDF.
+
+| coverage | |
+| --- | ---: |
+| faces | 5 |
+| (face, code point) pairs | 226 |
+| characters observed | 2301 |
+| code points carrying more than one width | **0** |
+| Type 3 code points no paired run used | 494 |
+
+| declared face | code points | observations | forms |
+| --- | ---: | ---: | ---: |
+| 한양중고딕 | 160 | 978 | 3 |
+| HCI Poppy | 22 | 1183 | 4 |
+| 고딕 | 38 | 51 | 1 |
+| 한양신명조 | 5 | 87 | 2 |
+| 명조 | 1 | 2 | 1 |
+
+The 494 unattributed code points are #288's limit, unchanged:
+`lineseg_vs_pdf` pairs top-level paragraphs only, so every Type 3 glyph
+inside a table cell belongs to a font no paired run reached and cannot be
+filed under a face at all.
+
+### The `Widths` are the advances, checked against the pen
+
+`Widths` is what the export SAYS; the anchored comparison is how far Hancom
+moved the pen between two aligned glyph origins. On 206 singleton segments
+of unstretched lines with no `hh:spacing`, the two agree to a median
+**0.0021 em**, 185 of 206 within 0.01 and all 206 within 0.02:
+
+| class | n | median abs |
+| --- | ---: | ---: |
+| digit | 118 | 0.0021 em |
+| hangul | 73 | 0.0003 em |
+| punct | 14 | 0.0014 em |
+| fw_punct | 1 | 0.0034 em |
+
+Those three filters are the finding, not bookkeeping. Read across ALL lines
+the same check says 0.0296 em on Hangul and 0.18 em at worst, because a
+JUSTIFY or DISTRIBUTE line's pen distances are its alignment and not its
+advances. Dividing by our declared cell instead of by the size the PDF sets
+the font in adds another 0.003 em of the same kind of error.
+
+### The face a width belongs to is the METRIC slot's, not the drawn slot's
+
+The one correction this slice had to make to #288. `pdf_face_probe`'s
+attribution files a character's declared face under `script_slot`'s slot;
+a table is looked up by the slot the character is METERED off, and #288
+itself measured that the two disagree on ASCII punctuation.
+
+On the carriers both slots are HFT and they name **different faces**:
+`hh:charPr` 8 names 한양신명조 for `symbol` and **HCI Poppy for `latin`**.
+Built the first way, `(` at 0.3320 was filed under 한양신명조 and the
+renderer, asking the `latin` slot, looked for it under HCI Poppy and found
+nothing — the table was complete and fired on none of ¶141. Rebuilt on
+`hwp_metric_slot`, the same 226 pairs land under the names the renderer
+asks for, ¶141's coverage goes 0 / 17 → 39 / 39, and the count of code
+points carrying two conflicting widths stays 0.
+
+### What ships
+
+`OwnRenderer._advance_hwp` is now the seam #283 and #286 named, and
+`_hft_advance_hwp` is the only rule stated at it. Per character, gated on
+`hh:font@type="HFT"` for `hwp_metric_slot`'s slot; a chunk with no
+HFT-declared character in it, or one the table covers nothing of, returns
+`None` and goes back to the face metric intact, kern table included. Three
+fallbacks for a code point the table does not carry: a full-width cell takes
+`HftWidthTable.full_width_em` (the declared cell, unless that face's own
+measured syllables said otherwise — 고딕 and 한양중고딕 both read exactly
+1.0000 em, over 41 and 801 observations, one distinct value each), a
+half-width cell keeps `SPACE_CELL_FRACTION`, anything else keeps the face
+metric it had. A checkout with no table file renders exactly as it did
+before the file existed, and there is a test that says so.
+
+### Three rules, priced
+
+`hft_width_table.py --score`, which installs each combination by rebinding
+`own_render.OwnRenderer` and `advance_probe.BreakRecordingRenderer` so the
+break test is the REAL breaker on real column widths. `cell` is #283's
+full-width rule for substituted faces, implemented in the probe because
+pricing it is all this slice may do with another slice's proposal.
+
+| variant | exact widths, installed | exact, substituted | installed ¶ breaks | other ¶ breaks | proven over-measurements |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current | 23 / 103 | 2 / 308 | 48 / 113 | 12 / 47 | 49 / 2272 |
+| **table** | **24 / 103** | 0 / 308 | **48 / 113** | **21 / 47** | **30 / 2272** |
+| cell | 23 / 103 | 0 / 308 | 48 / 113 | 2 / 47 | 92 / 2272 |
+| table + cell | 24 / 103 | **7 / 308** | 48 / 113 | 19 / 47 | 33 / 2272 |
+
+| variant | installed median | med abs | substituted median | med abs |
+| --- | ---: | ---: | ---: | ---: |
+| current | +8.72 | 10.56 | −120.33 | 256.69 |
+| table | +5.72 | 8.30 | −381.90 | 381.90 |
+| cell | +8.72 | 10.56 | +303.59 | 303.59 |
+| table + cell | +5.72 | 8.30 | **+24.83** | **25.62** |
+
+And the carriers, ours − Hancom in HWPUNIT:
+
+| line | current | table | cell | table + cell |
+| --- | ---: | ---: | ---: | ---: |
+| ¶118 line 0 | +1254.9 | −1850.2 | +2977.1 | **−128.0** |
+| ¶118 line 1 | +1.6 | −1659.2 | +1683.7 | **+22.9** |
+| ¶141 line 0 | +1147.9 | −1068.4 | +2301.7 | **+85.4** |
+
+**#288's cancellation is confirmed from both sides.** Only `table + cell`
+closes the carriers' WIDTHS, to within 128 HWPUNIT of Hancom on lines that
+were 1148 and 1255 out. But the break test, which is the gate, prefers
+`table` alone — 21 of 47 against 19 — and the widths `table` leaves wrong on
+substituted lines are the 휴먼명조 stand-in's error, uncancelled and now
+visible, which is #283's business and not this slice's to ship. So `table`
+ships alone, and the row above says what the merged tree will be worth when
+#283's rule lands beside it.
+
+### The corpus, before and after
+
+`table` alone, everything else unchanged. The baseline was re-measured on
+this branch by moving the table file aside, which reproduced #288's numbers
+to the digit.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| channel | `cache` before | after | `computed` before | after |
+| --- | ---: | ---: | ---: | ---: |
+| `text_line_iou_mean` | 0.737467 | 0.736589 | 0.665054 | **0.684242** |
+| `ssim_mean` | 0.860650 | **0.861944** | 0.840196 | **0.844732** |
+| `ssim_inked_mean` | 0.388099 | **0.393719** | 0.351454 | **0.358878** |
+| `text_line_pair_rate_mean` | 0.850991 | 0.850991 | 0.847426 | 0.846045 |
+
+Page counts 10 of 10 exact under both policies, before and after: `admrul`
+1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1, `jeongbo` 1/1, `jumin` 3/3,
+`kstartup` 22/22, `moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6.
+The `computed` policy is the channel that grades the breaker and it moves
+most: `text_line_iou_mean` +0.0192. `cache` gains on both SSIM channels and
+loses 0.0009 of line IOU, which is the cached-box render drawing the same
+lines with slightly different intra-line pen positions.
+
+`lineseg_vs_pdf.py --corpus`: **411 / 411** comparable paragraphs equal,
+8566 / 8566 characters in agreeing lines, before and after.
+
+`layout_divergence.py --corpus` classes A / B / C / D: 1635 / 111 / 279 / 28
+→ **1713 / 98 / 214 / 28**. `class_b_probe.py --corpus` roots:
+
+| root | before | after |
+| --- | ---: | ---: |
+| `text_rebreak:width` | 165 | **100** |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `cell_valign` | 15 | 15 |
+| `forced_break` | 7 | 7 |
+
+Per form the rebreak root goes `jumin` 1 → 1, `moel-2013` **22 → 0**,
+`moel-2025` 142 → 99. Every other root is untouched, which is the control:
+this rule can only move a line's width.
+
+`advance_probe.py --corpus --punct`: total over-measure on installed
+punctuation **+15013.0 → +135.8 HWPUNIT** over the same 545 advances.
+Installed lines' per-line delta median +8.72 → +5.72 and median abs
+10.56 → 8.30, 23 → 24 of 103 exact within 2 HWPUNIT; substituted lines
+−120.33 → −381.90 (the uncancelled 휴먼명조 term). Cached lines proven too
+wide 49 → 30 of 2272. Cached breaks reproduced 48 / 113 installed
+(unchanged) and 12 → **21** of 47 other, `moel-2013` 4 → 9 of 11 and
+`moel-2025` 6 → 10 of 30.
+
+`render_check.py` on `render-check-01` is **unchanged**: 6 · 37 · 6 · 2 at
+96 dpi and 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact both times. It declares
+**21 TTF faces and no HFT face at all**, so it is a pure control here and its
+not moving is what a correctly gated rule has to do.
+
+### Not proven
+
+- **226 (face, code point) pairs is an inventory, not a metric.** It says
+  nothing about a code point none of these ten forms uses, and the renderer
+  falls back to the wrong face for those exactly as before. The population it
+  does cover is the one that carried the corpus's remaining rebreaks.
+- **Five of the thirteen HFT faces the corpus declares.** 필기, 산세리프,
+  한양견고딕, HCI Hollyhock, 신명 신명조, 신명 신문명조, 신명 중고딕 and
+  신명 디나루 have no attributed code point at all — every character they
+  draw is inside a table cell, where the pairing does not reach.
+- **The metric-slot attribution is measured on ASCII punctuation only.**
+  #288's 22-character slot measurement is what says `latin` is the slot; this
+  slice extends it from "which slot predicts HFT-ness" to "which face's table
+  the width belongs in", and the extension is consistent, not separately
+  measured. Where both slots name the same face — everywhere in this corpus
+  but the carriers and those 22 — nothing can tell them apart.
+- **The verification is 206 segments.** Every other anchored reading of these
+  code points is on a stretched line and was excluded for cause, so the check
+  that the declared `Widths` are the advances rests on the unstretched
+  minority.
+- **`table + cell` is the better tree and is not the tree.** ¶118 line 1
+  agreed to +1.6 HWPUNIT before this slice by accident and is −1659 after it;
+  it comes back to +22.9 the moment #283's rule lands. Anyone measuring the
+  substituted per-line widths between now and then will see them worse.
+- **`HFT` is still read off `hh:font@type` and trusted**, and a machine WITH
+  the HFT faces installed might export them as TrueType subsets and move
+  every number here. #288's caveat, unchanged.
+- **The corpus is the training set, and now it is also the table.** The
+  widths were read off the same ten forms every score above is computed on.
+  A form outside the corpus gets the coverage it gets.
