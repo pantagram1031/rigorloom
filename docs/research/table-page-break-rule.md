@@ -98,11 +98,18 @@ only.
    takes the move-whole path that already existed beside it.
 
 The anchored path (`_split_anchor_overflow`,
-`_auto_anchor_overflow_cut`) is unchanged and is now the *only* splitter,
-which the anchored control says is right. Both of its cuts now record
+`_auto_anchor_overflow_action`) is unchanged and is now the *only* splitter,
+which the anchored control says is right. Both of its cuts record
 `hp:tbl@repeatHeader` as a named limit, which the deleted inline splitter used
-to be the only place to do — Hancom repeats the header row on a continuation
-page and we do not.
+to be the only place to do.
+
+> **2026-09-06.** That limit was recorded here as "Hancom repeats the header
+> row on a continuation page and we do not". Measured against the reference
+> PDF (`engine/scripts/table_split_probe.py`), it does not: the corpus' one
+> cross-page table carries `repeatHeader="1"` and repeats nothing, because
+> `repeatHeader` repeats the rows a file flags with `hp:tr@header` and no
+> `hp:tr` in the corpus carries that attribute. See *The one table Hancom
+> splits* in `engine/references/own-render-notes.md`.
 
 ### Effect
 

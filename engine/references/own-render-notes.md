@@ -473,14 +473,14 @@ on 2303 of the 2370 comparable lines, `baseline` on 2303, and `spacing` on
   vanish, the breaker matches 16 of the corpus's 216 break positions. Read as
   "spaces may shrink **by** `condense`%", so that 0 is the default and means no
   condensing, it matches 48. The second reading is kept.
-- **A negative `hh:intent`** (내어쓰기). The textbook reading — first line at
-  the left margin, continuation lines pushed in by its magnitude — matches
-  2710 of the 3214 cached boxes. "The intent moves the first line only,
-  clamped at 0" matches 2860, and "the intent never moves the box" matches
-  2895. The hanging reading is therefore **not implemented**; a negative
-  intent moves no line box here. That choice costs a little on the break
-  numbers (recall 48 → 43) and is kept anyway, because 3214 cached boxes are a
-  far larger and more direct sample than 216 break positions.
+- **A negative `hh:intent`** (내어쓰기). **SUPERSEDED — see *The indent is not
+  in the line box* at the end of this file.** All three readings weighed here
+  put the indent in the saved box, and none of them belongs there: measured
+  directly, `horzpos == margin_left` on all 3214 cached boxes and the indent
+  is an offset inside the box, which is why the three scored 2710 / 2860 /
+  2895 and none scored 3214. The hanging reading of the TEXT is right after
+  all. Left in place because the numbers below were measured under the old
+  reading.
 
 ### How well the breaker agrees with the engine that wrote the file
 
@@ -922,8 +922,9 @@ allowance (`_row_extent`) — a table has no descender to hang past the margin.
 
 A split leaves two placement records carrying the row range each page draws,
 and `_render_table` draws exactly that range with the row origin pulled back
-— the continuation page does **not** repeat the header row, where Hancom's
-anchored split does.
+— the continuation page does **not** repeat the header row, and neither does
+Hancom's, measured (*The one table Hancom splits* below: `repeatHeader` names
+rows the file flags with `hp:tr@header`, and no corpus row is flagged).
 
 ### How well the flow pass agrees with the engine that wrote the file
 
@@ -6139,3 +6140,1809 @@ every form. The fix removed a compensating error; it did not create one.
   is one of them, and its raggedness is the negative-`intent` reading above.
 - **The corpus is the training set.** 1609 cells from ten government forms,
   and the `hasMargin="1"` arm of the rule rests on 56 of them.
+
+## The track solve: Hancom lays each table row out on its own — measured, 2026-09-05
+
+#268 fixed which margin insets a cell and left one term standing in the fit:
+`+solved`, the difference between the solved track sum and the cell's own
+declared `cellSz@width`. It named that term structural rather than an
+attribute-handling error and stopped there. This run asks the structural
+question directly, over every cell on the corpus.
+
+The public basis says the global solve is our invention. OWPML (KS X 6101)
+gives `hp:tbl` a `sz`, a `rowCnt`/`colCnt` and a list of `hp:tr`; every
+`hp:tc` under those carries its own `cellSz`, its own `cellAddr` and its own
+`cellSpan`. There is no table-level column definition anywhere in the record —
+HWP 5.0's binary table record stores the same per-cell width, height and grid
+address and no column list. So `solve_tracks` is a reconstruction, and the
+cache can be asked whether it is the right one.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows] [--json]`
+subclasses #268's `CellColumnRenderer`, so the text column each cell was
+given is still read off the renderer's own `avail_w_hwp` rather than
+rederived. Added to it: the solved `xs` per table, and each cell's absolute
+drawn box and page.
+
+Four column models are scored:
+
+| model | a cell's box | a cell's x |
+| --- | --- | --- |
+| `global` | `xs[col+colSpan] - xs[col]` from `solve_tracks` | `xs[col]` |
+| `literal` | its own `cellSz@width` | running sum of its own row |
+| `addr` | its own `cellSz@width` | `xs[col]` |
+| `stretch` | `cellSz@width`, last cell of the row closing to `hp:sz@width` | running sum of its own row |
+
+The residual arithmetic is exact rather than a second derivation: the cell
+inset and the paragraph's own `hh:margin` enter the model's line box and the
+cache's identically and cancel, so a model's per-line residual is the
+renderer's own residual shifted by `model_box - rendered_box`.
+
+`literal`'s row walk carries a merge. A `rowSpan` cell is not repeated in the
+rows it reaches into, so the cursor steps over the grid columns it holds and
+advances x by its width before placing the next cell the row does list.
+Without that carry every row under a merge would start at x=0, and the model
+would be measuring the carry's absence. The walk agrees with the file's own
+`cellAddr@colAddr` on **1609 of 1609 cells**, which is what says the carry is
+right.
+
+### x is not in the cache, and the probe says so rather than assuming it
+
+The task proposed `hp:lineseg@horzpos` as a second oracle, on the reading
+that it is a text start. It is — but relative to the cell's own content box.
+Over the **2519** cached in-cell linesegs, 2482 equal the paragraph-relative
+prediction `max(0, margin_left + intent)` that `_line_box` already computes,
+**0** equal any absolute placement, and the largest `horzpos` in a cell
+anywhere on the corpus is 1500 HWPUNIT — smaller than any table's second
+column. A cache that never records an absolute x cannot separate `literal`
+from `addr`, and no amount of reading it harder will change that.
+
+So x got a third oracle off the reference PDF. `--pdf` reads every vertical
+stroke Hancom's own export draws (`page.get_drawings()`), in absolute page
+coordinates that need no registration — ours in HWPUNIT from the page corner,
+which is where `own_render` puts its canvas origin, the PDF's in points at
+1 pt = 100 HWPUNIT. Its verdict is real but thin, and the reason is worth
+stating: the corpus PDFs draw **1643** distinct vertical stroke positions
+while the models predict only 387-527 cell edges, because a cell edge whose
+`borderFill` says `NONE` is drawn nowhere. Scored in the only honest
+direction — of the strokes Hancom actually drew, how many does a model put a
+cell edge under — at one device pixel of 144 dpi (50 HWPUNIT): `global` 263,
+`addr` 283, `literal` 305, `stretch` 305. It ranks the models the same way
+the width oracle does and it does not prove anything on its own.
+
+### What the corpus says about width
+
+1609 cells compared, 1599 measurable, 10 ragged. A residual in `[0, 4)` is
+the column reproduced exactly: #268 measured that the cache saves
+`hp:lineseg@horzsize` quantised DOWN onto a 4 HWPUNIT grid (3164 of 3177
+values are multiples of 4), so that band is the quantiser. A NEGATIVE
+residual is not — no quantiser makes a box narrower than one already rounded
+down.
+
+| model | exact | on the 4-HWPUNIT grid | within 8 HWPUNIT |
+| --- | ---: | ---: | ---: |
+| `global` — the renderer today | 165 | 905 (56.6%) | 1102 |
+| `literal` | 322 | 1401 (87.6%) | 1406 |
+| `addr` | 322 | 1401 (87.6%) | 1406 |
+| **`stretch`** | **324** | **1495 (93.5%)** | **1502** |
+
+Per form, cells on the grid:
+
+| form | of | `global` | `literal` | `addr` | `stretch` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| admrul | 16 | 16 | 16 | 16 | 16 |
+| gianmun-1ho | 34 | 31 | 31 | 31 | 31 |
+| gianmun-2ho | 51 | 51 | 51 | 51 | 51 |
+| jeongbo | 70 | 70 | 70 | 70 | 70 |
+| jumin | 84 | 40 | 75 | 75 | **81** |
+| kstartup | 362 | 302 | 302 | 302 | 302 |
+| moel-2013 | 69 | 69 | 67 | 67 | **69** |
+| moel-2025 | 102 | 102 | 102 | 102 | 102 |
+| nrf | 32 | 32 | 32 | 32 | 32 |
+| saeopja | 779 | 192 | 655 | 655 | **741** |
+
+The corpus average hides the measurement. Seven of the ten forms score
+identically under all four models — the solved box equals the declared width
+on every cell they own, so there is nothing there to disagree about. What
+separates the models is the **771 cells the four place differently**:
+
+| model | of those 771, on the grid | cells `global` had on the grid and this model does not |
+| --- | ---: | ---: |
+| `global` | 143 | 0 |
+| `literal` | 639 | 40 |
+| `addr` | 639 | 40 |
+| **`stretch`** | **733** | **0** |
+
+`stretch` regresses nothing and recovers 590 cells the global solve loses.
+`literal` without the row-closing term regresses 40, which is what makes the
+`stretch` term a measurement and not an ornament.
+
+### jumin table 1, which is what named the problem
+
+39 rows, 5 columns, `hp:sz@width` 50897. Rows 0-30 total 50897; rows 31-38
+total 48067 for the same five columns; rows 33/34/38 split their 48067 as
+29386 + 18681. `solve_tracks` closes col2 off the 29386 constraint — a
+row-48067 constraint feeding a row-50897 column — and the contradiction
+lands on every row of the table:
+
+| cells | declared `cellSz` | solved box | `global` residual | `stretch` |
+| --- | ---: | ---: | ---: | ---: |
+| rows 4-20 col 2, `colSpan=3` (19 cells) | 39216 | 38530 | −683 | +3 |
+| rows 27-30 col 1, `colSpan=4` (4 cells) | 43968 | 43561 | −407 | +0 |
+| rows 33/34/38 col 0, `colSpan=3` | 29386 | 31114 | +1729 | +1 |
+| rows 33/34/38 col 3, `colSpan=2` | 18681 | 19783 | −1726 | +2 |
+| rows 31/32/35/37, `colSpan=5` | 48067 | 50897 | +0…+3, +500 | +0…+3, +500 |
+
+The last two lines are the whole rule in two rows of a table. Rows 33/34/38
+declare 29386 + 18681 = 48067 against a table of 50897, and the cache breaks
+the FIRST cell at exactly its declared 29386 and the second at
+50897 − 29386 = 21511, not at its declared 18681. Rows 31/32/35/37 are one
+5-column cell each declaring 48067, and the cache breaks three of them at
+50897. Row 31 carries a further +500 that `global` and `stretch` give
+identically — the same box, so whatever it is, it is not the column. A
+proportional rescale — which is what `solve_tracks` does when it has to —
+would have moved the first cell of rows 33/34/38 as well, and it did not
+move. The row closes at the table's right edge, and the last cell listed in
+the row is what absorbs the difference.
+
+`jumin` goes 40 → 81 of 84 cells on the grid. The three left are +503, +502
+and +500, and no model moves them: two of the three are cells every model
+gives the same box.
+
+### The rule
+
+**Hancom lays each table row out from its own cells' `cellSz@width`, left to
+right, carrying a `rowSpan` cell across the rows it holds; the last cell a
+row lists absorbs whatever is left between the row's own total and the
+table's `hp:tbl/hp:sz@width`.** There is no global column solve, and rows
+that declare contradictory totals are not a contradiction to be resolved —
+they are what the file means.
+
+`hp:tbl`'s other attributes were checked for anything that could legitimize a
+global width, and none of them does. Over the corpus's 81 tables:
+`cellSpacing="0"` on all 81; `repeatHeader="1"` on all 81; `rowCnt` equals
+the `hp:tr` count on all 81; `pageBreak` is `CELL` on 62 and `NONE` on 19;
+`noAdjust` is `"0"` on 63 and `"1"` on 18. Neither `pageBreak` nor
+`noAdjust` correlates with whether a table's rows agree — the 7 tables whose
+rows disagree split 3/2/2 across `noAdjust`/`pageBreak` combinations that
+also hold 74 tables whose rows agree. `hp:sz@width` is the only table-level
+width, and 80 of the 94 distinct row totals on the corpus equal it exactly;
+the 14 that do not are the `stretch` term's whole population.
+
+Span handling is the same in all four models and is not what separates them:
+751 cells declare `colSpan>1` alone, 103 `rowSpan>1` alone, 109 both, 646
+neither. `colSpan` never enters the box twice — a merged cell's `cellSz@width`
+is already the whole merged width, which is why `literal` needs no per-column
+sum at all.
+
+### Not implemented, and why
+
+The task's gate was 99% of cells with the counter-examples explained.
+`stretch` reaches 93.5% of all measurable cells and 95.1% of the contested
+ones, so the gate is not met and `own_render.py` is unchanged on this branch.
+Two things would have to close before it should be:
+
+- **38 contested cells stay off the grid under `stretch`**, 37 of them on
+  `saeopja` and concentrated in one shape. In `saeopja`'s 47996-wide table,
+  rows 8/9 total 47868 and the 128 short is not taken by the last cell: the
+  cache gives +26 to the `colSpan=3` cell at col 10 and +98 to the
+  `colSpan=1` cell at col 17, where `stretch` gives the last cell all 128
+  (residual +30) and `literal` gives it none (−98). The shortfall is split
+  between two cells in amounts that are neither proportional to their widths
+  nor equal, and nothing measured here says what picks them. `jumin` row 31
+  is the 38th, at +500.
+- **x has no oracle strong enough to move every table rule on.** The model
+  changes where every cell in every table is placed, and the only absolute
+  evidence for x on this corpus is 1643 PDF strokes that rank `stretch` above
+  `global` by 42 out of 1643. That ranks; it does not license.
+
+### Nothing moved, and that is the point
+
+`own_render.py` is byte for byte what #268 left, so every channel reads
+exactly as it did there, and the run confirms it rather than assuming it:
+`render_scoreboard.py --corpus --dpi 144` gives `cache` 0.8420 ssim / 0.3283
+inked / 0.6729 line IoU with 52 of 53 pages exact, and `computed` 0.8336 /
+0.3246 / 0.6595 with 53 of 53. `lineseg_vs_pdf.py --corpus` is 411/411
+paragraphs with 8566/8566 characters. `cell_column_probe.py --corpus` is 1599
+measurable cells with the `-margins +inset +solved` combination still winning
+at 322 exact / 1406 near, and `+solved` — which is `literal`'s width, read
+through #268's fit rather than this one's — scoring identically.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243. `render_check.py` on `render-check-01` is 6 match / 37 close / 6
+differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144, 9 pages on both.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The 66 off-grid cells the four models place identically are not a track
+  question at all** and are unchanged from #268: `kstartup` −156 on 60 cells,
+  `gianmun-1ho` −874 on 2 and −1157 on 1, `jumin` +503 and +502, `saeopja`
+  +602. Every model gives them the same box, so whatever they are, it is not
+  the column. Excluding them, `stretch` is 1495 of 1533 — 97.5%, still short
+  of the gate.
+- **Which cell absorbs a row's residual** is `stretch`'s one free choice and
+  it rests on 7 rows of `jumin` plus the `moel-2013` pair. "The last cell the
+  row lists" is what those say; `saeopja` says it is not always the last cell
+  alone.
+- **A row that overflows its table** is untested as a separate case:
+  `saeopja` has rows both under and over `hp:sz@width` and `stretch` shrinks
+  the last cell symmetrically, but no corpus row overflows by enough to
+  separate shrinking from clamping.
+- **The corpus is the training set** — 81 tables from ten government forms,
+  and the whole `stretch` term rests on the 7 of them whose rows disagree.
+- **The PDF rule oracle measures recall of drawn strokes**, so a form whose
+  cells declare no borders contributes nothing to it, and a stroke that is
+  not a table rule counts against every model equally.
+
+## A row's shortfall is not shared out — it is a boundary already written — measured, 2026-09-05
+
+#270 found that Hancom tiles each table row from its own cells' declared
+`cellSz@width` and closes the row at `hp:tbl/hp:sz@width`, and left one
+question standing: WHICH cell takes the difference. `stretch` answered "the
+last cell the row lists", reached 1495 of 1599 measurable cells on the
+cache's 4-HWPUNIT grid, and could not explain 37 `saeopja` cells where a
+128-HWPUNIT shortfall splits +26 / +98 between two cells.
+
+This run put nine more models beside it. The answer is that the question was
+wrong: there is no shortfall to share out. Hancom keeps one column grid per
+table, and a row that does not add up does not choose a victim — it lands
+wherever the grid already disagrees with it, which can be two cells, in
+amounts that are neither equal nor proportional.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows]
+[--heights] [--models LIST] [--json]` — #270's probe, with nine models added
+and `--models` to name a subset. `--rows` now prints every cell of every row
+that does not add up, with the box the CACHE gave it beside each model's
+residual, so the measurement and the guesses are in the same table.
+
+Six models tile the row exactly as `stretch` does and differ only in who
+pays: `prop4` (proportional to declared widths, each share floored onto the
+4-HWPUNIT grid, remainder to the last cell), `prop_round` (rounded,
+remainder to the last), `prop_widest` (remainder to the widest), `quanta`
+(4 HWPUNIT at a time, left to right, until spent), `colspan` (the largest
+`colSpan` takes it all) and `stretch` itself.
+
+Three do not compute a shortfall at all. They build one column grid and let
+a cell's box be the distance between the two boundaries it sits between:
+
+| model | who may write a boundary |
+| --- | --- |
+| `firstrow` | row 0 only — the task's "the first row's tracks" reading |
+| `gridfirst` | the first cell, in document order, whose width reaches it |
+| `gridlast` | a later row overwrites an earlier one — the control |
+
+All three seed `x[0] = 0` and `x[colCnt] = hp:tbl/hp:sz@width`, which is
+#270's row-closing term restated as a boundary rather than as an allocation.
+
+### What the corpus says
+
+1599 measurable cells, of which the models place 828 identically and 771
+differently. Only the second population is evidence about columns.
+
+| model | exact | on the grid | % | of the 771 | regressions vs `global` | vs `stretch` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `global` — the renderer today | 165 | 905 | 56.6 | 143 | 0 | 590 |
+| `literal` | 322 | 1401 | 87.6 | 639 | 40 | 99 |
+| `addr` | 322 | 1401 | 87.6 | 639 | 40 | 99 |
+| `stretch` — #270's best | 324 | 1495 | 93.5 | 733 | 0 | 0 |
+| `prop4` | 265 | 1218 | 76.2 | 456 | 7 | 277 |
+| `prop_round` | 255 | 1144 | 71.5 | 382 | 12 | 356 |
+| `prop_widest` | 250 | 1144 | 71.5 | 382 | 12 | 356 |
+| `quanta` | 250 | 1130 | 70.7 | 368 | 42 | 365 |
+| `colspan` | 296 | 1395 | 87.2 | 633 | 2 | 102 |
+| `firstrow` | 326 | 1497 | 93.6 | 735 | 0 | 0 |
+| **`gridfirst`** | **326** | **1518** | **94.9** | **756** | **0** | **1** |
+| `gridlast` | 326 | 1497 | 93.6 | 735 | 0 | 0 |
+
+Every model that shares a shortfall out among a row's own cells loses to the
+one that hands it all to the last cell, and loses badly: the best of them,
+`prop4`, gives back 277 of the cells `stretch` has. Proportionality is not
+what Hancom does, and neither is any rounding of it. `colspan` — the reading
+that a merged cell absorbs — is the best of the allocation family at 1395,
+still 100 short of `stretch`.
+
+`gridlast` scores exactly what `firstrow` does and 21 below `gridfirst`,
+which is what says "first" is doing the work rather than "a grid" doing it.
+
+### The +26 / +98, and where the two numbers come from
+
+`saeopja`'s 47996-wide table, 43 rows, 18 columns. Row 7 lists six cells
+totalling 47896; rows 8 and 9 list six totalling 47868, 128 short. The cache
+gives +26 to the `colSpan=3` cell at column 10 and +98 to the `colSpan=1`
+cell at column 17.
+
+Under `gridfirst` those are not two allocations. They are two boundaries,
+and neither was written by row 8:
+
+| written by | boundary | value |
+| --- | --- | ---: |
+| the table's own `hp:sz@width` | `x[18]` | 47996 |
+| row 3, `c0+1` … `c16+2`, a full partition | `x[1]`, `x[3]`, `x[5]`, `x[7]`, `x[9]`, `x[11]`, `x[12]`, `x[14]`, `x[16]` | 3234 … 43961 |
+| row 7, `c4+2` at 11448 + 2935 | `x[6]` | 14383 |
+| row 7, `c6+7` at 14383 + 19010 | `x[13]` | **33393** |
+| row 8, `c6+2` and `c8+2` | `x[8]`, `x[10]` | 20429, **26433** |
+
+Row 8's `c10+3` starts at `x[10]` = 26433 and reaches `x[13]` = 33393, so
+its box is 6960 against a declared 6932: **+28**, which the cache's
+quantiser saves as +26. Its `c17+1` starts at `x[17]` = 44144 and reaches
+`x[18]` = 47996, so its box is 3852 against a declared 3752: **+100**, saved
+as +98. The declared widths that produce them are row 7's 19010 at column 6
+and the table's own 47996 — not row 8's own widths at all, which is why no
+function of row 8 was ever going to find them. Row 7 itself is 100 short and
+gives all 100 to its last cell, because at row 7 no interior boundary to its
+right had been written yet; `stretch` and `gridfirst` agree there and
+disagree one row later.
+
+### The row that pays its shortfall to its FIRST cell
+
+The 47996 table is where the model was found, so it does not test it.
+`saeopja`'s 47757-wide table does, and it is the one row on the corpus that
+tells `stretch` and `gridfirst` apart in the opposite direction.
+
+Row 4 totals 47757 exactly and lists `c0+3` at 9890, writing `x[3]` = 9890.
+Ten rows later row 14 lists `c0+3` at 9759 and `c3+5` at 37867, totalling
+47626 — 131 short. `gridfirst` gives `c0+3` the boundary row 4 wrote, so its
+box is 9890, **+131 on the FIRST cell**, and `c3+5` then runs 9890 → 47757
+for a box of 37867, exactly its declared width and +0. The cache measures
+9890 and 37866. `stretch` has it backwards on both cells, and `firstrow`
+and `gridlast` miss it too, because the boundary was written by row 4 and
+neither of those lets row 4 write it.
+
+Two cells is thin, but they are the only two on the corpus that `gridfirst`
+gets right and that were not in view when it was written.
+
+`jumin` table 1 reads the same way. `x[3]` = 29386 is written by the first
+row that lists a `colSpan=3` cell at column 0, and rows 33/34/38 then break
+their second cell at 50897 − 29386 = 21511 rather than at its declared
+18681, exactly as #270 measured — except that #270 had to call it "the last
+cell absorbs" and here it is just `x[5]` = `hp:sz@width`.
+
+### The rule
+
+**A table has one column grid. `x[0]` is 0, `x[colCnt]` is
+`hp:tbl/hp:sz@width`, and every interior boundary is written by the first
+cell, in document order, whose declared `cellSz@width` reaches it. A cell
+that reaches a boundary already written is stretched or shrunk to it and
+writes nothing. A cell's box is the distance between its two boundaries.**
+
+The grid is a global column set after all — #270 was wrong to call the
+global solve our invention in kind, and right to call it wrong in method.
+What `solve_tracks` gets wrong is not that it solves globally but that it
+rescales: it treats contradictory rows as a system to be reconciled, and
+Hancom treats the first statement as binding and every later one as
+something to be fitted to it.
+
+### Not implemented, and why
+
+The gate was 99% of cells on the grid with 0 regressions and the remaining
+misses explained. `gridfirst` is 1518 of 1599 — **94.9%**, well short of it
+on the denominator #270's headline used. Three separate things would have to
+close first, and this run closed one of them:
+
+- **The 66 cells every model places identically** are unchanged from #268
+  and are not a column question: `kstartup` −156 on 60 cells, `gianmun-1ho`
+  −874 on 2 and −1157 on 1, `jumin` +503 and +502, `saeopja` +602. Excluding
+  them `gridfirst` is 1518 of 1533, **99.0%** — the first model to cross 99
+  on that population, and `stretch` was 97.5%.
+- **15 contested cells stay off the grid**, and only three of them have an
+  account. Eight are near-misses of one grid step: six at −1 and two at +4,
+  all inside the 8-HWPUNIT near band, and `near` improves 1502 → 1526. Four
+  are rows 7 and 8 of `saeopja`'s 48027-wide table, where a 19-HWPUNIT
+  shortfall goes to the row's FIRST cell (`c0+3` measured at 12018 against a
+  declared 12002) while row 4 of the same table gives its 19 to the last
+  cell; `gridfirst` writes `x[3]` = 12002 from row 7's own first cell and
+  the cache writes 12021, and nothing measured here says where 12021 comes
+  from. A per-column width vector consistent with every cached box in that
+  table does exist — `w0` = 5660, `w2` = 100, `w9` = 262 and so on — but it
+  was solved from the cache's answers, so it predicts nothing. The last
+  three are `jumin` row 31 at +500 and two `saeopja` cells whose cached
+  horzsize is WIDER than their declared `cellSz@width` (`r3 c6+3` declares
+  1062 and the cache breaks it at 2006; `r9 c0+12` declares 48008 and the
+  cache breaks it at 47426), which no tiling of their rows can produce.
+- **x still has no oracle, and this run made that worse rather than
+  better.** The PDF vertical-stroke recall at 50 HWPUNIT is `global` 263,
+  `addr` 283, `literal` 305, `stretch` 305, `firstrow` 305, `gridlast` 305,
+  **`gridfirst` 303** — two BELOW `stretch`, out of 1643 drawn strokes.
+  `gridfirst` wins the width oracle by 23 cells and loses the x oracle by 2
+  strokes, and the model moves where every cell in every table is drawn. A
+  change to `solve_tracks` moves every table rule on the corpus, and 1643
+  strokes that cannot separate the two candidates do not license it.
+
+So `own_render.py` is byte for byte what #268 left, for the second run
+running. The rule is recorded and the instrument that found it is in the
+tree; what it needs before it ships is an absolute-x oracle, which this
+corpus does not contain.
+
+### The row-height question, first look
+
+`--heights` reports the shape of #265's root rather than solving it.
+`hp:tr` carries no height in OWPML, so a row's height has to come from its
+cells' `cellSz@height`. Over the corpus's 81 tables and 514 rows:
+
+- **500 of 514 rows** have every `rowSpan=1` cell declaring one identical
+  height, so "the tallest cell" and "any cell" are the same answer and the
+  question does not arise. No row lists zero `rowSpan=1` cells. The 14 that
+  disagree spread by 283 HWPUNIT on 5 rows, 100 on 2, and then singletons at
+  45, 434, 1300, 1308 and 1345.
+- **202 of 212 `rowSpan` cells** declare a height exactly equal to the sum
+  of the unit heights of the rows they cover, so the merge adds no
+  constraint and no simultaneous solve is needed. The 10 that do not are all
+  singletons and all large — +2662, +3562, +3127, +4300, +435, +384, −566.
+- **50 of 81 tables** have row heights summing exactly to
+  `hp:tbl/hp:sz@height`. The 31 that do not are short by 700 on 2 tables,
+  3959 on 2, and then singletons up to 10195.
+
+The reading this supports is that row heights are the max of the row's own
+`rowSpan=1` cell heights and that a rowSpan-aware solve buys 10 cells out of
+212 — but the 31 tables whose rows do not sum to the declared table height
+are a third of the corpus and are not explained by either reading, so this
+is a shape and not a rule.
+
+### Nothing moved, and that is measured
+
+`own_render.py` is untouched, and every channel confirms it rather than
+assuming it. `render_scoreboard.py --corpus --dpi 144` gives `cache` 0.8420
+ssim / 0.3283 inked / 0.6729 line IoU with 52 candidate pages against 53
+reference (`kstartup` 21/22), and `computed` 0.8336 / 0.3246 / 0.6595 with
+53/53 — both identical to #270 to four places, in both directions.
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566
+characters. `cell_column_probe.py --corpus` is 322 exact / 1406 near of 1599.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243. `render_check.py` on `render-check-01` is 6 match / 37 close /
+6 differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144, 9 pages on
+both.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Which cell writes a boundary when two rows reach it at once** is
+  `gridfirst`'s one free choice, and document order is what the corpus says.
+  `gridlast` — the same grid resolved the other way — scores 21 cells worse,
+  which distinguishes the two but does not establish that Hancom's rule is
+  ordinal rather than, say, "the widest span wins" (untested; on this corpus
+  the earlier row is also usually the wider span).
+- **The four `saeopja` 48027 cells contradict document order outright.** Row
+  7's first cell is measured 19 HWPUNIT wider than it declares, and the only
+  boundary that could do it is one no earlier row writes. Either the grid is
+  not built in document order, or something outside `cellSz` writes `x[3]`.
+- **A row that overflows its table** is still untested as a separate case,
+  unchanged from #270: no corpus row overflows by enough to separate
+  shrinking the last cell from clamping it.
+- **The corpus is the training set**, and it is the same training set #270
+  used — 81 tables from ten government forms, with the whole grid term
+  resting on the 7 whose rows disagree. `gridfirst` was designed after
+  looking at `saeopja` rows 8/9, so those 37 cells are fitted, not
+  predicted. Of the 21 cells it gains over `firstrow` and `gridlast`, 20 are
+  in that same fitted table and 2 are the 47757 table's row 14, against 1
+  lost; those 2 are the whole of its held-out evidence.
+- **The row-height numbers are counts of the declaration, not of the
+  render.** There is no cached row height to score against, so nothing above
+  says what Hancom actually did with those heights — only what the file
+  gives it to work with.
+
+## A table's declared height is a floor on its rows — measured, 2026-09-05
+
+#265's `class_b_probe.py` attributes 109 of the corpus' class-B paragraphs to
+`table_row_heights` and 17 to `cell_valign`: text below a table sits at a
+different y under computed layout than under the cache because our table's
+rows come out a different height from Hancom's. #268 fixed which margin
+insets a cell and #270 measured the column a row's cells are laid out in.
+This run asks the remaining question on the other axis — what makes a ROW as
+tall as it is.
+
+### The oracle the task proposed is not in the cache
+
+The task proposed reading each row's top out of the cached
+`hp:lineseg@vertpos` of the cells in it. It cannot be read that way, for the
+same reason #270 could not read a cell's x out of `horzpos`. An in-cell
+`vertpos` is measured from the top of the cell's own CONTENT box and BEFORE
+the cell's vertical alignment offset, so **1522 of the corpus' 1610 cells
+that cache a line start it at exactly 0** whatever row they sit in, and 86 of
+the 88 that do not are equal to the first paragraph's own `hh:margin` prev
+(the two left over are cells whose first paragraph caches no line at all, so
+the reading is a later paragraph's). A `CENTER`-aligned cell in a row twice
+its content's height still caches 0. There are no row tops in there.
+
+### What the cache does state, and it is enough
+
+A paragraph whose whole content is one inline table caches one `hp:lineseg`,
+and #261 measured that an inline object's cached `vertsize` is the object's
+`hp:sz` height plus its own vertical `hp:outMargin`, exact on 63 of 63. So
+`vertsize − outMargin.top − outMargin.bottom` is Hancom's own total for the
+table, and it equals the declared `hp:tbl/hp:sz@height` on **65 of the 65
+tables the cache did not paginate** (the 8 it did read short by the part on
+the next page, which is what a paginated table's holder lineseg describes).
+
+That gives one equation per table: **a row-height rule whose rows do not add
+up to the table's own declared height is wrong.**
+
+### The instrument
+
+`engine/scripts/row_height_probe.py FORM.hwpx [--corpus] [--pdf] [--json]
+[--no-text] [--layout-policy P]` subclasses `OwnRenderer` and records each
+table's row solve as it happens. A cell's content height is captured off
+`_paragraph_block_extent` — the renderer's own number, the one
+`_table_tracks` actually feeds the row solve — rather than rederived, for the
+same reason #268 read the text column off `avail_w_hwp`.
+
+Nine candidates are solved with `solve_tracks` exactly as the renderer solves
+them and scored twice, with and without the compress-to-declared step,
+because the compress hides every disagreement inside itself. A second,
+CIRCULAR reading is printed beside the total: each row's own declared
+`cellSz@height`, where the row's unspanned cells agree on one. It is circular
+for the `declared` candidate, which scores 501 of 501 by construction, and it
+is labelled as such — but a candidate that does not reproduce the declared
+height on a row whose content fits comfortably inside it is saying the file's
+own number is decoration.
+
+`--pdf` adds Hancom's own horizontal table rules, scored for recall the way
+#270 scored the vertical ones: of the horizontal strokes Hancom drew inside a
+table's x-span, how many does a candidate put a row boundary under? Dashed
+rules export as runs of short segments on one y and are merged by y, without
+which a five-row form reports 158 rules.
+
+### What the corpus says
+
+81 tables and the 1610 cells in them that cache a line; 70 tables scored on
+the total (the other 11 — 10 on `kstartup`, 1 on `nrf` — are rendered
+`natural_rows`, which drops the declared total on the row axis by design);
+501 rows whose unspanned cells agree on one declared height:
+
+| candidate | rows on their declared height | tables whose rows sum to `hp:sz@height` |
+| --- | ---: | ---: |
+| `declared` — `cellSz@height` alone | 501 (circular) | 44 / 70 |
+| `content` — content + inset alone | 87 | 16 / 70 |
+| **`max`** — the larger of the two | **437** | **70 / 70** |
+| `max_spacing` — last line's `spacing` inside the content | 329 | 22 / 70 |
+| `max_marginnext` — + the last paragraph's `hh:margin` next | 437 | 70 / 70 |
+| `max_noinset` — content without the cell inset | 456 | 44 / 70 |
+| `max_span_equal` — a `rowSpan` cell's height split evenly | 359 | 58 / 70 |
+| `max_span_last` — all of it on the last row it spans | 359 | 51 / 70 |
+| `max_span_ignore` — a `rowSpan` cell constrains nothing | 437 | 70 / 70 |
+
+`max`'s total residuals are `{0: 70}` — not a distribution with a tail, one
+value. Per form, tables whose rows sum to the declared height: admrul 2/2,
+gianmun-1ho 3/3, gianmun-2ho 2/2, jeongbo 2/2, jumin 3/3, kstartup 32/32,
+moel-2013 7/7, moel-2025 10/10, nrf 2/2, saeopja 7/7.
+
+Hancom's own horizontal rules rank the same way. Of the strokes drawn inside
+a table's x-span, at one 144-dpi device pixel (100 HWPUNIT): saeopja `max`
+176 of 622 against `declared` 54 and `max_span_equal` 87; jeongbo 27/27
+against 18; moel-2013 33/72 against 12; jumin 54/56 against 23; gianmun-2ho
+10/10 against 9; nrf 11/38 against 7. `max`, `max_marginnext` and
+`max_span_ignore` are identical on every form. The two forms that do not rank
+it first are admrul (6 of 107, against `content`'s 9 — a five-row form whose
+PDF draws 107 horizontal strokes, so almost none of them is a row boundary)
+and kstartup (54, one behind `max_spacing`'s 56 of 317).
+
+### The rule
+
+**A row is as tall as the tallest thing its cells ask for: for each cell, the
+larger of its declared `cellSz@height` and its content height plus the cell's
+top and bottom inset (`cell_inset`, #268); a `rowSpan` cell states what the
+rows it covers must add up to, not what any one of them must be.** The
+content height is the cached line boxes WITHOUT the last line's trailing
+`spacing` — `Paragraph.extent_hwp`'s existing reading, and putting the
+spacing back costs 48 of the 70 tables.
+
+That is what `_table_tracks` already did, and this run confirms it rather
+than changing it. Three counter-examples are worth naming:
+
+* **`max_noinset` scores BETTER on rows (456 against 437) and worse on totals
+  (44 against 70).** The rows it wins are rows where the content nearly fills
+  the declared height and dropping the inset keeps the declared value
+  standing; the totals it loses are the tables whose declared rows genuinely
+  fall short. The circular oracle and the real one disagree, and the real one
+  is the one with a Hancom number behind it.
+* **`max_span_ignore` ties `max` exactly, on every form and both oracles.**
+  Not one corpus row is determined by a `rowSpan` cell — the unspanned cells
+  already fix every one of them. 109 cells declare `rowSpan > 1` and none of
+  them binds. So the span arm of the rule is untested by this corpus, not
+  confirmed by it; `max_span_equal` and `max_span_last` are ruled out only
+  because they make rows the unspanned cells had already fixed too short.
+* **`max_marginnext` ties `max` exactly too.** Every corpus cell's last
+  paragraph declares `hh:margin` next of 0, so whether a cell's content
+  reserves it is unmeasured here.
+
+### What changed: the declared height is a floor, not a ceiling
+
+The rule needed no change. The step AFTER it did.
+
+`solve_tracks`' last act is to rescale the tracks proportionally onto the
+declared total. Since the rule already sums to the declared height on every
+Hancom save, **that rescale never fires on one** — the probe's `{0: 70}` is
+exactly that statement. Instrumenting the render says the same: over the
+89 row solves a full corpus render performs under the `cache` policy, the
+compress fired on 2 tables, both `kstartup`, by 78 and 282 HWPUNIT. Under
+`computed` it fired on 6: `kstartup` 78, 282 and 2339, `moel-2013` 1100,
+`saeopja` 1040 and 1132.
+
+And when it fires it is destructive out of all proportion to the cause. Under
+`computed`, **8 cells of 1610 have a content height different from the
+cache's** — the line breaker's own residual, #265's `text_rebreak:width` seen
+from inside a cell — and the compress turned those 8 into **50 changed rows
+of 515**, because scaling a table proportionally moves every row in it. It
+was making forty rows wrong to make one row fit.
+
+Nothing licenses that. The overflow direction is one-sided too: over the 70
+tables on both policies the natural sum is never BELOW the declared height,
+only equal or above. So:
+
+    heights = solve_tracks(rows, row_cons)
+    if decl_h and sum(heights) < decl_h:
+        heights = solve_tracks(rows, row_cons, decl_h)
+
+A shortfall is still distributed, because no corpus table has one and nothing
+here says what one should do. This is the same reasoning `natural_rows`
+already carries for a table split across a page — "compressing a table's rows
+to fit a declared height that its own content does not fit in is exactly the
+bug" — applied to the case that is not a page split.
+
+Five unit tests on synthetic tables cover a row driven by its content, a row
+driven by its declared height, an empty cell, a `rowSpan` cell constraining
+the pair it covers, the floor, and the untouched shortfall arm. Their content
+heights come from authored `hp:linesegarray` on paragraphs with no
+characters, so `_paragraph_block_extent` takes the cached branch and no font
+on the machine can move them.
+
+### After
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pair rate | pages |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8420 | 0.3283 | 0.6729 | 0.8364 | 52 / 53 |
+| `cache` after | **0.8421** | 0.3283 | **0.6730** | 0.8364 | 52 / 53 |
+| `computed` before | 0.8336 | 0.3246 | 0.6595 | 0.8471 | 53 / 53 |
+| `computed` after | 0.8334 | **0.3253** | 0.6562 | 0.8469 | 53 / 53 |
+
+Under `cache` only `kstartup` moves — the two tables the compress was firing
+on — and it moves up: ssim 0.8316 → 0.8317, inked 0.3021 → 0.3023, line IoU
+0.2718 → 0.2726. Every other form is identical to four decimals and no page
+count moves on either policy. Every verdict is unchanged, `kstartup`'s
+standing 21-of-22 failure under `cache` included.
+
+**Under `computed` the against-Hancom channel is mixed and the reason is
+worth recording rather than hiding.** `kstartup` improves (inked 0.4418 →
+0.4427, line IoU 0.6518 → 0.6622) and `moel-2013`'s inked improves
+(0.1315 → 0.1388) while its line IoU falls (0.5129 → 0.4962); `saeopja` falls
+(ssim 0.7677 → 0.7657, line IoU 0.7535 → 0.7268). That is the compensating
+error going away. The compress was hiding this renderer's own content-height
+overshoot by smearing it across a table's rows; removing it puts the whole
+overshoot below the table, where the line-pairing channel charges for it in
+one place instead of forty small ones. The overshoot is the same size it
+always was — 8 cells — and it is #265's `text_rebreak:width`, not a row rule.
+
+The channel that grades this renderer against ITSELF says the same thing
+without the confound. `layout_divergence.py --corpus`: agreement 1350 → 1395,
+class A 118 → 118, class B **350 → 302**, class C 243 → 243.
+`class_b_probe.py --corpus` root histogram:
+
+| root mechanism | before | after |
+| --- | ---: | ---: |
+| `text_rebreak:width` | 167 | 167 |
+| `table_row_heights` | **109** | **64** |
+| `empty_paragraph` | 29 | 29 |
+| `forced_break` | 28 | 28 |
+| `cell_valign` | **17** | **14** |
+
+`table_row_heights` falls `moel-2013` 53 → 28 and `saeopja` 56 → 36, and its
+Σ|dy| RISES 623.50 → 1386.88 px: fewer paragraphs, each moving further, which
+is what un-smearing looks like. `cell_valign` falls with it, as #265 predicted
+it would — it is a consequence of the row question and not a separate one.
+
+`lineseg_vs_pdf.py --corpus` is byte-identical, 411 of 411 paragraphs with
+8566/8566 characters, as it must be: it reads the cache against the PDF and
+never through this renderer's row solve. `render_check.py` on
+`render-check-01` is unchanged at both 96 dpi (6 match / 37 close / 6 differ /
+2 unsupported) and 144 dpi (14 / 31 / 4 / 2), 9 of 9 pages exact both times —
+its tables' rows all fit their declared heights, so the floor cannot move
+them.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The rowSpan arm of the rule has no witness.** `max_span_ignore` ties
+  `max` on every number in the table above, so the corpus' 109 `rowSpan`
+  cells never determine a row. "A spanning cell states what its rows add up
+  to" is what `solve_tracks` does and what the two alternatives fail to do; it
+  is not something this corpus confirms.
+- **Whether a cell's content reserves its last paragraph's `hh:margin`
+  next.** Every corpus cell declares 0 there, so `max_marginnext` and `max`
+  are the same rule on this data.
+- **A table whose rows fall SHORT of its declared height.** No corpus table
+  does, on either policy, so the shortfall arm is the behaviour that was
+  already there and not a measurement. The one-sidedness itself is a finding:
+  the natural sum is ≥ the declared height on 140 table-policy pairs and < it
+  on none.
+- **Two kstartup tables overflow their declared height under the CACHE
+  policy**, by 78 and 282 HWPUNIT, which means this renderer measures
+  Hancom's own cached content as 78 and 282 taller than Hancom's own table.
+  Those two are the whole of the cache-policy movement above. Nothing here
+  says which term they are; they are small enough to be the ±2-per-line
+  `PERCENT` residual #247 and #261 both left open, accumulated over a tall
+  table, and that is a guess.
+- **The computed-policy line IoU cost is real and is not explained away.**
+  −0.0033 in the corpus mean, concentrated on `saeopja` and `moel-2013`. The
+  argument for taking it is that the compress had no positive evidence at all
+  and demonstrable collateral damage, not that the channel improved.
+- **The PDF oracle measures recall of drawn strokes.** A row boundary whose
+  `borderFill` is `NONE` is drawn nowhere and a horizontal stroke that is not
+  a table rule counts against every candidate equally, which is why admrul —
+  107 strokes for eight predicted boundaries — ranks nothing.
+- **The corpus is the training set.** 81 tables and 1610 cells from ten
+  government forms, and the total oracle rests on the 65 tables whose holder
+  paragraph holds nothing else. The private report-class holdout was not
+  opened, and it is exactly the population the floor changes: a Rigorloom-
+  written document has no cache, so every one of its cells takes the computed
+  branch and every table that overflows now grows instead of compressing.
+
+## A cell's text column has a floor, and it is 0.2 inch — measured, 2026-09-05
+
+#268, #270 and #272 each closed leaving the same 66 cells behind: cells
+whose cached `hp:lineseg@horzsize` no column model reproduces and every
+column model places identically, so whatever moves them is not the column.
+`kstartup` −156 on 60, `gianmun-1ho` −874 on 2 and −1157 on 1, `jumin` +503
+and +502, `saeopja` +602. This run asks the cell itself.
+
+### The instrument
+
+`engine/scripts/cell_column_probe.py FORM.hwpx --residuals [--corpus]
+[--json]` selects that population — measurable, off the cache's 4 HWPUNIT
+grid, and given one box by all twelve of #272's models — and dumps for each
+cell everything the file offers as a candidate: `hp:tc@hasMargin`, the cell's
+own `hp:cellMargin` and the table's `hp:inMargin` and the inset
+`cell_inset` resolves from the two, the `hh:borderFill` id with its left and
+right line types and widths, `hp:tbl@cellSpacing`, the `hp:subList`'s
+`vertAlign`, `textDirection` and `lineWrap`, and per paragraph its `paraPr`
+id, `align`, left and right `hh:margin`, `intent`, `hp:heading` type and
+level, `hh:tabPr` stop definitions and tabs used, every inline object with
+its kind, width, `outMargin` and `treatAsChar`, and every cached line's
+`horzpos` and `horzsize` beside our own.
+
+The residual is then fitted. Eight readings of the cell's geometry — as
+rendered, a floor, no inset at all, `cellMargin` unconditionally, `inMargin`
+unconditionally, plus or minus the border widths, less `cellSpacing` — are
+crossed with the three readings of a negative `hh:intent` #268 weighed, and
+the cheapest pair that puts EVERY one of the cell's cached lines inside
+`[0, 4)` is reported as its account. Cheapest means fewest departures from
+what the renderer does now, so a cell that needs one change is never
+reported as needing two.
+
+`track_probe.probe_form` grew a `cell_id` per cell and a `keep_renderer`
+flag so the elements behind a cell can be reached without rendering the form
+twice and matching the two runs up by address.
+
+### What the 66 are made of
+
+Two causes, and neither is a table attribute:
+
+| account | cells | where |
+| --- | ---: | --- |
+| `column := floor 1440` | 63 | `kstartup` 60, `gianmun-1ho` 3 |
+| `horzpos := margin_left only` | 3 | `jumin` 2, `saeopja` 1 |
+
+No residual cell carries a `hp:heading`, a bullet, a tab, an inline object,
+a `VERTICAL` text direction or a non-zero `cellSpacing`, and no reading of
+the border widths explains a single one of them. That is what the dump is
+for: those candidates are ruled out by having been read rather than by not
+having been thought of.
+
+### The floor
+
+`kstartup`'s block is one table, rows 2-6 × columns 1-12 — sixty identical
+cells 1566 HWPUNIT wide, inset 141 on each side, holding an empty paragraph.
+The column that leaves is 1284 and the cache saved `horzsize` 1440 in every
+one. Their row's neighbours settle that the inset itself is right: `c13` is
+9082 wide, our column is 9082 − 282 = 8800, and the cache says 8800.
+
+`gianmun-1ho` says the same thing from two more widths. Its `r7c6` and `r8c6`
+are 848 wide, leaving 566; its `r8c11` is 565 wide, leaving 283. All three
+cache 1440.
+
+Over every cached in-cell `hp:lineseg` on the corpus:
+
+- the smallest `horzsize` anywhere is **1440**, the next smallest is 1696,
+  and **nothing is below it**;
+- **64 lines sit exactly on 1440**, and they come from four different
+  columns — 283, 500, 566 and 1284 — so the value is not a function of the
+  cell;
+- those 64 carry two different `textheight` values, 900 and 1000, so it is
+  not a multiple of the text either;
+- `gianmun-1ho` `r8c11` is 565 HWPUNIT wide in total and still caches a 1440
+  line box, so this is a floor on the LINE and not a clamp on the margins:
+  no reading of a 565-wide cell's insets produces 1440, and the text is
+  simply allowed to overhang the cell it sits in.
+
+1440 HWPUNIT is 0.2 inch exactly — 5.08 mm, 14.4 pt — which reads as a
+designed constant rather than a derived one.
+
+### The rule
+
+**A table cell's text column is its box less its inset, and never less than
+1440 HWPUNIT.** `own_render.cell_text_width(box_hwp, margin)` is new and
+carries `MIN_CELL_TEXT_WIDTH`; the two places that computed a cell's content
+width — `_table_tracks`, for the content extent a row is measured from, and
+`_render_cell_content`, for the column the paragraphs are laid out in — both
+call it, so the row and the text can never disagree about how wide the cell
+is. Six unit tests on the synthetic table #268 built cover a roomy cell,
+the three corpus widths, a cell narrower than the floor, the floor's
+independence from the inset, the boundary (a column already on 1440 is not
+snapped, and 1444 stays 1444), and the render path itself — that
+`_render_cell_content` hands `_render_paragraphs` the floored number.
+
+### The three that are not a cell question at all
+
+`jumin` `r15c0`, `jumin` `r1c0` and `saeopja` `r19c0` are the `saeopja` 166
+case #268 recorded, three more times. Each is a single cached line whose
+paragraph declares a left margin and a negative `intent` larger than it —
+500 against −1070, 500 against −1308, 600 against −2180 — and in each the
+cache put the line box at `horzpos` = the left margin while `_line_box`
+clamps `max(0, left + intent)` to 0. The residual is the margin plus the
+grid: 503, 502, 602.
+
+They are left alone, for the reason #268 gave: the reading is a global
+property of every paragraph on the corpus and not a cell attribute, and #268
+measured all three readings over all 3214 cached line boxes — the clamped
+one this renderer implements scores 2860, "a negative intent moves nothing"
+2895, the textbook hanging indent 2710. These three cells are three of the
+35 that separate the first two. That is now a second, independent line of
+evidence for the middle reading and still not a slice: changing it moves
+every line box in the corpus and belongs to whichever run takes the indent
+question on.
+
+### After
+
+The 66 go to 3, and the three that remain are the three above.
+`cell_column_probe.py --corpus` goes **322 exact / 1406 near → 385 / 1470**
+of 1599 measurable cells; the −156 band of 60 leaves the residual histogram
+and nothing appears in its place. `track_probe.py --corpus` moves with it:
+the renderer's own `global` model goes 905 → **969** cells on the
+4 HWPUNIT grid, and `gridfirst` — #272's best, which this branch does not
+implement — goes 1518 → **1581**, 94.9% → **98.9%** of all 1599, because the
+floor was costing every model the same 64 cells.
+
+**Every raster channel is byte-identical before and after, and that is
+correct rather than disappointing.** `render_scoreboard.py --corpus --dpi
+144` gives `cache` 0.8420 ssim / 0.3283 inked / 0.6729 line IoU with 52 of
+53 pages, and `computed` 0.8336 / 0.3246 / 0.6595 with 53 of 53 — the same
+JSON byte for byte on both policies, form for form. `lineseg_vs_pdf.py
+--corpus` is 411/411 paragraphs with 8566/8566 characters, unchanged.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243, unchanged. `render_check.py` on `render-check-01` is 6 match /
+37 close / 6 differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144,
+9 pages on both, unchanged.
+
+Nothing moved because of what is IN those 64 lines: 61 of them are empty
+paragraphs, and the other 3 hold one character each in a `JUSTIFY`
+paragraph, which on a last line is a left-aligned line. A wider column moves
+neither. What the fix buys is not a pixel on this corpus — it is that a
+narrow cell with text in it will now break where Hancom breaks it, and that
+the 64 cells stop hiding the column question underneath themselves.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Whether the floor is on the column or on the line box.** All 64 lines
+  declare `margin_left`, `margin_right` and `intent` of zero, so the two are
+  the same number in every observation. It is implemented on the column,
+  which is the narrower claim: a paragraph whose own margins shrink a roomy
+  cell's line box below 1440 is not widened, because nothing measured says
+  it should be.
+- **1440 is read off ten government forms and nothing else.** It is a
+  constant with no public citation behind it here — what stands behind it is
+  that four different columns are driven to it, that no cached in-cell line
+  anywhere on the corpus is narrower, and that a cell 565 HWPUNIT wide still
+  gets it. A document whose narrow cells were authored at a different zoom
+  or unit could disprove it in one line.
+- **Whether the floor applies outside a table cell** is untested. Every
+  observation is in a `hp:tc`, and body columns on this corpus are never
+  within an order of magnitude of 1440, so the corpus cannot say. It is
+  applied only to cells.
+- **The three indent cells are recorded, not fixed**, and the reading that
+  would fix them is worth +35 line boxes over all 3214 — measured in #268,
+  re-confirmed here from a second direction, and still a whole-corpus change
+  rather than a cell one. **Since fixed, and it was worth +55, not +35: see
+  *The indent is not in the line box* at the end of this file. The reading
+  that fixes them is not one of the three #268 weighed.**
+- **`stretch`, `firstrow`, `gridfirst` and `gridlast` each pick up 1
+  regression against `global`** where they had 0 in #272. It is the same
+  cell in all four — `saeopja` `r3c6`, a `colSpan=3` cell declaring 1062
+  whose column was 500 and whose cache says 1440. The floor puts the
+  renderer's own box on the grid there and the models that give it a
+  different box stay off it. The cell was off the grid under every model
+  before, so nothing regressed in fact; the baseline moved.
+- **The corpus is the training set**, as it was for #268, #270 and #272 —
+  the same ten forms, and the floor rests on 64 lines in 4 of them.
+
+## The two tables that overflow, and what a split table caches — measured, 2026-09-05
+
+#273 left two things open on the row axis. Two `kstartup` tables overflow
+their declared `hp:tbl/hp:sz@height` by 78 and 282 HWPUNIT even under the
+`cache` policy, and nothing said whether that overflow is this renderer's or
+the file's; and the 11 tables the total oracle cannot read were excluded
+without anyone asking what the cache says about a table split across a page.
+This run answers both, and the first one moves a rule.
+
+### The overflow is neither table's content — it is the file's own arithmetic
+
+`row_height_probe.py --overflow` prints the reconciliation row by row for
+every table whose rows do not sum to its declared height. On the corpus there
+are exactly two, both `kstartup`, both ANCHORED (`hp:pos@treatAsChar="0"`),
+which is why #273's cache oracle could not read either: an anchored table's
+holder paragraph caches its own text line, not the table.
+
+**Table 5** — 4 rows, declared 62482:
+
+| row | declared `cellSz` | content + inset | asks | Hancom drew |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 3682 | 1500 + 276 | 3682 | 3690 |
+| 1 | 19626 | 6440 + 276 | 19626 | 19619 |
+| 2 | 19626 | 6440 + 276 | 19626 | 19631 |
+| 3 | 19626 | 3920 + 276 | 19626 | 19541 |
+| | Σ 62560 | | Σ 62560 | Σ 62481 |
+
+No cell's content comes near its declared height. The whole of the +78 is
+that **the table's own rows declare 62560 and its own `hp:sz@height` declares
+62482** — the file disagrees with itself, and table 5 is the only corpus
+table where the declared rows sum to MORE than the declared table (on the
+other 80, Σ `cellSz@height` ≤ `hp:sz@height`, usually well under).
+
+**Table 36** — 2 rows, declared 66505: row 0 declares 58747 and holds 28
+paragraphs whose 43 cached lines run to 61680 (`vertpos` 0 to 60480 on the
+1440 advance #263 measured, last line's `spacing` dropped per #273), so with
+its 280 inset it asks for 61960; row 1 asks for its declared 4827. Σ 66787,
++282. Here the overflow IS content — but content the cache itself recorded.
+
+### Hancom's own export says the declared height wins, and how
+
+Neither table has a cache oracle, so the reference PDF is the only witness.
+It is measurable: `kstartup`'s `hp:pagePr` declares 59528 × 84188 HWPUNIT and
+the exported PDF's MediaBox is 595.0 × 841.0 pt, a non-uniform 0.9995297 ×
+0.9989547. Checked against a length that is not in question, table 5's
+declared width 47651 measures 47649 through that scale (Δ 2).
+
+Read through it, with each boundary taken at the centre of its border band
+(a double border draws two strokes; the vertical strokes overshoot the
+horizontal band by 0.24 pt at a mitred corner and are not the boundary):
+
+* **table 5 measures 62481 against a declared 62482** (Δ 1), where the
+  uncompressed 62560 would have measured 62559.
+* **table 36 measures 66501 against a declared 66505** (Δ 4), where the
+  uncompressed 66787 would have measured 66717.
+
+So `hp:sz@height` is a ceiling as well as the floor #273 made it. Table 5
+draws its three interior rules as well, and they say WHERE the excess is
+taken: rows 0, 1 and 2 measure 3690 / 19619 / 19631 against their declared
+3682 / 19626 / 19626 — residuals +8 / −7 / +5, the slop every reading in this
+PDF carries — and **row 3 measures 19541 against a declared 19626**. Taking
+the whole 78 off the last row predicts 19548 (Δ −7, in band); scaling all
+four rows in proportion predicts 19603 (Δ −62, an order of magnitude out).
+The table is laid out top-down at the heights its rows ask for and cut off at
+the declared box.
+
+### The rule, and why it is not the compress #273 removed
+
+**A table ends where `hp:tbl/hp:sz@height` says. When the rows the row rule
+solves overflow it, the excess comes off the LAST row and every boundary
+above it stays where the row rule put it.**
+
+#273 removed the proportional rescale, and the reason it gave still stands:
+8 cells of 1610 whose computed content is taller than the cache's turned into
+50 changed rows of 515, because scaling a table moves every row in it. The
+cut here cannot do that. It moves one row — the last — and it moves it to the
+place Hancom's own export puts it. `own_render.clip_tracks` is the whole of
+it; a last row the excess would drive negative is clamped at zero and the
+remainder carries upward, which no corpus table needs.
+
+Instrumenting every call a full corpus render makes on both policies: 8
+clips, each moving **exactly one row** — `kstartup` 78 (19626 → 19548) and
+282 (4827 → 4545) under `cache`, and those two plus `kstartup` 2339 (3577 →
+1238), `moel-2013` 1100 (8566 → 7466), `saeopja` 1040 (1082 → **42**) and
+1132 (2430 → 1298) under `computed`. `saeopja`'s 1040 off a 1082 last row is
+the tightest, and it is the honest shape of the trade: the six `computed`
+clips are all paying for #265's `text_rebreak:width`, and a last row can end
+up nearly flat doing it. That is one visibly wrong row instead of forty
+slightly wrong ones, and the table's bottom edge — which everything below it
+is measured from — is right in both.
+
+The SHORTFALL arm is untouched: `solve_tracks(rows, row_cons, decl_h)` still
+distributes a shortfall proportionally. No corpus table has one on either
+policy, so there is still nothing to measure it against.
+
+### What the cache says about a table split across a page: nothing
+
+`row_height_probe.py --paginated` asks the second question — is a table the
+cache paged encoded as one `hp:lineseg` per fragment, each with its own
+`vertpos`/`vertsize`, the way #261 reads a whole inline object's height off
+one? Over the corpus's 81 tables:
+
+* **Every table's holder paragraph caches ONE `hp:lineseg` for it.** Two
+  `kstartup` holders cache two, and both are anchored holders whose own TEXT
+  wraps to a second line (`textpos` 0 and 15) — not a table fragment. There
+  is no per-fragment `vertsize` anywhere in the corpus.
+* An inline table's single lineseg carries the WHOLE table (`vertsize` less
+  the table's vertical `hp:outMargin`, #261), however many pages it takes.
+  `lineseg_vs_pdf.py` already states the consequence from the other side:
+  `kstartup` caches 20 page groups against the export's 22.
+* `hp:tbl@pageBreak` is `CELL` on 62 and `NONE` on 19 — a static authoring
+  setting, identical on a table that pages and one that does not, and #244's
+  `_table_may_split` already reads it that way.
+* `hp:tbl@repeatHeader` is `"1"` on all 81. It varies nowhere, so this corpus
+  cannot say whether honouring it (it is in `BLOCK_NOT_HONORED`) would change
+  anything; the one table this render splits has no header row to repeat.
+* 73 tables are inline (`treatAsChar="1"`) and 8 anchored.
+
+So a split table's fragment heights have no oracle in the file at all, and
+`natural_rows`' fragments cannot be graded against one. Of the 11 tables
+#273 excluded, only ONE — `kstartup` table 9 — is actually split by this
+render (page 5 rows 0–3 = 70529, page 6 rows 3–4 = 69505, the second
+fragment being `_expand_segmented_rows`' split of a solo full-width row). The
+other 10 are anchored tables `_anchor_table_geometry` measures with
+`natural_rows=True` before the fit test and then draws whole; the probe
+recorded that first solve, which is why they looked excluded. `--overflow`
+skips a table the render only ever solves with `natural_rows=True`, because
+the row expansion means its rows no longer line up with the file's.
+
+This is the same knot as `kstartup`'s 21-vs-22 pages under `cache` (#258 /
+#265): a whole-table lineseg the cache cannot page. Nothing here unties it —
+the clip does not move a page count on either policy.
+
+### After
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pair rate | pages |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8421 | 0.3283 | 0.6730 | 0.8364 | 52 / 53 |
+| `cache` after | 0.8421 | **0.3284** | 0.6730 | 0.8364 | 52 / 53 |
+| `computed` before | 0.8334 | 0.3253 | 0.6562 | 0.8469 | 53 / 53 |
+| `computed` after | **0.8335** | **0.3256** | **0.6566** | 0.8469 | 53 / 53 |
+
+Nothing falls, on either policy, on any channel, on any form. Under `cache`
+only `kstartup` moves (inked 0.3023 → 0.3027) — the two tables above are the
+whole of it. Under `computed` three forms move and all three move up:
+`kstartup` ssim 0.8808 → 0.8812, inked 0.4427 → 0.4435, line IoU 0.6622 →
+0.6625; `moel-2013` ssim 0.7987 → 0.7993, inked 0.1388 → 0.1391;
+`saeopja` ssim 0.7657 → 0.7662, inked 0.2971 → 0.2993, line IoU 0.7268 →
+0.7304. That last one is the interesting one: `saeopja`'s line IoU is where
+#273 paid −0.027 for removing the rescale, and putting the table's bottom
+back on the declared box without moving the rows above it recovers a third of
+it. No page count moves; `kstartup`'s standing 21-of-22 under `cache` and
+every verdict are unchanged.
+
+`row_height_probe.py --corpus` is byte-identical — `max` 437 of 501 rows,
+70 of 70 tables, total residuals `{0: 70}` — because the probe scores the row
+RULE, which did not change, before any clip. What did change is that no table
+now draws at a height other than the one it declares: instrumenting every
+`_table_tracks` call over the corpus on both policies, the overflows 78, 282
+(cache) and 78, 282, 2339, 1100, 1040, 1132 (computed) are all gone and every
+non-`natural_rows` solve lands exactly on `hp:sz@height`.
+
+`layout_divergence.py --corpus` is unchanged: agreement 1395, class A 118,
+class B 302, class C 243. `class_b_probe.py --corpus` roots are unchanged in
+count — `text_rebreak:width` 167, `table_row_heights` 64, `empty_paragraph`
+29, `forced_break` 28, `cell_valign` 14 — and `table_row_heights`' Σ|dy|
+falls 1386.88 → 1251.04 px. The paragraphs below those tables move toward the
+cache without any of them crossing the tolerance.
+
+`lineseg_vs_pdf.py --corpus` is byte-identical, 411 of 411 paragraphs and
+8566/8566 characters, as it must be: it never reads this renderer's rows.
+`render_check.py` on `render-check-01` is unchanged at 96 dpi (6 match / 37
+close / 6 differ / 2 unsupported) and 144 dpi (14 / 31 / 4 / 2), 9 of 9 pages
+exact both times.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The last-row rule has ONE witness.** `kstartup` table 5 is the only
+  corpus table that both overflows its declared height and draws the interior
+  rules that show where the excess went. Table 36's row boundary declares
+  `borderFill` `NONE` and is drawn nowhere, so its 282 is confirmed only on
+  the table total. Four rows, ±8 HWPUNIT, against a proportional rescale that
+  misses by 62 — decisive on this table and untested on any other.
+- **Whether Hancom clips the last row or lets its content spill.** Table 36's
+  row 0 asks for 61960 and the table only has 66505 − 4827 = 61678 for it if
+  row 1 keeps its declared height. Which of the two rows actually gives way
+  is not drawn, so `clip_tracks` taking it off the last row is the table-5
+  rule applied, not a table-36 measurement.
+- **The shortfall arm still has no witness**, on either policy, and is still
+  the proportional distribution that was there before #273.
+- **`repeatHeader` is unmeasurable on this corpus** — `"1"` on all 81 tables,
+  and the one table this render splits carries no header row. It stays in
+  `BLOCK_NOT_HONORED`.
+- **A table the CACHE paged has no fragment oracle.** The finding above is
+  that the file states nothing; it is not a measurement of what Hancom's
+  fragments are. Only the PDF can say, and pairing a PDF fragment to a row
+  range was not attempted here.
+- **`kstartup` 21 vs 22 pages under `cache` is untouched.** The clip changes
+  no page count on either policy, so the whole-table-lineseg knot #258 and
+  #265 named is exactly where it was.
+- **The corpus is still the training set**, and the private report-class
+  holdout was not opened. It is again the population this changes most: a
+  Rigorloom-written document has no cache, so an overflow there is this
+  renderer's own content measurement and the last row now pays for it instead
+  of the table growing.
+
+## A cell's declared width is a lower bound, and the grid is their envelope — measured, 2026-09-05
+
+#272 built the column grid and resolved it by document order: every interior
+boundary written by the FIRST cell whose declared width reaches it. After
+#275's 1440 floor that model — `gridfirst` — stood at 1581 of 1599 cells on
+the cache's 4 HWPUNIT grid, and #272 left three things open: 12 unexplained
+contested misses, the "first writer wins" against "widest span wins"
+ambiguity, and a PDF x oracle that ranked `gridfirst` two strokes BELOW
+`stretch`. This run asks what the last 18 cells are.
+
+Two of them turn out not to be cells at all, four more are the same
+paragraph question three others already were, and the ordering ambiguity
+dissolves: the rule that fits is not ordinal.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows]
+[--residuals] [--heights] [--models LIST] [--json]` — #272's probe, with a
+thirteenth model and two corrections.
+
+`--residuals` lists every cell a model leaves off the grid with what placed
+it: the declared `cellSz@width` and `colSpan`, the box the model gave it,
+the two boundaries it sits between and which cell's claim each of those
+sits on, the residual against the cache, and the row's own declared total
+beside `hp:sz@width`. That last column is the whole question — a row that
+adds up is a row where no column model can disagree with itself.
+
+**The residual arithmetic was wrong, and it was wrong in exactly one place.**
+#270 and #272 scored a model by SHIFTING the rendered residual by
+`model_box - rendered_box`, on the reading that the cell inset and the
+paragraph's own margins enter our line box and the cache's identically and
+cancel. They do — but #275 put a floor under the text column, and a floor is
+not linear: on a cell already saturated at 1440 a model that gives it a
+different BOX gives it the same COLUMN, and the shift reports a difference
+the renderer would not make. `track_probe.model_residual` now recomputes:
+the model's box goes through `cell_text_width` and the cell's cached lines
+are measured against `_line_box` in that column, which is what the renderer
+would do if the model shipped. The two arithmetics agree on 1598 of 1599
+cells. The one they differ on is `saeopja` `r3c6` — the cell #275 recorded
+as a regression that was the baseline moving rather than a model failing.
+Under the honest arithmetic it is not a regression, because it never was
+one, and **every grid model's regression count against `global` is 0**.
+
+### The eighteen, classified
+
+`gridfirst` under the corrected arithmetic is 1582 of 1599, and the 17 it
+leaves fall into three groups:
+
+| group | cells | where |
+| --- | ---: | --- |
+| a paragraph's negative `hh:intent` | 5 | `jumin` ×3, `saeopja` ×2 |
+| one grid step out, −1 or +4 | 8 | `saeopja`'s 47764-wide table |
+| `saeopja`'s 48027-wide table | 4 | rows 7 and 8 |
+
+The **five** are one shape and #275 named three of them. Each is a single
+cached line whose paragraph declares a left margin and a negative `indent`
+larger than it — 500 against −1070, 500 against −1308 twice, 600 against
+−2180 twice — and in each the cache put the line box at `horzpos` = the
+left margin while `_line_box` clamps `max(0, left + indent)` to 0. The
+residual is the margin plus the quantiser: 503, 502, 500, 602, 601. The two
+this run adds to #275's three are `jumin` row 31 and `saeopja` `r9c0+12`,
+which #270 and #272 both carried as unexplained. **No column model can move
+them and none should**: the reading that would fix them is worth +35 line
+boxes over all 3214 and changes every line box in the corpus.
+
+The **eight** are the near-misses #272 could not account for, and they are
+not the cache's quantiser. That was the first thing tested, because it is
+the obvious candidate: 3164 of 3177 cached in-cell `horzsize` are multiples
+of 4, so the saved value is the column floored onto a 4 HWPUNIT grid. But
+"on the grid" already IS `floor4(ours) == cached`, so snapping our own
+column down onto the same grid cannot change the verdict on a single cell —
+measured, 1582 before and after, and it takes 1582 cells to EXACT, which is
+the quantiser confirmed rather than a fix. The two roundings that could move
+a cell both cost far more than they buy:
+
+| our column snapped | on the grid | regressions vs `global` |
+| --- | ---: | ---: |
+| not snapped | 1582 | 0 |
+| floored to a multiple of 4 | 1582 | 0 |
+| rounded to nearest 4 | 1025 | 321 |
+| raised to a multiple of 4 | 396 | 703 |
+
+So the eight are 1 to 4 HWPUNIT of real box error, and the file says where
+it comes from. `saeopja`'s 47764-wide table has 35 columns and its rows
+declare mutually inconsistent widths by exactly one unit: row 22, whose six
+cells sum to 47764 exactly, puts `x[17]` at 14158 + 9578 = 23736, while row
+20, which is 739 short, puts it at 18282 + 5453 = 23735. Rows 25 and 26 then
+carry that one unit forward to `x[24]` = 23736 + 8562 = 32298 against row
+0's 32297, and row 27 — which addresses the same visual columns one lower,
+`c1+15`/`c16+7`/`c23+12` where rows 25 and 26 say `c1+16`/`c17+7`/`c24+11` —
+puts `x[16]` at 23735 and `x[23]` at 32297, so the grid carries two
+one-unit-wide columns. Every one of the eight hangs off `x[17]` or `x[24]`.
+Document order picks the smaller claim in both.
+
+The **four** are #272's four, re-measured and still not explained. Every one
+of the 24 rows in `saeopja`'s 48027-wide table totals 48008 — a uniform 19
+HWPUNIT short of the table's own box — and the cache gives that 19 to the
+LAST cell on row 4 and on rows 11-21, and to the FIRST cell on rows 7 and 8.
+Rows 7 and 8 are the only rows in the table whose four cells all declare the
+same width, 12002, so there is no cell for a rule to distinguish; the cache
+breaks the first at 12018-12021 and the other three at 12002-12005, and no
+function of any declared width in the file produces 12021.
+
+### The rule
+
+**A cell's `cellSz@width` is a lower bound on the distance between its two
+boundaries, not a statement of it. `x[0]` is 0, `x[colCnt]` is
+`hp:tbl/hp:sz@width`, and every interior boundary sits at the LARGEST x any
+cell reaching it produces.**
+
+A row whose widths sum short of the table under-claims every boundary it
+touches and is fitted to the rows that claim more; a row that agrees changes
+nothing. This is `gridmax`, and what it removes from #272's reading is the
+tie-break: there is no first and no last, so the question "which cell writes
+a boundary when two rows reach it at once" — #272's one free choice, and the
+thing "widest span wins" was proposed to settle — does not arise. The
+corpus is what says so:
+
+| model | exact | on the grid | % | of the 771 contested | regressions vs `global` | vs `stretch` | PDF rules |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `global` — before this run | 229 | 969 | 60.6 | 144 / 771 | 0 | 590 | 263 / 1643 |
+| `stretch` | 388 | 1559 | 97.5 | 734 / 771 | 0 | 0 | 305 / 1643 |
+| `firstrow` | 390 | 1561 | 97.6 | 736 / 771 | 0 | 0 | 305 / 1643 |
+| `gridlast` | 390 | 1561 | 97.6 | 736 / 771 | 0 | 0 | 305 / 1643 |
+| `gridfirst` | 390 | 1582 | 98.9 | 757 / 771 | 0 | 1 | 303 / 1643 |
+| **`gridmax`** | **401** | **1590** | **99.4** | **765 / 771** | **0** | **0** | **303 / 1643** |
+
+Two more readings of the ordering were scored and neither survives. Walking
+each row RIGHT to left — which is what rows 7 and 8 of the 48027 table look
+like on their own — is 1407 with 20 regressions. Letting the rows whose
+totals equal `hp:sz@width` write first and the rest fall back to document
+order is 1583: it gets `x[17]` right, because row 22 is the row that adds up,
+and still misses `x[24]`, because no row that adds up reaches it. `gridmax`
+gets both, and it gets them without a second rule.
+
+`gridmax` is also the only model with 0 regressions against BOTH baselines
+while beating both, and it keeps the two cells that were `gridfirst`'s whole
+held-out evidence: on `saeopja`'s 47757-wide table row 4 declares `c0+3` at
+9890 and row 14 declares it at 9759, and `max` is 9890, which is what the
+cache measures.
+
+### What changed in the code
+
+`own_render.column_grid(count, constraints, declared_total)` is new and
+returns the boundaries directly; `_table_tracks` calls it where it called
+`solve_tracks` on the column axis and derives `widths` from the differences,
+so everything downstream — the content extent a row is measured from, the
+drawn cell rectangle — reads the same numbers it always did.
+**`solve_tracks` is untouched and still solves the ROW axis**, where a max
+over constraints is the right reading and its own tests pin it.
+
+The fixpoint terminates because every claim moves a boundary strictly to the
+right of the one it starts at, so the dependency runs one way along the
+column index; the loop bound is belt and braces. A boundary no cell ever
+claims is split evenly between its nearest determined neighbours, which is
+the fallback `solve_tracks` already used for an unknown track, and one
+`kstartup` table needs it. A claim past the table's right edge is clamped
+onto it, so an overflowing row gives a zero-width column and never a
+negative one.
+
+Eight unit tests on synthetic tables cover a row that agrees (the no-op), a
+row that claims more against a row that claims less, the same constraints in
+both orders giving the same grid, a `colSpan` cell claiming only its far
+boundary, a later row filling a boundary the first row does not reach, an
+unclaimed boundary, the clamp and the non-decreasing invariant, and
+`_table_tracks` itself placing cells on the grid rather than on a rescale.
+
+### After
+
+`cell_column_probe.py --corpus` is the measurement that says the most, and
+it says it by what has gone missing. #268 left one term standing in its
+six-term fit — `+solved`, the difference between the solved track sum and
+the cell's own declared width — and called it structural. The winning
+combination is now **`(nothing)`**: the renderer needs no correction term at
+all on 1590 of 1599 cells, where before it needed `+solved` to reach 1470.
+385 exact / 1470 near → **401 / 1590**.
+
+`track_probe.py --corpus` reads the same thing from the other side: the
+renderer's own `global` model goes 969 → **1590** on the 4 HWPUNIT grid, and
+is byte for byte `gridmax`.
+
+Against the reference PDFs, `render_scoreboard.py --corpus --dpi 144`:
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8420 | 0.3283 | 0.6729 | 52 / 53 |
+| `cache` after | **0.8453** | **0.3359** | **0.6742** | 52 / 53 |
+| `computed` before | 0.8336 | 0.3246 | 0.6595 | 53 / 53 |
+| `computed` after | **0.8366** | **0.3316** | **0.6611** | 53 / 53 |
+
+Eight of the ten forms are unchanged to four places on both policies, which
+is correct: their rows agree, so the grid and the solve give the same
+answer. The two that move are the two whose tables contradict themselves,
+and both improve on both policies — `jumin` 0.7109 → 0.7287 ssim and 0.2435
+→ 0.2774 inked in cache mode, `saeopja` 0.7893 → 0.8041 and 0.3340 →
+0.3762. No form fell on any of the three metrics, and no page count moved.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566
+characters, unchanged, as it must be: it reads the cache against the PDF and
+never through this renderer's cell layout.
+
+The PDF vertical-rule oracle, which is the only absolute statement about x
+this corpus contains, goes **263 → 303 of 1643 drawn strokes** at one device
+pixel of 144 dpi. That is the number #272 stopped on, and it is worth being
+precise about why it reads differently here. #272 compared `gridfirst` with
+`stretch` and found it two strokes worse; but `stretch` is not what ships
+either, and the comparison that decides a change is against the renderer as
+it stands. Against that, this is +40 strokes and +621 cells. `stretch` is
+still 305, two above, and buying those two would cost 31 cells that the grid
+places correctly and it does not — and both of them are on `saeopja` page 6,
+in the 48027-wide table the grid cannot reproduce.
+
+`layout_divergence.py --corpus` barely moves: agreement 1350 → 1351, class A
+118 → 117, class B 350 and class C 243 unchanged. `class_b_probe.py
+--corpus` is identical root for root — `text_rebreak:width` 167,
+`table_row_heights` 109, `empty_paragraph` 29, `forced_break` 28,
+`cell_valign` 17 — so the mechanism this line of work is chasing has not
+moved, and neither has anything else. The one paragraph that changed class
+is on `jumin`, from A to agreement.
+
+`render_check.py` on `render-check-01` is unchanged at both 96 dpi (6 match
+/ 37 close / 6 differ / 2 unsupported, 9 pages) and 144 dpi (14 / 31 / 4 /
+2, 9 pages). Its tables' rows all add up, so the grid cannot move them.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Four cells are still unexplained, and they are the same four #272
+  named.** `saeopja`'s 48027-wide table gives its uniform 19 HWPUNIT
+  shortfall to the FIRST cell on rows 7 and 8 and to the last cell on every
+  other row of the same table. Rows 7 and 8 are the only rows whose cells
+  all declare the same width, so nothing in the file distinguishes their
+  first cell from their last, and the boundary the cache uses — 12021 —
+  is not produced by any declared width in the document. This is the gate's
+  "every remaining miss explained" clause, and it is not met on these four.
+  What is bounded is the damage: 4 cells of 1599, one table, 19 HWPUNIT,
+  0.07 mm.
+- **`gridmax` was found by looking at the eight near-misses it closes**, so
+  those eight are fitted and not predicted. Its held-out evidence is the two
+  cells of `saeopja`'s 47757-wide table that `gridfirst` also gets, and
+  those two were held out for `gridfirst` rather than for this. The corpus
+  is the training set for the fourth run running.
+- **A row that overflows its table is still untested.** No corpus row
+  overflows, so the clamp is an invariant a unit test pins and not a
+  measurement. Whether Hancom shrinks the overflowing cell or clamps it is
+  still unknown.
+- **`stretch` still wins the PDF x oracle by two strokes.** 1643 strokes
+  against 392 predicted edges is a thin instrument, both strokes are inside
+  the one table this model cannot reproduce, and the width oracle separates
+  the two by 31 cells in the other direction — but it is a loss and it is
+  recorded as one.
+- **The one-unit columns in `saeopja`'s 47764-wide table are read off the
+  file's own inconsistency**, not off a statement Hancom makes. That rows
+  25/26 and row 27 address the same visual columns one apart is what forces
+  them; whether Hancom builds the grid that way or merely tolerates it is
+  not observable here.
+- **Row heights are untouched and deliberately so.** `solve_tracks` still
+  solves them, `table_row_heights` is still 109 class-B paragraphs, and
+  nothing here says whether a max over constraints is the right reading for
+  a row.
+
+## The one table Hancom splits, and the page the cache lost — measured, 2026-09-06
+
+#276 closed the cache side of table pagination with a flat answer: the file
+states nothing about it. That left the reference PDF as the only witness, and
+the question it had to be asked was the whole of this run — *for every corpus
+table that crosses a page in Hancom's own export, where did it split, what did
+it draw there, and does this renderer reproduce it?*
+
+`engine/scripts/table_split_probe.py` asks it. The committed run is
+`engine/references/own-render-samples/e2.8-table-split.json`
+(`python engine/scripts/table_split_probe.py --corpus`).
+
+### Two readings of the export, kept apart on purpose
+
+The probe reads the reference twice and prints both, because either alone can
+be argued with.
+
+**The text.** Every paragraph inside every table cell, normalised, kept only
+when its text is unique in the whole document and at least eight characters
+long, and located on the one page whose text contains it. A table whose
+unique paragraphs land on two pages is a table Hancom split; the lowest row
+index on the second page is where; and a row whose paragraphs appear on BOTH
+pages is a row Hancom cut through rather than moved. Cell-level text cannot
+answer this — a cell holding both halves of a break matches neither page —
+which is why the unit of evidence is the paragraph.
+
+**The rules.** Every stroke the page draws, merged by coordinate and grouped
+into table regions by x-span rather than by touching: a table whose middle
+rows declare `borderFill` NONE draws nothing there, so a connected-component
+grouping falls into pieces on exactly the tables this has to read. The
+HWPUNIT scale is #276's, taken per form from `hp:pagePr` against the
+MediaBox.
+
+### One table, in ten forms, on 53 reference pages
+
+**`kstartup` table 9, reference pages 6 → 7. That is the entire population.**
+Nine forms have no table crossing a page at all, and `kstartup`'s other 34
+top-level tables do not either.
+
+| | pages | split row | boundary row | header repeated | continuation seat | first fragment | continuation |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| Hancom | 6, 7 | 2 | **divided** | no | +146 | 70624 | 69543 |
+| `cache` | 6, 7 | 3 † | at a boundary | no | +140 | 70529 | 69505 |
+| `computed` | 6, 7 | 3 † | at a boundary | no | +140 | 70529 | 69505 |
+
+† this renderer's row index, not the file's: `_expand_segmented_rows` (E2.7)
+has already turned the file's row 2 into two rows by then, because that row's
+own paragraph list restarts its cached `vertpos` partway through. Its cut
+after row 3 IS the file's row 2, cut in the same place — `○ 사업비 사용 계획`
+ending one page and `○ 성과목표 및 기대효과` starting the next. The probe
+reports both row spaces so the two columns can be compared without the reader
+having to know that.
+
+Fragment heights agree within 0.14% and 0.06%, and the continuation's seat
+within 6 HWPUNIT — six hundredths of a point. The interior rules on page 6
+say the same thing row by row: 4240 / 23180 / 42960 against this renderer's
+4248 / 23207 / 43074.
+
+### What the attributes turn out to mean
+
+- **`pageBreak="CELL"` really does mean the CELL.** Hancom did not move the
+  row that would not fit; it cut through it, leaving part of one cell's
+  content on each page. `NONE` forbids that and moves the table whole, and
+  #244's `_table_may_split` already reads both halves of the permission
+  (declared `CELL` **and** anchored) the same way.
+- **`repeatHeader="1"` repeated nothing, and the file says why.** OWPML
+  nominates the rows to repeat with `hp:tr@header`; **no `hp:tr` anywhere in
+  the corpus carries that attribute, or any other** — 514 rows, zero
+  attributes. So `repeatHeader` had nothing to repeat, and the split table's
+  continuation page opens on the second half of a divided cell with no header
+  band above it. #276 recorded `repeatHeader` as unmeasurable on this corpus;
+  it is measurable after all, and the measurement is that honouring it would
+  repeat a row the file never nominated. It stays in `BLOCK_NOT_HONORED`, now
+  for a stated reason rather than for want of a witness.
+- **The continuation seats at the top of the body box**, at the same offset
+  from it as the first fragment had on its own page (+146 measured, +140
+  drawn — the table's `hp:outMargin@top`), with no header band and no
+  re-drawn outer top border: the only stroke across the top of page 7 is the
+  interior rule the cut passed through, narrower than the outer border by its
+  own border width. That is the geometric signature of a continuation and it
+  is what the probe keys on.
+- **A split table's `hp:sz@height` is not the ceiling #276 measured.** Table 9
+  declares 70529 and Hancom drew 70529 + 69505 across the two pages. #276's
+  clip rule is a rule about a table that fits ONE page; `natural_rows` already
+  exempts a split table from it, and this is the measurement that says the
+  exemption is right.
+
+### The page the cache lost was never a split
+
+`kstartup` rendered 21 pages under `cache` against a 22-page reference (#258 /
+#265), and the natural suspicion — that the cache cannot page the whole-table
+`hp:lineseg` #276 measured — is wrong. The missing page is between tables 6
+and 7, and neither is split by anyone. **Table 7 is 69572 HWPUNIT tall,
+anchored, and the cache seats its holder paragraph at `vertpos` 69632 on a
+71000-HWPUNIT page** — 60 HWPUNIT of room left under it, hard against the
+bottom margin. Hancom's export draws it at the top of the NEXT page. This
+renderer drew it 68204 HWPUNIT off the bottom of the page it did not fit, and
+everything after it inherited the missing break.
+
+The rule that fixes it is the one the notes already state for an inline
+flowing table, and the one `_place_block` already applies under `computed`
+(`anchored_blocks_moved`): **a table that does not fit the room left, but
+does fit a page of its own, moves whole.** Only the cache path was missing
+it — `_auto_anchor_overflow_cut` had the split arm and no move arm, and
+returned `None` when the room left was too small for even the first row,
+which is the case a move exists for.
+
+`_auto_anchor_overflow_action` (its replacement) returns `("move", top)`
+there. `_paginate_with_anchor_overflow_fix` closes the page BEFORE the
+paragraph rather than after it, and records the page's own vertical rebase in
+`_auto_anchor_page_offsets` — every cached `vertpos` that travels with the
+moved paragraph is measured from the original page's body top, so the page it
+moved to is drawn shifted by `-top`, which is what puts the table that moved
+at the top of it. `_render_paragraphs` already took a `block_offset_hwp` for
+exactly this shape of correction; this is its first caller.
+
+The wild-`vertOffset` guard `_place_block` has (limit 12: an offset that puts
+a table's bottom pages down the sheet is a broken POSITION, not content
+needing a second page) is mirrored into the new arm, so `kstartup`'s table 36
+is left exactly where it was.
+
+### After
+
+Page counts, per form, both policies — the headline, because it is the
+channel a pagination rule is actually graded on:
+
+| form | reference | `cache` before | `cache` after | `computed` |
+| --- | ---: | ---: | ---: | ---: |
+| admrul | 1 | 1 | 1 | 1 |
+| gianmun-1ho | 1 | 1 | 1 | 1 |
+| gianmun-2ho | 1 | 1 | 1 | 1 |
+| jeongbo | 1 | 1 | 1 | 1 |
+| jumin | 3 | 3 | 3 | 3 |
+| **kstartup** | **22** | **21** | **22** | 22 |
+| moel-2013 | 7 | 7 | 7 | 7 |
+| moel-2025 | 7 | 7 | 7 | 7 |
+| nrf | 4 | 4 | 4 | 4 |
+| saeopja | 6 | 6 | 6 | 6 |
+
+**All ten forms now render their reference's own page count under both
+policies.** `page_count_exact` was the one floor check `kstartup` failed
+under `cache`, and it passes.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pair rate | ink delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8421 | 0.3284 | 0.6730 | 0.8364 | 0.0085 |
+| `cache` after | **0.8492** | **0.3469** | **0.7232** | **0.8510** | 0.0115 |
+| `computed` before/after | 0.8334 | 0.3253 | 0.6562 | 0.8469 | 0.0140 |
+
+Under `cache` only `kstartup` moves and every whole-document channel moves up:
+ssim 0.8317 → 0.9029, inked 0.3027 → 0.4882, line IoU 0.2726 → **0.7749**,
+pair rate 0.7922 → 0.9381. The one channel that moves the wrong way is
+`ink_delta_abs_max`, 0.0321 → 0.0621 against a 0.05 bound — and it is the
+same 0.0621 `computed` has measured since E2.5, page 22's pre-existing
+block-position drift, which the `cache` render simply could not see while it
+was one page short. `kstartup`'s verdict was already `false` (on
+`page_count_exact`); it is still `false`, on `ink_delta_abs_max` instead,
+which is exactly the trade #276 predicted for whichever run closed the page
+gap.
+
+`computed` is **byte-identical** before and after on all ten forms, and so is
+`cache` on the nine that are not `kstartup`: rendering every form at 96 dpi
+under both policies and hashing each page, one line of twenty changes —
+`kstartup` `cache`, where pages 1-3 are unchanged, page 4 is redrawn without
+the table that overflowed it, a page is inserted for that table, and pages
+6-22 are byte-identical to the old 5-21.
+
+`layout_divergence.py --corpus`: agreement **1395 → 1604**, class A 118
+unchanged, class B 302 → 305, class C **243 → 28**. `kstartup`'s seats that
+differ fall 119 → 36 and its pages that differ 18 → 5. Class C is the class
+with no counterpart to compare at all, and 215 of its 243 members were the
+cache and the flow pass disagreeing about which page a block was on.
+
+`class_b_probe.py --corpus` roots: `text_rebreak:width` 167 → 170,
+`table_row_heights` 64 → 82, `empty_paragraph` 29 unchanged,
+`cell_valign` 14 → 17, **`forced_break` 28 → 7**. The three that rise are
+`kstartup` paragraphs that were class C before — they had no counterpart to
+be measured against, and now they do.
+
+`lineseg_vs_pdf.py --corpus` is byte-identical, 411 of 411 paragraphs and
+8566/8566 characters: it reads the cache against the export and never this
+renderer's pages. `render_check.py` on `render-check-01` is byte-identical at
+96 dpi (6 match / 37 close / 6 differ / 2 unsupported) and 144 dpi
+(14 / 31 / 4 / 2), 9 of 9 pages exact both times.
+
+## The indent is not in the line box: 내어쓰기 hangs — measured, 2026-09-06
+
+#268 weighed three readings of a negative `hh:intent` and kept the middle one
+by 35 line boxes out of 3214. #277 met the same disagreement again from the
+table side, as cells whose cached `horzpos` sits at the paragraph's
+`margin_left` while `_line_box`'s `max(0, left + intent)` clamped it to 0, and
+recorded them rather than fixing them because the reading is a property of
+every paragraph on the corpus. Neither run asked the question directly. This
+one does, and the answer is that both sides of the old argument were looking
+at the wrong quantity.
+
+The public basis says what `intent` means and not where the saved box goes.
+OWPML gives `hp:paraPr/hh:margin` a `left`, a `right` and an `intent`, and
+the HWP 5.0 paragraph-shape record stores the same signed first-line indent:
+positive is 들여쓰기, negative is 내어쓰기. Hancom's editor calls the negative
+case 내어쓰기 and measures it from the left margin. None of that says whether
+`hp:lineseg@horzpos` — a saved LINE BOX — carries the indent or not, and that
+is the whole of what #268 and #277 disagreed about.
+
+### The instrument
+
+`engine/scripts/indent_probe.py FORM.hwpx [--corpus] [--pdf] [--json]
+[--no-text]` reads every `hp:p` that carries an `hp:linesegarray` straight out
+of the file — its `hh:margin` `left`/`right`/`intent` through
+`own_render.parse_header`, so the `hh:switch` branch and its unit halving are
+resolved exactly as the renderer resolves them — and records the first line's
+`horzpos` and `horzsize`, the second's where there is one, the container
+(top level, or the enclosing `hp:tc` with its declared width and the inset
+`cell_inset` resolves), the alignment, the `hp:heading` type and level, and
+whether the paragraph carries an `hp:tab` or declares a `tabPrIDRef`.
+
+Nothing here goes through the renderer's line box or the track solve, which
+is the point: #268's numbers were `_line_box`'s POSITION and WIDTH scored
+together, and the cell columns that width was cut from were wrong until #268
+and #277 fixed them. This probe's `horzpos` column depends on no column at
+all.
+
+### What the cache says
+
+Over the ten corpus forms — 2995 paragraphs carrying a cache, 3214 cached
+lines, 340 of those paragraphs declaring a non-zero `intent` (325 negative,
+15 positive, 191 in a table cell, 118 with more than one line):
+
+| reading of the first line's `horzpos` | intent ≠ 0 | all paragraphs |
+| --- | ---: | ---: |
+| **`left`** | **340 / 340** | **2995 / 2995** |
+| `max(left + intent, left)` = `left + max(intent, 0)` | 325 / 340 | 2980 / 2995 |
+| `max(0, left + intent)` — what this renderer implemented | 285 / 340 | 2940 / 2995 |
+| `max(0, left + intent/2)`, `max(0, left + 2·intent)` | 285 / 340 | 2940 / 2995 |
+| `left + intent` unclamped | 0 / 340 | 2655 / 2995 |
+| `max(0, left + |intent|)` | 0 / 340 | 2655 / 2995 |
+
+Over **every** cached line rather than the first of each: `horzpos == left`
+is exact on **3214 of 3214**, `max(0, left+intent)` on line 0 scores 3159 and
+the textbook hanging box 3043. Every multi-line paragraph's lines share one
+right edge — 161 of 161, and 118 of 118 of the ones declaring an `intent` —
+so the first line is neither moved nor widened. **The saved line box is the
+paragraph's column less its own two margins, and the intent is not in it.**
+
+The unit and sign variants are ruled out by having been scored rather than by
+not having been thought of: halving or doubling `intent` changes nothing
+(both agree with the unmodified reading wherever `left + intent` is negative,
+which is 321 of the 340), and taking it as a magnitude scores zero.
+
+### What the cache cannot say, and the PDF can
+
+A box that ignores the indent is not proof that the drawn glyphs ignore it.
+`--pdf` asks Hancom's own exports, locating a paragraph's drawn lines by the
+same whole-line text match `lineseg_vs_pdf` uses, so the two scripts cannot
+disagree about which PDF lines a paragraph owns. Of 384 top-level
+`LEFT`/`JUSTIFY` paragraphs matched (0 unmatched), **13 have a drawn `x0`
+that can tell the readings apart**, and all 13 say the same thing:
+
+- the 9 positive-`intent` paragraphs draw their first line at `left + intent`
+  — `nrf` p15–p23, `left` 0 against `intent` 2980, drawn at 2972;
+- the 4 whose `left + intent` is below zero draw it at `left` — `kstartup`
+  p31/p32/p37, `left` 3600 against `intent` −3612, drawn at 3600, and
+  `kstartup` p51, 1500 against −1312, drawn at 1500.
+
+And the second drawn line of a negative-`intent` paragraph is at
+`left + |intent|` on **39 of 39** and at `left` on **none**: `moel-2025` p20
+hangs 7420 HWPUNIT and the PDF puts its second line at 7404, `kstartup` p95
+hangs 3569 and the PDF says 3564. The tolerance is 50 HWPUNIT — half a point,
+inside a glyph's own left side bearing — and the smallest non-zero `intent`
+on the corpus is 100.
+
+The remaining 371 matched paragraphs are not counter-examples and are not
+scored as agreement either: half of them start with leading spaces (`moel-2013`
+p19 is `'  - 사업주는…'`), which the matching key deletes and the PDF draws, so
+their `x0` measures the space and not the box.
+
+### The rule
+
+**`hp:lineseg@horzpos`/`horzsize` are the paragraph's line box —
+`margin_left` and the column less both margins — and `hh:intent` is an offset
+INSIDE that box: the first line starts `max(intent, 0)` in, every
+continuation line starts `max(-intent, 0)` in.** Positive is 들여쓰기 and
+negative is 내어쓰기, which is the textbook reading of the attribute after
+all; what was wrong was not the semantics but the belief that the cache
+records them.
+
+`OwnRenderer._line_box` now returns the box and takes no `index` decision;
+`OwnRenderer._line_indent(para, index)` is new and returns the offset. Both
+paths use both: `compute_lines` subtracts the indent from the line's usable
+width — so a hanging paragraph's continuations are as much narrower as the
+file says and break where Hancom broke them — and `_render_computed_lines`
+and `_render_cached_lines` add it to the draw origin and take it off the
+alignment box. The cached path needs it precisely because the cache does not
+carry it: without this, a 내어쓰기 paragraph drew every line flush left.
+
+Six unit tests cover the box being indent-free at all three signs, a positive
+indent on the first line only, a hanging indent on the continuations only, an
+indent larger than the left margin (the `#277` case, `left` 500 against
+`intent` −1308), a hanging indent making a paragraph break into more lines
+than the same text without one, and the same rule inside a table cell. No
+integer inventory is pinned.
+
+### After
+
+Against the reference PDFs, `render_scoreboard.py --corpus --dpi 144`, means
+over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8453 | 0.3359 | 0.6742 | 52 / 53 |
+| `cache` after | **0.8516** | **0.3546** | **0.6866** | 52 / 53 |
+| `computed` before | 0.8366 | 0.3316 | 0.6611 | 53 / 53 |
+| `computed` after | **0.8384** | **0.3361** | **0.6685** | 53 / 53 |
+
+No page count moved on either policy. On `cache` every form improved or held
+on all three channels; the largest moves are `nrf` inked 0.4540 → 0.5214,
+`jumin` ssim 0.7287 → 0.7527 and `gianmun-2ho` line IoU 0.7874 → 0.8146. On
+`computed` two channels fell — `jumin` line IoU 0.6930 → 0.6833 and
+`moel-2025` inked 0.1439 → 0.1429 — against gains everywhere else, and both
+are forms whose hanging paragraphs sit in table cells the solved column still
+gets wrong.
+
+`own_render.py --lineseg-agreement` over the corpus: break positions matched
+**79 → 82** of 219 and exact break sequences **2033 → 2037** of 2151, with
+line counts unmoved at 2119. `moel-2013` goes 24 → 29 break positions and
+`kstartup` 16 → 19; `jumin` gives back 14 → 12 and `saeopja` 11 → 8, and
+those two are exactly the forms whose hanging paragraphs are in cells — a
+narrower line stops absorbing the column error and shows it.
+
+`cell_column_probe.py --corpus` goes **401 exact / 1590 near of 1599
+measurable → 404 / 1605 of 1609**. The population grew because the ten ragged
+cells — the ones whose lines disagreed on a delta — were ragged BECAUSE of the
+indent, and are not any more. The +503 / +502 / +500 residual band #277
+recorded is gone from the histogram and nothing appears in its place.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566 characters,
+unchanged, as it must be: it reads the cache against the PDF and never through
+this renderer.
+
+`layout_divergence.py --corpus`: agreement 1351 → **1353**, class A 117 →
+**113**, class B 350 → **349**, class C 243 unchanged. `class_b_probe.py
+--corpus` roots move where the fix acts: `text_rebreak:width` **167 → 165**
+(`saeopja`'s 2 leave; `jumin` 1, `moel-2013` 22 and `moel-2025` 142 stay),
+`table_row_heights` 109 unchanged, `empty_paragraph` 29, `forced_break` 28,
+`cell_valign` 17 → 18.
+
+`render_check.py` on `render-check-01` is unchanged in total at both
+resolutions — 6 match / 37 close / 6 differ / 2 unsupported at 96 dpi,
+14 / 31 / 4 / 2 at 144, 9 pages on both — and the block the fix is about moved
+inside its verdict: `F11` 내어쓰기 goes ssim 0.6990 → **0.7129** and inked
+0.0890 → **0.1059**, still `close`. `F10` 첫줄 들여쓰기 is byte-identical, and
+correctly so: its `left` is 0, so the old `max(0, left + intent)` put the text
+at the same x the new `horzpos + indent` puts it, and the two boxes differ
+only in a subtraction that cancels.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The split rule has ONE witness, and this run did not add to it.** Every
+  statement above about where Hancom splits, what it draws at the split and
+  where the continuation sits comes from `kstartup` table 9. Nine forms and
+  53 reference pages contain no second cross-page table to check it against.
+- **`repeatHeader` is still not exercised.** The measurement is that no
+  corpus row is flagged `hp:tr@header`, so the corpus cannot say what Hancom
+  does when one IS flagged — only that with none flagged it repeats nothing.
+  A document that flags a header row would be the test, and there is none.
+- **The move arm's continuation seat is inferred, not measured.** The
+  reference draws the moved table 7 at the same 6140 HWPUNIT from the page
+  top that every other table starting a page in this form is drawn at, and
+  rebasing the page by the paragraph's own cached `vertpos` reproduces it —
+  but a table whose holder paragraph is NOT the first thing on the page it
+  moves to would seat somewhere this corpus cannot check.
+- **Only the CELL-and-anchored gate reaches the new arm.** The move rule is
+  general — a `NONE` table that does not fit moves whole too — but the arm
+  sits behind `_anchor_table_geometry`, which reads the split permission
+  first. Widening it would repaginate on tables no reference has ever shown
+  moving, so it was left where the evidence is.
+- **`ink_delta_abs_max` on `kstartup` is now a failing floor check under
+  `cache` as well as `computed`.** It is a pre-existing defect newly visible,
+  not a new one, and nothing here fixes it.
+- **The probe pairs a PDF fragment to a row range by TEXT**, and a table
+  whose cells hold nothing unique and eight characters long is invisible to
+  it. The rules reading is the cross-check and it agrees on every form, but
+  a wholly borderless, wholly boilerplate table would be missed by both.
+- **The corpus is still the training set.** The private report-class holdout
+  was not opened, and a Rigorloom-written document has no cache at all, so
+  the arm this adds to the cache path never runs there.
+- **The corpus is the training set** for the box half of the rule. Ten
+  government forms, 3214 cached boxes, 340 paragraphs with a non-zero
+  `intent`; the fit is exact on all of them, which is what makes it a rule
+  rather than a preference, but nothing here is a holdout.
+- **The PDF half rests on 13 discriminating paragraphs and 39 second lines**,
+  all top-level and all `LEFT`/`JUSTIFY`. A centred or right-aligned line's
+  `x0` is a function of its own width, so those 26 paragraphs were excluded
+  rather than fitted, and no corpus paragraph combines a non-zero `intent`
+  with a `hp:heading`, a bullet or an `hp:tab` — 0 of 340 carry any of the
+  three — so an indent interacting with list numbering is untested here.
+- **A THIRD and later line of a hanging paragraph is barely observed.** 161
+  paragraphs have a cached second line and only 58 cached lines sit at index
+  2 or beyond. `_line_indent` treats every line after the first alike, which
+  is what the attribute means, but the corpus's evidence is concentrated on
+  line 1.
+- **Whether Hancom clamps anything.** The rule never subtracts, so it never
+  needs a floor, and no corpus paragraph declares a negative `margin_left`.
+  `max(0, left)` in `_line_box` is defensive, not measured.
+- **The two computed-policy channels that fell** are recorded and not
+  explained: `jumin` line IoU and `moel-2025` inked ink. Both forms lay their
+  hanging paragraphs out in cells whose column the track solve still gets
+  wrong, and separating the two effects needs the column fixed first.
