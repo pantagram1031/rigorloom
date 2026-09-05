@@ -231,14 +231,66 @@ HEX_COLOR_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 #                                                           (every
 #                                                           continuation line
 #                                                           in the corpus)
-#   (vertsize + spacing) / textheight == lineSpacing@value / 100
-#                                                           for every PERCENT
-#                                                           paragraph
+#   PERCENT: spacing == the quantised leading below           3214 / 3214
+#                                                           (see
+#                                                           percent_leading)
 #
 # The 0.85 is HWP's baseline convention: the baseline sits 85% of the way down
 # the character cell.  It is a *measured constant of this corpus*, not a number
 # KS X 6101 publishes, and it is declared as such in every sidecar.
 BASELINE_RATIO = 0.85
+
+#: The grid Hancom's ``PERCENT`` leading lands on, in HWPUNIT — 0.04 pt, or
+#: 1/1800 inch.  Every one of the corpus' 3214 cached ``hp:lineseg@spacing``
+#: values is a multiple of it, and the cached ``vertsize`` is NOT (53 of them
+#: carry an inline object whose box is not), so it is the LEADING that is
+#: quantised and not the total line advance.  Like BASELINE_RATIO this is a
+#: measured constant of this corpus, not a number the standard publishes.
+LEADING_QUANTUM = 4
+
+
+def _round_half_away(num, den):
+    """``num / den`` to the nearest integer, halves going AWAY from zero.
+
+    Integer arithmetic throughout: a float would decide the ties, and the
+    ties are the whole question here.
+    """
+    sign = -1 if (num < 0) != (den < 0) else 1
+    n, d = abs(num), abs(den)
+    return sign * ((2 * n + d) // (2 * d))
+
+
+def percent_leading(height, value):
+    """The ``hp:lineseg@spacing`` a ``PERCENT`` paragraph puts below a line.
+
+    ``height`` is the line's pitch height in HWPUNIT and ``value`` is
+    ``hh:lineSpacing@value``.  The nominal leading is
+    ``height * (value - 100) / 100``; Hancom rounds it onto a
+    ``LEADING_QUANTUM`` grid, halves away from zero.
+
+    Fitted to the authoring engine's own cache and exact on **3214 of 3214**
+    cached corpus lines — every text line, every empty paragraph, every line
+    carrying an inline object, over 172 distinct (height, value) pairs.  The
+    reading it replaces, ``round(height * value / 100) - height``, is exact on
+    2146 of them and off by 1 or 2 HWPUNIT on the other 1068; that residual is
+    what #247 and #261 both recorded as unexplained.
+
+    Two near-misses are refuted by five corpus lines, all of them
+    ``value < 100`` where the leading is negative:
+
+    * quantising the total ADVANCE rather than the leading, and
+    * rounding halves toward +infinity rather than away from zero,
+
+    both give ``-148`` where the cache says ``-152`` (900 HWPUNIT at 90%, and
+    300 at 50%).  Everything else in the candidate family is refuted by
+    hundreds of lines.  ``engine/scripts/spacing_residual_probe.py --corpus``
+    is the instrument and prints the whole table.
+
+    ``FIXED`` and ``BETWEEN_LINES`` are NOT put through this: no corpus
+    paragraph declares either, so there is nothing to fit them to.
+    """
+    return LEADING_QUANTUM * _round_half_away(
+        height * (value - 100), 100 * LEADING_QUANTUM)
 
 # --------------------------------------------------------------------------
 # Line breaking (UAX #14 class, Korean rules as hh:breakSetting declares them)
@@ -2665,10 +2717,12 @@ class OwnRenderer:
             # stream, and for a paragraph with no characters at all that is
             # every run it has.  Measured against the authoring engine's own
             # cache over the 101 empty top-level paragraphs of the ten
-            # converted corpus forms: ``vertsize`` exact on 101 of 101 and
-            # ``spacing`` on 91, every one of the 10 misses inside 2 HWPUNIT
-            # — the same PERCENT rounding residual #247 measured on 883 of
-            # the corpus' 2370 TEXT lines, not a second rule.
+            # converted corpus forms: ``vertsize`` exact on 101 of 101, and
+            # ``spacing`` on 91 of 101 when the leading was rounded in whole
+            # HWPUNIT.  It is exact on all 101 now that ``percent_leading``
+            # rounds it onto its measured 4 HWPUNIT grid — those ten misses
+            # were the same residual as #247's 883 TEXT lines, and one rule
+            # closes both.
             _textheight, vertsize, baseline, spacing = self._line_metrics(
                 para, 0, 0)
             rows.append({
@@ -4004,7 +4058,9 @@ class OwnRenderer:
         Every relation here is a measurement of the corpus, listed at
         ``BASELINE_RATIO``: ``vertsize == textheight`` (3214/3214),
         ``baseline == round(0.85 * textheight)``, and for a ``PERCENT``
-        paragraph ``vertsize + spacing == textheight * value / 100``.
+        paragraph the leading below the line is ``percent_leading`` — the
+        nominal ``height * (value - 100) / 100`` rounded onto a 4 HWPUNIT
+        grid, exact on all 3214 cached corpus lines.
 
         ``textheight`` is the largest DECLARED ``hh:charPr@height`` on the
         line.  The character metrics do not enter it — MEASURED against the
@@ -4117,7 +4173,7 @@ class OwnRenderer:
         kind = pr.get("line_spacing_type", "PERCENT")
         value = pr.get("line_spacing_value", 100)
         if kind == "PERCENT":
-            spacing = int(round(pitchheight * value / 100.0)) - pitchheight
+            spacing = percent_leading(pitchheight, value)
         elif kind == "FIXED":
             spacing = value - pitchheight
         elif kind in ("BETWEEN_LINES", "ATLEAST", "AT_LEAST"):
@@ -6740,9 +6796,10 @@ class OwnRenderer:
                 "vertpos": ("== previous vertpos + previous vertsize + "
                             "previous spacing (219/219 corpus continuation "
                             "lines)"),
-                "spacing": ("PERCENT: vertsize + spacing == round(textheight "
-                            "* value / 100); FIXED: vertsize + spacing == "
-                            "value"),
+                "spacing": (f"PERCENT: the leading textheight * (value - 100)"
+                            f" / 100 rounded onto a {LEADING_QUANTUM} HWPUNIT "
+                            "grid, halves away from zero (3214/3214 corpus "
+                            "line boxes); FIXED: vertsize + spacing == value"),
                 "textheight": ("max declared hh:charPr@height over the "
                                "characters on the line; the character metrics "
                                "(hh:relSz, hh:ratio, hh:offset) do NOT enter "

@@ -43,7 +43,16 @@ import own_render  # noqa: E402
 CORPUS = os.path.join(ROOT, "tests", "corpus", "forms", "converted")
 #: The smallest corpus form that diverges between the two policies at all,
 #: so the report has something in every section without costing a big render.
-SMALL_FORM = os.path.join(CORPUS, "admrul-gajokdolbom-hyuga-sinchengseo.hwpx")
+#:
+#: This was ``admrul`` until the PERCENT leading was put on its measured 4
+#: HWPUNIT grid (``own_render.percent_leading``).  admrul's only disagreement
+#: WAS that residual — one class-B line at -0.02 px — so computed layout now
+#: reproduces its cache exactly and its report has an empty
+#: ``first_divergence_per_paragraph``, which makes every test below vacuous.
+#: ``gianmun-byeolji-1ho`` is smaller still (one page) and diverges for a
+#: reason this renderer has not closed: one class-A paragraph, three lines,
+#: the font-substitution advance gap.
+SMALL_FORM = os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")
 
 
 def box(text="hello", page=1, y0=100.0, x0=10.0, address=0):
