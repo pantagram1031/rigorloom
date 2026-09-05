@@ -67,6 +67,17 @@ the session, and records the SHA-256. Every op reads one file and writes
 another. `tests/test_runtime_session.py` pins byte identity of the original
 across a full apply.
 
+The import copy is made from one bounded, stable read handle into an exclusive
+program-owned stage. The stage is hashed and ZIP-inspected, published with a
+no-replace link, then re-read before `meta.json` makes the session loadable.
+The hidden stage link remains as a custody anchor: it is another directory
+entry for the same inode, not a second copy of the bytes, and avoids deleting a
+path after a check that a same-user process could race.
+This detects a different leaf identity and size/timestamp changes during the
+capture. It is not a claim that every ancestor-directory alias or a same-user
+timestamp-preserving in-place rewrite is impossible; those remain outside the
+current handle binding.
+
 **The Runtime owns ordinary child cleanup.** On Windows every engine/checker
 child starts suspended, enters a kill-on-close Job, and is then resumed. A
 Runtime hard kill therefore removes its ordinary child tree as well as a

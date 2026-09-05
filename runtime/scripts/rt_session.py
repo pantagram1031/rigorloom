@@ -25,7 +25,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import threading
 import uuid
@@ -49,6 +48,7 @@ from rt_jsonl import canonical_bytes  # noqa: E402
 _SAFE_NAME = "-_. ()[]"
 _ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 RECORD_KINDS = ("plans", "approvals")
+_SOURCE_CAPTURE_CHECKPOINT = None
 
 
 def atomic_write_bytes(target: Path, data: bytes) -> None:
@@ -98,31 +98,95 @@ def _reject(reason: str, **data) -> RpcError:
     return RpcError("source_rejected", reason, **data)
 
 
-def validate_source(path: Path) -> dict:
-    """Bounded, no-follow validation of a candidate source. Returns facts."""
+def _snapshot(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (info.st_dev, info.st_ino, info.st_nlink, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+@contextlib.contextmanager
+def _open_source_once(path: Path):
+    """Open one regular source and bind validation to that exact handle."""
     try:
-        info = path.lstat()
+        before = path.lstat()
     except OSError as exc:
         raise _reject("source path cannot be read", detail=str(exc)) from exc
-    if stat.S_ISLNK(info.st_mode) or is_reparse(info):
+    if stat.S_ISLNK(before.st_mode) or is_reparse(before):
         raise _reject("source is a symlink or reparse point; open the real file")
-    if not stat.S_ISREG(info.st_mode):
+    if not stat.S_ISREG(before.st_mode):
         raise _reject("source is not a regular file")
-    if info.st_size > MAX_SOURCE_BYTES:
+    if before.st_size > MAX_SOURCE_BYTES:
         raise _reject("source exceeds the ingress size bound",
-                      bytes=info.st_size, limit=MAX_SOURCE_BYTES)
-    facts = {"bytes": info.st_size, "container": "opaque"}
-    with path.open("rb") as handle:
-        head = handle.read(4)
+                      bytes=before.st_size, limit=MAX_SOURCE_BYTES)
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", getattr(os, "O_NOINHERIT", 0))
+    if os.name != "nt":
+        flags |= getattr(os, "O_NONBLOCK", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        handle = os.fdopen(descriptor, "rb")
+    except OSError as exc:
+        raise _reject("source path cannot be opened", detail=str(exc)) from exc
+    try:
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode) or is_reparse(opened):
+            raise _reject("opened source is not a regular file")
+        if _snapshot(before) != _snapshot(opened):
+            raise _reject("source identity or content metadata changed while opening",
+                          beforeBytes=before.st_size, openedBytes=opened.st_size)
+        if opened.st_size > MAX_SOURCE_BYTES:
+            raise _reject("source exceeds the ingress size bound",
+                          bytes=opened.st_size, limit=MAX_SOURCE_BYTES)
+        yield handle, opened
+    finally:
+        handle.close()
+
+
+def _assert_handle_unchanged(handle, opened: os.stat_result) -> None:
+    final = os.fstat(handle.fileno())
+    if _snapshot(final) != _snapshot(opened):
+        raise _reject("source changed while it was being captured",
+                      beforeBytes=opened.st_size, afterBytes=final.st_size)
+
+
+def _source_facts(handle, size: int) -> dict:
+    handle.seek(0)
+    head = handle.read(4)
+    facts = {"bytes": size, "container": "opaque"}
     if head[:2] == b"PK":
         facts["container"] = "zip"
-        facts.update(_zip_sanity(path))
+        handle.seek(0)
+        facts.update(_zip_sanity(handle))
     return facts
 
 
-def _zip_sanity(path: Path) -> dict:
+def _hash_handle(handle) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    total = 0
+    handle.seek(0)
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        total += len(chunk)
+        if total > MAX_SOURCE_BYTES:
+            raise _reject("source exceeds the ingress size bound",
+                          bytes=total, limit=MAX_SOURCE_BYTES)
+        digest.update(chunk)
+    return digest.hexdigest(), total
+
+
+def validate_source(path: Path) -> dict:
+    """Bounded validation of the bytes read through one stable source handle."""
+    with _open_source_once(path) as (handle, opened):
+        digest, size = _hash_handle(handle)
+        del digest
+        facts = _source_facts(handle, size)
+        _assert_handle_unchanged(handle, opened)
+        return facts
+
+
+def _zip_sanity(handle) -> dict:
     try:
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(handle) as archive:
             infos = archive.infolist()
     except (zipfile.BadZipFile, OSError) as exc:
         raise _reject("source looks like a zip but does not open",
@@ -154,6 +218,89 @@ def _zip_sanity(path: Path) -> dict:
             "documentKind": "hwpx" if is_hwpx else "zip"}
 
 
+def _inspect_captured_source(path: Path, expected_sha256: str,
+                             expected_bytes: int,
+                             expected_links: int | None = None) -> dict:
+    with _open_source_once(path) as (handle, opened):
+        if expected_links is not None and opened.st_nlink != expected_links:
+            raise _reject("captured source link count changed",
+                          expectedLinks=expected_links,
+                          actualLinks=opened.st_nlink)
+        digest, size = _hash_handle(handle)
+        if digest != expected_sha256 or size != expected_bytes:
+            raise _reject("captured source bytes changed before publication",
+                          expectedBytes=expected_bytes, actualBytes=size)
+        facts = _source_facts(handle, size)
+        _assert_handle_unchanged(handle, opened)
+        return facts
+
+
+def _capture_source(source: Path, stage: Path) -> tuple[dict, str, int,
+                                                        tuple[int, int]]:
+    """Copy from one stable handle into one program-owned exclusive stage."""
+    digest = hashlib.sha256()
+    total = 0
+    stage_identity = None
+    try:
+        with _open_source_once(source) as (reader, opened):
+            checkpoint = _SOURCE_CAPTURE_CHECKPOINT
+            if callable(checkpoint):
+                checkpoint("opened", source)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_CLOEXEC", getattr(os, "O_NOINHERIT", 0))
+            try:
+                descriptor = os.open(stage, flags, 0o600)
+                writer = os.fdopen(descriptor, "wb")
+            except OSError as exc:
+                raise RpcError("publication_failed",
+                               "source staging file cannot be created",
+                               detail=str(exc)) from exc
+            with writer:
+                stage_info = os.fstat(writer.fileno())
+                stage_identity = (stage_info.st_dev, stage_info.st_ino)
+                while True:
+                    chunk = reader.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_SOURCE_BYTES:
+                        raise _reject("source exceeds the ingress size bound",
+                                      bytes=total, limit=MAX_SOURCE_BYTES)
+                    writer.write(chunk)
+                    digest.update(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+            _assert_handle_unchanged(reader, opened)
+        sha256 = digest.hexdigest()
+        facts = _inspect_captured_source(stage, sha256, total, expected_links=1)
+        assert stage_identity is not None
+        return facts, sha256, total, stage_identity
+    except BaseException:
+        # Never check a pathname and then unlink it: a same-user process can
+        # rebind the name between those two operations. Incomplete stages live
+        # only under a reserved, meta-less session and are non-loadable until a
+        # future identity-bound quarantine can classify them.
+        raise
+
+
+def _require_owned_stage(path: Path, identity: tuple[int, int],
+                         expected_links: int) -> None:
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise RpcError("publication_failed",
+                       "source staging file cannot be rebound",
+                       detail=str(exc)) from exc
+    if (current.st_dev, current.st_ino) != identity \
+            or not stat.S_ISREG(current.st_mode) or is_reparse(current) \
+            or current.st_nlink != expected_links:
+        raise RpcError("publication_failed",
+                       "source staging file identity changed",
+                       expectedLinks=expected_links,
+                       actualLinks=current.st_nlink)
+
+
 class Session:
     """One opened document and everything derived from it."""
 
@@ -179,33 +326,66 @@ class Session:
         if not source.is_absolute():
             raise RpcError("invalid_params",
                            "path must be absolute; the Runtime has no ambient cwd")
-        facts = validate_source(source)
         session = cls(root, uuid.uuid4().hex)
-        for directory in (session.source_dir, session.profile_dir,
-                          session.work_dir, session.candidates_dir,
-                          session.renders_dir):
-            directory.mkdir(parents=True, exist_ok=False)
-        name = safe_component(source.name)
-        target = session.source_dir / name
-        resolved = target.resolve()
-        if session.source_dir.resolve() not in resolved.parents:
-            raise RpcError("path_escape", "copied source escapes the session")
-        # Read-only on the source side: shutil.copyfile opens it 'rb'.
-        shutil.copyfile(source, target)
-        digest, size = sha256_file(target)
-        session.meta = {
-            "sessionId": session.id,
-            "openedUtc": now_utc(),
-            "sourceName": name,
-            "sourceSha256": digest,
-            "sourceBytes": size,
-            "ingress": facts,
-        }
-        atomic_write_bytes(
-            session.meta_path,
-            json.dumps(session.meta, ensure_ascii=False, indent=2,
-                       allow_nan=False).encode("utf-8"))
-        return session
+        try:
+            session.dir.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                session.dir.mkdir(exist_ok=False)
+            except FileExistsError as exc:
+                raise RpcError("publication_failed",
+                               "session id already exists") from exc
+            for directory in (session.source_dir, session.profile_dir,
+                              session.work_dir, session.candidates_dir,
+                              session.renders_dir):
+                directory.mkdir(exist_ok=False)
+            name = safe_component(source.name)
+            target = session.source_dir / name
+            resolved = target.resolve()
+            if session.source_dir.resolve() not in resolved.parents:
+                raise RpcError("path_escape", "copied source escapes the session")
+            stage = session.source_dir / f".capture-{uuid.uuid4().hex}.tmp"
+            facts, digest, size, stage_identity = _capture_source(source, stage)
+            checkpoint = _SOURCE_CAPTURE_CHECKPOINT
+            if callable(checkpoint):
+                checkpoint("before_publish", stage)
+            _require_owned_stage(stage, stage_identity, expected_links=1)
+            try:
+                os.link(stage, target)
+            except FileExistsError as exc:
+                raise RpcError("publication_failed",
+                               "source destination already exists") from exc
+            except OSError as exc:
+                raise RpcError("publication_failed",
+                               "captured source cannot be published",
+                               detail=str(exc)) from exc
+            published = _inspect_captured_source(
+                target, digest, size, expected_links=2)
+            if published != facts:
+                raise _reject("published source facts changed")
+            _require_owned_stage(stage, stage_identity, expected_links=2)
+            # Keep the hidden hard-link as a custody anchor. Removing it after
+            # a pathname identity check would create a check-then-unlink race
+            # that could delete a same-user replacement. A hard link consumes
+            # no duplicate file bytes; session metadata names only `target`.
+            session.meta = {
+                "sessionId": session.id,
+                "openedUtc": now_utc(),
+                "sourceName": name,
+                "sourceSha256": digest,
+                "sourceBytes": size,
+                "ingress": facts,
+            }
+            atomic_write_bytes(
+                session.meta_path,
+                json.dumps(session.meta, ensure_ascii=False, indent=2,
+                           allow_nan=False).encode("utf-8"))
+            return session
+        except BaseException:
+            # Do not recursively delete a path that another same-user process
+            # could have rebound. A reserved directory without meta.json is an
+            # incomplete, non-loadable session; later recovery may quarantine
+            # it after an identity-bound inventory.
+            raise
 
     @classmethod
     def load(cls, root: Path, session_id: str) -> "Session | None":

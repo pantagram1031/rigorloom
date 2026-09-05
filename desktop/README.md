@@ -1985,15 +1985,22 @@ rest stand.
 3b. **`artifact/exportTo` is GAP, so the shell writes outside the workspace.**
    The Desktop's whole safety story is that the Runtime is the only thing that
    touches documents — and export breaks it, because getting a candidate to a
-   person means writing a file the Runtime will not write. The shell's
-   `export_candidate` command is as narrow as it can be made (source path
-   composed from the root plus ids, never from the webview; `candidatePath`
-   forced to a bare name; receipt always travels; the copy is hashed), but it
-   is still the one place the shell has a file-writing power the capability set
-   otherwise denies it. *Suggested shape:* `artifact/exportTo {sessionId,
-   runId, destination}` host-only, copying artifact AND receipt, returning the
-   digest of what it wrote — which is exactly what the shell now does, and
-   belongs one layer down.
+   person means writing a file the Runtime will not write. The private preview
+   therefore supports **new names only**: if either the artifact destination or
+   its `.receipt.json` peer already exists (including a directory or link), the
+   export refuses without writing or deleting either path. The shell first asks
+   Runtime `receipt/read` to validate the canonical candidate, stages both files
+   in the destination directory, fsyncs and hashes them, publishes with
+   no-replace links, and re-hashes the published pair. Artifact publishes first
+   and receipt last, so a receipt never marks an incomplete pair as complete.
+   These are two publications, **not one atomic transaction**. A hard process
+   stop may leave a new orphan artifact. The `.rigorloom-export-*` staging
+   directory is retained even on success as an explicit custody record; its
+   files are hard links and do not duplicate content bytes. The preview does not
+   guess that a same-user path is safe to delete. Directory-handle binding,
+   identity-bound quarantine/cleanup, and filesystems without hard-link support
+   remain open. *Suggested long-term shape:* move this exact host-only operation to
+   `artifact/exportTo {sessionId, runId, destination}` in Runtime.
 3c. **`plan_stale` is structurally unreachable, so its refusal is untestable.**
    `validate_plan` compares `boundSha256` against `session.current_source_sha256()`,
    but `workspace/openPath` copies the bytes into the session and nothing ever
