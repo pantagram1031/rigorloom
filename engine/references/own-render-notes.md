@@ -3801,7 +3801,7 @@ The tolerance is in HWPUNIT, not pixels: seats are integers on both sides and
 the pass never leaves the units the layout was made in.  The default 0.5
 means "any difference at all".
 
-### What the corpus says
+### What the corpus says, before anything was changed
 
 144 dpi, `--no-text`, ten forms, top-level paragraphs:
 
