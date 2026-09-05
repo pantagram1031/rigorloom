@@ -4797,6 +4797,43 @@ class OwnRenderer:
             spacing = 0
         return textheight, vertsize, baseline, spacing
 
+    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end):
+        """THE RIGHT-EDGE FIT TEST: may ``chars[start:end]`` stay on one line?
+
+        Every quantity is HWPUNIT.  ``width_hwp`` is the breaker's own width
+        for the span with no trailing gap, ``avail_hwp`` the line box less the
+        indent, ``slack_hwp`` what ``hp:paraPr@condense`` lets the span's
+        spaces give up.  Returns True when the span fits.
+
+        A SEAM, because the rule is a measurement and not an axiom.  The
+        breaker asks this question once per candidate character and #298
+        priced six answers to it against the cache
+        (``engine/scripts/right_edge_probe.py``); a candidate is installed by
+        overriding this method and nothing else, which is what lets the probe
+        run the REAL breaker on REAL columns under a rule the shipped tree
+        does not hold.
+
+        Two of the six are already here and neither is a choice this method
+        makes:
+
+        * **a trailing space hangs.**  ``compute_lines`` only reaches this
+          test on a non-space ``cursor``, so a span ending in whitespace is
+          never presented and a space at a line end can never force a break.
+          That is the Korean typesetting convention and #242 measured the
+          reference PDFs splitting on it (19 lines drop the trailing space,
+          15 keep it), which is why ``LINE_BOX_END`` is ``visible_advance``.
+        * **condense**, in ``slack_hwp``, whose direction ``compute_lines``
+          decided by measurement.
+
+        The shipped answer is the strict one on top of those: a span fits
+        while it is no wider than its box.  #298 measured the bracket the
+        cache leaves for the other four — hanging punctuation, a fixed
+        k × 12 HWPUNIT tolerance, and rounding either side onto the pen grid
+        — and found no room for any of them; see the notes.
+        """
+        del para, start, end
+        return width_hwp <= avail_hwp + slack_hwp
+
     def compute_lines(self, draw, para, column_hwp, from_char=0,
                       from_line=0):
         """Break ``para`` into line boxes from font metrics — this is E2.1.
@@ -4901,8 +4938,9 @@ class OwnRenderer:
                 cursor += 1
                 continue
             if (cursor > start
-                    and width(start, cursor + 1)
-                    > avail + slack(start, cursor + 1)):
+                    and not self._line_fits(
+                        para, width(start, cursor + 1), avail,
+                        slack(start, cursor + 1), start, cursor + 1)):
                 cut = None
                 for position in opportunities:
                     if start < position <= cursor:
