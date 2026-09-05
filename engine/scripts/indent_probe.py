@@ -8,17 +8,21 @@ starts further in), negative is 내어쓰기 (a hanging indent, and the textbook
 reading is that the FIRST line starts at ``left + intent`` while every
 continuation line starts at ``left``).
 
-``_line_box`` implements ``max(0, left + intent)`` on line 0 and ``left`` on
-every other line.  #268 measured three readings of a negative ``intent``
-across all 3214 cached line boxes and none of them was exact -- the clamped
-one scores 2860, "a negative intent moves nothing" 2895, the textbook hanging
-indent 2710 -- and #277 found the same disagreement again from the table
-side, as five cells whose cached ``horzpos`` sits at the paragraph's
-``margin_left`` while our clamp puts it at 0.
+``_line_box`` used to implement ``max(0, left + intent)`` on line 0 and
+``left`` on every other line.  #268 measured three readings of a negative
+``intent`` across all 3214 cached line boxes and none of them was exact --
+the clamped one scored 2860, "a negative intent moves nothing" 2895, the
+textbook hanging indent 2710 -- and #277 found the same disagreement again
+from the table side, as cells whose cached ``horzpos`` sits at the
+paragraph's ``margin_left`` while the clamp put it at 0.
 
 Neither run fitted the question directly.  This one does: for every cached
 first line whose paragraph declares ``intent != 0``, what IS ``horzpos`` as a
-function of ``left`` and ``intent``?
+function of ``left`` and ``intent``?  The answer, on the whole corpus, is
+that it is ``left`` and the ``intent`` is not in the box at all -- and the
+reference PDFs then say where the indent DOES go, which is inside the box.
+``_line_box`` and :meth:`OwnRenderer._line_indent` implement that; this probe
+is what they cite, and re-running it is how the claim is checked.
 
 WHAT IS RECORDED
 ----------------
@@ -113,7 +117,7 @@ MAX_COUNTEREXAMPLES = 4
 
 def _first_line_candidates():
     return {
-        # What _line_box does today.
+        # What _line_box did before this measurement.
         "max(0, left+intent)": lambda l, i: max(0, l + i),
         # The same arithmetic with no floor at all -- a negative result would
         # put the first line left of the column, which is what a hanging

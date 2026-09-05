@@ -473,14 +473,14 @@ on 2303 of the 2370 comparable lines, `baseline` on 2303, and `spacing` on
   vanish, the breaker matches 16 of the corpus's 216 break positions. Read as
   "spaces may shrink **by** `condense`%", so that 0 is the default and means no
   condensing, it matches 48. The second reading is kept.
-- **A negative `hh:intent`** (내어쓰기). The textbook reading — first line at
-  the left margin, continuation lines pushed in by its magnitude — matches
-  2710 of the 3214 cached boxes. "The intent moves the first line only,
-  clamped at 0" matches 2860, and "the intent never moves the box" matches
-  2895. The hanging reading is therefore **not implemented**; a negative
-  intent moves no line box here. That choice costs a little on the break
-  numbers (recall 48 → 43) and is kept anyway, because 3214 cached boxes are a
-  far larger and more direct sample than 216 break positions.
+- **A negative `hh:intent`** (내어쓰기). **SUPERSEDED — see *The indent is not
+  in the line box* at the end of this file.** All three readings weighed here
+  put the indent in the saved box, and none of them belongs there: measured
+  directly, `horzpos == margin_left` on all 3214 cached boxes and the indent
+  is an offset inside the box, which is why the three scored 2710 / 2860 /
+  2895 and none scored 3214. The hanging reading of the TEXT is right after
+  all. Left in place because the numbers below were measured under the old
+  reading.
 
 ### How well the breaker agrees with the engine that wrote the file
 
@@ -6790,7 +6790,9 @@ Worker: Opus; orchestrator: Fable.
 - **The three indent cells are recorded, not fixed**, and the reading that
   would fix them is worth +35 line boxes over all 3214 — measured in #268,
   re-confirmed here from a second direction, and still a whole-corpus change
-  rather than a cell one.
+  rather than a cell one. **Since fixed, and it was worth +55, not +35: see
+  *The indent is not in the line box* at the end of this file. The reading
+  that fixes them is not one of the three #268 weighed.**
 - **`stretch`, `firstrow`, `gridfirst` and `gridlast` each pick up 1
   regression against `global`** where they had 0 in #272. It is the same
   cell in all four — `saeopja` `r3c6`, a `colSpan=3` cell declaring 1062
@@ -7062,3 +7064,200 @@ Worker: Opus; orchestrator: Fable.
   solves them, `table_row_heights` is still 109 class-B paragraphs, and
   nothing here says whether a max over constraints is the right reading for
   a row.
+
+## The indent is not in the line box: 내어쓰기 hangs — measured, 2026-09-06
+
+#268 weighed three readings of a negative `hh:intent` and kept the middle one
+by 35 line boxes out of 3214. #277 met the same disagreement again from the
+table side, as cells whose cached `horzpos` sits at the paragraph's
+`margin_left` while `_line_box`'s `max(0, left + intent)` clamped it to 0, and
+recorded them rather than fixing them because the reading is a property of
+every paragraph on the corpus. Neither run asked the question directly. This
+one does, and the answer is that both sides of the old argument were looking
+at the wrong quantity.
+
+The public basis says what `intent` means and not where the saved box goes.
+OWPML gives `hp:paraPr/hh:margin` a `left`, a `right` and an `intent`, and
+the HWP 5.0 paragraph-shape record stores the same signed first-line indent:
+positive is 들여쓰기, negative is 내어쓰기. Hancom's editor calls the negative
+case 내어쓰기 and measures it from the left margin. None of that says whether
+`hp:lineseg@horzpos` — a saved LINE BOX — carries the indent or not, and that
+is the whole of what #268 and #277 disagreed about.
+
+### The instrument
+
+`engine/scripts/indent_probe.py FORM.hwpx [--corpus] [--pdf] [--json]
+[--no-text]` reads every `hp:p` that carries an `hp:linesegarray` straight out
+of the file — its `hh:margin` `left`/`right`/`intent` through
+`own_render.parse_header`, so the `hh:switch` branch and its unit halving are
+resolved exactly as the renderer resolves them — and records the first line's
+`horzpos` and `horzsize`, the second's where there is one, the container
+(top level, or the enclosing `hp:tc` with its declared width and the inset
+`cell_inset` resolves), the alignment, the `hp:heading` type and level, and
+whether the paragraph carries an `hp:tab` or declares a `tabPrIDRef`.
+
+Nothing here goes through the renderer's line box or the track solve, which
+is the point: #268's numbers were `_line_box`'s POSITION and WIDTH scored
+together, and the cell columns that width was cut from were wrong until #268
+and #277 fixed them. This probe's `horzpos` column depends on no column at
+all.
+
+### What the cache says
+
+Over the ten corpus forms — 2995 paragraphs carrying a cache, 3214 cached
+lines, 340 of those paragraphs declaring a non-zero `intent` (325 negative,
+15 positive, 191 in a table cell, 118 with more than one line):
+
+| reading of the first line's `horzpos` | intent ≠ 0 | all paragraphs |
+| --- | ---: | ---: |
+| **`left`** | **340 / 340** | **2995 / 2995** |
+| `max(left + intent, left)` = `left + max(intent, 0)` | 325 / 340 | 2980 / 2995 |
+| `max(0, left + intent)` — what this renderer implemented | 285 / 340 | 2940 / 2995 |
+| `max(0, left + intent/2)`, `max(0, left + 2·intent)` | 285 / 340 | 2940 / 2995 |
+| `left + intent` unclamped | 0 / 340 | 2655 / 2995 |
+| `max(0, left + |intent|)` | 0 / 340 | 2655 / 2995 |
+
+Over **every** cached line rather than the first of each: `horzpos == left`
+is exact on **3214 of 3214**, `max(0, left+intent)` on line 0 scores 3159 and
+the textbook hanging box 3043. Every multi-line paragraph's lines share one
+right edge — 161 of 161, and 118 of 118 of the ones declaring an `intent` —
+so the first line is neither moved nor widened. **The saved line box is the
+paragraph's column less its own two margins, and the intent is not in it.**
+
+The unit and sign variants are ruled out by having been scored rather than by
+not having been thought of: halving or doubling `intent` changes nothing
+(both agree with the unmodified reading wherever `left + intent` is negative,
+which is 321 of the 340), and taking it as a magnitude scores zero.
+
+### What the cache cannot say, and the PDF can
+
+A box that ignores the indent is not proof that the drawn glyphs ignore it.
+`--pdf` asks Hancom's own exports, locating a paragraph's drawn lines by the
+same whole-line text match `lineseg_vs_pdf` uses, so the two scripts cannot
+disagree about which PDF lines a paragraph owns. Of 384 top-level
+`LEFT`/`JUSTIFY` paragraphs matched (0 unmatched), **13 have a drawn `x0`
+that can tell the readings apart**, and all 13 say the same thing:
+
+- the 9 positive-`intent` paragraphs draw their first line at `left + intent`
+  — `nrf` p15–p23, `left` 0 against `intent` 2980, drawn at 2972;
+- the 4 whose `left + intent` is below zero draw it at `left` — `kstartup`
+  p31/p32/p37, `left` 3600 against `intent` −3612, drawn at 3600, and
+  `kstartup` p51, 1500 against −1312, drawn at 1500.
+
+And the second drawn line of a negative-`intent` paragraph is at
+`left + |intent|` on **39 of 39** and at `left` on **none**: `moel-2025` p20
+hangs 7420 HWPUNIT and the PDF puts its second line at 7404, `kstartup` p95
+hangs 3569 and the PDF says 3564. The tolerance is 50 HWPUNIT — half a point,
+inside a glyph's own left side bearing — and the smallest non-zero `intent`
+on the corpus is 100.
+
+The remaining 371 matched paragraphs are not counter-examples and are not
+scored as agreement either: half of them start with leading spaces (`moel-2013`
+p19 is `'  - 사업주는…'`), which the matching key deletes and the PDF draws, so
+their `x0` measures the space and not the box.
+
+### The rule
+
+**`hp:lineseg@horzpos`/`horzsize` are the paragraph's line box —
+`margin_left` and the column less both margins — and `hh:intent` is an offset
+INSIDE that box: the first line starts `max(intent, 0)` in, every
+continuation line starts `max(-intent, 0)` in.** Positive is 들여쓰기 and
+negative is 내어쓰기, which is the textbook reading of the attribute after
+all; what was wrong was not the semantics but the belief that the cache
+records them.
+
+`OwnRenderer._line_box` now returns the box and takes no `index` decision;
+`OwnRenderer._line_indent(para, index)` is new and returns the offset. Both
+paths use both: `compute_lines` subtracts the indent from the line's usable
+width — so a hanging paragraph's continuations are as much narrower as the
+file says and break where Hancom broke them — and `_render_computed_lines`
+and `_render_cached_lines` add it to the draw origin and take it off the
+alignment box. The cached path needs it precisely because the cache does not
+carry it: without this, a 내어쓰기 paragraph drew every line flush left.
+
+Six unit tests cover the box being indent-free at all three signs, a positive
+indent on the first line only, a hanging indent on the continuations only, an
+indent larger than the left margin (the `#277` case, `left` 500 against
+`intent` −1308), a hanging indent making a paragraph break into more lines
+than the same text without one, and the same rule inside a table cell. No
+integer inventory is pinned.
+
+### After
+
+Against the reference PDFs, `render_scoreboard.py --corpus --dpi 144`, means
+over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8453 | 0.3359 | 0.6742 | 52 / 53 |
+| `cache` after | **0.8516** | **0.3546** | **0.6866** | 52 / 53 |
+| `computed` before | 0.8366 | 0.3316 | 0.6611 | 53 / 53 |
+| `computed` after | **0.8384** | **0.3361** | **0.6685** | 53 / 53 |
+
+No page count moved on either policy. On `cache` every form improved or held
+on all three channels; the largest moves are `nrf` inked 0.4540 → 0.5214,
+`jumin` ssim 0.7287 → 0.7527 and `gianmun-2ho` line IoU 0.7874 → 0.8146. On
+`computed` two channels fell — `jumin` line IoU 0.6930 → 0.6833 and
+`moel-2025` inked 0.1439 → 0.1429 — against gains everywhere else, and both
+are forms whose hanging paragraphs sit in table cells the solved column still
+gets wrong.
+
+`own_render.py --lineseg-agreement` over the corpus: break positions matched
+**79 → 82** of 219 and exact break sequences **2033 → 2037** of 2151, with
+line counts unmoved at 2119. `moel-2013` goes 24 → 29 break positions and
+`kstartup` 16 → 19; `jumin` gives back 14 → 12 and `saeopja` 11 → 8, and
+those two are exactly the forms whose hanging paragraphs are in cells — a
+narrower line stops absorbing the column error and shows it.
+
+`cell_column_probe.py --corpus` goes **401 exact / 1590 near of 1599
+measurable → 404 / 1605 of 1609**. The population grew because the ten ragged
+cells — the ones whose lines disagreed on a delta — were ragged BECAUSE of the
+indent, and are not any more. The +503 / +502 / +500 residual band #277
+recorded is gone from the histogram and nothing appears in its place.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566 characters,
+unchanged, as it must be: it reads the cache against the PDF and never through
+this renderer.
+
+`layout_divergence.py --corpus`: agreement 1351 → **1353**, class A 117 →
+**113**, class B 350 → **349**, class C 243 unchanged. `class_b_probe.py
+--corpus` roots move where the fix acts: `text_rebreak:width` **167 → 165**
+(`saeopja`'s 2 leave; `jumin` 1, `moel-2013` 22 and `moel-2025` 142 stay),
+`table_row_heights` 109 unchanged, `empty_paragraph` 29, `forced_break` 28,
+`cell_valign` 17 → 18.
+
+`render_check.py` on `render-check-01` is unchanged in total at both
+resolutions — 6 match / 37 close / 6 differ / 2 unsupported at 96 dpi,
+14 / 31 / 4 / 2 at 144, 9 pages on both — and the block the fix is about moved
+inside its verdict: `F11` 내어쓰기 goes ssim 0.6990 → **0.7129** and inked
+0.0890 → **0.1059**, still `close`. `F10` 첫줄 들여쓰기 is byte-identical, and
+correctly so: its `left` is 0, so the old `max(0, left + intent)` put the text
+at the same x the new `horzpos + indent` puts it, and the two boxes differ
+only in a subtraction that cancels.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The corpus is the training set** for the box half of the rule. Ten
+  government forms, 3214 cached boxes, 340 paragraphs with a non-zero
+  `intent`; the fit is exact on all of them, which is what makes it a rule
+  rather than a preference, but nothing here is a holdout.
+- **The PDF half rests on 13 discriminating paragraphs and 39 second lines**,
+  all top-level and all `LEFT`/`JUSTIFY`. A centred or right-aligned line's
+  `x0` is a function of its own width, so those 26 paragraphs were excluded
+  rather than fitted, and no corpus paragraph combines a non-zero `intent`
+  with a `hp:heading`, a bullet or an `hp:tab` — 0 of 340 carry any of the
+  three — so an indent interacting with list numbering is untested here.
+- **A THIRD and later line of a hanging paragraph is barely observed.** 161
+  paragraphs have a cached second line and only 58 cached lines sit at index
+  2 or beyond. `_line_indent` treats every line after the first alike, which
+  is what the attribute means, but the corpus's evidence is concentrated on
+  line 1.
+- **Whether Hancom clamps anything.** The rule never subtracts, so it never
+  needs a floor, and no corpus paragraph declares a negative `margin_left`.
+  `max(0, left)` in `_line_box` is defensive, not measured.
+- **The two computed-policy channels that fell** are recorded and not
+  explained: `jumin` line IoU and `moel-2025` inked ink. Both forms lay their
+  hanging paragraphs out in cells whose column the track solve still gets
+  wrong, and separating the two effects needs the column fixed first.
