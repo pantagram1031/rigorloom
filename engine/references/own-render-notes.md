@@ -6623,3 +6623,180 @@ Worker: Opus; orchestrator: Fable.
   render.** There is no cached row height to score against, so nothing above
   says what Hancom actually did with those heights — only what the file
   gives it to work with.
+
+## A cell's text column has a floor, and it is 0.2 inch — measured, 2026-09-05
+
+#268, #270 and #272 each closed leaving the same 66 cells behind: cells
+whose cached `hp:lineseg@horzsize` no column model reproduces and every
+column model places identically, so whatever moves them is not the column.
+`kstartup` −156 on 60, `gianmun-1ho` −874 on 2 and −1157 on 1, `jumin` +503
+and +502, `saeopja` +602. This run asks the cell itself.
+
+### The instrument
+
+`engine/scripts/cell_column_probe.py FORM.hwpx --residuals [--corpus]
+[--json]` selects that population — measurable, off the cache's 4 HWPUNIT
+grid, and given one box by all twelve of #272's models — and dumps for each
+cell everything the file offers as a candidate: `hp:tc@hasMargin`, the cell's
+own `hp:cellMargin` and the table's `hp:inMargin` and the inset
+`cell_inset` resolves from the two, the `hh:borderFill` id with its left and
+right line types and widths, `hp:tbl@cellSpacing`, the `hp:subList`'s
+`vertAlign`, `textDirection` and `lineWrap`, and per paragraph its `paraPr`
+id, `align`, left and right `hh:margin`, `intent`, `hp:heading` type and
+level, `hh:tabPr` stop definitions and tabs used, every inline object with
+its kind, width, `outMargin` and `treatAsChar`, and every cached line's
+`horzpos` and `horzsize` beside our own.
+
+The residual is then fitted. Eight readings of the cell's geometry — as
+rendered, a floor, no inset at all, `cellMargin` unconditionally, `inMargin`
+unconditionally, plus or minus the border widths, less `cellSpacing` — are
+crossed with the three readings of a negative `hh:intent` #268 weighed, and
+the cheapest pair that puts EVERY one of the cell's cached lines inside
+`[0, 4)` is reported as its account. Cheapest means fewest departures from
+what the renderer does now, so a cell that needs one change is never
+reported as needing two.
+
+`track_probe.probe_form` grew a `cell_id` per cell and a `keep_renderer`
+flag so the elements behind a cell can be reached without rendering the form
+twice and matching the two runs up by address.
+
+### What the 66 are made of
+
+Two causes, and neither is a table attribute:
+
+| account | cells | where |
+| --- | ---: | --- |
+| `column := floor 1440` | 63 | `kstartup` 60, `gianmun-1ho` 3 |
+| `horzpos := margin_left only` | 3 | `jumin` 2, `saeopja` 1 |
+
+No residual cell carries a `hp:heading`, a bullet, a tab, an inline object,
+a `VERTICAL` text direction or a non-zero `cellSpacing`, and no reading of
+the border widths explains a single one of them. That is what the dump is
+for: those candidates are ruled out by having been read rather than by not
+having been thought of.
+
+### The floor
+
+`kstartup`'s block is one table, rows 2-6 × columns 1-12 — sixty identical
+cells 1566 HWPUNIT wide, inset 141 on each side, holding an empty paragraph.
+The column that leaves is 1284 and the cache saved `horzsize` 1440 in every
+one. Their row's neighbours settle that the inset itself is right: `c13` is
+9082 wide, our column is 9082 − 282 = 8800, and the cache says 8800.
+
+`gianmun-1ho` says the same thing from two more widths. Its `r7c6` and `r8c6`
+are 848 wide, leaving 566; its `r8c11` is 565 wide, leaving 283. All three
+cache 1440.
+
+Over every cached in-cell `hp:lineseg` on the corpus:
+
+- the smallest `horzsize` anywhere is **1440**, the next smallest is 1696,
+  and **nothing is below it**;
+- **64 lines sit exactly on 1440**, and they come from four different
+  columns — 283, 500, 566 and 1284 — so the value is not a function of the
+  cell;
+- those 64 carry two different `textheight` values, 900 and 1000, so it is
+  not a multiple of the text either;
+- `gianmun-1ho` `r8c11` is 565 HWPUNIT wide in total and still caches a 1440
+  line box, so this is a floor on the LINE and not a clamp on the margins:
+  no reading of a 565-wide cell's insets produces 1440, and the text is
+  simply allowed to overhang the cell it sits in.
+
+1440 HWPUNIT is 0.2 inch exactly — 5.08 mm, 14.4 pt — which reads as a
+designed constant rather than a derived one.
+
+### The rule
+
+**A table cell's text column is its box less its inset, and never less than
+1440 HWPUNIT.** `own_render.cell_text_width(box_hwp, margin)` is new and
+carries `MIN_CELL_TEXT_WIDTH`; the two places that computed a cell's content
+width — `_table_tracks`, for the content extent a row is measured from, and
+`_render_cell_content`, for the column the paragraphs are laid out in — both
+call it, so the row and the text can never disagree about how wide the cell
+is. Six unit tests on the synthetic table #268 built cover a roomy cell,
+the three corpus widths, a cell narrower than the floor, the floor's
+independence from the inset, the boundary (a column already on 1440 is not
+snapped, and 1444 stays 1444), and the render path itself — that
+`_render_cell_content` hands `_render_paragraphs` the floored number.
+
+### The three that are not a cell question at all
+
+`jumin` `r15c0`, `jumin` `r1c0` and `saeopja` `r19c0` are the `saeopja` 166
+case #268 recorded, three more times. Each is a single cached line whose
+paragraph declares a left margin and a negative `intent` larger than it —
+500 against −1070, 500 against −1308, 600 against −2180 — and in each the
+cache put the line box at `horzpos` = the left margin while `_line_box`
+clamps `max(0, left + intent)` to 0. The residual is the margin plus the
+grid: 503, 502, 602.
+
+They are left alone, for the reason #268 gave: the reading is a global
+property of every paragraph on the corpus and not a cell attribute, and #268
+measured all three readings over all 3214 cached line boxes — the clamped
+one this renderer implements scores 2860, "a negative intent moves nothing"
+2895, the textbook hanging indent 2710. These three cells are three of the
+35 that separate the first two. That is now a second, independent line of
+evidence for the middle reading and still not a slice: changing it moves
+every line box in the corpus and belongs to whichever run takes the indent
+question on.
+
+### After
+
+The 66 go to 3, and the three that remain are the three above.
+`cell_column_probe.py --corpus` goes **322 exact / 1406 near → 385 / 1470**
+of 1599 measurable cells; the −156 band of 60 leaves the residual histogram
+and nothing appears in its place. `track_probe.py --corpus` moves with it:
+the renderer's own `global` model goes 905 → **969** cells on the
+4 HWPUNIT grid, and `gridfirst` — #272's best, which this branch does not
+implement — goes 1518 → **1581**, 94.9% → **98.9%** of all 1599, because the
+floor was costing every model the same 64 cells.
+
+**Every raster channel is byte-identical before and after, and that is
+correct rather than disappointing.** `render_scoreboard.py --corpus --dpi
+144` gives `cache` 0.8420 ssim / 0.3283 inked / 0.6729 line IoU with 52 of
+53 pages, and `computed` 0.8336 / 0.3246 / 0.6595 with 53 of 53 — the same
+JSON byte for byte on both policies, form for form. `lineseg_vs_pdf.py
+--corpus` is 411/411 paragraphs with 8566/8566 characters, unchanged.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243, unchanged. `render_check.py` on `render-check-01` is 6 match /
+37 close / 6 differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144,
+9 pages on both, unchanged.
+
+Nothing moved because of what is IN those 64 lines: 61 of them are empty
+paragraphs, and the other 3 hold one character each in a `JUSTIFY`
+paragraph, which on a last line is a left-aligned line. A wider column moves
+neither. What the fix buys is not a pixel on this corpus — it is that a
+narrow cell with text in it will now break where Hancom breaks it, and that
+the 64 cells stop hiding the column question underneath themselves.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Whether the floor is on the column or on the line box.** All 64 lines
+  declare `margin_left`, `margin_right` and `intent` of zero, so the two are
+  the same number in every observation. It is implemented on the column,
+  which is the narrower claim: a paragraph whose own margins shrink a roomy
+  cell's line box below 1440 is not widened, because nothing measured says
+  it should be.
+- **1440 is read off ten government forms and nothing else.** It is a
+  constant with no public citation behind it here — what stands behind it is
+  that four different columns are driven to it, that no cached in-cell line
+  anywhere on the corpus is narrower, and that a cell 565 HWPUNIT wide still
+  gets it. A document whose narrow cells were authored at a different zoom
+  or unit could disprove it in one line.
+- **Whether the floor applies outside a table cell** is untested. Every
+  observation is in a `hp:tc`, and body columns on this corpus are never
+  within an order of magnitude of 1440, so the corpus cannot say. It is
+  applied only to cells.
+- **The three indent cells are recorded, not fixed**, and the reading that
+  would fix them is worth +35 line boxes over all 3214 — measured in #268,
+  re-confirmed here from a second direction, and still a whole-corpus change
+  rather than a cell one.
+- **`stretch`, `firstrow`, `gridfirst` and `gridlast` each pick up 1
+  regression against `global`** where they had 0 in #272. It is the same
+  cell in all four — `saeopja` `r3c6`, a `colSpan=3` cell declaring 1062
+  whose column was 500 and whose cache says 1440. The floor puts the
+  renderer's own box on the grid there and the models that give it a
+  different box stay off it. The cell was off the grid under every model
+  before, so nothing regressed in fact; the baseline moved.
+- **The corpus is the training set**, as it was for #268, #270 and #272 —
+  the same ten forms, and the floor rests on 64 lines in 4 of them.
