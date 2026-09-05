@@ -670,7 +670,7 @@ The slice serves the offline `preedit` backend only (orchestrator decision D9);
 | `initialize` | implemented | `runtime/scripts/rt_server.py` `_m_initialize` |
 | `capabilities/list` | implemented (no render probe) | `_m_capabilities` |
 | `session/list` | implemented | `_m_session_list` |
-| `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
+| `workspace/openPath` (host) | implemented — one stable bounded source handle → exclusive stage → hash/ZIP inspection → no-replace session copy; the hidden stage hard-link remains as a no-delete custody anchor; differing leaf identity and size/timestamp drift refuse; no HWP5 CFB walk and no complete ancestor-alias guarantee | `runtime/scripts/rt_session.py` `_open_source_once`, `_capture_source`, `_inspect_captured_source` |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
 | `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan` |

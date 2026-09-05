@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import zipfile
 
@@ -34,6 +35,20 @@ def test_open_path_records_the_source_hash(client):
     assert result["source"]["sha256"] == _sha256(CORPUS_FORM)
     assert result["source"]["bytes"] == CORPUS_FORM.stat().st_size
     assert result["source"]["documentKind"] == "hwpx"
+
+
+def test_the_program_owned_capture_anchor_is_retained_without_duplicate_bytes(
+        tmp_path):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"captured once")
+
+    session = rt_session.Session.open_path(tmp_path / "root", str(source))
+
+    anchors = list(session.source_dir.glob(".capture-*.tmp"))
+    assert len(anchors) == 1
+    assert anchors[0].read_bytes() == session.source.read_bytes()
+    assert anchors[0].stat().st_ino == session.source.stat().st_ino
+    assert session.source.stat().st_nlink == 2
 
 
 def test_the_source_file_is_never_modified(client, tmp_path):
@@ -116,6 +131,174 @@ def test_an_oversized_source_is_refused(tmp_path, monkeypatch):
     with pytest.raises(rt_codes.RpcError) as excinfo:
         rt_session.validate_source(big)
     assert excinfo.value.data["limit"] == 1024
+
+
+def test_open_path_does_not_delegate_to_path_reopening_copyfile(tmp_path, monkeypatch):
+    source = tmp_path / "source.hwpx"
+    shutil.copyfile(CORPUS_FORM, source)
+    original = source.read_bytes()
+
+    def forbidden_reopen(*_args, **_kwargs):
+        raise AssertionError("openPath reopened the source through shutil.copyfile")
+
+    monkeypatch.setattr(shutil, "copyfile", forbidden_reopen)
+
+    session = rt_session.Session.open_path(tmp_path / "root", str(source))
+
+    assert session.source.read_bytes() == original
+    assert session.meta["sourceSha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_an_open_handle_keeps_the_original_bytes_when_the_path_is_replaced(
+        tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    replacement = tmp_path / "replacement.bin"
+    source.write_bytes(b"opened bytes")
+    replacement.write_bytes(b"replacement bytes")
+    replacement_blocked = []
+
+    def replace_path(step, path):
+        if step == "opened":
+            try:
+                replacement.replace(path)
+            except PermissionError:
+                # CPython on Windows opens without FILE_SHARE_DELETE, so the
+                # stable read handle itself can pin the directory entry.
+                replacement_blocked.append(True)
+
+    monkeypatch.setattr(rt_session, "_SOURCE_CAPTURE_CHECKPOINT", replace_path)
+
+    session = rt_session.Session.open_path(tmp_path / "root", str(source))
+
+    assert session.source.read_bytes() == b"opened bytes"
+    assert session.meta["sourceSha256"] == hashlib.sha256(b"opened bytes").hexdigest()
+    assert source.read_bytes() == (
+        b"opened bytes" if replacement_blocked else b"replacement bytes")
+
+
+def test_growth_through_the_open_handle_is_refused_and_cleans_the_session(
+        tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"small")
+    root = tmp_path / "root"
+    monkeypatch.setattr(rt_session, "MAX_SOURCE_BYTES", 16)
+
+    def grow_source(step, _path):
+        if step == "opened":
+            source.write_bytes(b"x" * 32)
+
+    monkeypatch.setattr(rt_session, "_SOURCE_CAPTURE_CHECKPOINT", grow_source)
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session.Session.open_path(root, str(source))
+
+    assert excinfo.value.code == "source_rejected"
+    sessions = list((root / "sessions").iterdir())
+    assert sessions and all(not (path / "meta.json").exists() for path in sessions)
+    assert all(rt_session.Session.load(root, path.name) is None for path in sessions)
+
+
+def test_a_changed_owned_stage_is_refused_before_publication(tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"stable source")
+    root = tmp_path / "root"
+
+    def change_stage(step, path):
+        if step == "before_publish":
+            path.write_bytes(b"changed stage")
+
+    monkeypatch.setattr(rt_session, "_SOURCE_CAPTURE_CHECKPOINT", change_stage)
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session.Session.open_path(root, str(source))
+
+    assert excinfo.value.code == "source_rejected"
+    sessions = list((root / "sessions").iterdir())
+    assert sessions and all(not (path / "meta.json").exists() for path in sessions)
+    assert all(rt_session.Session.load(root, path.name) is None for path in sessions)
+
+
+def test_a_rebound_same_byte_stage_is_preserved_not_unlinked(tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"same bytes")
+    foreign = tmp_path / "foreign.bin"
+    foreign.write_bytes(b"same bytes")
+    root = tmp_path / "root"
+    rebound = []
+
+    def rebind_stage(step, path):
+        if step == "before_publish":
+            original = path.with_name("original-stage-held")
+            path.replace(original)
+            foreign.replace(path)
+            rebound.extend([path, original])
+
+    monkeypatch.setattr(rt_session, "_SOURCE_CAPTURE_CHECKPOINT", rebind_stage)
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session.Session.open_path(root, str(source))
+
+    assert excinfo.value.code == "publication_failed"
+    assert len(rebound) == 2
+    assert rebound[0].read_bytes() == b"same bytes"
+    assert rebound[1].read_bytes() == b"same bytes"
+    assert all(not (path / "meta.json").exists()
+               for path in (root / "sessions").iterdir())
+
+
+def test_a_foreign_stage_collision_is_never_deleted(tmp_path):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"source")
+    stage = tmp_path / "stage.bin"
+    stage.write_bytes(b"foreign bytes")
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session._capture_source(source, stage)
+
+    assert excinfo.value.code == "publication_failed"
+    assert stage.read_bytes() == b"foreign bytes"
+
+
+def test_a_session_id_collision_preserves_the_existing_directory(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    session_id = "a" * 32
+    existing = root / "sessions" / session_id
+    existing.mkdir(parents=True)
+    marker = existing / "foreign.txt"
+    marker.write_bytes(b"keep me")
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"source")
+
+    class FixedUuid:
+        hex = session_id
+
+    monkeypatch.setattr(rt_session.uuid, "uuid4", lambda: FixedUuid())
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session.Session.open_path(root, str(source))
+
+    assert excinfo.value.code == "publication_failed"
+    assert marker.read_bytes() == b"keep me"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX FIFO")
+def test_a_fifo_swap_before_open_refuses_without_blocking(tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"regular")
+    real_open = rt_session.os.open
+
+    def swap_to_fifo(path, flags, *args):
+        if path == source:
+            source.unlink()
+            os.mkfifo(source)
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(rt_session.os, "open", swap_to_fifo)
+
+    with pytest.raises(rt_codes.RpcError) as excinfo:
+        rt_session.validate_source(source)
+
+    assert excinfo.value.code == "source_rejected"
 
 
 def test_an_opaque_non_zip_source_is_accepted_but_not_addressable(client, tmp_path):

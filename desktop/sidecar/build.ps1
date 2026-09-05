@@ -77,7 +77,11 @@ if ($LASTEXITCODE -ne 0) { exit 3 }
 # every repo script does, so the runtime modules go in as hidden imports and the
 # engine/pipeline scripts go in as DATA: rigorloomd.py executes them from source
 # with runpy when the Runtime spawns them as children.
-Remove-Item -Recurse -Force $Work, $Dist -ErrorAction SilentlyContinue
+foreach ($ownedBuildPath in @($Work, $Dist)) {
+    if (Test-Path -LiteralPath $ownedBuildPath) {
+        Remove-Item -LiteralPath $ownedBuildPath -Recurse -Force -ErrorAction Stop
+    }
+}
 
 $runtimeScripts = Join-Path $RepoRoot 'runtime\scripts'
 $hidden = @()
@@ -160,9 +164,68 @@ if (-not (Test-Path (Join-Path $built 'rigorloomd.exe'))) {
 }
 
 # --- publish into the Tauri resource tree ------------------------------------
-Remove-Item -Recurse -Force $OutDir -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutDir) | Out-Null
-Copy-Item -Recurse -Force $built $OutDir
+# Build output is copied into a unique sibling first and compared file-for-file
+# before the previous resource tree is touched. A locked/stale OutDir is a hard
+# build failure: copying on top of it can silently combine two sidecar versions.
+function Get-TreeManifest([string]$Root) {
+    $rootFull = [System.IO.Path]::GetFullPath($Root)
+    return @(
+        Get-ChildItem -LiteralPath $rootFull -Recurse -File | ForEach-Object {
+            [pscustomobject]@{
+                path = [System.IO.Path]::GetRelativePath($rootFull, $_.FullName).Replace('\', '/')
+                bytes = $_.Length
+                sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            }
+        } | Sort-Object path
+    )
+}
+
+$resourceParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $OutDir))
+$outFull = [System.IO.Path]::GetFullPath($OutDir)
+if ([System.IO.Path]::GetDirectoryName($outFull) -ne $resourceParent) {
+    Write-Error "refusing an unexpected sidecar output path: $outFull"
+    exit 3
+}
+New-Item -ItemType Directory -Force -Path $resourceParent | Out-Null
+$publishStage = Join-Path $resourceParent ("rigorloomd.stage." + [guid]::NewGuid().ToString('N'))
+
+try {
+    Copy-Item -LiteralPath $built -Destination $publishStage -Recurse -ErrorAction Stop
+    $builtManifest = Get-TreeManifest $built
+    $stageManifest = Get-TreeManifest $publishStage
+    $builtJson = $builtManifest | ConvertTo-Json -Depth 4 -Compress
+    $stageJson = $stageManifest | ConvertTo-Json -Depth 4 -Compress
+    if ($builtJson -cne $stageJson) {
+        throw 'sidecar staging tree does not match the PyInstaller output'
+    }
+
+    if (Test-Path -LiteralPath $outFull) {
+        Remove-Item -LiteralPath $outFull -Recurse -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $outFull) {
+            throw 'the previous sidecar output still exists after checked removal'
+        }
+    }
+    Move-Item -LiteralPath $publishStage -Destination $outFull -ErrorAction Stop
+    $publishedManifest = Get-TreeManifest $outFull
+    $publishedJson = $publishedManifest | ConvertTo-Json -Depth 4 -Compress
+    if ($publishedJson -cne $builtJson) {
+        throw 'published sidecar tree does not match the verified staging tree'
+    }
+    Write-Host ("sidecar manifest: {0} files, {1:N1} MiB" -f `
+        $publishedManifest.Count, (($publishedManifest | Measure-Object bytes -Sum).Sum / 1MB))
+} catch {
+    $failure = $_
+    if (Test-Path -LiteralPath $publishStage) {
+        try {
+            Remove-Item -LiteralPath $publishStage -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Error "sidecar staging cleanup failed at $publishStage`: $($_.Exception.Message)"
+            exit 3
+        }
+    }
+    Write-Error "sidecar publish failed: $($failure.Exception.Message)"
+    exit 3
+}
 
 $size = (Get-ChildItem -Recurse $OutDir | Measure-Object -Property Length -Sum).Sum
 Write-Host ("sidecar published: {0} ({1:N1} MiB)" -f $OutDir, ($size / 1MB))

@@ -14,7 +14,9 @@ mod sidecar;
 mod taskpacks;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -197,6 +199,431 @@ fn refuse(code: &str, message: String, data: Value) -> Value {
     json!({ "code": code, "message": message, "data": data })
 }
 
+static EXPORT_STAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct ExportStage {
+    path: PathBuf,
+}
+
+fn receipt_target_for(target: &Path) -> PathBuf {
+    target.with_file_name(format!(
+        "{}.receipt.json",
+        target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "candidate".into())
+    ))
+}
+
+fn is_canonical_candidate_name(name: &str) -> bool {
+    name.strip_prefix("artifact.")
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('.') && !suffix.contains('/') && !suffix.contains('\\'))
+}
+
+fn path_exists_no_follow(path: &Path) -> Result<bool, Value> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(refuse(
+            "export_failed",
+            format!("저장 경로를 확인하지 못했습니다: {error}"),
+            json!({ "destination": path.to_string_lossy() }),
+        )),
+    }
+}
+
+fn is_regular_file_no_follow(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.file_type().is_file() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn create_export_stage(parent: &Path) -> Result<ExportStage, Value> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for _ in 0..32 {
+        let counter = EXPORT_STAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".rigorloom-export-{}-{now}-{counter}.tmp",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&path) {
+            Ok(()) => {
+                return Ok(ExportStage { path })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(refuse(
+                    "export_failed",
+                    format!("임시 저장 폴더를 만들지 못했습니다: {error}"),
+                    json!({ "parent": parent.to_string_lossy() }),
+                ))
+            }
+        }
+    }
+    Err(refuse(
+        "export_failed",
+        "고유한 임시 저장 폴더를 만들지 못했습니다.".into(),
+        json!({ "parent": parent.to_string_lossy() }),
+    ))
+}
+
+fn stage_file(source: &Path, target: &Path, role: &str) -> Result<(), Value> {
+    use std::io::{Read, Write};
+
+    let mut reader = std::fs::File::open(source).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("{role} 원본을 읽지 못했습니다: {error}"),
+            json!({ "source": source.to_string_lossy() }),
+        )
+    })?;
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("{role} 임시 파일을 만들지 못했습니다: {error}"),
+                json!({ "destination": target.to_string_lossy() }),
+            )
+        })?;
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        let count = reader.read(&mut buffer).map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("{role} 원본을 읽지 못했습니다: {error}"),
+                json!({ "source": source.to_string_lossy() }),
+            )
+        })?;
+        if count == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..count]).map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("{role} 임시 파일을 쓰지 못했습니다: {error}"),
+                json!({ "destination": target.to_string_lossy() }),
+            )
+        })?;
+    }
+    writer.flush().and_then(|_| writer.sync_all()).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("{role} 임시 파일을 디스크에 기록하지 못했습니다: {error}"),
+            json!({ "destination": target.to_string_lossy() }),
+        )
+    })
+}
+
+fn publish_new(staged: &Path, target: &Path, role: &str) -> Result<(), Value> {
+    // Both files live in the same directory. Creating a hard link is an atomic
+    // no-replace publish on NTFS and the CI filesystems: it fails when the
+    // destination already exists instead of replacing somebody else's bytes.
+    std::fs::hard_link(staged, target).map_err(|error| {
+        let code = if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "export_exists"
+        } else {
+            "export_failed"
+        };
+        refuse(
+            code,
+            format!("{role}을(를) 게시하지 못했습니다: {error}"),
+            json!({ "destination": target.to_string_lossy() }),
+        )
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExportStep {
+    Staged,
+    ArtifactPublished,
+    ReceiptPublished,
+}
+
+fn export_candidate_files_with_observer<F>(
+    runtime_root: &Path,
+    artifact: &Path,
+    receipt: &Path,
+    verified_receipt: Option<&Value>,
+    session_id: &str,
+    run_id: &str,
+    candidate_path: &str,
+    target: &Path,
+    mut observe: F,
+) -> Result<Value, Value>
+where
+    F: FnMut(ExportStep, &Path, &Path),
+{
+    if !is_canonical_candidate_name(candidate_path) {
+        return Err(refuse(
+            "invalid_params",
+            "후보본 이름이 Runtime의 canonical artifact 이름이 아닙니다.".into(),
+            json!({ "candidatePath": candidate_path }),
+        ));
+    }
+    if !target.is_absolute() {
+        return Err(refuse(
+            "invalid_params",
+            "내보낼 경로는 절대 경로여야 합니다.".into(),
+            json!({ "destination": target.to_string_lossy() }),
+        ));
+    }
+    let target_name = target.file_name().filter(|name| !name.is_empty()).ok_or_else(|| {
+        refuse(
+            "invalid_params",
+            "내보낼 파일 이름이 없습니다.".into(),
+            json!({ "destination": target.to_string_lossy() }),
+        )
+    })?;
+    let parent = target.parent().filter(|path| !path.as_os_str().is_empty()).ok_or_else(|| {
+        refuse(
+            "export_failed",
+            "저장할 폴더가 없습니다.".into(),
+            json!({ "destination": target.to_string_lossy() }),
+        )
+    })?;
+    if !parent.is_dir() {
+        return Err(refuse(
+            "export_failed",
+            "저장할 폴더가 없습니다.".into(),
+            json!({ "parent": parent.to_string_lossy() }),
+        ));
+    }
+    let lexical_receipt_target = receipt_target_for(target);
+    for path in [target, lexical_receipt_target.as_path()] {
+        if path_exists_no_follow(path)? {
+            return Err(refuse(
+                "export_exists",
+                "기존 파일은 덮어쓰지 않습니다. 새 이름을 선택하세요.".into(),
+                json!({ "destination": path.to_string_lossy() }),
+            ));
+        }
+    }
+
+    let root = std::fs::canonicalize(runtime_root).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("Runtime 작업 폴더를 확인하지 못했습니다: {error}"),
+            json!({ "root": runtime_root.to_string_lossy() }),
+        )
+    })?;
+    let resolved_parent = std::fs::canonicalize(parent).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("저장할 폴더를 확인하지 못했습니다: {error}"),
+            json!({ "parent": parent.to_string_lossy() }),
+        )
+    })?;
+    if resolved_parent.starts_with(&root) {
+        return Err(refuse(
+            "export_alias",
+            "Runtime 작업 폴더 안으로는 내보낼 수 없습니다.".into(),
+            json!({ "destination": target.to_string_lossy() }),
+        ));
+    }
+
+    // Operate through the resolved directory rather than re-resolving a
+    // user-supplied junction/symlink spelling for every publication step.
+    let target = resolved_parent.join(target_name);
+    let receipt_target = receipt_target_for(&target);
+    for path in [target.as_path(), receipt_target.as_path()] {
+        if path_exists_no_follow(path)? {
+            return Err(refuse(
+                "export_exists",
+                "기존 파일은 덮어쓰지 않습니다. 새 이름을 선택하세요.".into(),
+                json!({ "destination": path.to_string_lossy() }),
+            ));
+        }
+    }
+
+    let stage = create_export_stage(&resolved_parent)?;
+    let staged_artifact = stage.path.join("artifact.stage");
+    let staged_receipt = stage.path.join("receipt.stage");
+    stage_file(artifact, &staged_artifact, "후보본")?;
+    stage_file(receipt, &staged_receipt, "영수증")?;
+
+    let receipt_value: Value = serde_json::from_slice(
+        &std::fs::read(&staged_receipt).map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("임시 영수증을 읽지 못했습니다: {error}"),
+                Value::Null,
+            )
+        })?,
+    )
+    .map_err(|error| {
+        refuse(
+            "export_receipt_mismatch",
+            format!("영수증 형식이 올바르지 않습니다: {error}"),
+            Value::Null,
+        )
+    })?;
+    if verified_receipt.is_some_and(|verified| verified != &receipt_value) {
+        return Err(refuse(
+            "export_receipt_mismatch",
+            "Runtime이 검증한 영수증과 디스크의 영수증이 다릅니다.".into(),
+            json!({ "sessionId": session_id, "runId": run_id }),
+        ));
+    }
+    let declared = &receipt_value["candidate"];
+    let declared_path = declared["path"].as_str();
+    let declared_sha256 = declared["sha256"].as_str();
+    let declared_bytes = declared["bytes"].as_u64();
+    if receipt_value["sessionId"].as_str() != Some(session_id)
+        || receipt_value["runId"].as_str() != Some(run_id)
+        || declared_path != Some(candidate_path)
+        || declared_sha256.is_none()
+        || declared_bytes.is_none()
+    {
+        return Err(refuse(
+            "export_receipt_mismatch",
+            "영수증의 후보본 결합 정보가 현재 후보본과 맞지 않습니다.".into(),
+            json!({
+                "sessionId": session_id,
+                "runId": run_id,
+                "candidatePath": candidate_path,
+            }),
+        ));
+    }
+
+    let (sha256, bytes) = digest::sha256_file(&staged_artifact).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("임시 후보본을 다시 읽지 못했습니다: {error}"),
+            Value::Null,
+        )
+    })?;
+    if declared_sha256 != Some(sha256.as_str()) || declared_bytes != Some(bytes) {
+        return Err(refuse(
+            "export_hash_mismatch",
+            "후보본 바이트가 영수증에 기록된 해시 또는 크기와 다릅니다.".into(),
+            json!({ "sha256": sha256, "bytes": bytes }),
+        ));
+    }
+    let (receipt_sha256, receipt_bytes) =
+        digest::sha256_file(&staged_receipt).map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("임시 영수증을 다시 읽지 못했습니다: {error}"),
+                Value::Null,
+            )
+        })?;
+
+    // This is deliberately not called a two-file atomic transaction. The
+    // artifact is published first and the receipt last, both no-replace, like
+    // Runtime publication where receipt presence marks a complete pair. A hard
+    // process stop can leave a new orphan artifact/staging directory, but it
+    // cannot overwrite or delete a file that existed before this export began.
+    observe(ExportStep::Staged, &target, &receipt_target);
+    publish_new(&staged_artifact, &target, "후보본")?;
+    observe(ExportStep::ArtifactPublished, &target, &receipt_target);
+    publish_new(&staged_receipt, &receipt_target, "영수증")?;
+    observe(ExportStep::ReceiptPublished, &target, &receipt_target);
+
+    let (published_sha256, published_bytes) = digest::sha256_file(&target).map_err(|error| {
+        refuse(
+            "export_failed",
+            format!("게시한 후보본을 다시 읽지 못했습니다: {error}"),
+            json!({ "destination": target.to_string_lossy() }),
+        )
+    })?;
+    let (published_receipt_sha256, published_receipt_bytes) =
+        digest::sha256_file(&receipt_target).map_err(|error| {
+            refuse(
+                "export_failed",
+                format!("게시한 영수증을 다시 읽지 못했습니다: {error}"),
+                json!({ "destination": receipt_target.to_string_lossy() }),
+            )
+        })?;
+    if published_sha256 != sha256
+        || published_bytes != bytes
+        || published_receipt_sha256 != receipt_sha256
+        || published_receipt_bytes != receipt_bytes
+    {
+        return Err(refuse(
+            "export_hash_mismatch",
+            "게시된 후보본 또는 영수증이 staging에서 검증한 바이트와 다릅니다.".into(),
+            json!({
+                "destination": target.to_string_lossy(),
+                "receiptDestination": receipt_target.to_string_lossy(),
+            }),
+        ));
+    }
+    Ok(json!({
+        "path": target.to_string_lossy(),
+        "sha256": published_sha256,
+        "bytes": published_bytes,
+        "receiptPath": receipt_target.to_string_lossy(),
+        "staging": {
+            "state": "retained_anchor",
+            "path": stage.path.to_string_lossy(),
+            "note": "identity-bound cleanup is not implemented; hard links do not duplicate content bytes",
+        },
+    }))
+}
+
+fn export_candidate_files(
+    runtime_root: &Path,
+    artifact: &Path,
+    receipt: &Path,
+    session_id: &str,
+    run_id: &str,
+    candidate_path: &str,
+    target: &Path,
+) -> Result<Value, Value> {
+    export_candidate_files_with_observer(
+        runtime_root,
+        artifact,
+        receipt,
+        None,
+        session_id,
+        run_id,
+        candidate_path,
+        target,
+        |_, _, _| {},
+    )
+}
+
+fn export_candidate_files_verified(
+    runtime_root: &Path,
+    artifact: &Path,
+    receipt: &Path,
+    verified_receipt: &Value,
+    session_id: &str,
+    run_id: &str,
+    candidate_path: &str,
+    target: &Path,
+) -> Result<Value, Value> {
+    export_candidate_files_with_observer(
+        runtime_root,
+        artifact,
+        receipt,
+        Some(verified_receipt),
+        session_id,
+        run_id,
+        candidate_path,
+        target,
+        |_, _, _| {},
+    )
+}
+
 /// Copy a candidate and its receipt out of the workspace, hashing the copy.
 ///
 /// `artifact/exportTo` is GAP (protocol §11.5): everything the Runtime writes
@@ -209,8 +636,9 @@ fn refuse(code: &str, message: String, data: Value) -> Value {
 /// - `candidatePath` is checked to be a bare file name, which is what the
 ///   receipt actually carries (`rt_apply` writes `artifact.hwpx`), so it
 ///   cannot walk out of the run directory;
-/// - the receipt travels with the artifact, always. A candidate without its
-///   receipt is a document with no account of where it came from;
+/// - a successful return means the receipt travelled with the artifact. A hard
+///   stop can leave an artifact without a receipt, which is incomplete rather
+///   than a successful export;
 /// - the bytes written are hashed and returned, so the UI can assert they
 ///   equal the digest the receipt bound rather than trusting the copy.
 #[tauri::command]
@@ -221,43 +649,63 @@ fn export_candidate(
     candidate_path: String,
     destination: String,
 ) -> Result<Value, Value> {
-    let bare = |s: &str| {
-        !s.is_empty()
-            && !s.contains('/')
-            && !s.contains('\\')
-            && s != "."
-            && s != ".."
+    let runtime_id = |value: &str| {
+        value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     };
-    for (name, value) in [
-        ("sessionId", &session_id),
-        ("runId", &run_id),
-        ("candidatePath", &candidate_path),
-    ] {
-        if !bare(value) {
+    for (name, value) in [("sessionId", &session_id), ("runId", &run_id)] {
+        if !runtime_id(value) {
             return Err(refuse(
                 "invalid_params",
-                format!("{name}은(는) 경로가 아니라 이름이어야 합니다."),
+                format!("{name}은(는) Runtime의 32자리 식별자여야 합니다."),
                 json!({ "field": name, "value": value }),
             ));
         }
     }
+    if !is_canonical_candidate_name(&candidate_path) {
+        return Err(refuse(
+            "invalid_params",
+            "candidatePath가 Runtime의 canonical artifact 이름이 아닙니다.".into(),
+            json!({ "field": "candidatePath", "value": candidate_path }),
+        ));
+    }
 
-    let root = state.0.lock().unwrap().status().root.ok_or_else(|| {
-        refuse(
-            "sidecar_down",
-            "런타임 작업 폴더를 알 수 없습니다.".into(),
-            Value::Null,
-        )
-    })?;
+    // A direct webview invoke must cross the same verified receipt boundary as
+    // the UI path. Runtime receipt/read validates the receipt body, identities,
+    // canonical candidate role, and artifact digest before the shell copies.
+    let (root, verified_receipt) = {
+        let guard = state.0.lock().unwrap();
+        let root = guard.status().root.ok_or_else(|| {
+            refuse(
+                "sidecar_down",
+                "런타임 작업 폴더를 알 수 없습니다.".into(),
+                Value::Null,
+            )
+        })?;
+        let verified = guard.call(
+            "receipt/read",
+            Some(json!({ "sessionId": session_id, "runId": run_id })),
+        )?;
+        let receipt = verified.get("receipt").cloned().ok_or_else(|| {
+            refuse(
+                "export_receipt_mismatch",
+                "Runtime receipt/read 응답에 영수증이 없습니다.".into(),
+                json!({ "sessionId": session_id, "runId": run_id }),
+            )
+        })?;
+        (root, receipt)
+    };
     let run_dir = Path::new(&root)
         .join("sessions")
         .join(&session_id)
         .join("candidates")
         .join(&run_id);
-    let artifact = run_dir.join(&candidate_path);
-    let receipt = run_dir.join("receipt.json");
-    for path in [&artifact, &receipt] {
-        if !path.is_file() {
+    let artifact_path = run_dir.join(&candidate_path);
+    let receipt_path = run_dir.join("receipt.json");
+    for path in [&artifact_path, &receipt_path] {
+        if !is_regular_file_no_follow(path) {
             return Err(refuse(
                 "artifact_missing",
                 "후보본이나 영수증이 제자리에 없습니다.".into(),
@@ -265,59 +713,441 @@ fn export_candidate(
             ));
         }
     }
+    let canonical_root = std::fs::canonicalize(&root).map_err(|_| {
+        refuse(
+            "artifact_missing",
+            "Runtime 작업 폴더를 확인하지 못했습니다.".into(),
+            Value::Null,
+        )
+    })?;
+    let canonical_run = std::fs::canonicalize(&run_dir).map_err(|_| {
+        refuse(
+            "artifact_missing",
+            "후보본 작업 폴더를 확인하지 못했습니다.".into(),
+            Value::Null,
+        )
+    })?;
+    if !canonical_run.starts_with(&canonical_root) {
+        return Err(refuse(
+            "export_alias",
+            "후보본 작업 폴더가 Runtime 작업 폴더 밖을 가리킵니다.".into(),
+            Value::Null,
+        ));
+    }
+    let artifact = std::fs::canonicalize(&artifact_path).map_err(|_| {
+        refuse(
+            "artifact_missing",
+            "후보본을 확인하지 못했습니다.".into(),
+            Value::Null,
+        )
+    })?;
+    let receipt = std::fs::canonicalize(&receipt_path).map_err(|_| {
+        refuse(
+            "artifact_missing",
+            "영수증을 확인하지 못했습니다.".into(),
+            Value::Null,
+        )
+    })?;
+    if artifact.parent() != Some(canonical_run.as_path())
+        || receipt.parent() != Some(canonical_run.as_path())
+    {
+        return Err(refuse(
+            "export_alias",
+            "후보본 또는 영수증이 canonical run 폴더 밖을 가리킵니다.".into(),
+            Value::Null,
+        ));
+    }
 
-    let target = PathBuf::from(&destination);
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() && !parent.is_dir() {
-            return Err(refuse(
-                "export_failed",
-                "저장할 폴더가 없습니다.".into(),
-                json!({ "parent": parent.to_string_lossy() }),
+    export_candidate_files_verified(
+        &canonical_root,
+        &artifact,
+        &receipt,
+        &verified_receipt,
+        &session_id,
+        &run_id,
+        &candidate_path,
+        &PathBuf::from(destination),
+    )
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "rigorloom-export-{label}-{}-{nonce}",
+                std::process::id()
             ));
+            std::fs::create_dir(&path).expect("create test directory");
+            Self(path)
         }
     }
-    // The receipt lands beside the artifact under a name that names it, so the
-    // pair cannot be separated by accident on the way to somebody's email.
-    let receipt_target = target.with_file_name(format!(
-        "{}.receipt.json",
-        target
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "candidate".into())
-    ));
 
-    std::fs::copy(&artifact, &target).map_err(|e| {
-        refuse(
-            "export_failed",
-            format!("후보본을 저장하지 못했습니다: {e}"),
-            json!({ "destination": destination }),
-        )
-    })?;
-    std::fs::copy(&receipt, &receipt_target).map_err(|e| {
-        // Leave nothing half-exported: an artifact whose receipt failed to
-        // land is exactly the unaccountable file this whole path exists to
-        // prevent.
-        let _ = std::fs::remove_file(&target);
-        refuse(
-            "export_failed",
-            format!("영수증을 저장하지 못했습니다: {e}"),
-            json!({ "destination": receipt_target.to_string_lossy() }),
-        )
-    })?;
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
-    let (sha256, bytes) = digest::sha256_file(&target).map_err(|e| {
-        refuse(
-            "export_failed",
-            format!("내보낸 파일을 다시 읽지 못했습니다: {e}"),
-            json!({ "destination": destination }),
+    fn source_pair(dir: &Path) -> (PathBuf, PathBuf) {
+        std::fs::create_dir_all(dir).unwrap();
+        let artifact = dir.join("artifact.hwpx");
+        let receipt = dir.join("receipt.json");
+        std::fs::write(&artifact, b"new candidate").unwrap();
+        let (sha256, bytes) = digest::sha256_file(&artifact).unwrap();
+        std::fs::write(
+            &receipt,
+            serde_json::to_vec_pretty(&json!({
+                "sessionId": "session",
+                "runId": "run",
+                "candidate": {
+                    "path": "artifact.hwpx",
+                    "sha256": sha256,
+                    "bytes": bytes,
+                }
+            }))
+            .unwrap(),
         )
-    })?;
-    Ok(json!({
-        "path": target.to_string_lossy(),
-        "sha256": sha256,
-        "bytes": bytes,
-        "receiptPath": receipt_target.to_string_lossy(),
-    }))
+        .unwrap();
+        (artifact, receipt)
+    }
+
+    fn layout(label: &str) -> (TestDir, PathBuf, PathBuf, PathBuf, PathBuf) {
+        let temp = TestDir::new(label);
+        let runtime_root = temp.0.join("runtime-root");
+        let export_dir = temp.0.join("exports");
+        std::fs::create_dir(&runtime_root).unwrap();
+        std::fs::create_dir(&export_dir).unwrap();
+        let (artifact, receipt) = source_pair(&runtime_root.join("candidate"));
+        (temp, runtime_root, export_dir, artifact, receipt)
+    }
+
+    fn has_stage_residue(export_dir: &Path) -> bool {
+        std::fs::read_dir(export_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".rigorloom-export-")
+        })
+    }
+
+    #[test]
+    fn a_new_name_exports_a_verified_pair() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) = layout("new-pair");
+        let target = export_dir.join("chosen.hwpx");
+
+        let result = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new candidate");
+        assert_eq!(
+            std::fs::read(export_dir.join("chosen.hwpx.receipt.json")).unwrap(),
+            std::fs::read(&receipt).unwrap()
+        );
+        assert_eq!(result["sha256"], digest::sha256_file(&target).unwrap().0);
+        assert!(has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn export_refuses_to_overwrite_an_existing_pair() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) = layout("existing-pair");
+        let target = export_dir.join("chosen.hwpx");
+        let receipt_target = export_dir.join("chosen.hwpx.receipt.json");
+        std::fs::write(&target, b"existing document").unwrap();
+        std::fs::write(&receipt_target, b"existing receipt").unwrap();
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_exists");
+        assert_eq!(std::fs::read(&target).unwrap(), b"existing document");
+        assert_eq!(std::fs::read(&receipt_target).unwrap(), b"existing receipt");
+        assert!(!has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn a_receipt_directory_refuses_before_the_artifact_is_published() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) = layout("receipt-directory");
+        let target = export_dir.join("chosen.hwpx");
+        let receipt_target = export_dir.join("chosen.hwpx.receipt.json");
+        std::fs::create_dir(&receipt_target).unwrap();
+
+        assert!(export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .is_err());
+        assert!(!target.exists());
+        assert!(receipt_target.is_dir());
+        assert!(!has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn a_hash_mismatch_publishes_nothing() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) = layout("hash-mismatch");
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&receipt).unwrap()).unwrap();
+        value["candidate"]["sha256"] = Value::String("0".repeat(64));
+        std::fs::write(&receipt, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let target = export_dir.join("chosen.hwpx");
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_hash_mismatch");
+        assert!(!target.exists());
+        assert!(!receipt_target_for(&target).exists());
+        assert!(has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn a_receipt_changed_after_runtime_verification_is_refused() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) =
+            layout("verified-receipt-drift");
+        let verified: Value =
+            serde_json::from_slice(&std::fs::read(&receipt).unwrap()).unwrap();
+        let mut changed = verified.clone();
+        changed["sessionId"] = Value::String("another-session".into());
+        std::fs::write(&receipt, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
+        let target = export_dir.join("chosen.hwpx");
+
+        let error = export_candidate_files_verified(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            &verified,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_receipt_mismatch");
+        assert!(!target.exists());
+        assert!(!receipt_target_for(&target).exists());
+        assert!(has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn a_runtime_internal_destination_is_refused() {
+        let (_temp, runtime_root, _export_dir, artifact, receipt) = layout("runtime-alias");
+        let target = runtime_root.join("new-export.hwpx");
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_alias");
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn the_runtime_receipt_cannot_be_exported_as_the_document() {
+        let (_temp, runtime_root, export_dir, _artifact, receipt) = layout("role-alias");
+        let target = export_dir.join("chosen.json");
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &receipt,
+            &receipt,
+            "session",
+            "run",
+            "receipt.json",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "invalid_params");
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn a_second_publish_failure_never_deletes_other_bytes() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) = layout("second-publish");
+        let target = export_dir.join("chosen.hwpx");
+        let sentinel = export_dir.join("existing-unrelated.hwpx");
+        std::fs::write(&sentinel, b"keep me").unwrap();
+
+        let error = export_candidate_files_with_observer(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            None,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+            |step, _target, receipt_target| {
+                if step == ExportStep::Staged {
+                    std::fs::create_dir(receipt_target).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_exists");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep me");
+        assert_eq!(std::fs::read(&target).unwrap(), b"new candidate");
+        assert!(receipt_target_for(&target).is_dir());
+        assert!(has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn final_rehash_detects_bytes_changed_after_publication() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) =
+            layout("published-drift");
+        let target = export_dir.join("chosen.hwpx");
+        let sentinel = export_dir.join("existing-unrelated.hwpx");
+        std::fs::write(&sentinel, b"keep me").unwrap();
+
+        let error = export_candidate_files_with_observer(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            None,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+            |step, target, _| {
+                if step == ExportStep::ReceiptPublished {
+                    std::fs::write(target, b"changed after publication").unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_hash_mismatch");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep me");
+        assert!(has_stage_residue(&export_dir));
+    }
+
+    const ABORT_STEP_ENV: &str = "RIGORLOOM_EXPORT_ABORT_STEP";
+
+    #[test]
+    fn export_abort_worker() {
+        let Ok(abort_at) = std::env::var(ABORT_STEP_ENV) else {
+            return;
+        };
+        let runtime_root = PathBuf::from(std::env::var("RIGORLOOM_EXPORT_TEST_ROOT").unwrap());
+        let artifact = PathBuf::from(std::env::var("RIGORLOOM_EXPORT_TEST_ARTIFACT").unwrap());
+        let receipt = PathBuf::from(std::env::var("RIGORLOOM_EXPORT_TEST_RECEIPT").unwrap());
+        let target = PathBuf::from(std::env::var("RIGORLOOM_EXPORT_TEST_TARGET").unwrap());
+
+        let _ = export_candidate_files_with_observer(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            None,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+            |step, _, _| {
+                let name = match step {
+                    ExportStep::Staged => "staged",
+                    ExportStep::ArtifactPublished => "artifact",
+                    ExportStep::ReceiptPublished => "receipt",
+                };
+                if name == abort_at {
+                    std::process::abort();
+                }
+            },
+        );
+        panic!("abort worker passed the requested step without terminating");
+    }
+
+    #[test]
+    fn hard_termination_at_each_publication_step_preserves_existing_bytes() {
+        for step in ["staged", "artifact", "receipt"] {
+            let (_temp, runtime_root, export_dir, artifact, receipt) =
+                layout(&format!("abort-{step}"));
+            let target = export_dir.join("chosen.hwpx");
+            let receipt_target = receipt_target_for(&target);
+            let sentinel = export_dir.join("existing-unrelated.hwpx");
+            std::fs::write(&sentinel, b"keep me").unwrap();
+
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("export_tests::export_abort_worker")
+                .arg("--nocapture")
+                .env(ABORT_STEP_ENV, step)
+                .env("RIGORLOOM_EXPORT_TEST_ROOT", &runtime_root)
+                .env("RIGORLOOM_EXPORT_TEST_ARTIFACT", &artifact)
+                .env("RIGORLOOM_EXPORT_TEST_RECEIPT", &receipt)
+                .env("RIGORLOOM_EXPORT_TEST_TARGET", &target)
+                .status()
+                .unwrap();
+
+            assert!(!status.success(), "worker did not terminate at {step}");
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep me");
+            match step {
+                "staged" => {
+                    assert!(!target.exists());
+                    assert!(!receipt_target.exists());
+                }
+                "artifact" => {
+                    assert_eq!(std::fs::read(&target).unwrap(), b"new candidate");
+                    assert!(!receipt_target.exists());
+                }
+                "receipt" => {
+                    assert_eq!(std::fs::read(&target).unwrap(), b"new candidate");
+                    assert!(receipt_target.is_file());
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                has_stage_residue(&export_dir),
+                "hard termination should leave owned staging evidence at {step}"
+            );
+        }
+    }
 }
 
 // --- the dev-mode agent door ---------------------------------------------------
