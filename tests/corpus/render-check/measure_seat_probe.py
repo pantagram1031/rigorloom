@@ -26,8 +26,12 @@ The analytic model, and every part of it is already measured elsewhere in
 * the line spacing is computed from the tallest RUN character size on the
   line, not from that object cell, and a run that emits no text still
   declares one (``hh:charPr@height`` is a property of the ``hp:run``);
-* ``PERCENT v`` makes the pitch ``round(pitch_height * v / 100)`` and
-  ``FIXED v`` makes it ``v``; the advance is that pitch;
+* ``PERCENT v`` makes the pitch ``round(pitch_height * v / 100)``,
+  ``FIXED v`` makes it ``v`` and ``BETWEEN_LINES v`` makes it
+  ``line height + v``; the advance is that pitch;
+* an EMPTY paragraph is one line by the same rules — its height is the
+  tallest shape its runs declare and its advance is that pitch — which is
+  what the ``empty_h*`` grid sweeps;
 * a paragraph carrying an ANCHORED object reserves
   ``vertOffset + outMargin.top + height + outMargin.bottom`` and its block
   height is the larger of that and its own lines;
@@ -61,6 +65,32 @@ sys.path.insert(0, str(_REPO / "engine" / "scripts"))
 import build_render_check as B  # noqa: E402  (path shim above is deliberate)
 import layout_divergence as LD  # noqa: E402
 import own_render  # noqa: E402
+
+def _extra_pp(name: str, **kw) -> int:
+    """Register a paraPr this probe needs and ``build_render_check`` lacks.
+
+    ``header_xml`` reads ``PARA_PRS`` when it is called, so appending here is
+    enough; the id is ``len(PP) - 1``, which is where the new XML lands.
+    """
+    idx = B._pp(name, **kw)
+    B.PARA_PRS.append(B.para_pr(idx, **kw))
+    return idx
+
+
+def _extra_cp(name: str, **kw) -> int:
+    """The ``_extra_pp`` of character shapes."""
+    idx = B._cp(name, **kw)
+    B.CHAR_PRS.append(B.char_pr(idx, **kw))
+    return idx
+
+
+#: The spacing types the empty-paragraph grid below needs.  ``BETWEEN_LINES``
+#: (줄 간격 '여백만 지정') adds its value to the line box rather than scaling
+#: it, and no ``build_render_check`` paraPr declares one.
+_extra_pp("ls_180", align="JUSTIFY", line_value=180)
+_extra_pp("ls_between_600", align="JUSTIFY", line_type="BETWEEN_LINES",
+          line_value=600)
+_extra_cp("pt15", height=1500)
 
 #: The probe's own table, so the outer margin and ``treatAsChar`` are dials
 #: rather than the constants ``build_render_check.table`` bakes in.
@@ -120,35 +150,57 @@ BASELINE = [
     {"id": "P6", "kind": "text", "pp": "base", "cp": "base"},
 ]
 
-#: ``(case label, paragraph id, field, value)`` — one attribute per case.
+#: ``(case label, paragraph id, ((field, value), …))``.  Every case but the
+#: empty-paragraph grid below changes exactly ONE field, so its row of the
+#: table is a derivative of that one declaration.
 CASES = [
-    ("baseline", None, None, None),
-    ("empty_ls_130", "P2", "pp", "ls_130"),
-    ("empty_ls_200", "P2", "pp", "ls_200"),
-    ("empty_ls_fixed_2400", "P2", "pp", "ls_fixed"),
-    ("empty_charpr_8pt", "P2", "cp", "pt8"),
-    ("empty_charpr_14pt", "P2", "cp", "pt14"),
-    ("empty_charpr_24pt", "P2", "cp", "pt24"),
-    ("empty_margin_prev_next", "P2", "pp", "label"),
-    ("inline_pic_margin_141", "P3", "margin", 141),
-    ("inline_pic_margin_283", "P3", "margin", 283),
-    ("inline_tbl_margin_141", "P4", "margin", 141),
-    ("inline_tbl_margin_283", "P4", "margin", 283),
-    ("inline_tbl_charpr_24pt", "P4", "cp", "pt24"),
-    ("inline_tbl_ls_200", "P4", "pp", "ls_200"),
-    ("anchored_tbl_margin_141", "P5", "margin", 141),
-    ("anchored_tbl_margin_283", "P5", "margin", 283),
-    ("inline_tbl_becomes_anchored", "P4", "treat_as_char", False),
-    ("anchored_tbl_becomes_inline", "P5", "treat_as_char", True),
+    ("baseline", None, ()),
+    ("empty_ls_130", "P2", (("pp", "ls_130"),)),
+    ("empty_ls_200", "P2", (("pp", "ls_200"),)),
+    ("empty_ls_fixed_2400", "P2", (("pp", "ls_fixed"),)),
+    ("empty_charpr_8pt", "P2", (("cp", "pt8"),)),
+    ("empty_charpr_14pt", "P2", (("cp", "pt14"),)),
+    ("empty_charpr_24pt", "P2", (("cp", "pt24"),)),
+    ("empty_margin_prev_next", "P2", (("pp", "label"),)),
+    ("inline_pic_margin_141", "P3", (("margin", 141),)),
+    ("inline_pic_margin_283", "P3", (("margin", 283),)),
+    ("inline_tbl_margin_141", "P4", (("margin", 141),)),
+    ("inline_tbl_margin_283", "P4", (("margin", 283),)),
+    ("inline_tbl_charpr_24pt", "P4", (("cp", "pt24"),)),
+    ("inline_tbl_ls_200", "P4", (("pp", "ls_200"),)),
+    ("anchored_tbl_margin_141", "P5", (("margin", 141),)),
+    ("anchored_tbl_margin_283", "P5", (("margin", 283),)),
+    ("inline_tbl_becomes_anchored", "P4", (("treat_as_char", False),)),
+    ("anchored_tbl_becomes_inline", "P5", (("treat_as_char", True),)),
 ]
 
+#: The empty paragraph's own height, swept across the two declarations that
+#: are supposed to set it.  ``P2`` is the empty paragraph; every other
+#: paragraph on the page is the baseline's, so the read-out ``P6`` moves by
+#: exactly what ``P2``'s block height does.  The corpus says an empty
+#: paragraph is ONE line whose ``vertsize`` is the tallest character shape
+#: its runs declare and whose advance follows the paragraph's own
+#: ``hh:lineSpacing`` — 101 of 101 cached empty top-level paragraphs on
+#: ``vertsize``, 91 of 101 on ``spacing`` with every miss inside ±2 HWPUNIT.
+EMPTY_HEIGHT_GRID = [
+    ("h%s_%s" % (height, spacing), (("cp", char_pr), ("pp", para_pr)))
+    for height, char_pr in (("10pt", "base"), ("12pt", "pt12"),
+                            ("15pt", "pt15"))
+    for spacing, para_pr in (("pct160", "ls_160"), ("pct180", "ls_180"),
+                             ("pct200", "ls_200"), ("fixed2400", "ls_fixed"),
+                             ("between600", "ls_between_600"))
+]
+CASES.extend(("empty_" + label, "P2", changes)
+             for label, changes in EMPTY_HEIGHT_GRID)
 
-def case_paragraphs(paragraph_id, field, value):
+
+def case_paragraphs(paragraph_id, changes):
     out = []
     for spec in BASELINE:
         spec = dict(spec)
         if spec["id"] == paragraph_id:
-            spec[field] = value
+            for field, value in changes:
+                spec[field] = value
         out.append(spec)
     return out
 
@@ -189,6 +241,10 @@ def analytic_advance(spec) -> int:
         spacing = int(round(pitch_height * value / 100.0)) - pitch_height
     elif kind == "FIXED":
         spacing = value - pitch_height
+    elif kind in ("BETWEEN_LINES", "ATLEAST", "AT_LEAST"):
+        # 여백만 지정: the value is added BELOW the line box, it does not
+        # scale it.
+        spacing = max(0, value)
     else:
         spacing = 0
     advance = vertsize + spacing
@@ -271,8 +327,8 @@ def rendered_seats(path, dpi):
 
 def measure(out_dir, dpi):
     results = []
-    for label, paragraph_id, field, value in CASES:
-        specs = case_paragraphs(paragraph_id, field, value)
+    for label, paragraph_id, changes in CASES:
+        specs = case_paragraphs(paragraph_id, changes)
         doc = build_document(specs, label)
         path = Path(out_dir) / ("seat-probe-%s.hwpx" % label)
         B.assemble(doc).write(path)
@@ -300,8 +356,9 @@ def measure(out_dir, dpi):
                     (facts.get(address) or {}).get("linesegs") or []),
             })
         results.append({
-            "case": label, "changed": None if field is None else
-            {"paragraph": paragraph_id, "field": field, "value": value},
+            "case": label, "changed": None if not changes else
+            {"paragraph": paragraph_id,
+             "fields": [{"field": f, "value": v} for f, v in changes]},
             "document": path.name,
             "paragraphs": rows,
         })
@@ -342,9 +399,9 @@ def summary(results):
     for result in results:
         row = next(r for r in result["paragraphs"] if r["paragraph"] == last)
         changed = ("-" if result["changed"] is None else
-                   "%s %s=%s" % (result["changed"]["paragraph"],
-                                 result["changed"]["field"],
-                                 result["changed"]["value"]))
+                   "%s %s" % (result["changed"]["paragraph"],
+                              " ".join("%s=%s" % (f["field"], f["value"])
+                                       for f in result["changed"]["fields"])))
         shift = row["top_hwp"] - baseline[last]["top_hwp"]
         out.append(f"{result['case']:<28} {changed:<34} "
                    f"{row['top_hwp']:>9} {row['expected_top_hwp']:>9} "
