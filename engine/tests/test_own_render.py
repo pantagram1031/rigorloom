@@ -2720,26 +2720,114 @@ def test_line_advance_follows_the_declared_line_spacing(typo_probe):
     assert fixed[0]["vertsize"] + fixed[0]["spacing"] == 2000
 
 
-def test_the_first_line_carries_the_declared_indent(typo_probe):
+def test_the_line_box_is_the_column_less_the_paragraphs_own_margins(
+        typo_probe):
+    """``hh:intent`` is not in the box — measured on all 3214 cached boxes.
+
+    ``engine/scripts/indent_probe.py --corpus``: every cached
+    ``hp:lineseg@horzpos`` on the corpus equals its paragraph's
+    ``margin_left``, first lines and continuations alike, and every
+    multi-line paragraph's lines share one right edge.
+    """
     renderer, _image, draw = typo_probe
     cid = _synthetic_charpr(renderer, "__ind__", height=1000)
-    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
-                            own_render.HWPUNIT_PER_PT * 10 * 5,
-                            break_non_latin="BREAK_WORD",
-                            margin_left=1000, margin_right=500, indent=2000)
-    assert lines[0]["horzpos"] == 3000
-    assert lines[1]["horzpos"] == 1000
     column = own_render.HWPUNIT_PER_PT * 10 * 5
-    assert lines[0]["horzsize"] == column - 3000 - 500
-    assert lines[1]["horzsize"] == column - 1000 - 500
-    # A negative intent (내어쓰기) moves no box — the corpus's cached boxes
-    # say so; see OwnRenderer._line_box.
+    for indent in (2000, 0, -2000):
+        _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                                column, break_non_latin="BREAK_WORD",
+                                margin_left=1000, margin_right=500,
+                                indent=indent)
+        assert len(lines) > 1
+        assert all(line["horzpos"] == 1000 for line in lines)
+        assert all(line["horzsize"] == column - 1000 - 500 for line in lines)
+
+
+def test_a_positive_intent_indents_the_first_line_inside_its_box(typo_probe):
+    """들여쓰기: the first line starts ``intent`` in, the rest at the margin."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in2__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 5
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            column, break_non_latin="BREAK_WORD",
+                            margin_left=1000, margin_right=500, indent=2000)
+    assert len(lines) > 1
+    assert lines[0]["indent"] == 2000
+    assert all(line["indent"] == 0 for line in lines[1:])
+
+
+def test_a_negative_intent_hangs_the_first_line_and_indents_the_rest(
+        typo_probe):
+    """내어쓰기, and the sign is the whole difference.
+
+    Hancom's own exported PDFs settle this against the "moves nothing"
+    reading the cache alone could not rule out: on
+    ``indent_probe.py --corpus --pdf`` the SECOND drawn line of a
+    negative-``intent`` paragraph is at ``left + |intent|`` on 39 of 39 and
+    at ``left`` on none of them.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in3__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 5
     _spans, hanging = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
                               column, break_non_latin="BREAK_WORD",
                               margin_left=1000, indent=-2000)
     assert len(hanging) > 1
-    assert hanging[0]["horzpos"] == 0        # 1000 + (-2000), clamped at 0
-    assert all(line["horzpos"] == 1000 for line in hanging[1:])
+    assert hanging[0]["indent"] == 0
+    assert all(line["indent"] == 2000 for line in hanging[1:])
+
+
+def test_an_indent_larger_than_the_left_margin_does_not_move_the_box(
+        typo_probe):
+    """The case #277 left standing: ``left + intent`` below zero.
+
+    ``kstartup`` p31 declares ``left`` 3600 against ``intent`` −3612 and
+    Hancom draws its first line at 3600, not at 0; the cache seats the box at
+    3600 too.  Nothing here clamps, because nothing here subtracts.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in4__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 6
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            column, break_non_latin="BREAK_WORD",
+                            margin_left=500, indent=-1308)
+    assert all(line["horzpos"] == 500 for line in lines)
+    assert lines[0]["indent"] == 0
+
+
+def test_a_hanging_indent_narrows_the_lines_it_indents(typo_probe):
+    """The indent is in the BREAK and not only in the draw.
+
+    A continuation line pushed in by |intent| has that much less room, so a
+    hanging paragraph breaks into more lines than the same text with no
+    indent in the same column.  If the offset were applied at draw time only,
+    these two would break identically and the text would run off the right.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in5__", height=1000)
+    column = own_render.HWPUNIT_PER_PT * 10 * 6
+    text = "가나다라마바사아자차카타파하거너더러머버서어저처"
+    _spans, flat = _breaks(renderer, draw, text, cid, column,
+                           break_non_latin="BREAK_WORD")
+    _spans, hung = _breaks(renderer, draw, text, cid, column,
+                           break_non_latin="BREAK_WORD", indent=-2000)
+    assert len(hung) > len(flat)
+    # And the first line, which is not indented, holds exactly as much as the
+    # unindented paragraph's first line does.
+    assert hung[0]["end"] == flat[0]["end"]
+
+
+def test_the_indent_is_the_same_inside_a_table_cell(typo_probe):
+    """The rule is the paragraph's, so a narrow column changes nothing."""
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__in6__", height=1000)
+    cell_column = own_render.cell_text_width(9000, {"left": 141, "right": 141})
+    _spans, lines = _breaks(renderer, draw, "가나다라마바사아자차카타파하", cid,
+                            cell_column, break_non_latin="BREAK_WORD",
+                            margin_left=600, indent=-2180)
+    assert len(lines) > 1
+    assert all(line["horzpos"] == 600 for line in lines)
+    assert lines[0]["indent"] == 0
+    assert all(line["indent"] == 2180 for line in lines[1:])
 
 
 def test_line_vertpos_stacks_the_way_the_cached_layout_does(typo_probe):
@@ -2785,12 +2873,12 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
-    "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 451, 432, 30, 29, 45, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 244, 35, 31, 50, 24),
+    "jumin-deungchobon-sinchengseo": (133, 130, 117, 27, 24, 36, 12),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 452, 433, 30, 30, 45, 19),
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 247, 35, 31, 50, 29),
     "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (765, 759, 750, 18, 15, 25, 11),
+    "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
 }
 
 
@@ -2979,7 +3067,21 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # control precedes rather than one past it, and ``compute_lines`` has no
     # notion of a forced break at all -- it breaks on width.  Some of the old
     # agreement at those positions was the two errors cancelling.
-    assert totals == [2151, 2119, 2033, 161, 142, 219, 79], totals
+    #
+    # 2033 -> 2037 and 79 -> 82 on the hanging-indent slice, with the three
+    # other columns unmoved.  ``hh:intent`` left the line BOX -- measured, it
+    # is in none of the corpus's 3214 cached boxes -- and became an offset
+    # INSIDE it, so a 내어쓰기 paragraph's continuation lines are now as much
+    # narrower as the file says they are and break where Hancom broke them.
+    # Two forms carry the gain (moel-2013 24 -> 29 break positions,
+    # kstartup 16 -> 19) and two give some back (jumin 14 -> 12, saeopja
+    # 11 -> 8): those two are the forms whose hanging paragraphs sit in table
+    # cells, where the column is still the solved one and a narrower line
+    # exposes the column error instead of absorbing it.  The rasters agree
+    # with the direction on both policies and on every form (cache ssim
+    # +0.0063, inked +0.0187, line IoU +0.0124; computed +0.0018 / +0.0045 /
+    # +0.0074, means over the corpus).
+    assert totals == [2151, 2119, 2037, 161, 142, 219, 82], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -3856,6 +3958,148 @@ def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():
     assert seen["CELL"] and seen["other"], "fixture drifted"
 
 
+# ------------------------------------- a table that does not fit the page left
+#
+# MEASURED against Hancom's own export, 2026-09-05
+# (engine/scripts/table_split_probe.py, own-render-notes E2.8).  Exactly one
+# corpus table crosses a page in a reference PDF -- kstartup's anchored,
+# pageBreak="CELL" table 9 -- and the export shows both arms of the same rule
+# on the two pages before it: the table before it (69572 HWPUNIT, seated by
+# the cache at vertpos 69632 on a 71000 page) MOVES WHOLE to a page of its
+# own, and table 9 itself, whose content needs more than one page, SPLITS at
+# a row boundary.  The synthetic fixtures below drive that decision directly
+# so neither arm depends on the one corpus table that exercises it.
+
+def _anchored_table(height, row_heights, page_break="CELL",
+                    treat_as_char="0", wrap="TOP_AND_BOTTOM"):
+    """An anchored table with explicit per-row declared heights."""
+    from xml.etree import ElementTree as ET
+
+    rows = "".join(
+        '<hp:tr><hp:tc><hp:cellAddr colAddr="0" rowAddr="%d"/>'
+        '<hp:cellSpan colSpan="1" rowSpan="1"/>'
+        '<hp:cellSz width="20000" height="%d"/>'
+        '<hp:subList vertAlign="TOP"/></hp:tc></hp:tr>'
+        % (index, row_height)
+        for index, row_height in enumerate(row_heights))
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="1" cellSpacing="0" '
+        'pageBreak="%s" repeatHeader="1" textWrap="%s">'
+        '<hp:sz width="20000" height="%d"/>'
+        '<hp:pos treatAsChar="%s" vertRelTo="PARA" vertOffset="0"/>'
+        '%s</hp:tbl>'
+        % (len(row_heights), page_break, wrap, height, treat_as_char, rows))
+
+
+class _AnchorHolder:
+    """The little a paragraph needs to be an anchored table's holder."""
+
+    def __init__(self, tbl, vertpos):
+        from xml.etree import ElementTree as ET
+
+        self.objects = [(0, "tbl", tbl, None)]
+        self.object_at = {0: (0, "tbl", tbl, True)}
+        self.linesegs = [ET.fromstring(
+            '<hp:lineseg xmlns:hp="urn:x" textpos="0" vertpos="%d" '
+            'vertsize="1000" spacing="0"/>' % vertpos)]
+
+
+def _overflow_action(tbl, vertpos, usable):
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")), dpi=96)
+    return renderer._auto_anchor_overflow_action(
+        renderer._scratch_draw(), _AnchorHolder(tbl, vertpos), usable)
+
+
+def test_an_anchored_table_that_fits_the_room_left_is_left_alone():
+    tbl = _anchored_table(30000, (10000, 20000))
+    assert _overflow_action(tbl, 1000, 71000) is None
+
+
+def test_an_anchored_table_too_tall_for_the_room_left_moves_whole():
+    """The arm Hancom's own export exercises.
+
+    A table that does not fit below where the cache seated it, but does fit a
+    page of its own, is not cut at a row boundary and is not drawn off the
+    bottom of the page: the whole of it goes to the next page.  This is the
+    same answer an inline flowing table already got, and what the reference
+    PDF draws.
+    """
+    tbl = _anchored_table(69572, (30000, 39572))
+    action = _overflow_action(tbl, 69632, 71000)
+    assert action is not None
+    assert action[0] == "move"
+    assert action[1] == 69632
+
+
+def test_an_anchored_table_too_tall_for_any_page_splits_at_a_row_boundary():
+    """A fresh page is not enough, so the row-boundary cut is the answer, and
+    the cut lands ON a boundary rather than through a row."""
+    row_heights = (30000, 30000, 30000)
+    tbl = _anchored_table(sum(row_heights), row_heights)
+    action = _overflow_action(tbl, 5000, 71000)
+    assert action is not None
+    assert action[0] == "split"
+    assert 0 < action[1] < len(row_heights)
+
+
+def test_a_table_that_declares_NONE_neither_moves_nor_splits_on_this_arm():
+    """``pageBreak="NONE"`` (나누지 않음) withdraws the split permission, and
+    this arm reads the permission before it reads the geometry -- so a NONE
+    table is left exactly where the cache put it, overflow and all, rather
+    than being quietly repaginated by the splitter's own code path."""
+    tbl = _anchored_table(69572, (30000, 39572), page_break="NONE")
+    assert _overflow_action(tbl, 69632, 71000) is None
+
+
+def test_an_inline_table_neither_moves_nor_splits_on_this_arm():
+    """The measured half of the permission: an inline (글자처럼 취급) table
+    is the flowing path's business, not the anchor path's."""
+    tbl = _anchored_table(69572, (30000, 39572), treat_as_char="1")
+    assert _overflow_action(tbl, 69632, 71000) is None
+
+
+def test_a_wild_vertOffset_is_left_to_the_ignored_reserve_handling():
+    """kstartup's own limit 12 anchors a table at an offset that puts its
+    bottom pages down the sheet.  That is a broken POSITION, not content
+    that needs a second page, and repaginating on it would be arithmetic
+    dressed up as a fix."""
+    from xml.etree import ElementTree as ET
+
+    tbl = _anchored_table(60000, (30000, 30000))
+    pos = own_render._kid(tbl, "pos")
+    pos.set("vertOffset", "4294967083")
+    assert _overflow_action(tbl, 4114, 71000) is None
+    assert ET.tostring(tbl) is not None
+
+
+def test_no_corpus_row_declares_itself_a_repeatable_header():
+    """Why a split table repeats nothing, on this corpus.
+
+    ``hp:tbl@repeatHeader`` is ``"1"`` on every corpus table, and the one
+    table Hancom splits (kstartup 9) repeats no row on its continuation page
+    -- measured off the reference PDF.  The reason is in the file: OWPML
+    flags the rows to repeat with ``hp:tr@header``, and no ``hp:tr`` anywhere
+    in the corpus carries that attribute, or any other.  So there is nothing
+    for ``repeatHeader`` to repeat, and honouring it would repeat a row the
+    file never nominated.
+    """
+    import glob
+
+    seen_tables = seen_rows = 0
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(_need(path), dpi=96)
+        for section in renderer.sections:
+            for element in section.iter():
+                if own_render._local(element.tag) != "tbl":
+                    continue
+                seen_tables += 1
+                for row in own_render._kids(element, "tr"):
+                    seen_rows += 1
+                    assert not row.attrib, (path, row.attrib)
+    assert seen_tables and seen_rows, "fixture drifted"
+
+
 def test_the_flow_pass_agrees_with_the_authoring_engine_on_the_corpus():
     """The honest measure of the flow pass, the way lineseg_agreement is the
     honest measure of the breaker.  A regression floor, not a fidelity bar:
@@ -4542,6 +4786,76 @@ def test_cellSpacing_and_border_widths_do_not_enter_the_inset():
             == own_render.cell_inset(_first_cell(dressed), dressed))
 
 
+# ------------------------------------------------ the cell text-column floor
+
+def test_a_roomy_cell_gives_its_text_the_box_less_the_inset():
+    """The floor changes nothing where the cell has room for it."""
+    inset = {"left": 283, "right": 510}
+    assert own_render.cell_text_width(20000, inset) == 20000 - 283 - 510
+
+
+def test_a_narrow_cell_never_gives_its_text_less_than_the_floor():
+    """kstartup's 60 stopwatch cells, in one assertion.
+
+    Each is 1566 HWPUNIT wide and inset 141 on both sides, which leaves 1284
+    -- and the hp:lineseg Hancom cached in every one of them declares
+    horzsize 1440.  The same number appears in gianmun-1ho's 848- and
+    565-wide cells, whose insets leave 566 and 283.  Four different columns
+    driven to one value is what says the value is a floor.
+    """
+    assert own_render.cell_text_width(1566, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(848, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(565, {"left": 141, "right": 141}) == 1440
+
+
+def test_the_floor_beats_the_whole_cell_when_the_cell_is_narrower_than_it():
+    """gianmun-1ho r8c11 is 565 wide and caches a 1440-wide line box.
+
+    So the floor is not a clamp on the margins -- no reading of a 565-wide
+    cell's insets produces 1440 -- and the text is allowed to overhang the
+    cell it sits in.
+    """
+    assert (own_render.cell_text_width(565, {"left": 0, "right": 0})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+
+
+def test_the_floor_is_a_constant_and_not_a_function_of_the_inset():
+    """Two cells of the same width and different insets floor to one value."""
+    assert (own_render.cell_text_width(900, {"left": 141, "right": 141})
+            == own_render.cell_text_width(900, {"left": 510, "right": 510}))
+
+
+def test_a_cell_at_the_floor_exactly_is_not_widened():
+    """The floor is a floor, not a snap: a column already on it stays."""
+    box = own_render.MIN_CELL_TEXT_WIDTH + 282
+    assert (own_render.cell_text_width(box, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+    assert (own_render.cell_text_width(box + 4, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH + 4)
+
+
+def test_the_render_path_hands_a_narrow_cell_the_floored_column():
+    """The wiring, not the arithmetic.
+
+    ``_render_cell_content`` is the one place a cell's paragraphs are given
+    their column, and on kstartup's 1566-wide, 141-inset cell it has to hand
+    over the floored 1440 rather than the 1284 the subtraction gives.  The
+    renderer is built without a file and the two methods the call reaches are
+    stubbed, so nothing here depends on a corpus document.
+    """
+    renderer = object.__new__(own_render.OwnRenderer)
+    seen = []
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    renderer._render_paragraphs = (
+        lambda draw, paras, origin, width, offset=0: seen.append(width))
+    tbl = _synthetic_table("0", in_margin=(141, 141, 141, 141),
+                           widths=(1566,))
+    tc = _first_cell(tbl)
+    cell = {"tc": tc, "paras": [], "margin": own_render.cell_inset(tc, tbl)}
+    renderer._render_cell_content(None, cell, 0, 0, 1566, 2032)
+    assert seen == [own_render.MIN_CELL_TEXT_WIDTH]
+
+
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
     """Row 0 holds a one-line cell and a two-line cell; it must fit both.
 
@@ -4580,6 +4894,275 @@ def test_row_heights_sum_to_the_tables_own_declared_height(tmp_path):
                                       declared_total=total)
     assert heights == [1200, 2400, 1200]
     assert sum(heights) == total
+
+
+# ------------------------------------------- row heights (a declared floor)
+
+def _row_table(rows, declared_total=None, in_margin=(0, 0, 200, 300)):
+    """A one-column table whose every row states its declared height and its
+    cached content height.
+
+    ``rows`` is ``[(declared cellSz height, cached content height or None,
+    rowSpan)]``.  A cell whose content height is ``None`` holds no paragraph
+    at all -- the empty-cell case.  Every paragraph authored here has an
+    ``hp:linesegarray`` and no characters, so ``_paragraph_block_extent``
+    takes the cached branch whatever the fonts on the machine resolve to and
+    the content height is exactly the number the fixture states.
+    """
+    from xml.etree import ElementTree as ET
+
+    inner = ('<hp:inMargin left="%d" right="%d" top="%d" bottom="%d"/>'
+             % in_margin)
+    body = []
+    row = 0
+    for declared, content, span in rows:
+        para = ""
+        if content is not None:
+            para = ('<hp:subList vertAlign="TOP"><hp:p><hp:run/>'
+                    '<hp:linesegarray><hp:lineseg vertpos="0" vertsize="%d" '
+                    'textheight="%d" baseline="%d" spacing="%d" horzpos="0" '
+                    'horzsize="10000"/></hp:linesegarray></hp:p></hp:subList>'
+                    % (content, content, content * 85 // 100, content))
+        body.append(
+            '<hp:tr><hp:tc><hp:cellAddr colAddr="0" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="1" rowSpan="%d"/>'
+            '<hp:cellSz width="10000" height="%d"/>%s</hp:tc></hp:tr>'
+            % (row, span, declared, para))
+        row += span
+    height = (sum(d for d, _c, _s in rows) if declared_total is None
+              else declared_total)
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="1" cellSpacing="0">'
+        '<hp:sz width="10000" height="%d"/>%s%s</hp:tbl>'
+        % (row, height, inner, "".join(body)))
+
+
+def _solve_rows(tbl):
+    """``_table_tracks``' row boundaries for a synthetic table."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    _xs, ys, _cells = renderer._table_tracks(
+        renderer.ImageDraw.Draw(canvas), tbl)
+    return [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
+
+
+def test_a_row_is_as_tall_as_its_content_plus_the_cells_inset():
+    """cellSz@height is a minimum, and the inset is on both sides of it.
+
+    The first row's content overflows its declared height and takes the row
+    with it; the second row's fits and leaves the declared height standing.
+    ``row_height_probe.py --corpus`` scores that reading -- max(declared,
+    content + top inset + bottom inset) -- at 70 of 70 corpus tables whose
+    rows sum exactly to the height the file declares for the table.
+    """
+    tbl = _row_table([(1200, 3000, 1), (4000, 900, 1)],
+                     declared_total=3500 + 4000)
+    assert _solve_rows(tbl) == [3000 + 200 + 300, 4000]
+
+
+def test_an_empty_cell_is_as_tall_as_it_declares():
+    """A cell holding no paragraph contributes no content, not a zero row."""
+    tbl = _row_table([(1500, None, 1)])
+    assert _solve_rows(tbl) == [1500]
+
+
+def test_a_rowspan_cell_constrains_the_rows_it_spans_together():
+    """A cell spanning two rows states what the PAIR must add up to.
+
+    Charging its whole height to either row on its own would double the
+    table; the corpus says so too -- dropping every rowSpan constraint
+    changes no corpus row, because the unspanned cells already determine
+    every one of them.
+    """
+    tall = _row_table([(1000, None, 1), (1000, None, 1)])
+    spanning = _row_table([(1000, None, 1), (5000, None, 2)])
+    assert _solve_rows(tall) == [1000, 1000]
+    assert sum(_solve_rows(spanning)) == 1000 + 5000
+
+
+def test_an_overflowing_table_is_cut_at_its_declared_height_on_the_last_row():
+    """A table ends where ``hp:sz@height`` says, and the last row pays for it.
+
+    Two things are being pinned at once, and the corpus witnesses them
+    separately.  That the table ends at the declared height: ``kstartup``
+    tables 5 and 36 overflow theirs by 78 and 282 HWPUNIT and Hancom's own
+    export draws both at the declared box (62416 and 66431 HWPUNIT measured
+    at the reference PDF's 841.0/841.89 page scale, against 62417 and 66435
+    predicted from the declaration and 62494 and 66717 from the overflow).
+    That the LAST row pays: table 5 draws its three interior rules, and its
+    first three rows keep the height they declare while the fourth is 78
+    short.  A proportional rescale -- what #273 removed, because it moved
+    forty innocent rows to pay for one -- would have moved all four.
+    """
+    overflowing = _row_table([(1000, None, 1), (1000, 4000, 1)],
+                             declared_total=5000)
+    heights = _solve_rows(overflowing)
+    assert heights[0] == 1000, "an innocent row was shrunk to pay for row 1"
+    assert heights[1] == 4000, "the last row did not absorb the whole excess"
+    assert sum(heights) == 5000
+
+
+def test_a_row_the_excess_would_drive_negative_carries_into_the_one_above():
+    """The tracks always sum to the declared total and none goes negative.
+
+    No corpus table needs the carry -- the largest overflow is 2339 HWPUNIT
+    against a 3577 last row -- so this pins the arithmetic rather than a
+    measurement.
+    """
+    assert own_render.clip_tracks([1000, 2000, 500], 2600) == [1000, 1600, 0]
+    assert own_render.clip_tracks([1000, 2000, 500], 900) == [900, 0, 0]
+    assert own_render.clip_tracks([1000, 2000], 5000) == [1000, 2000]
+
+
+def test_a_table_whose_rows_fall_short_still_reaches_its_declared_height():
+    """The other direction is unchanged and has no corpus witness either way.
+
+    No corpus table's rows fall short of its declared hp:sz@height, so this
+    pins the behaviour that was there rather than a measurement.
+    """
+    short = _row_table([(1000, None, 1), (1000, None, 1)],
+                       declared_total=4000)
+    assert sum(_solve_rows(short)) == 4000
+
+
+# ------------------------------------------------------------- column grid
+
+def _multirow_table(rows, declared_width, col_cnt):
+    """A synthetic table whose rows are ``[[(colAddr, colSpan, width), ...]]``.
+
+    Only the attributes ``_table_tracks`` reads on the column axis are
+    present, and the declared table width is passed separately from the
+    rows' own totals so a test can make the two disagree — which is the
+    whole question the grid answers.
+    """
+    from xml.etree import ElementTree as ET
+
+    body = ""
+    for index, row in enumerate(rows):
+        cells = "".join(
+            '<hp:tc><hp:cellAddr colAddr="%d" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="%d" rowSpan="1"/>'
+            '<hp:cellSz width="%d" height="1200"/>'
+            '<hp:subList vertAlign="TOP"/></hp:tc>'
+            % (col, index, span, width) for col, span, width in row)
+        body += "<hp:tr>%s</hp:tr>" % cells
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="%d" cellSpacing="0">'
+        '<hp:sz width="%d" height="%d"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>%s</hp:tbl>'
+        % (len(rows), col_cnt, declared_width, 1200 * len(rows), body))
+
+
+def test_a_row_that_agrees_with_its_table_gets_its_own_widths_back():
+    """The common case has to be a no-op, or nothing below is readable."""
+    xs = own_render.column_grid(3, [(0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+                                declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_the_row_that_claims_more_writes_the_boundary():
+    """Two rows contradict each other; the grid is the envelope of both.
+
+    Row 0 says the first column ends at 1000 and row 1 says 900.  Under the
+    grid the boundary is 1000 and row 1's first cell is stretched to it,
+    while row 0 is untouched — which is what the cache shows on saeopja's
+    47757-wide table, where a row ten rows below the one that set the
+    boundary is measured at the earlier row's width and not its own.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900), (1, 1, 3000)],
+        declared_total=4000)
+    assert xs == [0, 1000, 4000]
+
+
+def test_the_grid_does_not_depend_on_the_order_the_cells_arrive_in():
+    """A maximum has no first and no last, and that is the point.
+
+    ``gridfirst`` and ``gridlast`` — the same grid resolved by document
+    order, forwards and backwards — disagree with each other on the corpus,
+    so a rule that reads the order has to justify which way it reads it.
+    This one does not read the order at all.
+    """
+    forward = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900)], declared_total=4000)
+    backward = own_render.column_grid(
+        2, [(0, 1, 900), (1, 1, 3000), (0, 1, 1000)], declared_total=4000)
+    assert forward == backward == [0, 1000, 4000]
+
+
+def test_a_merged_cell_claims_only_its_far_boundary():
+    """``cellSz@width`` on a colSpan cell is the whole merged width.
+
+    So it constrains the distance from its own column to the one past its
+    span and says nothing about the columns inside it, which the row below
+    is then free to state.
+    """
+    xs = own_render.column_grid(
+        3, [(0, 3, 6000), (0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+        declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_a_later_row_fills_a_boundary_no_earlier_row_reaches():
+    """Row 0 is one merged cell, so the interior is row 1's to state.
+
+    This is the shape every contradictory corpus table starts with: a
+    header row spanning the whole table, and the columns declared further
+    down.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 2, 5000), (0, 1, 2000), (1, 1, 3000)], declared_total=5000)
+    assert xs == [0, 2000, 5000]
+
+
+def test_a_boundary_no_cell_claims_is_split_between_its_neighbours():
+    """A grid the file does not determine still has to be drawable.
+
+    No cell here ends at column 1, so nothing states where it is; the gap
+    between the two boundaries that ARE determined is divided evenly, which
+    is the fallback ``solve_tracks`` uses for an unknown track.
+    """
+    xs = own_render.column_grid(3, [(0, 2, 2000), (2, 1, 1000)],
+                                declared_total=3000)
+    assert xs == [0, 1000, 2000, 3000]
+
+
+def test_the_grid_closes_on_the_declared_width_and_never_runs_backwards():
+    """A row that overflows its table is clamped, not folded over itself.
+
+    No corpus row overflows by enough to say whether Hancom shrinks the
+    overflowing cell or clamps it, so this pins only the invariant every
+    reading has to satisfy: the boundaries are non-decreasing and the last
+    one is the table's own box.
+    """
+    xs = own_render.column_grid(2, [(0, 1, 9000), (1, 1, 9000)],
+                                declared_total=4000)
+    assert xs == [0, 4000, 4000]
+    assert xs == sorted(xs)
+
+
+def test_the_table_tracks_column_axis_reads_the_grid():
+    """The wiring: ``_table_tracks`` has to place cells on these boundaries.
+
+    Row 0 declares 1000 + 3000 against a table of 4000 and row 1 declares
+    900 + 3000, which is 100 short.  The old solve rescaled both rows into
+    one compromise; the grid gives row 1's first cell the boundary row 0
+    wrote.
+    """
+    from collections import Counter
+
+    renderer = object.__new__(own_render.OwnRenderer)
+    renderer.counts = Counter()
+    renderer.skipped = []
+    renderer.defs = {"para_pr": {}}
+    renderer._table_natural_height = set()
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    tbl = _multirow_table([[(0, 1, 1000), (1, 1, 3000)],
+                           [(0, 1, 900), (1, 1, 3000)]], 4000, 2)
+    xs, _ys, cells = renderer._table_tracks(None, tbl)
+    assert xs == [0, 1000, 4000]
+    assert len(cells) == 4
 
 
 # ---------------------------------------------------------------- ink probe
@@ -5973,6 +6556,11 @@ def test_out_margin_changes_no_corpus_page_count():
 
     Pinned per form so a later change to the outer-margin rule cannot pay for
     registration with a repagination.
+
+    Every count here is its reference PDF's own page count.  ``kstartup`` was
+    21 against a reference of 22 until E2.8 gave the cache path the move-whole
+    arm an anchored table that does not fit the room left has always had under
+    ``computed``; it is 22 now, and every one of the ten agrees with Hancom.
     """
     import glob
 
@@ -5982,7 +6570,7 @@ def test_out_margin_changes_no_corpus_page_count():
         "gianmun-byeolji-2ho": 1,
         "jeongbo-gonggae-cheongguseo": 1,
         "jumin-deungchobon-sinchengseo": 3,
-        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 21,
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 22,
         "moel-pyojun-geunrogyeyakseo-2013": 7,
         "moel-pyojun-geunrogyeyakseo-2025": 7,
         "nrf-gyeolgwa-bogoseo-yangsik": 4,
