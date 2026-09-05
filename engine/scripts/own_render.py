@@ -2600,6 +2600,28 @@ class OwnRenderer:
         68032 HWPUNIT further down.  Ignoring the object scores 49 of that
         form's 165 top-level blocks on the right page; reserving its extent
         scores 142 of 145 adjacent pairs exactly.
+
+        The extent is the object's SLOT, not its box: ``hp:outMargin`` is the
+        gap outside the box (schema: ``DevDoc/OWPML SCHEMA/ParaList XML
+        schema.xml``, on every ``ShapeObject``), the declared ``hp:pos``
+        offset names the slot's top, and ``_object_origin`` already draws the
+        box ``outMargin@top`` down inside it.  So the room the object takes
+        below the block's top is ``vertOffset + top + height + bottom``, and
+        the two other places this renderer reads the same tag agree:
+        ``_object_extent`` widens an inline slot by ``left + right`` and
+        ``_line_metrics`` grows an inline object's LINE by ``top + bottom``.
+        This path is the anchored sibling of that rule and it was the one
+        place the outer margin was dropped.
+
+        Measured against the authoring engine's own cached seats, exactly, on
+        every corpus anchored object that reserves room:
+
+            nrf paragraph 0    outMargin 138, height 63674, vertOffset 0
+                               the cache seats paragraph 33 at 63950
+                               = 0 + 138 + 63674 + 138
+            kstartup para 148  outMargin 140, height 69352, vertOffset 0
+                               the cache seats paragraph 160 at 69632
+                               = 0 + 140 + 69352 + 140
         """
         extent = 0
         for char_index, _name, el, _charpr in para.objects:
@@ -2612,15 +2634,17 @@ class OwnRenderer:
             pos = _kid(el, "pos")
             size = _kid(el, "sz")
             height = _iattr(size, "height") if size is not None else 0
+            _left, top, _right, bottom_margin = self._object_out_margin(el)
+            slot = top + height + bottom_margin
             offset = _iattr(pos, "vertOffset")
             vrel = ((pos.get("vertRelTo") or "PARA").upper()
                     if pos is not None else "PARA")
             if vrel in ("PAGE", "PAPER"):
                 # A page-relative anchor is measured from the sheet, and the
                 # flow cursor is measured from the body box.
-                bottom = offset + height - body_top
+                bottom = offset + slot - body_top
             else:
-                bottom = offset + height
+                bottom = offset + slot
             extent = max(extent, bottom)
         return extent
 
