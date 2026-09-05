@@ -161,11 +161,13 @@ MODELS = (
     "global", "literal", "addr", "stretch",
     "prop4", "prop_round", "prop_widest", "quanta", "colspan",
     "firstrow", "gridfirst", "gridlast", "gridmax",
+    "gridmin", "gridexact", "gridwide", "gridback", "gridsnap",
 )
 
 #: Models built by walking a shared column grid rather than by handing one
 #: row's shortfall to one of that row's own cells.
-GRID_MODELS = ("firstrow", "gridfirst", "gridlast", "gridmax")
+GRID_MODELS = ("firstrow", "gridfirst", "gridlast", "gridmax",
+               "gridmin", "gridexact", "gridwide", "gridback", "gridsnap")
 
 #: Models that tile a row from its own declared widths and then hand the
 #: shortfall out among that row's own cells, ``{name: allocation mode}``.
@@ -589,6 +591,157 @@ def grid_max_layout(table, clamp=True):
     return place_on_grid(table, grid_boundaries_max(table, clamp=clamp))
 
 
+def _row_claims(table, xs):
+    """``{column: [(claim, colSpan, row, exact), ...]}`` at a settled grid.
+
+    Every cell reaching a boundary, with the x it produces from the grid's
+    own left boundary and the three things a tie rule could read off it: how
+    many columns the cell spans, which row it is on, and whether that row's
+    declared widths sum to the table's own ``hp:sz@width``.  Computed at a
+    FIXED ``xs`` so the candidate rules below all read the same left edges
+    and differ only in which claim they take.
+    """
+    total = table["declared_width"]
+    out = defaultdict(list)
+    for r, row in enumerate(table["rows"]):
+        row_total = sum(c["width"] or 0 for c in row)
+        exact = bool(total) and row_total == total
+        for cell in row:
+            col = cell["col"]
+            if col is None or col not in xs:
+                continue
+            edge = col + cell["cspan"]
+            out[edge].append((xs[col] + max(0, cell["width"] or 0),
+                              cell["cspan"], r, exact))
+    return out
+
+
+def grid_boundaries_pick(table, pick):
+    """``{column: x}`` -- :func:`grid_boundaries_max`'s grid, re-resolved.
+
+    The envelope reading settles every boundary at the largest claim.  Where
+    two rows claim one boundary a few HWPUNIT apart that is a CHOICE, and
+    this is the instrument for the alternatives: the grid is solved to the
+    max fixpoint first, and then each interior boundary is rewritten by
+    ``pick(claims)`` over the cells reaching it, in ascending column order so
+    a rewritten boundary is the left edge the next one is claimed from.  The
+    two ends stay pinned and the result is forced non-decreasing, because a
+    boundary left of the one before it is not a grid.
+    """
+    ncol = table["col_cnt"]
+    total = table["declared_width"]
+    xs = dict(grid_boundaries_max(table))
+    for _ in range(2):
+        claims = _row_claims(table, xs)
+        prev = 0
+        for col in range(1, ncol):
+            if col not in xs:
+                continue
+            here = claims.get(col)
+            if here:
+                xs[col] = pick(here)
+            xs[col] = max(prev, xs[col])
+            if total:
+                xs[col] = min(xs[col], total)
+            prev = xs[col]
+    return xs
+
+
+def grid_boundaries_back(table):
+    """``{column: x}`` -- every boundary as far RIGHT as the cells allow.
+
+    ``gridmax`` propagates ``x[b] >= x[a] + width`` forwards from ``x[0]``,
+    which makes each boundary a LOWER bound.  The same inequality read
+    backwards from ``x[colCnt]`` makes it an UPPER bound, and this takes
+    that: a row short of the table's box is right-anchored, its shortfall
+    landing in its FIRST cell rather than its last.  The control for the two
+    ``saeopja`` rows the envelope reading misses, and the reason it is a
+    control and not a proposal is that the same table's other rows go the
+    other way.
+    """
+    ncol = table["col_cnt"]
+    total = table["declared_width"]
+    lo = grid_boundaries_max(table)
+    if not total or not ncol:
+        return lo
+    hi = {ncol: total}
+    for _ in range(ncol + 2):
+        changed = False
+        for row in table["rows"]:
+            for cell in row:
+                col = cell["col"]
+                if col is None:
+                    continue
+                edge = min(col + cell["cspan"], ncol)
+                if edge not in hi or col == 0:
+                    continue
+                bound = hi[edge] - max(0, cell["width"] or 0)
+                if bound < hi.get(col, total + 1):
+                    hi[col] = bound
+                    changed = True
+        if not changed:
+            break
+    xs, prev = dict(lo), 0
+    for col in range(1, ncol):
+        if col not in xs:
+            continue
+        xs[col] = max(prev, min(hi.get(col, xs[col]), total))
+        xs[col] = max(xs[col], lo[col])
+        prev = xs[col]
+    return xs
+
+
+def grid_boundaries_snap(table, step=4):
+    """``{column: x}`` -- ``gridmax`` with every interior boundary on a grid.
+
+    ``hp:lineseg@horzsize`` is saved quantised onto a 4 HWPUNIT grid, and one
+    reading of the misses is that the BOUNDARY is quantised too rather than
+    only the record of it.  Rounded to nearest, which is the only snap that
+    can move a cell in either direction.
+    """
+    ncol = table["col_cnt"]
+    total = table["declared_width"]
+    xs, prev = dict(grid_boundaries_max(table)), 0
+    for col in range(1, ncol):
+        if col not in xs:
+            continue
+        value = int(step * round(xs[col] / float(step)))
+        xs[col] = max(prev, min(value, total) if total else value)
+        prev = xs[col]
+    return xs
+
+
+#: The tie rules ``--models`` can score, ``{name: boundary function}``.  Each
+#: takes the table and returns ``{column: x}``; :func:`place_on_grid` reads
+#: every cell back off whichever grid comes out.
+GRID_RULES = {
+    "gridmin": lambda t: grid_boundaries_pick(t, lambda cs: min(c[0]
+                                                                for c in cs)),
+    "gridexact": lambda t: grid_boundaries_pick(t, _pick_exact_row),
+    "gridwide": lambda t: grid_boundaries_pick(t, _pick_widest_span),
+    "gridback": grid_boundaries_back,
+    "gridsnap": grid_boundaries_snap,
+}
+
+
+def _pick_exact_row(claims):
+    """The claim from a row whose widths sum to ``hp:sz@width``, else the max.
+
+    #277 scored an ordinal version of this and it reached 1583.  Here it is a
+    tie rule rather than a write order: a boundary two rows reach is written
+    by the row that adds up, and a boundary no such row reaches keeps the
+    envelope's answer.
+    """
+    exact = [c[0] for c in claims if c[3]]
+    return max(exact) if exact else max(c[0] for c in claims)
+
+
+def _pick_widest_span(claims):
+    """The claim from the cell spanning the most columns, ties to the max."""
+    widest = max(c[1] for c in claims)
+    return max(c[0] for c in claims if c[1] == widest)
+
+
 def grid_sources(table, xs):
     """``{column: "rRcC+S"}`` -- which cell's claim a boundary sits on.
 
@@ -759,6 +912,8 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         placed["gridfirst"] = grid_layout(table)
         placed["gridlast"] = grid_layout(table, last_wins=True)
         placed["gridmax"] = grid_max_layout(table)
+        for name, boundaries in GRID_RULES.items():
+            placed[name] = place_on_grid(table, boundaries(table))
         table["placed"] = placed
         # Reporting only: which cell's claim each grid boundary sits on, so
         # ``--residuals`` can name the boundary that placed an off-grid cell
