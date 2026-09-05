@@ -1412,8 +1412,17 @@ class RuleRenderer(own_render.OwnRenderer):
         bold = bool(self._charpr(cid).get("bold"))
         return self._face_source(cid, slot, bold) != "installed"
 
-    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio):
-        base = super()._advance_hwp(font, chunk, cid, slot, pt, ratio)
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz=100):
+        # #292 put the MEASURED HFT table in front of the face metric at this
+        # seam and gave the seam a ``rel_sz``.  Both have to be honoured here
+        # or the rule is scored against a renderer that no longer exists: the
+        # signature is forwarded, and a chunk the table speaks for keeps the
+        # table's answer, because the table is read off Hancom's own output
+        # and every rule below is a model.
+        hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if hft is not None:
+            return hft
+        base = super()._advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
         if not self.rule or self.rule == "current" or not chunk:
             return base
         if not self._substituted(cid, slot):
@@ -1669,6 +1678,13 @@ def break_scoreboard(hwpx_path, dpi=144, repo_root=None):
                 "cache_breaks": cache_breaks,
                 "computed_breaks": computed,
                 "match": cache_breaks == computed,
+                # What the breaker actually had in hand.  A break moves when
+                # a line's measured width crosses the column it is fitted
+                # into, so naming the paragraph that flipped is only half an
+                # answer without these.
+                "column_hwp": call["column_hwp"],
+                "our_widths": list(call["widths"]),
+                "our_spans": [list(span) for span in call["spans"]],
             })
     return rows
 
