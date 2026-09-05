@@ -4279,29 +4279,72 @@ class OwnRenderer:
     def _line_box(self, para, index, column_hwp):
         """``(horzpos, horzsize)`` in HWPUNIT for the ``index``-th line.
 
-        ``hh:margin`` gives ``left``/``right``/``intent``.  A positive
-        ``intent`` is 들여쓰기 — the first line starts that much further in.
+        THE BOX IS THE PARAGRAPH'S COLUMN LESS ITS OWN LEFT AND RIGHT
+        MARGINS, AND ``hh:intent`` IS NOT IN IT.  Measured, on
+        ``engine/scripts/indent_probe.py --corpus``: over all **3214** cached
+        ``hp:lineseg`` of the ten corpus forms, ``horzpos == margin_left`` on
+        **3214**, first lines and continuations alike, and every multi-line
+        paragraph's lines share one right edge (161/161, and 118/118 of the
+        ones declaring a non-zero ``intent``).  A first line is neither moved
+        nor widened by the indent; the box a paragraph gets is one box.
 
-        A negative ``intent`` is 내어쓰기, and the textbook reading of it —
-        first line at the left margin, every *continuation* line pushed in by
-        its magnitude — is **not** what this corpus's cached boxes show.
-        Measured over all 3214 cached line boxes, three readings score:
+        Readings that put the indent in the box do worse, and the two the
+        corpus separates most sharply are the two this renderer has held:
+        ``max(0, left + intent)`` on line 0 scores 3159 of 3214 and the
+        textbook hanging box 3043.  (#268 scored the same three readings at
+        2860 / 2895 / 2710; it scored ``_line_box``'s WIDTH alongside its
+        position, and the cell columns that width was cut from were wrong
+        until #268 and #277 fixed them.  This measurement reads ``horzpos``
+        straight out of the file and depends on no column at all.)
 
-            horzpos == max(0, left + intent), intent on line 0 only    2860
-            horzpos == left, intent never moves the box                2895
-            first line at left, continuations indented by |intent|     2710
-
-        The hanging reading is the worst of the three, so it is not
-        implemented: a negative ``intent`` moves no line box here.  The other
-        two are within 35 boxes of each other and the first is the plain
-        reading of the attribute, so that is the one kept.
+        The indent is real, and it is drawn INSIDE this box —
+        :meth:`_line_indent`.
         """
+        del index
         pr = para.para_pr
-        left = pr.get("margin_left", 0)
+        left = max(0, pr.get("margin_left", 0))
         right = max(0, pr.get("margin_right", 0))
-        indent = pr.get("indent", 0)
-        horzpos = max(0, left + (indent if index == 0 else 0))
-        return horzpos, max(1, column_hwp - horzpos - right)
+        return left, max(1, column_hwp - left - right)
+
+    @staticmethod
+    def _line_indent(para, index):
+        """How far into its line box the ``index``-th line's text starts.
+
+        ``hh:intent`` is the FIRST-LINE indent, signed, and HWP's two names
+        for it are the two signs:
+
+        * 들여쓰기, ``intent > 0`` — the first line starts ``intent`` further
+          in and every other line starts at the margin;
+        * 내어쓰기, ``intent < 0`` — the first line starts at the margin and
+          every *continuation* line starts ``|intent|`` further in.  The first
+          line hangs out to the left of the block, which is what makes it an
+          outdent.
+
+        MEASURED against Hancom's own exported PDFs, not inferred from the
+        names (``engine/scripts/indent_probe.py --corpus --pdf``, which locates
+        a paragraph's drawn lines by the same whole-line text match
+        ``lineseg_vs_pdf`` uses):
+
+        * every one of the **13** top-level paragraphs whose drawn ``x0`` can
+          separate this reading from ``max(0, left + intent)`` supports this
+          one — the 9 positive-``intent`` paragraphs draw their first line at
+          ``left + intent`` (``nrf`` p15-p23, left 0, intent 2980, drawn at
+          2972) and the 4 negative-``intent`` paragraphs whose ``left + intent``
+          would be below zero draw it at ``left`` instead (``kstartup`` p31,
+          left 3600, intent −3612, drawn at 3600);
+        * the SECOND drawn line of a negative-``intent`` paragraph is at
+          ``left + |intent|`` on **39 of 39** and at ``left`` on **0** —
+          ``moel-2025`` p20 hangs 7420 HWPUNIT, ``kstartup`` p95 3569, and the
+          PDF puts them at 7404 and 3564.  The cache's line box says ``left``
+          for all of these, so the hanging indent is an offset inside the box
+          and is not the box.
+
+        The tolerance in that fit is 50 HWPUNIT (half a point, inside a
+        glyph's own left side bearing); the smallest non-zero ``intent`` on
+        the corpus is 100.
+        """
+        intent = para.para_pr.get("indent", 0)
+        return max(0, intent) if index == 0 else max(0, -intent)
 
     def _line_metrics(self, para, start, end):
         """``(textheight, vertsize, baseline, spacing)`` in HWPUNIT.
@@ -4524,9 +4567,14 @@ class OwnRenderer:
                 cursor += 1
                 continue
             horzpos, horzsize = self._line_box(para, index, column_hwp)
-            avail = float(horzsize)
+            # The indent eats into the line's usable width: a hanging
+            # paragraph's continuation lines are genuinely narrower than its
+            # first, which is exactly why the indent has to enter the BREAK
+            # and not only the draw.
+            indent = self._line_indent(para, index)
+            avail = float(max(1, horzsize - indent))
             if ch == "\t":
-                here = horzpos + width(start, cursor)
+                here = horzpos + indent + width(start, cursor)
                 advances[cursor] = max(
                     0.0, self._tab_advance(para, here, column_hwp) - here)
                 for i in range(cursor, count):
@@ -4559,6 +4607,7 @@ class OwnRenderer:
         for offset, (first, last, forced) in enumerate(spans):
             index = from_line + offset
             horzpos, horzsize = self._line_box(para, index, column_hwp)
+            indent = self._line_indent(para, index)
             textheight, vertsize, baseline, spacing = self._line_metrics(
                 para, first, last)
             visible = last
@@ -4566,7 +4615,12 @@ class OwnRenderer:
                 visible -= 1
             lines.append({
                 "start": first, "end": last,
-                "horzpos": horzpos, "horzsize": horzsize,
+                # ``horzpos``/``horzsize`` are the BOX, the quantities the
+                # cache saves; ``indent`` is the first-line/hanging offset
+                # inside it, which the cache does not save and the drawing
+                # side has to add.  Keeping them apart is what lets
+                # ``--lineseg-agreement`` compare our box against Hancom's.
+                "horzpos": horzpos, "horzsize": horzsize, "indent": indent,
                 "vertpos": vertpos, "vertsize": vertsize,
                 "textheight": textheight, "baseline": baseline,
                 "spacing": spacing, "forced": forced,
@@ -5219,14 +5273,17 @@ class OwnRenderer:
             chunk = para.chars[line["start"]:line["end"]]
             if not chunk:
                 continue
+            # The indent moves the text inside the box and narrows what the
+            # alignment has to play with; it is not part of the box itself.
+            indent = line.get("indent", 0)
             self._draw_line(
                 draw,
                 self._line_items(para, chunk, line["start"]),
-                ox + line["horzpos"],
+                ox + line["horzpos"] + indent,
                 oy + line["vertpos"],
                 oy + line["vertpos"] + line["baseline"],
                 para.align,
-                line["horzsize"],
+                max(1, line["horzsize"] - indent),
                 last_line=(index == len(lines) - 1),
             )
 
@@ -5262,23 +5319,29 @@ class OwnRenderer:
                 continue
             horzpos = _iattr(seg, "horzpos")
             horzsize = _iattr(seg, "horzsize") or avail_w_hwp
+            # The cache saves the BOX and never the indent (measured: 3214 of
+            # 3214 cached horzpos equal the paragraph's own margin_left), so
+            # the 들여쓰기/내어쓰기 offset has to be added here exactly as the
+            # computed path adds it — otherwise a hanging paragraph draws
+            # every line flush left and Hancom's own PDF does not.
+            indent = self._line_indent(para, i)
             # The cached box, not the paragraph's true available width: see
             # _draw_line's stretch_avail_hwp docstring.  This is only ever a
             # WIDER box than horzsize (never narrower — max() below, and
             # _draw_line takes max() again against avail_px), so a line whose
             # cached horzsize already reaches its container is unaffected.
-            stretch_hwp = max(horzsize,
-                              avail_w_hwp - horzpos - margin_right)
+            stretch_hwp = max(horzsize - indent,
+                              avail_w_hwp - horzpos - indent - margin_right)
             baseline = _iattr(seg, "baseline")
             vertpos = _iattr(seg, "vertpos")
             self._draw_line(
                 draw,
                 self._line_items(para, chunk, start),
-                ox + horzpos,
+                ox + horzpos + indent,
                 oy + vertpos,
                 oy + vertpos + baseline,
                 para.align,
-                horzsize,
+                max(1, horzsize - indent),
                 last_line=(i == len(para.linesegs) - 1),
                 stretch_avail_hwp=stretch_hwp,
             )
@@ -8368,6 +8431,10 @@ def layout_digest(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
                 "vertpos_hwpunit": [line["vertpos"] for line in lines],
                 "horzpos_hwpunit": [line["horzpos"] for line in lines],
                 "horzsize_hwpunit": [line["horzsize"] for line in lines],
+                # The 들여쓰기/내어쓰기 offset inside each box.  Reported
+                # separately because the cache does not carry it and the box
+                # above is directly comparable to hp:lineseg without it.
+                "indent_hwpunit": [line["indent"] for line in lines],
                 "vertsize_hwpunit": [line["vertsize"] for line in lines],
                 "baseline_hwpunit": [line["baseline"] for line in lines],
             })
