@@ -7946,3 +7946,632 @@ Worker: Opus; orchestrator: Fable.
   explained: `jumin` line IoU and `moel-2025` inked ink. Both forms lay their
   hanging paragraphs out in cells whose column the track solve still gets
   wrong, and separating the two effects needs the column fixed first.
+
+## What a substituted face advances by — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#267 measured that a line drawn in the faces this machine HAS agrees with
+Hancom at ratio 1.0000, and that a line carrying a stand-in does not: the
+bundled `NanumMyeongjo` answering for 휴먼명조 measures every Hangul syllable
+at 0.9536 of Hancom's advance, −60 HWPUNIT per character at 13 pt. It left
+the fix unwritten, because the rule it could see — "a full-width cell
+advances by the declared size" — was the same one #242 had costed and
+dropped. This slice reads the reference PDF's own embedded fonts, states the
+rule the reference actually supports, and prices it on the breaker with the
+#260–#279 inputs in place.
+
+Three things came out of it, in descending order of how much they matter.
+**The rule is right and #267 stated it slightly wrong.** **The reference
+embeds the declared face, so nothing here is Hancom's own substitution.**
+And **the rule still does not ship**, because on this corpus the advance it
+corrects was being cancelled by a second, larger error on the same lines.
+
+### The instrument
+
+`advance_probe.py --corpus --fallback-rules`, alongside everything #267
+printed. It adds four tables and one test:
+
+* what Hancom's exporter EMBEDDED, per reference — every Type0 font's
+  `/BaseFont` (Hancom writes a Korean name into it as CP949, escaped `#XX`)
+  and the embedded program's own `hmtx`, read with `fontTools`;
+* Hancom's em against the stand-in's, per (declared face, resolved face,
+  class), both divided by the run's declared cell;
+* the full-width advance MEAN against MODAL, per (face, size);
+* seven candidate advance rules against Hancom's per-line widths and against
+  the per-character residual, split installed / substituted;
+* the break test — for every paragraph the cache broke, does the rule
+  reproduce `hp:lineseg`'s own break positions?
+
+The rules go into the renderer at one seam. `_text_pieces` used to compute a
+chunk's advance inline; it now calls `OwnRenderer._advance_hwp(font, chunk,
+cid, slot, pt, ratio)`, which returns exactly what the inline expression
+returned. `RuleRenderer` in the probe overrides that method and
+`_half_cell_hwp`, so a break test is the REAL breaker on real inputs rather
+than a second model of it. `OwnRenderer._face_source` reads
+`fonts.faces[].source` out of the `_face_for` cache without re-resolving, so
+asking whether a run is substituted never adds a character to the per-face
+counts the sidecar reports.
+
+### The reference embeds the DECLARED face — this is not Hancom substituting
+
+The question had to be asked, because if Hancom's own exporter had swapped
+휴먼명조 for Batang then "advance = declared size" would be describing
+Hancom's substitution and not the face.
+
+It did not. The nrf and moel references embed `INPILL+휴먼명조` — the CP949
+bytes of the name the file declares, with the standard subset tag. The
+embedded program has **units per em 512**, and in the nrf subset exactly
+three distinct advances: 104, 256 and 512 font units, which is 0.2031, 0.500
+and 1.000 em. Hancom strips the `name` table out of every subset it embeds,
+so the program cannot name itself; what it can do is be compared, and it
+matches nothing on this machine. Fingerprinting its Hangul outlines (contour
+count, point count, bounding box scaled to a common em) against every face
+in `C:\Windows\Fonts` and the bundled family map returns **0 hits of 400
+tried** on each — including `HMKMRHD.TTF`, which is also 512 upem and is
+휴먼둥근헤드라인 (`Headline R`), not 휴먼명조. `batang.ttc` is 1024 upem,
+`NanumMyeongjo` 1024, Malgun 2048.
+
+So the reference was exported on a machine that had 휴먼명조, and the em it
+draws a syllable at — 1.000 — is that face's own metric, not a stand-in's.
+
+Across all ten references, 3746 (character, embedded face) pairs: Unicode's
+East Asian Width `W`/`F` predicts an advance of exactly 1.000 em, and
+anything else predicts less, on **3630 of them**. The 116 misses are 40 `A`
+(ambiguous) characters these Korean faces do draw full width, plus two
+display faces whose whole em is not one — `HaanYHeadB` at 0.85 and
+`HCRBatang-Bold` at 0.97. That is what `is_full_width` in the probe rests on.
+
+### #267 read the median where it needed the mean
+
+#267 recorded that "for a face Hancom has, the advance of a Hangul syllable
+is the declared point size rounded to a whole 1/600 inch — 13 pt → 1296, not
+1300". That is the MODAL advance and it is not the advance.
+
+| src | pdf font | pt | n | cell | mean | median | grid cell | mean/cell | advances, in 1/600 in |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| bundled | 휴먼명조 | 13 | 2312 | 1300.0 | **1299.45** | 1295.30 | 1296.0 | **0.9996** | 108 ×1515, 109 ×797 |
+| installed | Batang | 12 | 282 | 1200.0 | 1200.00 | 1200.00 | 1200.0 | 1.0000 | 100 ×282 |
+| installed | MalgunGothicBold | 13 | 115 | 1300.0 | 1300.19 | 1296.00 | 1296.0 | 1.0001 | 108 ×75, 109 ×40 |
+| installed | T6 | 11 | 62 | 1100.0 | 1099.33 | 1103.40 | 1104.0 | 0.9994 | 91 ×21, 92 ×41 |
+| installed | MalgunGothicBold | 15 | 59 | 1500.0 | 1500.00 | 1500.00 | 1500.0 | 1.0000 | 125 ×59 |
+| installed | Batang | 11 | 40 | 1100.0 | 1100.09 | 1104.00 | 1104.0 | 1.0001 | 91 ×13, 92 ×27 |
+| installed | MalgunGothicBold | 20 | 34 | 2000.0 | 1999.40 | 2004.00 | 2004.0 | 0.9997 | 166 ×13, 167 ×21 |
+| installed | Batang | 14 | 31 | 1400.0 | 1400.77 | 1404.00 | 1404.0 | 1.0006 | 116 ×8, 117 ×23 |
+
+Every row, installed and bundled alike, has **mean / cell between 0.9994 and
+1.0006**. At 13 pt an individual advance is 108 or 109 whole 1/600 inches on
+1515 and 797 characters, whose weighted mean is 108.29 against the 108.333
+that 13 pt IS. The 1/600 inch grid is on the **pen position**, not on the
+advance: one glyph moves the pen by the declared cell rounded to the nearest
+whole unit, and a run of them accumulates the declared cell exactly. The
+sizes that appeared to sit on the grid at 12, 15 and 20 pt are the sizes
+whose cell is already a whole number of units.
+
+The reference's own font size does sit on the grid — MuPDF reports 12.96 pt
+for a declared 13 — and that stays true; a PDF `/FontMatrix` and a pen
+position are the same grid, and the rounded size is how the exporter writes
+it. But the quantity a line breaker needs is the accumulated width, and that
+is the declared size. #267's "1/600 in cell (size rounded, advance
+truncated)" row scored 16 / 411 against no-rule's 22 for exactly this
+reason: it took 4 HWPUNIT per character off every 13 pt line.
+
+### The three answers
+
+**(a) Full-width.** The declared cell — declared size × `hh:ratio` — with no
+grid on it. Held by the embedded `hmtx` (1.000 em on 3630 of 3746 pairs) and
+by the mean advance above (0.9996 on 2312 substituted characters).
+
+**(b) The space.** Half the cell, which is what `SPACE_CELL_FRACTION`
+already does. Hancom's median space over the declared cell is 0.4982
+(한양신명조, n = 1169), 0.5000 (바탕, n = 333), 0.5000 (맑은 고딕, n = 209),
+0.4984 (맑은 고딕 bold, n = 146) — the same 0.5 whatever the face's own
+`hmtx` space is (Batang's is 0.333, Dotum's 0.334, MalgunGothic's 0.3516).
+Hancom does not draw a space as a glyph at all; it is a pen move, and the
+1/600 inch quantisation of the pen is the whole of the −4 HWPUNIT residual.
+**Not measured for a substituted face**: on this corpus the space is metered
+by the symbol slot, which resolves to an installed face on every 휴먼명조 run
+there is, so no substituted space was ever compared.
+
+**(c) Latin, digits and punctuation.** Face-dependent and NOT on a grid, so
+the stand-in's own `hmtx` is the only available answer and it is the wrong
+one where the stand-in is wrong. The whole substituted population is:
+
+| src | declared | resolved (ours) | class | n | hancom em | ours em | on grid |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| bundled | 휴먼명조 | `NanumMyeongjo-Regular.ttf` | hangul | 3488 | 0.9964 | 0.9502 | 0.2% |
+| system | HCI Poppy | `(fallback)` | digit | 123 | 0.4982 | 0.5508 | 4.1% |
+| bundled | 휴먼명조 | `NanumMyeongjo-Bold.ttf` | hangul | 40 | 1.0000 | 0.9502 | 40.0% |
+| system | HY울릉도M | `(fallback)` | hangul | 28 | 1.0023 | 1.0000 | 32.1% |
+| system | 고딕 | `(fallback)` | hangul | 24 | 0.9744 | 0.9700 | 0.0% |
+| system | HY울릉도M | `(fallback)` | digit | 8 | 0.6340 | 0.5801 | 50.0% |
+
+**131 characters of substituted Latin/digit in the whole corpus**, all but
+eight of them the machine fallback answering for `HCI Poppy`. There is no
+per-face Latin table to be read off that, and the low `on grid` shares
+confirm the negative: a Latin advance is a face metric that lands wherever
+the outlines put it, and only the full-width cell is regular.
+
+### The rules, and what each is worth
+
+Seven candidates, applied only where `fonts.faces[].source` is not
+`installed`. `latin oracle` is fitted — its per-class em was read off the
+same reference it is then scored against — and is here as a ceiling, not a
+proposal.
+
+Per character, on the 3580 substituted anchored advances (ours − Hancom,
+HWPUNIT):
+
+| rule | hangul median | med abs | within 2 HWPUNIT | digit median (n=131) |
+| --- | ---: | ---: | ---: | ---: |
+| current | **−60.04** | 60.04 | 0 / 3580 | +68.37 |
+| cell | +3.75 | 4.70 | 721 | +68.37 |
+| cell + grid, round | **+0.64** | 2.06 | **1758** | +60.35 |
+| cell + grid, floor | +0.64 | 2.06 | 1758 | +60.35 |
+| cell + grid, ceil | +0.64 | 2.06 | 1758 | +72.35 |
+| cell + grid, space floor | +0.64 | 2.06 | 1758 | +60.35 |
+| … + latin oracle | +0.64 | 2.06 | 1758 | −1.99 |
+
+The gridded variants win the per-CHARACTER table because they predict the
+modal advance; `cell` wins the accumulated width, which is the quantity that
+matters, and the two differ by 4 HWPUNIT at 13 pt. Nothing separates round
+from floor from ceil on Hangul, because a full cell on the grid is already a
+whole number of units.
+
+Per line, on the 411 comparable lines of #267 (exact = within 2 HWPUNIT):
+
+| rule | substituted exact | med abs | median | installed exact | med abs | median |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| current | 2 / 308 | 256.69 | −120.33 | 20 / 103 | 56.57 | +41.73 |
+| cell | 0 / 308 | 303.59 | +303.59 | 20 / 103 | 56.57 | +41.73 |
+| cell + grid, round | 10 / 308 | 235.57 | +235.57 | 20 / 103 | 56.57 | +41.73 |
+| cell + grid, floor | 10 / 308 | 240.45 | +235.57 | 20 / 103 | 56.57 | +41.73 |
+| cell + grid, ceil | 10 / 308 | 247.57 | +247.57 | 20 / 103 | 56.57 | +41.73 |
+| cell + grid, space floor | 10 / 308 | 235.57 | +235.57 | 20 / 103 | 56.57 | +41.73 |
+| … + latin oracle | 10 / 308 | 171.13 | +171.13 | 20 / 103 | 56.57 | +41.73 |
+
+Every rule leaves the installed column at exactly 20 / 103 and 56.57, which
+is the control working: an installed face is untouched by all seven.
+
+The substituted column is the surprise, and decomposing it says why. Summed
+over the 308 lines, under `cell + grid, round`:
+
+| segment | n | total residual | per |
+| --- | ---: | ---: | ---: |
+| `punct`, installed face | 514 | **+101647** | +197.76 |
+| `punct`, installed face, multi-character | 191 | +32527 | +170.30 |
+| `fw_punct`, installed face, multi-character | 20 | +12046 | +602.30 |
+| `hangul`, bundled | 3171 | **−9212** | **−2.90** |
+| `digit`, system fallback | 152 | +8312 | +54.68 |
+| `space`, installed face | 1544 | −6311 | −4.09 |
+
+The rule closes the Hangul term almost completely — from −60 per character
+to −2.90 — and the line total barely moves, because on these same lines the
+punctuation term is twenty times larger. Those lines were only ever close to
+Hancom's width because two errors of opposite sign were cancelling.
+
+### The break test, and why the rule does not ship
+
+Every paragraph the cache broke, top level and in cells, its `hp:lineseg`
+break positions against our breaker's, run through `RuleRenderer` with the
+real column its container gives it. A paragraph is `substituted` when any
+character on it resolves to a stand-in.
+
+| rule | substituted ¶ | multi-line | installed ¶ | multi-line |
+| --- | ---: | ---: | ---: | ---: |
+| current | 329 / 368 | **12 / 47** | 1623 / 1697 | 48 / 113 |
+| cell | 287 / 368 | 2 / 47 | 1623 / 1697 | 48 / 113 |
+| cell + grid, round | 291 / 368 | **2 / 47** | 1623 / 1697 | 48 / 113 |
+| cell + grid, floor / ceil / space floor / oracle | 291 / 368 | 2 / 47 | 1623 / 1697 | 48 / 113 |
+
+Per form, substituted multi-line paragraphs matched: `moel-2013` 4/11 → 0/11,
+`moel-2025` 6/30 → 0/30, `nrf` 1/3 → 1/3, `admrul` 1/1 → 1/1, and every other
+form has none. The gate this slice was to clear — 99% of substituted
+paragraphs' cached breaks reproduced with no installed-face regression — is
+not reached by any rule, and `current` does not reach it either: **25.5% is
+the standing number and the rule takes it to 4.3%.** The installed column
+does not move under any rule, which is the one thing the gate does get.
+
+The cache's own one-sided score says the same thing without a reference.
+Every cached line Hancom fitted into its own `@horzsize` is a line our
+metrics must call no wider:
+
+| rule | proven over-measurements | on substituted lines |
+| --- | ---: | ---: |
+| current | 51 / 2272 | 17 / 426 |
+| cell | 94 / 2272 | 60 / 426 |
+| cell + grid, round | 90 / 2272 | 56 / 426 |
+
+**39 lines that fitted now overflow.** All 39 are in `moel`, all 39 carry at
+least one ASCII punctuation character, and the median fill after is 1.0083 —
+0.8% over a box they were 1–4% inside. Six punctuation marks at +198 HWPUNIT
+each is 1188 HWPUNIT, which is 2.6% of a 45128 HWPUNIT `moel` column: the
+overflow is the punctuation term, uncovered.
+
+### The two errors are one interaction, and the punctuation one is bigger
+
+Priced together, with a per-(declared face, class) punctuation oracle read
+off the reference — an oracle on both sides, so neither number is shippable
+and both are ceilings:
+
+| experiment | over-measurements | substituted ¶ | multi-line | installed ¶ |
+| --- | ---: | ---: | ---: | ---: |
+| nothing (today) | 51 / 2272 | 329 / 368 | 12 / 47 | 1623 / 1697 |
+| fallback cell only | 90 / 2272 | 291 / 368 | 2 / 47 | 1623 / 1697 |
+| punctuation oracle only | **76 / 2272** | **333 / 368** | 12 / 47 | 1600 / 1697 |
+| both | 81 / 2272 | 328 / 368 | 12 / 47 | 1600 / 1697 |
+
+The punctuation oracle gives back everything the fallback rule costs and
+nothing more: substituted multi-line agreement is 12 / 47 in three of the
+four rows and the fourth is the one that has the fallback rule alone. So the
+fallback advance is not what those 47 paragraphs re-break on. Something else
+is, and it is not named yet.
+
+The punctuation oracle also costs 23 installed paragraphs (1623 → 1600),
+which is the same lesson from the other side: a fitted per-face table is not
+a rule, and `script_slot`'s decision about which face meters a punctuation
+character has to be measured before anything is written into `_measure`.
+
+### Nothing was changed
+
+`own_render.py` gained two methods and lost one inline expression, and the
+expression moved into one of them unchanged. Measured before and after on
+`origin/claude/engine-e2-hanging-indent`'s `own_render.py` against this
+branch's, every channel is identical:
+
+| channel | `cache` | `computed` |
+| --- | ---: | ---: |
+| `text_line_iou_mean` | 0.686617 | 0.668513 |
+| `ssim_mean` | 0.851564 | 0.838366 |
+| `ssim_inked_mean` | 0.354611 | 0.336142 |
+| `text_line_pair_rate_mean` | 0.836393 | 0.847573 |
+
+Page counts under `cache` 9 of 10 exact (`kstartup` 21/22), under `computed`
+10 of 10 — unchanged. `lineseg_vs_pdf.py --corpus` 411 / 411 with 8566/8566
+characters in agreeing lines. `layout_divergence.py --corpus` 1353 / 113 /
+349 / 243 before and after. `class_b_probe.py --corpus` is byte-identical,
+`text_rebreak:width` 165 roots. `render_check.py` on `render-check-01` is
+6 · 37 · 6 · 2 at 96 dpi and 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact both,
+identical before and after. `advance_probe.py`'s ratio table is unchanged to
+the last digit.
+
+### The costed proposal, restated
+
+* **The full-width cell on a substituted face.** Public basis: the reference
+  embeds the declared face and its `hmtx` says 1.000 em; the mean advance is
+  the declared cell on every face and size measured. Worth −60 → −2.90
+  HWPUNIT per Hangul character. Costs 39 proven over-measurements and 10 of
+  the 12 substituted multi-line break agreements. **It should ship after the
+  punctuation slot, not before it** — the same conclusion #267 reached about
+  the device grid, now with the interaction measured rather than guessed.
+* **Which face meters a punctuation character.** The larger term by twenty
+  times on the very lines the fallback rule wants to move: +197.76 HWPUNIT
+  per ASCII punctuation character on an INSTALLED face, 514 of them in the
+  comparable population. A fitted oracle takes proven over-measurements
+  51 → 76 while costing 23 installed paragraphs, so the answer is a rule
+  about slot resolution and not a table. This is now the head of the queue.
+* **The 1/600 inch grid.** Withdrawn as an advance rule. It is the pen
+  position, it is already implicit in accumulating the declared cell, and
+  quantising our own advances onto it is fitting to the modal value of a
+  quantity whose mean we already have.
+
+### Not proven
+
+- **The substituted space was never compared.** Every 휴먼명조 run in this
+  corpus takes its space from the symbol slot, which resolves to an installed
+  face here, so `(b)` above is measured on installed faces only and asserted
+  for substituted ones.
+- **Substituted Latin is 131 characters**, 123 of them one face
+  (`HCI Poppy` → the machine fallback) and one class (digit). Nothing about
+  Latin under substitution generalises from that.
+- **The embedded 휴먼명조 is identified by exclusion, not by name.** Hancom
+  strips the `name` table from every subset it embeds. What is proven is that
+  the `/BaseFont` is the declared name in CP949, that the program is 512 upem
+  with a 1.000 em full-width advance, and that no face on THIS machine has
+  its outlines. A machine holding a different 512-upem Korean serif could
+  still be the one that exported it.
+- **`is_full_width` misses 40 ambiguous-width characters** that these Korean
+  faces draw full width (`±`, box drawing, circled numbers and the like).
+  Under any shipped rule they would keep the stand-in's advance, which is
+  wrong by whatever the stand-in is wrong by, and the population was not
+  counted per form.
+- **The break test's `substituted` flag is per paragraph, not per line.** A
+  paragraph with one substituted character anywhere counts, so the 47
+  multi-line paragraphs are not 47 paragraphs the rule materially moves.
+- **The punctuation oracle is an oracle.** Its 76 / 2272 and 333 / 368 are
+  ceilings measured against the corpus they were fitted on, and the 23
+  installed paragraphs it costs are the evidence that the real rule is a
+  different shape.
+- **The corpus is still the training set.** Every number here comes off the
+  same ten forms and the same machine's installed fonts, and the whole
+  substituted population is 휴먼명조 plus 131 stray Latin characters.
+
+## Punctuation is not compressed — 진하게 is metered by the regular cut — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#267 left three costed proposals and named the smallest of them "which face
+meters a punctuation character", worth 2469 and 1768 HWPUNIT on `moel-2013`'s
+two carriers. This slice asks that question per CODE POINT on installed faces
+only, and asks the auto-spacing question beside it. Both of the typographic
+rules the task proposed — half-width compression of full-width punctuation,
+and a 1/4 em 한글-영문 gap — are **contradicted by the reference**. What the
+measurement found instead is one rule that is not about punctuation at all
+and that closes the largest name-matched residual in the table.
+
+### The instrument
+
+`engine/scripts/advance_probe.py --corpus --punct`. Three additions to the
+#267 probe, all on the measurement side:
+
+* every anchored single-character record now carries its face `source`, its
+  `slot`, the full-width `cell` its advance is a fraction of, and **the class
+  of the character that follows it**, which is the only way a pen move can be
+  split into a glyph advance and a boundary gap;
+* `punct_char_table` groups by code point, not by class, restricted to
+  advances whose own face AND whose successor's face are the declared,
+  installed one — the substituted-face population is the other slice's and
+  the filter is what keeps the two disjoint;
+* `gap_table` measures the boundary. Hancom's distance from one glyph's
+  origin to the next is the first glyph's advance plus whatever is inserted
+  between the classes; the first glyph's own advance is not separately
+  observable in a PDF, so the baseline is **measured** — the median distance
+  for the same (class, face, size) when the successor is of the SAME class,
+  where no inter-class rule can apply — and the gap is the difference of the
+  two medians, taken the same way on our side.
+
+`break_scoreboard` is new and is the two-sided score `fit_scoreboard` could
+not be: for every paragraph the cache broke into more than one line, the
+cached break positions against `compute_lines`' own, all-or-nothing per
+paragraph, split by whether every face on the paragraph is installed.
+
+### The auto-spacing question closes negative, and the flags are not there
+
+**Neither `autoSpaceEAsianEng` nor `autoSpaceEAsianNum` appears on any
+`hp:paraPr` in this corpus.** Read straight out of `Contents/header.xml` on
+all ten forms: 774 `hh:paraPr` elements carry exactly eight attributes
+between them — `id`, `tabPrIDRef`, `condense` (0 ×603, 25 ×130, 20 ×37,
+30 ×4), `fontLineHeight` (0 throughout), `snapToGrid`, `suppressLineNumbers`,
+`checked`, `textDir`. So the split the question asked for has one bucket, and
+nothing measured here is evidence about what either flag does when set.
+
+With the attribute absent, the boundary is empty. Installed faces, em:
+
+| from → to | n | Hancom gap | ours | delta |
+| --- | ---: | ---: | ---: | ---: |
+| hangul → space | 389 | 0.0000 | 0.0000 | 0.0000 |
+| space → hangul | 381 | 0.0000 | 0.0000 | 0.0000 |
+| hangul → punct | 105 | −0.0000 | 0.0000 | −0.0000 |
+| hangul → fw_punct | 23 | 0.0000 | 0.0000 | 0.0000 |
+| digit → hangul | 19 | −0.0000 | 0.0000 | 0.0000 |
+| hangul → digit | 6 | −0.0000 | 0.0000 | 0.0000 |
+| latin → hangul | 2 | 0.1100 | 0.1101 | −0.0001 |
+
+A Hangul syllable's advance does not change with what follows it, on any of
+the five classes that follow it here. **There is no 1/4 em, and there is no
+gap at all.** The `punct →` and `fw_punct →` rows carry a non-zero "gap" and
+are not evidence of one: their baseline is a median over DIFFERENT
+punctuation marks, which are not one width, so the number those rows report
+is the spread of the class and not a boundary. Hangul is the only class in
+this corpus wide enough and uniform enough to carry the test, and it answers
+zero. `test_no_automatic_space_is_opened_between_hangul_and_latin` pins it.
+
+### Punctuation per code point, and the three populations it splits into
+
+545 anchored punctuation advances on installed faces, summing to **+19431
+HWPUNIT** of over-measure before this slice. Sorted by which face the
+reference itself says it drew with:
+
+| our face → the PDF's font | n | Σ ours − Hancom |
+| --- | ---: | ---: |
+| `H2GTRM.TTF` → `T3` / `T6` / `T19` | 35 | **+9922** |
+| `H2MJSM.TTF` → `T2` | 23 | **+4838** |
+| `malgunbd.ttf` → `MalgunGothicBold` | 239 | **+4475** |
+| `malgun.ttf` → `MalgunGothic` | 166 | +210 |
+| `batang.ttc` → `Batang` | 61 | **−39** |
+| `H2GTRE.TTF` → `H2gtrE` | 13 | +19 |
+| `H2HDRM.TTF` → `H2hdrM` | 2 | +7 |
+| `H2GPRM.TTF` → `H2gprM` | 6 | **+0.0** |
+
+Three populations, and only one of them is a rule.
+
+**Where the reference names our own face, punctuation was already right.**
+`batang.ttc`, `H2GTRE.TTF`, `H2HDRM.TTF` and `H2GPRM.TTF` are 82 advances
+summing to −13 HWPUNIT — `Batang`'s `,` at 0.2836 em against our 0.2920,
+`○` at 0.9969 against 1.0000, `H2gprM` at exactly zero. That is the control
+for every compression hypothesis and it fails all of them: a face Hancom
+actually drew with advances its punctuation by its own `hmtx` and by nothing
+else. No half-em for `、。，．`, no bracket trim, no squeeze on consecutive
+marks. The corpus's only full-width brackets, `『』` on `malgun.ttf`, measure
+0.5035 em against our 0.5072.
+
+**Where the PDF drew an anonymous Type 3 font, the disagreement is the face.**
+58 advances carry +14760 of the +19431, and every one of them is a `T`-font:
+
+| cp | n | Hancom em | ours em | our face | PDF |
+| --- | ---: | ---: | ---: | --- | --- |
+| `(` | 24 | 0.2835 | 0.4035 | `H2GTRM.TTF` | `T6`/`T19` |
+| `”` | 4 | 0.3925 | 1.0350 | `H2GTRM.TTF` | `T3` |
+| `“` | 4 | 0.3925 | 1.0300 | `H2GTRM.TTF` | `T3` |
+| `)` | 13 | 0.3321 | 0.4950 | `H2MJSM.TTF` | `T2` |
+| `]` | 10 | 0.3229 | 0.4850 | `H2MJSM.TTF` | `T2` |
+
+Read the `T` fonts' own advances off the export and the pattern is a
+PROPORTIONAL LATIN design, not a compressed CJK one: `T2` gives every digit
+0.5001 em, `)` and `]` 0.3334, `T4` gives `.` and `:` 0.2500, `D` 0.7717,
+`N` 0.8261, `a` 0.4891. Those are the metrics of a Times-class Latin
+companion. Our resolved faces genuinely have the wide advances we measure —
+`H2MJSM.TTF`'s `hmtx` says `(` is 512/1024 = 0.5000 em and `“` a full
+1024/1024, read straight out of `C:\Windows\Fonts` — so the two sides are
+metering with two different physical faces. The declared symbol face on
+`moel-2013`'s carriers is 한양신명조, installed here as `H2MJSM.TTF`; the
+machine that produced the reference did not have it and answered with an
+embedded Type 3 subset. **That is #267's face question and there is no width
+rule inside it.**
+
+**Where the family is one we have and the run is bold, there IS a rule.**
+
+### 진하게 is a `hh:charPr` attribute, so it moves the ink and not the pen
+
+`malgunbd.ttf` is the one name-matched pair in the table that is badly wrong,
++4475 over 239 advances, and it is wrong in a single shape: our em is a
+constant per character and Hancom's is about 0.85 of it. Reading both cuts'
+`hmtx` says exactly what the 0.85 is.
+
+| cp | Hancom, in a BOLD run | 맑은 고딕 regular | 맑은 고딕 Bold (ours) |
+| --- | ---: | ---: | ---: |
+| `(` | 0.3046 | **0.3047** | 0.3579 |
+| `*` | 0.4246 | **0.4248** | 0.4561 |
+| `-` | 0.4093 | **0.4102** | 0.4136 |
+| `.` | 0.2220 | **0.2188** | 0.2617 |
+| `‘` `’` | 0.2320 | **0.2310** | 0.2793 |
+
+Hancom advances a bold run by the family's **REGULAR** cut. The file says so:
+`kstartup` cid 5 and `nrf` cid 18 declare 맑은 고딕 — the regular family name
+— in all three slots and set `hh:charPr@bold="1"`. 진하게 is a character
+attribute, not a family switch, and `_face_for` was answering it by swapping
+in `malgunbd.ttf` for the glyph AND the metric. `-` is the character that
+hid it: the two cuts differ by 0.8% there and by 17% on `(`.
+
+바탕 corroborates. Its family has no bold cut installed, so `_face_for`
+already handed back `batang.ttc` for a bold run — and 바탕 is #267's
+exactly-1.0000 face.
+
+Over every anchored non-space advance the corpus puts on an installed bold
+face, scoring the regular cut's `hmtx` against Hancom's own glyph positions:
+
+| class | n | Σ&#124;ours − Hancom&#124; | Σ&#124;regular − Hancom&#124; |
+| --- | ---: | ---: | ---: |
+| punct | 224 | 4270.6 | **1352.0** |
+| hangul | 318 | 1322.2 | 1322.2 |
+| latin | 18 | 1222.4 | **113.4** |
+| digit | 16 | 765.1 | **188.9** |
+| fw_punct | 15 | 290.4 | **83.6** |
+| other | 10 | 906.4 | **33.5** |
+| **all six** | **601** | **8777.1** | **1893.6** |
+
+Hangul does not move because a syllable is 1 em in either cut, which is why
+#267's per-face table could not see this: it read the ratio off Hangul.
+
+### The rule, and what changed
+
+`OwnRenderer._installed_regular_cut(cid, slot)` returns the regular cut of a
+bold run's declared family, or `None`. `_metric_font_for` turns that into the
+font an advance is measured off, and `_text_pieces` measures with it while
+drawing with the bold one. Everything else is untouched: the glyph, the
+synthetic-bold path, `_half_cell_hwp` (face-free), `hh:spacing`, `hh:ratio`.
+
+The function is deliberately self-contained. It asks `font_index` and nothing
+else, so a face answered by `BundledFontMap` or by the machine fallback never
+reaches it — that population belongs to the substituted-face slice and this
+one must not move it, which the numbers below confirm to six decimal places.
+It also does its own name lookup rather than calling `_face_for`, because
+`_face_for` counts every call into `face_resolution@characters` and that
+tally must keep counting DRAWN characters.
+
+### After
+
+`--corpus --punct`, installed faces:
+
+| | before | after |
+| --- | ---: | ---: |
+| Σ punctuation over-measure (545 advances) | +19431.2 | **+15013.0** |
+| per-line width, installed lines, median abs | 56.57 | **10.56** |
+| per-line width, installed lines, median | +41.73 | **+8.72** |
+| lines exact within 2 HWPUNIT, installed | 20 / 103 | **23 / 103** |
+| lines exact within 2 HWPUNIT, all | 22 / 411 | **25 / 411** |
+| per-line width, SUBSTITUTED lines, median abs | 256.69 | **256.69** |
+| cached lines proven too wide | 51 / 2272 | **49 / 2272** |
+| cached breaks reproduced, installed ¶ | 48 / 113 | **48 / 113** |
+| cached breaks reproduced, other ¶ | 12 / 47 | **12 / 47** |
+
+`malgunbd.ttf`'s `(` is now 0.3047 em against Hancom's 0.3043, ratio 1.0002,
+and the whole +4475 is gone. The substituted median is byte-identical, which
+is the disjointness claim discharged.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| channel | `cache` before → after | `computed` before → after |
+| --- | --- | --- |
+| `text_line_iou_mean` | 0.737194 → **0.737467** | 0.664280 → **0.665054** |
+| `ssim_mean` | 0.858906 → **0.860650** | 0.838307 → **0.840196** |
+| `ssim_inked_mean` | 0.373852 → **0.388099** | 0.337158 → **0.351454** |
+| `text_line_pair_rate_mean` | 0.850991 → 0.850991 | 0.847426 → 0.847426 |
+
+Every channel up or level, both policies. Page counts 10 of 10 exact before
+and after under both policies, every form unchanged (`kstartup` 22/22 either
+way — its standing failure is elsewhere and did not move).
+
+`lineseg_vs_pdf.py --corpus` is 411 / 411 with 8566/8566 characters in
+agreeing lines, unchanged. `layout_divergence.py --corpus` is
+1612 / 113 / 300 / 28 before and **1635 / 111 / 279 / 28** after: 23
+paragraphs move into agreement, 21 of them out of class B and 2 out of class
+A, none the other way. `class_b_probe.py --corpus` roots:
+`text_rebreak:width` **165 → 165**, `table_row_heights` **81 → 63**,
+`cell_valign` 18 → 15, `empty_paragraph` 29 → 29, `forced_break` 7 → 7 —
+every one of `kstartup`'s 18 `table_row_heights` paragraphs closes, because a
+bold cell that is narrower needs fewer lines and the row is the height the
+cache says. `render_check.py` on `render-check-01` is 6 · 37 · 6 · 2 at 96 dpi
+and 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact, **unchanged in both
+directions and on every one of the 51 blocks** — that document's bold text is
+set in families with no second installed cut, so the rule never fires there.
+
+`own_render.lineseg_agreement` over the corpus moved
+`[2151, 2119, 2037, 161, 142, 219, 82]` → `[2151, 2121, 2039, 161, 142, 219,
+82]`, both gains on `kstartup`, which now reproduces the cached line count on
+all 454 of its scored paragraphs. No break position was lost.
+
+### The three rules that did NOT ship, and why
+
+* **Full-width punctuation at half an em for `、。，．`.** The corpus holds
+  none of those four code points, and every full-width mark it does hold
+  (`『』`, `○`, `□`, `·`, `◦`) measures within 1.4% of its face's own `hmtx`
+  on a face the reference names. No support, and a control that contradicts.
+* **Opening brackets trimmed left / closing trimmed right by half an em.**
+  `『』` on `malgun.ttf`: Hancom 0.5035 em, ours 0.5072. Nothing is trimmed.
+* **Auto-spacing at 1/4 em when the flag is set.** The flag is set nowhere in
+  the corpus and the boundary measures 0.0000 em on 921 anchored pairs.
+* **ASCII punctuation by `hmtx`** is what we do and it is right — once the
+  face it comes off is the one Hancom metered with.
+
+### Not proven
+
+- **The bold rule rests on ONE family.** 맑은 고딕 is the only family in this
+  corpus that declares a regular name, sets `hh:charPr@bold`, and has both
+  cuts installed on this machine. 602 advances is a wide population but they
+  are all one design, and a family whose bold cut is metric-compatible with
+  its regular (every bundled family here is) could not have detected the rule
+  and cannot corroborate it.
+- **Whether Hancom would meter a DECLARED bold family the same way.** The
+  rule fires on `hh:charPr@bold` over a regular family name. No corpus
+  paragraph names a face that is itself a bold cut, so the case where the
+  file asks for the bold design by name is untested and untouched.
+- **The break gate the task set is unreachable by any advance rule.** Cached
+  breaks on all-installed paragraphs reproduce at 48 / 113 = 42.5% BEFORE
+  this change; the specified ≥ 99% is not a bar an advance rule can clear,
+  because the remaining disagreements on those paragraphs are column width,
+  `@condense` and the break rules, not the advance. The change was taken on
+  the two-sided evidence instead: zero break regressions, 51 → 49 proven
+  over-measurements, and every raster channel up on both policies.
+- **`moel-2013`'s two carriers are NOT installed-face lines and did not
+  move.** Paragraph 118 and 141 resolve their Hangul slot to 휴먼명조, which
+  is not installed here and falls to bundled Nanum Myeongjo; only the symbol
+  slot (한양신명조 → `H2MJSM.TTF`) is installed. The +1165 / +815 decomposes,
+  on the PDF pairing, as `(` `)` `:` `,` metered at 0.495 em off
+  `H2MJSM.TTF` where Hancom's `T2` draws them at 0.332 (+211 to +224 each,
+  ~+1330 on 141's single line) and `“` `”` at a full em against Hancom's 648
+  = half the 1/600-inch cell (+611 to +652 each, +2469 on 118's first line).
+  Both terms are the anonymous-Type-3 face question, so this slice closed
+  neither carrier. 118's first line is also a JUSTIFY non-last line and
+  carries no comparable width at all; its second line already agreed to
+  +1.6 HWPUNIT before this change.
+- **`“` at 0.5 em of the 1/600-inch cell is one observation.** 118's line 1
+  gives 647.6 and 647.7 against a 1296 grid cell, which is exactly half, and
+  the same character on `H2GTRM.TTF`/`T3` at 11 pt gives 0.3925. Two
+  different subset fonts, two different answers, and no rule fitted to
+  either.
+- **`text_rebreak:width` did not move: 165 before, 165 after.** The class-B
+  root this whole line of work descends from is untouched, because its 142
+  `moel-2025` and 22 `moel-2013` paragraphs are substituted-face paragraphs.
+- **The corpus is the training set, again.** Every number here was read off
+  the same ten forms and the same machine's installed fonts.

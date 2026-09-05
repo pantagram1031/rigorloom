@@ -39,6 +39,16 @@ Usage::
     python engine/scripts/advance_probe.py FORM.hwpx REFERENCE.pdf
     python engine/scripts/advance_probe.py --corpus
     python engine/scripts/advance_probe.py --corpus --json out.json --no-text
+    python engine/scripts/advance_probe.py --corpus --punct
+
+``--punct`` adds the #281 punctuation pass, restricted to advances whose own
+face and whose successor's face are both the DECLARED, installed one: the
+advance of every punctuation CODE POINT against Hancom's, in HWPUNIT and in
+em; the inter-class boundary (Hangul→Latin and the rest) as Hancom's pen move
+minus the same class's own same-class baseline, split by the paragraph's
+``autoSpaceEAsianEng`` / ``autoSpaceEAsianNum``; and ``break_scoreboard``, the
+two-sided score ``fit_scoreboard`` cannot be — the cached break positions
+against ``compute_lines``' own, all-or-nothing per paragraph.
 
 WHAT IS MEASURED, AND WHAT IS NOT
 ---------------------------------
@@ -69,8 +79,10 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import io
 import json
 import math
+import re
 import statistics
 import sys
 import unicodedata
@@ -129,6 +141,79 @@ def truncate_to_grid(value):
     return math.floor(value / DEVICE_GRID_HWP) * DEVICE_GRID_HWP
 
 
+#: The character classes a full-width cell rule governs, decided by Unicode's
+#: own East Asian Width property rather than by a range list of this repo's.
+#: MEASURED against the reference: over the 3746 (character, embedded face)
+#: pairs the ten reference PDFs carry, ``W``/``F`` predicts an advance of
+#: exactly 1.000 em, and anything else predicts less than one em, on 3630 of
+#: them.  The 116 that miss are 40 ``A`` (ambiguous) characters that these
+#: Korean faces do draw full width, and two display faces -- ``HaanYHeadB``
+#: at 0.85 em and ``HCRBatang-Bold`` at 0.97 -- whose whole em is not 1.
+FULL_WIDTH_EAW = frozenset(("W", "F"))
+
+#: Candidate advance rules for a run whose face was SUBSTITUTED.  Each is a
+#: complete answer to "how wide is this character", applied only where
+#: ``fonts.faces[].source`` is not ``installed``; an installed face keeps its
+#: own outlines' advance under every one of them.
+FALLBACK_RULES = (
+    "current",
+    "cell",
+    "cell+grid:round",
+    "cell+grid:floor",
+    "cell+grid:ceil",
+    "cell+grid, space floor",
+    "cell+grid, space floor, latin oracle",
+)
+
+
+def is_full_width(ch):
+    """Does this character occupy a whole character cell?  See ``FULL_WIDTH_EAW``."""
+    return unicodedata.east_asian_width(ch) in FULL_WIDTH_EAW
+
+
+def quantise_grid(value, how):
+    """``value`` onto the 1/600 inch grid, rounded / floored / ceiled."""
+    units = value / DEVICE_GRID_HWP
+    if how == "floor":
+        units = math.floor(units + 1e-9)
+    elif how == "ceil":
+        units = math.ceil(units - 1e-9)
+    else:
+        units = round(units)
+    return units * DEVICE_GRID_HWP
+
+
+def rule_advance(name, base, ch, cell, oracle_em=None):
+    """One character's advance in HWPUNIT under ``name``, on a substituted face.
+
+    ``base`` is what the renderer measures today -- the stand-in face's own
+    outlines, or, for a space, half the declared cell.  ``cell`` is the
+    declared character cell (declared size x ``hh:ratio``), which is the
+    quantity the reference says Hancom advances a full-width glyph by.
+    """
+    if name == "current":
+        return base
+    grid = "round"
+    if name.startswith("cell+grid:"):
+        grid = name.split(":", 1)[1]
+    on_grid = name != "cell"
+    cell_used = quantise_grid(cell, "round") if on_grid else cell
+    if is_full_width(ch):
+        return cell_used
+    if ch in own_render.HALF_WIDTH_CELL_CHARS:
+        half = cell_used * own_render.SPACE_CELL_FRACTION
+        if not on_grid:
+            return half
+        if "space floor" in name:
+            return quantise_grid(half, "floor")
+        return quantise_grid(half, grid)
+    if oracle_em is not None and "latin oracle" in name:
+        return cell_used * oracle_em
+    if not on_grid or cell <= 0:
+        return base
+    return quantise_grid(base / cell * cell_used, grid)
+
+
 def readable_font_name(name):
     """A PDF font name, with a mis-decoded Korean name put back together.
 
@@ -183,6 +268,40 @@ def char_class(ch):
 
 
 # -- the PDF side --------------------------------------------------------
+
+#: ``hp:paraPr`` attributes that would switch Hancom's 한글-영문 / 한글-숫자
+#: automatic spacing on.  Read off the file rather than assumed, because the
+#: OWPML default when the attribute is absent is not stated in the schema
+#: this repo holds and the corpus turns out to omit both everywhere.
+AUTOSPACE_ATTRS = ("autoSpaceEAsianEng", "autoSpaceEAsianNum")
+
+
+def autospace_flags(hwpx_path):
+    """``{paraPr id: {attr: value or None}}`` straight out of ``header.xml``.
+
+    ``own_render`` parses neither attribute, so this reads the header itself
+    rather than adding an unused field to the renderer's ``para_pr``.  A
+    ``None`` value means the attribute is ABSENT on that paragraph shape,
+    which is a different statement from it being ``"0"``.
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    out = {}
+    try:
+        with zipfile.ZipFile(hwpx_path) as archive:
+            data = archive.read("Contents/header.xml")
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return out
+    for el in ET.fromstring(data).iter():
+        if _local(el.tag) != "paraPr":
+            continue
+        pid = el.get("id")
+        if pid is None:
+            continue
+        out[pid] = {name: el.get(name) for name in AUTOSPACE_ATTRS}
+    return out
+
 
 def read_pdf_chars(pdf_path):
     """``lineseg_vs_pdf.PdfLines``, with every line's characters attached.
@@ -299,8 +418,11 @@ class OurMetrics:
     reconstruction of it.
     """
 
-    def __init__(self, renderer):
+    def __init__(self, renderer, oracle=None):
         self.renderer = renderer
+        #: ``(declared face, class) -> em`` read off Hancom's own drawn
+        #: advances, for the one rule that is fitted rather than derived.
+        self.oracle = oracle or {}
         self._cache = {}
 
     def run(self, ch, cid):
@@ -342,18 +464,34 @@ class OurMetrics:
         # font sizes sit -- see ``pdf_size_table``), the face's em advance is
         # taken against THAT cell, and the result is truncated onto the same
         # grid.  A space keeps the half-cell rule, on the grid.
-        declared = size_pt * HWPUNIT_PER_PT * ratio / 100.0
-        cell = cell_on_grid(declared)
-        if declared <= 0:
+        cell_hwp = size_pt * HWPUNIT_PER_PT * ratio / 100.0
+        cell = cell_on_grid(cell_hwp)
+        if cell_hwp <= 0:
             grid_advance = advance
         elif ch in own_render.HALF_WIDTH_CELL_CHARS:
             grid_advance = truncate_to_grid(cell * own_render.SPACE_CELL_FRACTION)
         else:
-            grid_advance = truncate_to_grid(advance / declared * cell)
+            grid_advance = truncate_to_grid(advance / cell_hwp * cell)
         grid_gap = (renderer._spacing_gap(grid_advance, spacing)
                     if spacing else 0.0)
+        # Every candidate fallback rule, priced on this one character.  An
+        # installed face is untouched by all of them, which is what makes the
+        # installed lines a control rather than a second treatment.
+        klass = char_class(ch)
+        oracle_em = self.oracle.get((declared, klass))
+        rules = {}
+        rule_gaps = {}
+        for name in FALLBACK_RULES:
+            if source == "installed" or cell_hwp <= 0:
+                value = advance
+            else:
+                value = rule_advance(name, advance, ch, cell_hwp, oracle_em)
+            rules[name] = value
+            rule_gaps[name] = (renderer._spacing_gap(value, spacing)
+                               if spacing else 0.0)
         return {
             "declared": declared,
+            "cell_hwp": cell_hwp,
             "resolved": resolved,
             "source": source,
             "slot": slot,
@@ -361,11 +499,13 @@ class OurMetrics:
             "size_pt": round(size_pt, 2),
             "spacing": spacing,
             "ratio": ratio,
-            "class": char_class(ch),
+            "class": klass,
             "advance_hwp": advance,
             "gap_hwp": gap,
             "grid_advance_hwp": grid_advance,
             "grid_gap_hwp": grid_gap,
+            "rule_advance_hwp": rules,
+            "rule_gap_hwp": rule_gaps,
         }
 
 
@@ -453,10 +593,14 @@ def analyse_line(ours, boxes, metrics, keep_text=True):
         covered = [ours[i] for i in range(i1, i2)]
         ours_hwp = 0.0
         grid_hwp = 0.0
+        rule_hwp = dict.fromkeys(FALLBACK_RULES, 0.0)
         for _pos, ch, cid in covered:
             run = metrics.run(ch, cid)
             ours_hwp += run["advance_hwp"] + run["gap_hwp"]
             grid_hwp += run["grid_advance_hwp"] + run["grid_gap_hwp"]
+            for name in FALLBACK_RULES:
+                rule_hwp[name] += (run["rule_advance_hwp"][name]
+                                   + run["rule_gap_hwp"][name])
         hancom_hwp = (boxes[j2]["ox"] - boxes[j1]["ox"]) * HWPUNIT_PER_PT
         has_tab = any(ch == "\t" for _p, ch, _c in covered)
         singleton = (i2 == i1 + 1 and j2 == j1 + 1
@@ -464,17 +608,38 @@ def analyse_line(ours, boxes, metrics, keep_text=True):
         head = metrics.run(covered[0][1], covered[0][2])
         segments.append({
             "ours_hwp": ours_hwp, "hancom_hwp": hancom_hwp,
-            "grid_hwp": grid_hwp,
+            "grid_hwp": grid_hwp, "rule_hwp": rule_hwp,
             "chars": len(covered), "tab": has_tab, "singleton": singleton,
             "resolved": head["resolved"], "class": head["class"],
             "sources": sorted({metrics.run(ch, cid)["source"]
                                for _p, ch, cid in covered}),
         })
         if singleton and not has_tab:
+            # The character that FOLLOWS this one in our own text, and its
+            # class.  A singleton segment's Hancom distance is the pen move
+            # from this glyph's origin to the next one's, so it is this
+            # glyph's advance PLUS whatever Hancom inserts at the boundary
+            # between the two classes -- which is the quantity the
+            # inter-class gap table reads.  Recorded here because this is
+            # the only place both sides of the boundary are in hand.
+            nxt = ours[i2] if i2 < len(ours) else None
+            nxt_run = metrics.run(nxt[1], nxt[2]) if nxt is not None else None
             chars.append({
                 "char": covered[0][1] if keep_text else None,
                 "class": head["class"],
+                "slot": head["slot"],
+                "source": head["source"],
+                "next_char": (nxt[1] if (nxt is not None and keep_text)
+                              else None),
+                "next_class": nxt_run["class"] if nxt_run else None,
+                "next_source": nxt_run["source"] if nxt_run else None,
+                # The full-width cell this advance is a fraction of: the
+                # declared point size times ``hh:ratio``.  Dividing by it
+                # turns every advance into em and makes sizes comparable.
+                "cell_hwp": head["declared"],
                 "declared": head["declared"],
+                "cell_hwp": head["cell_hwp"],
+                "source": head["source"],
                 "resolved": head["resolved"],
                 # What Hancom's own exporter embedded for this glyph.  The
                 # declared name is what the FILE asks for; this is what the
@@ -490,6 +655,7 @@ def analyse_line(ours, boxes, metrics, keep_text=True):
                 "bold": head["bold"],
                 "ours_hwp": ours_hwp,
                 "hancom_hwp": hancom_hwp,
+                "rule_hwp": dict(rule_hwp),
             })
     return pairs, n_ours, n_theirs, chars, segments
 
@@ -554,11 +720,13 @@ def pair_lines(para, cells, pdf_run, metrics, keep_text):
     return lines
 
 
-def probe_document(hwpx_path, pdf_path, repo_root=None, keep_text=True):
+def probe_document(hwpx_path, pdf_path, repo_root=None, keep_text=True,
+                   oracle=None):
     """Every paired top-level text line of one document, both sides."""
     renderer = own_render.OwnRenderer(hwpx_path, repo_root=repo_root)
-    metrics = OurMetrics(renderer)
+    metrics = OurMetrics(renderer, oracle=oracle)
     pdf = read_pdf_chars(pdf_path)
+    flags = autospace_flags(hwpx_path)
     cursor = 0
     paragraphs = []
     skipped = defaultdict(int)
@@ -584,6 +752,11 @@ def probe_document(hwpx_path, pdf_path, repo_root=None, keep_text=True):
                 "section": section,
                 "paragraph": order,
                 "address": renderer.paragraph_index.get(id(el)),
+                "para_pr": el.get("paraPrIDRef"),
+                "autospace": flags.get(el.get("paraPrIDRef") or "",
+                                       {name: None
+                                        for name in AUTOSPACE_ATTRS}),
+                "condense": para.para_pr.get("condense"),
                 "cached_lines": len(para.linesegs),
                 "pdf_lines": len(pdf_run),
                 "lines": pair_lines(para, cells, pdf_run, metrics, keep_text),
@@ -619,7 +792,10 @@ def run_table(reports):
                     if abs(entry["hancom_hwp"]) < 1e-9:
                         zero_hancom += 1
                         continue
-                    key = (entry["declared"], entry["resolved"],
+                    # The cell, not the declared face name: two runs of the
+                    # same face at the same size but different ``hh:ratio``
+                    # are different advances and stay different rows.
+                    key = (entry["cell_hwp"], entry["resolved"],
                            entry.get("pdf_font"),
                            entry["size_pt"], entry["spacing"], entry["class"])
                     buckets[key].append((entry["ours_hwp"],
@@ -629,7 +805,7 @@ def run_table(reports):
         ratios = [ours / theirs for ours, theirs in pairs]
         deltas = [ours - theirs for ours, theirs in pairs]
         rows.append({
-            "declared": key[0], "resolved": key[1], "pdf_font": key[2],
+            "cell_hwp": key[0], "resolved": key[1], "pdf_font": key[2],
             "size_pt": key[3], "spacing": key[4], "class": key[5],
             "n": len(pairs),
             "ratio_median": statistics.median(ratios),
@@ -666,6 +842,145 @@ def class_table(reports):
         })
     rows.sort(key=lambda row: -row["n"])
     return rows
+
+
+#: The two classes ``char_class`` puts a punctuation mark in.  ``fw_punct``
+#: is everything outside ASCII that is not a syllable, so it also holds the
+#: CJK brackets and the general-punctuation quotation marks.
+PUNCT_CLASSES = frozenset({"punct", "fw_punct"})
+
+
+def installed_chars(reports, classes=None):
+    """Every anchored single-character advance drawn in an INSTALLED face.
+
+    Restricted on BOTH sides of the boundary: the character's own face is the
+    declared one and so is its successor's, because a segment's distance is a
+    pen move whose far end is the next glyph's origin and a substituted
+    successor can be positioned by a metric that is not the declared face's.
+    The fallback slice is measuring the other half of this population; the
+    filter here is what keeps the two disjoint.
+    """
+    out = []
+    for report in reports:
+        for para in report["paragraphs"]:
+            auto = para.get("autospace") or {}
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    if entry.get("source") != "installed":
+                        continue
+                    if entry.get("next_source") not in (None, "installed"):
+                        continue
+                    if abs(entry["hancom_hwp"]) < 1e-9:
+                        continue
+                    if not entry.get("cell_hwp"):
+                        continue
+                    if classes is not None and entry["class"] not in classes:
+                        continue
+                    row = dict(entry)
+                    row["form"] = Path(report["document"]).stem
+                    row["autospace"] = auto
+                    out.append(row)
+    return out
+
+
+def punct_char_table(reports):
+    """Per punctuation CODE POINT, on installed faces: Hancom's em vs ours.
+
+    Grouped by the character itself rather than by class, because the class
+    is the hypothesis under test: #267 found ``fw_punct`` and ``punct``
+    over-measuring in aggregate, and an aggregate over a class cannot say
+    whether every mark in it is wrong by the same amount or one mark is
+    wrong by all of it.
+
+    ``em`` is the advance over the run's full-width cell (declared size times
+    ``hh:ratio``), so 1.0 is a full-width cell and 0.5 a half-width one.
+    """
+    buckets = defaultdict(list)
+    for row in installed_chars(reports, PUNCT_CLASSES):
+        buckets[(row["char"], row["class"], row["resolved"])].append(row)
+    rows = []
+    for (ch, klass, face), group in buckets.items():
+        hancom = [g["hancom_hwp"] for g in group]
+        ours = [g["ours_hwp"] for g in group]
+        cells = [g["cell_hwp"] for g in group]
+        rows.append({
+            "char": ch,
+            "codepoint": f"U+{ord(ch):04X}" if ch else None,
+            "class": klass,
+            "slot": group[0]["slot"],
+            "resolved": face,
+            "pdf_fonts": sorted({str(g["pdf_font"]) for g in group}),
+            "forms": sorted({g["form"] for g in group}),
+            "n": len(group),
+            "hancom_median_hwp": statistics.median(hancom),
+            "ours_median_hwp": statistics.median(ours),
+            "hancom_em": statistics.median(h / c for h, c
+                                           in zip(hancom, cells)),
+            "ours_em": statistics.median(o / c for o, c in zip(ours, cells)),
+            "ratio": statistics.median(o / h for o, h in zip(ours, hancom)),
+            "delta_median_hwp": statistics.median(o - h for o, h
+                                                  in zip(ours, hancom)),
+            "total_delta_hwp": sum(o - h for o, h in zip(ours, hancom)),
+        })
+    rows.sort(key=lambda row: -abs(row["total_delta_hwp"]))
+    return rows
+
+
+def gap_table(reports):
+    """The inter-class boundary, on installed faces, in em.
+
+    A singleton segment's Hancom distance is the pen move from one glyph's
+    origin to the next one's: the first glyph's own advance PLUS anything
+    Hancom inserts at the boundary.  The first glyph's own advance is not
+    separately observable in a PDF, so the baseline is measured rather than
+    assumed: for the same (character class, face, size) the median distance
+    when the SUCCESSOR IS OF THE SAME CLASS, where no inter-class rule can
+    apply.  The gap is the difference of the two medians, and the same
+    subtraction is done on our side so the two columns answer the same
+    question.
+
+    ``autoSpaceEAsianEng`` / ``autoSpaceEAsianNum`` are carried through from
+    the paragraph so the table can be split by them.  On this corpus both
+    attributes are ABSENT from every ``hp:paraPr``, which the formatter says
+    out loud rather than reporting a split that does not exist.
+    """
+    rows = installed_chars(reports)
+    baseline = defaultdict(list)
+    for row in rows:
+        if row["next_class"] == row["class"]:
+            key = (row["class"], row["resolved"], row["size_pt"])
+            baseline[key].append((row["hancom_hwp"] / row["cell_hwp"],
+                                  row["ours_hwp"] / row["cell_hwp"]))
+    base_med = {k: (statistics.median(h for h, _o in v),
+                    statistics.median(o for _h, o in v))
+                for k, v in baseline.items()}
+    pairs = defaultdict(list)
+    for row in rows:
+        if row["next_class"] is None or row["next_class"] == row["class"]:
+            continue
+        key = (row["class"], row["resolved"], row["size_pt"])
+        if key not in base_med:
+            continue
+        h_base, o_base = base_med[key]
+        flags = row["autospace"]
+        pairs[(row["class"], row["next_class"],
+               flags.get("autoSpaceEAsianEng"),
+               flags.get("autoSpaceEAsianNum"))].append(
+            (row["hancom_hwp"] / row["cell_hwp"] - h_base,
+             row["ours_hwp"] / row["cell_hwp"] - o_base,
+             row["hancom_hwp"] - row["ours_hwp"]))
+    out = []
+    for (left, right, eng, num), group in pairs.items():
+        out.append({
+            "from": left, "to": right,
+            "autoSpaceEAsianEng": eng, "autoSpaceEAsianNum": num,
+            "n": len(group),
+            "hancom_gap_em": statistics.median(h for h, _o, _d in group),
+            "ours_gap_em": statistics.median(o for _h, o, _d in group),
+            "gap_delta_em": statistics.median(h - o for h, o, _d in group),
+        })
+    out.sort(key=lambda row: -row["n"])
+    return out
 
 
 def comparable_lines(reports):
@@ -846,6 +1161,392 @@ def pdf_size_table(reports):
     return rows
 
 
+# -- the substituted-face question (#280) ---------------------------------
+
+def line_source(line):
+    """``installed`` or ``substituted`` for one comparable line."""
+    sources = {source for seg in line["segments"]
+               for source in seg.get("sources", ())}
+    return "installed" if sources <= {"installed"} else "substituted"
+
+
+def latin_oracle(reports):
+    """``(declared face, class) -> em``, off Hancom's OWN drawn advances.
+
+    The one candidate rule that is fitted rather than derived: for every
+    class on a SUBSTITUTED face, the median of Hancom's advance divided by
+    the run's declared cell.  It is an oracle in the strict sense -- it was
+    read off the reference it is then scored against -- so what it measures
+    is the ceiling a per-face Latin table could reach, not a shippable rule.
+    """
+    buckets = defaultdict(list)
+    for report in reports:
+        for para in report["paragraphs"]:
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    if entry.get("source") == "installed":
+                        continue
+                    cell = entry.get("cell_hwp") or 0.0
+                    if cell <= 0 or abs(entry["hancom_hwp"]) < 1e-9:
+                        continue
+                    buckets[(entry["declared"], entry["class"])].append(
+                        entry["hancom_hwp"] / cell)
+    return {key: statistics.median(values) for key, values in buckets.items()}
+
+
+def substituted_em_table(reports):
+    """Per (declared face, resolved stand-in, class): Hancom's em against ours.
+
+    Both sides divided by the run's own declared cell, so the numbers are
+    face metrics and not point sizes: ``hancom_em`` is what the reference
+    advances that character by, ``ours_em`` is what the stand-in's outlines
+    say, and ``on_grid`` is the share of Hancom's advances that land on a
+    whole 1/600 inch -- which is how a Latin advance is told apart from a
+    full cell.
+    """
+    buckets = defaultdict(list)
+    for report in reports:
+        for para in report["paragraphs"]:
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    cell = entry.get("cell_hwp") or 0.0
+                    if cell <= 0 or abs(entry["hancom_hwp"]) < 1e-9:
+                        continue
+                    buckets[(entry.get("source"), entry["declared"],
+                             entry["resolved"], entry["class"])].append(
+                        (entry["hancom_hwp"], entry["ours_hwp"], cell))
+    rows = []
+    for key, values in buckets.items():
+        hancom = [h / c for h, _o, c in values]
+        ours = [o / c for _h, o, c in values]
+        on_grid = sum(1 for h, _o, _c in values
+                      if abs(h - quantise_grid(h, "round")) <= 0.05)
+        rows.append({
+            "source": key[0], "declared": key[1], "resolved": key[2],
+            "class": key[3], "n": len(values),
+            "hancom_em": statistics.median(hancom),
+            "ours_em": statistics.median(ours),
+            "on_grid": on_grid / len(values),
+        })
+    # Substituted first: they are the population this report is about, and a
+    # truncated table has to keep them rather than the control.
+    rows.sort(key=lambda row: (row["source"] == "installed", -row["n"]))
+    return rows
+
+
+def fullwidth_cell_table(reports):
+    """The full-width advance, MEAN against MODAL, per (face, size).
+
+    #267 read "13 pt advances by 1296, the declared size rounded to a whole
+    1/600 inch" off the MEDIAN of Hancom's per-character advances.  The
+    median is not the advance.  At 13 pt Hancom's individual full-width
+    advances are 108 units of 1/600 inch on 1515 characters and 109 on 797,
+    and the mean of those is 108.29 against the 108.333 that 13 pt actually
+    is: the 1/600 inch grid is on the PEN POSITION, not on the advance, so a
+    single advance is the declared cell rounded up or down by at most one
+    unit while a run of them accumulates the declared cell exactly.
+
+    Which is the quantity a line breaker needs -- so this table is the one
+    that says what a rule should use, and it says the declared cell.
+    """
+    buckets = defaultdict(list)
+    for report in reports:
+        for para in report["paragraphs"]:
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    if entry["spacing"] or not entry.get("cell_hwp"):
+                        continue
+                    if entry["class"] not in ("hangul", "hanja"):
+                        continue
+                    buckets[(entry.get("source"), entry.get("pdf_font"),
+                             entry["size_pt"], entry["cell_hwp"])].append(
+                        entry["hancom_hwp"])
+    rows = []
+    for (source, font, size_pt, cell), values in buckets.items():
+        if len(values) < 30:
+            continue
+        units = defaultdict(int)
+        for value in values:
+            units[int(round(value / DEVICE_GRID_HWP))] += 1
+        rows.append({
+            "source": source, "pdf_font": font, "size_pt": size_pt,
+            "cell_hwp": cell, "n": len(values),
+            "mean_hwp": statistics.mean(values),
+            "median_hwp": statistics.median(values),
+            "grid_cell_hwp": cell_on_grid(cell),
+            "mean_over_cell": statistics.mean(values) / cell,
+            "units": dict(sorted(units.items())),
+        })
+    rows.sort(key=lambda row: -row["n"])
+    return rows
+
+
+def fallback_rule_table(reports):
+    """Every candidate rule, scored on the comparable lines it can move.
+
+    Split installed / substituted, because a rule that only fires on a
+    substituted face MUST leave the installed lines exactly where they were
+    and the table has to show that rather than assert it.
+    """
+    lines = comparable_lines(reports)
+    rows = []
+    for name in FALLBACK_RULES:
+        row = {"rule": name}
+        for group in ("installed", "substituted"):
+            deltas = []
+            for line in lines:
+                if line_source(line) != group:
+                    continue
+                total = sum(seg["rule_hwp"][name] for seg in line["segments"])
+                deltas.append(total - line["hancom_span_hwp"])
+            row[group] = {
+                "n": len(deltas),
+                "exact": sum(1 for d in deltas if abs(d) <= TOL_HWP),
+                "median": statistics.median(deltas) if deltas else None,
+                "median_abs": (statistics.median(abs(d) for d in deltas)
+                               if deltas else None),
+                "p10": _pct(deltas, 0.10), "p90": _pct(deltas, 0.90),
+            }
+        rows.append(row)
+    return rows
+
+
+def fallback_class_residual(reports):
+    """Per rule and character class, the residual on SUBSTITUTED characters.
+
+    One anchored character against the next, so this is a per-glyph residual
+    and not a line's accumulation of them: ours under the rule minus
+    Hancom's, in HWPUNIT, median and the share inside 2 HWPUNIT.
+    """
+    buckets = defaultdict(list)
+    for report in reports:
+        for para in report["paragraphs"]:
+            for line in para["lines"]:
+                for entry in line.get("chars", []):
+                    if entry.get("source") == "installed":
+                        continue
+                    if abs(entry["hancom_hwp"]) < 1e-9:
+                        continue
+                    for name in FALLBACK_RULES:
+                        buckets[(name, entry["class"])].append(
+                            entry["rule_hwp"][name] - entry["hancom_hwp"])
+    rows = []
+    for (name, klass), deltas in buckets.items():
+        rows.append({
+            "rule": name, "class": klass, "n": len(deltas),
+            "median": statistics.median(deltas),
+            "median_abs": statistics.median(abs(d) for d in deltas),
+            "within_tol": sum(1 for d in deltas if abs(d) <= TOL_HWP),
+        })
+    rows.sort(key=lambda row: (FALLBACK_RULES.index(row["rule"]), -row["n"]))
+    return rows
+
+
+def embedded_font_report(pdf_path):
+    """What face did Hancom's own exporter EMBED, and is it a substitute?
+
+    The declared name is what the file asks for; the reference PDF says what
+    Hancom drew with.  Every Type0 font's ``/BaseFont`` is read (Hancom writes
+    a Korean face name into it as CP949 bytes, escaped ``#XX``), and the
+    embedded program's own advances are read out of its ``hmtx``.  A subset
+    Hancom embeds carries no ``name`` table, so the program cannot name
+    itself -- what it CAN say is its units per em and its advances, and a
+    substitute betrays itself there: a full-width Korean face advances a
+    syllable by exactly 1.000 em, and two faces of different families rarely
+    agree on the em they use.
+    """
+    try:
+        import fitz
+        from fontTools.ttLib import TTFont
+    except ImportError as exc:                      # pragma: no cover
+        return [{"error": f"{exc}"}]
+    doc = fitz.open(str(pdf_path))
+    xrefs = {}
+    for page in range(doc.page_count):
+        for font in doc.get_page_fonts(page, full=True):
+            xrefs.setdefault(font[0], font[3])
+    rows = []
+    for xref, listed in sorted(xrefs.items()):
+        obj = doc.xref_object(xref, compressed=True)
+        match = re.search(r"/BaseFont\s*/([^\s/>\]]+)", obj)
+        raw = match.group(1) if match else (listed or "?")
+        name = re.sub(r"#([0-9A-Fa-f]{2})",
+                      lambda hit: chr(int(hit.group(1), 16)), raw)
+        row = {"xref": xref, "base_font": readable_font_name(name),
+               "type3": "/Type3" in obj, "upem": None, "hangul_em": None,
+               "advances_em": None}
+        if not row["type3"]:
+            try:
+                data = doc.extract_font(xref)[3]
+                face = TTFont(io.BytesIO(data), fontNumber=0, lazy=True,
+                              ignoreDecompileErrors=True)
+                upem = face["head"].unitsPerEm
+                widths = sorted({adv for adv, _lsb
+                                 in face["hmtx"].metrics.values()})
+                row["upem"] = upem
+                row["advances_em"] = [round(w / upem, 4) for w in widths[:8]]
+                row["hangul_em"] = (1.0 if upem in widths else None)
+                row["named"] = "name" in face.reader.keys()
+            except Exception as exc:                # pragma: no cover
+                row["error"] = f"{type(exc).__name__}: {exc}"
+        rows.append(row)
+    doc.close()
+    return rows
+
+
+class RuleRenderer(own_render.OwnRenderer):
+    """The renderer with one candidate substituted-face advance rule in it.
+
+    The rule goes in at ``_advance_hwp`` and ``_half_cell_hwp`` -- the two
+    places every advance the line breaker sees comes out of -- so a break
+    test run through this class is the real breaker on real inputs, not a
+    reconstruction of one.
+    """
+
+    def __init__(self, *args, rule=None, oracle=None, **kwargs):
+        self.rule = rule
+        self.rule_oracle = oracle or {}
+        super().__init__(*args, **kwargs)
+
+    def _substituted(self, cid, slot):
+        bold = bool(self._charpr(cid).get("bold"))
+        return self._face_source(cid, slot, bold) != "installed"
+
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio):
+        base = super()._advance_hwp(font, chunk, cid, slot, pt, ratio)
+        if not self.rule or self.rule == "current" or not chunk:
+            return base
+        if not self._substituted(cid, slot):
+            return base
+        cell = pt * HWPUNIT_PER_PT * ratio / 100.0
+        if cell <= 0:
+            return base
+        if not any(is_full_width(ch) for ch in chunk):
+            # Nothing in this chunk is a full cell; the whole kerned
+            # measurement stands, quantised as one where the rule quantises.
+            if self.rule == "cell":
+                return base
+            return quantise_grid(base / cell * quantise_grid(cell, "round"),
+                                 self.rule.split(":", 1)[1]
+                                 if self.rule.startswith("cell+grid:")
+                                 else "round")
+        # A mixed chunk is measured character by character.  It costs the
+        # face's kern table, which no Korean full-width run has anyway.
+        declared = declared_face(self, cid, slot)
+        total = 0.0
+        for ch in chunk:
+            per = self._em_width(font, ch) * pt * HWPUNIT_PER_PT * ratio / 100.0
+            oracle_em = self.rule_oracle.get((declared, char_class(ch)))
+            total += rule_advance(self.rule, per, ch, cell, oracle_em)
+        return total
+
+    def _half_cell_hwp(self, cid, rel_sz, ratio):
+        base = super()._half_cell_hwp(cid, rel_sz, ratio)
+        if not self.rule or self.rule == "current" or self.rule == "cell":
+            return base
+        if not self._substituted(cid, script_slot(" ")):
+            return base
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        cell = pt * HWPUNIT_PER_PT * ratio / 100.0
+        if cell <= 0:
+            return base
+        return rule_advance(self.rule, base, " ", cell, None)
+
+
+class BreakTestRenderer(RuleRenderer):
+    """``RuleRenderer``, recording every ``compute_lines`` call it makes."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.break_calls = {}
+
+    def compute_lines(self, draw, para, column_hwp, from_char=0, from_line=0):
+        lines = super().compute_lines(draw, para, column_hwp,
+                                      from_char=from_char, from_line=from_line)
+        address = self.paragraph_index.get(id(para.el))
+        if address is not None and from_char == 0:
+            self.break_calls.setdefault(
+                address, [line["end"] for line in lines[:-1]])
+        return lines
+
+
+def cache_break_positions(para, cells):
+    """The cache's own break positions, in our character index."""
+    out = []
+    for _lo, hi in lineseg_vs_pdf.cached_split(para, cells)[:-1]:
+        cut = len(para.chars)
+        for index in range(len(para.chars)):
+            if para.cell_start[index] >= hi:
+                cut = index
+                break
+        out.append(cut)
+    return out
+
+
+def break_test(hwpx_path, rule, oracle=None, repo_root=None, dpi=144):
+    """Does ``rule`` reproduce the cached break positions?  Per paragraph.
+
+    Every paragraph the cache broke -- top level and in cells alike -- is
+    read, its ``hp:lineseg`` break positions taken as truth, and our own
+    breaker run against the column its container actually gave it.  A
+    paragraph is counted ``substituted`` when any character on it resolves to
+    a stand-in face, which is the population the rule is allowed to move;
+    every other paragraph is the control and must not move at all.
+    """
+    renderer = BreakTestRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                                 layout_policy="computed", rule=rule,
+                                 oracle=oracle)
+    renderer.render()
+    rows = []
+    for section in renderer.sections:
+        for el in section.iter():
+            if _local(el.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(el))
+            if address is None or address not in renderer.break_calls:
+                continue
+            para = own_render.Paragraph(el, renderer.defs["para_pr"])
+            if not para.linesegs or para.objects:
+                continue
+            cells = lineseg_vs_pdf.character_cells(para)
+            if _iattr(para.linesegs[-1], "textpos") > len(cells):
+                continue
+            substituted = False
+            for ch, cid in para.chars:
+                if ch == own_render.OBJECT_SLOT:
+                    continue
+                slot = script_slot(ch)
+                bold = bool(renderer._charpr(cid).get("bold"))
+                if renderer._face_source(cid, slot, bold) != "installed":
+                    substituted = True
+                    break
+            rows.append({
+                "address": address,
+                "cached_lines": len(para.linesegs),
+                "substituted": substituted,
+                "cache_breaks": cache_break_positions(para, cells),
+                "our_breaks": renderer.break_calls[address],
+            })
+    return rows
+
+
+def break_summary(rows):
+    """``matched / total`` per population, and multi-line only."""
+    out = {}
+    for group, want in (("substituted", True), ("installed", False)):
+        picked = [row for row in rows if row["substituted"] is want]
+        multi = [row for row in picked if row["cached_lines"] > 1]
+        out[group] = {
+            "paragraphs": len(picked),
+            "matched": sum(1 for row in picked
+                           if row["cache_breaks"] == row["our_breaks"]),
+            "multiline": len(multi),
+            "multiline_matched": sum(1 for row in multi
+                                     if row["cache_breaks"] == row["our_breaks"]),
+        }
+    return out
+
+
 # -- the cache's own one-sided score --------------------------------------
 
 def fit_scoreboard(hwpx_path, repo_root=None):
@@ -913,6 +1614,88 @@ def fit_scoreboard(hwpx_path, repo_root=None):
                     "grid_over": grid > horzsize,
                 })
     return rows
+
+
+def break_scoreboard(hwpx_path, dpi=144, repo_root=None):
+    """Does our breaker put the line ends where the cache put them?
+
+    ``fit_scoreboard`` is one-sided -- it can only prove an over-measurement.
+    This is the two-sided score and it is the one a candidate advance rule
+    has to pass: for every paragraph the cache broke into more than one line,
+    the cached break positions in ``chars`` index against the ones
+    ``compute_lines`` produced on the real column.  A paragraph counts as
+    reproduced only when every break matches, so a rule that fixes one break
+    and breaks another scores worse, not the same.
+
+    Split by whether EVERY face on the paragraph is the declared, installed
+    one, because that is the only half of the corpus this slice may move:
+    a paragraph carrying a stand-in is the fallback slice's population and a
+    change that moved it would be measuring the other worker's subject.
+    """
+    renderer = BreakRecordingRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                                      layout_policy="computed")
+    renderer.render()
+    metrics = OurMetrics(renderer)
+    rows = []
+    for section in renderer.sections:
+        for el in section.iter():
+            if _local(el.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(el))
+            call = renderer.break_calls.get(address)
+            if call is None:
+                continue
+            para = own_render.Paragraph(el, renderer.defs["para_pr"])
+            if len(para.linesegs) < 2 or para.objects:
+                continue
+            cells = lineseg_vs_pdf.character_cells(para)
+            if _iattr(para.linesegs[-1], "textpos") > len(cells):
+                continue
+            spans = lineseg_vs_pdf.cached_split(para, cells)
+            cache_breaks = []
+            for _lo, hi in spans[:-1]:
+                cut = len(para.chars)
+                for index in range(len(para.chars)):
+                    if para.cell_start[index] >= hi:
+                        cut = index
+                        break
+                cache_breaks.append(cut)
+            computed = [end for _start, end in call["spans"][:-1]]
+            sources = {metrics.run(ch, cid)["source"]
+                       for ch, cid in para.chars}
+            rows.append({
+                "address": address,
+                "installed": sources <= {"installed"},
+                "cache_breaks": cache_breaks,
+                "computed_breaks": computed,
+                "match": cache_breaks == computed,
+            })
+    return rows
+
+
+def format_breaks(rows_by_form):
+    out = ["", "cached break positions reproduced by our own breaker, "
+                "multi-line paragraphs", ""]
+    out.append(f"{'form':<14} {'installed ¶':>12} {'match':>7} "
+               f"{'other ¶':>9} {'match':>7}")
+    out.append("-" * 54)
+    tot = [0, 0, 0, 0]
+    for stem, rows in rows_by_form:
+        inst = [r for r in rows if r["installed"]]
+        rest = [r for r in rows if not r["installed"]]
+        hit_i = sum(1 for r in inst if r["match"])
+        hit_r = sum(1 for r in rest if r["match"])
+        tot[0] += len(inst)
+        tot[1] += hit_i
+        tot[2] += len(rest)
+        tot[3] += hit_r
+        out.append(f"{stem[:14]:<14} {len(inst):>12} {hit_i:>7} "
+                   f"{len(rest):>9} {hit_r:>7}")
+    out.append("-" * 54)
+    share = f"{tot[1] / tot[0]:.4f}" if tot[0] else "n/a"
+    out.append(f"{'all':<14} {tot[0]:>12} {tot[1]:>7} {tot[2]:>9} {tot[3]:>7}"
+               f"   installed share {share}")
+    return "\n".join(out)
 
 
 def format_fit(rows_by_form):
@@ -1133,6 +1916,61 @@ def format_classes(rows):
     return "\n".join(out)
 
 
+def format_punct(rows, limit=40):
+    out = ["", "punctuation advance per CODE POINT, installed faces only "
+                "(em = advance / declared cell)", ""]
+    if not rows:
+        out.append("  (no punctuation advance is anchored on an installed "
+                   "face in this run)")
+        return "\n".join(out)
+    out.append(f"{'cp':<8} {'ch':<3} {'class':<9} {'slot':<8} "
+               f"{'n':>5} {'hancom':>8} {'h_em':>7} {'ours':>8} {'o_em':>7} "
+               f"{'ratio':>7} {'sum d':>9}  {'resolved':<26}")
+    out.append("-" * 118)
+    for row in rows[:limit]:
+        out.append(f"{row['codepoint'] or '?':<8} {row['char'] or '?':<3} "
+                   f"{row['class']:<9} {row['slot']:<8} {row['n']:>5} "
+                   f"{row['hancom_median_hwp']:>8.1f} {row['hancom_em']:>7.4f} "
+                   f"{row['ours_median_hwp']:>8.1f} {row['ours_em']:>7.4f} "
+                   f"{row['ratio']:>7.4f} {row['total_delta_hwp']:>9.1f}  "
+                   f"{row['resolved'][:26]:<26}")
+    if len(rows) > limit:
+        out.append(f"  ... {len(rows) - limit} further code points")
+    out.append(f"  total over-measure on installed punctuation: "
+               f"{sum(r['total_delta_hwp'] for r in rows):+.1f} HWPUNIT over "
+               f"{sum(r['n'] for r in rows)} advances")
+    return "\n".join(out)
+
+
+def format_gaps(rows, limit=24):
+    out = ["", "inter-class boundary, installed faces only: Hancom's pen "
+                "move minus the same class's same-class baseline, in em", ""]
+    if not rows:
+        out.append("  (no inter-class boundary is anchored on an installed "
+                   "face in this run)")
+        return "\n".join(out)
+    flagged = [row for row in rows
+               if row["autoSpaceEAsianEng"] is not None
+               or row["autoSpaceEAsianNum"] is not None]
+    out.append(f"{'from':<9} {'to':<9} {'eng':>6} {'num':>6} {'n':>6} "
+               f"{'hancom em':>10} {'ours em':>9} {'delta em':>9}")
+    out.append("-" * 70)
+    for row in rows[:limit]:
+        eng = "-" if row["autoSpaceEAsianEng"] is None \
+            else row["autoSpaceEAsianEng"]
+        num = "-" if row["autoSpaceEAsianNum"] is None \
+            else row["autoSpaceEAsianNum"]
+        out.append(f"{row['from']:<9} {row['to']:<9} {eng:>6} {num:>6} "
+                   f"{row['n']:>6} {row['hancom_gap_em']:>10.4f} "
+                   f"{row['ours_gap_em']:>9.4f} {row['gap_delta_em']:>9.4f}")
+    if not flagged:
+        out.append("  `-` in both flag columns: hp:paraPr declares NEITHER "
+                   "autoSpaceEAsianEng NOR autoSpaceEAsianNum anywhere in "
+                   "this run, so the split has one bucket and nothing here "
+                   "is evidence about what either flag does.")
+    return "\n".join(out)
+
+
 def format_pdf_sizes(rows, limit=18):
     out = ["", "the reference PDF's own font size against 1/600 inch "
                 "(no metric of ours enters this)", ""]
@@ -1241,6 +2079,120 @@ def format_carriers(carriers):
     return "\n".join(out)
 
 
+def format_fullwidth_cells(rows, limit=12):
+    out = ["", "the full-width advance: MEAN against MODAL, per (face, size)",
+           "(the 1/600 inch grid is on the pen POSITION, so one advance is "
+           "the cell +-1 unit and a run of them is the cell exactly)", ""]
+    out.append(f"{'src':<10} {'pdf font':<14} {'pt':>6} {'n':>6} {'cell':>8} "
+               f"{'mean':>9} {'median':>9} {'grid cell':>10} "
+               f"{'mean/cell':>10}  units")
+    out.append("-" * 116)
+    for row in rows[:limit]:
+        units = ", ".join(f"{unit}x{count}"
+                          for unit, count in list(row["units"].items())[:4])
+        out.append(f"{str(row['source'])[:10]:<10} "
+                   f"{str(row['pdf_font'])[:14]:<14} {row['size_pt']:>6.2f} "
+                   f"{row['n']:>6} {row['cell_hwp']:>8.1f} "
+                   f"{row['mean_hwp']:>9.2f} {row['median_hwp']:>9.2f} "
+                   f"{row['grid_cell_hwp']:>10.1f} "
+                   f"{row['mean_over_cell']:>10.4f}  {units}")
+    return "\n".join(out)
+
+
+def format_fallback_rules(rows, class_rows, em_rows, embedded, breaks):
+    """The #280 report: what a substituted face should advance by."""
+    out = ["", "=" * 100, "SUBSTITUTED-FACE ADVANCE RULES (#280)", "=" * 100,
+           "", "what Hancom's own exporter EMBEDDED, per reference",
+           "(a subset carries no name table, so the program cannot name "
+           "itself; its em and its advances can)", ""]
+    out.append(f"{'/BaseFont':<26} {'kind':<7} {'upem':>6} {'names itself':<13} "
+               f"{'refs':>5} {'distinct advances, em':<38}")
+    out.append("-" * 104)
+    seen = {}
+    for _stem, faces in embedded:
+        for face in faces:
+            key = (str(face.get("base_font")), face.get("upem"),
+                   str(face.get("advances_em")))
+            seen[key] = (seen.get(key, (0, face))[0] + 1, face)
+    for (_name, _upem, _adv), (count, face) in sorted(
+            seen.items(), key=lambda kv: (-kv[1][0], kv[0][0])):
+        kind = "Type3" if face["type3"] else "Type0"
+        named = ("-" if face["type3"]
+                 else ("yes" if face.get("named") else "NO (subset)"))
+        out.append(f"{str(face['base_font'])[:26]:<26} {kind:<7} "
+                   f"{str(face['upem'] or '-'):>6} {named:<13} {count:>5} "
+                   f"{str(face.get('advances_em') or '-')[:38]:<38}")
+    out += ["", "Hancom's em against the stand-in's, per (declared face, "
+                "class), both over the run's declared cell",
+            "(on_grid = the share of Hancom's advances that land on a whole "
+            "1/600 inch)", ""]
+    out.append(f"{'src':<11} {'declared':<22} {'resolved (ours)':<26} "
+               f"{'class':<9} {'n':>6} {'hancom em':>10} {'ours em':>9} "
+               f"{'on grid':>8}")
+    out.append("-" * 108)
+    for row in em_rows[:26]:
+        out.append(f"{str(row['source'])[:11]:<11} "
+                   f"{str(row['declared'])[:22]:<22} "
+                   f"{str(row['resolved'])[:26]:<26} {row['class']:<9} "
+                   f"{row['n']:>6} {row['hancom_em']:>10.4f} "
+                   f"{row['ours_em']:>9.4f} {row['on_grid']:>7.1%}")
+    if len(em_rows) > 26:
+        out.append(f"... {len(em_rows) - 26} further rows")
+    out += ["", "each candidate rule against Hancom's per-line widths "
+                "(exact = within 2 HWPUNIT)", ""]
+    out.append(f"{'rule':<38} {'subst exact':>12} {'med abs':>9} "
+               f"{'median':>9} | {'inst exact':>11} {'med abs':>9} "
+               f"{'median':>9}")
+    out.append("-" * 104)
+    for row in rows:
+        sub, inst = row["substituted"], row["installed"]
+        out.append(
+            f"{row['rule'][:38]:<38} "
+            f"{sub['exact']:>5} / {sub['n']:<4} {sub['median_abs']:>9.2f} "
+            f"{sub['median']:>9.2f} | "
+            f"{inst['exact']:>4} / {inst['n']:<4} {inst['median_abs']:>9.2f} "
+            f"{inst['median']:>9.2f}")
+    out += ["", "per-character residual on SUBSTITUTED characters, ours minus "
+                "Hancom in HWPUNIT", ""]
+    out.append(f"{'rule':<38} {'class':<9} {'n':>6} {'median':>9} "
+               f"{'med abs':>9} {'within 2':>9}")
+    out.append("-" * 84)
+    for row in class_rows:
+        if row["n"] < 20:
+            continue
+        out.append(f"{row['rule'][:38]:<38} {row['class']:<9} {row['n']:>6} "
+                   f"{row['median']:>9.2f} {row['median_abs']:>9.2f} "
+                   f"{row['within_tol']:>9}")
+    if breaks:
+        out += ["", "the break test: does the rule reproduce hp:lineseg's own "
+                    "break positions?", ""]
+        out.append(f"{'rule':<38} {'substituted ¶':>14} {'multi-line':>12} "
+                   f"| {'installed ¶':>13} {'multi-line':>12}")
+        out.append("-" * 98)
+        for name, summary, _per_form in breaks:
+            sub, inst = summary["substituted"], summary["installed"]
+            out.append(
+                f"{name[:38]:<38} "
+                f"{sub['matched']:>6} / {sub['paragraphs']:<5} "
+                f"{sub['multiline_matched']:>5} / {sub['multiline']:<4} | "
+                f"{inst['matched']:>5} / {inst['paragraphs']:<5} "
+                f"{inst['multiline_matched']:>5} / {inst['multiline']:<4}")
+        out += ["", "the same test per form: substituted multi-line "
+                    "paragraphs whose break positions match the cache", ""]
+        forms = [stem for stem, _s in breaks[0][2]]
+        head = f"{'rule':<38}" + "".join(f" {stem.split('-')[0][:8]:>9}"
+                                         for stem in forms)
+        out.append(head)
+        out.append("-" * len(head))
+        for name, _summary, per_form in breaks:
+            cells = "".join(
+                f" {s['substituted']['multiline_matched']:>4}/"
+                f"{s['substituted']['multiline']:<4}"
+                for _stem, s in per_form)
+            out.append(f"{name[:38]:<38}{cells}")
+    return "\n".join(out)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Our glyph advances against Hancom's PDF glyph positions")
@@ -1262,6 +2214,17 @@ def build_parser():
                         help="skip the #265 carrier pass")
     parser.add_argument("--no-fit", action="store_true",
                         help="skip the cache-only overflow scoreboard")
+    parser.add_argument("--punct", action="store_true",
+                        help="the punctuation pass: per code point and per "
+                             "inter-class boundary, INSTALLED faces only, "
+                             "plus the candidate-rule scoreboard")
+    parser.add_argument("--fallback-rules", action="store_true",
+                        help="score candidate advance rules for a run whose "
+                             "declared face is not installed (#280), and run "
+                             "the cached-break test for each")
+    parser.add_argument("--no-break-test", action="store_true",
+                        help="with --fallback-rules, skip the break test "
+                             "(it renders the corpus once per rule)")
     return parser
 
 
@@ -1282,6 +2245,16 @@ def main(argv=None):
     for hwpx, pdf in targets:
         reports.append(probe_document(hwpx, pdf, repo_root=repo_root,
                                       keep_text=keep_text))
+    oracle = None
+    if args.fallback_rules:
+        # The oracle rule needs Hancom's own per-class em before it can be
+        # scored, so the pass that scores it is a SECOND one over the same
+        # documents with the table in hand.  Every other rule is derived and
+        # gives the same answer in both passes.
+        oracle = latin_oracle(reports)
+        reports = [probe_document(hwpx, pdf, repo_root=repo_root,
+                                  keep_text=keep_text, oracle=oracle)
+                   for hwpx, pdf in targets]
     rows, undrawn, zero_hancom = run_table(reports)
     classes = class_table(reports)
     residual = grid_residual_table(reports)
@@ -1289,16 +2262,64 @@ def main(argv=None):
     line_stats = line_delta_stats(reports)
     counts = comparability_counts(reports)
     sizes = pdf_size_table(reports)
+    puncts = punct_char_table(reports) if args.punct else []
+    gaps = gap_table(reports) if args.punct else []
     print(format_runs(rows, undrawn, zero_hancom, limit=args.runs))
     print(format_classes(classes))
+    if args.punct:
+        print(format_punct(puncts))
+        print(format_gaps(gaps))
     print(format_pdf_sizes(sizes))
     print(format_grids(residual, rounding, line_stats, counts))
+    breaks = []
+    if args.punct:
+        for hwpx, _pdf in targets:
+            breaks.append((Path(hwpx).stem,
+                           break_scoreboard(hwpx, dpi=args.dpi,
+                                            repo_root=repo_root)))
+        print(format_breaks(breaks))
     fits = []
     if not args.no_fit:
         for hwpx, _pdf in targets:
             fits.append((Path(hwpx).stem,
                          fit_scoreboard(hwpx, repo_root=repo_root)))
         print(format_fit(fits))
+    fallback = None
+    if args.fallback_rules:
+        rule_rows = fallback_rule_table(reports)
+        class_rows = fallback_class_residual(reports)
+        em_rows = substituted_em_table(reports)
+        cell_rows = fullwidth_cell_table(reports)
+        embedded = [(Path(pdf).stem, embedded_font_report(pdf))
+                    for _hwpx, pdf in targets]
+        breaks = []
+        if not args.no_break_test:
+            for name in FALLBACK_RULES:
+                rows_all = []
+                per_form = []
+                for hwpx, _pdf in targets:
+                    rows = break_test(hwpx, name, oracle=oracle,
+                                      repo_root=repo_root, dpi=args.dpi)
+                    per_form.append((Path(hwpx).stem, break_summary(rows)))
+                    rows_all.extend(rows)
+                breaks.append((name, break_summary(rows_all), per_form))
+        print(format_fallback_rules(rule_rows, class_rows, em_rows, embedded,
+                                    breaks))
+        print(format_fullwidth_cells(cell_rows))
+        fallback = {
+            "rules": rule_rows, "class_residual": class_rows,
+            "substituted_em": em_rows, "full_width_cell": cell_rows,
+            "embedded_fonts": [{"reference": stem, "faces": faces}
+                               for stem, faces in embedded],
+            "break_test": [{"rule": name, "summary": summary,
+                            "per_form": [{"form": stem, "summary": rows}
+                                         for stem, rows in per_form]}
+                           for name, summary, per_form in breaks],
+            "latin_oracle": {f"{key[0]}|{key[1]}": value
+                             for key, value in sorted(
+                                 (oracle or {}).items(),
+                                 key=lambda kv: str(kv[0]))},
+        }
     carriers = []
     if not args.no_carriers:
         for hwpx, pdf in targets:
@@ -1315,6 +2336,10 @@ def main(argv=None):
         payload = {
             "runs": rows,
             "classes": classes,
+            "punctuation": puncts,
+            "inter_class_gaps": gaps,
+            "break_scoreboard": [{"form": stem, "paragraphs": rows}
+                                 for stem, rows in breaks],
             "pdf_font_sizes": sizes,
             "hancom_grid_residual": residual,
             "rounding_hypotheses": rounding,
@@ -1326,6 +2351,8 @@ def main(argv=None):
                          for stem, records in carriers],
             "documents": reports,
         }
+        if fallback is not None:
+            payload["fallback_rules"] = fallback
         args.json.write_text(json.dumps(payload, indent=2, ensure_ascii=False,
                                         default=_jsonable),
                              encoding="utf-8")
