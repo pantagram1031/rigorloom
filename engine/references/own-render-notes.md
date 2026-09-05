@@ -4216,3 +4216,230 @@ the overflowing anchored table E2.7 already names and not this question.
   separates them would.
 - **The synthetic probe grades the renderer, not Hancom.**  Its six rows say
   the flow pass implements `baseline`; they are silent on whether it should.
+
+## Whether `usable_height` itself is short — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+E2.7 above left the fit test bracketed but undecided, and one private
+measurement made the ambiguity concrete: on the development-validation
+document Hancom KEPT a line whose box, under `vertsize`, overhangs the
+derived body bottom by **+566** and REJECTED one that would have overhung by
+**+626**. Two readings fit that pair. Either the fit allows about
+0.6 × `vertsize`, which no part of OWPML suggests, or **our `usable_height`
+is short by roughly 600 HWPUNIT** for that geometry, in which case `vertsize`
+has its boundary exactly at 0. This section asks the second question of the
+public corpus, and the answer is that the derivation is right: the tightest
+measurement in the corpus pins the body bottom to **11 HWPUNIT**, and an
+offset of 600 would miss it by fifty times that.
+
+### What the derivation is
+
+`OwnRenderer.page_geometry` reads `hp:pagePr` and its `hh:margin` child and
+computes
+
+    body_top      = top + header
+    usable_height = height - top - bottom - header - footer
+
+`gutter` is reported and never folded in — `gutterType` decides which side it
+lands on and every corpus form declares `gutter="0"` with
+`gutterType="LEFT_ONLY"`, so nothing on this corpus can grade it.
+
+### The corpus, form by form
+
+Every form is A4 portrait-declared (`width="59528"`, `landscape="WIDELY"`,
+`gutterType="LEFT_ONLY"`, `gutter="0"`), one section each, so only the
+varying terms are worth a column. "deepest cached" is
+`max(vertpos + vertsize)` over the section's top-level `hp:lineseg`s.
+
+| form | height | top | bottom | header | footer | body_top | usable | deepest cached | vs usable |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `admrul` | 84189 | 5669 | 2834 | 0 | 0 | 5669 | 75686 | 67920 | −7766 |
+| `gianmun-1ho` | 84188 | 5669 | 2835 | 0 | 0 | 5669 | 75684 | 74006 | −1678 |
+| `gianmun-2ho` | 84188 | 5669 | 2835 | 0 | 0 | 5669 | 75684 | 73762 | −1922 |
+| `jeongbo` | 84188 | 5668 | 2834 | 0 | 0 | 5668 | 75686 | 75655 | −31 |
+| `jumin` | 84188 | 5669 | 2834 | 0 | 0 | 5669 | 75685 | 74234 | −1451 |
+| `kstartup` | 84188 | 5668 | 4252 | 332 | 2936 | 6000 | 71000 | 70918 | −82 |
+| `moel-2013` | 84188 | 3600 | 3600 | 3600 | 3600 | 7200 | 69788 | 74535 | **+4747** |
+| `moel-2025` | 84186 | 2834 | 2834 | 2834 | 2834 | 5668 | 72850 | 70215 | −2635 |
+| `nrf` | 84188 | 5668 | 4252 | 1416 | 1416 | 7084 | 71436 | 73230 | **+1794** |
+| `saeopja` | 84188 | 5668 | 2834 | 0 | 0 | 5668 | 75686 | 76989 | **+1303** |
+
+Three forms look like counter-evidence and none of them is:
+
+* **`nrf` +1794** is paragraphs 4 and 5, two trailing EMPTY paragraphs sharing
+  one `vertpos` of 71630 — the seats E2.6 already wrote up. They carry no
+  character, so nothing crosses anything.
+* **`moel-2013` +4747** is paragraph 152, a single `hp:tbl` with
+  `pageBreak="NONE"` and `rowCnt="20"`, and its neighbour 153 (`NONE`,
+  `rowCnt="16"`) is +3846. A table that may not split is kept whole, so it
+  overflows rather than paginating.
+* **`saeopja` +1303** is paragraph 1, a `pageBreak="CELL"` table whose
+  `hp:lineseg@vertsize` is 76989. That number is the whole table's height, and
+  the drawn page tells a different story — see below.
+
+So **no corpus page seats a line of text whose box crosses the derived body
+bottom**, and the probe's existing `taller_than_page` and `empty`
+classifications are what keep the three above out of the kept-side evidence.
+
+### The offset scan
+
+`page_fit_probe.py --offset-scan` (also `--scan-range LO:HI:STEP` and
+`--band LO:HI`) adds a candidate offset to `usable_height` and recomputes
+k!/r! for `vertsize` and `baseline`. Because every overhang is linear in
+`usable_height`, the scan is exact: an overhang at offset δ is the offset-0
+overhang minus δ, and the consistent band is closed-open,
+`[max(kept), min(rejected))`. Only the fit boundary moves; the cached page
+grouping and the taller-than-a-page guard stay at the renderer's own
+derivation, so that a large offset cannot invent kept evidence out of a
+multi-page table's whole-table `vertsize`.
+
+| form | `vertsize` band | `baseline` band |
+| --- | --- | --- |
+| `admrul`, `gianmun-1ho`, `gianmun-2ho`, `jeongbo`, `nrf` | (no evidence) | (no evidence) |
+| `jumin` | [−1451, ∞) | [−12586, ∞) |
+| `kstartup` | **[−296, 911)** | **[−518, 731)** |
+| `moel-2013` | [−396, ∞) | [−591, ∞) |
+| `moel-2025` | [−2635, ∞) | [−2830, ∞) |
+| `saeopja` | [−299, ∞) | [−11607, ∞) |
+| **joint** | **[−296, 911)** | **[−518, 731)** |
+
+`kstartup` alone bounds the offset from above, on the five rejected-side
+events it contributes. Four of those are the `top` refuters, printed
+explicitly by the scan: pages 1/12/13/14, paragraphs 40/71/76/80, whose
+would-be tops sat 445 / 116 / 289 / 186 HWPUNIT INSIDE a `usable_height` of
+71000 and were moved anyway. Their `vertsize` overhangs — 955, 1084, 911,
+1014 — are the ceiling: an offset of 911 or more would have kept paragraph
+76's line.
+
+The private band [566, 626) is inside both joint bands, so **the corpus
+cannot refute the short-derivation reading from the cached seats alone**.
+That is as far as path A goes.
+
+### What the drawn page says
+
+`page_fit_probe.py --reference-ink` closes the gap E2.7 named as open
+("neither the corpus reference PDFs' ink positions nor a fresh Hancom export
+was consulted"). It reads each reference PDF's deepest vector extent and
+deepest glyph box and reports both against the derived body box. The two are
+kept apart on purpose: a Korean government form prints its paper-spec line in
+the bottom margin from a page-anchored object, which is text far below any
+body box and evidence about nothing, while a table's ruling has no such
+escape.
+
+The result that decides the question is one row:
+
+    saeopja page 1   body [5668, 81354]   ruling [7444, 81343]   -11
+
+`saeopja` is six pages, each one full-page table, and page 1 holds the
+76989-tall `pageBreak="CELL"` table from the table above. Hancom ruled it to
+**11 HWPUNIT above the derived body bottom** — 0.1 pt on a 297 mm page. A
++600 offset moves that bottom to 81954 and leaves a table that was plainly
+sized to the room 611 HWPUNIT short of it. The seat's 76989 is the whole
+table's height including what continues past the page; the ruling is where
+the ink stopped.
+
+The rest of the corpus agrees from both sides:
+
+* **Top.** `vector_top - body_top` is never below −82 (`moel-2025` −82,
+  `kstartup` −7, `nrf` +68, `admrul` +3485 on a form that starts low). If the
+  header band were not part of the top offset, `moel-2013` would start 3600
+  higher than it does and `kstartup` 332. `body_top = top + header` is
+  measured, not assumed.
+* **Bottom, with a footer margin and no footer.** `kstartup` declares
+  `footer="2936"` and contains no `hp:footer`. Its deepest ruling is
+  **−152** from the derived bottom on page 2. Had the footer band not been
+  reserved the body would run 2936 further and Hancom would have broken that
+  page 3088 early with a 1084-tall line waiting. The footer margin is
+  reserved whether or not a footer exists.
+* **The only rulings below the derived bottom** are `moel-2013` pages 5 and 6,
+  +2353 and +3612 — the two `pageBreak="NONE"` tables — and page 6's ruling
+  also runs +12 past `height - bottom`, the paper's own bottom margin, which
+  no margin-derived body box can contain. They are the unsplittable-table
+  overflow, not a taller body.
+
+### The spec reading
+
+KS X 6101 / OWPML gives `hp:pagePr` a `hh:margin` child carrying `left`,
+`right`, `top`, `bottom`, `header`, `footer` and `gutter`, and Hancom's own
+편집 용지 dialog stacks them cumulatively down the page: paper edge → `top` →
+`header` → body → `footer` → `bottom`. The header and footer bands are
+therefore INSIDE the top and bottom margins and outside the body, both are
+subtracted, and neither is conditioned on a header or footer existing — the
+band is page geometry, not content. `gutter` is added on the side
+`gutterType` selects (`LEFT_ONLY`, `RIGHT_ONLY`, `LEFT_RIGHT`, `TOP_ONLY`),
+so it shortens the body's width, or its height under `TOP_ONLY`. Our
+derivation matches that reading on every term except `gutter`, which is
+reported and unapplied and which no corpus form exercises.
+
+Every spec-shaped rule that would produce a positive offset is refuted by the
+scan against `kstartup`'s own band of [−296, 911):
+
+| rule | offset on `kstartup` | in band |
+| --- | ---: | :--- |
+| the footer margin is not reserved when no `hp:footer` exists | 2936 | no |
+| the footer margin is never reserved | 2936 | no |
+| the body extends to the bottom margin (header and footer both freed) | 3268 | no |
+| the header margin is not reserved | 332 | yes, but... |
+
+The last one survives the scan on all ten forms and is still wrong: it keeps
+`body_top = top + header` while extending the bottom by `header`, which pushes
+the body 332 HWPUNIT into `kstartup`'s footer band, and the measured ink tops
+above show the header band is real. It also predicts nothing near [566, 626)
+unless the private document happens to declare a header margin of about 600,
+which is not a value Hancom's dialog produces from any round millimetre.
+
+### Nothing was changed
+
+`own_render.py` is byte-identical to `origin/claude/engine-e2-page-bottom-fit`
+on this branch. No single public-spec rule reconciles the corpus with
+[566, 626): the rules that would produce an offset that size are refuted, and
+the derivation the renderer already uses is confirmed to 11 HWPUNIT on the
+tightest page the corpus has. Tuning `usable_height` to close one private
+pair, against that, would be fitting the constant to the residual.
+
+The bands are recorded instead. If the private document is re-probed, the
+number to take is `--reference-ink` on its own reference PDF: the derived body
+bottom against the deepest ruling on a page whose content fills it. If that
+comes back near 0 as `saeopja` does, the +566/+626 pair is about the fit
+measure and not about the body box, and E2.7's `vertsize - spacing` reading is
+where to look next.
+
+### The state these numbers were taken against
+
+`render_scoreboard.py --corpus --dpi 144`, this branch, no renderer change,
+so before and after are the same run:
+
+| policy | IoU | ssim | ssim_inked | pair | page-count exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` | 0.645754 | 0.830919 | 0.276175 | 0.836210 | 9/10 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 | 10/10 |
+
+`render_check.py` on `render-check-01` at 144 dpi, cache path: match 14,
+close 31, differs 4, unsupported 2, pages 9/9 exact.
+
+### Not proven
+
+- **The decisive measurement is one page.** `saeopja` page 1 is the only
+  corpus page whose content is ruled to within 300 HWPUNIT of the derived
+  bottom. `kstartup` page 2 at −152 is the second, and it is a text page whose
+  last line need not touch the margin. Two pages carry the whole refutation of
+  a +600 offset.
+- **It is a table, and a table is not a line.** What page 1 pins is where
+  Hancom stopped ruling a block it was fitting to the page. Whether the
+  page-bottom test for a LINE clears the same boundary is E2.7's question and
+  this section does not answer it.
+- **The private geometry was not read.** The offset the private pair needs is
+  [566, 626) for whatever `hp:pagePr` that document declares; every corpus
+  band and every named rule here is computed from corpus margins. If that
+  document's geometry has a term the corpus has none of — a `TOP_ONLY` gutter,
+  a `hp:footNotePr` reserve, a second section — the comparison is not like for
+  like.
+- **`gutter` is still unapplied.** Every corpus form declares 0, so nothing
+  above grades the one term of the derivation that is knowingly incomplete. A
+  `TOP_ONLY` gutter would change `usable_height` and no test would notice.
+- **The reference-ink mode reads extents, not layout.** It reports the deepest
+  vector and the deepest glyph box per page and cannot say which object drew
+  either. On `saeopja` page 1 the deepest glyph box is +1007 below the body
+  bottom and is the form's paper-spec line in the margin; that attribution is
+  read off the page, not asserted by the tool.
