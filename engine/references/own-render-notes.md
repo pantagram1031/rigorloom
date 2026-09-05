@@ -3991,3 +3991,228 @@ paragraphs would have moved ink, and none of the ten forms is that document.
   was not opened.  `--corpus --no-text` is what the operator runs on it; the
   seat section carries paragraph addresses, HWPUNIT measurements and declared
   style values, and no document text under any flag.
+
+## What the page-bottom fit test clears — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The flow pass decides whether one more line still fits above the bottom of
+the body box by comparing `vertpos + row["extent"]` against `usable_height`,
+and `_row_extent` makes that extent `baseline` for a line of text (#252,
+`docs/research/line-fit-rule.md`).  That choice was reasoned from three
+overfull corpus pages, none of which turned out to be a normal text line.
+This section measures the question directly, from both sides, and the answer
+is that **the corpus cannot decide it and one private measurement rules the
+current term out** — so nothing in the renderer changed here.
+
+### The instrument
+
+`engine/scripts/page_fit_probe.py` reads the cached seats and never renders
+either path.  It re-implements `paginate`'s restart rule while keeping the
+lineseg RANGE each page holds (which `paginate` itself throws away into
+`Paragraph.page_run`), and at every cached page break it measures both sides
+against seven candidate offsets added to `vertpos` — `top`,
+`vertsize - spacing`, `vertsize // 2`, `baseline`, `textheight`, `vertsize`,
+`vertsize + spacing`:
+
+- **kept**: how far the DEEPEST line the page kept overhangs `usable_height`
+  under that candidate.  A kept overhang refutes the candidate outright —
+  Hancom kept a line the candidate refuses, and no other rule can make it do
+  that.
+- **rejected**: how far the first line the cache moved to the next page WOULD
+  have overhung had it stayed, seated at the previous line's advance plus the
+  `margin_next + margin_prev` gap the flow pass opens between two paragraphs.
+  Leaving that gap out understates the would-be top by up to a whole line and
+  invents refutations.
+
+A rejected line only refutes a candidate if no OTHER rule already explains
+the break, so four classes are excluded from that side: a forced break
+(`hp:p@pageBreak`, `pageBreakBefore`, `columnBreak`), a `keepWithNext` push,
+a whole inline table moving (a table that does not fit moves whole —
+`docs/research/table-page-break-rule.md`), and a page holding an ANCHORED
+object, whose room no `hp:lineseg` records.  That last one is not a
+technicality: `kstartup`'s cached page 17 holds two short lines and an
+anchored table, and read from linesegs alone it looks like a page that broke
+with 63 000 HWPUNIT of room left; `nrf`'s page 0 and `kstartup`'s page 5 go
+the same way.  Two classes are excluded from the kept
+side as well — a line taller than the whole body box (placed by
+`_place_block`'s `cursor > 0` guard, which never runs the fit test) and a
+line with no characters (it draws no ink).
+
+    python engine/scripts/page_fit_probe.py --corpus
+
+`usable_height` is read per section from that section's own `hp:pagePr`, not
+assumed: the ten forms run from 69 788 to 75 686, and none of them is 70 864.
+No corpus form declares a footnote, an endnote or a footer, and one
+(`jeongbo`) declares a header, so the header/footer MARGINS are the only
+furniture term in play and `page_geometry`'s formula already carries them.
+
+### What the corpus says
+
+41 cached page breaks over the ten forms.  **Not one of them is inside a
+paragraph** — no corpus paragraph has more than one page run, which
+`Paragraph.page_runs`' docstring already predicted and this now measures.
+Every corpus break is between two blocks.  27 carry kept-side evidence (12
+pages end on an empty line, 2 on a line taller than the page); 5 carry
+rejected-side evidence.
+
+| candidate | kept max | rejected min | k! | r! | fits |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `top` | −1368 | **−445** | 0 | 4 | no |
+| `vertsize - spacing` | −720 | +395 | 0 | 0 | **yes** |
+| `vertsize // 2` | −868 | +255 | 0 | 0 | **yes** |
+| `baseline` | −518 | +731 | 0 | 0 | **yes** |
+| `textheight` | −296 | +911 | 0 | 0 | **yes** |
+| `vertsize` | −296 | +911 | 0 | 0 | **yes** |
+| `vertsize + spacing` | **+1521** | +1427 | 6 | 0 | no |
+
+HWPUNIT, against `usable_height`.  `k!` counts kept lines the candidate would
+have refused and `r!` moved lines it would have kept.
+
+Per form, the kept side is where the numbers live: `kstartup` 19 breaks,
+`moel-2013` 6, `moel-2025` 6, `saeopja` 5, `nrf` 3, `jumin` 2, and the four
+one-page forms contribute none.  The tightest kept line anywhere is
+`kstartup` page 7, whose deepest box ends 296 HWPUNIT above the boundary, and
+`saeopja` page 4 at 299.  All five rejected-side events are `kstartup`,
+pages 1, 12, 13, 14 and 16.
+
+Two things follow, and they are the whole public result:
+
+1. **The corpus refutes `top`.**  Four `kstartup` breaks move a line whose
+   TOP would have been 116–445 HWPUNIT inside the page, with no page break,
+   no `keepWithNext`, no `keepLines`, no `widowOrphan`, no inline table and
+   no anchored object on the page to explain it.  Something below the top
+   has to be inside the box for the rule to hold.
+2. **The corpus refutes `vertsize + spacing`.**  Six pages keep a line whose
+   box plus trailing leading crosses the margin — the trailing spacing of the
+   last line on a page is not required to fit, which is the same relation
+   `extent_hwp` already excludes for a different reason.
+
+Between those two ends the corpus is silent, and silent for a structural
+reason rather than for want of pages: **the largest kept overhang under the
+STRICTEST surviving candidate is −296, so no corpus page keeps a line whose
+box crosses the margin at all.**  There is no corpus case in the ambiguous
+band, and five candidates — including the `baseline` the renderer already
+implements — fit every corpus case equally.
+
+### The synthetic side manufactures the band
+
+`tests/corpus/render-check/measure_page_fit_probe.py` builds the case the
+corpus lacks.  Forty-five identical single-line paragraphs (`charPr` 1000,
+`PERCENT` 160, so `vertsize` 1000, `spacing` 600, `baseline` 850, advance
+1600) fill the body, which puts line 40 at exactly 64 000 from the body top;
+the section's `hc:bottom` page margin is then swept so `usable_height`
+crosses that line's box.  One knob, six settings.
+
+| slack below line 40 | flow pass seats it | candidates that agree |
+| ---: | --- | --- |
+| 1364 | page 1 | all but `vertsize + spacing` |
+| 900 | page 1 | `top` … `baseline` |
+| **764** | page 2 | `baseline` and stricter |
+| **464** | page 2 | `vertsize // 2` and stricter |
+| 164 | page 2 | `vertsize - spacing` and stricter |
+| −36 | page 2 | all |
+
+The flow pass agrees with exactly one candidate across all six: `baseline`.
+That is the confirmation the probe is for — the mechanism under test really
+is `_row_extent`, and the two middle rows are precisely where a change to it
+would be visible.  **Path A does not exist** (a Rigorloom-written package
+carries no `hp:lineseg`) and **path C was NOT RUN** — no Hancom reference was
+exported, so none of this says what Hancom does with the same document.
+
+### The one case that decides it is private, and it rules out `baseline`
+
+The development-validation document the operator ran — not opened here, and
+the numbers below are the only thing carried across — has a page-1 paragraph
+at 61 430 with `vertsize` 1000, `spacing` 800, pitch 1800, against
+`usable_height` 70 864.  The cache keeps SIX lines, the sixth at 70 430;
+Rigorloom keeps five and everything after runs +1800 late, which is the
+`page_top` first-seat divergence #255 reported on every page.
+
+Read as a constraint, that one page says the measure for a 1000/800 line is
+at most `70864 − 70430 = 434`.  Against the seven candidates:
+
+| candidate | offset for a 1000/800 line | ≤ 434? |
+| --- | ---: | --- |
+| `top` | 0 | yes — but the corpus refutes it |
+| `vertsize - spacing` | 200 | **yes** |
+| `vertsize // 2` | 500 | no |
+| `baseline` | 850 | no — this is what ships |
+| `textheight` / `vertsize` | 1000 | no |
+| `vertsize + spacing` | 1800 | no — the corpus refutes it too |
+
+**Exactly one of the seven survives both sides: `vertsize - spacing`.**  Read
+plainly, it says a line may hang past the bottom margin by as much as its own
+trailing leading — the leading below the last line on a page is not drawn, so
+it is available to be spent.  Checked back against every corpus event it
+holds: kept max −720, rejected min +395.
+
+### Why nothing was changed
+
+The bracket is real but it is not tight, and the half of it that moves the
+renderer is private.
+
+- Between `vertsize - spacing` and `baseline` the corpus has **no** case.
+  Adopting the former is a relaxation with no public evidence that the
+  latter is wrong; the entire upper bound comes from one page of one document
+  that is not in this repository and cannot be re-measured by a reader.
+- `vertsize - spacing` is not the only expression inside the surviving band.
+  `baseline - spacing` (50 for the private line, 698 and 504 for the two
+  binding `kstartup` lines) fits every case as well, and so does any fixed
+  fraction of `vertsize` between about 0.32 and 0.43.  The measurement picks
+  a band, not a formula, and choosing `vertsize - spacing` out of that band
+  is a reading rather than a result.
+- No public basis settles it.  KS X 6101 and the OWPML lineseg semantics
+  already measured in this file name the fields — `LineHeight`,
+  `TextPartHeight`, the baseline distance, `LineSpacing` — and say nothing
+  about which of them a pagination test compares.
+
+So this lands as a **costed proposal**, and the cost is one line.  Change
+`_row_extent`'s text-line return from `baseline` to
+`max(0, vertsize - spacing)` (the `spacing` is already on the lineseg and on
+the computed line dict, so `_flow_lines` passes it at both call sites) and
+move `test_the_flow_pass_compares_baseline_for_a_text_line` in
+`engine/tests/test_page_fit_probe.py` to the new term.  On this corpus the
+change is a no-op by construction — every kept line clears both terms and
+every moved line clears neither — so `render_scoreboard.py --corpus` cannot
+grade it.  What would grade it is a run against the private holdout, and the
+prediction to hold the change to is specific: the page_top +1800 cascade
+closes on every page whose last line sits within `spacing` of the margin.
+
+### The state these numbers were taken against
+
+`render_scoreboard.py --corpus --dpi 144`, this branch, no renderer change,
+so before and after are the same run:
+
+| policy | IoU | ssim | ssim_inked | pair | page-count exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` | 0.645754 | 0.830919 | 0.276175 | 0.836210 | 9/10 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 | 10/10 |
+
+The one cache-mode page-count miss is `kstartup` at 21 against 22, which is
+the overflowing anchored table E2.7 already names and not this question.
+
+### Not proven
+
+- **The corpus contains no intra-paragraph page break at all.**  Every number
+  above comes from block boundaries.  The fit test's per-row loop in
+  `_place_block` is the same code either way, but a paragraph splitting
+  mid-flow is the shape the private holdout has and this corpus does not, and
+  nothing here measures it.
+- **The rejected side is five events on two forms.**  Four of them are
+  `kstartup` body lines and they carry the whole refutation of `top`.  If any
+  one of the four turns out to have a cause the exclusion list does not name,
+  `top` comes back into the band and the surviving candidate changes.
+- **The private page is one page.**  It bounds the measure at 434 for a
+  1000/800 line and says nothing about how that bound scales.  A second line
+  geometry from the same document would separate `vertsize - spacing` from
+  `baseline - spacing` and from the fractional readings; one page cannot.
+- **Path C was not run anywhere in this section.**  Neither the corpus
+  reference PDFs' ink positions nor a fresh Hancom export was consulted.  The
+  kept/rejected sides are read off Hancom's own cached seats, which is
+  evidence about what its layout engine decided, not about where it drew.
+- **`vertsize == textheight` on every corpus lineseg**, so the two columns
+  are identical above and the corpus cannot tell them apart.  A document that
+  separates them would.
+- **The synthetic probe grades the renderer, not Hancom.**  Its six rows say
+  the flow pass implements `baseline`; they are silent on whether it should.
