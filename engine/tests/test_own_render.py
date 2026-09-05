@@ -4542,6 +4542,76 @@ def test_cellSpacing_and_border_widths_do_not_enter_the_inset():
             == own_render.cell_inset(_first_cell(dressed), dressed))
 
 
+# ------------------------------------------------ the cell text-column floor
+
+def test_a_roomy_cell_gives_its_text_the_box_less_the_inset():
+    """The floor changes nothing where the cell has room for it."""
+    inset = {"left": 283, "right": 510}
+    assert own_render.cell_text_width(20000, inset) == 20000 - 283 - 510
+
+
+def test_a_narrow_cell_never_gives_its_text_less_than_the_floor():
+    """kstartup's 60 stopwatch cells, in one assertion.
+
+    Each is 1566 HWPUNIT wide and inset 141 on both sides, which leaves 1284
+    -- and the hp:lineseg Hancom cached in every one of them declares
+    horzsize 1440.  The same number appears in gianmun-1ho's 848- and
+    565-wide cells, whose insets leave 566 and 283.  Four different columns
+    driven to one value is what says the value is a floor.
+    """
+    assert own_render.cell_text_width(1566, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(848, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(565, {"left": 141, "right": 141}) == 1440
+
+
+def test_the_floor_beats_the_whole_cell_when_the_cell_is_narrower_than_it():
+    """gianmun-1ho r8c11 is 565 wide and caches a 1440-wide line box.
+
+    So the floor is not a clamp on the margins -- no reading of a 565-wide
+    cell's insets produces 1440 -- and the text is allowed to overhang the
+    cell it sits in.
+    """
+    assert (own_render.cell_text_width(565, {"left": 0, "right": 0})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+
+
+def test_the_floor_is_a_constant_and_not_a_function_of_the_inset():
+    """Two cells of the same width and different insets floor to one value."""
+    assert (own_render.cell_text_width(900, {"left": 141, "right": 141})
+            == own_render.cell_text_width(900, {"left": 510, "right": 510}))
+
+
+def test_a_cell_at_the_floor_exactly_is_not_widened():
+    """The floor is a floor, not a snap: a column already on it stays."""
+    box = own_render.MIN_CELL_TEXT_WIDTH + 282
+    assert (own_render.cell_text_width(box, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+    assert (own_render.cell_text_width(box + 4, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH + 4)
+
+
+def test_the_render_path_hands_a_narrow_cell_the_floored_column():
+    """The wiring, not the arithmetic.
+
+    ``_render_cell_content`` is the one place a cell's paragraphs are given
+    their column, and on kstartup's 1566-wide, 141-inset cell it has to hand
+    over the floored 1440 rather than the 1284 the subtraction gives.  The
+    renderer is built without a file and the two methods the call reaches are
+    stubbed, so nothing here depends on a corpus document.
+    """
+    renderer = object.__new__(own_render.OwnRenderer)
+    seen = []
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    renderer._render_paragraphs = (
+        lambda draw, paras, origin, width, offset=0: seen.append(width))
+    tbl = _synthetic_table("0", in_margin=(141, 141, 141, 141),
+                           widths=(1566,))
+    tc = _first_cell(tbl)
+    cell = {"tc": tc, "paras": [], "margin": own_render.cell_inset(tc, tbl)}
+    renderer._render_cell_content(None, cell, 0, 0, 1566, 2032)
+    assert seen == [own_render.MIN_CELL_TEXT_WIDTH]
+
+
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
     """Row 0 holds a one-line cell and a two-line cell; it must fit both.
 
