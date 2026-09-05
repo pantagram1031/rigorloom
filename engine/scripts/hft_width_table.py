@@ -67,7 +67,7 @@ import lineseg_vs_pdf  # noqa: E402
 import pdf_face_probe  # noqa: E402
 from cli_io import utf8_stdio  # noqa: E402
 import own_render  # noqa: E402
-from own_render import HWPUNIT_PER_PT, _local, hwp_metric_slot  # noqa: E402
+from own_render import HWPUNIT_PER_PT, hwp_metric_slot  # noqa: E402
 
 
 #: Where the measured table is written and where the renderer reads it.
@@ -77,11 +77,6 @@ TABLE_REL = own_render.HFT_WIDTH_TABLE_REL
 #: header so a later reader can tell how old the measurement is without
 #: consulting git.
 MEASURED_ON = "2026-09"
-
-#: Two advances count as the same em within this much.  ``Widths`` are
-#: integers in a 1000-unit grid here, so a genuine disagreement is at least
-#: one whole unit and anything under half a unit is float noise.
-SAME_EM = 0.0005
 
 #: The paragraphs #267 named and #281 and #288 could not close.
 CARRIERS = {"moel-pyojun-geunrogyeyakseo-2013": (118, 141)}
@@ -396,7 +391,7 @@ def build_payload(per_face, unattributed, non_hft, verify_rows, forms):
 
 # -- coverage reporting ---------------------------------------------------
 
-def format_coverage(payload, per_face):
+def format_coverage(payload):
     dec = payload["declaration"]["coverage"]
     out = ["", "MEASURED HFT advance table -- coverage", ""]
     out.append(f"{'declared face':<22} {'code points':>12} "
@@ -721,7 +716,7 @@ def main(argv=None):
                                              repo_root, keep_text=True)
         payload = build_payload(per_face, unattributed, non_hft, verify_rows,
                                 sorted(fonts_by_form))
-        print(format_coverage(payload, per_face))
+        print(format_coverage(payload))
         out = args.out or (repo_root / TABLE_REL)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
