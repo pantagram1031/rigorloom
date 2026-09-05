@@ -95,6 +95,43 @@ down from the nearest preceding paragraph that had one.
 The accumulators reset at every page boundary: a dy is measured from a page
 top, so a total carried across one means nothing.
 
+WHAT SITS ABOVE THE FIRST DRIFT ON A PAGE
+-----------------------------------------
+The attribution above says class B is mostly NOT inherited from a re-break:
+on the corpus, 318 of 538 class-B paragraphs have nothing re-broken above
+them at all.  If the extra height is not a line, it is added BETWEEN
+paragraphs or at a paragraph's bottom, and the paragraph immediately above
+the first drift on a page is the only place it can have come from.  So per
+page this tool walks the paragraphs in document order, finds the first whose
+ordinal-0 line is paired on the same page and whose ``dy`` exceeds
+``--y-tol``, and reports its PREDECESSOR: that paragraph's last line under
+each policy (the cache's ``vertpos``/``vertsize``/``spacing``, the computed
+side's ``y0``/``y1``/pitch), the two candidate bottoms it implies, the gap
+between that bottom and the drifting paragraph's first line under both
+policies, and the predecessor's own ``hh:paraPr`` — line spacing type and
+value, ``hh:margin/prev`` and ``/next``, whether its text is empty, and every
+object it carries with that object's extent under both policies.
+
+The population that matters here is the one the A/B/C classification cannot
+see.  A paragraph with no characters draws no line box — both render paths
+``continue`` on ``not para.chars`` — so it is in neither policy's
+``line_boxes``, its line-count delta is 0 either way, and every paragraph
+below it is booked ``B_own_no_upstream_rebreak`` however wrong its height is.
+For those the report leaves the pixel domain and states the cache's height
+(the sum of the paragraph's ``hp:lineseg`` advances) against the flow pass's
+(its seat height), whose difference is the drift in the units it was made in.
+
+A paragraph that draws nothing and that the flow pass never seated — the
+empty one inside a table cell — is placed on a page by ENCLOSURE: when the
+paragraph before it and the paragraph after it in document order are both on
+one page, so is it.  A paragraph whose neighbours disagree is left unplaced
+rather than guessed at.
+
+``first_drift_predecessors.kinds`` is a histogram over those predecessors
+keyed on ``(anchor kind, empty text, line spacing type)``, and
+``dominant_kind`` is its tallest bar — the one number that says what kind of
+paragraph the drift starts under.
+
 ATTRIBUTING CLASS A
 -------------------
 For each class-A paragraph the report names its first divergent line's break
@@ -189,6 +226,74 @@ ATTRIBUTION_RULE = (
 _UNSET = object()
 
 
+PREDECESSOR_RULE = (
+    "per page, paragraphs in document order (every hp:p seated on the page by "
+    "its boxes, by its flow seat, or by lying between two paragraphs that are "
+    "both on it, so one that draws no line box still counts): find the FIRST "
+    "whose ordinal-0 "
+    "line is paired on the same page under both policies and whose dy exceeds "
+    "y_tol, and report the paragraph immediately BEFORE it on that page. "
+    "A page whose first seated paragraph is already the drifting one has no "
+    "predecessor and is reported as page_top.")
+
+#: A predecessor's kind, and the whole of what the histogram is keyed on.
+PREDECESSOR_KEY_FIELDS = ("anchor_kind", "empty_text", "line_spacing_type")
+
+
+def anchor_kind(objects):
+    """One label for what a paragraph carries, for the histogram key.
+
+    ``anchored:<kind>`` beats ``inline:<kind>`` because the two are different
+    layout mechanisms and only the anchored one is placed outside the line —
+    a paragraph carrying both is named by the anchored object.  Ties inside a
+    class go to the first object in the character stream, which is the one
+    the line metrics meet first.
+    """
+    if not objects:
+        return "none"
+    for obj in objects:
+        if not obj["treat_as_char"]:
+            return f"anchored:{obj['kind']}"
+    return f"inline:{objects[0]['kind']}"
+
+
+def cached_line_metrics(para):
+    """``{textpos: metrics}`` over a paragraph's cached ``hp:lineseg``.
+
+    Keyed on ``textpos`` because that is the argument ``_render_cached_lines``
+    hands ``_line_items``, so the latch finds the right line without counting
+    draw calls — a line whose chunk is empty is skipped and never drawn, and
+    an ordinal counter would be off by one from there on.
+    """
+    metrics = {}
+    for seg in getattr(para, "linesegs", ()):
+        textpos = own_render._iattr(seg, "textpos")
+        vertsize = own_render._iattr(seg, "vertsize")
+        spacing = own_render._iattr(seg, "spacing")
+        metrics[textpos] = {
+            "source": "lineseg",
+            "vertpos_hwp": own_render._iattr(seg, "vertpos"),
+            "vertsize_hwp": vertsize,
+            "spacing_hwp": spacing,
+            "advance_hwp": vertsize + spacing,
+        }
+    return metrics
+
+
+def computed_line_metrics(lines):
+    """``{line["start"]: metrics}`` over this renderer's own computed lines."""
+    metrics = {}
+    for line in lines or ():
+        metrics[line["start"]] = {
+            "source": "computed",
+            "vertpos_hwp": line["vertpos"],
+            "vertsize_hwp": line["vertsize"],
+            "spacing_hwp": line["spacing"],
+            "advance_hwp": line["vertsize"] + line["spacing"],
+        }
+    return metrics
+
+
 class TracingRenderer(own_render.OwnRenderer):
     """``OwnRenderer`` that stamps each line box with who drew it.
 
@@ -200,23 +305,74 @@ class TracingRenderer(own_render.OwnRenderer):
     """
 
     _tracing_para = None
+    #: ``{first character index of a line: that line's advance metrics}`` for
+    #: the paragraph currently drawing, under whichever policy is drawing it.
+    _tracing_metrics = None
+    #: The one entry of that map for the line ``_draw_line`` is about to draw,
+    #: latched by ``_line_items`` — the last thing either render path calls
+    #: before ``_draw_line``, and the only place a line's identity (its first
+    #: character index) is in scope on both paths.
+    _tracing_line = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: ``{(address, page): seat}`` for every block the flow pass placed,
+        #: INCLUDING one that draws no line box at all.  An empty paragraph
+        #: never reaches a line render path — ``_render_paragraphs`` and
+        #: ``_render_flow_page`` both ``continue`` on ``not para.chars`` — so
+        #: its flow seat is the only place its computed height is stated.
+        self.flow_seats = {}
 
     def _render_cached_lines(self, draw, para, *args, **kwargs):
         outer, self._tracing_para = self._tracing_para, para
+        outer_metrics = self._tracing_metrics
+        self._tracing_metrics = cached_line_metrics(para)
         try:
             return super()._render_cached_lines(draw, para, *args, **kwargs)
         finally:
             self._tracing_para = outer
+            self._tracing_metrics = outer_metrics
 
-    def _render_computed_lines(self, draw, para, *args, **kwargs):
+    def _render_computed_lines(self, draw, para, origin_hwp, lines, *args,
+                               **kwargs):
         outer, self._tracing_para = self._tracing_para, para
+        outer_metrics = self._tracing_metrics
+        self._tracing_metrics = computed_line_metrics(lines)
         try:
-            return super()._render_computed_lines(draw, para, *args, **kwargs)
+            return super()._render_computed_lines(draw, para, origin_hwp,
+                                                  lines, *args, **kwargs)
         finally:
             self._tracing_para = outer
+            self._tracing_metrics = outer_metrics
+
+    def _render_flow_page(self, draw, records, origin_hwp, avail_w_hwp):
+        """Record where the flow pass seated each block before drawing it."""
+        for record in records:
+            para = record.get("para")
+            address = (self.paragraph_index.get(id(para.el))
+                       if para is not None else None)
+            if address is None:
+                continue
+            seat = self.flow_seats.setdefault((address, self._page), {
+                "address": address,
+                "page": self._page,
+                "top_hwp": record.get("top"),
+                "height_hwp": 0,
+            })
+            seat["height_hwp"] += record.get("height") or 0
+        return super()._render_flow_page(draw, records, origin_hwp,
+                                         avail_w_hwp)
+
+    def _line_items(self, para, chars, base_index):
+        self._tracing_line = (self._tracing_metrics or {}).get(base_index)
+        return super()._line_items(para, chars, base_index)
 
     def _draw_line(self, draw, items, *args, **kwargs):
         before = len(self.line_boxes)
+        # Latched BEFORE the call: a paragraph holding an inline table draws
+        # its cells' lines from inside this very call, and every one of them
+        # goes through ``_line_items`` and overwrites the latch.
+        metrics = self._tracing_line
         result = super()._draw_line(draw, items, *args, **kwargs)
         fresh = self.line_boxes[before:]
         if fresh:
@@ -229,7 +385,78 @@ class TracingRenderer(own_render.OwnRenderer):
                 record.setdefault("address", address)
                 record.setdefault("text", text)
                 record.setdefault("faces", faces)
+                record.setdefault("metrics", metrics)
         return result
+
+    def paragraph_facts(self):
+        """Static facts for EVERY ``hp:p`` in the document, keyed by address.
+
+        Read off the tree rather than off the render on purpose: a paragraph
+        with no characters draws nothing under either policy and so is absent
+        from ``line_boxes`` entirely, and that is exactly the population the
+        predecessor pass exists to see.  Object extents come from the
+        renderer's own ``_object_extent``, so calling this on both renderers
+        states them "under both policies" without re-implementing the rule.
+        """
+        facts = {}
+        for section in self.sections:
+            for el in section.iter():
+                if own_render._local(el.tag) != "p":
+                    continue
+                address = self.paragraph_index.get(id(el))
+                if address is None:
+                    continue
+                facts[address] = self._paragraph_fact(el, address)
+        return facts
+
+    def _paragraph_fact(self, el, address):
+        para = own_render.Paragraph(el, self.defs["para_pr"])
+        pr = para.para_pr
+        objects = []
+        for char_index, name, obj, _charpr in para.objects:
+            record = para.object_at.get(char_index)
+            pos = own_render._kid(obj, "pos")
+            width, height = self._object_extent(obj)
+            _l, top, _r, bottom = self._object_out_margin(obj)
+            objects.append({
+                "kind": name,
+                "treat_as_char": not (record[3] if record else False),
+                "width_hwp": width,
+                "height_hwp": height,
+                "out_margin_top_hwp": top,
+                "out_margin_bottom_hwp": bottom,
+                "vert_rel_to": (pos.get("vertRelTo") if pos is not None
+                                else None),
+                "horz_rel_to": (pos.get("horzRelTo") if pos is not None
+                                else None),
+                "flow_with_text": (pos.get("flowWithText") if pos is not None
+                                   else None),
+            })
+        text = "".join(ch for ch, _cid in para.chars
+                       if ch != own_render.OBJECT_SLOT)
+        linesegs = [{
+            "textpos": own_render._iattr(seg, "textpos"),
+            "vertpos": own_render._iattr(seg, "vertpos"),
+            "vertsize": own_render._iattr(seg, "vertsize"),
+            "spacing": own_render._iattr(seg, "spacing"),
+        } for seg in para.linesegs]
+        return {
+            "address": address,
+            "empty_text": not text.strip(),
+            "characters": len(para.chars),
+            "objects": objects,
+            "anchor_kind": anchor_kind(objects),
+            "line_spacing_type": pr.get("line_spacing_type"),
+            "line_spacing_value": pr.get("line_spacing_value"),
+            "margin_prev_hwp": pr.get("margin_prev", 0),
+            "margin_next_hwp": pr.get("margin_next", 0),
+            "linesegs": linesegs,
+            "cache_advance_hwp": sum(seg["vertsize"] + seg["spacing"]
+                                     for seg in linesegs),
+            "cache_extent_hwp": (
+                linesegs[-1]["vertpos"] + linesegs[-1]["vertsize"]
+                - linesegs[0]["vertpos"] if linesegs else None),
+        }
 
     def _line_faces(self, items):
         """Every ``(charPr, slot, bold)`` this line draws, resolved.
@@ -288,6 +515,16 @@ def trace_lines(hwpx_path, policy, dpi=own_render.DEFAULT_DPI, repo_root=None):
         "pages": len(images),
         "line_boxes": sidecar.get("line_boxes") or [],
         "layout_policy": sidecar.get("layout_policy", policy),
+        # Read AFTER the render: the object extents an equation carries are
+        # measured during it, and the flow seats only exist once the flow
+        # pass has run.
+        "facts": renderer.paragraph_facts(),
+        "flow_seats": dict(renderer.flow_seats),
+        "px_per_hwp": dpi / own_render.HWPUNIT_PER_INCH,
+        # Section 0's body box.  A multi-section document can page differently
+        # per section and this does not follow that; it is here to be read
+        # against a cached ``vertpos``, which is measured from the body top.
+        "usable_height_hwp": renderer.page_geometry().get("usable_height"),
     }
 
 
@@ -685,6 +922,284 @@ def walk_paragraphs(cache_paras, computed_paras, y_tol=DEFAULT_Y_TOL,
     }
 
 
+def merge_facts(cache_facts, computed_facts):
+    """One fact map, with each object's extent stated under BOTH policies.
+
+    Everything else a fact carries is read off the XML tree and cannot differ
+    between two renders of the same file; the extent can, because an
+    equation's height is measured during the render
+    (``_equation_extent_height``).  Where the two agree — every corpus object
+    — ``height_hwp_computed`` simply repeats ``height_hwp``, and
+    ``extent_differs`` says so in one boolean rather than asking a reader to
+    compare two numbers.
+    """
+    merged = {}
+    for address, fact in (cache_facts or {}).items():
+        fact = dict(fact)
+        other = ((computed_facts or {}).get(address) or {}).get("objects") or []
+        objects = []
+        for index, obj in enumerate(fact.get("objects") or []):
+            obj = dict(obj)
+            twin = other[index] if index < len(other) else None
+            obj["width_hwp_computed"] = (twin or obj).get("width_hwp")
+            obj["height_hwp_computed"] = (twin or obj).get("height_hwp")
+            obj["extent_differs"] = (
+                obj["width_hwp_computed"] != obj["width_hwp"]
+                or obj["height_hwp_computed"] != obj["height_hwp"])
+            objects.append(obj)
+        fact["objects"] = objects
+        merged[address] = fact
+    return merged
+
+
+def _page_of(boxes):
+    """The page a paragraph's boxes sit on, or ``None`` when they disagree."""
+    pages = {box.get("page") for box in boxes}
+    return pages.pop() if len(pages) == 1 else None
+
+
+def _edge_line(boxes, page, which):
+    """This paragraph's first or last box on ``page``, in draw order."""
+    on_page = [box for box in boxes if box.get("page") == page]
+    if not on_page:
+        return None
+    return on_page[0] if which == "first" else on_page[-1]
+
+
+def _bottoms(box, px_per_hwp):
+    """``(ink bottom, advance bottom)`` in px for one drawn line.
+
+    Two of them because they are the two candidate readings of where a
+    paragraph ENDS, and the whole question this pass was opened on is which
+    one the gap below the paragraph is measured from.  ``ink`` is
+    ``y0 + vertsize`` — the cache's own ``_cached_extent`` reading, the last
+    line's trailing ``spacing`` excluded.  ``advance`` is ``y0 + vertsize +
+    spacing``, which is what the flow pass sums into a block height.
+    """
+    if box is None:
+        return None, None
+    metrics = box.get("metrics")
+    if not metrics:
+        return None, None
+    y0 = box["y0"]
+    return (round(y0 + metrics["vertsize_hwp"] * px_per_hwp, 3),
+            round(y0 + metrics["advance_hwp"] * px_per_hwp, 3))
+
+
+def _side(boxes, page, px_per_hwp):
+    """One policy's view of a predecessor paragraph on one page."""
+    last = _edge_line(boxes, page, "last")
+    ink, advance = _bottoms(last, px_per_hwp)
+    metrics = (last or {}).get("metrics") or {}
+    return {
+        "lines_on_page": sum(1 for box in boxes if box.get("page") == page),
+        "last_line": None if last is None else {
+            "y0_px": last["y0"],
+            "y1_px": last["y1"],
+            "vertpos_hwp": metrics.get("vertpos_hwp"),
+            "vertsize_hwp": metrics.get("vertsize_hwp"),
+            "spacing_hwp": metrics.get("spacing_hwp"),
+            "advance_hwp": metrics.get("advance_hwp"),
+        },
+        "pitch_px": dominant_pitch([box for box in boxes
+                                    if box.get("page") == page]),
+        "bottom_ink_px": ink,
+        "bottom_advance_px": advance,
+    }
+
+
+def _gap(bottom_px, first_box):
+    if bottom_px is None or first_box is None:
+        return None
+    return round(first_box["y0"] - bottom_px, 3)
+
+
+def seated_pages(cache_paras, computed_paras, facts, seats):
+    """``{page: {address, ...}}`` — every paragraph seated on each page.
+
+    Three sources, in decreasing directness.  A paragraph that DREW is on the
+    page its boxes are on.  A paragraph the flow pass placed is on the page
+    its seat names, drawn or not.  And a paragraph with neither — the empty
+    one inside a table cell, which no flow seat covers — is placed by
+    ENCLOSURE: if the paragraph before it and the paragraph after it in
+    document order are both on one page, so is it.  Enclosure is an
+    inference, but a safe one, and refusing to make it is what would hide the
+    population this pass exists to see; a paragraph whose neighbours disagree
+    is left unplaced rather than guessed at.
+    """
+    placed = {}
+    for address, boxes in list(cache_paras.items()) + list(
+            computed_paras.items()):
+        for box in boxes:
+            placed.setdefault(address, box.get("page"))
+    for (address, page), _seat in (seats or {}).items():
+        placed.setdefault(address, page)
+
+    known = sorted(placed)
+    if known:
+        for address in sorted(facts or ()):
+            if address in placed:
+                continue
+            before = [value for value in known if value < address]
+            after = [value for value in known if value > address]
+            if not before or not after:
+                continue
+            page = placed[before[-1]]
+            if page == placed[after[0]]:
+                placed[address] = page
+
+    pages = {}
+    for address, page in placed.items():
+        pages.setdefault(page, set()).add(address)
+    return pages
+
+
+def predecessor_key(fact):
+    """The histogram key: ``(anchor kind, empty text, line spacing type)``."""
+    return (fact.get("anchor_kind", "none"),
+            bool(fact.get("empty_text")),
+            fact.get("line_spacing_type") or "PERCENT")
+
+
+def first_drift_predecessors(cache_paras, computed_paras, facts, seats,
+                             px_per_hwp, y_tol=DEFAULT_Y_TOL,
+                             usable_height_hwp=None):
+    """Per page, what sits immediately above the first paragraph that drifts.
+
+    Takes plain dicts and nothing else — the two ``{address: [box, ...]}``
+    maps, the per-address static facts, the computed flow seats and the
+    HWPUNIT-to-pixel scale — so the whole rule can be exercised on synthetic
+    input without rendering a document.
+
+    A predecessor that drew nothing (the empty paragraph, the paragraph whose
+    only content is an anchored object) has no box to measure, and it is the
+    reason this pass exists at all: it is invisible to the A/B/C
+    classification, its line-count delta is 0 either way, so every paragraph
+    below it is booked ``B_own_no_upstream_rebreak``.  For those the report
+    falls back to the HWPUNIT domain, where the cache states a height (the
+    sum of its ``hp:lineseg`` advances) and the flow pass states another (its
+    seat height), and the difference between the two is the drift in the
+    units it was made in.
+    """
+    pages = seated_pages(cache_paras, computed_paras, facts, seats)
+
+    rows = []
+    kinds = Counter()
+    for page in sorted(pages, key=lambda value: (value is None, value)):
+        order = sorted(pages[page])
+        drift_at = None
+        for position, address in enumerate(order):
+            cache_first = _edge_line(cache_paras.get(address, []), page,
+                                     "first")
+            computed_first = _edge_line(computed_paras.get(address, []), page,
+                                        "first")
+            if cache_first is None or computed_first is None:
+                continue
+            dy = round(computed_first["y0"] - cache_first["y0"], 3)
+            if abs(dy) > y_tol:
+                drift_at = (position, address, dy, cache_first, computed_first)
+                break
+        if drift_at is None:
+            continue
+        position, address, dy, cache_first, computed_first = drift_at
+        row = {
+            "page": page,
+            "drift_paragraph": address,
+            "drift_dy_px": dy,
+            "predecessor": None,
+        }
+        if position == 0:
+            row["predecessor_note"] = ("page_top: the first paragraph seated "
+                                       "on this page is the one that drifts")
+            rows.append(row)
+            continue
+        previous = order[position - 1]
+        fact = dict(facts.get(previous) or {})
+        cache_boxes = cache_paras.get(previous, [])
+        computed_boxes = computed_paras.get(previous, [])
+        cache_side = _side(cache_boxes, page, px_per_hwp)
+        computed_side = _side(computed_boxes, page, px_per_hwp)
+        seat = (seats or {}).get((previous, page))
+        drawn = bool(cache_side["last_line"] or computed_side["last_line"])
+        row.update({
+            "predecessor": previous,
+            "predecessor_drawn": drawn,
+            "cache": cache_side,
+            "computed": computed_side,
+            "gap_px": {
+                "cache_from_ink": _gap(cache_side["bottom_ink_px"],
+                                       cache_first),
+                "cache_from_advance": _gap(cache_side["bottom_advance_px"],
+                                           cache_first),
+                "computed_from_ink": _gap(computed_side["bottom_ink_px"],
+                                          computed_first),
+                "computed_from_advance": _gap(
+                    computed_side["bottom_advance_px"], computed_first),
+            },
+            "para_pr": {
+                "line_spacing_type": fact.get("line_spacing_type"),
+                "line_spacing_value": fact.get("line_spacing_value"),
+                "margin_prev_hwp": fact.get("margin_prev_hwp"),
+                "margin_next_hwp": fact.get("margin_next_hwp"),
+            },
+            "empty_text": bool(fact.get("empty_text")),
+            "anchor_kind": fact.get("anchor_kind", "none"),
+            "objects": fact.get("objects") or [],
+            "cache_advance_hwp": fact.get("cache_advance_hwp"),
+            "cache_extent_hwp": fact.get("cache_extent_hwp"),
+            "flow_seat_height_hwp": (seat or {}).get("height_hwp"),
+            "flow_seat_top_hwp": (seat or {}).get("top_hwp"),
+            # Where the CACHE seats this paragraph, read against the body box
+            # it is supposed to fit in.  A cached seat at or past the bottom
+            # is the authoring engine declining to paginate a paragraph the
+            # flow pass does paginate, and that is the whole difference on a
+            # predecessor that draws nothing: the flow pass carries it to the
+            # next page and every paragraph below it moves down by its height.
+            "cache_seat_vertpos_hwp": (
+                (fact.get("linesegs") or [{}])[0].get("vertpos")),
+            "usable_height_hwp": usable_height_hwp,
+        })
+        seat_top = row["cache_seat_vertpos_hwp"]
+        row["cache_seat_past_page_bottom"] = (
+            None if seat_top is None or usable_height_hwp is None
+            else seat_top >= usable_height_hwp)
+        cached_height = fact.get("cache_advance_hwp")
+        seat_height = (seat or {}).get("height_hwp")
+        row["height_delta_hwp"] = (
+            None if seat_height is None or cached_height is None
+            else seat_height - cached_height)
+        row["height_delta_px"] = (
+            None if row["height_delta_hwp"] is None
+            else round(row["height_delta_hwp"] * px_per_hwp, 3))
+        rows.append(row)
+        kinds[predecessor_key(fact)] += 1
+
+    histogram = [
+        {"anchor_kind": key[0], "empty_text": key[1],
+         "line_spacing_type": key[2], "pages": count}
+        for key, count in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    total = sum(kinds.values())
+    dominant = None
+    if histogram:
+        top = histogram[0]
+        dominant = {
+            "kind": (f"{top['anchor_kind']}/empty={int(top['empty_text'])}"
+                     f"/{top['line_spacing_type']}"),
+            "pages": top["pages"],
+            "share": round(top["pages"] / total, 6) if total else None,
+        }
+    return {
+        "rule": PREDECESSOR_RULE,
+        "key_fields": list(PREDECESSOR_KEY_FIELDS),
+        "pages_with_drift": len(rows),
+        "pages_with_a_predecessor": total,
+        "kinds": histogram,
+        "dominant_kind": dominant,
+        "pages": rows,
+    }
+
+
 def divergence_report(hwpx_path, dpi=own_render.DEFAULT_DPI,
                       y_tol=DEFAULT_Y_TOL, include_text=True,
                       repo_root=None, attribution_tol=DEFAULT_ATTRIBUTION_TOL):
@@ -694,10 +1209,16 @@ def divergence_report(hwpx_path, dpi=own_render.DEFAULT_DPI,
                         repo_root=repo_root)
     computed = trace_lines(hwpx_path, own_render.LAYOUT_POLICY_COMPUTED,
                            dpi=dpi, repo_root=repo_root)
-    walk = walk_paragraphs(by_paragraph(cache["line_boxes"]),
-                           by_paragraph(computed["line_boxes"]),
+    cache_paras = by_paragraph(cache["line_boxes"])
+    computed_paras = by_paragraph(computed["line_boxes"])
+    walk = walk_paragraphs(cache_paras, computed_paras,
                            y_tol=y_tol, include_text=include_text,
                            attribution_tol=attribution_tol)
+    walk["first_drift_predecessors"] = first_drift_predecessors(
+        cache_paras, computed_paras,
+        merge_facts(cache["facts"], computed["facts"]),
+        computed["flow_seats"], computed["px_per_hwp"], y_tol=y_tol,
+        usable_height_hwp=cache["usable_height_hwp"])
 
     report = {
         "tool": "layout_divergence",
@@ -775,10 +1296,16 @@ def summary_line(stem, report):
     split = (report.get("attribution") or {}).get("class_b_paragraphs") or {}
     split_text = (f" [B inherited {split.get('B_inherited', 0)} / own "
                   f"{split.get('B_own', 0)}]" if split else "")
+    predecessors = report.get("first_drift_predecessors") or {}
+    dominant_kind = predecessors.get("dominant_kind")
+    pred_text = (
+        f"; first-drift predecessor {dominant_kind['kind']} "
+        f"{dominant_kind['pages']}/{predecessors['pages_with_a_predecessor']}"
+        if dominant_kind else "")
     return (f"{stem}: paragraphs agree {paras['agree']} / A {paras['A']} / "
             f"B {paras['B']} / C {paras['C']} (A&B {paras['A_and_B']}); "
             f"lines agree {lines['agree']} / A {lines['A']} / B {lines['B']} "
-            f"/ C {lines['C']}{dominant}{split_text}{iou_text}")
+            f"/ C {lines['C']}{dominant}{split_text}{iou_text}{pred_text}")
 
 
 def corpus_forms(repo_root):
@@ -819,7 +1346,8 @@ def corpus_table(rows):
     """
     width = max([len(name) for name, _ in rows] + [4])
     head = (f"{'form':<{width}}  {'agree':>6} {'A':>5} {'B':>5} {'C':>5} "
-            f"{'A&B':>5} {'B_inh':>6} {'B_own':>6} {'A_sub':>6} {'A_ins':>6}")
+            f"{'A&B':>5} {'B_inh':>6} {'B_own':>6} {'A_sub':>6} {'A_ins':>6}"
+            f"  {'dominant first-drift predecessor'}")
     out = [head, "-" * len(head)]
     total = Counter()
     for name, report in rows:
@@ -834,10 +1362,17 @@ def corpus_table(rows):
             "A_substituted": faces.get("substituted", 0),
             "A_installed": faces.get("installed", 0),
         }
+        predecessors = report.get("first_drift_predecessors") or {}
+        dominant_kind = predecessors.get("dominant_kind")
+        pred = ("-" if not dominant_kind else
+                f"{dominant_kind['kind']} "
+                f"{dominant_kind['pages']}/"
+                f"{predecessors['pages_with_a_predecessor']}")
         out.append(f"{name:<{width}}  {paras['agree']:>6} {paras['A']:>5} "
                    f"{paras['B']:>5} {paras['C']:>5} {paras['A_and_B']:>5} "
                    f"{cells['B_inherited']:>6} {cells['B_own']:>6} "
-                   f"{cells['A_substituted']:>6} {cells['A_installed']:>6}")
+                   f"{cells['A_substituted']:>6} {cells['A_installed']:>6}"
+                   f"  {pred}")
         for key in ("agree", "A", "B", "C", "A_and_B"):
             total[key] += paras[key]
         for key, value in cells.items():

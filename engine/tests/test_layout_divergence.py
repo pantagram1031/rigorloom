@@ -14,7 +14,11 @@ What is pinned here, and why:
     fact that every divergent paragraph gets a first-divergence record;
   * ``--no-text`` omits the text field entirely rather than blanking it.  A
     holdout measurement that leaves the operator's machine depends on that
-    being an omission, not an empty string.
+    being an omission, not an empty string;
+  * the first-drift predecessor rule: which paragraph on a page is reported,
+    that a predecessor drawing NO line box is still reported (it is the
+    population the A/B/C classification cannot see at all), and that the
+    histogram is keyed on the three fields the report names.
 
 No count of corpus forms or of report rows is pinned as an integer here:
 ``tests/test_no_inventory_pins.py`` forbids it, and the counts are the
@@ -465,3 +469,254 @@ def test_the_corpus_table_shows_the_attribution_columns(small_report):
     table = LD.corpus_table([("alpha", small_report)])
     for column in ("B_inh", "B_own", "A_sub", "A_ins"):
         assert column in table
+
+
+# -- the first-drift predecessor --------------------------------------------
+
+def metric(vertsize=1600, spacing=960, vertpos=0):
+    return {"source": "lineseg", "vertpos_hwp": vertpos,
+            "vertsize_hwp": vertsize, "spacing_hwp": spacing,
+            "advance_hwp": vertsize + spacing}
+
+
+def mbox(metrics=None, **kwargs):
+    """A ``box`` carrying the advance metrics the predecessor pass reads."""
+    out = box(**kwargs)
+    out["metrics"] = metrics if metrics is not None else metric()
+    return out
+
+
+def fact(address, **kwargs):
+    base = {"address": address, "empty_text": False, "characters": 4,
+            "objects": [], "anchor_kind": "none",
+            "line_spacing_type": "PERCENT", "line_spacing_value": 160,
+            "margin_prev_hwp": 0, "margin_next_hwp": 0, "linesegs": [],
+            "cache_advance_hwp": 2560, "cache_extent_hwp": 1600}
+    base.update(kwargs)
+    return base
+
+
+#: 144 dpi, the scale every corpus measurement in this repo is made at.
+PX_PER_HWP = 144 / 7200
+
+
+def _predecessors(cache, computed, facts, seats=None, **kwargs):
+    return LD.first_drift_predecessors(cache, computed, facts, seats or {},
+                                       PX_PER_HWP, **kwargs)
+
+
+def test_the_paragraph_above_the_first_drift_is_the_one_reported():
+    """2 drifts, 3 drifts with it; the report names 1, not 2."""
+    cache = {index: [mbox(text=f"p{index}", y0=100.0 + 30.0 * index)]
+             for index in range(4)}
+    computed = dict(cache)
+    computed[2] = [mbox(text="p2", y0=190.0)]
+    computed[3] = [mbox(text="p3", y0=220.0)]
+    report = _predecessors(cache, computed,
+                           {index: fact(index) for index in range(4)})
+    assert len(report["pages"]) == 1
+    row = report["pages"][0]
+    assert row["drift_paragraph"] == 2
+    assert row["predecessor"] == 1
+    assert row["drift_dy_px"] == 30.0
+
+
+def test_each_page_gets_its_own_first_drift():
+    cache = {0: [mbox(text="a", page=1, y0=100.0)],
+             1: [mbox(text="b", page=1, y0=130.0)],
+             2: [mbox(text="c", page=2, y0=100.0)],
+             3: [mbox(text="d", page=2, y0=130.0)]}
+    computed = dict(cache)
+    computed[1] = [mbox(text="b", page=1, y0=160.0)]
+    computed[3] = [mbox(text="d", page=2, y0=160.0)]
+    report = _predecessors(cache, computed,
+                           {index: fact(index) for index in range(4)})
+    assert [row["page"] for row in report["pages"]] == [1, 2]
+    assert [row["predecessor"] for row in report["pages"]] == [0, 2]
+
+
+def test_a_page_whose_first_paragraph_drifts_has_no_predecessor():
+    cache = {0: [mbox(text="a", y0=100.0)]}
+    computed = {0: [mbox(text="a", y0=140.0)]}
+    row = _predecessors(cache, computed, {0: fact(0)})["pages"][0]
+    assert row["predecessor"] is None
+    assert "page_top" in row["predecessor_note"]
+
+
+def test_a_page_with_no_drift_is_not_reported_at_all():
+    cache = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=130.0)]}
+    report = _predecessors(cache, dict(cache), {0: fact(0), 1: fact(1)})
+    assert report["pages"] == []
+    assert report["dominant_kind"] is None
+
+
+def test_the_tolerance_is_what_decides_a_drift():
+    cache = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=130.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)],
+                1: [mbox(text="b", y0=130.4)]}
+    facts = {0: fact(0), 1: fact(1)}
+    assert _predecessors(cache, computed, facts, y_tol=0.5)["pages"] == []
+    assert _predecessors(cache, computed, facts, y_tol=0.1)["pages"]
+
+
+def test_a_predecessor_that_draws_nothing_is_still_reported():
+    """The empty paragraph is the whole reason this pass exists.
+
+    It is in neither policy's boxes, so the A/B/C classification cannot see
+    it and its line-count delta is 0 either way — the paragraph below it is
+    booked ``B_own_no_upstream_rebreak`` however wrong its height is.
+    """
+    cache = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=160.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=200.0)]}
+    facts = {0: fact(0), 1: fact(1, empty_text=True, characters=0),
+             2: fact(2)}
+    seats = {(1, 1): {"address": 1, "page": 1, "top_hwp": 2560,
+                      "height_hwp": 4560}}
+    row = _predecessors(cache, computed, facts, seats)["pages"][0]
+    assert row["predecessor"] == 1
+    assert row["predecessor_drawn"] is False
+    assert row["empty_text"] is True
+    # No box either side, so the drift is stated in the units it was made in.
+    assert row["gap_px"]["cache_from_ink"] is None
+    assert row["height_delta_hwp"] == 4560 - 2560
+
+
+def test_a_cached_seat_past_the_body_box_is_named_as_such():
+    cache = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=160.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=200.0)]}
+    facts = {0: fact(0),
+             1: fact(1, empty_text=True,
+                     linesegs=[{"textpos": 0, "vertpos": 71630,
+                                "vertsize": 1600, "spacing": 960}]),
+             2: fact(2)}
+    row = _predecessors(cache, computed, facts,
+                        usable_height_hwp=71436)["pages"][0]
+    assert row["cache_seat_vertpos_hwp"] == 71630
+    assert row["cache_seat_past_page_bottom"] is True
+
+
+def test_a_cached_seat_inside_the_body_box_is_not():
+    cache = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=160.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)], 2: [mbox(text="c", y0=200.0)]}
+    facts = {0: fact(0),
+             1: fact(1, empty_text=True,
+                     linesegs=[{"textpos": 0, "vertpos": 1000,
+                                "vertsize": 1600, "spacing": 960}]),
+             2: fact(2)}
+    row = _predecessors(cache, computed, facts,
+                        usable_height_hwp=71436)["pages"][0]
+    assert row["cache_seat_past_page_bottom"] is False
+
+
+def test_the_two_bottoms_differ_by_the_last_lines_trailing_spacing():
+    """``ink`` is ``y0 + vertsize``; ``advance`` adds the trailing spacing.
+
+    Which of the two the gap below a paragraph is measured from is the
+    question the pass was opened on, so both have to be in the report.
+    """
+    cache = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=200.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=240.0)]}
+    row = _predecessors(cache, computed, {0: fact(0), 1: fact(1)})["pages"][0]
+    ink = row["cache"]["bottom_ink_px"]
+    advance = row["cache"]["bottom_advance_px"]
+    assert advance - ink == pytest.approx(960 * PX_PER_HWP)
+    assert (row["gap_px"]["cache_from_ink"]
+            - row["gap_px"]["cache_from_advance"]
+            == pytest.approx(960 * PX_PER_HWP))
+
+
+def test_the_gap_is_measured_under_both_policies():
+    cache = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=200.0)]}
+    computed = {0: [mbox(text="a", y0=100.0)], 1: [mbox(text="b", y0=240.0)]}
+    row = _predecessors(cache, computed, {0: fact(0), 1: fact(1)})["pages"][0]
+    assert (row["gap_px"]["computed_from_ink"]
+            - row["gap_px"]["cache_from_ink"]) == pytest.approx(40.0)
+
+
+def test_the_histogram_is_keyed_on_the_three_fields_the_report_names():
+    cache = {0: [mbox(text="a", page=1, y0=100.0)],
+             1: [mbox(text="b", page=1, y0=200.0)],
+             2: [mbox(text="c", page=2, y0=100.0)],
+             3: [mbox(text="d", page=2, y0=200.0)]}
+    computed = dict(cache)
+    computed[1] = [mbox(text="b", page=1, y0=240.0)]
+    computed[3] = [mbox(text="d", page=2, y0=240.0)]
+    facts = {0: fact(0, anchor_kind="anchored:pic"),
+             1: fact(1), 2: fact(2, anchor_kind="anchored:pic"), 3: fact(3)}
+    report = _predecessors(cache, computed, facts)
+    assert report["kinds"] == [{"anchor_kind": "anchored:pic",
+                                "empty_text": False,
+                                "line_spacing_type": "PERCENT", "pages": 2}]
+    assert set(LD.PREDECESSOR_KEY_FIELDS) == set(report["kinds"][0]) - {"pages"}
+    assert report["dominant_kind"]["pages"] == 2
+    assert report["dominant_kind"]["share"] == 1.0
+
+
+def test_the_tallest_bar_is_the_dominant_kind():
+    cache = {index: [mbox(text=f"p{index}", page=index // 2 + 1,
+                          y0=100.0 + 100.0 * (index % 2))]
+             for index in range(6)}
+    computed = dict(cache)
+    facts = {}
+    for index in range(6):
+        odd = index % 2
+        computed[index] = ([mbox(text=f"p{index}", page=index // 2 + 1,
+                                 y0=240.0)] if odd else cache[index])
+        facts[index] = fact(index, empty_text=bool(index == 0))
+    report = _predecessors(cache, computed, facts)
+    counts = [row["pages"] for row in report["kinds"]]
+    assert counts == sorted(counts, reverse=True)
+    assert report["dominant_kind"]["kind"].endswith("/PERCENT")
+    assert report["pages_with_a_predecessor"] == sum(counts)
+
+
+# -- the anchor label -------------------------------------------------------
+
+def test_a_paragraph_with_no_object_has_no_anchor_kind():
+    assert LD.anchor_kind([]) == "none"
+
+
+def test_an_anchored_object_names_the_paragraph_over_an_inline_one():
+    objects = [{"kind": "tbl", "treat_as_char": True},
+               {"kind": "pic", "treat_as_char": False}]
+    assert LD.anchor_kind(objects) == "anchored:pic"
+
+
+def test_an_inline_object_is_labelled_inline():
+    assert LD.anchor_kind([{"kind": "equation", "treat_as_char": True}]) == \
+        "inline:equation"
+
+
+# -- the predecessor section in the report ----------------------------------
+
+def test_the_report_carries_the_predecessor_rule(small_report):
+    section = small_report["first_drift_predecessors"]
+    assert section["rule"] == LD.PREDECESSOR_RULE
+    assert section["key_fields"] == list(LD.PREDECESSOR_KEY_FIELDS)
+
+
+def test_every_predecessor_row_names_a_page_and_a_drift(small_report):
+    for row in small_report["first_drift_predecessors"]["pages"]:
+        assert row["drift_paragraph"] is not None
+        assert row["drift_dy_px"] is not None
+
+
+def test_the_histogram_counts_the_rows_that_have_a_predecessor(small_report):
+    section = small_report["first_drift_predecessors"]
+    with_predecessor = [row for row in section["pages"]
+                        if row["predecessor"] is not None]
+    assert len(with_predecessor) == section["pages_with_a_predecessor"]
+    assert sum(row["pages"] for row in section["kinds"]) \
+        == section["pages_with_a_predecessor"]
+
+
+def test_the_predecessor_section_carries_no_document_text():
+    """``--no-text`` has to hold here too: this is a holdout channel."""
+    report = LD.divergence_report(SMALL_FORM, include_text=False)
+    blob = json.dumps(report["first_drift_predecessors"], ensure_ascii=False)
+    assert '"text"' not in blob
+
+
+def test_the_corpus_table_shows_the_dominant_predecessor(small_report):
+    table = LD.corpus_table([("alpha", small_report)])
+    assert "dominant first-drift predecessor" in table
