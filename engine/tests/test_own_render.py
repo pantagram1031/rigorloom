@@ -3856,6 +3856,148 @@ def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():
     assert seen["CELL"] and seen["other"], "fixture drifted"
 
 
+# ------------------------------------- a table that does not fit the page left
+#
+# MEASURED against Hancom's own export, 2026-09-05
+# (engine/scripts/table_split_probe.py, own-render-notes E2.8).  Exactly one
+# corpus table crosses a page in a reference PDF -- kstartup's anchored,
+# pageBreak="CELL" table 9 -- and the export shows both arms of the same rule
+# on the two pages before it: the table before it (69572 HWPUNIT, seated by
+# the cache at vertpos 69632 on a 71000 page) MOVES WHOLE to a page of its
+# own, and table 9 itself, whose content needs more than one page, SPLITS at
+# a row boundary.  The synthetic fixtures below drive that decision directly
+# so neither arm depends on the one corpus table that exercises it.
+
+def _anchored_table(height, row_heights, page_break="CELL",
+                    treat_as_char="0", wrap="TOP_AND_BOTTOM"):
+    """An anchored table with explicit per-row declared heights."""
+    from xml.etree import ElementTree as ET
+
+    rows = "".join(
+        '<hp:tr><hp:tc><hp:cellAddr colAddr="0" rowAddr="%d"/>'
+        '<hp:cellSpan colSpan="1" rowSpan="1"/>'
+        '<hp:cellSz width="20000" height="%d"/>'
+        '<hp:subList vertAlign="TOP"/></hp:tc></hp:tr>'
+        % (index, row_height)
+        for index, row_height in enumerate(row_heights))
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="1" cellSpacing="0" '
+        'pageBreak="%s" repeatHeader="1" textWrap="%s">'
+        '<hp:sz width="20000" height="%d"/>'
+        '<hp:pos treatAsChar="%s" vertRelTo="PARA" vertOffset="0"/>'
+        '%s</hp:tbl>'
+        % (len(row_heights), page_break, wrap, height, treat_as_char, rows))
+
+
+class _AnchorHolder:
+    """The little a paragraph needs to be an anchored table's holder."""
+
+    def __init__(self, tbl, vertpos):
+        from xml.etree import ElementTree as ET
+
+        self.objects = [(0, "tbl", tbl, None)]
+        self.object_at = {0: (0, "tbl", tbl, True)}
+        self.linesegs = [ET.fromstring(
+            '<hp:lineseg xmlns:hp="urn:x" textpos="0" vertpos="%d" '
+            'vertsize="1000" spacing="0"/>' % vertpos)]
+
+
+def _overflow_action(tbl, vertpos, usable):
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")), dpi=96)
+    return renderer._auto_anchor_overflow_action(
+        renderer._scratch_draw(), _AnchorHolder(tbl, vertpos), usable)
+
+
+def test_an_anchored_table_that_fits_the_room_left_is_left_alone():
+    tbl = _anchored_table(30000, (10000, 20000))
+    assert _overflow_action(tbl, 1000, 71000) is None
+
+
+def test_an_anchored_table_too_tall_for_the_room_left_moves_whole():
+    """The arm Hancom's own export exercises.
+
+    A table that does not fit below where the cache seated it, but does fit a
+    page of its own, is not cut at a row boundary and is not drawn off the
+    bottom of the page: the whole of it goes to the next page.  This is the
+    same answer an inline flowing table already got, and what the reference
+    PDF draws.
+    """
+    tbl = _anchored_table(69572, (30000, 39572))
+    action = _overflow_action(tbl, 69632, 71000)
+    assert action is not None
+    assert action[0] == "move"
+    assert action[1] == 69632
+
+
+def test_an_anchored_table_too_tall_for_any_page_splits_at_a_row_boundary():
+    """A fresh page is not enough, so the row-boundary cut is the answer, and
+    the cut lands ON a boundary rather than through a row."""
+    row_heights = (30000, 30000, 30000)
+    tbl = _anchored_table(sum(row_heights), row_heights)
+    action = _overflow_action(tbl, 5000, 71000)
+    assert action is not None
+    assert action[0] == "split"
+    assert 0 < action[1] < len(row_heights)
+
+
+def test_a_table_that_declares_NONE_neither_moves_nor_splits_on_this_arm():
+    """``pageBreak="NONE"`` (나누지 않음) withdraws the split permission, and
+    this arm reads the permission before it reads the geometry -- so a NONE
+    table is left exactly where the cache put it, overflow and all, rather
+    than being quietly repaginated by the splitter's own code path."""
+    tbl = _anchored_table(69572, (30000, 39572), page_break="NONE")
+    assert _overflow_action(tbl, 69632, 71000) is None
+
+
+def test_an_inline_table_neither_moves_nor_splits_on_this_arm():
+    """The measured half of the permission: an inline (글자처럼 취급) table
+    is the flowing path's business, not the anchor path's."""
+    tbl = _anchored_table(69572, (30000, 39572), treat_as_char="1")
+    assert _overflow_action(tbl, 69632, 71000) is None
+
+
+def test_a_wild_vertOffset_is_left_to_the_ignored_reserve_handling():
+    """kstartup's own limit 12 anchors a table at an offset that puts its
+    bottom pages down the sheet.  That is a broken POSITION, not content
+    that needs a second page, and repaginating on it would be arithmetic
+    dressed up as a fix."""
+    from xml.etree import ElementTree as ET
+
+    tbl = _anchored_table(60000, (30000, 30000))
+    pos = own_render._kid(tbl, "pos")
+    pos.set("vertOffset", "4294967083")
+    assert _overflow_action(tbl, 4114, 71000) is None
+    assert ET.tostring(tbl) is not None
+
+
+def test_no_corpus_row_declares_itself_a_repeatable_header():
+    """Why a split table repeats nothing, on this corpus.
+
+    ``hp:tbl@repeatHeader`` is ``"1"`` on every corpus table, and the one
+    table Hancom splits (kstartup 9) repeats no row on its continuation page
+    -- measured off the reference PDF.  The reason is in the file: OWPML
+    flags the rows to repeat with ``hp:tr@header``, and no ``hp:tr`` anywhere
+    in the corpus carries that attribute, or any other.  So there is nothing
+    for ``repeatHeader`` to repeat, and honouring it would repeat a row the
+    file never nominated.
+    """
+    import glob
+
+    seen_tables = seen_rows = 0
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(_need(path), dpi=96)
+        for section in renderer.sections:
+            for element in section.iter():
+                if own_render._local(element.tag) != "tbl":
+                    continue
+                seen_tables += 1
+                for row in own_render._kids(element, "tr"):
+                    seen_rows += 1
+                    assert not row.attrib, (path, row.attrib)
+    assert seen_tables and seen_rows, "fixture drifted"
+
+
 def test_the_flow_pass_agrees_with_the_authoring_engine_on_the_corpus():
     """The honest measure of the flow pass, the way lineseg_agreement is the
     honest measure of the breaker.  A regression floor, not a fidelity bar:
@@ -6103,6 +6245,11 @@ def test_out_margin_changes_no_corpus_page_count():
 
     Pinned per form so a later change to the outer-margin rule cannot pay for
     registration with a repagination.
+
+    Every count here is its reference PDF's own page count.  ``kstartup`` was
+    21 against a reference of 22 until E2.8 gave the cache path the move-whole
+    arm an anchored table that does not fit the room left has always had under
+    ``computed``; it is 22 now, and every one of the ten agrees with Hancom.
     """
     import glob
 
@@ -6112,7 +6259,7 @@ def test_out_margin_changes_no_corpus_page_count():
         "gianmun-byeolji-2ho": 1,
         "jeongbo-gonggae-cheongguseo": 1,
         "jumin-deungchobon-sinchengseo": 3,
-        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 21,
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo": 22,
         "moel-pyojun-geunrogyeyakseo-2013": 7,
         "moel-pyojun-geunrogyeyakseo-2025": 7,
         "nrf-gyeolgwa-bogoseo-yangsik": 4,

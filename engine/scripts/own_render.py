@@ -2249,6 +2249,13 @@ class OwnRenderer:
         # renderer inserted for the remainder -- see
         # ``_split_anchor_overflow`` and ``_render_floating``.
         self._auto_anchor_splits = {}
+        # ``{page index: HWPUNIT}`` for a page the cache/auto path INSERTED
+        # because an anchored table did not fit the room left where the
+        # cache seated it (E2.8).  Every cached ``vertpos`` on that page is
+        # measured from the ORIGINAL page's body top, so the whole page is
+        # drawn shifted by this offset -- which is what puts the table that
+        # moved at the top of the page it moved to.
+        self._auto_anchor_page_offsets = {}
         self._flow_report = None
         self._scratch_draw_cache = None
         # >0 while a measurement pass runs (a table row asking how tall its
@@ -2662,43 +2669,85 @@ class OwnRenderer:
         usable = max(1, geo["usable_height"])
         draw = self._scratch_draw()
         raw_pages = self.paginate()
+        self._auto_anchor_page_offsets = {}
         out = []
         for page_paras in raw_pages:
             current = []
             for para in page_paras:
-                cut = self._auto_anchor_overflow_cut(draw, para, usable)
-                if cut is None:
+                action = self._auto_anchor_overflow_action(draw, para, usable)
+                if action is None:
+                    current.append(para)
+                    continue
+                if action[0] == "move":
+                    # A table that does not fit the room left, but does fit a
+                    # page of its own, MOVES WHOLE — the answer an inline
+                    # flowing table already gets, and the one Hancom's own
+                    # export gives (E2.8).  It leaves the page it did not fit
+                    # and opens the next one, and every cached ``vertpos``
+                    # that comes with it is rebased so that the paragraph
+                    # that moved starts at the top of the body box.
+                    if current:
+                        out.append(current)
+                        current = []
+                    self._auto_anchor_page_offsets[len(out)] = -action[1]
                     current.append(para)
                     continue
                 # This paragraph's own anchored table overflows the seat the
-                # cache gave it: it stays the last thing on the page it was
-                # on, and starts the next page as the first thing there too
-                # (its second row-range picked up by ``_render_floating``'s
-                # queue on that second encounter) — everything after it
-                # naturally continues on the new page.
+                # cache gave it and would not fit a page of its own either:
+                # it stays the last thing on the page it was on, and starts
+                # the next page as the first thing there too (its second
+                # row-range picked up by ``_render_floating``'s queue on that
+                # second encounter) — everything after it naturally continues
+                # on the new page.
                 current.append(para)
                 out.append(current)
                 current = [para]
             out.append(current)
         return out
 
-    def _auto_anchor_overflow_cut(self, draw, para, usable):
-        """The row-boundary cut ``para``'s own anchored table needs to split
-        at, if its cached seat overflows — or ``None``.  Side effect on a
-        cut: registers the two row ranges on ``self._auto_anchor_splits``
-        (a queue ``_render_floating`` consumes, first encounter then
-        second) and flags the table for natural-height drawing, mirroring
-        exactly what ``_split_anchor_overflow`` does for the computed flow
-        pass.
+    def _auto_anchor_overflow_action(self, draw, para, usable):
+        """What ``para``'s own anchored table needs when the seat the cache
+        gave it overflows the page — ``None`` when it fits.
+
+        ``("move", top)``
+            It does not fit the room left below ``top`` but a whole page is
+            enough for it, so it moves whole to the next page and is drawn
+            from that page's body top (``top`` is what the caller rebases
+            the cached ``vertpos`` by).  This is the arm Hancom's own export
+            exercises: `kstartup` seats a 69572-HWPUNIT anchored table at a
+            cached ``vertpos`` of 69632 on a 71000-HWPUNIT page, and the
+            reference PDF draws it at the top of the NEXT page rather than
+            68204 HWPUNIT off the bottom of that one.
+
+        ``("split", cut)``
+            Not even a fresh page is enough, so it splits at the last row
+            boundary that fits.  Side effect: registers the two row ranges
+            on ``self._auto_anchor_splits`` (a queue ``_render_floating``
+            consumes, first encounter then second) and flags the table for
+            natural-height drawing, mirroring exactly what
+            ``_split_anchor_overflow`` does for the computed flow pass.
         """
         info = self._anchor_table_geometry(draw, para)
         if info is None:
             return None
         tbl_el, offset, ys = info
+        if offset > usable:
+            # A wild ``vertOffset`` (kstartup's own limit 12) is a broken
+            # POSITION, not content that needs a second page; it is left to
+            # the existing ignored-reserve handling, exactly as
+            # ``_place_block`` leaves it.
+            return None
         top = _iattr(para.linesegs[0], "vertpos") if para.linesegs else 0
         room = usable - top
         if offset + ys[-1] <= room:
             return None
+        if top > 0 and offset + ys[-1] <= usable:
+            self._skip(
+                "hp:tbl (anchored)",
+                "the cached page assignment seated this table where it "
+                "overflows the usable box and a page of its own is enough "
+                "for it, so it moves whole to the next page")
+            return ("move", top)
         cut = self._row_cut_for_room(ys, 0, max(0, room - offset))
         if not cut:
             return None
@@ -2715,7 +2764,7 @@ class OwnRenderer:
         queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
         queue.append((0, cut))
         queue.append((cut, len(ys) - 1))
-        return cut
+        return ("split", cut)
 
     # -- block flow (E2.5) -----------------------------------------------
     # ``paginate`` above READS the page assignment the authoring engine left
@@ -7881,7 +7930,9 @@ class OwnRenderer:
                         self._render_paragraphs(
                             draw, page_paras,
                             (geo["body_left"], geo["body_top"]),
-                            geo["usable_width"])
+                            geo["usable_width"],
+                            block_offset_hwp=self._auto_anchor_page_offsets
+                            .get(local_idx - 1, 0))
                     else:
                         self._render_flow_page(
                             draw, page_paras,
