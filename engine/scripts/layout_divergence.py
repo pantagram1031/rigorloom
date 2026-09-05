@@ -480,7 +480,13 @@ class TracingRenderer(own_render.OwnRenderer):
             text = "".join(seg.text for kind, seg in items if kind == "text")
             faces = self._line_faces(items)
             for record in fresh:
-                record.setdefault("address", address)
+                # The desktop renderer stamps its own OWPML ``address`` dict
+                # (kind / atPara / table / row / col) on every box.  This tool
+                # keys paragraphs by its flat document-order index, so that
+                # index takes the slot and the dict moves aside, unchanged.
+                if "address" in record and record["address"] != address:
+                    record.setdefault("owpml_address", record["address"])
+                record["address"] = address
                 record.setdefault("text", text)
                 record.setdefault("faces", faces)
                 record.setdefault("metrics", metrics)
