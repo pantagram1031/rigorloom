@@ -4572,7 +4572,8 @@ construction.
 the whitespace character it stands for so the key deletes it, and with that
 the 18 divergences go to 0.
 
-**This is a live bug in `own_render.py` and it is NOT fixed here.**
+**This is a live bug in `own_render.py` and it is NOT fixed here.** (It is
+fixed in the section below, "What `hp:lineseg@textpos` counts".)
 `OwnRenderer._render_cached_lines` slices `para.chars[start:end]` at exactly
 those `textpos` values, so on the cache path every affected paragraph is
 drawn with one character on the wrong side of a line break. Corpus-wide,
@@ -4661,3 +4662,229 @@ IoU 0.645754 / pair 0.836210 / 9 of 10 page-count exact, `computed` IoU
   13.0.0.2986 on this machine with these fonts installed. An export from a
   build whose metrics differ from the saving build is exactly the case that
   would re-flow, and this corpus cannot contain it.
+
+## What `hp:lineseg@textpos` counts, and the slicing it fixes — 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The slice before this one measured that Hancom's PDF export reproduces the
+saved `hp:lineseg` exactly, and found our own bug on the way: `textpos`
+indexes a stream `Paragraph.chars` is not. This slice reads that stream.
+
+### The model
+
+`hp:lineseg@textpos` indexes the paragraph's TEXT STREAM — the WCHAR run KS X
+6101 and the HWP 5.0 paragraph-text record describe, in which a control
+character is either a *char* control worth one cell or an *inline*/*extended*
+control worth eight. `Paragraph.chars` is a different list: it is built for
+the drawing side, one entry per glyph and exactly one slot per inline object,
+and `itertext()` walks straight past `<hp:tab/>`, `<hp:lineBreak/>` and their
+kind. Slicing `chars` at a `textpos` therefore ran late by whatever the
+controls before the cut were worth.
+
+`Paragraph` now builds both streams and the map between them:
+
+| member | what it is |
+| --- | --- |
+| `chars` | unchanged: `(char, charPrIDRef)`, one slot per inline object |
+| `cell_start[i]` | the cell `chars[i]` begins at |
+| `cell_count` | the paragraph's total cell count |
+| `char_of_cell` / `cell_of_char` | the map, both ways |
+| `lineseg_spans()` | `[(lo, hi)]` into `chars`, one per cached line |
+
+Every reader of a `textpos` goes through it: `_render_cached_lines`, the row
+planner `_line_rows`, `_object_line`, `stale_cache_reason`,
+`page_fit_probe._has_text`, `layout_divergence.cached_line_metrics` (now keyed
+on the line's first CHARACTER, because that is what `_line_items` is handed)
+and `lineseg_agreement`. Drawing itself is untouched: a tab still advances the
+way it did, a line break still breaks, an object still takes one slot.
+
+### The widths, and what pins them
+
+Two constraints hold on every one of the **2995** corpus paragraphs that carry
+an `hp:linesegarray` — top level and table cell alike — and neither needs a
+reference render:
+
+* **reach** — the last cached line still has to hold a cell, so the widths
+  must reach the largest `textpos`;
+* **boundary** — a cached line can only START where an element starts, so
+  they must not overshoot it either: no `textpos` may land inside a control.
+
+| element | in ¶ | ≥2 seats | cells | how it is pinned |
+| --- | ---: | ---: | ---: | --- |
+| a literal character | — | — | 1 | by construction |
+| `hp:lineBreak` | 20 | 20 | 1 | reach+boundary admit **0 or 1**; the PDF oracle admits only 1 |
+| `hp:fwSpace` | 7 | 1 | 1 | char control (HWP 5.0 #31); corpus admits 0–7 |
+| `hp:nbSpace`, `hp:hyphen` | 0 | 0 | 1 | char controls (#30, #24); no corpus instance |
+| `hp:tab` | 3 | 0 | 8 | inline control (#9); no corpus paragraph constrains it |
+| `hp:colPr` | 32 | 2 | 8 | reach+boundary admit **7 or 8**, and the cached box refuses 7 |
+| `hp:fieldBegin`/`End` | 9 | 1 | 8 | the cached box refuses every pair sum below 16, and 8 is the cap |
+| `hp:tbl` | 80 | 1 | 8 | reach+boundary admit **4–8**; 8 is the extended control (#11) |
+| `hp:pic`, `hp:rect` and the other drawing objects | 7 | 0 | 8 | same control (#11); no corpus paragraph constrains them |
+| `hp:secPr` | 10 | 0 | 8 | extended control (#1/#2); no corpus paragraph constrains it |
+| `hp:header`, `hp:newNum` | 5 | 0 | 8 | extended controls (#16, #18); ditto |
+| `hp:markpenBegin`/`End` | 1 | 1 | 0 | an HWPX-only span marker with no control character behind it |
+| `hp:titleMark`, `hp:insertBegin/End`, `hp:deleteBegin/End` | 0 | 0 | 0 | the same reading, and **untested**: no corpus instance |
+| anything else | — | — | 8 | one control's worth, and `lineseg_vs_pdf` reports the guess |
+
+Under the old reading exactly three paragraphs of three UNEDITED forms fail
+both constraints, and they are the three `textpos_past_end` has been firing on
+since it was written:
+
+| paragraph | holds | chars | cells then | cells now | max textpos |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `saeopja` #321 | one `hp:colPr` | 10 | 10 | 18 | 16 |
+| `moel-2013` #159 | a HYPERLINK `fieldBegin`/`fieldEnd` | 36 | 36 | 52 | 42 |
+| `kstartup` #264 | two inline `hp:tbl` | 13 | 13 | 27 | 15 |
+
+Under the new one, none does — 0 of 2995 fail reach and 0 fail boundary. So
+`textpos_past_end` now fires only when the stream genuinely ends early, and
+those three caches come back into the cache path.
+
+Two of the three pin their width rather than merely bounding it, and the third
+channel that does it is the cached `horzsize` itself: a candidate width fixes
+which characters the first cached line holds, and a line whose text does not
+fit its own cached box is refuted. Measured with the renderer's own advance
+arithmetic at 144 dpi:
+
+| paragraph | candidate | line 0 becomes | visible advance | box |
+| --- | --- | --- | ---: | ---: |
+| `saeopja` #321 | `colPr` = 7 | `최대출자자와의 관` (9) | 8050 | 7136 — over |
+| | `colPr` = **8** | `최대출자자와의 ` (8) | 6640 | 7136 — fits |
+| `moel-2013` #159 | pair = 14 | `…에서도 이용` (28) | 13476 | 11752 — over |
+| | pair = 15 | `…에서도 이` (27) | 12760 | 11752 — over |
+| | pair = **16** | `…에서도 ` (26) | 11616 | 11752 — fits |
+
+Eight is the largest a control can be, so 16 is both the smallest pair sum the
+box allows and the largest the format allows: `fieldBegin` and `fieldEnd` are
+8 each. `kstartup` #264 is not pinned this way — its line 0 is spaces and two
+inline tables, and every width from 4 to 8 leaves the same visible advance.
+
+### What moved
+
+`lineseg_vs_pdf.py` now reads the renderer's own map instead of keeping a
+second copy of the model, so the corpus comparison grades the renderer's
+reading rather than a private one. It does not move: **411 of 411**
+paragraphs, **8566 of 8566** characters, `inkless` 107 / `object` 5 /
+`table` 67 skipped, before and after.
+
+The renderer's own slicing does move. Of the **161** corpus paragraphs with
+more than one cached line, **25** were drawn with a character on the wrong
+side of a break and none is now:
+
+| form | ≥2 seats | mis-sliced before | after |
+| --- | ---: | ---: | ---: |
+| `admrul` | 2 | 1 | 0 |
+| `gianmun-1ho` / `-2ho` | 3 | 0 | 0 |
+| `jeongbo` | 6 | 1 | 0 |
+| `jumin` | 27 | 0 | 0 |
+| `kstartup` | 30 | 3 | 0 |
+| `moel-2013` | 35 | 1 | 0 |
+| `moel-2025` | 37 | 17 | 0 |
+| `nrf` | 3 | 0 | 0 |
+| `saeopja` | 18 | 2 | 0 |
+| **all ten** | **161** | **25** | **0** |
+
+21 of the 25 are the `lineBreak`/`tab`/`fwSpace` family the previous slice
+named and counted; the other 4 need the extended-control widths as well.
+Restricted to the paragraphs `lineseg_vs_pdf` can actually compare against the
+PDF, 18 of 54 disagreed with the export's own split and 0 do now — which is
+the oracle, and it is character-exact:
+
+```
+admrul p9    before  '…하고자 하오니 허가' / '하여 주시기 바랍니다. '
+             after   '…하고자 하오니 '     / '허가하여 주시기 바랍니다. '
+moel-2025 p29 before  '(근로자) 주    소 :연' / ' 락 처 : 성 ' / '   명 : …'
+              after   '(근로자) 주    소 :'   / '연 락 처 : '  / '성    명 : …'
+```
+
+### The scoreboard
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | channel | before | after |
+| --- | --- | ---: | ---: |
+| `cache` | text_line_iou | 0.645754 | 0.645275 |
+| | ssim | 0.830919 | 0.831060 |
+| | ssim_inked | 0.276175 | 0.276567 |
+| | text_line_pair_rate | 0.836210 | 0.836393 |
+| | page_count exact | 9 of 10 | 9 of 10 |
+| `computed` | all four | unchanged | unchanged |
+
+`computed` is byte-identical on every form and every channel, which is the
+control: that policy never reads a `textpos`.
+
+Five forms move under `cache`, and they are the five holding a mis-sliced
+paragraph:
+
+| form | IoU | ssim | ssim_inked | pair |
+| --- | ---: | ---: | ---: | ---: |
+| `admrul` | 0.595391 → 0.589760 | 0.926907 → 0.927293 | 0.533986 → 0.535593 | = |
+| `jeongbo` | 0.831621 → 0.832390 | 0.765158 → 0.765346 | 0.294106 → 0.294067 | = |
+| `kstartup` | 0.272355 → 0.272207 | 0.831700 → 0.831705 | 0.302953 → 0.302943 | 0.790319 → 0.792151 |
+| `moel-2025` | 0.557290 → 0.556662 | 0.781896 → 0.782325 | 0.206880 → 0.207606 | = |
+| `saeopja` | 0.806544 → 0.807399 | 0.770592 → 0.770993 | 0.279969 → 0.281603 | = |
+
+`moel-2013` does not move at all: its one affected paragraph is a table cell
+whose two lines the computed breaker had been putting in the same boxes.
+
+**The pixel channels move toward the reference and the box channel does not,
+and the box channel is the one to distrust here.** `ssim` and `ssim_inked` are
+read off the Hancom raster and rise on four of the five forms; `text_line_iou`
+is an overlap between OUR line box and a PyMuPDF line box, our box ends at
+`LINE_BOX_END = visible_advance`, and moving one character — very often a
+space — across a break changes where both ends sit. What is not a judgement
+call is the split itself: the characters now sit where Hancom's own export
+puts them, on all 411 comparable paragraphs.
+
+`render_check.py` on `render-check-01` is unchanged at both 96 dpi (match 6,
+close 37, differs 6, unsupported 2) and 144 dpi (match 14, close 31,
+differs 4, unsupported 2), 9 of 9 pages either way — the document carries no
+`hp:linesegarray`, so there is no `textpos` in it to read.
+
+### `--lineseg-agreement` moved, and one column fell
+
+The breaker's own report compares cached break positions with computed ones,
+and those were being compared across the two index spaces. Converted:
+2148 → 2151 paragraphs scored, 2116 → 2119 line counts exact, 2030 → 2033
+break sequences exact, 158 → 161 multi-line, 139 → 142 of those, 216 → 219
+cached break positions, and **80 → 79 matched**.
+
+The one column that fell is worth keeping rather than explaining away. The
+corpus's forced breaks are `<hp:lineBreak/>`; the cached break now sits at the
+character the control precedes rather than one past it, and `compute_lines`
+has no notion of a forced break at all — it breaks on width. Some of the old
+agreement at those positions was the two errors cancelling. Teaching the
+breaker about `<hp:lineBreak/>` is a separate change and is not made here.
+
+### Not proven
+
+- **Four of the widths have no corpus witness at all.** `hp:tab`,
+  `hp:nbSpace`, `hp:hyphen`, `hp:secPr` and the drawing objects other than
+  `hp:tbl` appear only in paragraphs with a single cached line, where every
+  width satisfies both constraints. They are set from the same control-
+  character classification the three measured cases confirm, and a document
+  that breaks a line after a tab would test the most load-bearing of them.
+- **`hp:titleMark` and the change-tracking markers are a reading, not a
+  measurement.** They are given no cell on the same grounds as `markpen` — an
+  HWPX-only span marker — and no corpus form carries one.
+- **`hp:tbl` is bounded, not pinned.** Reach and boundary admit 4 through 8 on
+  the one paragraph that constrains it. 8 is the extended control's width and
+  is what the other two measured cases show, but nothing here separates it
+  from 7 or 5.
+- **`fieldBegin` and `fieldEnd` are pinned only as a sum.** Their paragraph
+  constrains `wB + wE` to 16; the even 8/8 split is the classification's, not
+  the corpus's, and 16 rests on 8 being the cap.
+- **The box refutation is measured with this renderer's advances.** The two
+  overflows above are 15% and 13% past the cached box, which is far outside
+  the disagreement `--lineseg-agreement` records, but they are still this
+  renderer's numbers and not Hancom's.
+- **Table cells still never reach the PDF oracle.** The 411 are top-level
+  paragraphs. Most of this corpus's text is in cells, and the 4 paragraphs
+  that need the extended widths are all cell or object paragraphs, so their
+  new splits are checked against the cache's own two constraints and against
+  nothing else.
+- **The IoU fall is unexplained in detail.** It is attributed above to the
+  line box's end moving with the character that moved. No per-line
+  attribution was made, and `admrul`'s −0.0056 is the largest single move on
+  the board.
