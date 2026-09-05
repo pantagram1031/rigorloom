@@ -2285,6 +2285,7 @@ class OwnRenderer:
         self.skipped = {}
         self._bin_cache = {}
         self._synthetic_bold = {}
+        self._metric_face_cache = {}
         self.bin_items = {}
         self.counts = {"paragraphs": 0, "runs": 0, "tables": 0, "cells": 0,
                        "text_lines": 0, "placeholders": 0, "borders": 0,
@@ -3802,6 +3803,72 @@ class OwnRenderer:
         return self.fontbook.get(self.pt_to_px(pt), bold,
                                  self._face_for(cid, slot, bold))
 
+    def _installed_regular_cut(self, cid, slot):
+        """The REGULAR cut of a bold installed run's declared family.
+
+        진하게 is a ``hh:charPr`` attribute, not a family: the file names
+        맑은 고딕 and sets ``bold="1"``, and Hancom answers that by DRAWING
+        the bold cut while still ADVANCING by the regular one.  #281's
+        punctuation pass measured it on the one family in this corpus that
+        declares a regular name, sets the bold flag, and has both cuts
+        installed here (맑은 고딕 → ``malgun.ttf`` / ``malgunbd.ttf``): over
+        602 anchored non-space advances the absolute error against Hancom's
+        own glyph positions falls from 8785 HWPUNIT to 1894, and the ASCII
+        punctuation that carries most of it lands on the regular cut's hmtx
+        to three decimal places — ``(`` 0.3047 em, ``*`` 0.4248, ``-``
+        0.4102.  바탕, whose family has no bold cut installed at all and so
+        already advanced by its regular, is #267's exactly-1.0000 face.
+
+        Returns ``(path, index)`` for the face an advance should be measured
+        off, or ``None`` to leave the run alone.
+
+        **INSTALLED FACES ONLY, and deliberately self-contained.**  It asks
+        ``font_index`` and nothing else, so a run whose declared face is
+        answered by the bundled family map or the machine fallback never
+        reaches this rule -- that population is the substituted-face slice's
+        and this function must not move it.  It also does its own name
+        lookup rather than calling ``_face_for``, both because ``_face_for``
+        counts every call into ``face_resolution@characters`` (the sidecar's
+        per-face character tally, which must keep counting DRAWN characters)
+        and so that the two slices do not edit the same lines.
+        """
+        key = (cid, slot)
+        hit = self._metric_face_cache.get(key)
+        if hit is not None:
+            return hit[0]
+        answer = None
+        if self.font_index is not None and self._charpr(cid).get("bold"):
+            font_ids = self._charpr(cid).get("font_ids") or {}
+            face_name = None
+            for slot_key in (slot, slot.upper()):
+                font_id = font_ids.get(slot_key)
+                if font_id is None:
+                    continue
+                table = (self.defs["fontfaces"].get(slot.upper())
+                         or self.defs["fontfaces"].get(slot) or {})
+                face_name = table.get(font_id)
+                if face_name:
+                    break
+            entry = (self.font_index.lookup(face_name) if face_name else None)
+            if entry is not None and entry["regular"] and entry["bold"] \
+                    and entry["regular"] != entry["bold"]:
+                answer = entry["regular"]
+        self._metric_face_cache[key] = (answer,)
+        return answer
+
+    def _metric_font_for(self, cid, rel_sz, slot, drawn):
+        """The font an advance is MEASURED off, given the one it is DRAWN in.
+
+        Everything but :meth:`_installed_regular_cut` returns ``drawn``
+        unchanged, so this is a no-op for every run that is not a bold run in
+        an installed family with both cuts on this machine.
+        """
+        face = self._installed_regular_cut(cid, slot)
+        if face is None:
+            return drawn
+        pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        return self.fontbook.get(self.pt_to_px(pt), False, face)
+
     def _reference_font(self, font):
         """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
 
@@ -3963,7 +4030,11 @@ class OwnRenderer:
             # integer pixel size); its size is deliberately not what the
             # advance is measured against — see ``LAYOUT_REFERENCE_PX``.
             pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-            advance_hwp = (self._em_width(font, chunk) * pt * HWPUNIT_PER_PT
+            # DRAWN in ``font``, ADVANCED by ``metric`` -- the two differ only
+            # for a bold run in an installed family with both cuts on this
+            # machine; see ``_installed_regular_cut``.
+            metric = self._metric_font_for(cid, rel_sz, slot, font)
+            advance_hwp = (self._em_width(metric, chunk) * pt * HWPUNIT_PER_PT
                            * ratio / 100.0)
             width = self.pxf(advance_hwp)
             size_px = font.size

@@ -2874,7 +2874,12 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 130, 117, 27, 24, 36, 12),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 452, 433, 30, 30, 45, 19),
+    # 452 -> 454, 433 -> 435 on the bold-metering slice (#281): kstartup's
+    # bold runs declare 맑은 고딕 and set hh:charPr@bold, and their advance is
+    # now the family's REGULAR cut, which is what Hancom's own export
+    # positions them by.  Every scored paragraph of this form now reproduces
+    # the cached line count.  Nothing else on the row moved.
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 454, 435, 30, 30, 45, 19),
     "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 247, 35, 31, 50, 29),
     "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
@@ -3081,7 +3086,19 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # with the direction on both policies and on every form (cache ssim
     # +0.0063, inked +0.0187, line IoU +0.0124; computed +0.0018 / +0.0045 /
     # +0.0074, means over the corpus).
-    assert totals == [2151, 2119, 2037, 161, 142, 219, 82], totals
+    #
+    # 2119 -> 2121 and 2037 -> 2039 on the bold-metering slice (#281), every
+    # other column unmoved and every one of the two gains on kstartup.  진하게
+    # is a ``hh:charPr`` attribute, not a family: the file names 맑은 고딕 and
+    # sets ``bold="1"``, and Hancom's own export DRAWS the bold cut while
+    # ADVANCING by the regular one.  Over the 602 anchored non-space advances
+    # the corpus puts on an installed bold face, the absolute error against
+    # Hancom's glyph positions falls 8785 -> 1894 HWPUNIT, and the per-line
+    # width error on installed-face lines falls from a median absolute 56.57
+    # to 10.56.  The rasters agree on both policies (cache ssim +0.0017,
+    # inked +0.0142, line IoU +0.0003; computed +0.0019 / +0.0143 / +0.0008,
+    # means over the corpus) and no break position was lost.
+    assert totals == [2151, 2121, 2039, 161, 142, 219, 82], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -6759,3 +6776,154 @@ def test_an_anchor_that_reserves_no_room_still_reserves_none(typo_probe):
     para = _anchored_object_paragraph(renderer, 10000, 283,
                                       wrap="BEHIND_TEXT")
     assert renderer._anchor_extent(para, body_top=0) == 0
+
+
+# -- a bold run is ADVANCED by its family's regular cut (#281) -------------
+
+FAMILY_MAP_DIR = os.path.join(ENGINE, "references", "fonts", "family-map")
+_REGULAR_CUT = os.path.join(FAMILY_MAP_DIR, "NanumMyeongjo-Regular.ttf")
+_BOLD_CUT = os.path.join(FAMILY_MAP_DIR, "NanumGothicCoding-Bold.ttf")
+
+#: Advance in EM of one character per class in the two cuts above, read off
+#: their own ``hmtx``.  The pair is deliberately NOT metric-compatible — the
+#: repo's real regular/bold pairs are, which would make every assertion below
+#: vacuous — so each character separates the two answers by a wide margin.
+_CUT_EM = {
+    "(": (0.365234, 0.5),        # punct
+    ".": (0.273438, 0.5),        # punct
+    "“": (0.440430, 1.0),   # fw_punct
+    "A": (0.726562, 0.5),        # latin
+    "1": (0.537109, 0.5),        # digit
+    "가": (0.950195, 1.0),   # hangul
+}
+
+
+def _bold_metric_probe(tmp_path, both_cuts=True):
+    """A renderer whose every declared face is one synthetic bold family.
+
+    The installed index is blanked and one family entry is planted under
+    every name the document declares, so the resolution is the same on any
+    machine: ``source == "installed"``, regular and bold two different
+    designs.  ``both_cuts=False`` plants a family with NO bold cut, which is
+    the 바탕 case — nothing to swap, and the rule must not fire.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    entry = {
+        "regular": (_REGULAR_CUT, 0),
+        "bold": (_BOLD_CUT, 0) if both_cuts else None,
+        "italic": None, "bold_italic": None,
+        "family": "SYNTHETIC-PAIR",
+    }
+    for table in renderer.defs["fontfaces"].values():
+        for name in table.values():
+            renderer.font_index.families[name] = dict(entry)
+    renderer._face_cache.clear()
+    renderer._metric_face_cache.clear()
+    return renderer
+
+
+def _cid_with_bold(renderer, bold):
+    for cid, cp in renderer.defs["char_pr"].items():
+        if bool(cp.get("bold")) is bold and (cp.get("font_ids") or {}):
+            return cid
+    return None
+
+
+def _cell_hwp(renderer, cid):
+    pt = renderer._charpr(cid).get("height_pt") or 10.0
+    return pt * own_render.HWPUNIT_PER_PT
+
+
+def test_a_bold_run_is_advanced_by_its_familys_regular_cut(tmp_path):
+    """진하게 is a hh:charPr attribute, so it changes the ink, not the pen.
+
+    #281 measured it against Hancom's own glyph positions on 맑은 고딕: the
+    bold cut is DRAWN and the regular cut's advances are what the line is
+    laid out on.  One character per class, so a rule that fired for
+    punctuation alone would fail here too.
+    """
+    renderer = _bold_metric_probe(tmp_path)
+    cid = _cid_with_bold(renderer, True)
+    assert cid is not None, "the fixture has no bold hh:charPr"
+    cell = _cell_hwp(renderer, cid)
+    for ch, (regular_em, bold_em) in _CUT_EM.items():
+        got = renderer._measure_hwp(None, ch, cid)
+        assert got == pytest.approx(regular_em * cell, rel=1e-3), ch
+        # and the assertion is not vacuous: the drawn cut says otherwise.
+        assert got != pytest.approx(bold_em * cell, rel=1e-3), ch
+
+
+def test_a_bold_run_is_still_drawn_in_the_bold_cut(tmp_path):
+    """Only the advance moves.  The glyph a bold run draws is unchanged."""
+    renderer = _bold_metric_probe(tmp_path)
+    cid = _cid_with_bold(renderer, True)
+    drawn = renderer._font_for(cid, 100, "symbol")
+    assert os.path.basename(drawn.path) == os.path.basename(_BOLD_CUT)
+    metric = renderer._metric_font_for(cid, 100, "symbol", drawn)
+    assert os.path.basename(metric.path) == os.path.basename(_REGULAR_CUT)
+
+
+def test_a_regular_run_is_advanced_by_the_face_it_is_drawn_in(tmp_path):
+    """The rule is bold-only: a non-bold run must not be touched."""
+    renderer = _bold_metric_probe(tmp_path)
+    cid = _cid_with_bold(renderer, False)
+    assert cid is not None, "the fixture has no regular hh:charPr"
+    assert renderer._installed_regular_cut(cid, "symbol") is None
+    cell = _cell_hwp(renderer, cid)
+    for ch, (regular_em, _bold_em) in _CUT_EM.items():
+        assert renderer._measure_hwp(None, ch, cid) == \
+            pytest.approx(regular_em * cell, rel=1e-3), ch
+
+
+def test_a_family_with_no_bold_cut_has_nothing_to_swap(tmp_path):
+    """바탕: HWP fakes the weight, and the advance was already the regular's."""
+    renderer = _bold_metric_probe(tmp_path, both_cuts=False)
+    cid = _cid_with_bold(renderer, True)
+    assert renderer._installed_regular_cut(cid, "symbol") is None
+    cell = _cell_hwp(renderer, cid)
+    assert renderer._measure_hwp(None, "(", cid) == \
+        pytest.approx(_CUT_EM["("][0] * cell, rel=1e-3)
+
+
+def test_a_substituted_bold_face_is_left_to_the_fallback_slice(tmp_path):
+    """The rule asks ``font_index`` and nothing else.
+
+    A declared face answered by the bundled family map or by the machine
+    fallback is the substituted-face population, which this slice does not
+    move; with the installed index blanked the rule must decline outright.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    renderer.font_index = own_render.SystemFontIndex(directories=[
+        str(tmp_path / "no-such-directory")])
+    renderer._face_cache.clear()
+    renderer._metric_face_cache.clear()
+    cid = _cid_with_bold(renderer, True)
+    for slot in ("hangul", "latin", "symbol"):
+        assert renderer._installed_regular_cut(cid, slot) is None
+    renderer.font_index = None
+    renderer._metric_face_cache.clear()
+    assert renderer._installed_regular_cut(cid, "symbol") is None
+
+
+def test_no_automatic_space_is_opened_between_hangul_and_latin(tmp_path):
+    """한글-영문 자동 띄움 is NOT applied, and that is measured, not assumed.
+
+    #281 read Hancom's own pen moves across every inter-class boundary on
+    the installed-face lines of the corpus — Hangul->Latin, Latin->Hangul,
+    Hangul->digit, digit->Hangul — and every one of them is the first
+    glyph's own advance to within 0.0001 em: no 1/4 em, no gap at all.
+    Neither ``autoSpaceEAsianEng`` nor ``autoSpaceEAsianNum`` appears on any
+    ``hp:paraPr`` in the corpus, so this pins the behaviour with the
+    attribute ABSENT and says nothing about what it would do if set.
+    """
+    renderer = _bold_metric_probe(tmp_path)
+    cid = _cid_with_bold(renderer, False)
+    for left, right in (("가", "A"), ("A", "가"),
+                        ("가", "1"), ("1", "가"),
+                        ("가", "("), ("(", "가")):
+        pair = renderer._measure_hwp(None, left + right, cid)
+        apart = (renderer._measure_hwp(None, left, cid)
+                 + renderer._measure_hwp(None, right, cid))
+        assert pair == pytest.approx(apart, rel=1e-6), (left, right)
