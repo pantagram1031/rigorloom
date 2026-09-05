@@ -6241,9 +6241,10 @@ Per form, cells on the grid:
 | nrf | 32 | 32 | 32 | 32 | 32 |
 | saeopja | 779 | 192 | 655 | 655 | **741** |
 
-The corpus average hides the measurement. Six of the ten forms declare one
-consistent width per table and every model agrees with every other on them;
-what separates the models is the **771 cells the four place differently**:
+The corpus average hides the measurement. Seven of the ten forms score
+identically under all four models — the solved box equals the declared width
+on every cell they own, so there is nothing there to disagree about. What
+separates the models is the **771 cells the four place differently**:
 
 | model | of those 771, on the grid | cells `global` had on the grid and this model does not |
 | --- | ---: | ---: |
@@ -6270,13 +6271,15 @@ lands on every row of the table:
 | rows 27-30 col 1, `colSpan=4` (4 cells) | 43968 | 43561 | −407 | +0 |
 | rows 33/34/38 col 0, `colSpan=3` | 29386 | 31114 | +1729 | +1 |
 | rows 33/34/38 col 3, `colSpan=2` | 18681 | 19783 | −1726 | +2 |
-| rows 31/32/35/37, `colSpan=5` | 48067 | 50897 | +0…+3 | +0…+3 |
+| rows 31/32/35/37, `colSpan=5` | 48067 | 50897 | +0…+3, +500 | +0…+3, +500 |
 
 The last two lines are the whole rule in two rows of a table. Rows 33/34/38
 declare 29386 + 18681 = 48067 against a table of 50897, and the cache breaks
 the FIRST cell at exactly its declared 29386 and the second at
 50897 − 29386 = 21511, not at its declared 18681. Rows 31/32/35/37 are one
-5-column cell each declaring 48067, and the cache breaks them at 50897. A
+5-column cell each declaring 48067, and the cache breaks three of them at
+50897. Row 31 carries a further +500 that `global` and `stretch` give
+identically — the same box, so whatever it is, it is not the column. A
 proportional rescale — which is what `solve_tracks` does when it has to —
 would have moved the first cell of rows 33/34/38 as well, and it did not
 move. The row closes at the table's right edge, and the last cell listed in
