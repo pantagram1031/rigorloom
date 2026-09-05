@@ -35,6 +35,10 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": ["resources/rigorloomd/**/*"]
+    "resources": {
+      "resources/rigorloomd/": "resources/rigorloomd/",
+      "../../LICENSE": "notices/RIGORLOOM-MIT.txt",
+      "../src/assets/fonts/OFL.txt": "notices/Pretendard-OFL-1.1.txt"
+    }
   }
 }

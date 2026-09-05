@@ -579,6 +579,7 @@ where
     }))
 }
 
+#[cfg(test)]
 fn export_candidate_files(
     runtime_root: &Path,
     artifact: &Path,

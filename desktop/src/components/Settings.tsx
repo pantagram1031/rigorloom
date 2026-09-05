@@ -453,6 +453,19 @@ export function Settings() {
             </p>
           </section>
         ) : null}
+
+        <section className="section" data-testid="product-legal">
+          <h3>제품 정보와 호환성</h3>
+          <p className="prose tiny">
+            본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+          </p>
+          <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
+            Rigorloom은 한컴 또는 한컴오피스와 제휴하거나 그 승인을 받은 제품이 아닙니다.
+            한컴오피스와 그 바이너리·SDK·글꼴·템플릿은 포함하지 않습니다. Automation 기능은
+            사용자가 적법하게 설치한 한컴오피스와 해당 이용 조건이 허용하는 범위에서만 사용할 수
+            있습니다.
+          </p>
+        </section>
       </div>
     </div>
   );
