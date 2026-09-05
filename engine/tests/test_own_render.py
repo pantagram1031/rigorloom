@@ -2337,6 +2337,143 @@ def test_render_cached_lines_never_narrows_a_box_wider_than_its_container():
                                            abs=0.5)
 
 
+# --------------------------------------- textpos counts cells, not characters
+#
+# ``hp:lineseg@textpos`` indexes the paragraph's TEXT STREAM, in which an
+# inline control occupies cells even though it draws no glyph.  Slicing
+# ``Paragraph.chars`` at a raw ``textpos`` therefore runs late by whatever the
+# controls before the cut are worth, and puts characters on the wrong side of
+# a line break.  Every fixture below is synthetic and asserts where a
+# character lands, never how many of anything the corpus holds.
+
+
+def _cell_paragraph(inner, textpos, para_pr=None):
+    """A synthetic ``hp:p`` with the given run content and cached seats."""
+    from xml.etree import ElementTree as ET
+
+    segs = "".join(
+        f'<hp:lineseg textpos="{pos}" vertpos="{i * 2000}" vertsize="1000" '
+        f'textheight="1000" baseline="850" spacing="0" horzpos="0" '
+        f'horzsize="20000" flags="0"/>'
+        for i, pos in enumerate(textpos))
+    xml = (f'<hp:p xmlns:hp="urn:x" paraPrIDRef="0">{inner}'
+           f'<hp:linesegarray>{segs}</hp:linesegarray></hp:p>')
+    return own_render.Paragraph(ET.fromstring(xml), para_pr or {})
+
+
+def _lines(para):
+    """The text each cached line holds, as the renderer would slice it."""
+    return ["".join(ch for ch, _cid in para.chars[lo:hi])
+            for lo, hi in para.lineseg_spans()]
+
+
+def test_a_line_break_takes_a_cell_the_character_stream_does_not():
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>주소:<hp:lineBreak/>연락처:'
+        '</hp:t></hp:run>', [0, 4])
+    # Four characters before the second line starts, and the fourth of them
+    # is the break itself, which draws nothing.
+    assert para.text == "주소:연락처:"
+    assert para.cell_count == len(para.chars) + own_render.CELL_PER_CHAR
+    assert _lines(para) == ["주소:", "연락처:"]
+
+
+def test_a_tab_before_a_break_is_worth_a_whole_control():
+    width = own_render.CELL_PER_CONTROL
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나<hp:tab/>다라</hp:t></hp:run>',
+        [0, 2 + width])
+    assert para.cell_count == 4 + width
+    assert _lines(para) == ["가나", "다라"]
+
+
+def test_a_full_width_space_is_one_cell_like_any_other_space():
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가<hp:fwSpace/>나다</hp:t></hp:run>',
+        [0, 2])
+    assert para.cell_count == len(para.chars) + own_render.CELL_PER_CHAR
+    assert _lines(para) == ["가", "나다"]
+
+
+def test_a_ctrl_before_a_break_is_counted_and_the_cache_stays_readable():
+    """The shape three unedited corpus forms carry, and used to lose.
+
+    A paragraph opening with an ``hp:ctrl`` puts its whole text after that
+    control's cells.  Counting the control keeps the cached seats inside the
+    stream — the cache is READABLE — and puts the break where the authoring
+    engine put it.
+    """
+    width = own_render.CELL_PER_CONTROL
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:ctrl><hp:colPr id="" type="NEWSPAPER"/>'
+        '</hp:ctrl></hp:run>'
+        '<hp:run charPrIDRef="0"><hp:t>가나다라마바사아</hp:t></hp:run>',
+        [0, width + 6])
+    assert own_render.OwnRenderer.unusable_cache_reason(para) is None
+    assert _lines(para) == ["가나다라마바", "사아"]
+
+
+def test_a_formatting_mark_takes_no_cell_and_moves_no_character():
+    plain = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나다라</hp:t></hp:run>', [0, 2])
+    marked = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가<hp:markpenBegin/>나'
+        '<hp:markpenEnd/>다라</hp:t></hp:run>', [0, 2])
+    assert marked.cell_count == plain.cell_count
+    assert _lines(marked) == _lines(plain)
+
+
+def test_a_cache_that_really_does_start_past_the_end_is_still_refused():
+    """The condition keeps its teeth: no width for any control explains a
+    seat past the end of the paragraph."""
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나<hp:lineBreak/>다라'
+        '</hp:t></hp:run>', [0, 999])
+    assert (own_render.OwnRenderer.unusable_cache_reason(para)
+            == "textpos_past_end")
+
+
+def test_an_inline_object_keeps_one_slot_in_the_character_stream():
+    """``chars`` gets one slot per object however many cells it counts for:
+    the drawing side places one object, the cell map does the arithmetic."""
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나</hp:t>'
+        '<hp:tbl rowCnt="1" colCnt="1"/><hp:t>다라</hp:t></hp:run>', [0])
+    assert len(para.chars) == 5
+    assert para.chars[2][0] == own_render.OBJECT_SLOT
+    assert para.cell_count == 4 + own_render.CELL_PER_CONTROL
+    # The object's own cell is where the cache will look for it.
+    assert para.cell_of_char(2) == 2
+    assert para.char_of_cell(2 + own_render.CELL_PER_CONTROL) == 3
+
+
+def test_the_renderer_draws_the_cached_split_the_cell_map_says():
+    """End to end through ``_render_cached_lines``: what reaches the page."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__cellsplit__", height=1000)
+    renderer.defs["para_pr"]["__cellpara__"] = dict(
+        renderer.defs["para_pr"][next(iter(renderer.defs["para_pr"]))],
+        align="LEFT")
+    para = _cell_paragraph(
+        f'<hp:run charPrIDRef="{cid}"><hp:t>주소:<hp:lineBreak/>연락처:'
+        '</hp:t></hp:run>', [0, 4], renderer.defs["para_pr"])
+
+    drawn = []
+    original = renderer._line_items
+
+    def spy(para_, chars, base_index):
+        drawn.append("".join(ch for ch, _cid in chars))
+        return original(para_, chars, base_index)
+
+    renderer._line_items = spy
+    renderer.line_boxes = []
+    renderer._render_cached_lines(draw, para, (0, 0), 40000)
+    assert drawn == ["주소:", "연락처:"]
+
+
 # ------------------------------------------------- line breaking (E2.1)
 #
 # The breaker is graded twice over.  Its *mechanics* — which positions the
@@ -2558,16 +2695,16 @@ def test_a_tab_advances_to_the_paragraphs_next_declared_stop(typo_probe):
 LINESEG_AGREEMENT = {
     # form: (scored, line_count_exact, sequence_exact, multiline_scored,
     #        multiline_line_count_exact, cached_break_positions, matched)
-    "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 21, 2, 2, 2, 1),
+    "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 22, 2, 2, 2, 2),
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 450, 432, 29, 28, 44, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 258, 243, 34, 30, 49, 23),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 12),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 451, 432, 30, 29, 45, 16),
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 244, 35, 31, 50, 24),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
+    "saeopja-deungnok-sinchengseo": (765, 759, 750, 18, 15, 25, 11),
 }
 
 
@@ -2744,7 +2881,19 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # moel-2025 (301 -> 297 line counts) and saeopja (8 -> 9); the other
     # seven are unchanged there because their declared sizes already landed
     # on integer pixels at 144.
-    assert totals == [2148, 2116, 2030, 158, 139, 216, 80], totals
+    #
+    # 2148 -> 2151, 2116 -> 2119, 2030 -> 2033, 158 -> 161, 139 -> 142,
+    # 216 -> 219 and 80 -> 79 on the textpos-cells slice.  ``textpos`` counts
+    # CELLS, so a cached break is converted to a character index before it is
+    # compared with the breaker's own, and three paragraphs whose caches were
+    # unreadable only because their controls had been given no cells join the
+    # measurement.  The one column that fell is the break-position one, and it
+    # fell for a reason worth keeping: the corpus's forced breaks are
+    # ``<hp:lineBreak/>``, whose cached break now sits at the character the
+    # control precedes rather than one past it, and ``compute_lines`` has no
+    # notion of a forced break at all -- it breaks on width.  Some of the old
+    # agreement at those positions was the two errors cancelling.
+    assert totals == [2151, 2119, 2033, 161, 142, 219, 79], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():

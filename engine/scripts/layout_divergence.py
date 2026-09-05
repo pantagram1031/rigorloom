@@ -324,19 +324,20 @@ def anchor_kind(objects):
 
 
 def cached_line_metrics(para):
-    """``{textpos: metrics}`` over a paragraph's cached ``hp:lineseg``.
+    """``{character index: metrics}`` over a paragraph's cached ``hp:lineseg``.
 
-    Keyed on ``textpos`` because that is the argument ``_render_cached_lines``
-    hands ``_line_items``, so the latch finds the right line without counting
-    draw calls — a line whose chunk is empty is skipped and never drawn, and
-    an ordinal counter would be off by one from there on.
+    Keyed on the line's first CHARACTER because that is the argument
+    ``_render_cached_lines`` hands ``_line_items``, so the latch finds the
+    right line without counting draw calls — a line whose chunk is empty is
+    skipped and never drawn, and an ordinal counter would be off by one from
+    there on.  It is not the raw ``textpos``: that counts cells, and a
+    paragraph carrying an inline control has fewer characters than cells.
     """
     metrics = {}
-    for seg in getattr(para, "linesegs", ()):
-        textpos = own_render._iattr(seg, "textpos")
+    for (start, _end), seg in zip(para.lineseg_spans(), para.linesegs):
         vertsize = own_render._iattr(seg, "vertsize")
         spacing = own_render._iattr(seg, "spacing")
-        metrics[textpos] = {
+        metrics[start] = {
             "source": "lineseg",
             "vertpos_hwp": own_render._iattr(seg, "vertpos"),
             "vertsize_hwp": vertsize,
