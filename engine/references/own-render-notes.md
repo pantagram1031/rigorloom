@@ -6139,3 +6139,238 @@ every form. The fix removed a compensating error; it did not create one.
   is one of them, and its raggedness is the negative-`intent` reading above.
 - **The corpus is the training set.** 1609 cells from ten government forms,
   and the `hasMargin="1"` arm of the rule rests on 56 of them.
+
+## The track solve: Hancom lays each table row out on its own — measured, 2026-09-05
+
+#268 fixed which margin insets a cell and left one term standing in the fit:
+`+solved`, the difference between the solved track sum and the cell's own
+declared `cellSz@width`. It named that term structural rather than an
+attribute-handling error and stopped there. This run asks the structural
+question directly, over every cell on the corpus.
+
+The public basis says the global solve is our invention. OWPML (KS X 6101)
+gives `hp:tbl` a `sz`, a `rowCnt`/`colCnt` and a list of `hp:tr`; every
+`hp:tc` under those carries its own `cellSz`, its own `cellAddr` and its own
+`cellSpan`. There is no table-level column definition anywhere in the record —
+HWP 5.0's binary table record stores the same per-cell width, height and grid
+address and no column list. So `solve_tracks` is a reconstruction, and the
+cache can be asked whether it is the right one.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows] [--json]`
+subclasses #268's `CellColumnRenderer`, so the text column each cell was
+given is still read off the renderer's own `avail_w_hwp` rather than
+rederived. Added to it: the solved `xs` per table, and each cell's absolute
+drawn box and page.
+
+Four column models are scored:
+
+| model | a cell's box | a cell's x |
+| --- | --- | --- |
+| `global` | `xs[col+colSpan] - xs[col]` from `solve_tracks` | `xs[col]` |
+| `literal` | its own `cellSz@width` | running sum of its own row |
+| `addr` | its own `cellSz@width` | `xs[col]` |
+| `stretch` | `cellSz@width`, last cell of the row closing to `hp:sz@width` | running sum of its own row |
+
+The residual arithmetic is exact rather than a second derivation: the cell
+inset and the paragraph's own `hh:margin` enter the model's line box and the
+cache's identically and cancel, so a model's per-line residual is the
+renderer's own residual shifted by `model_box - rendered_box`.
+
+`literal`'s row walk carries a merge. A `rowSpan` cell is not repeated in the
+rows it reaches into, so the cursor steps over the grid columns it holds and
+advances x by its width before placing the next cell the row does list.
+Without that carry every row under a merge would start at x=0, and the model
+would be measuring the carry's absence. The walk agrees with the file's own
+`cellAddr@colAddr` on **1609 of 1609 cells**, which is what says the carry is
+right.
+
+### x is not in the cache, and the probe says so rather than assuming it
+
+The task proposed `hp:lineseg@horzpos` as a second oracle, on the reading
+that it is a text start. It is — but relative to the cell's own content box.
+Over the **2519** cached in-cell linesegs, 2482 equal the paragraph-relative
+prediction `max(0, margin_left + intent)` that `_line_box` already computes,
+**0** equal any absolute placement, and the largest `horzpos` in a cell
+anywhere on the corpus is 1500 HWPUNIT — smaller than any table's second
+column. A cache that never records an absolute x cannot separate `literal`
+from `addr`, and no amount of reading it harder will change that.
+
+So x got a third oracle off the reference PDF. `--pdf` reads every vertical
+stroke Hancom's own export draws (`page.get_drawings()`), in absolute page
+coordinates that need no registration — ours in HWPUNIT from the page corner,
+which is where `own_render` puts its canvas origin, the PDF's in points at
+1 pt = 100 HWPUNIT. Its verdict is real but thin, and the reason is worth
+stating: the corpus PDFs draw **1643** distinct vertical stroke positions
+while the models predict only 387-527 cell edges, because a cell edge whose
+`borderFill` says `NONE` is drawn nowhere. Scored in the only honest
+direction — of the strokes Hancom actually drew, how many does a model put a
+cell edge under — at one device pixel of 144 dpi (50 HWPUNIT): `global` 263,
+`addr` 283, `literal` 305, `stretch` 305. It ranks the models the same way
+the width oracle does and it does not prove anything on its own.
+
+### What the corpus says about width
+
+1609 cells compared, 1599 measurable, 10 ragged. A residual in `[0, 4)` is
+the column reproduced exactly: #268 measured that the cache saves
+`hp:lineseg@horzsize` quantised DOWN onto a 4 HWPUNIT grid (3164 of 3177
+values are multiples of 4), so that band is the quantiser. A NEGATIVE
+residual is not — no quantiser makes a box narrower than one already rounded
+down.
+
+| model | exact | on the 4-HWPUNIT grid | within 8 HWPUNIT |
+| --- | ---: | ---: | ---: |
+| `global` — the renderer today | 165 | 905 (56.6%) | 1102 |
+| `literal` | 322 | 1401 (87.6%) | 1406 |
+| `addr` | 322 | 1401 (87.6%) | 1406 |
+| **`stretch`** | **324** | **1495 (93.5%)** | **1502** |
+
+Per form, cells on the grid:
+
+| form | of | `global` | `literal` | `addr` | `stretch` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| admrul | 16 | 16 | 16 | 16 | 16 |
+| gianmun-1ho | 34 | 31 | 31 | 31 | 31 |
+| gianmun-2ho | 51 | 51 | 51 | 51 | 51 |
+| jeongbo | 70 | 70 | 70 | 70 | 70 |
+| jumin | 84 | 40 | 75 | 75 | **81** |
+| kstartup | 362 | 302 | 302 | 302 | 302 |
+| moel-2013 | 69 | 69 | 67 | 67 | **69** |
+| moel-2025 | 102 | 102 | 102 | 102 | 102 |
+| nrf | 32 | 32 | 32 | 32 | 32 |
+| saeopja | 779 | 192 | 655 | 655 | **741** |
+
+The corpus average hides the measurement. Seven of the ten forms score
+identically under all four models — the solved box equals the declared width
+on every cell they own, so there is nothing there to disagree about. What
+separates the models is the **771 cells the four place differently**:
+
+| model | of those 771, on the grid | cells `global` had on the grid and this model does not |
+| --- | ---: | ---: |
+| `global` | 143 | 0 |
+| `literal` | 639 | 40 |
+| `addr` | 639 | 40 |
+| **`stretch`** | **733** | **0** |
+
+`stretch` regresses nothing and recovers 590 cells the global solve loses.
+`literal` without the row-closing term regresses 40, which is what makes the
+`stretch` term a measurement and not an ornament.
+
+### jumin table 1, which is what named the problem
+
+39 rows, 5 columns, `hp:sz@width` 50897. Rows 0-30 total 50897; rows 31-38
+total 48067 for the same five columns; rows 33/34/38 split their 48067 as
+29386 + 18681. `solve_tracks` closes col2 off the 29386 constraint — a
+row-48067 constraint feeding a row-50897 column — and the contradiction
+lands on every row of the table:
+
+| cells | declared `cellSz` | solved box | `global` residual | `stretch` |
+| --- | ---: | ---: | ---: | ---: |
+| rows 4-20 col 2, `colSpan=3` (19 cells) | 39216 | 38530 | −683 | +3 |
+| rows 27-30 col 1, `colSpan=4` (4 cells) | 43968 | 43561 | −407 | +0 |
+| rows 33/34/38 col 0, `colSpan=3` | 29386 | 31114 | +1729 | +1 |
+| rows 33/34/38 col 3, `colSpan=2` | 18681 | 19783 | −1726 | +2 |
+| rows 31/32/35/37, `colSpan=5` | 48067 | 50897 | +0…+3, +500 | +0…+3, +500 |
+
+The last two lines are the whole rule in two rows of a table. Rows 33/34/38
+declare 29386 + 18681 = 48067 against a table of 50897, and the cache breaks
+the FIRST cell at exactly its declared 29386 and the second at
+50897 − 29386 = 21511, not at its declared 18681. Rows 31/32/35/37 are one
+5-column cell each declaring 48067, and the cache breaks three of them at
+50897. Row 31 carries a further +500 that `global` and `stretch` give
+identically — the same box, so whatever it is, it is not the column. A
+proportional rescale — which is what `solve_tracks` does when it has to —
+would have moved the first cell of rows 33/34/38 as well, and it did not
+move. The row closes at the table's right edge, and the last cell listed in
+the row is what absorbs the difference.
+
+`jumin` goes 40 → 81 of 84 cells on the grid. The three left are +503, +502
+and +500, and no model moves them: two of the three are cells every model
+gives the same box.
+
+### The rule
+
+**Hancom lays each table row out from its own cells' `cellSz@width`, left to
+right, carrying a `rowSpan` cell across the rows it holds; the last cell a
+row lists absorbs whatever is left between the row's own total and the
+table's `hp:tbl/hp:sz@width`.** There is no global column solve, and rows
+that declare contradictory totals are not a contradiction to be resolved —
+they are what the file means.
+
+`hp:tbl`'s other attributes were checked for anything that could legitimize a
+global width, and none of them does. Over the corpus's 81 tables:
+`cellSpacing="0"` on all 81; `repeatHeader="1"` on all 81; `rowCnt` equals
+the `hp:tr` count on all 81; `pageBreak` is `CELL` on 62 and `NONE` on 19;
+`noAdjust` is `"0"` on 63 and `"1"` on 18. Neither `pageBreak` nor
+`noAdjust` correlates with whether a table's rows agree — the 7 tables whose
+rows disagree split 3/2/2 across `noAdjust`/`pageBreak` combinations that
+also hold 74 tables whose rows agree. `hp:sz@width` is the only table-level
+width, and 80 of the 94 distinct row totals on the corpus equal it exactly;
+the 14 that do not are the `stretch` term's whole population.
+
+Span handling is the same in all four models and is not what separates them:
+751 cells declare `colSpan>1` alone, 103 `rowSpan>1` alone, 109 both, 646
+neither. `colSpan` never enters the box twice — a merged cell's `cellSz@width`
+is already the whole merged width, which is why `literal` needs no per-column
+sum at all.
+
+### Not implemented, and why
+
+The task's gate was 99% of cells with the counter-examples explained.
+`stretch` reaches 93.5% of all measurable cells and 95.1% of the contested
+ones, so the gate is not met and `own_render.py` is unchanged on this branch.
+Two things would have to close before it should be:
+
+- **38 contested cells stay off the grid under `stretch`**, 37 of them on
+  `saeopja` and concentrated in one shape. In `saeopja`'s 47996-wide table,
+  rows 8/9 total 47868 and the 128 short is not taken by the last cell: the
+  cache gives +26 to the `colSpan=3` cell at col 10 and +98 to the
+  `colSpan=1` cell at col 17, where `stretch` gives the last cell all 128
+  (residual +30) and `literal` gives it none (−98). The shortfall is split
+  between two cells in amounts that are neither proportional to their widths
+  nor equal, and nothing measured here says what picks them. `jumin` row 31
+  is the 38th, at +500.
+- **x has no oracle strong enough to move every table rule on.** The model
+  changes where every cell in every table is placed, and the only absolute
+  evidence for x on this corpus is 1643 PDF strokes that rank `stretch` above
+  `global` by 42 out of 1643. That ranks; it does not license.
+
+### Nothing moved, and that is the point
+
+`own_render.py` is byte for byte what #268 left, so every channel reads
+exactly as it did there, and the run confirms it rather than assuming it:
+`render_scoreboard.py --corpus --dpi 144` gives `cache` 0.8420 ssim / 0.3283
+inked / 0.6729 line IoU with 52 of 53 pages exact, and `computed` 0.8336 /
+0.3246 / 0.6595 with 53 of 53. `lineseg_vs_pdf.py --corpus` is 411/411
+paragraphs with 8566/8566 characters. `cell_column_probe.py --corpus` is 1599
+measurable cells with the `-margins +inset +solved` combination still winning
+at 322 exact / 1406 near, and `+solved` — which is `literal`'s width, read
+through #268's fit rather than this one's — scoring identically.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243. `render_check.py` on `render-check-01` is 6 match / 37 close / 6
+differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144, 9 pages on both.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The 66 off-grid cells the four models place identically are not a track
+  question at all** and are unchanged from #268: `kstartup` −156 on 60 cells,
+  `gianmun-1ho` −874 on 2 and −1157 on 1, `jumin` +503 and +502, `saeopja`
+  +602. Every model gives them the same box, so whatever they are, it is not
+  the column. Excluding them, `stretch` is 1495 of 1533 — 97.5%, still short
+  of the gate.
+- **Which cell absorbs a row's residual** is `stretch`'s one free choice and
+  it rests on 7 rows of `jumin` plus the `moel-2013` pair. "The last cell the
+  row lists" is what those say; `saeopja` says it is not always the last cell
+  alone.
+- **A row that overflows its table** is untested as a separate case:
+  `saeopja` has rows both under and over `hp:sz@width` and `stretch` shrinks
+  the last cell symmetrically, but no corpus row overflows by enough to
+  separate shrinking from clamping.
+- **The corpus is the training set** — 81 tables from ten government forms,
+  and the whole `stretch` term rests on the 7 of them whose rows disagree.
+- **The PDF rule oracle measures recall of drawn strokes**, so a form whose
+  cells declare no borders contributes nothing to it, and a stroke that is
+  not a table rule counts against every model equally.
