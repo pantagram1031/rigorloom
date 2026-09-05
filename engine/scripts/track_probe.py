@@ -48,6 +48,47 @@ THE THREE MODELS
     and the second (18681) at 21511 = 50897 - 29386.  A proportional rescale
     would have moved the first cell too, and it did not move.
 
+WHICH CELL PAYS: THE ALLOCATION MODELS
+--------------------------------------
+``stretch`` left one question open -- it hands a row's whole shortfall to the
+last cell the row lists, and 37 ``saeopja`` cells say that is not always
+where it goes.  Six more models tile the row the same way and differ only in
+who pays: ``prop4`` (proportional to the declared widths, each share floored
+onto the 4-HWPUNIT grid, remainder to the last cell), ``prop_round`` (the
+same, rounded, remainder to the last), ``prop_widest`` (remainder to the
+widest cell), ``quanta`` (4 HWPUNIT at a time left to right until spent) and
+``colspan`` (the largest ``colSpan`` in the row takes it all).
+
+Three more do not hand the shortfall to anybody, because they never compute
+one.  They build ONE column grid for the table and let a cell's box be the
+distance between the two boundaries it sits between:
+
+``gridfirst``
+    ``x[0]`` is 0, ``x[colCnt]`` is ``hp:tbl/hp:sz@width``, and every other
+    boundary is written by the FIRST cell, in document order, whose declared
+    width reaches it.  A later cell that reaches an already-written boundary
+    is stretched or shrunk to it instead of writing its own.
+``firstrow``
+    the same, but only row 0 may write boundaries -- the task's "the first
+    row's tracks" reading.
+``gridlast``
+    the same, but a later row overwrites an earlier one.  The control that
+    says whether "first" is doing any work.
+
+``gridfirst`` is what the corpus picks, and the datum that picks it is
+``saeopja``'s 47996-wide table.  Rows 8/9 there total 47868 and the 128
+short does NOT go to the last cell: the cache gives +26 to the ``colSpan=3``
+cell at column 10 and +98 to the ``colSpan=1`` cell at column 17.  Under
+``gridfirst`` that is not two allocations, it is two boundaries.  Row 7's
+``colSpan=7`` cell at column 6 runs 14383 + 19010 and writes ``x[13]`` =
+33393; row 8's ``colSpan=3`` cell at column 10 starts at ``x[10]`` = 26433
+and reaches ``x[13]``, so its box is 6960 against a declared 6932 -- +28,
+which the cache's 4-HWPUNIT quantiser saves as +26.  Its last cell reaches
+``x[18]`` = 47996 from ``x[17]`` = 44144 for a box of 3852 against a declared
+3752 -- +100, saved as +98.  Neither number is proportional to anything and
+neither is a choice; both fall out of boundaries two earlier rows had
+already written.
+
 TWO ORACLES, AND WHAT EACH CAN SEE
 ----------------------------------
 **Width** is observable.  ``hp:lineseg@horzsize`` is the box Hancom broke the
@@ -76,7 +117,10 @@ Usage::
     python engine/scripts/track_probe.py FORM.hwpx
     python engine/scripts/track_probe.py --corpus
     python engine/scripts/track_probe.py --corpus --pdf --horzpos
-    python engine/scripts/track_probe.py FORM.hwpx --table 1 --rows
+    python engine/scripts/track_probe.py --corpus --heights
+    python engine/scripts/track_probe.py --corpus --rows \
+        --models stretch,gridfirst
+    python engine/scripts/track_probe.py FORM.hwpx --rows
 
 This is measurement.  It changes nothing in ``own_render.py``.
 """
@@ -85,6 +129,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -97,7 +142,31 @@ import layout_divergence  # noqa: E402
 import own_render  # noqa: E402
 from cli_io import utf8_stdio  # noqa: E402
 
-MODELS = ("global", "literal", "addr", "stretch")
+#: Every column model the probe scores, in the order they are reported.
+#: The first four are #270's; the rest answer the question #270 left open --
+#: when a row's cells do not add up to the table, WHICH cell takes the
+#: difference.  ``gridfirst`` is the one the corpus picks; see the module
+#: docstring's ALLOCATION MODELS section.
+MODELS = (
+    "global", "literal", "addr", "stretch",
+    "prop4", "prop_round", "prop_widest", "quanta", "colspan",
+    "firstrow", "gridfirst", "gridlast",
+)
+
+#: Models built by walking a shared column grid rather than by handing one
+#: row's shortfall to one of that row's own cells.
+GRID_MODELS = ("firstrow", "gridfirst", "gridlast")
+
+#: Models that tile a row from its own declared widths and then hand the
+#: shortfall out among that row's own cells, ``{name: allocation mode}``.
+ROW_MODELS = {
+    "stretch": "last",
+    "prop4": "prop4",
+    "prop_round": "prop_round",
+    "prop_widest": "prop_widest",
+    "quanta": "quanta",
+    "colspan": "colspan",
+}
 
 #: A residual at or under this many HWPUNIT is zero.  The quantities are
 #: integers; the tolerance exists only so a float column compares cleanly.
@@ -185,6 +254,7 @@ def read_table(tbl):
                 "cspan": max(1, own_render._iattr(span, "colSpan", 1)),
                 "rspan": max(1, own_render._iattr(span, "rowSpan", 1)),
                 "width": own_render._iattr(size, "width"),
+                "height": own_render._iattr(size, "height"),
             })
         rows.append(row)
     sz = own_render._kid(tbl, "sz")
@@ -193,6 +263,8 @@ def read_table(tbl):
         "row_cnt": own_render._iattr(tbl, "rowCnt", len(rows)),
         "col_cnt": own_render._iattr(tbl, "colCnt", 0),
         "declared_width": own_render._iattr(sz, "width") if sz is not None else 0,
+        "declared_height": (own_render._iattr(sz, "height")
+                            if sz is not None else 0),
         "cell_spacing": own_render._iattr(tbl, "cellSpacing"),
         "repeat_header": tbl.get("repeatHeader"),
         "page_break": tbl.get("pageBreak"),
@@ -260,6 +332,224 @@ def first_row_prefix(table):
     return out
 
 
+def allocate(widths, spans, shortfall, mode):
+    """How ``shortfall`` HWPUNIT is shared among one row's own listed cells.
+
+    ``widths`` are the cells' declared ``cellSz@width`` in row order and
+    ``spans`` their ``colSpan``; the return is a list of per-cell additions
+    that sums to ``shortfall`` exactly, so every model closes the row at the
+    table's declared width and they differ only in WHO pays.
+
+    ``last``          the last cell the row lists takes all of it (#270's
+                      ``stretch``).
+    ``prop4``         proportional to the cells' declared widths, each share
+                      floored onto the 4-HWPUNIT grid the cache quantises on,
+                      the remainder to the last cell.
+    ``prop_round``    proportional, each share rounded to the nearest
+                      HWPUNIT, remainder to the last cell.
+    ``prop_widest``   the same, remainder to the widest cell instead.
+    ``quanta``        4 HWPUNIT at a time, left to right, wrapping until the
+                      shortfall is spent; the sub-quantum tail goes to the
+                      last cell touched.
+    ``colspan``       the cell holding the largest ``colSpan`` takes all of
+                      it, the leftmost of those on a tie.
+    """
+    n = len(widths)
+    if n == 0:
+        return []
+    add = [0] * n
+    if shortfall == 0:
+        return add
+    if mode == "last":
+        add[-1] = shortfall
+        return add
+    if mode == "colspan":
+        add[max(range(n), key=lambda i: (spans[i], -i))] = shortfall
+        return add
+    if mode == "quanta":
+        step = 4 if shortfall > 0 else -4
+        left, i = shortfall, 0
+        while abs(left) >= 4:
+            add[i % n] += step
+            left -= step
+            i += 1
+        add[(i - 1) % n if i else 0] += left
+        return add
+    total = sum(widths)
+    if total <= 0:
+        add[-1] = shortfall
+        return add
+    raw = [shortfall * w / float(total) for w in widths]
+    if mode == "prop4":
+        add = [int(math.floor(v / 4.0)) * 4 for v in raw]
+    else:
+        add = [int(round(v)) for v in raw]
+    slack = shortfall - sum(add)
+    if mode == "prop_widest":
+        add[max(range(n), key=lambda i: (widths[i], -i))] += slack
+    else:
+        add[-1] += slack
+    return add
+
+
+def row_alloc_layout(table, mode):
+    """``{id(tc): (x, width)}`` -- each row tiled from its own declared
+    widths, with the row's shortfall against ``hp:tbl/hp:sz@width`` shared
+    out by ``allocate``.
+
+    The ``rowSpan`` carry is the same one ``literal_layout`` measured against
+    the file's own ``cellAddr``: a held cell contributes its DECLARED width
+    to the rows it reaches into, not the width its own row gave it, because
+    the row it was listed in is the only row that adjusts it.
+    """
+    out, held = {}, {}
+    declared = table["declared_width"]
+    for r, row in enumerate(table["rows"]):
+        # First pass: where each listed cell starts, and the row's total.
+        starts, x, col = [], 0, 0
+        for cell in row:
+            while (r, col) in held:
+                w, cspan = held[(r, col)]
+                x += w
+                col += cspan
+            starts.append(x)
+            for rr in range(r + 1, r + cell["rspan"]):
+                held[(rr, col)] = (cell["width"], cell["cspan"])
+            x += cell["width"]
+            col += cell["cspan"]
+        while (r, col) in held:
+            w, cspan = held[(r, col)]
+            x += w
+            col += cspan
+        if not row:
+            continue
+        shortfall = (declared - x) if declared else 0
+        add = allocate([c["width"] for c in row],
+                       [c["cspan"] for c in row], shortfall, mode)
+        # Second pass: re-tile with the adjusted widths, keeping the leading
+        # gap each cell had (a held cell's width is unchanged, so the gap is
+        # the same quantity in both passes).
+        shift = 0
+        for i, cell in enumerate(row):
+            width = cell["width"] + add[i]
+            out[id(cell["tc"])] = (starts[i] + shift, width)
+            shift += add[i]
+    return out
+
+
+def grid_layout(table, rows_used=None, last_wins=False):
+    """``{id(tc): (x, width)}`` -- one column grid for the table, built by
+    walking the rows in document order.
+
+    ``x[0]`` is 0 and ``x[colCnt]`` is ``hp:tbl/hp:sz@width``: the table
+    closes at its own declared box, which is the one thing every row on this
+    corpus agrees about.  Every other boundary is written by the FIRST cell
+    whose declared width reaches it, and a later cell that reaches an
+    already-written boundary is stretched or shrunk to it instead of writing
+    its own.  A cell's box is the distance between the two boundaries it sits
+    between, so a row whose cells do not add up does not hand its shortfall
+    to any one cell -- the shortfall lands wherever the grid already
+    disagrees with the row, which can be several cells and in unequal
+    amounts.
+
+    ``rows_used`` restricts which rows may WRITE boundaries (``{0}`` is the
+    task's "first row's tracks" reading); every row still reads them.
+    ``last_wins`` is the control: a later row overwrites an earlier row's
+    boundary rather than yielding to it.
+    """
+    ncol = table["col_cnt"]
+    declared = table["declared_width"]
+    xs = {0: 0}
+    if declared and ncol:
+        xs[ncol] = declared
+    fixed = set(xs)
+    out, held = {}, {}
+    for r, row in enumerate(table["rows"]):
+        writes = rows_used is None or r in rows_used
+        pos, col = 0, 0
+        for cell in row:
+            while (r, col) in held:
+                w, cspan = held[(r, col)]
+                col += cspan
+                pos = xs.get(col, pos + w)
+            c = cell["col"] if cell["col"] is not None else col
+            left = xs.get(c, pos)
+            right_col = c + cell["cspan"]
+            if right_col in xs and not (last_wins and writes
+                                        and right_col not in fixed):
+                right = xs[right_col]
+            else:
+                right = left + cell["width"]
+                if writes:
+                    xs[right_col] = right
+            out[id(cell["tc"])] = (left, right - left)
+            for rr in range(r + 1, r + cell["rspan"]):
+                held[(rr, c)] = (cell["width"], cell["cspan"])
+            pos, col = right, right_col
+    return out
+
+
+def row_height_shape(tables):
+    """The shape of the row-height question, before anyone tries to solve it.
+
+    ``hp:tr`` carries no height in OWPML; every ``hp:tc`` carries its own
+    ``cellSz@height``, and a row's height has to be recovered from them.  The
+    two readings that could be right are "a row is as tall as the tallest
+    cell listed in it" and "a ``rowSpan`` cell constrains the SUM of the rows
+    it covers, so the heights need solving together".  This does not score
+    them against an oracle -- there is no cached row height to score against
+    -- it counts how often the data even lets them differ:
+
+    ``unit_rows_agreeing``   rows where every ``rowSpan=1`` cell declares the
+                             same height, so "tallest" and "any of them" are
+                             the same answer.
+    ``span_exact``           ``rowSpan`` cells whose declared height equals
+                             the sum of the unit heights of the rows it
+                             covers -- the merge adds no constraint.
+    ``span_residual``        the histogram of the difference when it does
+                             not, which is what a solve would have to move.
+    ``table_exact``          tables whose row heights sum to
+                             ``hp:tbl/hp:sz@height``.
+    """
+    out = {"tables": 0, "rows": 0, "unit_rows_agreeing": 0,
+           "rows_without_unit_cell": 0, "span_cells": 0, "span_exact": 0,
+           "table_exact": 0, "span_residual": Counter(),
+           "table_residual": Counter(), "unit_row_spread": Counter()}
+    for table in tables.values():
+        out["tables"] += 1
+        unit = {}
+        for r, row in enumerate(table["rows"]):
+            out["rows"] += 1
+            heights = sorted({c["height"] for c in row if c["rspan"] == 1})
+            if not heights:
+                out["rows_without_unit_cell"] += 1
+                continue
+            unit[r] = heights[-1]
+            out["unit_row_spread"][heights[-1] - heights[0]] += 1
+            if len(heights) == 1:
+                out["unit_rows_agreeing"] += 1
+        for r, row in enumerate(table["rows"]):
+            for cell in row:
+                if cell["rspan"] == 1:
+                    continue
+                out["span_cells"] += 1
+                covered = [unit.get(rr) for rr in range(r, r + cell["rspan"])]
+                if any(v is None for v in covered):
+                    out["span_residual"]["unknown"] += 1
+                    continue
+                gap = cell["height"] - sum(covered)
+                out["span_exact"] += gap == 0
+                out["span_residual"][gap] += 1
+        total = sum(unit.get(r, 0) for r in range(len(table["rows"])))
+        gap = table["declared_height"] - total
+        out["table_exact"] += gap == 0
+        out["table_residual"][gap] += 1
+    for key in ("span_residual", "table_residual", "unit_row_spread"):
+        out[key] = dict(sorted(out[key].items(),
+                               key=lambda kv: -kv[1])[:8])
+    return out
+
+
 # --------------------------------------------------------------------------
 # Scoring
 # --------------------------------------------------------------------------
@@ -282,14 +572,14 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         (table["literal_x"], table["walked"], table["row_totals"],
          table["last_of_row"]) = literal_layout(table)
         table["first_row_grid"] = first_row_prefix(table)
-        # ``stretch``: how much the last cell a row lists has to grow (or
-        # shrink) for the row to end at the table's declared right edge.
-        table["stretch"] = {}
-        for r, last in enumerate(table["last_of_row"]):
-            if last is None or not table["declared_width"]:
-                continue
-            table["stretch"][id(last["tc"])] = (table["declared_width"]
-                                                - table["row_totals"][r])
+        # Every model that is not the global solve reduces to a
+        # ``{id(tc): (x, width)}`` placement, computed once per table.
+        placed = {name: row_alloc_layout(table, mode)
+                  for name, mode in ROW_MODELS.items()}
+        placed["firstrow"] = grid_layout(table, rows_used={0})
+        placed["gridfirst"] = grid_layout(table)
+        placed["gridlast"] = grid_layout(table, last_wins=True)
+        table["placed"] = placed
         tables[id(tbl)] = table
 
     cells = []
@@ -310,20 +600,15 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         # difference in box width, because the cell inset and the
         # paragraph's own margins enter both sides identically.
         rendered_box = record["box_hwp"]
-        model_box = {
-            "global": rendered_box,
-            "literal": declared,
-            "addr": declared,
-            "stretch": declared + table["stretch"].get(id(tc), 0),
-        }
         gx = xs[min(col, len(xs) - 1)] if xs else 0
         lx = table["literal_x"].get(id(tc), 0)
-        model_x = {
-            "global": gx,
-            "literal": lx,
-            "addr": gx,
-            "stretch": lx,
-        }
+        model_box = {"global": rendered_box, "literal": declared,
+                     "addr": declared}
+        model_x = {"global": gx, "literal": lx, "addr": gx}
+        for name, placed in table["placed"].items():
+            x0, width = placed.get(id(tc), (lx, declared))
+            model_box[name] = width
+            model_x[name] = x0
         delta = base["delta_line"]
         base.update({
             "model_box": model_box,
@@ -394,12 +679,29 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         "grid": {n: sum(1 for c in contested
                         if 0 <= c["model_delta"][n] < 4) for n in MODELS},
     }
+    # Two baselines, because the question this run asks is not "beat the
+    # global solve" but "beat ``stretch``, which already does".
     report["regressions"] = {
         n: sum(1 for c in cells
                if c["delta_line"] is not None
                and 0 <= c["model_delta"]["global"] < 4
                and not 0 <= c["model_delta"][n] < 4)
         for n in MODELS}
+    report["regressions_vs_stretch"] = {
+        n: sum(1 for c in cells
+               if c["delta_line"] is not None
+               and 0 <= c["model_delta"]["stretch"] < 4
+               and not 0 <= c["model_delta"][n] < 4)
+        for n in MODELS}
+    report["off_grid"] = {
+        n: [{"row": c["row"], "col": c["col"], "span": c["col_span"],
+             "declared": c["cell_width"], "residual": c["model_delta"][n],
+             "row_total": c["row_total"], "table_width": c["declared_total"]}
+            for c in cells
+            if c["delta_line"] is not None
+            and not 0 <= c["model_delta"][n] < 4]
+        for n in MODELS}
+    report["rows"] = row_height_shape(tables)
     report["horzpos"] = horzpos_oracle(renderer, cells)
     if pdf_path is not None:
         report["rules"] = pdf_rule_oracle(renderer, tables, cells, pdf_path)
@@ -513,84 +815,96 @@ def pdf_rule_oracle(renderer, tables, cells, pdf_path):
 # Output
 # --------------------------------------------------------------------------
 
-def summary_line(stem, report):
+def summary_line(stem, report, models=MODELS):
     parts = [f"{stem}: {report['cells_compared']} cells "
              f"({report['cells_measurable']} measurable, "
              f"{report['cells_ragged']} ragged) in {report['tables']} tables, "
              f"{report['tables_row_disagreement']} with rows that disagree; "
              f"colAddr==walk {report['coladdr_matches_walk']}"
              f"/{report['cells_compared']}"]
-    for name in MODELS:
+    for name in models:
         w = report["width"][name]
-        parts.append(f"  width {name:<8} exact {w['exact']:>5}  "
+        parts.append(f"  width {name:<11} exact {w['exact']:>5}  "
                      f"grid {w['grid']:>5}  near {w['near']:>5}  "
                      f"/ {w['of']}")
     return "\n".join(parts)
 
 
-def histogram_block(report, top=6):
+def histogram_block(report, top=6, models=MODELS):
     out = []
-    for name in MODELS:
+    for name in models:
         hist = report["width"][name]["histogram"]
         shown = " ".join(f"{k:+g}x{v}" for k, v in list(hist.items())[:top])
-        out.append(f"    {name:<8} residuals: {shown}")
+        out.append(f"    {name:<11} residuals: {shown}")
     return "\n".join(out)
 
 
-def rows_block(report, cells, table_id=None):
-    """What each row of a table declares, and which model reproduces it."""
+def rows_block(report, cells, table_id=None, models=MODELS):
+    """Every cell of every row that does not add up, and what the cache did.
+
+    The cache's own box is printed alongside the models: a model's residual
+    is its box minus the cache's, so the cache's box is
+    ``cellSz@width - literal_residual`` for any cell, and ``alloc`` is how
+    much the cache gave that cell over and above its declared width.  That
+    column is the measurement; the models are guesses at reproducing it.
+    """
     by_table = defaultdict(list)
     for cell in cells:
         by_table[cell["table"]].append(cell)
     out = []
     for tid, group in by_table.items():
         totals = sorted({c["row_total"] for c in group if c["row_total"]})
-        if table_id is None and len(totals) < 2:
-            continue
         declared = group[0]["declared_total"]
+        if table_id is None and len(totals) < 2 and totals[:1] == [declared]:
+            continue
         out.append(f"  table {tid}: declared {declared}, row totals "
                    f"{totals}")
-        seen = set()
         for cell in sorted(group, key=lambda c: (c["row"], c["col"])):
-            if cell["row"] in seen:
+            if cell["row_total"] == declared:
                 continue
-            seen.add(cell["row"])
+            delta = cell["model_delta"]
+            cache = (None if delta["literal"] is None
+                     else cell["cell_width"] - delta["literal"])
+            alloc = None if cache is None else cache - cell["cell_width"]
             deltas = " ".join(
-                f"{name[0]}={cell['model_delta'][name]:+g}"
-                if cell["model_delta"][name] is not None else f"{name[0]}=-"
-                for name in MODELS)
+                f"{name}={delta[name]:+g}" if delta[name] is not None
+                else f"{name}=-" for name in models)
             out.append(
-                f"    r{cell['row']:<3} total {cell['row_total']:>6}  "
-                f"cellSz {cell['cell_width']:>6}  box {cell['rendered_box']:>6g}"
+                f"    r{cell['row']:<3} c{cell['col']:<3}+{cell['col_span']:<2}"
+                f" total {cell['row_total']:>6} short "
+                f"{declared - (cell['row_total'] or 0):>+6}  cellSz "
+                f"{cell['cell_width']:>6}  cache "
+                f"{'-' if cache is None else format(cache, '.0f'):>6}  alloc "
+                f"{'-' if alloc is None else format(alloc, '+.0f'):>6}"
                 f"  {deltas}")
     return "\n".join(out)
 
 
-def corpus_block(rows):
-    """The three models over every corpus cell at once."""
+def corpus_block(rows, models=MODELS):
+    """Every model over every corpus cell at once."""
     out = ["corpus width fit (cells whose cached horzsize the model "
            "reproduces):"]
     totals = {name: {"exact": 0, "grid": 0, "near": 0, "of": 0}
-              for name in MODELS}
+              for name in models}
     for _stem, report in rows:
-        for name in MODELS:
+        for name in models:
             for key in ("exact", "grid", "near", "of"):
                 totals[name][key] += report["width"][name][key]
-    for name in MODELS:
+    for name in models:
         t = totals[name]
-        out.append(f"  {name:<8} exact {t['exact']:>5}  grid {t['grid']:>5}"
+        out.append(f"  {name:<11} exact {t['exact']:>5}  grid {t['grid']:>5}"
                    f"  near {t['near']:>5}  / {t['of']}"
                    f"   ({100.0 * t['grid'] / max(1, t['of']):.1f}% on the "
                    f"4-HWPUNIT grid)")
     contested = sum(report["contested"]["cells"] for _s, report in rows)
     out.append(f"  of the {contested} cells the models place differently, on "
-               "the grid:")
-    for name in MODELS:
+               "the grid, and what each loses against the two baselines:")
+    for name in models:
         got = sum(report["contested"]["grid"][name] for _s, report in rows)
         back = sum(report["regressions"][name] for _s, report in rows)
-        out.append(f"    {name:<8} {got:>5} / {contested}"
-                   f"   (cells the global solve had on the grid and this "
-                   f"model does not: {back})")
+        vs = sum(report["regressions_vs_stretch"][name] for _s, report in rows)
+        out.append(f"    {name:<11} {got:>5} / {contested}"
+                   f"   regressions vs global {back:>3}, vs stretch {vs:>3}")
     hp = {"linesegs": 0, "paragraph_relative": 0, "absolute": 0,
           "max_horzpos": 0}
     for _stem, report in rows:
@@ -604,7 +918,7 @@ def corpus_block(rows):
     if any("rules" in report for _stem, report in rows):
         out.append("  drawn PDF vertical rules a model puts a cell edge "
                    f"under, per tolerance {RULE_TOL} HWPUNIT:")
-        for name in MODELS:
+        for name in models:
             line = []
             for tol in RULE_TOL:
                 hit = sum(report["rules"][name][str(tol)]["hit"]
@@ -614,17 +928,48 @@ def corpus_block(rows):
                 line.append(f"{hit}/{of}")
             predicted = sum(report["rules"][name][str(RULE_TOL[0])]["predicted"]
                             for _s, report in rows if "rules" in report)
-            out.append(f"    {name:<8} " + "   ".join(line)
+            out.append(f"    {name:<11} " + "   ".join(line)
                        + f"   (edges predicted {predicted})")
+    return "\n".join(out)
+
+
+def heights_block(rows):
+    """The row-height histogram, summed over the corpus."""
+    keys = ("tables", "rows", "unit_rows_agreeing", "rows_without_unit_cell",
+            "span_cells", "span_exact", "table_exact")
+    total = {key: 0 for key in keys}
+    hists = {"unit_row_spread": Counter(), "span_residual": Counter(),
+             "table_residual": Counter()}
+    for _stem, report in rows:
+        shape = report["rows"]
+        for key in keys:
+            total[key] += shape[key]
+        for name, hist in hists.items():
+            for key, count in shape[name].items():
+                hist[key] += count
+    out = [f"row heights ({total['tables']} tables, {total['rows']} rows):",
+           f"  rows whose rowSpan=1 cells all declare one height: "
+           f"{total['unit_rows_agreeing']}/{total['rows']}"
+           f"   (rows listing no rowSpan=1 cell at all: "
+           f"{total['rows_without_unit_cell']})",
+           f"  rowSpan cells whose height equals the sum of the rows it "
+           f"covers: {total['span_exact']}/{total['span_cells']}",
+           f"  tables whose row heights sum to hp:sz@height: "
+           f"{total['table_exact']}/{total['tables']}"]
+    for name in ("unit_row_spread", "span_residual", "table_residual"):
+        shown = " ".join(f"{k}x{v}" for k, v in
+                         sorted(hists[name].items(), key=lambda kv: -kv[1])[:8])
+        out.append(f"  {name}: {shown}")
     return "\n".join(out)
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="track_probe.py",
-        description="Score three column models -- the global track solve, a "
-                    "literal per-row tiling, and declared widths on the "
-                    "global x grid -- against the cache's horzsize and the "
+        description="Score every column model -- the global track solve, a "
+                    "literal per-row tiling, six ways of handing a row's "
+                    "shortfall to its own cells, and three first-writer-wins "
+                    "column grids -- against the cache's horzsize and the "
                     "reference PDF's own table rules. Measures; changes "
                     "nothing.")
     parser.add_argument("input", nargs="?", help="input .hwpx")
@@ -636,8 +981,17 @@ def build_parser():
                         help="also score cell x against the reference PDF's "
                              "vertical rules (needs PyMuPDF)")
     parser.add_argument("--rows", action="store_true",
-                        help="print, per table whose rows disagree, what each "
-                             "row declares and each model's residual")
+                        help="print, per table whose rows disagree, every "
+                             "cell of every disagreeing row: what it "
+                             "declares, what the cache gave it, and each "
+                             "model's residual")
+    parser.add_argument("--heights", action="store_true",
+                        help="also report the shape of the row-height "
+                             "question: hp:tr has no height, so a row's "
+                             "height has to come from its cells")
+    parser.add_argument("--models", default=",".join(MODELS),
+                        help="comma-separated subset of "
+                             + ",".join(MODELS))
     parser.add_argument("--json", help="write the full per-cell report")
     parser.add_argument("--no-text", action="store_true")
     return parser
@@ -648,6 +1002,10 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     repo_root = Path(__file__).resolve().parents[2]
     quiet = args.no_text
+    models = tuple(name for name in MODELS
+                   if name in {n.strip() for n in args.models.split(",")})
+    if not models:
+        build_parser().error("--models named none of " + ",".join(MODELS))
 
     if args.corpus:
         forms = layout_divergence.corpus_forms(repo_root)
@@ -660,15 +1018,18 @@ def main(argv=None):
                                 pdf_path=pdf if args.pdf else None)
             rows.append((labels[hwpx.stem], report))
             if not quiet:
-                print(summary_line(labels[hwpx.stem], report))
-                print(histogram_block(report))
+                print(summary_line(labels[hwpx.stem], report, models))
+                print(histogram_block(report, models=models))
                 if args.rows:
-                    block = rows_block(report, report["cells"])
+                    block = rows_block(report, report["cells"], models=models)
                     if block:
                         print(block)
         if not quiet:
             print()
-            print(corpus_block(rows))
+            print(corpus_block(rows, models))
+            if args.heights:
+                print()
+                print(heights_block(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -687,10 +1048,13 @@ def main(argv=None):
     report = probe_form(hwpx, dpi=args.dpi, policy=args.layout_policy,
                         repo_root=repo_root, pdf_path=pdf)
     if not quiet:
-        print(summary_line(hwpx.stem, report))
-        print(histogram_block(report))
+        print(summary_line(hwpx.stem, report, models))
+        print(histogram_block(report, models=models))
         if args.rows:
-            print(rows_block(report, report["cells"], table_id=True))
+            print(rows_block(report, report["cells"], table_id=True,
+                             models=models))
+        if args.heights:
+            print(heights_block([(hwpx.stem, report)]))
         if "rules" in report:
             print(f"  PDF rules: {json.dumps(report['rules'], sort_keys=True)}")
         print(f"  horzpos: {json.dumps(report['horzpos'], sort_keys=True)}")
