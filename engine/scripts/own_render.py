@@ -7929,8 +7929,9 @@ class OwnRenderer:
         "read and not acted on: a footnote block always sets on the body "
         "box's bottom edge, spanning the full page width even in a "
         "multi-column section, never reserved per column",
-        "the reference mark's own character cell is this renderer's reading "
-        "of how hp:lineseg@textpos counts a note control, not a measurement — "
+        "the reference mark draws in one slot of the character stream and "
+        "the note control is given one control's worth of hp:lineseg@textpos "
+        "cells (textpos_cells) — a reading of the format, not a measurement: "
         "no document in reach of this repo carries a note to measure it on",
         "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT sets every "
         "section's notes after the LAST section's last page, in spine order; "
