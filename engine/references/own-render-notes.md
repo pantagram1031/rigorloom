@@ -5609,3 +5609,330 @@ scoreboard sees.
   private report-class holdout was not opened, and its class-B population is
   a different shape: every paragraph takes the computed branch and there is
   no cache to diverge from.
+
+## Whose advance is wrong, and by how much — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+#265 named the biggest remaining class-B mechanism and stopped there:
+`text_rebreak:width`, 167 of 320 paragraphs, descending from seven carriers,
+"the advance widths this renderer measures differ from Hancom's". This slice
+reads Hancom's own glyph positions out of the reference PDF and says which
+advance, on which face, by how much — and finds that two of the seven
+carriers are not an advance problem at all.
+
+### The instrument
+
+`engine/scripts/advance_probe.py <form.hwpx> <reference.pdf>`, or `--corpus`;
+`--json OUT` writes the per-character record and `--no-text` keeps the
+document's text out of it. It reuses `lineseg_vs_pdf`'s pairing verbatim —
+the same matching key, the same forward cursor, the same visual-line
+regrouping — and reads the PDF with `rawdict` instead of `dict`, which is the
+same line records with each span's characters attached. The one change to
+`lineseg_vs_pdf` is that `merge_visual_lines` now keeps `parts` instead of
+counting and discarding it, so a caller can reach the characters that went
+into a merged line.
+
+**Hancom does not draw every character.** This is the fact the whole reading
+turns on and it was not in #258, which only ever compared text. On this
+corpus a 60-character line commonly reaches the PDF as 31 glyphs in 19
+text-showing runs: the spaces are not glyphs, they are the pen being moved
+between runs, and **4013 of our characters corpus-wide never appear as a
+glyph at all**. So the comparison cannot be glyph against glyph. It is
+anchor to anchor: between two characters the alignment matched, Hancom's
+distance is `ox[j2] - ox[j1]` in absolute page coordinates and ours is the
+sum of our advances over our own characters `i1 .. i2-1` — both sides
+covering the same characters. A segment spanning one character on each side,
+inside one run, is a pure per-glyph advance and is the only kind the ratio
+table below uses. Across a run boundary the distance is a pen move and is
+not charged to any glyph; charging it is what made ASCII punctuation look, in
+the first version of this probe, as though it had a ratio spread of 0.03 to
+2.5.
+
+Our side is `OwnRenderer._measure_hwp` plus the `hh:spacing` gap after it,
+which is exactly what `_char_advance_tables` hands the line breaker. It is
+**dpi-free** — `LAYOUT_REFERENCE_PX` makes every advance a property of the
+outlines and the declared point size — so 96 dpi and 144 dpi give the same
+HWPUNIT and the probe has no dpi argument for them. `--dpi` reaches only the
+carrier render.
+
+### The ratio, per (resolved face → the PDF's own font, size, 자간, class)
+
+`--corpus`, 8377 anchored single-character advances. `d_med` is the median of
+ours minus Hancom in HWPUNIT.
+
+| resolved (ours) | pdf font (Hancom) | pt | 자간 | class | n | median | p10 | p90 | d_med |
+| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| `NanumMyeongjo-Regular.ttf` | 휴먼명조 | 13 | 0 | hangul | 2312 | **0.9536** | 0.9449 | 0.9536 | −60.04 |
+| `H2MJSM.TTF` | 휴먼명조 | 13 | 0 | space | 864 | 1.0036 | 1.0036 | 1.0037 | +2.35 |
+| `NanumMyeongjo-Regular.ttf` | 휴먼명조 | 13 | −6 | hangul | 302 | 0.9492 | 0.9492 | 0.9585 | −62.14 |
+| `batang.ttc` | Batang | 12 | 0 | hangul | 282 | **1.0000** | 1.0000 | 1.0000 | 0.00 |
+| `malgunbd.ttf` | MalgunGothicBold | 16 | −4 | punct | 185 | 1.0184 | 0.9989 | 1.0184 | +11.28 |
+| `batang.ttc` | Batang | 12 | 0 | space | 166 | **1.0000** | 1.0000 | 1.0000 | 0.00 |
+| `H2GTRM.TTF` | T6 | 11 | −3 | hangul | 160 | 0.9996 | 0.9996 | 0.9996 | −0.43 |
+| `H2GPRM.TTF` | H2gprM | 12 | −12 | hangul | 108 | **1.0000** | 1.0000 | 1.0000 | 0.00 |
+| `(fallback)` | T2 | 13 | 0 | digit | 101 | **1.1056** | 1.1056 | 1.1056 | +68.37 |
+| `malgun.ttf` | MalgunGothic | 12 | 0 | space | 90 | **1.0000** | 1.0000 | 1.0000 | 0.00 |
+
+231 further runs. Collapsed onto the class alone: hangul 5628 at 0.9536,
+space 1943 at 1.0036, punct 466 at 1.0144, digit 209 at 1.1056, fw_punct 84
+at 1.0000, latin 33 at 1.0618, other 10 at 1.0545, hanja 4 at 1.0017.
+
+The shape of that table is the answer. **Where our resolved face is the face
+Hancom drew with, the ratio is 1.0000** — `batang.ttc`/Batang on 282 Hangul
+and 166 spaces, `H2GPRM.TTF`/H2gprM, `malgun.ttf`/MalgunGothic, all exactly
+1. Where it is a stand-in it is not: `NanumMyeongjo-Regular.ttf` answering
+for 휴먼명조 measures every Hangul syllable at 0.9502 em where the real face
+advances 0.9964, and the machine fallback answering for `HCI Poppy` measures
+a digit 10.6% wide.
+
+Per line, split by whether every face on the line is the DECLARED one (the
+renderer's own `face_resolution@source`), on the 411 comparable lines:
+
+| lines | n | median | median abs | p10 | p90 | within 2 HWPUNIT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all | 411 | −15.71 | 203.27 | −761.45 | +929.43 | 22 |
+| installed faces only | 103 | +41.73 | **56.57** | −0.75 | +705.45 | **20 of 103** |
+| a face substituted | 308 | −120.33 | **256.69** | −817.10 | +929.43 | 2 of 308 |
+
+Four and a half times the error on a substituted line, and 20 of the 103
+installed-only lines land inside 0.02 pt of Hancom's own width against 2 of
+the 308 others.
+
+### The residual on an installed face IS a device grid, and it is 1/600 inch
+
+What is left on the installed side is small, positive and regular, and it is
+readable straight off the reference. For a face Hancom has, the advance of a
+Hangul syllable is the declared point size **rounded to a whole 1/600 inch**
+— 12 HWPUNIT — and not the declared size:
+
+| declared | 1/600 in units | Hancom's Hangul advance | ours |
+| ---: | ---: | ---: | ---: |
+| 12 pt | 100 | 1200 | 1200 |
+| 13 pt | round(108.33) = 108 | **1296** | 1300 |
+| 14 pt | round(116.67) = 117 | **1404** | 1400 |
+| 11 pt | round(91.67) = 92 | **1104** | 1100 |
+| 15 pt | 125 | 1500 | 1500 |
+| 20 pt | round(166.67) = 167 | **2004** | 2000 |
+
+and its half-width space is that cell halved and **truncated** onto the same
+grid, which is where the sign comes from: at 15 pt the cell is 125 units, its
+half is 62.5, and Hancom advances 62 units = 744 HWPUNIT where we advance
+750. At 20 pt: 83 units = 996 against our 1000. At 28 pt: 116 units = 1392
+against our 1400. The reference's own font sizes carry the same grid — MuPDF
+reports 12.96 pt for a declared 13, 11.04 for 11, 14.04 for 14 — on 26 of the
+40 (declared size, PDF font) pairs the corpus holds; the 14 that miss are all
+subset-embedded fonts (`T2`, `T3`, `T6`, the embedded 휴먼명조) whose reported
+size is off by under 0.1%, which is the subset's own font matrix and not a
+different grid.
+
+Worth about **+4 HWPUNIT per Hangul syllable and +2 per space at 13 pt**, or
+0.3% of a line.
+
+### Every rounding hypothesis was tested, and none of them ships
+
+The question #265 left was whether Hancom rounds. Two forms of the test.
+First, directly: what share of Hancom's own per-character advances land
+within 0.05 HWPUNIT of a multiple of each candidate grid, against what a
+uniform advance would score.
+
+| grid | step | on grid | share | by chance |
+| --- | ---: | ---: | ---: | ---: |
+| 1 HWPUNIT (= 1/100 pt) | 1.0000 | 2586 | 30.87% | 10.00% |
+| 4 HWPUNIT (#263's leading grid) | 4.0000 | 2585 | 30.86% | 2.50% |
+| 1/64 pt | 1.5625 | 2292 | 27.36% | 6.40% |
+| px @ 96 dpi | 75.0000 | 721 | 8.61% | 0.13% |
+| px @ 144 dpi | 50.0000 | 721 | 8.61% | 0.20% |
+| px @ 600 dpi (= 12 HWPUNIT) | 12.0000 | 2585 | 30.86% | **0.83%** |
+
+The 1-, 4- and 12-HWPUNIT counts are the same 2585 advances, so the grid
+those sit on is 12 and the other two rows are its multiples counted twice.
+37 times chance — but only **30.86%** of advances, because the rest come out
+of subset fonts whose reported widths are not on it.
+
+Second, and this is the one that decides: does quantising OUR advances onto
+each grid reproduce Hancom's per-line widths? 411 comparable lines, exact
+within 2 HWPUNIT.
+
+| grid | exact / paired | median abs delta | median delta |
+| --- | ---: | ---: | ---: |
+| none | 22 / 411 | 203.27 | −15.71 |
+| 1 HWPUNIT | 22 / 411 | 206.00 | −17.61 |
+| 4 HWPUNIT | 22 / 411 | 197.44 | −8.00 |
+| 1/64 pt | 16 / 411 | 198.00 | −8.36 |
+| px @ 96 dpi | 5 / 411 | 365.83 | −102.90 |
+| px @ 144 dpi | 9 / 411 | 207.65 | −18.00 |
+| px @ 600 dpi (= 12 HWPUNIT) | **31 / 411** | 204.00 | −36.05 |
+| 1/600 in cell (size rounded, advance truncated) | 16 / 411 | 282.20 | −150.38 |
+
+The 12-HWPUNIT grid is the best of them and it wins nine lines out of 411
+while moving the median absolute error by less than one HWPUNIT. The fuller
+rule — round the CELL onto the grid first, then truncate the advance — is
+**worse than doing nothing** (16 exact, 282.20), because for a size that
+rounds UP (11 pt to 11.04) it makes our lines wider, and the substituted
+faces it cannot help swamp the installed ones it can.
+
+### The cache CAN score a candidate advance, in one direction
+
+#265 recorded that "`hp:lineseg` records where a line STARTS, not how wide
+its text was, so the cache cannot score a candidate advance the way it scored
+the leading in #263". It records `@horzsize` as well, which is the box
+Hancom fitted that line into. Hancom put those characters on that line, so
+our width for them must be no greater than that box: **a cached line our own
+metrics call too wide is a proven over-measurement**, with no reference render
+in it, and the count of them is a score. It is one-sided on purpose — a line
+we call narrow enough may still break elsewhere, because the break also
+depends on the next word and on `@condense` — and it reads every paragraph
+with a lineseg, cells included, which is where three quarters of this
+corpus's text lives.
+
+| form | cached lines | over now | over on the 1/600 grid | worst fill |
+| --- | ---: | ---: | ---: | ---: |
+| `admrul` | 21 | 0 | 0 | 0.9587 |
+| `gianmun-1ho` | 30 | 1 | 1 | 1.0148 |
+| `gianmun-2ho` | 18 | 0 | 0 | 0.9967 |
+| `jeongbo` | 62 | 5 | 5 | 1.0310 |
+| `jumin` | 165 | 2 | 2 | 1.0250 |
+| `kstartup` | 447 | 8 | 6 | 1.0256 |
+| `moel-2013` | 307 | 9 | 7 | 1.0591 |
+| `moel-2025` | 351 | 15 | 13 | 1.0511 |
+| `nrf` | 89 | 0 | 0 | 0.9913 |
+| `saeopja` | 782 | 11 | 13 | 1.2862 |
+| **all ten** | **2272** | **51** | **47** | |
+
+**51 of 2272, 2.2%.** The grid rule closes four of them and opens two new
+ones on `saeopja`, for a net of four. That is the cost of the only rule with
+a public basis, priced on the widest population this repo can put it in front
+of, and it is not worth a change to `_measure`.
+
+### The seven carriers, and the two that are not about advances
+
+`--corpus` runs the carrier pass; all seven matched in the PDF (the four
+top-level ones through the pairing, the three cell ones — `jumin` 46,
+`moel-2025` 241, `saeopja` 166 — by matching their text anywhere in the
+export, which is stated per carrier as `pdf_text_match`).
+
+| form | ¶ | our column | cache's `horzsize` | cache breaks | ours | our width of the cache's line 0 / its box |
+| --- | ---: | ---: | ---: | --- | --- | ---: |
+| `jumin` | 46 | 42541 | 43172 | [59] | [57, 112] | 42766 / 43172 = **0.9906** |
+| `moel-2013` | 118 | 45128 | 45128 | [45] | [38, 79] | 46293 / 45128 = 1.0258 |
+| `moel-2013` | 141 | 45128 | 45128 | [] | [49] | 45943 / 45128 = 1.0181 |
+| `moel-2025` | 6 | 48190 | 48188 | [] | [62] | 48368 / 48188 = 1.0037 |
+| `moel-2025` | 37 | 48190 | 48188 | [] | [62] | 48368 / 48188 = 1.0037 |
+| `moel-2025` | 241 | 44057 | 44056 | [] | [53] | 44083 / 44056 = 1.0006 |
+| `saeopja` | 166 | 47475 | 46672 | [68, 135] | [68] | 46400 / 46672 = **0.9942** |
+
+**`jumin` 46 and `saeopja` 166 are not advance failures.** Both cached lines
+of `jumin` 46 fit inside the cache's own box by our own measurement (0.9906
+and 0.9619) and every cached line of `saeopja` 166 fits too — but the column
+we hand the breaker is 631 HWPUNIT NARROWER than the box Hancom used on
+`jumin` and 803 WIDER on `saeopja`, and the two re-breaks follow the sign of
+that difference exactly: `jumin` breaks early because 42766 overruns our
+42541, `saeopja` breaks late because 44602 fits inside our 47475 where Hancom
+had 46672. Both are cell geometry, both are inside a table, and #265's
+`text_rebreak:width` label is wrong on both. That is 3 of the 320 class-B
+paragraphs re-attributed, and a mechanism `class_b_probe` has no bucket for.
+
+The other five are width, and the term that carries them is named per line:
+
+* `moel-2013` 118 and 141 are over their box by 1165 and 815 HWPUNIT, and
+  the largest single contributor on each is **punctuation** —
+  `H2MJSM.TTF/fw_punct +2469` and `H2MJSM.TTF/punct +1768`. The quotation
+  marks and parentheses in those two paragraphs are measured off a face that
+  gives them a full-width advance (a `“` at 11 pt measures 1133 for us,
+  1.03 em) where Hancom draws them at 0.39 em. That is a slot-resolution
+  question — which face meters a punctuation character — and it is the same
+  family as the substitution above, not a rounding one.
+* `moel-2025` 6 and 37 are over by 180 HWPUNIT on 48188, 0.37%. The 1/600
+  grid alone brings them to 48028 and they FIT: these two are the carriers
+  the device grid would close.
+* `moel-2025` 241 is over by 27 HWPUNIT on 44056, 0.06% — and the grid rule
+  makes it worse, 44184. Its anchored comparison also says Hancom drew that
+  line 45743 wide, past the `horzsize` the lineseg declares, which is either a
+  cell whose real column is not its `horzsize` or a mis-match by the
+  text-only carrier search; either way, one carrier of the seven is not
+  cleanly readable and it is the smallest of them.
+
+### Nothing was changed
+
+`own_render.py` is byte-identical to
+`origin/claude/engine-e2-class-b-remainder`. `render_scoreboard.py --corpus
+--dpi 144`, both policies, is what #263 and #265 recorded and it did not
+move:
+
+| channel | `cache` | `computed` |
+| --- | ---: | ---: |
+| `text_line_iou_mean` | 0.645275 | 0.633875 |
+| `ssim_mean` | 0.831060 | 0.824261 |
+| `ssim_inked_mean` | 0.276567 | 0.277281 |
+| `text_line_pair_rate_mean` | 0.836393 | 0.847831 |
+
+Page counts under `cache`: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho`
+1/1, `jeongbo` 1/1, `jumin` 3/3, `kstartup` 21/22, `moel-2013` 7/7,
+`moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6 — 9 of 10 exact; under `computed`
+`kstartup` is 22/22 and every other form is unchanged, 10 of 10.
+`kstartup`'s standing failure is unchanged under both.
+`layout_divergence.py --corpus` is 1371 / 135 / 320 / 233 before and after.
+`lineseg_vs_pdf.py --corpus` is 411 / 411 with 8566/8566 characters in
+agreeing lines, which is the number the one-line change to
+`merge_visual_lines` had to leave alone. `render_check.py` on
+`render-check-01` is 6 · 37 · 6 · 2 at 96 dpi and 14 · 31 · 4 · 2 at 144,
+9 of 9 pages exact both times.
+
+### The costed proposal
+
+Three rules are now measurable and none of them ships here.
+
+* **The 1/600 inch device grid.** Public basis: the reference PDF's own font
+  sizes and the exact Hangul and space advances above. Worth 2 of the 51
+  proven over-measurements net 4 (51 → 47), closes `moel-2025` 6 and 37,
+  worsens `moel-2025` 241 and `saeopja`. It is real and it is not the
+  problem. It should ship WITH the face question, not before it, because on
+  its own it moves lines in both directions for a net that a re-measurement
+  could reverse.
+* **The face.** 308 of 411 comparable lines carry a stand-in, and their error
+  is 4.5 times the installed lines'. There is no rule to write: the fix is
+  either the declared face on the machine or a metric-compatible substitute,
+  and choosing the second means matching a face's Hangul em to the declared
+  one, which is a font-selection change and not a layout one.
+* **Which face meters a punctuation character.** Two of the seven carriers
+  turn on it and it is worth 2469 and 1768 HWPUNIT on their first lines.
+  `script_slot` decides it today and nothing in this repo has measured that
+  decision against a reference. It is the smallest of the three and the one
+  with a bounded population.
+
+And one that is not about advances at all: **the column width of a paragraph
+inside a table cell**, worth 631 and 803 HWPUNIT on two carriers, and
+currently mis-labelled `text_rebreak:width`.
+
+### Not proven
+
+- **The grid is measured at six sizes and contradicted at one.** 12, 13, 14,
+  11, 15 and 20 pt all give round(size × 600/72); 28 pt gives 234 units where
+  the rule predicts 233, on 5 characters of one form. The rule is not fitted
+  to that case and the case is not explained.
+- **Only 411 of 477 paired lines carry a per-line width.** 66 are excluded as
+  stretched — a DISTRIBUTE line's gaps are its alignment, and so are a
+  JUSTIFY line's on every line but the paragraph's last. Whether Hancom
+  stretches a JUSTIFY last line at all is assumed here, not measured.
+- **The per-character advance is read through MuPDF.** A PDF text-showing
+  operator positions a whole string and the per-character origins are
+  reconstructed from the font's own widths, so "Hancom's advance" is Hancom's
+  DECLARED advance for that glyph — which is the quantity a line breaker
+  needs, but it is not read off the page description.
+- **A line's last character carries no ratio.** It has no successor to
+  subtract from and its bbox is ink, not advance; the side bearing between
+  the two is not modelled and 4013 pen-move characters are not glyph
+  advances either.
+- **Latin, hanja and `other` are 47 characters between them.** Every ratio
+  quoted for them is a median over a handful, and `latin` at 1.0618 mixes
+  different letters rather than measuring one.
+- **`moel-2025` 241's PDF match is a text search, not the pairing.** The
+  three cell carriers are matched by their text anywhere in the export
+  because `lineseg_vs_pdf` reads top-level paragraphs only, and on 241 that
+  match returns a line wider than the box the lineseg declares.
+- **The corpus is the training set, again.** Every ratio, every count and the
+  grid itself were read off the same ten forms and the same machine's
+  installed fonts. A machine with 휴먼명조 installed would move most of this
+  table, which is precisely the point being made and also the reason none of
+  it has been fitted to.

@@ -301,7 +301,12 @@ def merge_visual_lines(pieces):
             "_last": piece,
         })
     for group in merged:
-        group["pieces"] = len(group.pop("parts"))
+        # ``parts`` is kept, not popped: a caller that needs what went INTO a
+        # visual line — ``advance_probe`` reads the per-character boxes off
+        # the pieces — must not have to re-run the regrouping to get it.
+        # Nothing in this module reads it, and no record written out of here
+        # carries it.
+        group["pieces"] = len(group["parts"])
         group.pop("_last")
     return merged
 
