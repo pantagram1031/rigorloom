@@ -1,0 +1,62 @@
+{
+  "scope": "Boundary functions extracted from connector-read source excerpts; not a full checkout, parser/render/GUI or installed-app test.",
+  "repository": "pantagram1031/rigorloom",
+  "source_commit": "8a56ada79391a577c02319d0e2efffd6a7968a67",
+  "source_blobs": {
+    "runtime/scripts/rt_core.py": "584eaf1fe6afa4ab6c2af4844c7c368967735603",
+    "runtime/scripts/rt_geometry.py": "25dee640d55f146642c2e4d1aa7a002c86cc9011",
+    "desktop/src/actions.ts": "988cef43a841b6b22f3b899efcc6389817f5e9c2"
+  },
+  "python": "3.13.5",
+  "node": "22.16.0",
+  "typescript": "5.8.3",
+  "functions": {
+    "python_ast_sha256": {
+      "_norm_rect": "7358eb964d70f281e40a9aee2e0e56133a14a6e8efe31d495428577da19252a1",
+      "build_targets": "0845afc500dc8da8b7a1add2a70704c3f6ecd7ebab6bd09ca6d4be691d36aa56",
+      "base_span": "cc06f9a9ffef04d4063e8e6ecf22b63362671ae7b29a0b8a3480eb3add24ed62",
+      "map_spans": "0a104df440a9cab5d6a4b02ecee2729c1920cb43e665cb03b0ab19463709811e",
+      "document_page_geometry": "af3dd7a07a823f844b5f3af27ff6a079a6be64d674d4abf2a5f9c215b0b01a85"
+    },
+    "typescript_text_sha256": {
+      "looselySameText": "e5bc52530cce118d91e47186cdef798ab12d04100266b17e608c4d5f29daf822",
+      "caretOffsetAt": "0b61e3326023a00d7b0ee39c1ef9f27b4f41ba483c9b93ffedae55ee1df27eb7",
+      "beginParagraphEdit": "8c3e2f1e44252af2b8588905d9d435bfc1e447df1cbdeb50c5432375055066eb",
+      "clickOverlaySpan": "f49cf6d53d68ade9c7efb37257f5dbadf3cf64be5e51a0d90fce4bf9a5a9eb95"
+    }
+  },
+  "interventions": {
+    "none": {"passed": 8, "violations": 13, "desktop_executed": true},
+    "runtime-only": {"passed": 13, "violations": 8, "desktop_executed": true},
+    "frontend-routing-only": {"passed": 10, "violations": 11, "desktop_executed": true},
+    "coherent-guard": {"passed": 18, "violations": 3, "desktop_executed": true},
+    "public-guard": {"passed": 21, "violations": 0, "desktop_executed": true}
+  },
+  "cases": {
+    "source_unique_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "source_duplicate_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "candidate_profile_identity": {"none": false, "runtime-only": true, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "candidate_new_text_remains_addressable": {"none": false, "runtime-only": true, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "candidate_collision_is_not_false_unique": {"none": false, "runtime-only": true, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "candidate_removes_old_ambiguity": {"none": false, "runtime-only": true, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "missing_profile_refuses_mapping_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "same_revision_mapper_intervention_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "source_caret_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "missing_inventory_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "text_mismatch_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "candidate_read_routes_same_revision": {"none": false, "runtime-only": false, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "candidate_new_text_reopens_for_edit": {"none": false, "runtime-only": false, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "wrong_subject_same_text_is_rejected": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "runtime_to_desktop_wrong_target_is_not_accepted": {"none": false, "runtime-only": true, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "late_reply_does_not_edit_another_session": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "late_reply_does_not_reopen_replaced_view": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": true, "public-guard": true},
+    "public_click_source_control": {"none": true, "runtime-only": true, "frontend-routing-only": true, "coherent-guard": true, "public-guard": true},
+    "public_click_ignores_other_session_reply": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": false, "public-guard": true},
+    "public_click_ignores_replaced_view_reply": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": false, "public-guard": true},
+    "public_click_latest_intent_wins": {"none": false, "runtime-only": false, "frontend-routing-only": false, "coherent-guard": false, "public-guard": true}
+  },
+  "not_run": ["whole repository pytest", "Hancom conversion", "actual HWPX apply/export", "Tauri/IME/native Windows", "live MCP/provider", "repository privacy scanner"],
+  "important": "Interventions are in-memory causal controls, not installed or production fixes. A 21/21 result is finite coverage, not a universal safety proof.",
+  "artifact_kind": "bounded-function-experiment; not product acceptance",
+  "reproduce": "python scripts/revision_coherence/probe.py --repo-root . --out YOUR_PRIVATE_SCRATCH/revision.json --source-label YOUR_HEAD"
+}
