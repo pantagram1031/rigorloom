@@ -3669,6 +3669,17 @@ class OwnRenderer:
         self._face_cache[key] = (chosen, record)
         return chosen
 
+    def _face_source(self, cid, slot, bold):
+        """``installed`` / ``bundled`` / ``system`` for this run's face.
+
+        Read straight out of the ``_face_for`` cache rather than re-resolving,
+        so asking the question never adds a character to the per-face counts
+        the sidecar reports.  A run whose face has not been resolved yet
+        answers ``installed``, which is the answer that changes nothing.
+        """
+        hit = self._face_cache.get((cid, slot, bold))
+        return hit[1]["source"] if hit else "installed"
+
     def _declare_face(self, face_name, slot, entry, bold, source="system"):
         key = (face_name or "(no hh:fontRef for this slot)", slot, bold)
         record = self.face_resolution.get(key)
@@ -3867,8 +3878,7 @@ class OwnRenderer:
             # integer pixel size); its size is deliberately not what the
             # advance is measured against — see ``LAYOUT_REFERENCE_PX``.
             pt = (self._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
-            advance_hwp = (self._em_width(font, chunk) * pt * HWPUNIT_PER_PT
-                           * ratio / 100.0)
+            advance_hwp = self._advance_hwp(font, chunk, cid, slot, pt, ratio)
             width = self.pxf(advance_hwp)
             size_px = font.size
             pieces.append({
@@ -3923,6 +3933,18 @@ class OwnRenderer:
                 })
         flush()
         return pieces
+
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio):
+        """HWPUNIT advance of one same-``(charPr, slot)`` chunk of text.
+
+        The whole chunk goes through ``_em_width`` in one call, so the face's
+        kern table still applies; the declared point size and ``hh:ratio``
+        scale the em the face reports.  Every advance the layout and the
+        drawing cursor use comes through here, which makes it the one place a
+        rule about a particular face's advances can be stated.
+        """
+        return (self._em_width(font, chunk) * pt * HWPUNIT_PER_PT
+                * ratio / 100.0)
 
     def _measure(self, draw, text, cid):
         """Advance of ``text`` under ``cid``, character typography included.
