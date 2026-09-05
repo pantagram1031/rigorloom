@@ -226,3 +226,242 @@ def test_corpus_table_has_a_row_per_form_and_a_total(small_report):
     assert "alpha" in table and "beta" in table
     assert "total" in table
     assert "A&B" in table
+
+
+# -- the attribution rule ---------------------------------------------------
+#
+# Synthetic paragraphs throughout: the rule has to be checkable without a
+# render, and a rendered form would pin its own inventory into a core test.
+
+
+def faced(source, characters=5, declared="Batang", **kwargs):
+    """A box whose runs all resolved the same way."""
+    record = box(**kwargs)
+    record["faces"] = [{
+        "declared": declared, "slot": "hangul", "bold": False,
+        "source": source, "resolved_family": None,
+        "resolved_file": "some.ttf", "characters": characters,
+    }]
+    return record
+
+
+def test_pitch_is_the_dominant_step_between_consecutive_lines():
+    boxes = [box(y0=100.0), box(y0=130.0), box(y0=160.0), box(y0=200.0)]
+    assert LD.dominant_pitch(boxes) == 30.0
+
+
+def test_pitch_ignores_a_step_across_a_page_boundary():
+    """The next page's y0 restarts at its own top; that is not an advance."""
+    boxes = [box(page=1, y0=100.0), box(page=1, y0=130.0),
+             box(page=2, y0=80.0)]
+    assert LD.dominant_pitch(boxes) == 30.0
+
+
+def test_a_single_line_has_no_pitch_of_its_own():
+    assert LD.dominant_pitch([box()]) is None
+    assert LD.dominant_pitch([]) is None
+
+
+def test_pitch_prefers_the_paragraphs_own_computed_lines():
+    computed = [box(y0=100.0), box(y0=130.0)]
+    cache = [box(y0=100.0), box(y0=150.0)]
+    assert LD.paragraph_pitch(computed, cache, 99.0) == (30.0, "own_computed")
+
+
+def test_pitch_falls_back_to_the_paragraphs_own_linesegs():
+    """One computed line, two cached: the cache step IS vertsize + spacing."""
+    cache = [box(y0=100.0), box(y0=150.0)]
+    assert LD.paragraph_pitch([box(y0=100.0)], cache, 99.0) == (
+        50.0, "own_lineseg")
+
+
+def test_pitch_then_falls_back_to_the_nearest_preceding_paragraph():
+    assert LD.paragraph_pitch([box()], [box()], 42.0) == (
+        42.0, "preceding_computed")
+
+
+def test_pitch_says_none_rather_than_guessing():
+    assert LD.paragraph_pitch([box()], [box()], None) == (None, "none")
+
+
+def test_a_drift_matching_the_upstream_prediction_is_inherited():
+    assert LD.attribute_class_b(30.0, 30.0, 1.0, 1) == "B_inherited"
+    assert LD.attribute_class_b(30.4, 30.0, 1.0, 1) == "B_inherited"
+
+
+def test_a_drift_the_prediction_misses_is_the_paragraphs_own():
+    assert LD.attribute_class_b(36.0, 30.0, 1.0, 1) == "B_own"
+
+
+def test_nothing_rebroken_upstream_means_nothing_was_inherited():
+    """Without the guard every sub-pixel drift matches a prediction of zero."""
+    assert LD.attribute_class_b(0.02, 0.0, 1.0, 0) == "B_own"
+    assert LD.attribute_class_b(0.02, 0.0, 1.0, None) == "B_own"
+
+
+def test_an_unmeasurable_drift_is_never_called_inherited():
+    assert LD.attribute_class_b(None, 30.0, 1.0, 1) == "B_own"
+    assert LD.attribute_class_b(30.0, None, 1.0, 1) == "B_own"
+
+
+# -- the walk ---------------------------------------------------------------
+
+def _walk(cache, computed, **kwargs):
+    return LD.walk_paragraphs(cache, computed, **kwargs)["attribution"]
+
+
+def test_a_paragraph_pushed_down_by_an_upstream_rebreak_is_inherited():
+    """0 gains a line; 1 and 2 move by exactly that line's pitch."""
+    cache = {0: [box(text="a0", y0=100.0)],
+             1: [box(text="b0", y0=130.0)],
+             2: [box(text="c0", y0=160.0)]}
+    computed = {0: [box(text="a0", y0=100.0), box(text="a1", y0=130.0)],
+                1: [box(text="b0", y0=160.0)],
+                2: [box(text="c0", y0=190.0)]}
+    attribution = _walk(cache, computed)
+    split = attribution["class_b_paragraphs"]
+    assert split["B_own"] == 0
+    assert split["B_inherited"] == len(attribution["class_b"])
+    for row in attribution["class_b"]:
+        assert row["upstream_line_delta"] == 1
+        assert row["residual_px"] == 0.0
+
+
+def test_the_same_drift_with_nothing_rebroken_above_it_is_its_own():
+    cache = {0: [box(text="a0", y0=100.0)], 1: [box(text="b0", y0=130.0)]}
+    computed = {0: [box(text="a0", y0=100.0)], 1: [box(text="b0", y0=160.0)]}
+    split = _walk(cache, computed)["class_b_paragraphs"]
+    assert split["B_inherited"] == 0
+    assert split["B_own_no_upstream_rebreak"] == split["B_own"]
+
+
+def test_a_rebreak_upstream_that_mispredicts_is_booked_with_its_upstream():
+    """The cause is upstream even when the predicted magnitude is wrong."""
+    cache = {0: [box(text="a0", y0=100.0)], 1: [box(text="b0", y0=130.0)]}
+    computed = {0: [box(text="a0", y0=100.0), box(text="a1", y0=130.0)],
+                1: [box(text="b0", y0=200.0)]}
+    split = _walk(cache, computed)["class_b_paragraphs"]
+    assert split["B_inherited"] == 0
+    assert split["B_own_with_upstream_rebreak"] == split["B_own"]
+    assert split["B_own_no_upstream_rebreak"] == 0
+
+
+def test_the_accumulators_reset_at_a_page_boundary():
+    """A dy is measured from a page top, so a total carried over is nonsense."""
+    cache = {0: [box(text="a0", page=1, y0=100.0)],
+             1: [box(text="b0", page=2, y0=100.0)]}
+    computed = {0: [box(text="a0", page=1, y0=100.0),
+                    box(text="a1", page=1, y0=130.0)],
+                1: [box(text="b0", page=2, y0=130.0)]}
+    attribution = _walk(cache, computed)
+    assert attribution["class_b_paragraphs"]["B_inherited"] == 0
+    for row in attribution["class_b"]:
+        assert row["upstream_line_delta"] == 0
+
+
+def test_the_residual_histogram_puts_the_tallest_bar_first():
+    cache = {index: [box(text=f"p{index}", y0=100.0 + 30.0 * index)]
+             for index in range(4)}
+    computed = {index: [box(text=f"p{index}", y0=140.0 + 30.0 * index)]
+                for index in range(4)}
+    histogram = _walk(cache, computed)["class_b_residual_px"]
+    counts = [row["paragraphs"] for row in histogram]
+    assert counts == sorted(counts, reverse=True)
+    assert histogram[0]["residual_px"] == 40.0
+
+
+# -- the class-A break cause ------------------------------------------------
+
+def test_a_shorter_computed_line_reads_as_a_break_that_moved_earlier():
+    cache = {0: [box(text="abcdefgh", x0=10.0)]}
+    computed = {0: [box(text="abcde", x0=10.0)]}
+    record = _walk(cache, computed)["class_a_lines"][0]
+    assert record["break"] == "computed_broke_earlier"
+    assert record["cache_chars"] > record["computed_chars"]
+
+
+def test_a_longer_computed_line_reads_as_a_break_that_moved_later():
+    cache = {0: [box(text="abc")]}
+    computed = {0: [box(text="abcdefgh")]}
+    assert _walk(cache, computed)["class_a_lines"][0]["break"] == \
+        "computed_broke_later"
+
+
+def test_the_class_a_record_carries_both_drawn_widths():
+    cache = {0: [box(text="abcdefgh", x0=10.0)]}
+    computed = {0: [box(text="abcde", x0=10.0)]}
+    record = _walk(cache, computed)["class_a_lines"][0]
+    assert record["cache_width_px"] == 50.0
+    assert record["computed_width_px"] == 50.0
+    assert record["dwidth_px"] == 0.0
+
+
+def test_an_unpaired_line_names_which_side_has_it():
+    cache = {0: [box(text="one"), box(text="two")]}
+    computed = {0: [box(text="one")]}
+    record = _walk(cache, computed)["class_a_lines"][0]
+    assert record["break"] == "cache_only"
+    assert record["line_delta"] < 0
+
+
+def test_a_line_with_one_substituted_run_counts_as_substituted():
+    cache = {0: [faced("installed", text="abcdefgh")]}
+    computed = {0: [faced("bundled", text="abcde")]}
+    share = _walk(cache, computed)["class_a_font_sources"]
+    assert share["lines"]["substituted"] == 1
+    assert share["lines"]["installed"] == 0
+    assert share["substituted_share"] == 1.0
+
+
+def test_a_line_whose_runs_all_resolved_is_not_counted_as_substituted():
+    cache = {0: [faced("installed", text="abcdefgh")]}
+    computed = {0: [faced("installed", text="abcde")]}
+    share = _walk(cache, computed)["class_a_font_sources"]
+    assert share["lines"]["installed"] == 1
+    assert share["lines"]["substituted"] == 0
+    assert share["substituted_share"] == 0.0
+
+
+def test_the_font_share_weights_characters_as_well_as_lines():
+    cache = {0: [faced("installed", characters=8, text="abcdefgh")]}
+    computed = {0: [faced("bundled", characters=5, text="abcde")]}
+    characters = _walk(cache, computed)["class_a_font_sources"]["characters"]
+    assert characters["installed"] == 8
+    assert characters["bundled"] == 5
+
+
+# -- the attribution in the report ------------------------------------------
+
+def test_the_report_carries_the_attribution_rule_and_its_tolerance(
+        small_report):
+    attribution = small_report["attribution"]
+    assert attribution["rule"] == LD.ATTRIBUTION_RULE
+    assert attribution["tolerance_px"] == LD.DEFAULT_ATTRIBUTION_TOL
+    split = attribution["class_b_paragraphs"]
+    assert set(split) == {"B_inherited", "B_own",
+                          "B_own_with_upstream_rebreak",
+                          "B_own_no_upstream_rebreak"}
+
+
+def test_the_b_split_accounts_for_every_class_b_paragraph(small_report):
+    split = small_report["attribution"]["class_b_paragraphs"]
+    assert (split["B_inherited"] + split["B_own"]
+            == small_report["paragraphs"]["B"])
+    assert (split["B_own_with_upstream_rebreak"]
+            + split["B_own_no_upstream_rebreak"] == split["B_own"])
+
+
+def test_every_class_a_paragraph_gets_a_break_cause(small_report):
+    records = small_report["attribution"]["class_a_lines"]
+    assert len(records) == small_report["paragraphs"]["A"]
+    for record in records:
+        assert record["break"] in ("computed_broke_earlier",
+                                   "computed_broke_later",
+                                   "same_length_different_text",
+                                   "cache_only", "computed_only")
+
+
+def test_the_corpus_table_shows_the_attribution_columns(small_report):
+    table = LD.corpus_table([("alpha", small_report)])
+    for column in ("B_inh", "B_own", "A_sub", "A_ins"):
+        assert column in table
