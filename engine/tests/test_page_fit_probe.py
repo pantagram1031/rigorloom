@@ -173,3 +173,123 @@ def test_the_corpus_report_states_a_verdict_per_candidate():
         row = summary["measures"][name]
         assert row["consistent"] == (row["kept_violations"] == 0
                                      and row["rejected_violations"] == 0)
+
+
+# -- the offset scan ------------------------------------------------------
+#
+# The bracket above takes ``usable_height`` as given.  These pin the
+# arithmetic of asking what happens when it is not: the band is closed-open,
+# it says the same thing as the two violation counts printed beside it, and
+# the named candidates are read off the document's own margins rather than
+# chosen from a list of constants that happen to fit.
+
+
+def test_the_band_is_the_kept_maximum_up_to_the_rejected_minimum():
+    """``[max(kept), min(rejected))``.  An offset at the low end is exactly
+    large enough to accept every kept line; one at the high end has grown the
+    body box until it would have accepted a line Hancom moved."""
+    lo, hi = PFP.evidence_band([-296, -1000, -50], [911, 1014, 4032])
+    assert (lo, hi) == (-50, 911)
+
+
+def test_a_side_with_no_evidence_does_not_bound_the_offset():
+    assert PFP.evidence_band([], [700]) == (None, 700)
+    assert PFP.evidence_band([-5], []) == (-5, None)
+    assert PFP.evidence_band([], []) == (None, None)
+
+
+def test_the_band_and_the_violation_counts_are_the_same_statement():
+    """Whatever the scan prints at an offset has to agree with the band it
+    prints beside it, or one of the two is decoration."""
+    kept, rejected = [-296, -720], [395, 911]
+    lo, hi = PFP.evidence_band(kept, rejected)
+    for offset in range(-1000, 1500, 37):
+        k = sum(1 for v in kept if v - offset > 0)
+        r = sum(1 for v in rejected if v - offset <= 0)
+        assert (k == 0 and r == 0) == (lo <= offset < hi)
+
+
+def test_the_named_offsets_are_this_document_s_own_margin_terms():
+    """Each named candidate is a term ``page_geometry`` subtracts from the
+    body box, read off the section."""
+    report = {"document": "d.hwpx", "events": [], "sections": [
+        {"margin": {"header": 332, "footer": 2936}, "headers": 0,
+         "footers": 0},
+    ]}
+    named = PFP.named_offsets(report)
+    assert named["zero"] == 0
+    assert named["header"] == 332
+    assert named["footer"] == 2936
+    assert named["header_plus_footer"] == 3268
+    # No hp:footer in the section, so the narrower reading offers the band
+    # back; with one declared it offers nothing.
+    assert named["footer_if_no_footer"] == 2936
+    report["sections"][0]["footers"] = 1
+    assert PFP.named_offsets(report)["footer_if_no_footer"] == 0
+
+
+def test_the_scan_reports_every_form_and_a_joint_band():
+    """The joint band is an intersection, so a rule has to clear the worst
+    form rather than the average one."""
+    reports = [
+        {"document": "a.hwpx", "events": [], "sections": [
+            {"margin": {"header": 0, "footer": 0}, "headers": 0,
+             "footers": 0}]},
+        {"document": "b.hwpx", "events": [], "sections": [
+            {"margin": {"header": 0, "footer": 0}, "headers": 0,
+             "footers": 0}]},
+    ]
+    scan = PFP.offset_scan(reports, lo=-100, hi=100, step=50)
+    assert set(scan["per_form"]) == {"a", "b"}
+    assert scan["grid"] == [-100, -50, 0, 50, 100]
+    for name in PFP.SCAN_MEASURES:
+        assert scan["joint"][name]["band"] == [None, None]
+
+
+@pytest.mark.skipif(not os.path.isdir(CORPUS), reason="corpus absent")
+def test_the_joint_band_is_inside_every_form_s_own_band():
+    forms = sorted(f for f in os.listdir(CORPUS) if f.endswith(".hwpx"))
+    assert forms, "no corpus form discovered"
+    reports = [PFP.probe_document(os.path.join(CORPUS, f)) for f in forms[:3]]
+    scan = PFP.offset_scan(reports, lo=0, hi=0, step=1)
+    for name in PFP.SCAN_MEASURES:
+        jlo, jhi = scan["joint"][name]["band"]
+        for entry in scan["per_form"].values():
+            lo, hi = entry["measures"][name]["band"]
+            if lo is not None:
+                assert jlo is not None and jlo >= lo
+            if hi is not None:
+                assert jhi is not None and jhi <= hi
+
+
+# -- the body box against the reference PDF -------------------------------
+
+
+@pytest.mark.skipif(not os.path.isdir(CORPUS), reason="corpus absent")
+def test_the_reference_ink_is_measured_against_the_derived_body_box():
+    """The mode reports the derived box and the drawn extent side by side,
+    per page, so an offset hypothesis has a number to survive; the ruling and
+    the glyph boxes stay apart, because a form's paper-spec line is drawn in
+    the bottom margin and is evidence about nothing."""
+    fitz = pytest.importorskip("fitz")
+    assert fitz is not None
+    render = os.path.join(ROOT, "tests", "corpus", "forms", "render")
+    forms = sorted(f for f in os.listdir(CORPUS) if f.endswith(".hwpx"))
+    pair = next(((f, os.path.join(render, f[:-5] + ".pdf")) for f in forms
+                 if os.path.exists(os.path.join(render, f[:-5] + ".pdf"))),
+                None)
+    if pair is None:
+        pytest.skip("no reference PDF beside the corpus")
+    record = PFP.reference_ink(os.path.join(CORPUS, pair[0]), pair[1],
+                               repo_root=ROOT)
+    renderer = own_render.OwnRenderer(os.path.join(CORPUS, pair[0]),
+                                      repo_root=ROOT)
+    renderer._current_section = 0
+    geo = renderer.page_geometry()
+    assert record["body_top"] == geo["body_top"]
+    assert record["body_bottom"] == geo["body_top"] + geo["usable_height"]
+    assert record["margin_bottom"] == geo["height"] - geo["margin"]["bottom"]
+    assert record["pages"]
+    for page in record["pages"]:
+        for key in ("vector_top", "vector_bottom", "text_top", "text_bottom"):
+            assert key in page
