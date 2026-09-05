@@ -6800,3 +6800,265 @@ Worker: Opus; orchestrator: Fable.
   before, so nothing regressed in fact; the baseline moved.
 - **The corpus is the training set**, as it was for #268, #270 and #272 —
   the same ten forms, and the floor rests on 64 lines in 4 of them.
+
+## A cell's declared width is a lower bound, and the grid is their envelope — measured, 2026-09-05
+
+#272 built the column grid and resolved it by document order: every interior
+boundary written by the FIRST cell whose declared width reaches it. After
+#275's 1440 floor that model — `gridfirst` — stood at 1581 of 1599 cells on
+the cache's 4 HWPUNIT grid, and #272 left three things open: 12 unexplained
+contested misses, the "first writer wins" against "widest span wins"
+ambiguity, and a PDF x oracle that ranked `gridfirst` two strokes BELOW
+`stretch`. This run asks what the last 18 cells are.
+
+Two of them turn out not to be cells at all, four more are the same
+paragraph question three others already were, and the ordering ambiguity
+dissolves: the rule that fits is not ordinal.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows]
+[--residuals] [--heights] [--models LIST] [--json]` — #272's probe, with a
+thirteenth model and two corrections.
+
+`--residuals` lists every cell a model leaves off the grid with what placed
+it: the declared `cellSz@width` and `colSpan`, the box the model gave it,
+the two boundaries it sits between and which cell's claim each of those
+sits on, the residual against the cache, and the row's own declared total
+beside `hp:sz@width`. That last column is the whole question — a row that
+adds up is a row where no column model can disagree with itself.
+
+**The residual arithmetic was wrong, and it was wrong in exactly one place.**
+#270 and #272 scored a model by SHIFTING the rendered residual by
+`model_box - rendered_box`, on the reading that the cell inset and the
+paragraph's own margins enter our line box and the cache's identically and
+cancel. They do — but #275 put a floor under the text column, and a floor is
+not linear: on a cell already saturated at 1440 a model that gives it a
+different BOX gives it the same COLUMN, and the shift reports a difference
+the renderer would not make. `track_probe.model_residual` now recomputes:
+the model's box goes through `cell_text_width` and the cell's cached lines
+are measured against `_line_box` in that column, which is what the renderer
+would do if the model shipped. The two arithmetics agree on 1598 of 1599
+cells. The one they differ on is `saeopja` `r3c6` — the cell #275 recorded
+as a regression that was the baseline moving rather than a model failing.
+Under the honest arithmetic it is not a regression, because it never was
+one, and **every grid model's regression count against `global` is 0**.
+
+### The eighteen, classified
+
+`gridfirst` under the corrected arithmetic is 1582 of 1599, and the 17 it
+leaves fall into three groups:
+
+| group | cells | where |
+| --- | ---: | --- |
+| a paragraph's negative `hh:intent` | 5 | `jumin` ×3, `saeopja` ×2 |
+| one grid step out, −1 or +4 | 8 | `saeopja`'s 47764-wide table |
+| `saeopja`'s 48027-wide table | 4 | rows 7 and 8 |
+
+The **five** are one shape and #275 named three of them. Each is a single
+cached line whose paragraph declares a left margin and a negative `indent`
+larger than it — 500 against −1070, 500 against −1308 twice, 600 against
+−2180 twice — and in each the cache put the line box at `horzpos` = the
+left margin while `_line_box` clamps `max(0, left + indent)` to 0. The
+residual is the margin plus the quantiser: 503, 502, 500, 602, 601. The two
+this run adds to #275's three are `jumin` row 31 and `saeopja` `r9c0+12`,
+which #270 and #272 both carried as unexplained. **No column model can move
+them and none should**: the reading that would fix them is worth +35 line
+boxes over all 3214 and changes every line box in the corpus.
+
+The **eight** are the near-misses #272 could not account for, and they are
+not the cache's quantiser. That was the first thing tested, because it is
+the obvious candidate: 3164 of 3177 cached in-cell `horzsize` are multiples
+of 4, so the saved value is the column floored onto a 4 HWPUNIT grid. But
+"on the grid" already IS `floor4(ours) == cached`, so snapping our own
+column down onto the same grid cannot change the verdict on a single cell —
+measured, 1582 before and after, and it takes 1582 cells to EXACT, which is
+the quantiser confirmed rather than a fix. The two roundings that could move
+a cell both cost far more than they buy:
+
+| our column snapped | on the grid | regressions vs `global` |
+| --- | ---: | ---: |
+| not snapped | 1582 | 0 |
+| floored to a multiple of 4 | 1582 | 0 |
+| rounded to nearest 4 | 1025 | 321 |
+| raised to a multiple of 4 | 396 | 703 |
+
+So the eight are 1 to 4 HWPUNIT of real box error, and the file says where
+it comes from. `saeopja`'s 47764-wide table has 35 columns and its rows
+declare mutually inconsistent widths by exactly one unit: row 22, whose six
+cells sum to 47764 exactly, puts `x[17]` at 14158 + 9578 = 23736, while row
+20, which is 739 short, puts it at 18282 + 5453 = 23735. Rows 25 and 26 then
+carry that one unit forward to `x[24]` = 23736 + 8562 = 32298 against row
+0's 32297, and row 27 — which addresses the same visual columns one lower,
+`c1+15`/`c16+7`/`c23+12` where rows 25 and 26 say `c1+16`/`c17+7`/`c24+11` —
+puts `x[16]` at 23735 and `x[23]` at 32297, so the grid carries two
+one-unit-wide columns. Every one of the eight hangs off `x[17]` or `x[24]`.
+Document order picks the smaller claim in both.
+
+The **four** are #272's four, re-measured and still not explained. Every one
+of the 24 rows in `saeopja`'s 48027-wide table totals 48008 — a uniform 19
+HWPUNIT short of the table's own box — and the cache gives that 19 to the
+LAST cell on row 4 and on rows 11-21, and to the FIRST cell on rows 7 and 8.
+Rows 7 and 8 are the only rows in the table whose four cells all declare the
+same width, 12002, so there is no cell for a rule to distinguish; the cache
+breaks the first at 12018-12021 and the other three at 12002-12005, and no
+function of any declared width in the file produces 12021.
+
+### The rule
+
+**A cell's `cellSz@width` is a lower bound on the distance between its two
+boundaries, not a statement of it. `x[0]` is 0, `x[colCnt]` is
+`hp:tbl/hp:sz@width`, and every interior boundary sits at the LARGEST x any
+cell reaching it produces.**
+
+A row whose widths sum short of the table under-claims every boundary it
+touches and is fitted to the rows that claim more; a row that agrees changes
+nothing. This is `gridmax`, and what it removes from #272's reading is the
+tie-break: there is no first and no last, so the question "which cell writes
+a boundary when two rows reach it at once" — #272's one free choice, and the
+thing "widest span wins" was proposed to settle — does not arise. The
+corpus is what says so:
+
+| model | exact | on the grid | % | of the 771 contested | regressions vs `global` | vs `stretch` | PDF rules |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `global` — before this run | 229 | 969 | 60.6 | 144 / 771 | 0 | 590 | 263 / 1643 |
+| `stretch` | 388 | 1559 | 97.5 | 734 / 771 | 0 | 0 | 305 / 1643 |
+| `firstrow` | 390 | 1561 | 97.6 | 736 / 771 | 0 | 0 | 305 / 1643 |
+| `gridlast` | 390 | 1561 | 97.6 | 736 / 771 | 0 | 0 | 305 / 1643 |
+| `gridfirst` | 390 | 1582 | 98.9 | 757 / 771 | 0 | 1 | 303 / 1643 |
+| **`gridmax`** | **401** | **1590** | **99.4** | **765 / 771** | **0** | **0** | **303 / 1643** |
+
+Two more readings of the ordering were scored and neither survives. Walking
+each row RIGHT to left — which is what rows 7 and 8 of the 48027 table look
+like on their own — is 1407 with 20 regressions. Letting the rows whose
+totals equal `hp:sz@width` write first and the rest fall back to document
+order is 1583: it gets `x[17]` right, because row 22 is the row that adds up,
+and still misses `x[24]`, because no row that adds up reaches it. `gridmax`
+gets both, and it gets them without a second rule.
+
+`gridmax` is also the only model with 0 regressions against BOTH baselines
+while beating both, and it keeps the two cells that were `gridfirst`'s whole
+held-out evidence: on `saeopja`'s 47757-wide table row 4 declares `c0+3` at
+9890 and row 14 declares it at 9759, and `max` is 9890, which is what the
+cache measures.
+
+### What changed in the code
+
+`own_render.column_grid(count, constraints, declared_total)` is new and
+returns the boundaries directly; `_table_tracks` calls it where it called
+`solve_tracks` on the column axis and derives `widths` from the differences,
+so everything downstream — the content extent a row is measured from, the
+drawn cell rectangle — reads the same numbers it always did.
+**`solve_tracks` is untouched and still solves the ROW axis**, where a max
+over constraints is the right reading and its own tests pin it.
+
+The fixpoint terminates because every claim moves a boundary strictly to the
+right of the one it starts at, so the dependency runs one way along the
+column index; the loop bound is belt and braces. A boundary no cell ever
+claims is split evenly between its nearest determined neighbours, which is
+the fallback `solve_tracks` already used for an unknown track, and one
+`kstartup` table needs it. A claim past the table's right edge is clamped
+onto it, so an overflowing row gives a zero-width column and never a
+negative one.
+
+Eight unit tests on synthetic tables cover a row that agrees (the no-op), a
+row that claims more against a row that claims less, the same constraints in
+both orders giving the same grid, a `colSpan` cell claiming only its far
+boundary, a later row filling a boundary the first row does not reach, an
+unclaimed boundary, the clamp and the non-decreasing invariant, and
+`_table_tracks` itself placing cells on the grid rather than on a rescale.
+
+### After
+
+`cell_column_probe.py --corpus` is the measurement that says the most, and
+it says it by what has gone missing. #268 left one term standing in its
+six-term fit — `+solved`, the difference between the solved track sum and
+the cell's own declared width — and called it structural. The winning
+combination is now **`(nothing)`**: the renderer needs no correction term at
+all on 1590 of 1599 cells, where before it needed `+solved` to reach 1470.
+385 exact / 1470 near → **401 / 1590**.
+
+`track_probe.py --corpus` reads the same thing from the other side: the
+renderer's own `global` model goes 969 → **1590** on the 4 HWPUNIT grid, and
+is byte for byte `gridmax`.
+
+Against the reference PDFs, `render_scoreboard.py --corpus --dpi 144`:
+
+| policy | ssim | ssim inked | line IoU | pages |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8420 | 0.3283 | 0.6729 | 52 / 53 |
+| `cache` after | **0.8453** | **0.3359** | **0.6742** | 52 / 53 |
+| `computed` before | 0.8336 | 0.3246 | 0.6595 | 53 / 53 |
+| `computed` after | **0.8366** | **0.3316** | **0.6611** | 53 / 53 |
+
+Eight of the ten forms are unchanged to four places on both policies, which
+is correct: their rows agree, so the grid and the solve give the same
+answer. The two that move are the two whose tables contradict themselves,
+and both improve on both policies — `jumin` 0.7109 → 0.7287 ssim and 0.2435
+→ 0.2774 inked in cache mode, `saeopja` 0.7893 → 0.8041 and 0.3340 →
+0.3762. No form fell on any of the three metrics, and no page count moved.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566
+characters, unchanged, as it must be: it reads the cache against the PDF and
+never through this renderer's cell layout.
+
+The PDF vertical-rule oracle, which is the only absolute statement about x
+this corpus contains, goes **263 → 303 of 1643 drawn strokes** at one device
+pixel of 144 dpi. That is the number #272 stopped on, and it is worth being
+precise about why it reads differently here. #272 compared `gridfirst` with
+`stretch` and found it two strokes worse; but `stretch` is not what ships
+either, and the comparison that decides a change is against the renderer as
+it stands. Against that, this is +40 strokes and +621 cells. `stretch` is
+still 305, two above, and buying those two would cost 31 cells that the grid
+places correctly and it does not — and both of them are on `saeopja` page 6,
+in the 48027-wide table the grid cannot reproduce.
+
+`layout_divergence.py --corpus` barely moves: agreement 1350 → 1351, class A
+118 → 117, class B 350 and class C 243 unchanged. `class_b_probe.py
+--corpus` is identical root for root — `text_rebreak:width` 167,
+`table_row_heights` 109, `empty_paragraph` 29, `forced_break` 28,
+`cell_valign` 17 — so the mechanism this line of work is chasing has not
+moved, and neither has anything else. The one paragraph that changed class
+is on `jumin`, from A to agreement.
+
+`render_check.py` on `render-check-01` is unchanged at both 96 dpi (6 match
+/ 37 close / 6 differ / 2 unsupported, 9 pages) and 144 dpi (14 / 31 / 4 /
+2, 9 pages). Its tables' rows all add up, so the grid cannot move them.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Four cells are still unexplained, and they are the same four #272
+  named.** `saeopja`'s 48027-wide table gives its uniform 19 HWPUNIT
+  shortfall to the FIRST cell on rows 7 and 8 and to the last cell on every
+  other row of the same table. Rows 7 and 8 are the only rows whose cells
+  all declare the same width, so nothing in the file distinguishes their
+  first cell from their last, and the boundary the cache uses — 12021 —
+  is not produced by any declared width in the document. This is the gate's
+  "every remaining miss explained" clause, and it is not met on these four.
+  What is bounded is the damage: 4 cells of 1599, one table, 19 HWPUNIT,
+  0.07 mm.
+- **`gridmax` was found by looking at the eight near-misses it closes**, so
+  those eight are fitted and not predicted. Its held-out evidence is the two
+  cells of `saeopja`'s 47757-wide table that `gridfirst` also gets, and
+  those two were held out for `gridfirst` rather than for this. The corpus
+  is the training set for the fourth run running.
+- **A row that overflows its table is still untested.** No corpus row
+  overflows, so the clamp is an invariant a unit test pins and not a
+  measurement. Whether Hancom shrinks the overflowing cell or clamps it is
+  still unknown.
+- **`stretch` still wins the PDF x oracle by two strokes.** 1643 strokes
+  against 392 predicted edges is a thin instrument, both strokes are inside
+  the one table this model cannot reproduce, and the width oracle separates
+  the two by 31 cells in the other direction — but it is a loss and it is
+  recorded as one.
+- **The one-unit columns in `saeopja`'s 47764-wide table are read off the
+  file's own inconsistency**, not off a statement Hancom makes. That rows
+  25/26 and row 27 address the same visual columns one apart is what forces
+  them; whether Hancom builds the grid that way or merely tolerates it is
+  not observable here.
+- **Row heights are untouched and deliberately so.** `solve_tracks` still
+  solves them, `table_row_heights` is still 109 class-B paragraphs, and
+  nothing here says whether a max over constraints is the right reading for
+  a row.
