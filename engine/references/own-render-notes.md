@@ -3579,3 +3579,167 @@ document asked for, so the breaking rule itself is doing most of the work.
 - **`own_render.py` was not touched.** This slice measures. The corpus
   scoreboard, the classification counts and the IoU column are all unchanged
   from #249's tip.
+
+## What sits above the first drift on a page — measured, 2026-09-05
+
+#250 left class B with a shape nobody had a mechanism for: 318 of 538
+class-B paragraphs have nothing re-broken above them, and on the private
+holdout the residual is a whole multiple of the body pitch — +48, +72, +24,
++264, +120 px at 96 dpi against a 24 px pitch — with an upstream line-count
+delta of 0 on 224 of 267.  Whole pitches that no re-break produced means the
+height is added BETWEEN paragraphs or at a paragraph's bottom, and the
+paragraph immediately above the first drift on a page is the only place it
+can come from.  `layout_divergence.py` now reports that paragraph.
+
+### The instrument
+
+Per page, paragraphs in document order: find the first whose ordinal-0 line
+is paired on the same page under both policies and whose `dy` exceeds
+`--y-tol`, and report its PREDECESSOR with its last line under each policy
+(the cache's `vertpos`/`vertsize`/`spacing`, the computed side's `y0`/`y1`
+and pitch), the two candidate bottoms those imply, the gap from each bottom
+to the drifting paragraph's first line, and the predecessor's own `hh:paraPr`
+— line spacing type and value, `hh:margin/prev` and `/next`, whether its text
+is empty, and every object it carries with that object's extent under both
+policies.  `first_drift_predecessors.kinds` is a histogram keyed on
+`(anchor kind, empty text, line spacing type)` and `dominant_kind` is its
+tallest bar.
+
+Two bottoms, deliberately.  `ink` is `y0 + vertsize`, which is
+`_cached_extent`'s reading and excludes the last line's trailing `spacing`;
+`advance` is `y0 + vertsize + spacing`, which is what `_flow_lines` sums into
+a block height.  Which of the two the gap below a paragraph is measured from
+was the first candidate mechanism, and the report states both rather than
+picking one.
+
+**The population that matters here is one the A/B/C classification cannot
+see.**  A paragraph with no characters draws no line box — `_render_paragraphs`
+and `_render_flow_page` both `continue` on `not para.chars` — so it is in
+neither policy's `line_boxes`, its line-count delta is 0 either way, and every
+paragraph below it is booked `B_own_no_upstream_rebreak` however wrong its
+height is.  For those the report leaves the pixel domain: the cache states a
+height (the sum of the paragraph's `hp:lineseg` advances) and the flow pass
+states another (its seat height, captured off `_render_flow_page`), and the
+difference is the drift in the units it was made in.  Their page membership
+comes from the flow seat, or by ENCLOSURE — a paragraph lying between two
+paragraphs that are both on one page is on it too; neighbours that disagree
+leave it unplaced rather than guessed at.
+
+### What the corpus says
+
+144 dpi, `--no-text`, ten forms.  Pages that have a drift at all, keyed by
+the kind of paragraph the drift starts under:
+
+| predecessor kind | `--y-tol 0.01` | `--y-tol 0.5` |
+| --- | --- | --- |
+| `none` / text / `PERCENT` | 13 | 10 |
+| `inline:tbl` / empty / `PERCENT` | 5 | 4 |
+| `none` / empty / `PERCENT` | 4 | 3 |
+| **pages with a drift** | **22** | **17** |
+
+Per form the dominant kind at `--y-tol 0.5` is `none/empty=0/PERCENT` on
+`jumin` (1/1), `moel-2013` (3/4), `moel-2025` (5/6) and `saeopja` (1/3),
+`inline:tbl/empty=1/PERCENT` on `kstartup` (2/2), and `none/empty=1/PERCENT`
+on `nrf` (1/1).  The A/B/C and attribution columns are unchanged from #250 at
+both tolerances, which is the check that the pass added nothing to the
+classification.
+
+**No one mechanism dominates**, and the two shapes behind those rows are
+different:
+
+* **The predecessor grew (10 of 17).**  `moel-2013` page 4: the drift is
+  +36.66 px and the predecessor's own block is +36.70 px taller under the
+  flow pass than the cache says it is.  `moel-2025` pages 1/2/3: +29.76 /
+  +32.28 / +26.64 against +29.88 / +32.52 / +26.76.  The height is inside the
+  predecessor, so this is #250's class-A tail seen from below, not a gap.
+  What IS new is where the shortfall lives: the gap from the predecessor's
+  ink bottom to the next paragraph's first line shrinks by a constant
+  −5.98 / −6.02 px on those pages, which is #250's −6.14 px residual located
+  — it is the predecessor's LAST line's advance, not the inter-paragraph gap
+  and not the paragraph's dominant pitch.
+* **The predecessor drew nothing (7 of 17).**  Every one is an empty
+  paragraph.  On six of them the flow seat height equals the sum of the
+  cached `hp:lineseg` advances exactly (`height_delta_hwp` 0), so the empty
+  paragraph's own height is right and the cause is above it.
+
+### `nrf`: the one measured page-fit difference
+
+The seventh is `nrf` page 2, and it is the corpus's only instance of the
+shape the holdout shows.  The drift is +102.40 px on all 29 class-B
+paragraphs — exactly 5120 HWPUNIT, two whole 2560-HWPUNIT body pitches — with
+nothing re-broken above it.  The predecessor is paragraph 37, empty, and:
+
+    usable_height (body box)         71436 HWPUNIT
+    cached vertpos of paragraph 36   71630   <- past the body bottom
+    cached vertpos of paragraph 37   71630   <- the SAME seat
+    flow seat of paragraph 36        page 2, top 0
+    flow seat of paragraph 37        page 2, top 2560
+    paragraph 38, cached             page 2, vertpos 0
+    paragraph 38, computed           page 2, top 5120
+
+So the authoring engine seated two trailing empty paragraphs 194 HWPUNIT past
+the bottom of its own body box, and gave them the same `vertpos` rather than
+advancing — it neither paginated them nor made room for them.  The flow pass
+does paginate them, because its page-fit test measures a block by its
+`advance` and knows nothing about whether the block puts ink down, and the
+first paragraph of page 2 therefore starts two empty-paragraph heights lower.
+
+The rule that reading suggests is that an INKLESS paragraph does not force a
+page: it draws nothing, so nothing crosses the margin, and Hancom lets it
+hang.  That is consistent with the schema (`hp:lineseg` is cached geometry,
+not a fit assertion) and with `_row_extent`'s existing measured concession
+that a line may cross the bottom margin by its descender
+(`docs/research/line-fit-rule.md`).
+
+### Nothing was changed
+
+`own_render.py` is untouched.  Three reasons, in order:
+
+1. **The mechanism does not dominate.**  Ten of seventeen drifting pages
+   start under an ordinary drawn paragraph whose own block grew, which #250
+   already attributes to class A.  A page-fit change would not move them.
+2. **The measured basis is one page boundary on one form.**  `nrf`'s two
+   paragraphs are the only corpus instance where the cached seat is past the
+   body box at all: the report's `cache_seat_past_page_bottom` is `false` on
+   the other six undrawn predecessors.  Writing an inkless-paragraph rule off
+   one boundary is exactly the corpus-as-training-set overfit the empty-run
+   slice's "Not proven" already warns about, and it would be tuned on the
+   form whose IoU it would move.
+3. **Pagination is the highest-blast-radius knob in the flow pass.**  A block
+   that stops forcing a page changes page counts, and `kstartup`'s extra page
+   currently scores +0.37000 IoU *better* than the cache.
+
+Corpus scoreboard, 144 dpi, both policies pinned, before and after this
+slice: `cache` `text_line_iou_mean` 0.645754, `ssim_mean` 0.830919,
+`ssim_inked_mean` 0.276175, `text_line_pair_rate_mean` 0.836210; `computed`
+0.633897 / 0.824293 / 0.277430 / 0.847831.  All ten forms' scoreboard JSON is
+byte-identical across the change under both policies (label field aside) and
+every verdict is unchanged.  `render_check` on `render-check-01` is unchanged:
+9/9 pages exact, 6 · 37 · 6 · 2 at 96 dpi and 14 · 31 · 4 · 2 at 144.
+
+### Not proven
+
+- **`nrf` is one boundary.**  Two paragraphs, one page, one form.  The
+  inkless-paragraph reading explains it and nothing else on the corpus
+  contradicts it, but nothing else on the corpus tests it either.
+- **The rule was not read out of a published spec.**  KS X 6101 and the OWPML
+  schema describe `hp:lineseg` as cached geometry and say nothing about when
+  the authoring engine will refuse to paginate; "an inkless paragraph does
+  not force a page" is inferred from `nrf`'s cache, not quoted.
+- **The −6 px gap shortfall is located, not explained.**  It is the
+  predecessor's last line's advance falling short of the paragraph's dominant
+  pitch, which is what #250 guessed; why that line's advance is smaller is
+  still unmeasured, and reading it needs the added line's own
+  `vertsize + spacing` rather than a `y0` step.
+- **Enclosure is an inference.**  A paragraph placed on a page because its
+  neighbours are both on it has no direct evidence of its own; six of the
+  seven undrawn predecessors are placed that way or by a flow seat, and a
+  wrong placement would name the wrong predecessor.
+- **The two bottoms did not separate on the corpus.**  No page was found
+  where the gap from the `advance` bottom agrees across the policies while
+  the gap from the `ink` bottom does not, so the question the two readings
+  were added to answer is still open.
+- **The holdout is not in these numbers.**  The private report-class document
+  was not opened.  `--corpus --no-text` is what the operator runs on it; the
+  predecessor section carries paragraph addresses, HWPUNIT measurements and
+  declared style values, and no document text under any flag.
