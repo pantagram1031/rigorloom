@@ -720,3 +720,296 @@ def test_the_predecessor_section_carries_no_document_text():
 def test_the_corpus_table_shows_the_dominant_predecessor(small_report):
     table = LD.corpus_table([("alpha", small_report)])
     assert "dominant first-drift predecessor" in table
+
+
+# -- the seat pass ----------------------------------------------------------
+
+def seat_fact(address, **kwargs):
+    """A ``paragraph_facts`` entry for a top-level paragraph."""
+    base = fact(address)
+    base.update({"section": 0, "top_level": True, "empty_runs": [],
+                 "page_break_before": False, "column_break": False,
+                 "keep_with_next": False, "keep_lines": False,
+                 "widow_orphan": False,
+                 "linesegs": [{"textpos": 0, "vertpos": 0,
+                               "vertsize": 1600, "spacing": 960}]})
+    base.update(kwargs)
+    return base
+
+
+def cache_seat(page=1, vertpos=0, advance=2560):
+    """The pair a cache seat is read from: the drawn page and the linesegs."""
+    return ({"page": page, "drawn_pages": 1},
+            {"linesegs": [{"textpos": 0, "vertpos": vertpos,
+                           "vertsize": 1600, "spacing": advance - 1600}],
+             "cache_advance_hwp": advance})
+
+
+def build_seats(spec):
+    """``{address: (cache page, top, advance, computed page, top, advance)}``.
+
+    Returns the three dicts ``seat_rows`` takes, so a test states a document
+    as its seats and nothing else.
+    """
+    facts, cache_seats, flow_seats = {}, {}, {}
+    for address, values in spec.items():
+        cpage, ctop, cadv, kpage, ktop, kadv = values
+        drawn, seg = cache_seat(page=cpage, vertpos=ctop, advance=cadv)
+        facts[address] = seat_fact(address, **seg)
+        cache_seats[address] = drawn
+        flow_seats[(address, kpage)] = {"address": address, "page": kpage,
+                                        "top_hwp": ktop, "height_hwp": kadv}
+    return facts, cache_seats, flow_seats
+
+
+def rows_for(spec, **kwargs):
+    facts, cache_seats, flow_seats = build_seats(spec)
+    return LD.seat_rows(facts, cache_seats, flow_seats, {}, {}, PX_PER_HWP,
+                        **kwargs)
+
+
+def test_a_seat_row_states_both_policies_and_their_delta():
+    row = rows_for({0: (1, 0, 2560, 1, 0, 3560)})[0]
+    assert row["cache"]["top_hwp"] == 0
+    assert row["computed"]["advance_hwp"] == 3560
+    assert row["delta"]["advance_hwp"] == 1000
+    assert row["delta"]["top_hwp"] == 0
+
+
+def test_a_seat_delta_is_stated_in_pixels_as_well_as_hwpunit():
+    row = rows_for({0: (1, 0, 2560, 1, 7200, 2560)})[0]
+    assert row["delta"]["top_hwp"] == 7200
+    assert row["delta"]["top_px"] == round(7200 * PX_PER_HWP, 3)
+
+
+def test_a_paragraph_inside_a_table_cell_is_not_a_seat_row():
+    facts, cache_seats, flow_seats = build_seats({0: (1, 0, 2560, 1, 0, 2560)})
+    facts[1] = seat_fact(1, top_level=False)
+    rows = LD.seat_rows(facts, cache_seats, flow_seats, {}, {}, PX_PER_HWP)
+    assert [row["address"] for row in rows] == [0]
+
+
+def test_a_paragraph_with_no_cached_lineseg_has_no_cache_seat():
+    """A package this repo wrote carries no lineseg, so path A does not exist
+    for it and the pass says so instead of inventing a zero."""
+    facts = {0: seat_fact(0, linesegs=[], cache_advance_hwp=0)}
+    rows = LD.seat_rows(facts, {0: {"page": 1, "drawn_pages": 1}},
+                        {(0, 1): {"page": 1, "top_hwp": 0,
+                                  "height_hwp": 2560}},
+                        {}, {}, PX_PER_HWP)
+    assert rows[0]["cache"] is None
+    assert rows[0]["delta"] is None
+
+
+def test_a_paragraph_the_flow_pass_split_keeps_its_first_top_and_all_height():
+    facts, cache_seats, flow_seats = build_seats({0: (1, 0, 5000, 1, 0, 3000)})
+    flow_seats[(0, 2)] = {"address": 0, "page": 2, "top_hwp": 0,
+                          "height_hwp": 2000}
+    rows = LD.seat_rows(facts, cache_seats, flow_seats, {}, {}, PX_PER_HWP)
+    assert rows[0]["computed"]["page"] == 1
+    assert rows[0]["computed"]["top_hwp"] == 0
+    assert rows[0]["computed"]["advance_hwp"] == 5000
+    assert rows[0]["computed"]["records"] == 2
+
+
+def _seats(spec, **kwargs):
+    return LD.first_seat_divergences(rows_for(spec), px_per_hwp=PX_PER_HWP,
+                                     **kwargs)
+
+
+def test_a_document_whose_seats_agree_reports_nothing():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (1, 2560, 2560, 1, 2560, 2560)})
+    assert report["pages"] == []
+    assert report["dominant_kind"] is None
+    assert report["paragraphs_with_a_seat_delta"] == 0
+
+
+def test_only_the_first_differing_seat_on_a_page_is_reported():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (1, 2560, 2560, 1, 2860, 2560),
+                     2: (1, 5120, 2560, 1, 5420, 2560)})
+    assert [row["paragraph"] for row in report["pages"]] == [1]
+    assert report["paragraphs_with_a_seat_delta"] == 2
+
+
+def test_each_page_reports_its_own_first_differing_seat():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (1, 2560, 2560, 1, 2860, 2560),
+                     2: (2, 0, 2560, 2, 0, 2560),
+                     3: (2, 2560, 2560, 2, 2960, 2560)})
+    assert [(row["page"], row["paragraph"]) for row in report["pages"]] == \
+        [(1, 1), (2, 3)]
+
+
+def test_a_taller_predecessor_puts_the_delta_on_its_advance():
+    """The gap between the two is unchanged; the block above grew."""
+    report = _seats({0: (1, 0, 2560, 1, 0, 3560),
+                     1: (1, 2560, 2560, 1, 3560, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "d_prev_advance_hwp"
+    assert row["single_term"] is True
+    assert row["terms_hwp"]["d_prev_advance_hwp"] == 1000
+    assert row["terms_hwp"]["d_gap_hwp"] == 0
+    assert row["identity_ok"] is True
+
+
+def test_a_wider_space_between_two_paragraphs_puts_the_delta_on_the_gap():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (1, 2560, 2560, 1, 3560, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "d_gap_hwp"
+    assert row["single_term"] is True
+    assert row["terms_hwp"]["d_gap_hwp"] == 1000
+    assert row["terms_hwp"]["gap_cache_hwp"] == 0
+    assert row["terms_hwp"]["gap_computed_hwp"] == 1000
+
+
+def test_two_terms_over_the_tolerance_are_not_called_a_single_term():
+    """nrf's shape: the block above grew and the gap below it shrank."""
+    report = _seats({0: (1, 0, 2560, 1, 0, 63674),
+                     1: (1, 63950, 2560, 1, 63674, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "d_gap_hwp"
+    assert row["single_term"] is False
+    assert row["terms_hwp"]["d_prev_advance_hwp"] == 61114
+    assert row["terms_hwp"]["d_gap_hwp"] == -61390
+    assert row["delta_top_hwp"] == -276
+    assert row["identity_ok"] is True
+
+
+def test_the_three_terms_always_add_up_to_the_seat_delta():
+    report = _seats({0: (1, 0, 2560, 1, 0, 3000),
+                     1: (1, 2560, 2560, 1, 4200, 2560)})
+    row = report["pages"][0]
+    terms = row["terms_hwp"]
+    assert (terms["d_prev_top_hwp"] + terms["d_prev_advance_hwp"]
+            + terms["d_gap_hwp"]) == row["delta_top_hwp"] == 1640
+    assert row["identity_ok"] is True
+
+
+def test_a_predecessor_that_itself_moved_carries_the_delta_it_inherited():
+    """The only way to see ``d_prev_top`` non-zero: the pair is decomposed
+    directly, because on a real page the predecessor would have been the
+    first differing seat and reported instead of this one."""
+    rows = rows_for({0: (1, 100, 2560, 1, 400, 3000),
+                     1: (1, 3000, 2560, 1, 4200, 2560)})
+    split = LD.decompose_seat_delta(rows[0], rows[1])
+    terms = split["terms"]
+    assert terms["d_prev_top_hwp"] == 300
+    assert terms["d_prev_advance_hwp"] == 440
+    assert terms["d_gap_hwp"] == 460
+    assert split["carrier"] == "d_gap_hwp"
+    assert split["single_term"] is False
+    assert split["identity_sum_hwp"] == rows[1]["delta"]["top_hwp"] == 1200
+
+
+def test_the_first_seated_paragraph_on_a_page_has_no_terms():
+    report = _seats({0: (1, 0, 2560, 1, 300, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "page_top"
+    assert row["terms_hwp"] is None
+    assert "page" in row["note"]
+
+
+def test_a_paragraph_the_two_policies_put_on_different_pages_is_named():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (1, 2560, 2560, 2, 0, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "page_move"
+    assert row["delta_page"] == 1
+    assert row["terms_hwp"] is None
+
+
+def test_a_predecessor_on_another_page_leaves_no_gap_to_measure():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2560),
+                     1: (2, 0, 2560, 2, 300, 2560)})
+    row = report["pages"][0]
+    assert row["carrier"] == "page_top"
+    assert row["terms_hwp"] is None
+
+
+def test_a_predecessor_with_no_seat_is_named_rather_than_guessed():
+    facts, cache_seats, flow_seats = build_seats(
+        {0: (1, 0, 2560, 1, 0, 2560), 1: (1, 2560, 2560, 1, 2860, 2560)})
+    facts[0]["linesegs"] = []
+    rows = LD.seat_rows(facts, cache_seats, flow_seats, {}, {}, PX_PER_HWP)
+    report = LD.first_seat_divergences(rows, px_per_hwp=PX_PER_HWP)
+    assert report["pages"][0]["carrier"] == "page_top"
+
+
+def test_the_tolerance_is_what_decides_a_seat_difference():
+    spec = {0: (1, 0, 2560, 1, 0, 2560), 1: (1, 2560, 2560, 1, 2562, 2560)}
+    assert _seats(spec, tol=0.5)["pages"]
+    assert _seats(spec, tol=2.5)["pages"] == []
+
+
+def test_a_delta_spread_under_the_tolerance_has_no_carrier():
+    report = _seats({0: (1, 0, 2560, 1, 0, 2562),
+                     1: (1, 2560, 2560, 1, 2564, 2560)}, tol=2.5)
+    row = report["pages"][0]
+    assert row["carrier"] == "none"
+    assert row["single_term"] is None
+
+
+def test_the_histogram_is_keyed_on_both_kinds_and_the_carrier():
+    report = _seats({0: (1, 0, 2560, 1, 0, 3560),
+                     1: (1, 2560, 2560, 1, 3560, 2560)})
+    assert set(LD.SEAT_KEY_FIELDS) == set(report["kinds"][0]) - {"pages"}
+    assert report["kinds"][0]["carrier"] == "d_prev_advance_hwp"
+    assert report["dominant_kind"]["carrier"] == "d_prev_advance_hwp"
+    assert report["dominant_kind"]["share"] == 1.0
+
+
+def test_the_tallest_carrier_bar_is_the_dominant_kind():
+    spec = {}
+    for page in range(1, 4):
+        base = (page - 1) * 4
+        grew = page < 3
+        spec[base] = (page, 0, 2560, page, 0, 3560 if grew else 2560)
+        spec[base + 1] = (page, 2560, 2560, page, 3560, 2560)
+    report = _seats(spec)
+    counts = [row["pages"] for row in report["kinds"]]
+    assert counts == sorted(counts, reverse=True)
+    assert report["dominant_kind"]["carrier"] == "d_prev_advance_hwp"
+    assert report["carriers"]["d_prev_advance_hwp"] == 2
+    assert report["carriers"]["d_gap_hwp"] == 1
+
+
+# -- the seat section in the report -----------------------------------------
+
+def test_the_report_carries_the_seat_rule(small_report):
+    section = small_report["first_seat_divergences"]
+    assert section["rule"] == LD.SEAT_RULE
+    assert section["key_fields"] == list(LD.SEAT_KEY_FIELDS)
+    assert section["seat_tolerance_hwp"] == LD.DEFAULT_SEAT_TOL_HWP
+
+
+def test_every_seat_row_of_the_report_is_seated_under_both_policies(
+        small_report):
+    section = small_report["first_seat_divergences"]
+    assert section["paragraphs_seated_both"] > 0
+    for row in section["pages"]:
+        assert row["this"]["cache"] is not None
+        assert row["this"]["computed"] is not None
+
+
+def test_the_seat_rows_are_off_by_default_and_optional(small_report):
+    assert "seat_rows" not in small_report["first_seat_divergences"]
+    with_rows = LD.divergence_report(_need(SMALL_FORM), include_seat_rows=True)
+    rows = with_rows["first_seat_divergences"]["seat_rows"]
+    assert [row["address"] for row in rows] == sorted(
+        row["address"] for row in rows)
+
+
+def test_the_seat_section_carries_no_document_text():
+    report = LD.divergence_report(_need(SMALL_FORM), include_text=False,
+                                  include_seat_rows=True)
+    blob = json.dumps(report["first_seat_divergences"], ensure_ascii=False)
+    assert '"text"' not in blob
+
+
+def test_the_seat_table_has_a_row_per_form(small_report):
+    table = LD.seat_table([("alpha", small_report), ("beta", small_report)])
+    assert "carrier" in table
+    assert "alpha" in table and "beta" in table
