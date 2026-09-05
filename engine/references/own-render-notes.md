@@ -922,8 +922,9 @@ allowance (`_row_extent`) — a table has no descender to hang past the margin.
 
 A split leaves two placement records carrying the row range each page draws,
 and `_render_table` draws exactly that range with the row origin pulled back
-— the continuation page does **not** repeat the header row, where Hancom's
-anchored split does.
+— the continuation page does **not** repeat the header row, and neither does
+Hancom's, measured (*The one table Hancom splits* below: `repeatHeader` names
+rows the file flags with `hp:tr@header`, and no corpus row is flagged).
 
 ### How well the flow pass agrees with the engine that wrote the file
 
@@ -6842,3 +6843,224 @@ Worker: Opus; orchestrator: Fable.
   Rigorloom-written document has no cache, so an overflow there is this
   renderer's own content measurement and the last row now pays for it instead
   of the table growing.
+
+## The one table Hancom splits, and the page the cache lost — measured, 2026-09-06
+
+#276 closed the cache side of table pagination with a flat answer: the file
+states nothing about it. That left the reference PDF as the only witness, and
+the question it had to be asked was the whole of this run — *for every corpus
+table that crosses a page in Hancom's own export, where did it split, what did
+it draw there, and does this renderer reproduce it?*
+
+`engine/scripts/table_split_probe.py` asks it. The committed run is
+`engine/references/own-render-samples/e2.8-table-split.json`
+(`python engine/scripts/table_split_probe.py --corpus`).
+
+### Two readings of the export, kept apart on purpose
+
+The probe reads the reference twice and prints both, because either alone can
+be argued with.
+
+**The text.** Every paragraph inside every table cell, normalised, kept only
+when its text is unique in the whole document and at least eight characters
+long, and located on the one page whose text contains it. A table whose
+unique paragraphs land on two pages is a table Hancom split; the lowest row
+index on the second page is where; and a row whose paragraphs appear on BOTH
+pages is a row Hancom cut through rather than moved. Cell-level text cannot
+answer this — a cell holding both halves of a break matches neither page —
+which is why the unit of evidence is the paragraph.
+
+**The rules.** Every stroke the page draws, merged by coordinate and grouped
+into table regions by x-span rather than by touching: a table whose middle
+rows declare `borderFill` NONE draws nothing there, so a connected-component
+grouping falls into pieces on exactly the tables this has to read. The
+HWPUNIT scale is #276's, taken per form from `hp:pagePr` against the
+MediaBox.
+
+### One table, in ten forms, on 53 reference pages
+
+**`kstartup` table 9, reference pages 6 → 7. That is the entire population.**
+Nine forms have no table crossing a page at all, and `kstartup`'s other 34
+top-level tables do not either.
+
+| | pages | split row | boundary row | header repeated | continuation seat | first fragment | continuation |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| Hancom | 6, 7 | 2 | **divided** | no | +146 | 70624 | 69543 |
+| `cache` | 6, 7 | 3 † | at a boundary | no | +140 | 70529 | 69505 |
+| `computed` | 6, 7 | 3 † | at a boundary | no | +140 | 70529 | 69505 |
+
+† this renderer's row index, not the file's: `_expand_segmented_rows` (E2.7)
+has already turned the file's row 2 into two rows by then, because that row's
+own paragraph list restarts its cached `vertpos` partway through. Its cut
+after row 3 IS the file's row 2, cut in the same place — `○ 사업비 사용 계획`
+ending one page and `○ 성과목표 및 기대효과` starting the next. The probe
+reports both row spaces so the two columns can be compared without the reader
+having to know that.
+
+Fragment heights agree within 0.14% and 0.06%, and the continuation's seat
+within 6 HWPUNIT — six hundredths of a point. The interior rules on page 6
+say the same thing row by row: 4240 / 23180 / 42960 against this renderer's
+4248 / 23207 / 43074.
+
+### What the attributes turn out to mean
+
+- **`pageBreak="CELL"` really does mean the CELL.** Hancom did not move the
+  row that would not fit; it cut through it, leaving part of one cell's
+  content on each page. `NONE` forbids that and moves the table whole, and
+  #244's `_table_may_split` already reads both halves of the permission
+  (declared `CELL` **and** anchored) the same way.
+- **`repeatHeader="1"` repeated nothing, and the file says why.** OWPML
+  nominates the rows to repeat with `hp:tr@header`; **no `hp:tr` anywhere in
+  the corpus carries that attribute, or any other** — 514 rows, zero
+  attributes. So `repeatHeader` had nothing to repeat, and the split table's
+  continuation page opens on the second half of a divided cell with no header
+  band above it. #276 recorded `repeatHeader` as unmeasurable on this corpus;
+  it is measurable after all, and the measurement is that honouring it would
+  repeat a row the file never nominated. It stays in `BLOCK_NOT_HONORED`, now
+  for a stated reason rather than for want of a witness.
+- **The continuation seats at the top of the body box**, at the same offset
+  from it as the first fragment had on its own page (+146 measured, +140
+  drawn — the table's `hp:outMargin@top`), with no header band and no
+  re-drawn outer top border: the only stroke across the top of page 7 is the
+  interior rule the cut passed through, narrower than the outer border by its
+  own border width. That is the geometric signature of a continuation and it
+  is what the probe keys on.
+- **A split table's `hp:sz@height` is not the ceiling #276 measured.** Table 9
+  declares 70529 and Hancom drew 70529 + 69505 across the two pages. #276's
+  clip rule is a rule about a table that fits ONE page; `natural_rows` already
+  exempts a split table from it, and this is the measurement that says the
+  exemption is right.
+
+### The page the cache lost was never a split
+
+`kstartup` rendered 21 pages under `cache` against a 22-page reference (#258 /
+#265), and the natural suspicion — that the cache cannot page the whole-table
+`hp:lineseg` #276 measured — is wrong. The missing page is between tables 6
+and 7, and neither is split by anyone. **Table 7 is 69572 HWPUNIT tall,
+anchored, and the cache seats its holder paragraph at `vertpos` 69632 on a
+71000-HWPUNIT page** — 60 HWPUNIT of room left under it, hard against the
+bottom margin. Hancom's export draws it at the top of the NEXT page. This
+renderer drew it 68204 HWPUNIT off the bottom of the page it did not fit, and
+everything after it inherited the missing break.
+
+The rule that fixes it is the one the notes already state for an inline
+flowing table, and the one `_place_block` already applies under `computed`
+(`anchored_blocks_moved`): **a table that does not fit the room left, but
+does fit a page of its own, moves whole.** Only the cache path was missing
+it — `_auto_anchor_overflow_cut` had the split arm and no move arm, and
+returned `None` when the room left was too small for even the first row,
+which is the case a move exists for.
+
+`_auto_anchor_overflow_action` (its replacement) returns `("move", top)`
+there. `_paginate_with_anchor_overflow_fix` closes the page BEFORE the
+paragraph rather than after it, and records the page's own vertical rebase in
+`_auto_anchor_page_offsets` — every cached `vertpos` that travels with the
+moved paragraph is measured from the original page's body top, so the page it
+moved to is drawn shifted by `-top`, which is what puts the table that moved
+at the top of it. `_render_paragraphs` already took a `block_offset_hwp` for
+exactly this shape of correction; this is its first caller.
+
+The wild-`vertOffset` guard `_place_block` has (limit 12: an offset that puts
+a table's bottom pages down the sheet is a broken POSITION, not content
+needing a second page) is mirrored into the new arm, so `kstartup`'s table 36
+is left exactly where it was.
+
+### After
+
+Page counts, per form, both policies — the headline, because it is the
+channel a pagination rule is actually graded on:
+
+| form | reference | `cache` before | `cache` after | `computed` |
+| --- | ---: | ---: | ---: | ---: |
+| admrul | 1 | 1 | 1 | 1 |
+| gianmun-1ho | 1 | 1 | 1 | 1 |
+| gianmun-2ho | 1 | 1 | 1 | 1 |
+| jeongbo | 1 | 1 | 1 | 1 |
+| jumin | 3 | 3 | 3 | 3 |
+| **kstartup** | **22** | **21** | **22** | 22 |
+| moel-2013 | 7 | 7 | 7 | 7 |
+| moel-2025 | 7 | 7 | 7 | 7 |
+| nrf | 4 | 4 | 4 | 4 |
+| saeopja | 6 | 6 | 6 | 6 |
+
+**All ten forms now render their reference's own page count under both
+policies.** `page_count_exact` was the one floor check `kstartup` failed
+under `cache`, and it passes.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pair rate | ink delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8421 | 0.3284 | 0.6730 | 0.8364 | 0.0085 |
+| `cache` after | **0.8492** | **0.3469** | **0.7232** | **0.8510** | 0.0115 |
+| `computed` before/after | 0.8334 | 0.3253 | 0.6562 | 0.8469 | 0.0140 |
+
+Under `cache` only `kstartup` moves and every whole-document channel moves up:
+ssim 0.8317 → 0.9029, inked 0.3027 → 0.4882, line IoU 0.2726 → **0.7749**,
+pair rate 0.7922 → 0.9381. The one channel that moves the wrong way is
+`ink_delta_abs_max`, 0.0321 → 0.0621 against a 0.05 bound — and it is the
+same 0.0621 `computed` has measured since E2.5, page 22's pre-existing
+block-position drift, which the `cache` render simply could not see while it
+was one page short. `kstartup`'s verdict was already `false` (on
+`page_count_exact`); it is still `false`, on `ink_delta_abs_max` instead,
+which is exactly the trade #276 predicted for whichever run closed the page
+gap.
+
+`computed` is **byte-identical** before and after on all ten forms, and so is
+`cache` on the nine that are not `kstartup`: rendering every form at 96 dpi
+under both policies and hashing each page, one line of twenty changes —
+`kstartup` `cache`, where pages 1-3 are unchanged, page 4 is redrawn without
+the table that overflowed it, a page is inserted for that table, and pages
+6-22 are byte-identical to the old 5-21.
+
+`layout_divergence.py --corpus`: agreement **1395 → 1604**, class A 118
+unchanged, class B 302 → 305, class C **243 → 28**. `kstartup`'s seats that
+differ fall 119 → 36 and its pages that differ 18 → 5. Class C is the class
+with no counterpart to compare at all, and 215 of its 243 members were the
+cache and the flow pass disagreeing about which page a block was on.
+
+`class_b_probe.py --corpus` roots: `text_rebreak:width` 167 → 170,
+`table_row_heights` 64 → 82, `empty_paragraph` 29 unchanged,
+`cell_valign` 14 → 17, **`forced_break` 28 → 7**. The three that rise are
+`kstartup` paragraphs that were class C before — they had no counterpart to
+be measured against, and now they do.
+
+`lineseg_vs_pdf.py --corpus` is byte-identical, 411 of 411 paragraphs and
+8566/8566 characters: it reads the cache against the export and never this
+renderer's pages. `render_check.py` on `render-check-01` is byte-identical at
+96 dpi (6 match / 37 close / 6 differ / 2 unsupported) and 144 dpi
+(14 / 31 / 4 / 2), 9 of 9 pages exact both times.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The split rule has ONE witness, and this run did not add to it.** Every
+  statement above about where Hancom splits, what it draws at the split and
+  where the continuation sits comes from `kstartup` table 9. Nine forms and
+  53 reference pages contain no second cross-page table to check it against.
+- **`repeatHeader` is still not exercised.** The measurement is that no
+  corpus row is flagged `hp:tr@header`, so the corpus cannot say what Hancom
+  does when one IS flagged — only that with none flagged it repeats nothing.
+  A document that flags a header row would be the test, and there is none.
+- **The move arm's continuation seat is inferred, not measured.** The
+  reference draws the moved table 7 at the same 6140 HWPUNIT from the page
+  top that every other table starting a page in this form is drawn at, and
+  rebasing the page by the paragraph's own cached `vertpos` reproduces it —
+  but a table whose holder paragraph is NOT the first thing on the page it
+  moves to would seat somewhere this corpus cannot check.
+- **Only the CELL-and-anchored gate reaches the new arm.** The move rule is
+  general — a `NONE` table that does not fit moves whole too — but the arm
+  sits behind `_anchor_table_geometry`, which reads the split permission
+  first. Widening it would repaginate on tables no reference has ever shown
+  moving, so it was left where the evidence is.
+- **`ink_delta_abs_max` on `kstartup` is now a failing floor check under
+  `cache` as well as `computed`.** It is a pre-existing defect newly visible,
+  not a new one, and nothing here fixes it.
+- **The probe pairs a PDF fragment to a row range by TEXT**, and a table
+  whose cells hold nothing unique and eight characters long is invisible to
+  it. The rules reading is the cross-check and it agrees on every form, but
+  a wholly borderless, wholly boilerplate table would be missed by both.
+- **The corpus is still the training set.** The private report-class holdout
+  was not opened, and a Rigorloom-written document has no cache at all, so
+  the arm this adds to the cache path never runs there.
