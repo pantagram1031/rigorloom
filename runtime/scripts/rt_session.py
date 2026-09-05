@@ -103,6 +103,19 @@ def _snapshot(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
             info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _open_binding(info: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Fields that must agree across pathname lstat and the opened handle.
+
+    NTFS may advance ctime while a regular file is being opened (observed on a
+    Downloads copy even though dev/ino/nlink/size/mtime and SHA-256 stayed
+    unchanged). ctime remains part of the opened-handle before/after check, but
+    cannot be an lstat-to-fstat identity field without false-blocking a valid
+    user document.
+    """
+    return (info.st_dev, info.st_ino, info.st_nlink, info.st_size,
+            info.st_mtime_ns)
+
+
 @contextlib.contextmanager
 def _open_source_once(path: Path):
     """Open one regular source and bind validation to that exact handle."""
@@ -132,7 +145,7 @@ def _open_source_once(path: Path):
         opened = os.fstat(handle.fileno())
         if not stat.S_ISREG(opened.st_mode) or is_reparse(opened):
             raise _reject("opened source is not a regular file")
-        if _snapshot(before) != _snapshot(opened):
+        if _open_binding(before) != _open_binding(opened):
             raise _reject("source identity or content metadata changed while opening",
                           beforeBytes=before.st_size, openedBytes=opened.st_size)
         if opened.st_size > MAX_SOURCE_BYTES:
