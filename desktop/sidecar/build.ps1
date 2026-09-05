@@ -127,13 +127,55 @@ Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
 #                      build can only say it has no packs.
 #   pyproject.toml     module_registry gates each manifest's `requires.rigorloom`
 #                      against the project version, which it reads from here.
+#
+# Never add these live directories directly: running tests creates ignored
+# __pycache__/*.pyc files, and --add-data would silently freeze those local
+# leftovers into the installer. Copy only source payload files into a unique
+# build-owned tree and freeze that exact tree.
+function Copy-TreeFiltered([string]$SourceRoot, [string]$DestinationRoot) {
+    $sourceFull = [System.IO.Path]::GetFullPath($SourceRoot)
+    $sourcePrefix = $sourceFull.TrimEnd('\') + '\'
+    foreach ($file in Get-ChildItem -LiteralPath $sourceFull -Recurse -File) {
+        if ($file.Extension -eq '.pyc' -or $file.FullName -match '[\\/]__pycache__[\\/]') {
+            continue
+        }
+        $relative = $file.FullName.Substring($sourcePrefix.Length)
+        $target = Join-Path $DestinationRoot $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $target -ErrorAction Stop
+    }
+}
+
+$dataStage = Join-Path $Work 'bundled-data'
+New-Item -ItemType Directory -Path $dataStage -ErrorAction Stop | Out-Null
+$dataTrees = @(
+    [pscustomobject]@{ source = Join-Path $RepoRoot 'engine\scripts'; destination = 'repo\engine\scripts' },
+    [pscustomobject]@{ source = Join-Path $RepoRoot 'pipeline\scripts'; destination = 'repo\pipeline\scripts' },
+    [pscustomobject]@{ source = Join-Path $RepoRoot 'runtime\scripts'; destination = 'repo\runtime\scripts' },
+    [pscustomobject]@{ source = Join-Path $RepoRoot 'agenthost\scripts'; destination = 'repo\agenthost\scripts' },
+    [pscustomobject]@{ source = Join-Path $RepoRoot 'modules'; destination = 'repo\modules' }
+)
+foreach ($tree in $dataTrees) {
+    Copy-TreeFiltered $tree.source (Join-Path $dataStage $tree.destination)
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $dataStage 'repo') | Out-Null
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'pyproject.toml') `
+    -Destination (Join-Path $dataStage 'repo\pyproject.toml') -ErrorAction Stop
+$cachePayload = @(Get-ChildItem -LiteralPath $dataStage -Recurse -File | Where-Object {
+    $_.Extension -eq '.pyc' -or $_.FullName -match '[\\/]__pycache__[\\/]'
+})
+if ($cachePayload.Count -ne 0) {
+    Write-Error "filtered sidecar data stage contains $($cachePayload.Count) cache file(s)"
+    exit 3
+}
+
 $addData = @(
-    "$RepoRoot\engine\scripts;repo\engine\scripts",
-    "$RepoRoot\pipeline\scripts;repo\pipeline\scripts",
-    "$RepoRoot\runtime\scripts;repo\runtime\scripts",
-    "$RepoRoot\agenthost\scripts;repo\agenthost\scripts",
-    "$RepoRoot\modules;repo\modules",
-    "$RepoRoot\pyproject.toml;repo"
+    "$(Join-Path $dataStage 'repo\engine\scripts');repo\engine\scripts",
+    "$(Join-Path $dataStage 'repo\pipeline\scripts');repo\pipeline\scripts",
+    "$(Join-Path $dataStage 'repo\runtime\scripts');repo\runtime\scripts",
+    "$(Join-Path $dataStage 'repo\agenthost\scripts');repo\agenthost\scripts",
+    "$(Join-Path $dataStage 'repo\modules');repo\modules",
+    "$(Join-Path $dataStage 'repo\pyproject.toml');repo"
 )
 $dataArgs = @()
 foreach ($entry in $addData) { $dataArgs += '--add-data'; $dataArgs += $entry }
@@ -212,6 +254,12 @@ try {
     $publishedJson = $publishedManifest | ConvertTo-Json -Depth 4 -Compress
     if ($publishedJson -cne $builtJson) {
         throw 'published sidecar tree does not match the verified staging tree'
+    }
+    $publishedCaches = @(Get-ChildItem -LiteralPath $outFull -Recurse -File | Where-Object {
+        $_.Extension -eq '.pyc' -or $_.FullName -match '[\\/]__pycache__[\\/]'
+    })
+    if ($publishedCaches.Count -ne 0) {
+        throw "published sidecar contains $($publishedCaches.Count) cache file(s)"
     }
     Write-Host ("sidecar manifest: {0} files, {1:N1} MiB" -f `
         $publishedManifest.Count, (($publishedManifest | Measure-Object bytes -Sum).Sum / 1MB))
