@@ -1612,6 +1612,34 @@ def cell_inset(tc, tbl):
             for side in ("left", "right", "top", "bottom")}
 
 
+#: The narrowest text column a table cell ever gets, in HWPUNIT — 0.2 inch.
+#:
+#: MEASURED, on ``engine/scripts/cell_column_probe.py --corpus --residuals``.
+#: Over every cached in-cell ``hp:lineseg`` on the corpus the smallest
+#: ``horzsize`` Hancom ever saved is exactly 1440 and the next smallest is
+#: 1696; 64 lines sit on 1440, none below it.  Those 64 are in cells 283,
+#: 500, 566 and 1284 HWPUNIT wide after their inset — four different widths
+#: driven to one number — and they carry two different ``textheight`` values
+#: (900 and 1000), so the floor is a constant of the layout and not a
+#: multiple of the text.  ``gianmun-1ho`` r8c11 settles that it is a floor on
+#: the LINE and not a clamp on the inset: its whole cell is 565 wide and the
+#: cache still writes a 1440 line box in it, which no reading of the margins
+#: can produce.
+MIN_CELL_TEXT_WIDTH = 1440
+
+
+def cell_text_width(box_hwp, margin):
+    """The text column a cell of ``box_hwp`` HWPUNIT gives its paragraphs.
+
+    The inset comes off the box and the result never goes below
+    :data:`MIN_CELL_TEXT_WIDTH`.  A cell narrower than the floor therefore
+    lays its text out in a column wider than itself and lets it overhang,
+    which is what the cache records Hancom doing.
+    """
+    return max(MIN_CELL_TEXT_WIDTH,
+               box_hwp - margin["left"] - margin["right"])
+
+
 def solve_tracks(count: int, constraints, declared_total=None):
     """Recover per-column widths / per-row heights from span constraints.
 
@@ -1724,6 +1752,101 @@ def clip_tracks(sizes, declared_total):
         excess -= take
         if excess <= 0:
             break
+    return out
+
+
+def column_grid(count, constraints, declared_total=None):
+    """A table's column boundaries, ``[x0, x1, ... x_count]`` in HWPUNIT.
+
+    A table has ONE column grid — every row draws against the same
+    boundaries, which is why a cell's ``cellAddr@colAddr`` means anything at
+    all — and OWPML records it nowhere: `hp:tbl` carries a `sz`, a
+    `rowCnt`/`colCnt` and a list of rows, and every `hp:tc` under those
+    carries only its own `cellSz@width`, `cellAddr` and `cellSpan`.  The grid
+    has to be recovered from the cells, and the corpus's rows do not agree
+    about it: `jumin` table 1 declares 50897 across its first thirty-one rows
+    and 48067 across its last eight, and `saeopja` has a table whose every
+    row totals 19 HWPUNIT short of the table's own box.
+
+    **A cell's ``cellSz@width`` is a lower bound on the distance between its
+    two boundaries, not a statement of it.** ``x[0]`` is 0 and ``x[count]``
+    is the table's declared ``hp:sz@width``; every interior boundary sits at
+    the LARGEST x any cell reaching it produces from its own declared width.
+    A row whose widths sum short of the table under-claims every boundary it
+    touches and is fitted to the rows that claim more; a row that agrees
+    changes nothing.  Contradictory rows are therefore not a system to be
+    reconciled — which is what :func:`solve_tracks` treats them as, and why
+    it smears one row's shortfall across every column of every row — they
+    are claims, and the grid is their envelope.
+
+    Measured against the cache's ``hp:lineseg@horzsize`` over 1599 corpus
+    cells (``engine/scripts/track_probe.py --corpus --models gridmax``): this
+    reproduces 1590 of them on the cache's 4 HWPUNIT quantiser against 969
+    for :func:`solve_tracks`, with no cell that the older reading placed
+    correctly placed wrongly here.  Of the nine left, five are a paragraph's
+    negative ``hh:intent`` and not a column question at all, and four are one
+    ``saeopja`` table whose cached boundary no declared width in the file
+    produces.  Against the reference PDFs' own vertical rules it puts a cell
+    edge under 303 of 1643 drawn strokes against 263.
+
+    Solved to a fixpoint because a claim depends on the boundary it starts
+    from.  Every claim moves a boundary strictly to the right of the one it
+    starts at, so the dependency runs one way along the column index and the
+    iteration terminates; the loop bound is belt and braces.  A boundary no
+    cell ever claims — a grid the file does not determine — is split evenly
+    between its nearest determined neighbours, which is the same fallback
+    :func:`solve_tracks` uses for an unknown track.
+
+    ``constraints`` is ``[(start_column, colSpan, cellSz@width), ...]`` in
+    document order; the order does not matter, and that it does not is the
+    point of taking a maximum rather than letting the first or the last cell
+    win.
+    """
+    if count <= 0:
+        return [0]
+    xs = {0: 0}
+    pinned = {0}
+    if declared_total:
+        xs[count] = declared_total
+        pinned.add(count)
+    for _ in range(count + 2):
+        changed = False
+        for start, span, width in constraints:
+            if start is None or start < 0:
+                continue
+            left = xs.get(start)
+            if left is None:
+                continue
+            edge = min(start + max(1, span), count)
+            if edge in pinned:
+                continue
+            claim = left + max(0, width or 0)
+            if declared_total:
+                claim = min(claim, declared_total)
+            if claim > xs.get(edge, -1):
+                xs[edge] = claim
+                changed = True
+        if not changed:
+            break
+
+    # A table whose file gives no right edge closes at the widest claim, so
+    # the even split below always has a determined boundary on both sides.
+    if count not in xs:
+        xs[count] = max(xs.values())
+    out = [xs.get(i) for i in range(count + 1)]
+    lo = 0
+    for i in range(1, count + 1):
+        if out[i] is None:
+            continue
+        gap, steps = out[i] - out[lo], i - lo
+        for step in range(1, steps):
+            out[lo + step] = out[lo] + gap * step // steps
+        lo = i
+    # Nothing may run backwards: a row that overflows its table has every
+    # claim past the right edge clamped onto it, which is a zero-width
+    # column and not a negative one.
+    for i in range(1, count + 1):
+        out[i] = max(out[i], out[i - 1])
     return out
 
 
@@ -6292,7 +6415,11 @@ class OwnRenderer:
                 })
         if natural_rows:
             rows, cells = self._expand_segmented_rows(cells, rows, cols)
-        widths = solve_tracks(cols, col_cons, decl_w)
+        # Columns come off the shared grid the cells claim, not off a solve
+        # that rescales contradictory rows into each other; rows still go
+        # through solve_tracks, which is the right reading for a max.
+        xs = column_grid(cols, col_cons, decl_w)
+        widths = [xs[i + 1] - xs[i] for i in range(cols)]
         # Columns first, then content extents, then rows: a cell's content
         # height depends on the width it gets, and its width does not depend
         # on any content.  A paragraph this renderer has to relay out is a
@@ -6302,8 +6429,7 @@ class OwnRenderer:
         for cell in cells:
             c0 = min(cell["col"], len(widths))
             c1 = min(cell["col"] + cell["cspan"], len(widths))
-            inner = max(0, sum(widths[c0:c1])
-                        - cell["margin"]["left"] - cell["margin"]["right"])
+            inner = cell_text_width(sum(widths[c0:c1]), cell["margin"])
             content_h = self._paragraph_block_extent(draw, cell["paras"], inner)
             # cellSz height is a *minimum*: HWP grows a row to fit its content
             # and leaves the stored value behind.  Taking the max of the two is
@@ -6335,9 +6461,6 @@ class OwnRenderer:
                 heights = solve_tracks(rows, row_cons, decl_h)
             elif sum(heights) > decl_h:
                 heights = clip_tracks(heights, decl_h)
-        xs = [0]
-        for w in widths:
-            xs.append(xs[-1] + w)
         ys = [0]
         for h in heights:
             ys.append(ys[-1] + h)
@@ -6501,7 +6624,7 @@ class OwnRenderer:
         margin = cell["margin"]
         cx = x0 + margin["left"]
         cy = y0 + margin["top"]
-        avail_w = max(0, (x1 - x0) - margin["left"] - margin["right"])
+        avail_w = cell_text_width(x1 - x0, margin)
         avail_h = max(0, (y1 - y0) - margin["top"] - margin["bottom"])
         sub = _kid(cell["tc"], "subList")
         valign = (sub.get("vertAlign") if sub is not None else "TOP") or "TOP"
