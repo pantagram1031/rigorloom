@@ -1612,6 +1612,34 @@ def cell_inset(tc, tbl):
             for side in ("left", "right", "top", "bottom")}
 
 
+#: The narrowest text column a table cell ever gets, in HWPUNIT — 0.2 inch.
+#:
+#: MEASURED, on ``engine/scripts/cell_column_probe.py --corpus --residuals``.
+#: Over every cached in-cell ``hp:lineseg`` on the corpus the smallest
+#: ``horzsize`` Hancom ever saved is exactly 1440 and the next smallest is
+#: 1696; 64 lines sit on 1440, none below it.  Those 64 are in cells 283,
+#: 500, 566 and 1284 HWPUNIT wide after their inset — four different widths
+#: driven to one number — and they carry two different ``textheight`` values
+#: (900 and 1000), so the floor is a constant of the layout and not a
+#: multiple of the text.  ``gianmun-1ho`` r8c11 settles that it is a floor on
+#: the LINE and not a clamp on the inset: its whole cell is 565 wide and the
+#: cache still writes a 1440 line box in it, which no reading of the margins
+#: can produce.
+MIN_CELL_TEXT_WIDTH = 1440
+
+
+def cell_text_width(box_hwp, margin):
+    """The text column a cell of ``box_hwp`` HWPUNIT gives its paragraphs.
+
+    The inset comes off the box and the result never goes below
+    :data:`MIN_CELL_TEXT_WIDTH`.  A cell narrower than the floor therefore
+    lays its text out in a column wider than itself and lets it overhang,
+    which is what the cache records Hancom doing.
+    """
+    return max(MIN_CELL_TEXT_WIDTH,
+               box_hwp - margin["left"] - margin["right"])
+
+
 def solve_tracks(count: int, constraints, declared_total=None):
     """Recover per-column widths / per-row heights from span constraints.
 
@@ -6206,8 +6234,7 @@ class OwnRenderer:
         for cell in cells:
             c0 = min(cell["col"], len(widths))
             c1 = min(cell["col"] + cell["cspan"], len(widths))
-            inner = max(0, sum(widths[c0:c1])
-                        - cell["margin"]["left"] - cell["margin"]["right"])
+            inner = cell_text_width(sum(widths[c0:c1]), cell["margin"])
             content_h = self._paragraph_block_extent(draw, cell["paras"], inner)
             # cellSz height is a *minimum*: HWP grows a row to fit its content
             # and leaves the stored value behind.  Taking the max of the two is
@@ -6383,7 +6410,7 @@ class OwnRenderer:
         margin = cell["margin"]
         cx = x0 + margin["left"]
         cy = y0 + margin["top"]
-        avail_w = max(0, (x1 - x0) - margin["left"] - margin["right"])
+        avail_w = cell_text_width(x1 - x0, margin)
         avail_h = max(0, (y1 - y0) - margin["top"] - margin["bottom"])
         sub = _kid(cell["tc"], "subList")
         valign = (sub.get("vertAlign") if sub is not None else "TOP") or "TOP"
