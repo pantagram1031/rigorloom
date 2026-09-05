@@ -3444,3 +3444,138 @@ differently from a count-based one.
 - **The pairing assumes draw order is line order within a paragraph.** It is,
   for every path in this renderer today — including a paragraph split across
   a page, which draws its halves in page order — but nothing enforces it.
+
+## Attributing class B to the re-breaks above it — measured, 2026-09-05
+
+The open question the divergence tool left was whether class B is mostly its
+own error or the shadow of class A: a paragraph that breaks into one more
+computed line pushes everything below it down by one line pitch, and every
+one of those pushed paragraphs is booked class B although its own layout is
+right. `layout_divergence.py` now answers it, and the answer is *the cause is
+upstream far less often than the shape suggests, and where it is upstream the
+pitch does not predict the amount*.
+
+### The rule
+
+Per page, paragraphs in reading order, two totals carried over the paragraphs
+BEFORE the current one:
+
+* `upstream_line_delta` — the sum of `computed lines − cache lines`;
+* `expected_dy_px` — the same sum weighted by each of those paragraphs' own
+  line pitch.
+
+A class-B paragraph is `B_inherited` when `upstream_line_delta` is non-zero
+**and** the dy of its first class-B line is within `--attribution-tol`
+(default 1.0 px) of `expected_dy_px`; otherwise `B_own`. The non-zero guard is
+not a formality: with nothing re-broken above it the prediction is exactly 0,
+so without the guard every sub-pixel drift would read as "explained by an
+upstream delta of zero lines" and the ±2 HWPUNIT `PERCENT` spacing residual —
+most of class B at the default `--y-tol` — would disappear into `B_inherited`.
+
+A paragraph's **pitch** is the dominant step between the `y0` of its
+consecutive computed lines on one page. That step is `vertsize + spacing` by
+this renderer's own line-position relation (`vertpos[i] == vertpos[i-1] +
+vertsize[i-1] + spacing[i-1]`), so the pitch is read off the render rather
+than re-derived. A paragraph with one computed line falls back to the same
+step over its cached linesegs — its own `hp:lineseg` `vertsize + spacing` —
+and then to the pitch carried down from the nearest preceding paragraph that
+had one. The accumulators reset at every page boundary, because a dy measured
+from a different page top is not a dy.
+
+Both accumulators are exposed per paragraph (`expected_dy_px`,
+`residual_px`) alongside the brief's simpler reading
+(`simple_expected_px = upstream_line_delta × pitch`, `residual_simple_px`),
+so the two can be compared instead of one being trusted.
+
+### The corpus split
+
+144 dpi, `--no-text`, ten public forms, paragraphs:
+
+| form | B | B_inh | B_own (upstream re-break) | B_own (none) |
+| --- | --- | --- | --- | --- |
+| `admrul` | 1 | 0 | 0 | 1 |
+| `gianmun-1ho` | 0 | 0 | 0 | 0 |
+| `gianmun-2ho` | 0 | 0 | 0 | 0 |
+| `jeongbo` | 0 | 0 | 0 | 0 |
+| `jumin` | 2 | 1 | 0 | 1 |
+| `kstartup` | 98 | 0 | 0 | 98 |
+| `moel-2013` | 112 | 4 | 21 | 87 |
+| `moel-2025` | 225 | 0 | **161** | 64 |
+| `nrf` | 29 | 0 | 0 | 29 |
+| `saeopja` | 71 | 0 | 33 | 38 |
+| **total** | **538** | **5** | **215** | **318** |
+
+Five of 538. The hypothesis as stated — dy is a whole number of line pitches
+inherited from upstream — is **refuted on this corpus**, and the two ways it
+fails are different mechanisms:
+
+* **318 class-B paragraphs have no re-break above them at all.** For
+  `kstartup` (98) and `nrf` (29) that is the whole column. `nrf`'s residual is
+  +102.40 px on all 29, one bar, which is the undiagnosed block height the
+  empty-run slice already named; `kstartup`'s is −0.08 px on 46 and −0.04 px
+  on 24, which is the `PERCENT` spacing residual accumulating down the page.
+  Neither is a break error and neither is inherited.
+* **215 do have a re-break above them, and the pitch over-predicts the
+  push.** `moel-2025` paragraph 6 breaks 1 → 2 computed lines; the step
+  between its two computed lines is 35.90 px, but every paragraph below it
+  moves by 29.76 px, not 35.90. The residual is a constant, not a scatter:
+  −6.14 px at `upstream_line_delta` 1, and per added line the whole form
+  clusters at −10.01 (34 paragraphs), −6.67 (34) and −20.02 (5). `saeopja`
+  clusters at −20.22 per added line on 17. A constant miss per added line
+  means the missing term is a rule, not noise: re-breaking a paragraph does
+  not only append a line, it changes the `spacing` of the lines that were
+  already there, and the block grows by the new line's own advance rather
+  than by the paragraph's dominant one.
+
+So class B *is* downstream of class A on the forms where class A is present —
+161 of `moel-2025`'s 225 — but "downstream" is not "one pitch per line".
+
+### Class A and the font stack
+
+For each class-A paragraph the report now names its first divergent line's
+break cause: the line count each policy made, the character count on each
+side of that ordinal (so "computed broke earlier" is a shorter computed line),
+the drawn width in px on each side, and every run's face — declared name, the
+family it resolved to, and whether that was `installed`, `bundled` (the
+repo's OFL substitute for a Hancom face) or `system` (the machine-dependent
+fallback).
+
+Over the corpus's 136 class-A paragraphs: **96 draw every run on an installed
+face and 40 have at least one substituted run** (37 bundled, 9 system; a line
+mixing both is in each) — a 0.294 substituted share. By characters it is
+4556 installed, 655 bundled, 111 system. Per form the split is bimodal rather
+than uniform: `jumin` 17/17, `jeongbo` 5/5 and `saeopja` 16/16 installed, and
+at the other end `admrul` 1/1 and `nrf` 2/2 substituted, `moel-2025` 27 of 43.
+`admrul`'s single class A is the clean case — 바탕 falls through to
+`malgun.ttf`, the computed line is 54.23 px narrower than the cached one, and
+it breaks two characters earlier.
+
+Read against the hypothesis this slice was sent to test: **the fallback-font
+advance is a real contributor to class A but it is not most of class A.**
+Seventy per cent of class-A paragraphs re-break with every run on the face the
+document asked for, so the breaking rule itself is doing most of the work.
+
+### Not proven
+
+- **The pitch model's residual is not explained, only shown to be constant.**
+  −6.14 px per added line on `moel-2025`, −20.22 on `saeopja`. Reading the
+  actual `vertsize + spacing` of the added line — which needs tagging the
+  advance onto each drawn line, not inferring it from `y0` steps — would say
+  whether the whole miss is the added line's own advance being smaller than
+  the paragraph's dominant one. That is the next measurement, not this one.
+- **`B_own_with_upstream_rebreak` is a correlation.** A re-break above a
+  drifting paragraph on the same page is not proof it caused the drift; the
+  constancy of the residual is the evidence, and it is circumstantial.
+- **The class-A font share is this machine's font stack.** A machine with
+  Hancom Office installed resolves more of these faces and would move the
+  96/40 split; the `bundled` rows are stable across machines by construction,
+  the `system` rows are not.
+- **Nothing here separates a break the rules moved from a break a substituted
+  advance moved.** The 96 installed-face class-A paragraphs prove the breaker
+  differs from Hancom's on faces we have; they do not price it.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened. `--no-text --corpus` is what the operator runs on it; the
+  four attribution columns come back without any document content.
+- **`own_render.py` was not touched.** This slice measures. The corpus
+  scoreboard, the classification counts and the IoU column are all unchanged
+  from #249's tip.
