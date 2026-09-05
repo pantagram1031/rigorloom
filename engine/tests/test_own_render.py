@@ -4684,6 +4684,76 @@ def test_cellSpacing_and_border_widths_do_not_enter_the_inset():
             == own_render.cell_inset(_first_cell(dressed), dressed))
 
 
+# ------------------------------------------------ the cell text-column floor
+
+def test_a_roomy_cell_gives_its_text_the_box_less_the_inset():
+    """The floor changes nothing where the cell has room for it."""
+    inset = {"left": 283, "right": 510}
+    assert own_render.cell_text_width(20000, inset) == 20000 - 283 - 510
+
+
+def test_a_narrow_cell_never_gives_its_text_less_than_the_floor():
+    """kstartup's 60 stopwatch cells, in one assertion.
+
+    Each is 1566 HWPUNIT wide and inset 141 on both sides, which leaves 1284
+    -- and the hp:lineseg Hancom cached in every one of them declares
+    horzsize 1440.  The same number appears in gianmun-1ho's 848- and
+    565-wide cells, whose insets leave 566 and 283.  Four different columns
+    driven to one value is what says the value is a floor.
+    """
+    assert own_render.cell_text_width(1566, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(848, {"left": 141, "right": 141}) == 1440
+    assert own_render.cell_text_width(565, {"left": 141, "right": 141}) == 1440
+
+
+def test_the_floor_beats_the_whole_cell_when_the_cell_is_narrower_than_it():
+    """gianmun-1ho r8c11 is 565 wide and caches a 1440-wide line box.
+
+    So the floor is not a clamp on the margins -- no reading of a 565-wide
+    cell's insets produces 1440 -- and the text is allowed to overhang the
+    cell it sits in.
+    """
+    assert (own_render.cell_text_width(565, {"left": 0, "right": 0})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+
+
+def test_the_floor_is_a_constant_and_not_a_function_of_the_inset():
+    """Two cells of the same width and different insets floor to one value."""
+    assert (own_render.cell_text_width(900, {"left": 141, "right": 141})
+            == own_render.cell_text_width(900, {"left": 510, "right": 510}))
+
+
+def test_a_cell_at_the_floor_exactly_is_not_widened():
+    """The floor is a floor, not a snap: a column already on it stays."""
+    box = own_render.MIN_CELL_TEXT_WIDTH + 282
+    assert (own_render.cell_text_width(box, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH)
+    assert (own_render.cell_text_width(box + 4, {"left": 141, "right": 141})
+            == own_render.MIN_CELL_TEXT_WIDTH + 4)
+
+
+def test_the_render_path_hands_a_narrow_cell_the_floored_column():
+    """The wiring, not the arithmetic.
+
+    ``_render_cell_content`` is the one place a cell's paragraphs are given
+    their column, and on kstartup's 1566-wide, 141-inset cell it has to hand
+    over the floored 1440 rather than the 1284 the subtraction gives.  The
+    renderer is built without a file and the two methods the call reaches are
+    stubbed, so nothing here depends on a corpus document.
+    """
+    renderer = object.__new__(own_render.OwnRenderer)
+    seen = []
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    renderer._render_paragraphs = (
+        lambda draw, paras, origin, width, offset=0: seen.append(width))
+    tbl = _synthetic_table("0", in_margin=(141, 141, 141, 141),
+                           widths=(1566,))
+    tc = _first_cell(tbl)
+    cell = {"tc": tc, "paras": [], "margin": own_render.cell_inset(tc, tbl)}
+    renderer._render_cell_content(None, cell, 0, 0, 1566, 2032)
+    assert seen == [own_render.MIN_CELL_TEXT_WIDTH]
+
+
 def test_a_track_is_as_big_as_its_largest_constraint_not_its_first():
     """Row 0 holds a one-line cell and a two-line cell; it must fit both.
 
@@ -4852,6 +4922,145 @@ def test_a_table_whose_rows_fall_short_still_reaches_its_declared_height():
     short = _row_table([(1000, None, 1), (1000, None, 1)],
                        declared_total=4000)
     assert sum(_solve_rows(short)) == 4000
+
+
+# ------------------------------------------------------------- column grid
+
+def _multirow_table(rows, declared_width, col_cnt):
+    """A synthetic table whose rows are ``[[(colAddr, colSpan, width), ...]]``.
+
+    Only the attributes ``_table_tracks`` reads on the column axis are
+    present, and the declared table width is passed separately from the
+    rows' own totals so a test can make the two disagree — which is the
+    whole question the grid answers.
+    """
+    from xml.etree import ElementTree as ET
+
+    body = ""
+    for index, row in enumerate(rows):
+        cells = "".join(
+            '<hp:tc><hp:cellAddr colAddr="%d" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="%d" rowSpan="1"/>'
+            '<hp:cellSz width="%d" height="1200"/>'
+            '<hp:subList vertAlign="TOP"/></hp:tc>'
+            % (col, index, span, width) for col, span, width in row)
+        body += "<hp:tr>%s</hp:tr>" % cells
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="%d" cellSpacing="0">'
+        '<hp:sz width="%d" height="%d"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>%s</hp:tbl>'
+        % (len(rows), col_cnt, declared_width, 1200 * len(rows), body))
+
+
+def test_a_row_that_agrees_with_its_table_gets_its_own_widths_back():
+    """The common case has to be a no-op, or nothing below is readable."""
+    xs = own_render.column_grid(3, [(0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+                                declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_the_row_that_claims_more_writes_the_boundary():
+    """Two rows contradict each other; the grid is the envelope of both.
+
+    Row 0 says the first column ends at 1000 and row 1 says 900.  Under the
+    grid the boundary is 1000 and row 1's first cell is stretched to it,
+    while row 0 is untouched — which is what the cache shows on saeopja's
+    47757-wide table, where a row ten rows below the one that set the
+    boundary is measured at the earlier row's width and not its own.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900), (1, 1, 3000)],
+        declared_total=4000)
+    assert xs == [0, 1000, 4000]
+
+
+def test_the_grid_does_not_depend_on_the_order_the_cells_arrive_in():
+    """A maximum has no first and no last, and that is the point.
+
+    ``gridfirst`` and ``gridlast`` — the same grid resolved by document
+    order, forwards and backwards — disagree with each other on the corpus,
+    so a rule that reads the order has to justify which way it reads it.
+    This one does not read the order at all.
+    """
+    forward = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900)], declared_total=4000)
+    backward = own_render.column_grid(
+        2, [(0, 1, 900), (1, 1, 3000), (0, 1, 1000)], declared_total=4000)
+    assert forward == backward == [0, 1000, 4000]
+
+
+def test_a_merged_cell_claims_only_its_far_boundary():
+    """``cellSz@width`` on a colSpan cell is the whole merged width.
+
+    So it constrains the distance from its own column to the one past its
+    span and says nothing about the columns inside it, which the row below
+    is then free to state.
+    """
+    xs = own_render.column_grid(
+        3, [(0, 3, 6000), (0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+        declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_a_later_row_fills_a_boundary_no_earlier_row_reaches():
+    """Row 0 is one merged cell, so the interior is row 1's to state.
+
+    This is the shape every contradictory corpus table starts with: a
+    header row spanning the whole table, and the columns declared further
+    down.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 2, 5000), (0, 1, 2000), (1, 1, 3000)], declared_total=5000)
+    assert xs == [0, 2000, 5000]
+
+
+def test_a_boundary_no_cell_claims_is_split_between_its_neighbours():
+    """A grid the file does not determine still has to be drawable.
+
+    No cell here ends at column 1, so nothing states where it is; the gap
+    between the two boundaries that ARE determined is divided evenly, which
+    is the fallback ``solve_tracks`` uses for an unknown track.
+    """
+    xs = own_render.column_grid(3, [(0, 2, 2000), (2, 1, 1000)],
+                                declared_total=3000)
+    assert xs == [0, 1000, 2000, 3000]
+
+
+def test_the_grid_closes_on_the_declared_width_and_never_runs_backwards():
+    """A row that overflows its table is clamped, not folded over itself.
+
+    No corpus row overflows by enough to say whether Hancom shrinks the
+    overflowing cell or clamps it, so this pins only the invariant every
+    reading has to satisfy: the boundaries are non-decreasing and the last
+    one is the table's own box.
+    """
+    xs = own_render.column_grid(2, [(0, 1, 9000), (1, 1, 9000)],
+                                declared_total=4000)
+    assert xs == [0, 4000, 4000]
+    assert xs == sorted(xs)
+
+
+def test_the_table_tracks_column_axis_reads_the_grid():
+    """The wiring: ``_table_tracks`` has to place cells on these boundaries.
+
+    Row 0 declares 1000 + 3000 against a table of 4000 and row 1 declares
+    900 + 3000, which is 100 short.  The old solve rescaled both rows into
+    one compromise; the grid gives row 1's first cell the boundary row 0
+    wrote.
+    """
+    from collections import Counter
+
+    renderer = object.__new__(own_render.OwnRenderer)
+    renderer.counts = Counter()
+    renderer.skipped = []
+    renderer.defs = {"para_pr": {}}
+    renderer._table_natural_height = set()
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    tbl = _multirow_table([[(0, 1, 1000), (1, 1, 3000)],
+                           [(0, 1, 900), (1, 1, 3000)]], 4000, 2)
+    xs, _ys, cells = renderer._table_tracks(None, tbl)
+    assert xs == [0, 1000, 4000]
+    assert len(cells) == 4
 
 
 # ---------------------------------------------------------------- ink probe
