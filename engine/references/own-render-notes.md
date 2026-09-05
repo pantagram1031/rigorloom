@@ -3163,3 +3163,1935 @@ to be found before the cell rule can land without lowering
   attributed to the pre-existing over-measure on `moel`/`jumin` because those
   forms' fills were already over 1.0 before it, not because a tree with that
   over-measure removed was rendered.
+
+## The computed-vs-cache gap was an empty run — measured, 2026-09-05
+
+PR #244 made the layout policy document-wide: an untouched Hancom package is
+drawn from its cached `hp:lineseg`, and anything this repo wrote, edited or
+cannot identify is laid out `computed` for the whole document. Computed is
+therefore what every edited document now gets, and the price of it was the
+open question. On the corpus at 144 dpi it was 0.645754 → 0.588691
+`text_line_iou_mean` and 0.830919 → 0.816681 `ssim_mean`. This is where that
+0.057 went.
+
+### The instrument
+
+Both policies are rendered through `OwnRenderer.render()`, with the two
+paragraph draw paths (`_render_cached_lines`, `_render_computed_lines`)
+wrapped so every `line_boxes` record carries the paragraph that produced it.
+A paragraph is then classified by comparing its two lists of boxes:
+
+* **A** — a box's `x0`/`x1` moved, or the paragraph produced a different
+  number of lines: the breaker chose different break positions;
+* **B** — the same boxes, the same widths, a different `y0`: the line is in
+  the right place across the column and the wrong place down the page;
+* **C** — a box changed page.
+
+Paragraph identity is what makes the classes mean anything. Pairing boxes by
+proximity, which is what the scoreboard has to do against a PDF, cannot tell
+class A from class B at all: a line that moved 20 px down pairs with its
+neighbour and reads as a break error.
+
+### Where the computed layout diverges, before
+
+144 dpi, ten forms, every paragraph that drew a line under both policies:
+
+| form | agree | A break | B vertical | C page | A and B |
+| --- | --- | --- | --- | --- | --- |
+| `admrul` | 4 | 1 | **14** | 0 | 1 |
+| `gianmun-1ho` | 23 | 1 | 4 | 0 | 0 |
+| `gianmun-2ho` | 13 | 3 | 0 | 0 | 0 |
+| `jeongbo` | 43 | 12 | 0 | 0 | 0 |
+| `jumin` | 70 | 57 | 1 | 0 | 1 |
+| `kstartup` | 109 | 20 | 25 | **239** | 8 |
+| `moel-2013` | 198 | 35 | 23 | 0 | 1 |
+| `moel-2025` | 82 | 40 | **145** | 0 | 37 |
+| `nrf` | 33 | 9 | **42** | 0 | 2 |
+| `saeopja` | 628 | 55 | 22 | 0 | 52 |
+
+The counts do not rank the mechanisms; the IoU does. Sorted by what each form
+lost going from `cache` to `computed`: `admrul` −0.40016, `moel-2025`
+−0.22322, `nrf` −0.16632, `saeopja` −0.09131 — and `kstartup` **+0.37000**,
+the one form dominated by class C, whose extra page moves it *toward* the
+reference. Every form that lost is a form dominated by class B. The line
+breaker, which is what a reader expects to be at fault, is not where the
+corpus loses its ink.
+
+Class B is a constant per document, not a scatter. `admrul` moves 14 of its
+19 drifting paragraphs by exactly −20.00 px; `nrf` moves one run of
+paragraphs by −8.00 px and another by +102.40 px; `moel-2025` moves by
++29.76 px and then sheds 0.02 px per line after that. A constant offset
+shared by every paragraph below a point in the document is a **block
+height**, not a line box.
+
+### The mechanism
+
+`--flow-agreement` reads the flow pass against the cache with the line boxes
+held fixed, and `--flow-agreement --line-layout computed` reads the two
+errors compounded. On `admrul` the first is exact on 15 of 15 blocks and the
+second puts 13 of the 15 at exactly 1000 HWPUNIT — 10 pt, 20 px at 144 dpi —
+too high. So the block model is right and one block is measured 1000 HWPUNIT
+too short. `_flow_lines` measures a computed block as the sum of
+`vertsize + spacing` over its lines, and exactly one line in the whole corpus
+is off by more than 2 HWPUNIT:
+
+    admrul paragraph 1, the page's inline table
+      cached    vertsize 6618   spacing 2400
+      computed  vertsize 6618   spacing 1400
+
+The paragraph is one `hp:run` at 14 pt holding the table and a **second run
+at 24 pt whose `<hp:t>` is empty**. The line spacing is 200%, and 2400 is
+what 200% of 24 pt leaves over — not 200% of 14 pt, which is the 1400 this
+renderer computed. `_line_metrics` walked `para.chars`; an empty run puts no
+character there, so the 24 pt shape was invisible to it.
+
+**The rule.** `hh:charPr@height` is a property of the `hp:run`, not of the
+characters in it: `hp:run@charPrIDRef` applies to the run whether or not the
+run emits text, and the paragraph mark that ends the line is drawn in the
+shape the last run declares. So a run that puts no character on a line still
+declares that line's character height. `Paragraph` now records `empty_runs`
+as `[(char_index, charPrIDRef)]` and `_line_metrics` reads the ones whose
+position falls inside the line, the last line owning one that sits at the end
+of the character stream.
+
+Measured against the authoring engine's own cache over all 2370 cached lines
+of the ten forms, with the cached `textpos` boundaries fixing line identity:
+
+| reading | `vertsize` exact | `spacing` exact | both |
+| --- | --- | --- | --- |
+| only runs that put characters down | 2365 / 2370 | 1482 | 1481 |
+| the empty run joins the PITCH | 2365 | 1487 | 1482 |
+| the empty run joins the HEIGHT too | **2370 / 2370** | **1487** | **1487** |
+
+The third row is the one that ships. It is exact on every cached line in the
+corpus and there is no line the other two get right and it gets wrong. Every
+surviving `spacing` miss is within 2 HWPUNIT of the cache — 0.02 pt, 0.0004
+px at 144 dpi — on 883 lines, all of them `PERCENT`. That residual is a
+rounding difference in how the pitch is divided into `vertsize + spacing`,
+not a rule, and it is not chased here.
+
+### After
+
+Corpus scoreboard, 144 dpi, the policy pinned on both sides:
+
+| channel | computed, before | computed, after | `cache` |
+| --- | --- | --- | --- |
+| `text_line_iou_mean` | 0.588691 | **0.633897** | 0.645754 |
+| `ssim_mean` | 0.816681 | **0.824293** | 0.830919 |
+| `ssim_inked_mean` | 0.249020 | **0.277430** | 0.276175 |
+| `text_line_pair_rate_mean` | 0.847831 | 0.847831 | 0.836210 |
+
+The gap this slice set out to price closes from −0.05706 to −0.01186 on
+`text_line_iou_mean`, and `ssim_inked_mean` under computed layout is now
+*above* the cache's. Per form only `admrul` (+0.39449), `nrf` (+0.04648),
+`gianmun-1ho` (+0.01133) and `jumin` (+0.00011) move; `saeopja` moves
+−0.00036 and the other five are unchanged to five decimals. `admrul`'s
+scoreboard verdict goes back to `pass`, which computed layout had been
+failing. `--flow-agreement --line-layout computed` on `admrul` is now exact
+on 15 of 15 blocks.
+
+**Nothing on the cache path moved.** The ten forms' scoreboards are
+byte-identical before and after, per form and in aggregate, and `render_check`
+on `render-check-01` is byte-identical at 96 and 144 dpi: 9/9 pages exact,
+6 · 37 · 6 · 2 at 96 and 14 · 31 · 4 · 2 at 144. The line breaker is
+untouched by construction — `_line_metrics` runs after `compute_lines` has
+already chosen its spans — and the lineseg channel confirms it: 80/216 break
+positions matched, 77/216 per-decision exact, 2030/2148 paragraphs with an
+exact break sequence, the same numbers the resolution-independence slice
+left.
+
+### What is left, and it is not this
+
+Class B does not go to zero. After the fix it is 0 on `admrul`, 29 on `nrf`,
+145 on `moel-2025`, 25 on `kstartup`, 23 on `moel-2013` and 22 on `saeopja`,
+and the three surviving shapes are different mechanisms:
+
+* `moel-2025`'s +29.76 px is downstream of a class-A error — its paragraph 6
+  breaks into two computed lines where the cache has one — and the 0.02 px it
+  sheds per line after that is the ±1 HWPUNIT `spacing` rounding above,
+  accumulating down the column.
+* `nrf`'s +102.40 px starts at one paragraph and holds for the rest of the
+  document: another block measured short, not yet attributed.
+* `kstartup`'s 239 class-C paragraphs are its 21 → 22 page difference, and
+  that difference scores *better* than the cache.
+
+### Not proven
+
+- **One form carried the whole finding.** `admrul` is the only corpus
+  document whose empty run is a different size from the run beside it in a
+  way that costs 10 pt. The rule is right on all 2370 corpus lines, but 2365
+  of them were already right; the evidence that it is a RULE and not a patch
+  is the OWPML reading of `hp:run@charPrIDRef` plus admrul's cached `spacing`
+  being exactly 200% of the empty run's 24 pt.
+- **The pitch-only reading was not ruled out by a reference render.** Putting
+  the empty run into the height as well is what makes `vertsize` exact on the
+  last 5 lines, and those 5 are why the third row was chosen — but no
+  reference PDF was measured to confirm that a taller empty run grows the
+  DRAWN line box rather than only the pitch.
+- **The ±2 HWPUNIT spacing residual is unexplained.** 883 of 2370 lines,
+  every one `PERCENT`, every one within 2 HWPUNIT. Sub-pixel per line, but it
+  accumulates, and `moel-2025`'s 0.02 px per line is it showing up in the
+  render.
+- **`nrf`'s remaining 102.40 px was not diagnosed.** It is a block height by
+  the same constant-offset argument used above, but which block and why is
+  not measured.
+- **The classification is 144 dpi and this machine's font stack.** Class A in
+  particular is partly a font-substitution artefact — the corpus resolves
+  휴먼명조 and friends to bundled substitutes whose advances are not Hancom's
+  — and no attempt was made here to separate that from the breaking rules.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened; whether the same empty-run line exists in it, and what it
+  is worth there, is the operator's measurement to make.
+
+## The classification is a tool now: `layout_divergence.py`
+
+The A/B/C table above was produced by an ad-hoc pass that was never
+committed, which is the whole reason the private holdout could not be
+measured the same way: only the operator may open it, and there was nothing
+to hand them. `engine/scripts/layout_divergence.py` is that pass, committed.
+
+    python engine/scripts/layout_divergence.py FORM.hwpx --out DIR [--dpi 144] [--no-text]
+    python engine/scripts/layout_divergence.py --corpus --out DIR [--iou]
+
+It renders the document twice in one process through a subclass of
+`OwnRenderer` that tags every `line_boxes` record with the `address` of the
+paragraph that drew it — own_render's own global `paragraph_index`, so the
+identity comes from the XML tree and is the same under both policies — and
+with that line's text. Lines pair by ordinal inside a paragraph. Each pair is
+class **A** if it is unpaired or the text differs, else **C** if the page
+differs, else **B** if `|dy|` exceeds `--y-tol` (default 0.01 px, i.e. exact
+up to the sidecar's rounding), else `agree`. The module docstring carries the
+rule and the precedence argument; `engine/tests/test_layout_divergence.py`
+pins them.
+
+`DIR/<stem>.divergence.json` holds the per-class counts (per line and per
+paragraph), each divergent paragraph's first divergent line, and a histogram
+of rounded class-B `dy` — the channel on which a constant per-document offset
+shows up as one tall bar. Line text is truncated to 12 characters and
+`--no-text` omits the field entirely, which is what a holdout run should use.
+
+### What it measures on the corpus, at this tip
+
+144 dpi, paragraphs (a paragraph is counted under every class one of its
+lines lands in), 17 s for the whole corpus:
+
+| form | agree | A | B | C | A&B | IoU delta |
+| --- | --- | --- | --- | --- | --- | --- |
+| `admrul` | 17 | 1 | 1 | 0 | 0 | −0.00567 |
+| `gianmun-1ho` | 27 | 1 | 0 | 0 | 0 | −0.00367 |
+| `gianmun-2ho` | 16 | 0 | 0 | 0 | 0 | +0.00317 |
+| `jeongbo` | 50 | 5 | 0 | 0 | 0 | +0.00092 |
+| `jumin` | 110 | 17 | 2 | 0 | 0 | −0.00464 |
+| `kstartup` | 43 | 31 | 98 | **233** | 1 | **+0.37000** |
+| `moel-2013` | 127 | 20 | 112 | 0 | 2 | −0.04396 |
+| `moel-2025` | 36 | 43 | **225** | 0 | 0 | −0.22322 |
+| `nrf` | 55 | 2 | 29 | 0 | 0 | −0.11984 |
+| `saeopja` | 673 | 16 | 71 | 0 | 3 | −0.09167 |
+
+The IoU column is `--iou` (`render_scoreboard.score_form` on both policies
+against the same reference PDF, 78 s for the corpus) and it reproduces the
+"After" section above exactly, form by form: `admrul` −0.40016 + 0.39449 =
+−0.00567, `nrf` −0.16632 + 0.04648 = −0.11984, `saeopja` −0.09131 − 0.00036 =
+−0.09167, `kstartup` +0.37000 unchanged. The render path this tool traces is
+therefore the same render the scoreboard scores.
+
+### It does NOT reproduce the A/B/C table above, and here is the whole of why
+
+Read against "Where the computed layout diverges, before":
+
+* **That table is the state before `c16a93a`.** The empty-run height fix
+  landed between it and this tool, and the "What is left" section already
+  records what it moved: class B on `admrul` 14 → 0 and on `nrf` 42 → 29.
+  At `--y-tol 0.5` this tool gives `admrul` 0 and `nrf` 29 — the post-fix
+  numbers, exactly. The IoU column above says the same thing more sharply.
+* **The tolerance.** The default 0.01 px counts the ±2 HWPUNIT `PERCENT`
+  spacing residual (0.02–0.08 px per line) as class B; the ad-hoc pass did
+  not. That residual is most of the excess: at `--y-tol 0.5` the B column
+  falls to `admrul` 0, `jumin` 1, `kstartup` 28, `moel-2013` **23**,
+  `moel-2025` 173, `nrf` **29**, `saeopja` 68 — and 23 and 29 are the
+  earlier table's numbers on the nose. The default stays exact: the residual
+  is real ink displacement, it accumulates down a column, and burying it
+  under a tolerance is how it stopped being visible the first time.
+* **The A rule is not the earlier one, and the earlier one is not
+  recoverable.** The table above defines A as "the paragraph produced a
+  different number of lines". Implemented literally that gives `admrul` 0 and
+  `jeongbo` 0 against the table's 1 and 12, so the ad-hoc pass was not using
+  its own stated test either. This tool uses text inequality on the paired
+  ordinal — a superset of the count test, since it also catches a re-break
+  that preserves the line count — and gets `jumin` 17 against 57 and
+  `saeopja` 16 against 55. Neither rule lands on those numbers, the script
+  that produced them is not in the repo, and nothing here was bent to close
+  the gap.
+* **The denominator differs.** The earlier rows sum to fewer lines than the
+  corpus draws (`saeopja` 705 against 782 boxes here), so its scope was a
+  subset — paragraphs that drew a line under *both* policies, which drops
+  exactly the unpaired population this tool books as class A.
+
+`moel-2025` (225 against 145) and `saeopja` (71 against 22) do not close at
+any tolerance. Both are downstream of class A: once one line re-breaks, every
+later line in the paragraph moves, and a text-based A/B split books that tail
+differently from a count-based one.
+
+### Not proven, for this tool
+
+- **The corpus is the training set for the rule and the holdout is not in
+  it.** The private report-class document was not opened here either. The
+  tool exists so the operator can run it, with `--no-text`, and get the same
+  four columns without handing anyone the document.
+- **Class A still mixes the breaker with the font stack.** Nothing here
+  separates a break the rules moved from a break a substituted advance moved,
+  and `jumin`'s 41 class-A lines are the population where that matters most.
+- **The pairing assumes draw order is line order within a paragraph.** It is,
+  for every path in this renderer today — including a paragraph split across
+  a page, which draws its halves in page order — but nothing enforces it.
+
+## Attributing class B to the re-breaks above it — measured, 2026-09-05
+
+The open question the divergence tool left was whether class B is mostly its
+own error or the shadow of class A: a paragraph that breaks into one more
+computed line pushes everything below it down by one line pitch, and every
+one of those pushed paragraphs is booked class B although its own layout is
+right. `layout_divergence.py` now answers it, and the answer is *the cause is
+upstream far less often than the shape suggests, and where it is upstream the
+pitch does not predict the amount*.
+
+### The rule
+
+Per page, paragraphs in reading order, two totals carried over the paragraphs
+BEFORE the current one:
+
+* `upstream_line_delta` — the sum of `computed lines − cache lines`;
+* `expected_dy_px` — the same sum weighted by each of those paragraphs' own
+  line pitch.
+
+A class-B paragraph is `B_inherited` when `upstream_line_delta` is non-zero
+**and** the dy of its first class-B line is within `--attribution-tol`
+(default 1.0 px) of `expected_dy_px`; otherwise `B_own`. The non-zero guard is
+not a formality: with nothing re-broken above it the prediction is exactly 0,
+so without the guard every sub-pixel drift would read as "explained by an
+upstream delta of zero lines" and the ±2 HWPUNIT `PERCENT` spacing residual —
+most of class B at the default `--y-tol` — would disappear into `B_inherited`.
+
+A paragraph's **pitch** is the dominant step between the `y0` of its
+consecutive computed lines on one page. That step is `vertsize + spacing` by
+this renderer's own line-position relation (`vertpos[i] == vertpos[i-1] +
+vertsize[i-1] + spacing[i-1]`), so the pitch is read off the render rather
+than re-derived. A paragraph with one computed line falls back to the same
+step over its cached linesegs — its own `hp:lineseg` `vertsize + spacing` —
+and then to the pitch carried down from the nearest preceding paragraph that
+had one. The accumulators reset at every page boundary, because a dy measured
+from a different page top is not a dy.
+
+Both accumulators are exposed per paragraph (`expected_dy_px`,
+`residual_px`) alongside the brief's simpler reading
+(`simple_expected_px = upstream_line_delta × pitch`, `residual_simple_px`),
+so the two can be compared instead of one being trusted.
+
+### The corpus split
+
+144 dpi, `--no-text`, ten public forms, paragraphs:
+
+| form | B | B_inh | B_own (upstream re-break) | B_own (none) |
+| --- | --- | --- | --- | --- |
+| `admrul` | 1 | 0 | 0 | 1 |
+| `gianmun-1ho` | 0 | 0 | 0 | 0 |
+| `gianmun-2ho` | 0 | 0 | 0 | 0 |
+| `jeongbo` | 0 | 0 | 0 | 0 |
+| `jumin` | 2 | 1 | 0 | 1 |
+| `kstartup` | 98 | 0 | 0 | 98 |
+| `moel-2013` | 112 | 4 | 21 | 87 |
+| `moel-2025` | 225 | 0 | **161** | 64 |
+| `nrf` | 29 | 0 | 0 | 29 |
+| `saeopja` | 71 | 0 | 33 | 38 |
+| **total** | **538** | **5** | **215** | **318** |
+
+Five of 538. The hypothesis as stated — dy is a whole number of line pitches
+inherited from upstream — is **refuted on this corpus**, and the two ways it
+fails are different mechanisms:
+
+* **318 class-B paragraphs have no re-break above them at all.** For
+  `kstartup` (98) and `nrf` (29) that is the whole column. `nrf`'s residual is
+  +102.40 px on all 29, one bar, which is the undiagnosed block height the
+  empty-run slice already named; `kstartup`'s is −0.08 px on 46 and −0.04 px
+  on 24, which is the `PERCENT` spacing residual accumulating down the page.
+  Neither is a break error and neither is inherited.
+* **215 do have a re-break above them, and the pitch over-predicts the
+  push.** `moel-2025` paragraph 6 breaks 1 → 2 computed lines; the step
+  between its two computed lines is 35.90 px, but every paragraph below it
+  moves by 29.76 px, not 35.90. The residual is a constant, not a scatter:
+  −6.14 px at `upstream_line_delta` 1, and per added line the whole form
+  clusters at −10.01 (34 paragraphs), −6.67 (34) and −20.02 (5). `saeopja`
+  clusters at −20.22 per added line on 17. A constant miss per added line
+  means the missing term is a rule, not noise: re-breaking a paragraph does
+  not only append a line, it changes the `spacing` of the lines that were
+  already there, and the block grows by the new line's own advance rather
+  than by the paragraph's dominant one.
+
+So class B *is* downstream of class A on the forms where class A is present —
+161 of `moel-2025`'s 225 — but "downstream" is not "one pitch per line".
+
+### Class A and the font stack
+
+For each class-A paragraph the report now names its first divergent line's
+break cause: the line count each policy made, the character count on each
+side of that ordinal (so "computed broke earlier" is a shorter computed line),
+the drawn width in px on each side, and every run's face — declared name, the
+family it resolved to, and whether that was `installed`, `bundled` (the
+repo's OFL substitute for a Hancom face) or `system` (the machine-dependent
+fallback).
+
+Over the corpus's 136 class-A paragraphs: **96 draw every run on an installed
+face and 40 have at least one substituted run** (37 bundled, 9 system; a line
+mixing both is in each) — a 0.294 substituted share. By characters it is
+4556 installed, 655 bundled, 111 system. Per form the split is bimodal rather
+than uniform: `jumin` 17/17, `jeongbo` 5/5 and `saeopja` 16/16 installed, and
+at the other end `admrul` 1/1 and `nrf` 2/2 substituted, `moel-2025` 27 of 43.
+`admrul`'s single class A is the clean case — 바탕 falls through to
+`malgun.ttf`, the computed line is 54.23 px narrower than the cached one, and
+it breaks two characters earlier.
+
+Read against the hypothesis this slice was sent to test: **the fallback-font
+advance is a real contributor to class A but it is not most of class A.**
+Seventy per cent of class-A paragraphs re-break with every run on the face the
+document asked for, so the breaking rule itself is doing most of the work.
+
+### Not proven
+
+- **The pitch model's residual is not explained, only shown to be constant.**
+  −6.14 px per added line on `moel-2025`, −20.22 on `saeopja`. Reading the
+  actual `vertsize + spacing` of the added line — which needs tagging the
+  advance onto each drawn line, not inferring it from `y0` steps — would say
+  whether the whole miss is the added line's own advance being smaller than
+  the paragraph's dominant one. That is the next measurement, not this one.
+- **`B_own_with_upstream_rebreak` is a correlation.** A re-break above a
+  drifting paragraph on the same page is not proof it caused the drift; the
+  constancy of the residual is the evidence, and it is circumstantial.
+- **The class-A font share is this machine's font stack.** A machine with
+  Hancom Office installed resolves more of these faces and would move the
+  96/40 split; the `bundled` rows are stable across machines by construction,
+  the `system` rows are not.
+- **Nothing here separates a break the rules moved from a break a substituted
+  advance moved.** The 96 installed-face class-A paragraphs prove the breaker
+  differs from Hancom's on faces we have; they do not price it.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened. `--no-text --corpus` is what the operator runs on it; the
+  four attribution columns come back without any document content.
+- **`own_render.py` was not touched.** This slice measures. The corpus
+  scoreboard, the classification counts and the IoU column are all unchanged
+  from #249's tip.
+
+## What sits above the first drift on a page — measured, 2026-09-05
+
+#250 left class B with a shape nobody had a mechanism for: 318 of 538
+class-B paragraphs have nothing re-broken above them, and on the private
+holdout the residual is a whole multiple of the body pitch — +48, +72, +24,
++264, +120 px at 96 dpi against a 24 px pitch — with an upstream line-count
+delta of 0 on 224 of 267.  Whole pitches that no re-break produced means the
+height is added BETWEEN paragraphs or at a paragraph's bottom, and the
+paragraph immediately above the first drift on a page is the only place it
+can come from.  `layout_divergence.py` now reports that paragraph.
+
+### The instrument
+
+Per page, paragraphs in document order: find the first whose ordinal-0 line
+is paired on the same page under both policies and whose `dy` exceeds
+`--y-tol`, and report its PREDECESSOR with its last line under each policy
+(the cache's `vertpos`/`vertsize`/`spacing`, the computed side's `y0`/`y1`
+and pitch), the two candidate bottoms those imply, the gap from each bottom
+to the drifting paragraph's first line, and the predecessor's own `hh:paraPr`
+— line spacing type and value, `hh:margin/prev` and `/next`, whether its text
+is empty, and every object it carries with that object's extent under both
+policies.  `first_drift_predecessors.kinds` is a histogram keyed on
+`(anchor kind, empty text, line spacing type)` and `dominant_kind` is its
+tallest bar.
+
+Two bottoms, deliberately.  `ink` is `y0 + vertsize`, which is
+`_cached_extent`'s reading and excludes the last line's trailing `spacing`;
+`advance` is `y0 + vertsize + spacing`, which is what `_flow_lines` sums into
+a block height.  Which of the two the gap below a paragraph is measured from
+was the first candidate mechanism, and the report states both rather than
+picking one.
+
+**The population that matters here is one the A/B/C classification cannot
+see.**  A paragraph with no characters draws no line box — `_render_paragraphs`
+and `_render_flow_page` both `continue` on `not para.chars` — so it is in
+neither policy's `line_boxes`, its line-count delta is 0 either way, and every
+paragraph below it is booked `B_own_no_upstream_rebreak` however wrong its
+height is.  For those the report leaves the pixel domain: the cache states a
+height (the sum of the paragraph's `hp:lineseg` advances) and the flow pass
+states another (its seat height, captured off `_render_flow_page`), and the
+difference is the drift in the units it was made in.  Their page membership
+comes from the flow seat, or by ENCLOSURE — a paragraph lying between two
+paragraphs that are both on one page is on it too; neighbours that disagree
+leave it unplaced rather than guessed at.
+
+### What the corpus says
+
+144 dpi, `--no-text`, ten forms.  Pages that have a drift at all, keyed by
+the kind of paragraph the drift starts under:
+
+| predecessor kind | `--y-tol 0.01` | `--y-tol 0.5` |
+| --- | --- | --- |
+| `none` / text / `PERCENT` | 13 | 10 |
+| `inline:tbl` / empty / `PERCENT` | 5 | 4 |
+| `none` / empty / `PERCENT` | 4 | 3 |
+| **pages with a drift** | **22** | **17** |
+
+Per form the dominant kind at `--y-tol 0.5` is `none/empty=0/PERCENT` on
+`jumin` (1/1), `moel-2013` (3/4), `moel-2025` (5/6) and `saeopja` (1/3),
+`inline:tbl/empty=1/PERCENT` on `kstartup` (2/2), and `none/empty=1/PERCENT`
+on `nrf` (1/1).  The A/B/C and attribution columns are unchanged from #250 at
+both tolerances, which is the check that the pass added nothing to the
+classification.
+
+**No one mechanism dominates**, and the two shapes behind those rows are
+different:
+
+* **The predecessor grew (10 of 17).**  `moel-2013` page 4: the drift is
+  +36.66 px and the predecessor's own block is +36.70 px taller under the
+  flow pass than the cache says it is.  `moel-2025` pages 1/2/3: +29.76 /
+  +32.28 / +26.64 against +29.88 / +32.52 / +26.76.  The height is inside the
+  predecessor, so this is #250's class-A tail seen from below, not a gap.
+  What IS new is where the shortfall lives: the gap from the predecessor's
+  ink bottom to the next paragraph's first line shrinks by a constant
+  −5.98 / −6.02 px on those pages, which is #250's −6.14 px residual located
+  — it is the predecessor's LAST line's advance, not the inter-paragraph gap
+  and not the paragraph's dominant pitch.
+* **The predecessor drew nothing (7 of 17).**  Every one is an empty
+  paragraph.  On six of them the flow seat height equals the sum of the
+  cached `hp:lineseg` advances exactly (`height_delta_hwp` 0), so the empty
+  paragraph's own height is right and the cause is above it.
+
+### `nrf`: the one measured page-fit difference
+
+The seventh is `nrf` page 2, and it is the corpus's only instance of the
+shape the holdout shows.  The drift is +102.40 px on all 29 class-B
+paragraphs — exactly 5120 HWPUNIT, two whole 2560-HWPUNIT body pitches — with
+nothing re-broken above it.  The predecessor is paragraph 37, empty, and:
+
+    usable_height (body box)         71436 HWPUNIT
+    cached vertpos of paragraph 36   71630   <- past the body bottom
+    cached vertpos of paragraph 37   71630   <- the SAME seat
+    flow seat of paragraph 36        page 2, top 0
+    flow seat of paragraph 37        page 2, top 2560
+    paragraph 38, cached             page 2, vertpos 0
+    paragraph 38, computed           page 2, top 5120
+
+So the authoring engine seated two trailing empty paragraphs 194 HWPUNIT past
+the bottom of its own body box, and gave them the same `vertpos` rather than
+advancing — it neither paginated them nor made room for them.  The flow pass
+does paginate them, because its page-fit test measures a block by its
+`advance` and knows nothing about whether the block puts ink down, and the
+first paragraph of page 2 therefore starts two empty-paragraph heights lower.
+
+The rule that reading suggests is that an INKLESS paragraph does not force a
+page: it draws nothing, so nothing crosses the margin, and Hancom lets it
+hang.  That is consistent with the schema (`hp:lineseg` is cached geometry,
+not a fit assertion) and with `_row_extent`'s existing measured concession
+that a line may cross the bottom margin by its descender
+(`docs/research/line-fit-rule.md`).
+
+### Nothing was changed
+
+`own_render.py` is untouched.  Three reasons, in order:
+
+1. **The mechanism does not dominate.**  Ten of seventeen drifting pages
+   start under an ordinary drawn paragraph whose own block grew, which #250
+   already attributes to class A.  A page-fit change would not move them.
+2. **The measured basis is one page boundary on one form.**  `nrf`'s two
+   paragraphs are the only corpus instance where the cached seat is past the
+   body box at all: the report's `cache_seat_past_page_bottom` is `false` on
+   the other six undrawn predecessors.  Writing an inkless-paragraph rule off
+   one boundary is exactly the corpus-as-training-set overfit the empty-run
+   slice's "Not proven" already warns about, and it would be tuned on the
+   form whose IoU it would move.
+3. **Pagination is the highest-blast-radius knob in the flow pass.**  A block
+   that stops forcing a page changes page counts, and `kstartup`'s extra page
+   currently scores +0.37000 IoU *better* than the cache.
+
+Corpus scoreboard, 144 dpi, both policies pinned, before and after this
+slice: `cache` `text_line_iou_mean` 0.645754, `ssim_mean` 0.830919,
+`ssim_inked_mean` 0.276175, `text_line_pair_rate_mean` 0.836210; `computed`
+0.633897 / 0.824293 / 0.277430 / 0.847831.  All ten forms' scoreboard JSON is
+byte-identical across the change under both policies (label field aside) and
+every verdict is unchanged.  `render_check` on `render-check-01` is unchanged:
+9/9 pages exact, 6 · 37 · 6 · 2 at 96 dpi and 14 · 31 · 4 · 2 at 144.
+
+### Not proven
+
+- **`nrf` is one boundary.**  Two paragraphs, one page, one form.  The
+  inkless-paragraph reading explains it and nothing else on the corpus
+  contradicts it, but nothing else on the corpus tests it either.
+- **The rule was not read out of a published spec.**  KS X 6101 and the OWPML
+  schema describe `hp:lineseg` as cached geometry and say nothing about when
+  the authoring engine will refuse to paginate; "an inkless paragraph does
+  not force a page" is inferred from `nrf`'s cache, not quoted.
+- **The −6 px gap shortfall is located, not explained.**  It is the
+  predecessor's last line's advance falling short of the paragraph's dominant
+  pitch, which is what #250 guessed; why that line's advance is smaller is
+  still unmeasured, and reading it needs the added line's own
+  `vertsize + spacing` rather than a `y0` step.
+- **Enclosure is an inference.**  A paragraph placed on a page because its
+  neighbours are both on it has no direct evidence of its own; six of the
+  seven undrawn predecessors are placed that way or by a flow seat, and a
+  wrong placement would name the wrong predecessor.
+- **The two bottoms did not separate on the corpus.**  No page was found
+  where the gap from the `advance` bottom agrees across the policies while
+  the gap from the `ink` bottom does not, so the question the two readings
+  were added to answer is still open.
+- **The holdout is not in these numbers.**  The private report-class document
+  was not opened.  `--corpus --no-text` is what the operator runs on it; the
+  predecessor section carries paragraph addresses, HWPUNIT measurements and
+  declared style values, and no document text under any flag.
+
+
+## The first seat difference, and which term carries it — measured, 2026-09-05
+
+#252 could see that the drift starts under an inkless paragraph and could not
+see any further: a paragraph that draws no line box is invisible to a
+line-box pairing, so a whole run of them is one opaque step and the report
+could only say "the divergence began above here".  The question this slice
+was sent to answer is the obvious next one — at the first paragraph boundary
+where the two policies disagree, WHICH height or gap is added or removed —
+and answering it needs a channel that does not go through ink.
+
+### The instrument
+
+`layout_divergence.py` now has a seat pass.  For every top-level `hp:p` of
+every section, in document order, it records the paragraph's SEAT under both
+policies:
+
+* under `cache`, the page `_render_paragraphs` drew it on and the
+  `hp:lineseg@vertpos` of its first cached line — the authoring engine's own
+  statement of where the paragraph starts, measured from the body top;
+* under `computed`, the page and `top` of its flow-pass placement, the same
+  quantity in the same units;
+
+with each side's advance (cache: the sum of the paragraph's lineseg
+`vertsize + spacing`; computed: the flow record's `height`), its drawn line
+count, and everything that could explain a difference: every empty `hp:run`
+with its `hh:charPr@height`, every object with extent, out-margins,
+`treatAsChar`, `flowWithText` and `vertRelTo`, the paragraph's own
+`hh:paraPr` — line spacing, `hh:margin/prev` and `/next`, both spellings of
+page-break-before, `keepWithNext`, `keepLines`, `widowOrphan` — and its
+section, `columnBreak` and column count.  **An inkless paragraph has a seat
+under both policies**, which is the whole point: the pass sees the population
+the classification cannot.
+
+Per page the first paragraph whose seat differs is reported with the one
+before it and the delta split three ways:
+
+    Δtop(this) = Δ(prev seat top) + Δ(prev advance) + Δ(gap)
+
+where `gap` is `this.top − (prev.top + prev.advance)` under each policy.  The
+identity is exact by construction and `identity_ok` re-checks it rather than
+asserting it; what it buys is WHERE the height entered.  `d_prev_top` means
+the divergence is older than this pair, `d_prev_advance` means the block
+above is measured differently, `d_gap` means the space BETWEEN the two
+paragraphs is different — the inter-paragraph channel and nothing else.  A
+pair the terms cannot be computed for is named (`page_top`, `page_move`,
+`no_seat`) instead of guessed at.  `carrier` is the largest term over
+`--seat-tol` and `single_term` says whether the other two are both under it.
+
+    python engine/scripts/layout_divergence.py --corpus --out DIR --no-text
+    python engine/scripts/layout_divergence.py --corpus --out DIR --no-text \
+        --seat-tol 2.5
+
+The tolerance is in HWPUNIT, not pixels: seats are integers on both sides and
+the pass never leaves the units the layout was made in.  The default 0.5
+means "any difference at all".
+
+### What the corpus says, before anything was changed
+
+144 dpi, `--no-text`, ten forms, top-level paragraphs:
+
+| form | seated both | seats differ | pages with a divergence |
+| --- | --- | --- | --- |
+| `admrul` | 15 | 0 | 0 |
+| `gianmun-1ho` | 3 | 0 | 0 |
+| `gianmun-2ho` | 3 | 0 | 0 |
+| `jeongbo` | 1 | 0 | 0 |
+| `jumin` | 3 | 0 | 0 |
+| `kstartup` | 165 | 139 | 20 |
+| `moel-2013` | 154 | 109 | 4 |
+| `moel-2025` | 187 | 141 | 6 |
+| `nrf` | 53 | 10 | 2 |
+| `saeopja` | 6 | 0 | 0 |
+
+`saeopja`'s 6 is not a typo: its whole body is inside one table, and a cell
+paragraph has a `vertpos` measured from its own cell and no flow seat at all,
+so the pass refuses to put it beside a body-box seat.
+
+Over the 32 divergent pages the carrier is `page_move` 16, `d_prev_advance`
+11, `page_top` 4 and `d_gap` **1**.  Per form, the FIRST seat difference in
+the document:
+
+| form | page | paragraph | Δtop HWPUNIT | carrier | at `--seat-tol 2.5` |
+| --- | --- | --- | --- | --- | --- |
+| `kstartup` | 1 | 1 | −2 | `d_prev_advance` | para 14, −4, `none` |
+| `moel-2013` | 1 | 3 | +2 | `d_prev_advance` | para 4, +3, `none` |
+| `moel-2025` | 1 | 2 | −1 | `d_prev_advance` | para 3, −3, `none` |
+| `nrf` | 1 | 33 | **−276** | **`d_gap`** | unchanged |
+
+Three of the four are the ±2 HWPUNIT `PERCENT` spacing residual #247 already
+named, accumulating: raise the tolerance past it and the delta is a few
+HWPUNIT spread across all three terms with no carrier at all.  `nrf` is the
+one substantive first seat difference on the corpus, it survives any
+tolerance, and it is the form #252 singled out.
+
+### `nrf`: the gap below an anchored table is its outer margin
+
+Paragraph 0 is empty and anchors a table: `hh:sz@height` 63674, `hp:pos`
+`treatAsChar="0" vertRelTo="PARA" vertOffset="0"`, `textWrap="TOP_AND_BOTTOM"`,
+`hp:outMargin` 138 on all four sides.  The pair reads:
+
+    paragraph 0    cache  top 0      advance  2560   (its own empty line)
+                   flow   top 0      advance 63674   (the table's box)
+    paragraph 33   cache  top 63950
+                   flow   top 63674
+
+    d_prev_top        0
+    d_prev_advance   +61114
+    d_gap            -61390   (gap 61390 -> 0)
+    -------------------------
+    Δtop              -276
+
+and 276 is 138 + 138.  The cache seats the next paragraph at
+`0 + 138 + 63674 + 138`.  `kstartup` says it again with different numbers:
+paragraph 148 anchors 69352 with `outMargin=140`, and its successor is cached
+at 69632 = `0 + 140 + 69352 + 140`.  Both exact; those two are every corpus
+anchored object that reserves flow room.
+
+**The rule.**  `hp:outMargin` is the gap OUTSIDE the object's own box
+(schema: `DevDoc/OWPML SCHEMA/ParaList XML schema.xml`, on every
+`ShapeObject`), so the declared `hp:pos` offset names the top of a SLOT that
+is `top + height + bottom` tall and the box sits `top` inside it.  This
+renderer already reads it exactly that way in three places: `_object_origin`
+draws the box `outMargin@top` down from the slot, `_object_extent` widens an
+inline slot by `left + right`, and `_line_metrics` grows an INLINE object's
+line by `top + bottom` (measured on the corpus's 79 object lines,
+`docs/research/object-line-box.md`).  `_anchor_extent` was the one place that
+dropped it, reserving `vertOffset + hh:sz@height` and nothing more.  It now
+reserves `vertOffset + top + height + bottom`, which is the anchored sibling
+of the rule the other three already state.
+
+### The synthetic side, and what it is not
+
+`tests/corpus/render-check/measure_seat_probe.py` asks the same question of a
+document nobody but this repo has touched: the same six-paragraph page
+eighteen times — a text paragraph, an empty one, an empty one holding an
+inline picture, an empty one holding an inline table, an empty one holding an
+ANCHORED table, and a read-out paragraph — with exactly one declared
+attribute changed each time.
+
+**Path A does not exist for it and path C is NOT RUN.**  A package this repo
+writes carries no `hp:lineseg`, so `--layout-policy cache` has nothing to read;
+and no Hancom PDF was exported, so nothing below is evidence about what
+Hancom would do.  The render is compared against the ANALYTIC seat instead —
+the height the paragraph's own `hh:paraPr` and `hh:charPr` say it should
+have, computed in the probe from the values it authored the document with.
+
+How far the read-out paragraph moves against the unchanged baseline, HWPUNIT:
+
+| attribute changed | before | after | analytic |
+| --- | --- | --- | --- |
+| empty paragraph, line spacing 130 / 200 / FIXED 2400 | 0 / 0 / 0 | 0 / 0 / 0 | −300 / +400 / +800 |
+| empty paragraph, `charPr` 8 / 14 / 24 pt | 0 / 0 / 0 | 0 / 0 / 0 | −320 / +640 / +2240 |
+| empty paragraph, `margin/prev`+`/next` 600+200 | +800 | +800 | +800 |
+| inline picture, `outMargin` 141 / 283 | +282 / +566 | +282 / +566 | +282 / +566 |
+| inline table, `outMargin` 141 / 283 | +282 / +566 | +282 / +566 | +282 / +566 |
+| inline table, `charPr` 24 pt | +840 | +840 | +840 |
+| inline table, line spacing 200 | +400 | +400 | +400 |
+| **anchored table, `outMargin` 141 / 283** | **0 / 0** | **+282 / +566** | **+282 / +566** |
+| inline table → anchored | −600 | −600 | −600 |
+| anchored table → inline | +600 | +600 | +600 |
+
+The anchored row is the defect, reproduced on a public document: give an
+inline object an outer margin and everything below it moves; give the same
+margin to the same object anchored and, before this change, nothing moved.
+After it the two agree, which is what the declarations predict.
+
+### The other thing the probe found, and it is NOT fixed here
+
+Every case sits a constant 1600 HWPUNIT above its analytic seat, and the
+reason is the empty paragraph.  `_flow_lines` takes the computed branch only
+`if mode == LINE_LAYOUT_COMPUTED and para.chars`, and a paragraph with no
+characters falls through to its cached linesegs — of which a Rigorloom-written
+package has none — so it gets `rows = []` and a block height of **0**.  The
+three rows above where line spacing and `charPr` height move the read-out by
+nothing are the same fact seen from the side: an empty paragraph with no
+cache has no height for those attributes to scale.
+
+That is a real defect and it is deliberately left alone.  It is measured
+against this probe's own arithmetic and nothing else: no corpus form
+exercises it, because every corpus form's empty paragraph HAS a cached
+lineseg to fall back on, and no Hancom render was made to say what the height
+should be.  Fixing it means inventing a line for a paragraph that has none,
+on a path that only Rigorloom-written documents take — which is the whole
+population of edited documents — and it deserves its own measurement with a
+reference export, not a rider on this one.
+
+### After
+
+Corpus scoreboard, 144 dpi, both policies pinned, before and after:
+
+| channel | `cache` | `computed` |
+| --- | --- | --- |
+| `text_line_iou_mean` | 0.645754 | 0.633897 |
+| `ssim_mean` | 0.830919 | 0.824293 |
+| `ssim_inked_mean` | 0.276175 | 0.277430 |
+| `text_line_pair_rate_mean` | 0.836210 | 0.847831 |
+
+**Byte-identical**, all ten forms, under BOTH policies — not just the cache
+one.  Page counts are unchanged (`kstartup` 21/22 under cache and 22/22 under
+computed, every other form exact), every verdict is unchanged, and
+`render_check` on `render-check-01` is unchanged: 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144.
+
+What moved is the seat channel, and only on `nrf`: seats differing 10 → 7,
+and the −276 page-1 divergence is gone.  The corpus carrier tally goes from
+`page_move` 16 / `d_prev_advance` 11 / `page_top` 4 / `d_gap` 1 to `page_move`
+17 / `d_prev_advance` 11 / `page_top` 4, i.e. `nrf`'s page 1 stops having a
+first seat difference at all and its remaining one is the trailing-empty-
+paragraph pagination #252 already declined to touch.  `kstartup` paragraph
+148's flow height is now 69632 against the cache's own 69632.
+
+The change buys agreement in a channel the raster cannot see, and costs
+nothing in the one it can.  The paragraphs whose seats moved put no ink down
+and no page repaginated, which is why the scoreboard does not move; a
+document whose anchored object is followed by TEXT rather than by five empty
+paragraphs would have moved ink, and none of the ten forms is that document.
+
+### Not proven
+
+- **The rule rests on two anchored objects.**  `nrf` paragraph 0 and
+  `kstartup` paragraph 148 are every corpus anchor that reserves flow room,
+  and both are `TOP_AND_BOTTOM` tables at `vertOffset=0` with
+  `vertRelTo=PARA`.  A `SQUARE`/`TIGHT`/`THROUGH` wrap, a non-zero offset and
+  a `PAGE`-relative anchor all take the same code path and none of them is
+  measured; the tests pin the arithmetic, not the engine's agreement with it.
+- **The synthetic side has no reference.**  Path C was not run.  The probe
+  says the flow pass now obeys the document's own declarations; it does not
+  say Hancom obeys them the same way.
+- **It moved no ink, so no raster channel confirms it.**  The whole evidence
+  is the cached seat agreeing to the HWPUNIT on two forms plus the schema
+  reading.  A form where the correction changes what a reader sees does not
+  exist in this corpus.
+- **The empty paragraph's zero height is unfixed and unpriced.**  It is worth
+  1600 HWPUNIT per empty paragraph on the probe's 10 pt / 160% baseline, and
+  what it is worth on a real Rigorloom-written report is not measured.
+- **The seat pass is top-level only.**  A paragraph inside a table cell has
+  no flow seat and a cell-relative `vertpos`, so `saeopja` — whose body is
+  one table — contributes 6 seats out of 700-odd paragraphs.  Whatever
+  happens inside a cell, this channel cannot see it.
+- **`page_move` is 16 of 32 carriers and none of them is decomposed.**  Where
+  the two policies put a paragraph on different pages the three terms are not
+  computable, and that is most of `kstartup`.
+- **The holdout is not in these numbers.**  The private report-class document
+  was not opened.  `--corpus --no-text` is what the operator runs on it; the
+  seat section carries paragraph addresses, HWPUNIT measurements and declared
+  style values, and no document text under any flag.
+
+## What the page-bottom fit test clears — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The flow pass decides whether one more line still fits above the bottom of
+the body box by comparing `vertpos + row["extent"]` against `usable_height`,
+and `_row_extent` makes that extent `baseline` for a line of text (#252,
+`docs/research/line-fit-rule.md`).  That choice was reasoned from three
+overfull corpus pages, none of which turned out to be a normal text line.
+This section measures the question directly, from both sides, and the answer
+is that **the corpus cannot decide it and one private measurement rules the
+current term out** — so nothing in the renderer changed here.
+
+### The instrument
+
+`engine/scripts/page_fit_probe.py` reads the cached seats and never renders
+either path.  It re-implements `paginate`'s restart rule while keeping the
+lineseg RANGE each page holds (which `paginate` itself throws away into
+`Paragraph.page_run`), and at every cached page break it measures both sides
+against seven candidate offsets added to `vertpos` — `top`,
+`vertsize - spacing`, `vertsize // 2`, `baseline`, `textheight`, `vertsize`,
+`vertsize + spacing`:
+
+- **kept**: how far the DEEPEST line the page kept overhangs `usable_height`
+  under that candidate.  A kept overhang refutes the candidate outright —
+  Hancom kept a line the candidate refuses, and no other rule can make it do
+  that.
+- **rejected**: how far the first line the cache moved to the next page WOULD
+  have overhung had it stayed, seated at the previous line's advance plus the
+  `margin_next + margin_prev` gap the flow pass opens between two paragraphs.
+  Leaving that gap out understates the would-be top by up to a whole line and
+  invents refutations.
+
+A rejected line only refutes a candidate if no OTHER rule already explains
+the break, so four classes are excluded from that side: a forced break
+(`hp:p@pageBreak`, `pageBreakBefore`, `columnBreak`), a `keepWithNext` push,
+a whole inline table moving (a table that does not fit moves whole —
+`docs/research/table-page-break-rule.md`), and a page holding an ANCHORED
+object, whose room no `hp:lineseg` records.  That last one is not a
+technicality: `kstartup`'s cached page 17 holds two short lines and an
+anchored table, and read from linesegs alone it looks like a page that broke
+with 63 000 HWPUNIT of room left; `nrf`'s page 0 and `kstartup`'s page 5 go
+the same way.  Two classes are excluded from the kept
+side as well — a line taller than the whole body box (placed by
+`_place_block`'s `cursor > 0` guard, which never runs the fit test) and a
+line with no characters (it draws no ink).
+
+    python engine/scripts/page_fit_probe.py --corpus
+
+`usable_height` is read per section from that section's own `hp:pagePr`, not
+assumed: the ten forms run from 69 788 to 75 686, and none of them is 70 864.
+No corpus form declares a footnote, an endnote or a footer, and one
+(`jeongbo`) declares a header, so the header/footer MARGINS are the only
+furniture term in play and `page_geometry`'s formula already carries them.
+
+### What the corpus says
+
+41 cached page breaks over the ten forms.  **Not one of them is inside a
+paragraph** — no corpus paragraph has more than one page run, which
+`Paragraph.page_runs`' docstring already predicted and this now measures.
+Every corpus break is between two blocks.  27 carry kept-side evidence (12
+pages end on an empty line, 2 on a line taller than the page); 5 carry
+rejected-side evidence.
+
+| candidate | kept max | rejected min | k! | r! | fits |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `top` | −1368 | **−445** | 0 | 4 | no |
+| `vertsize - spacing` | −720 | +395 | 0 | 0 | **yes** |
+| `vertsize // 2` | −868 | +255 | 0 | 0 | **yes** |
+| `baseline` | −518 | +731 | 0 | 0 | **yes** |
+| `textheight` | −296 | +911 | 0 | 0 | **yes** |
+| `vertsize` | −296 | +911 | 0 | 0 | **yes** |
+| `vertsize + spacing` | **+1521** | +1427 | 6 | 0 | no |
+
+HWPUNIT, against `usable_height`.  `k!` counts kept lines the candidate would
+have refused and `r!` moved lines it would have kept.
+
+Per form, the kept side is where the numbers live: `kstartup` 19 breaks,
+`moel-2013` 6, `moel-2025` 6, `saeopja` 5, `nrf` 3, `jumin` 2, and the four
+one-page forms contribute none.  The tightest kept line anywhere is
+`kstartup` page 7, whose deepest box ends 296 HWPUNIT above the boundary, and
+`saeopja` page 4 at 299.  All five rejected-side events are `kstartup`,
+pages 1, 12, 13, 14 and 16.
+
+Two things follow, and they are the whole public result:
+
+1. **The corpus refutes `top`.**  Four `kstartup` breaks move a line whose
+   TOP would have been 116–445 HWPUNIT inside the page, with no page break,
+   no `keepWithNext`, no `keepLines`, no `widowOrphan`, no inline table and
+   no anchored object on the page to explain it.  Something below the top
+   has to be inside the box for the rule to hold.
+2. **The corpus refutes `vertsize + spacing`.**  Six pages keep a line whose
+   box plus trailing leading crosses the margin — the trailing spacing of the
+   last line on a page is not required to fit, which is the same relation
+   `extent_hwp` already excludes for a different reason.
+
+Between those two ends the corpus is silent, and silent for a structural
+reason rather than for want of pages: **the largest kept overhang under the
+STRICTEST surviving candidate is −296, so no corpus page keeps a line whose
+box crosses the margin at all.**  There is no corpus case in the ambiguous
+band, and five candidates — including the `baseline` the renderer already
+implements — fit every corpus case equally.
+
+### The synthetic side manufactures the band
+
+`tests/corpus/render-check/measure_page_fit_probe.py` builds the case the
+corpus lacks.  Forty-five identical single-line paragraphs (`charPr` 1000,
+`PERCENT` 160, so `vertsize` 1000, `spacing` 600, `baseline` 850, advance
+1600) fill the body, which puts line 40 at exactly 64 000 from the body top;
+the section's `hc:bottom` page margin is then swept so `usable_height`
+crosses that line's box.  One knob, six settings.
+
+| slack below line 40 | flow pass seats it | candidates that agree |
+| ---: | --- | --- |
+| 1364 | page 1 | all but `vertsize + spacing` |
+| 900 | page 1 | `top` … `baseline` |
+| **764** | page 2 | `baseline` and stricter |
+| **464** | page 2 | `vertsize // 2` and stricter |
+| 164 | page 2 | `vertsize - spacing` and stricter |
+| −36 | page 2 | all |
+
+The flow pass agrees with exactly one candidate across all six: `baseline`.
+That is the confirmation the probe is for — the mechanism under test really
+is `_row_extent`, and the two middle rows are precisely where a change to it
+would be visible.  **Path A does not exist** (a Rigorloom-written package
+carries no `hp:lineseg`) and **path C was NOT RUN** — no Hancom reference was
+exported, so none of this says what Hancom does with the same document.
+
+### The one case that decides it is private, and it rules out `baseline`
+
+The development-validation document the operator ran — not opened here, and
+the numbers below are the only thing carried across — has a page-1 paragraph
+at 61 430 with `vertsize` 1000, `spacing` 800, pitch 1800, against
+`usable_height` 70 864.  The cache keeps SIX lines, the sixth at 70 430;
+Rigorloom keeps five and everything after runs +1800 late, which is the
+`page_top` first-seat divergence #255 reported on every page.
+
+Read as a constraint, that one page says the measure for a 1000/800 line is
+at most `70864 − 70430 = 434`.  Against the seven candidates:
+
+| candidate | offset for a 1000/800 line | ≤ 434? |
+| --- | ---: | --- |
+| `top` | 0 | yes — but the corpus refutes it |
+| `vertsize - spacing` | 200 | **yes** |
+| `vertsize // 2` | 500 | no |
+| `baseline` | 850 | no — this is what ships |
+| `textheight` / `vertsize` | 1000 | no |
+| `vertsize + spacing` | 1800 | no — the corpus refutes it too |
+
+**Exactly one of the seven survives both sides: `vertsize - spacing`.**  Read
+plainly, it says a line may hang past the bottom margin by as much as its own
+trailing leading — the leading below the last line on a page is not drawn, so
+it is available to be spent.  Checked back against every corpus event it
+holds: kept max −720, rejected min +395.
+
+### Why nothing was changed
+
+The bracket is real but it is not tight, and the half of it that moves the
+renderer is private.
+
+- Between `vertsize - spacing` and `baseline` the corpus has **no** case.
+  Adopting the former is a relaxation with no public evidence that the
+  latter is wrong; the entire upper bound comes from one page of one document
+  that is not in this repository and cannot be re-measured by a reader.
+- `vertsize - spacing` is not the only expression inside the surviving band.
+  `baseline - spacing` (50 for the private line, 698 and 504 for the two
+  binding `kstartup` lines) fits every case as well, and so does any fixed
+  fraction of `vertsize` between about 0.32 and 0.43.  The measurement picks
+  a band, not a formula, and choosing `vertsize - spacing` out of that band
+  is a reading rather than a result.
+- No public basis settles it.  KS X 6101 and the OWPML lineseg semantics
+  already measured in this file name the fields — `LineHeight`,
+  `TextPartHeight`, the baseline distance, `LineSpacing` — and say nothing
+  about which of them a pagination test compares.
+
+So this lands as a **costed proposal**, and the cost is one line.  Change
+`_row_extent`'s text-line return from `baseline` to
+`max(0, vertsize - spacing)` (the `spacing` is already on the lineseg and on
+the computed line dict, so `_flow_lines` passes it at both call sites) and
+move `test_the_flow_pass_compares_baseline_for_a_text_line` in
+`engine/tests/test_page_fit_probe.py` to the new term.  On this corpus the
+change is a no-op by construction — every kept line clears both terms and
+every moved line clears neither — so `render_scoreboard.py --corpus` cannot
+grade it.  What would grade it is a run against the private holdout, and the
+prediction to hold the change to is specific: the page_top +1800 cascade
+closes on every page whose last line sits within `spacing` of the margin.
+
+### The state these numbers were taken against
+
+`render_scoreboard.py --corpus --dpi 144`, this branch, no renderer change,
+so before and after are the same run:
+
+| policy | IoU | ssim | ssim_inked | pair | page-count exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` | 0.645754 | 0.830919 | 0.276175 | 0.836210 | 9/10 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 | 10/10 |
+
+The one cache-mode page-count miss is `kstartup` at 21 against 22, which is
+the overflowing anchored table E2.7 already names and not this question.
+
+### Not proven
+
+- **The corpus contains no intra-paragraph page break at all.**  Every number
+  above comes from block boundaries.  The fit test's per-row loop in
+  `_place_block` is the same code either way, but a paragraph splitting
+  mid-flow is the shape the private holdout has and this corpus does not, and
+  nothing here measures it.
+- **The rejected side is five events on two forms.**  Four of them are
+  `kstartup` body lines and they carry the whole refutation of `top`.  If any
+  one of the four turns out to have a cause the exclusion list does not name,
+  `top` comes back into the band and the surviving candidate changes.
+- **The private page is one page.**  It bounds the measure at 434 for a
+  1000/800 line and says nothing about how that bound scales.  A second line
+  geometry from the same document would separate `vertsize - spacing` from
+  `baseline - spacing` and from the fractional readings; one page cannot.
+- **Path C was not run anywhere in this section.**  Neither the corpus
+  reference PDFs' ink positions nor a fresh Hancom export was consulted.  The
+  kept/rejected sides are read off Hancom's own cached seats, which is
+  evidence about what its layout engine decided, not about where it drew.
+- **`vertsize == textheight` on every corpus lineseg**, so the two columns
+  are identical above and the corpus cannot tell them apart.  A document that
+  separates them would.
+- **The synthetic probe grades the renderer, not Hancom.**  Its six rows say
+  the flow pass implements `baseline`; they are silent on whether it should.
+
+## Whether `usable_height` itself is short — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+E2.7 above left the fit test bracketed but undecided, and one private
+measurement made the ambiguity concrete: on the development-validation
+document Hancom KEPT a line whose box, under `vertsize`, overhangs the
+derived body bottom by **+566** and REJECTED one that would have overhung by
+**+626**. Two readings fit that pair. Either the fit allows about
+0.6 × `vertsize`, which no part of OWPML suggests, or **our `usable_height`
+is short by roughly 600 HWPUNIT** for that geometry, in which case `vertsize`
+has its boundary exactly at 0. This section asks the second question of the
+public corpus, and the answer is that the derivation is right: the tightest
+measurement in the corpus pins the body bottom to **11 HWPUNIT**, and an
+offset of 600 would miss it by fifty times that.
+
+### What the derivation is
+
+`OwnRenderer.page_geometry` reads `hp:pagePr` and its `hh:margin` child and
+computes
+
+    body_top      = top + header
+    usable_height = height - top - bottom - header - footer
+
+`gutter` is reported and never folded in — `gutterType` decides which side it
+lands on and every corpus form declares `gutter="0"` with
+`gutterType="LEFT_ONLY"`, so nothing on this corpus can grade it.
+
+### The corpus, form by form
+
+Every form is A4 portrait-declared (`width="59528"`, `landscape="WIDELY"`,
+`gutterType="LEFT_ONLY"`, `gutter="0"`), one section each, so only the
+varying terms are worth a column. "deepest cached" is
+`max(vertpos + vertsize)` over the section's top-level `hp:lineseg`s.
+
+| form | height | top | bottom | header | footer | body_top | usable | deepest cached | vs usable |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `admrul` | 84189 | 5669 | 2834 | 0 | 0 | 5669 | 75686 | 67920 | −7766 |
+| `gianmun-1ho` | 84188 | 5669 | 2835 | 0 | 0 | 5669 | 75684 | 74006 | −1678 |
+| `gianmun-2ho` | 84188 | 5669 | 2835 | 0 | 0 | 5669 | 75684 | 73762 | −1922 |
+| `jeongbo` | 84188 | 5668 | 2834 | 0 | 0 | 5668 | 75686 | 75655 | −31 |
+| `jumin` | 84188 | 5669 | 2834 | 0 | 0 | 5669 | 75685 | 74234 | −1451 |
+| `kstartup` | 84188 | 5668 | 4252 | 332 | 2936 | 6000 | 71000 | 70918 | −82 |
+| `moel-2013` | 84188 | 3600 | 3600 | 3600 | 3600 | 7200 | 69788 | 74535 | **+4747** |
+| `moel-2025` | 84186 | 2834 | 2834 | 2834 | 2834 | 5668 | 72850 | 70215 | −2635 |
+| `nrf` | 84188 | 5668 | 4252 | 1416 | 1416 | 7084 | 71436 | 73230 | **+1794** |
+| `saeopja` | 84188 | 5668 | 2834 | 0 | 0 | 5668 | 75686 | 76989 | **+1303** |
+
+Three forms look like counter-evidence and none of them is:
+
+* **`nrf` +1794** is paragraphs 4 and 5, two trailing EMPTY paragraphs sharing
+  one `vertpos` of 71630 — the seats E2.6 already wrote up. They carry no
+  character, so nothing crosses anything.
+* **`moel-2013` +4747** is paragraph 152, a single `hp:tbl` with
+  `pageBreak="NONE"` and `rowCnt="20"`, and its neighbour 153 (`NONE`,
+  `rowCnt="16"`) is +3846. A table that may not split is kept whole, so it
+  overflows rather than paginating.
+* **`saeopja` +1303** is paragraph 1, a `pageBreak="CELL"` table whose
+  `hp:lineseg@vertsize` is 76989. That number is the whole table's height, and
+  the drawn page tells a different story — see below.
+
+So **no corpus page seats a line of text whose box crosses the derived body
+bottom**, and the probe's existing `taller_than_page` and `empty`
+classifications are what keep the three above out of the kept-side evidence.
+
+### The offset scan
+
+`page_fit_probe.py --offset-scan` (also `--scan-range LO:HI:STEP` and
+`--band LO:HI`) adds a candidate offset to `usable_height` and recomputes
+k!/r! for `vertsize` and `baseline`. Because every overhang is linear in
+`usable_height`, the scan is exact: an overhang at offset δ is the offset-0
+overhang minus δ, and the consistent band is closed-open,
+`[max(kept), min(rejected))`. Only the fit boundary moves; the cached page
+grouping and the taller-than-a-page guard stay at the renderer's own
+derivation, so that a large offset cannot invent kept evidence out of a
+multi-page table's whole-table `vertsize`.
+
+| form | `vertsize` band | `baseline` band |
+| --- | --- | --- |
+| `admrul`, `gianmun-1ho`, `gianmun-2ho`, `jeongbo`, `nrf` | (no evidence) | (no evidence) |
+| `jumin` | [−1451, ∞) | [−12586, ∞) |
+| `kstartup` | **[−296, 911)** | **[−518, 731)** |
+| `moel-2013` | [−396, ∞) | [−591, ∞) |
+| `moel-2025` | [−2635, ∞) | [−2830, ∞) |
+| `saeopja` | [−299, ∞) | [−11607, ∞) |
+| **joint** | **[−296, 911)** | **[−518, 731)** |
+
+`kstartup` alone bounds the offset from above, on the five rejected-side
+events it contributes. Four of those are the `top` refuters, printed
+explicitly by the scan: pages 1/12/13/14, paragraphs 40/71/76/80, whose
+would-be tops sat 445 / 116 / 289 / 186 HWPUNIT INSIDE a `usable_height` of
+71000 and were moved anyway. Their `vertsize` overhangs — 955, 1084, 911,
+1014 — are the ceiling: an offset of 911 or more would have kept paragraph
+76's line.
+
+The private band [566, 626) is inside both joint bands, so **the corpus
+cannot refute the short-derivation reading from the cached seats alone**.
+That is as far as path A goes.
+
+### What the drawn page says
+
+`page_fit_probe.py --reference-ink` closes the gap E2.7 named as open
+("neither the corpus reference PDFs' ink positions nor a fresh Hancom export
+was consulted"). It reads each reference PDF's deepest vector extent and
+deepest glyph box and reports both against the derived body box. The two are
+kept apart on purpose: a Korean government form prints its paper-spec line in
+the bottom margin from a page-anchored object, which is text far below any
+body box and evidence about nothing, while a table's ruling has no such
+escape.
+
+The result that decides the question is one row:
+
+    saeopja page 1   body [5668, 81354]   ruling [7444, 81343]   -11
+
+`saeopja` is six pages, each one full-page table, and page 1 holds the
+76989-tall `pageBreak="CELL"` table from the table above. Hancom ruled it to
+**11 HWPUNIT above the derived body bottom** — 0.1 pt on a 297 mm page. A
++600 offset moves that bottom to 81954 and leaves a table that was plainly
+sized to the room 611 HWPUNIT short of it. The seat's 76989 is the whole
+table's height including what continues past the page; the ruling is where
+the ink stopped.
+
+The rest of the corpus agrees from both sides:
+
+* **Top.** `vector_top - body_top` is never below −82 (`moel-2025` −82,
+  `kstartup` −7, `nrf` +68, `admrul` +3485 on a form that starts low). If the
+  header band were not part of the top offset, `moel-2013` would start 3600
+  higher than it does and `kstartup` 332. `body_top = top + header` is
+  measured, not assumed.
+* **Bottom, with a footer margin and no footer.** `kstartup` declares
+  `footer="2936"` and contains no `hp:footer`. Its deepest ruling is
+  **−152** from the derived bottom on page 2. Had the footer band not been
+  reserved the body would run 2936 further and Hancom would have broken that
+  page 3088 early with a 1084-tall line waiting. The footer margin is
+  reserved whether or not a footer exists.
+* **The only rulings below the derived bottom** are `moel-2013` pages 5 and 6,
+  +2353 and +3612 — the two `pageBreak="NONE"` tables — and page 6's ruling
+  also runs +12 past `height - bottom`, the paper's own bottom margin, which
+  no margin-derived body box can contain. They are the unsplittable-table
+  overflow, not a taller body.
+
+### The spec reading
+
+KS X 6101 / OWPML gives `hp:pagePr` a `hh:margin` child carrying `left`,
+`right`, `top`, `bottom`, `header`, `footer` and `gutter`, and Hancom's own
+편집 용지 dialog stacks them cumulatively down the page: paper edge → `top` →
+`header` → body → `footer` → `bottom`. The header and footer bands are
+therefore INSIDE the top and bottom margins and outside the body, both are
+subtracted, and neither is conditioned on a header or footer existing — the
+band is page geometry, not content. `gutter` is added on the side
+`gutterType` selects (`LEFT_ONLY`, `RIGHT_ONLY`, `LEFT_RIGHT`, `TOP_ONLY`),
+so it shortens the body's width, or its height under `TOP_ONLY`. Our
+derivation matches that reading on every term except `gutter`, which is
+reported and unapplied and which no corpus form exercises.
+
+Every spec-shaped rule that would produce a positive offset is refuted by the
+scan against `kstartup`'s own band of [−296, 911):
+
+| rule | offset on `kstartup` | in band |
+| --- | ---: | :--- |
+| the footer margin is not reserved when no `hp:footer` exists | 2936 | no |
+| the footer margin is never reserved | 2936 | no |
+| the body extends to the bottom margin (header and footer both freed) | 3268 | no |
+| the header margin is not reserved | 332 | yes, but... |
+
+The last one survives the scan on all ten forms and is still wrong: it keeps
+`body_top = top + header` while extending the bottom by `header`, which pushes
+the body 332 HWPUNIT into `kstartup`'s footer band, and the measured ink tops
+above show the header band is real. It also predicts nothing near [566, 626)
+unless the private document happens to declare a header margin of about 600,
+which is not a value Hancom's dialog produces from any round millimetre.
+
+### Nothing was changed
+
+`own_render.py` is byte-identical to `origin/claude/engine-e2-page-bottom-fit`
+on this branch. No single public-spec rule reconciles the corpus with
+[566, 626): the rules that would produce an offset that size are refuted, and
+the derivation the renderer already uses is confirmed to 11 HWPUNIT on the
+tightest page the corpus has. Tuning `usable_height` to close one private
+pair, against that, would be fitting the constant to the residual.
+
+The bands are recorded instead. If the private document is re-probed, the
+number to take is `--reference-ink` on its own reference PDF: the derived body
+bottom against the deepest ruling on a page whose content fills it. If that
+comes back near 0 as `saeopja` does, the +566/+626 pair is about the fit
+measure and not about the body box, and E2.7's `vertsize - spacing` reading is
+where to look next.
+
+### The state these numbers were taken against
+
+`render_scoreboard.py --corpus --dpi 144`, this branch, no renderer change,
+so before and after are the same run:
+
+| policy | IoU | ssim | ssim_inked | pair | page-count exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` | 0.645754 | 0.830919 | 0.276175 | 0.836210 | 9/10 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 | 10/10 |
+
+`render_check.py` on `render-check-01` at 144 dpi, cache path: match 14,
+close 31, differs 4, unsupported 2, pages 9/9 exact.
+
+### Not proven
+
+- **The decisive measurement is one page.** `saeopja` page 1 is the only
+  corpus page whose content is ruled to within 300 HWPUNIT of the derived
+  bottom. `kstartup` page 2 at −152 is the second, and it is a text page whose
+  last line need not touch the margin. Two pages carry the whole refutation of
+  a +600 offset.
+- **It is a table, and a table is not a line.** What page 1 pins is where
+  Hancom stopped ruling a block it was fitting to the page. Whether the
+  page-bottom test for a LINE clears the same boundary is E2.7's question and
+  this section does not answer it.
+- **The private geometry was not read.** The offset the private pair needs is
+  [566, 626) for whatever `hp:pagePr` that document declares; every corpus
+  band and every named rule here is computed from corpus margins. If that
+  document's geometry has a term the corpus has none of — a `TOP_ONLY` gutter,
+  a `hp:footNotePr` reserve, a second section — the comparison is not like for
+  like.
+- **`gutter` is still unapplied.** Every corpus form declares 0, so nothing
+  above grades the one term of the derivation that is knowingly incomplete. A
+  `TOP_ONLY` gutter would change `usable_height` and no test would notice.
+- **The reference-ink mode reads extents, not layout.** It reports the deepest
+  vector and the deepest glyph box per page and cannot say which object drew
+  either. On `saeopja` page 1 the deepest glyph box is +1007 below the body
+  bottom and is the form's paper-spec line in the margin; that attribution is
+  read off the page, not asserted by the tool.
+
+## Whether the exported PDF reproduces the saved lineseg — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The scoreboard treats path A — the cached `hp:lineseg` seats Hancom wrote at
+save time — as if it were the reference in another coordinate system. One
+private measurement put that in doubt: on the development-validation document
+a paragraph carries **7** cached linesegs while Hancom's own PDF, exported one
+minute later by the same Hancom 13.0, draws it in **6** lines. If the cached
+seats and the export are two different layout passes, then every number this
+repo reads off path A is measuring the wrong thing.
+
+They are not. On the public corpus the export reproduces the saved lineseg
+**exactly**: same number of lines, same characters on each line, same page
+grouping, on every paragraph the question can be asked of.
+
+### The instrument
+
+`engine/scripts/lineseg_vs_pdf.py <form.hwpx> <reference.pdf>`, or `--corpus`
+for every converted form with a reference. `--json OUT` writes the per-line
+record, `--no-text` keeps the document's text out of it.
+
+The corpus pair IS the question: `tests/corpus/forms/converted/X.hwpx` is
+Hancom's own hwp→hwpx conversion output, so it carries Hancom's save-time
+seats, and `tests/corpus/forms/render/X.pdf` is Hancom's PDF export of that
+same `.hwpx` — both `com_backend.py convert`, both 13.0.0.2986, per the
+corpus manifest.
+
+The two sides share no identifier, so paragraphs are located in the PDF by
+their text, under a rule stated once and applied to every document. The key
+deletes whitespace and soft hyphens and nothing else, because whitespace is
+exactly what a line break is entitled to eat. The PDF's text lines are
+concatenated in page then draw order, and a paragraph matches the contiguous
+run of WHOLE lines whose concatenation equals its own key, searched forward
+from a cursor that never rewinds. If nothing matches, the search is repeated
+against a second concatenation with a trailing hyphen dropped from each line
+— which never fires on this corpus, and is there so the rule is not silently
+wrong on a document that hyphenates. A match found only before the cursor is
+reported, not dropped.
+
+Two things had to be got right before any number meant anything.
+
+**A PyMuPDF line is not a laid-out line.** Hancom draws 배분/나눔 text, a
+letter-spaced heading, or a run of space-padded fields as several
+text-showing operations with wide gaps, and MuPDF's grouper cuts those into
+separate `line` records at one height. Read raw, that says "the export broke
+one cached line into four" — `admrul` paragraph 9 arrives as 16 records for 2
+lines. So inside a run already known to be one paragraph, consecutive pieces
+on one page whose vertical extents overlap by at least half the shorter are
+regrouped into one line. The regrouping is confined to a matched run, so it
+cannot weld two columns together, and the piece count is kept.
+
+**`textpos` counts cells, and `Paragraph.chars` does not.** See below; it is
+the finding, not a detail.
+
+### What the corpus says
+
+`--corpus`, this branch, nothing in the renderer touched. `cmp` is the
+paragraphs the question can be asked of; `split!` is those whose line count
+agrees but whose character split does not; `char%` is the share of characters
+sitting in lines that hold exactly the same text on both sides; `dy` is
+cached `vertpos` minus the PDF glyph-box top, both relative to `body_top`, in
+HWPUNIT; `dy_res` is the median absolute residual about the form's own median
+`dy`; `spread` is the median within-paragraph range of `dy`.
+
+| form | cmp | equal | more cached | fewer cached | split! | char% | dy_med | dy_res | spread | skipped |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `admrul` | 9 | 9 | 0 | 0 | 0 | 100.0 | 268 | 7 | 6 | 6 |
+| `gianmun-1ho` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `gianmun-2ho` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `jeongbo` | 0 | – | – | – | – | – | – | – | – | 1 |
+| `jumin` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `kstartup` | 67 | 67 | 0 | 0 | 0 | 100.0 | 11 | 7 | 0 | 98 |
+| `moel-2013` | 134 | 134 | 0 | 0 | 0 | 100.0 | 235 | 17 | 2 | 20 |
+| `moel-2025` | 172 | 172 | 0 | 0 | 0 | 100.0 | 233 | 19 | 10 | 15 |
+| `nrf` | 29 | 29 | 0 | 0 | 0 | 100.0 | −89 | 21 | – | 24 |
+| `saeopja` | 0 | – | – | – | – | – | – | – | – | 6 |
+| **all ten** | **411** | **411** | **0** | **0** | **0** | **8566/8566 = 100.0** | | | | 179 |
+
+411 of 411, and not one character on a different line. Skipped, by reason:
+`inkless` 107, `table` 67, `object` 5 — no paragraph failed to match, and no
+paragraph's `textpos` overran the cell stream.
+
+`dy` is a per-form constant of a few hundred HWPUNIT, and that is the leading
+the cached box carries above the glyph box, not drift: the residual about it
+is 7–21 HWPUNIT, 0.07–0.21 pt, and within one paragraph the range is 0–10.
+The sign flips on `nrf` (−89) because its declared line spacing puts the
+glyph box above the box top, which is a property of that form's own character
+and paragraph shapes and not of the comparison.
+
+### Pages: the partition holds, the index does not
+
+| form | cached page groups | PDF pages | lines on a different page index | grouping breaks |
+| --- | ---: | ---: | ---: | ---: |
+| `kstartup` | 20 | 22 | 49/77 | **0/76** |
+| every other form | = PDF | = cached | 0 | 0 |
+
+`kstartup` is the one form where the two sides give a line a different page
+NUMBER, and the difference is a constant +2 that appears across a stretch of
+table-only pages and never varies. It is not a re-pagination: **a whole
+`hp:tbl` is ONE cached lineseg however many pages it takes**, so the cache
+cannot say how many pages that stretch occupies and the reconstruction
+(`page_fit_probe.cached_pages`) is short by two. The channel that does not
+depend on the index is whether two consecutive lines share a page, and that
+partition is identical on every form including `kstartup` — 0 breaks out of
+76. `own_render`'s own `paginate` gives 20 for `kstartup` too, which is where
+the corpus scoreboard's one failing `page_count_exact` comes from.
+
+### The finding: `textpos` counts cells, and `Paragraph.chars` does not
+
+The first run of this tool reported 18 paragraphs re-broken, all 18 at line 0,
+17 of them by exactly one character and all 18 in the same direction. That
+uniformity was the tell, and it was ours.
+
+`hp:lineseg@textpos` indexes the paragraph's character STREAM, and an inline
+control inside `<hp:t>` occupies a cell in that stream even when it draws no
+glyph. `own_render.Paragraph.chars` is built from `itertext()`, which walks
+straight past those elements. So slicing `chars` at a `textpos` runs one cell
+late for every control before the cut. The corpus carries three such controls
+inside `<hp:t>` — `hp:lineBreak` ×30, `hp:tab` ×15, `hp:fwSpace` ×8 — against
+`hp:markpenBegin`/`End`, which take no cell. A `<hp:lineBreak/>` is the
+common case, because a paragraph that carries one has more than one line by
+construction.
+
+`lineseg_vs_pdf.py` builds its own cell stream instead, giving each control
+the whitespace character it stands for so the key deletes it, and with that
+the 18 divergences go to 0.
+
+**This is a live bug in `own_render.py` and it is NOT fixed here.** (It is
+fixed in the section below, "What `hp:lineseg@textpos` counts".)
+`OwnRenderer._render_cached_lines` slices `para.chars[start:end]` at exactly
+those `textpos` values, so on the cache path every affected paragraph is
+drawn with one character on the wrong side of a line break. Corpus-wide,
+**21 of the 161 paragraphs with more than one lineseg** are mis-sliced:
+`moel-2025` 17, `kstartup` 2, `admrul` 1, `jeongbo` 1. It is the same class
+of defect as the `textpos_past_end` condition `unusable_cache_reason` already
+documents — "an `hp:ctrl` this reader gives no character cell while the
+authoring engine's `textpos` counted one" — and that docstring names
+`hp:fieldBegin`/`fieldEnd` and `hp:colPr` as two more members of the family.
+The brief for this slice was measurement, so the renderer is byte-identical
+to `origin/claude/engine-e2-usable-height`; the fix belongs to whoever takes
+the cache path next, and the number to beat is 21 of 161.
+
+### render-check-01 cannot be asked this question
+
+`tests/corpus/render-check/render-check-01.hwpx` was named as the cleanest
+public instance of the pairing. It is not an instance at all:
+`build_render_check.py` authors it through `hwpx_write.py`, and it **carries
+no `hp:linesegarray` anywhere** — all 107 of its top-level paragraphs skip as
+`no_lineseg`, and so do all 83 of `table-break-probe.hwpx`. Its PDF is a
+Hancom export, but there is no Hancom save-time layout beside it to compare
+with, which the dpi-independence section above already says in passing. The
+Hancom-saved and Hancom-exported pair this repo actually holds is
+`converted/` + `render/`, and that is what `--corpus` reads.
+
+### The interpretation
+
+**The export does not re-flow text.** On ten forms and 8566 characters of
+body text, Hancom's PDF writer put every character on the line the save-time
+pass had already chosen. Nothing here is consistent with the export running a
+second line breaker: a different pass would show breaks in both directions
+and at lines other than the first, and would not hold at 100.0% of
+characters. Font metrics at export, kerning and justification are all ruled
+out as sources of a re-break on this corpus, because none of them produced
+one.
+
+So **path A is a faithful stand-in for the reference in the horizontal
+channel**: line count, break position, and which page a line lands on. What
+it cannot stand in for is anything a lineseg does not record — the vertical
+offset between a line box and the glyphs inside it is a real few hundred
+HWPUNIT and varies per form, and a multi-page table has no per-page seat at
+all.
+
+**And the private 7-versus-6 remains unexplained by this.** Nothing on the
+public corpus reproduces it. The measurement shifts where to look: not at the
+export's line breaker, which reproduces the save, but at whether that
+document's cached seats were written by the same save the PDF was exported
+from — a paragraph whose sixth line sits 566 past the body bottom is a cache
+that `unusable_cache_reason` and `stale_cache_reason` exist to refuse.
+
+### Nothing was changed
+
+`own_render.py` is byte-identical to `origin/claude/engine-e2-usable-height`.
+The scoreboard state these numbers were taken against is the one E2.8
+recorded and did not move: `render_scoreboard.py --corpus --dpi 144`, `cache`
+IoU 0.645754 / pair 0.836210 / 9 of 10 page-count exact, `computed` IoU
+0.633897 / pair 0.847831 / 10 of 10.
+
+### Not proven
+
+- **Five of the ten forms contribute nothing.** `gianmun-1ho`,
+  `gianmun-2ho`, `jeongbo`, `jumin` and `saeopja` are whole-page table forms:
+  every top-level paragraph is a table or inkless, and all their body text
+  lives in cells this tool does not read. The 411 come from five forms, and
+  306 of them from the two `moel` contracts, which share most of their text.
+- **Table cells were never compared.** A cell paragraph carries its own
+  `hp:lineseg`s and its own PDF lines, and the same question could be asked
+  of them. It was not, because a cell's column comes from the table's own
+  geometry and the reading order of cell text in a PDF is not document order.
+  Most of this corpus's text is in cells.
+- **The regrouping rule is a judgement.** Half the shorter box's height is a
+  chosen threshold. It is applied only inside a matched run, so a wrong call
+  can merge two lines of one paragraph but cannot invent a pairing across
+  paragraphs; the piece counts are in the JSON for anyone who wants to
+  re-cut it.
+- **100.0% is a share of characters, not of layout.** Two lines agree when
+  they hold the same characters. Where each glyph sits inside the line —
+  justification stretch, tab stops, the 배분 gaps that made the regrouping
+  necessary — is not measured here at all.
+- **`dy` is read against a mediabox that is not the declared page.** The
+  references are A4 at 595 × 841 pt while the forms declare 595.28 × 841.88,
+  and the conversion used is a flat 100 HWPUNIT per point with no rescale.
+  That is worth up to about 88 HWPUNIT at the foot of a page and is inside
+  the per-form `dy` constant, not the residual.
+- **One machine, one Hancom.** Every pair in the corpus was produced by
+  13.0.0.2986 on this machine with these fonts installed. An export from a
+  build whose metrics differ from the saving build is exactly the case that
+  would re-flow, and this corpus cannot contain it.
+
+## What `hp:lineseg@textpos` counts, and the slicing it fixes — 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The slice before this one measured that Hancom's PDF export reproduces the
+saved `hp:lineseg` exactly, and found our own bug on the way: `textpos`
+indexes a stream `Paragraph.chars` is not. This slice reads that stream.
+
+### The model
+
+`hp:lineseg@textpos` indexes the paragraph's TEXT STREAM — the WCHAR run KS X
+6101 and the HWP 5.0 paragraph-text record describe, in which a control
+character is either a *char* control worth one cell or an *inline*/*extended*
+control worth eight. `Paragraph.chars` is a different list: it is built for
+the drawing side, one entry per glyph and exactly one slot per inline object,
+and `itertext()` walks straight past `<hp:tab/>`, `<hp:lineBreak/>` and their
+kind. Slicing `chars` at a `textpos` therefore ran late by whatever the
+controls before the cut were worth.
+
+`Paragraph` now builds both streams and the map between them:
+
+| member | what it is |
+| --- | --- |
+| `chars` | unchanged: `(char, charPrIDRef)`, one slot per inline object |
+| `cell_start[i]` | the cell `chars[i]` begins at |
+| `cell_count` | the paragraph's total cell count |
+| `char_of_cell` / `cell_of_char` | the map, both ways |
+| `lineseg_spans()` | `[(lo, hi)]` into `chars`, one per cached line |
+
+Every reader of a `textpos` goes through it: `_render_cached_lines`, the row
+planner `_line_rows`, `_object_line`, `stale_cache_reason`,
+`page_fit_probe._has_text`, `layout_divergence.cached_line_metrics` (now keyed
+on the line's first CHARACTER, because that is what `_line_items` is handed)
+and `lineseg_agreement`. Drawing itself is untouched: a tab still advances the
+way it did, a line break still breaks, an object still takes one slot.
+
+### The widths, and what pins them
+
+Two constraints hold on every one of the **2995** corpus paragraphs that carry
+an `hp:linesegarray` — top level and table cell alike — and neither needs a
+reference render:
+
+* **reach** — the last cached line still has to hold a cell, so the widths
+  must reach the largest `textpos`;
+* **boundary** — a cached line can only START where an element starts, so
+  they must not overshoot it either: no `textpos` may land inside a control.
+
+| element | in ¶ | ≥2 seats | cells | how it is pinned |
+| --- | ---: | ---: | ---: | --- |
+| a literal character | — | — | 1 | by construction |
+| `hp:lineBreak` | 20 | 20 | 1 | reach+boundary admit **0 or 1**; the PDF oracle admits only 1 |
+| `hp:fwSpace` | 7 | 1 | 1 | char control (HWP 5.0 #31); corpus admits 0–7 |
+| `hp:nbSpace`, `hp:hyphen` | 0 | 0 | 1 | char controls (#30, #24); no corpus instance |
+| `hp:tab` | 3 | 0 | 8 | inline control (#9); no corpus paragraph constrains it |
+| `hp:colPr` | 32 | 2 | 8 | reach+boundary admit **7 or 8**, and the cached box refuses 7 |
+| `hp:fieldBegin`/`End` | 9 | 1 | 8 | the cached box refuses every pair sum below 16, and 8 is the cap |
+| `hp:tbl` | 80 | 1 | 8 | reach+boundary admit **4–8**; 8 is the extended control (#11) |
+| `hp:pic`, `hp:rect` and the other drawing objects | 7 | 0 | 8 | same control (#11); no corpus paragraph constrains them |
+| `hp:secPr` | 10 | 0 | 8 | extended control (#1/#2); no corpus paragraph constrains it |
+| `hp:header`, `hp:newNum` | 5 | 0 | 8 | extended controls (#16, #18); ditto |
+| `hp:markpenBegin`/`End` | 1 | 1 | 0 | an HWPX-only span marker with no control character behind it |
+| `hp:titleMark`, `hp:insertBegin/End`, `hp:deleteBegin/End` | 0 | 0 | 0 | the same reading, and **untested**: no corpus instance |
+| anything else | — | — | 8 | one control's worth, and `lineseg_vs_pdf` reports the guess |
+
+Under the old reading exactly three paragraphs of three UNEDITED forms fail
+both constraints, and they are the three `textpos_past_end` has been firing on
+since it was written:
+
+| paragraph | holds | chars | cells then | cells now | max textpos |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `saeopja` #321 | one `hp:colPr` | 10 | 10 | 18 | 16 |
+| `moel-2013` #159 | a HYPERLINK `fieldBegin`/`fieldEnd` | 36 | 36 | 52 | 42 |
+| `kstartup` #264 | two inline `hp:tbl` | 13 | 13 | 27 | 15 |
+
+Under the new one, none does — 0 of 2995 fail reach and 0 fail boundary. So
+`textpos_past_end` now fires only when the stream genuinely ends early, and
+those three caches come back into the cache path.
+
+Two of the three pin their width rather than merely bounding it, and the third
+channel that does it is the cached `horzsize` itself: a candidate width fixes
+which characters the first cached line holds, and a line whose text does not
+fit its own cached box is refuted. Measured with the renderer's own advance
+arithmetic at 144 dpi:
+
+| paragraph | candidate | line 0 becomes | visible advance | box |
+| --- | --- | --- | ---: | ---: |
+| `saeopja` #321 | `colPr` = 7 | `최대출자자와의 관` (9) | 8050 | 7136 — over |
+| | `colPr` = **8** | `최대출자자와의 ` (8) | 6640 | 7136 — fits |
+| `moel-2013` #159 | pair = 14 | `…에서도 이용` (28) | 13476 | 11752 — over |
+| | pair = 15 | `…에서도 이` (27) | 12760 | 11752 — over |
+| | pair = **16** | `…에서도 ` (26) | 11616 | 11752 — fits |
+
+Eight is the largest a control can be, so 16 is both the smallest pair sum the
+box allows and the largest the format allows: `fieldBegin` and `fieldEnd` are
+8 each. `kstartup` #264 is not pinned this way — its line 0 is spaces and two
+inline tables, and every width from 4 to 8 leaves the same visible advance.
+
+### What moved
+
+`lineseg_vs_pdf.py` now reads the renderer's own map instead of keeping a
+second copy of the model, so the corpus comparison grades the renderer's
+reading rather than a private one. It does not move: **411 of 411**
+paragraphs, **8566 of 8566** characters, `inkless` 107 / `object` 5 /
+`table` 67 skipped, before and after.
+
+The renderer's own slicing does move. Of the **161** corpus paragraphs with
+more than one cached line, **25** were drawn with a character on the wrong
+side of a break and none is now:
+
+| form | ≥2 seats | mis-sliced before | after |
+| --- | ---: | ---: | ---: |
+| `admrul` | 2 | 1 | 0 |
+| `gianmun-1ho` / `-2ho` | 3 | 0 | 0 |
+| `jeongbo` | 6 | 1 | 0 |
+| `jumin` | 27 | 0 | 0 |
+| `kstartup` | 30 | 3 | 0 |
+| `moel-2013` | 35 | 1 | 0 |
+| `moel-2025` | 37 | 17 | 0 |
+| `nrf` | 3 | 0 | 0 |
+| `saeopja` | 18 | 2 | 0 |
+| **all ten** | **161** | **25** | **0** |
+
+21 of the 25 are the `lineBreak`/`tab`/`fwSpace` family the previous slice
+named and counted; the other 4 need the extended-control widths as well.
+Restricted to the paragraphs `lineseg_vs_pdf` can actually compare against the
+PDF, 18 of 54 disagreed with the export's own split and 0 do now — which is
+the oracle, and it is character-exact:
+
+```
+admrul p9    before  '…하고자 하오니 허가' / '하여 주시기 바랍니다. '
+             after   '…하고자 하오니 '     / '허가하여 주시기 바랍니다. '
+moel-2025 p29 before  '(근로자) 주    소 :연' / ' 락 처 : 성 ' / '   명 : …'
+              after   '(근로자) 주    소 :'   / '연 락 처 : '  / '성    명 : …'
+```
+
+### The scoreboard
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | channel | before | after |
+| --- | --- | ---: | ---: |
+| `cache` | text_line_iou | 0.645754 | 0.645275 |
+| | ssim | 0.830919 | 0.831060 |
+| | ssim_inked | 0.276175 | 0.276567 |
+| | text_line_pair_rate | 0.836210 | 0.836393 |
+| | page_count exact | 9 of 10 | 9 of 10 |
+| `computed` | all four | unchanged | unchanged |
+
+`computed` is byte-identical on every form and every channel, which is the
+control: that policy never reads a `textpos`.
+
+Five forms move under `cache`, and they are the five holding a mis-sliced
+paragraph:
+
+| form | IoU | ssim | ssim_inked | pair |
+| --- | ---: | ---: | ---: | ---: |
+| `admrul` | 0.595391 → 0.589760 | 0.926907 → 0.927293 | 0.533986 → 0.535593 | = |
+| `jeongbo` | 0.831621 → 0.832390 | 0.765158 → 0.765346 | 0.294106 → 0.294067 | = |
+| `kstartup` | 0.272355 → 0.272207 | 0.831700 → 0.831705 | 0.302953 → 0.302943 | 0.790319 → 0.792151 |
+| `moel-2025` | 0.557290 → 0.556662 | 0.781896 → 0.782325 | 0.206880 → 0.207606 | = |
+| `saeopja` | 0.806544 → 0.807399 | 0.770592 → 0.770993 | 0.279969 → 0.281603 | = |
+
+`moel-2013` does not move at all: its one affected paragraph is a table cell
+whose two lines the computed breaker had been putting in the same boxes.
+
+**The pixel channels move toward the reference and the box channel does not,
+and the box channel is the one to distrust here.** `ssim` and `ssim_inked` are
+read off the Hancom raster and rise on four of the five forms; `text_line_iou`
+is an overlap between OUR line box and a PyMuPDF line box, our box ends at
+`LINE_BOX_END = visible_advance`, and moving one character — very often a
+space — across a break changes where both ends sit. What is not a judgement
+call is the split itself: the characters now sit where Hancom's own export
+puts them, on all 411 comparable paragraphs.
+
+`render_check.py` on `render-check-01` is unchanged at both 96 dpi (match 6,
+close 37, differs 6, unsupported 2) and 144 dpi (match 14, close 31,
+differs 4, unsupported 2), 9 of 9 pages either way — the document carries no
+`hp:linesegarray`, so there is no `textpos` in it to read.
+
+### `--lineseg-agreement` moved, and one column fell
+
+The breaker's own report compares cached break positions with computed ones,
+and those were being compared across the two index spaces. Converted:
+2148 → 2151 paragraphs scored, 2116 → 2119 line counts exact, 2030 → 2033
+break sequences exact, 158 → 161 multi-line, 139 → 142 of those, 216 → 219
+cached break positions, and **80 → 79 matched**.
+
+The one column that fell is worth keeping rather than explaining away. The
+corpus's forced breaks are `<hp:lineBreak/>`; the cached break now sits at the
+character the control precedes rather than one past it, and `compute_lines`
+has no notion of a forced break at all — it breaks on width. Some of the old
+agreement at those positions was the two errors cancelling. Teaching the
+breaker about `<hp:lineBreak/>` is a separate change and is not made here.
+
+### Not proven
+
+- **Four of the widths have no corpus witness at all.** `hp:tab`,
+  `hp:nbSpace`, `hp:hyphen`, `hp:secPr` and the drawing objects other than
+  `hp:tbl` appear only in paragraphs with a single cached line, where every
+  width satisfies both constraints. They are set from the same control-
+  character classification the three measured cases confirm, and a document
+  that breaks a line after a tab would test the most load-bearing of them.
+- **`hp:titleMark` and the change-tracking markers are a reading, not a
+  measurement.** They are given no cell on the same grounds as `markpen` — an
+  HWPX-only span marker — and no corpus form carries one.
+- **`hp:tbl` is bounded, not pinned.** Reach and boundary admit 4 through 8 on
+  the one paragraph that constrains it. 8 is the extended control's width and
+  is what the other two measured cases show, but nothing here separates it
+  from 7 or 5.
+- **`fieldBegin` and `fieldEnd` are pinned only as a sum.** Their paragraph
+  constrains `wB + wE` to 16; the even 8/8 split is the classification's, not
+  the corpus's, and 16 rests on 8 being the cap.
+- **The box refutation is measured with this renderer's advances.** The two
+  overflows above are 15% and 13% past the cached box, which is far outside
+  the disagreement `--lineseg-agreement` records, but they are still this
+  renderer's numbers and not Hancom's.
+- **Table cells still never reach the PDF oracle.** The 411 are top-level
+  paragraphs. Most of this corpus's text is in cells, and the 4 paragraphs
+  that need the extended widths are all cell or object paragraphs, so their
+  new splits are checked against the cache's own two constraints and against
+  nothing else.
+- **The IoU fall is unexplained in detail.** It is attributed above to the
+  line box's end moving with the character that moved. No per-line
+  attribution was made, and `admrul`'s −0.0056 is the largest single move on
+  the board.
+
+## An empty paragraph is one line — measured, 2026-09-05
+
+PR #255 found the defect and priced nothing: `_flow_lines` takes its computed
+branch only `if mode == LINE_LAYOUT_COMPUTED and para.chars`, so a paragraph
+with no characters falls through to its cached `hp:lineseg`, and a package
+this repo wrote carries none. The block came out **0 high**, and the seat
+probe read the whole of it as a constant 1600 HWPUNIT that every case sat
+above its analytic seat. The three rows where the probe changed the empty
+paragraph's line spacing and character height and the read-out moved by
+nothing were the same fact seen from the side: there was no line for those
+declarations to scale.
+
+That path is every empty paragraph in every edited document, which is the
+whole population this renderer exists to draw. This is what the height should
+be, measured against the one oracle there is.
+
+### The oracle, and what it says
+
+A Hancom save DOES cache a lineseg for an empty paragraph, so the authoring
+engine's own answer is in the corpus. Ten converted forms, every top-level
+`hp:p` whose character stream is empty:
+
+* **101 empty top-level paragraphs**, every one with exactly **one** cached
+  `hp:lineseg` and exactly **one** `hp:run` — an `<hp:t></hp:t>` that draws
+  nothing and declares a shape;
+* **none of them carries an object.** An inline picture, table or equation
+  occupies a character cell, so a paragraph holding one is not empty by this
+  test at all and takes the computed branch already. Its box was measured
+  separately and is unchanged here: on the 63 top-level corpus paragraphs
+  whose whole character stream is one inline object, the cached `vertsize`
+  is the object's `hp:sz` height plus its own vertical `hp:outMargin`, exact
+  on **63 of 63**.
+
+**The rule.** An empty paragraph is ONE line, and it is the same line every
+other paragraph gets: `vertsize` is the tallest `hh:charPr@height` its runs
+declare, and the advance is that height put through the paragraph's own
+`hh:lineSpacing` exactly as a text line's is. In code it is
+`_line_metrics(para, 0, 0)` — the empty-run pass #247 grew already owns a run
+sitting at the end of the character stream, and for a paragraph with no
+characters that is every run it has.
+
+Against the cache, all 101:
+
+| quantity | exact |
+| --- | --- |
+| `vertsize` == the run's declared height | **101 / 101** |
+| `textheight` == `vertsize` | 101 / 101 |
+| `baseline` == `round(0.85 * vertsize)` | 101 / 101 |
+| `spacing` from `hh:lineSpacing` | **91 / 101** |
+
+**There is no counter-example to the rule.** The ten `spacing` misses are all
+`PERCENT` and all inside 2 HWPUNIT — the cache four times 2 above the rule and
+six times 1 below it, 0.02 pt, 0.0004 px at 144 dpi — which is the same
+rounding residual #247 measured on 883 of
+the corpus' 2370 cached TEXT lines. It is one residual on both kinds of line,
+not a second rule for empty ones. The misses, for the record:
+
+| form | para | spacing | cached | rule | residual |
+| --- | --- | --- | ---: | ---: | ---: |
+| `gianmun-1ho` | 1 | PERCENT 150 on 900 | 452 | 450 | +2 |
+| `kstartup` | 1, 41 | PERCENT 135 on 700 | 244 | 245 | −1 |
+| `kstartup` | 3 | PERCENT 130 on 1500 | 452 | 450 | +2 |
+| `kstartup` | 72 | PERCENT 143 on 700 | 300 | 301 | −1 |
+| `kstartup` | 149 | PERCENT 135 on 1100 | 384 | 385 | −1 |
+| `moel-2013` | 22 | PERCENT 145 on 1300 | 584 | 585 | −1 |
+| `moel-2013` | 24 | PERCENT 125 on 1300 | 324 | 325 | −1 |
+| `moel-2013` | 145 | PERCENT 150 on 1300 | 652 | 650 | +2 |
+| `nrf` | 10 | PERCENT 130 on 1300 | 392 | 390 | +2 |
+
+The declared spacings across the 101 are `PERCENT` only — 160 (46), 180 (24),
+140 (7), 135 (5), 130 (5), 150 (4), 200 (3), 120 (2), and one each of 100,
+125, 143, 145 and **0**. The `PERCENT 0` one is `admrul` paragraph 2: the
+cache gives it `vertsize` 400 and `spacing` −400, an advance of exactly zero,
+and the rule reproduces both. No corpus empty paragraph declares `FIXED` or
+`BETWEEN_LINES`; those two come from the probe below and from the arithmetic,
+not from Hancom.
+
+### What computed does for the same paragraphs, and why the corpus cannot move
+
+Ignoring the cache with `--layout-policy computed` does NOT reach the defect
+on any corpus form, because the fall-through reads the cached lineseg and
+every corpus empty paragraph has one. Measured block height, rule minus what
+the flow pass gives today, over all 101:
+
+| delta, HWPUNIT | paragraphs |
+| --- | --- |
+| 0 | 91 |
+| +1 | 6 |
+| −2 | 4 |
+
+which is the ±2 residual again and nothing else. Exactly one of the 101 is
+measured 0 high today and it is `admrul`'s `PERCENT 0` paragraph, whose height
+IS zero.
+
+So the fix is scoped to the case that has no answer: an empty paragraph **and**
+no cached lineseg. Where the authoring engine left a seat it is still read,
+not recomputed — which is what keeps the corpus untouched, and is also the
+honest reading, since the cache is the oracle the rule was fitted to.
+
+### The public probe
+
+`tests/corpus/render-check/measure_seat_probe.py` grows a grid on `P2`, its
+empty paragraph: `hh:charPr@height` 10 / 12 / 15 pt against `PERCENT` 160 /
+180 / 200, `FIXED 2400` and `BETWEEN_LINES 600`. `BETWEEN_LINES` and the 15 pt
+shape are new paraPr/charPr the probe registers itself; `build_render_check`
+declares neither. **Path A does not exist for this package and path C is NOT
+RUN**: the comparison is the analytic seat the probe computes from the values
+it authored, so this says the flow pass obeys the document's declarations, not
+that Hancom obeys them the same way.
+
+Before, every one of the 15 grid cases put the read-out paragraph at the same
+23800 HWPUNIT — the empty paragraph contributed nothing, whatever it declared.
+After, all 15 sit on their analytic seat:
+
+| charPr | PERCENT 160 | PERCENT 180 | PERCENT 200 | FIXED 2400 | BETWEEN_LINES 600 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10 pt | 1600 | 1800 | 2000 | 2400 | 1600 |
+| 12 pt | 1920 | 2160 | 2400 | 2400 | 1800 |
+| 15 pt | 2400 | 2700 | 3000 | 2400 | 2100 |
+
+Across the whole probe — 33 cases, 231 paragraph rows — the seats off their
+analytic value go **165 → 0**. That includes the 18 pre-existing cases, whose
+constant −1600 offset #255 recorded is gone: `baseline` reads 25400 against
+25400, and the empty paragraph's own `ls_130` / `ls_200` / `ls_fixed` /
+`pt8` / `pt14` / `pt24` rows now move the read-out by −300 / +400 / +800 /
+−320 / +640 / +2240, which is what the declarations predict and what #255
+listed as the analytic column those rows were failing.
+
+### After
+
+Nothing on the corpus moved, under either policy, and that is the intended
+result rather than a disappointment.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms, before
+and after, both policies:
+
+| policy | text_line_iou | ssim | ssim_inked | pair_rate |
+| --- | ---: | ---: | ---: | ---: |
+| `cache` | 0.645275 | 0.831060 | 0.276567 | 0.836393 |
+| `computed` | 0.633897 | 0.824293 | 0.277430 | 0.847831 |
+
+Identical to six decimals on every channel, before and after, per form and in
+aggregate. Page counts are unchanged and exact on nine of ten forms under
+either policy: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1, `jeongbo`
+1/1, `jumin` 3/3, `moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6,
+and `kstartup` 21 against a reference 22 under `cache` and 22/22 under
+`computed`. Every verdict is unchanged, `kstartup`'s standing failure
+included.
+
+`layout_divergence.py --corpus` is byte-identical too, both printed tables and
+all ten per-form JSONs. The state it holds at: seats differing `admrul` 15,
+`gianmun-1ho` 3, `gianmun-2ho` 3, `jeongbo` 1, `jumin` 3, `kstartup` 165,
+`moel-2013` 154, `moel-2025` 187, `nrf` 53, `saeopja` 6; a first seat
+divergence on 32 pages across four forms, carried by `page_move` on
+`kstartup` (3 of its 20), `d_prev_advance_hwp` on `moel-2013` (4 of 4) and
+`moel-2025` (3 of 6), and `page_top` on `nrf` (1 of 2) — the corpus' only
+`page_top` carrier, and the trailing-empty-paragraph pagination #252 declined
+to touch. `nrf`'s own first divergence is `page_move`, −71630 HWPUNIT at
+page 1 paragraph 36.
+
+`render_check.py` on `render-check-01` is byte-identical at 96 dpi (match 6,
+close 37, differs 6, unsupported 2) and 144 dpi (match 14, close 31,
+differs 4, unsupported 2), 9 of 9 pages exact both times — and the reason is
+worth stating rather than assuming, because the change was expected to move
+it: **`render-check-01` has no empty paragraph.** All 227 of its `hp:p`,
+top-level and in cells, put at least one character down, and so does every one
+of `table-break-probe.hwpx`'s 979. The one Rigorloom-written document with a
+Hancom reference cannot ask this question, and the seat probe — which has no
+reference — is the only place the change shows.
+
+### Not proven
+
+- **No reference render says an empty line is drawn this tall.** The rule is
+  fitted to the authoring engine's own cache, and every one of the 101
+  paragraphs it was fitted to keeps that cache after the change. The only
+  documents the new code path actually runs on are ones nobody has a Hancom
+  export of. Path C is the measurement that would close this and it was not
+  run.
+- **`FIXED` and `BETWEEN_LINES` have no corpus witness for an EMPTY
+  paragraph.** All 101 declare `PERCENT`. Those two branches are
+  `_line_metrics`' existing arithmetic, measured on text lines, reused; the
+  probe and the unit tests pin the arithmetic, not the engine's agreement
+  with it.
+- **`BETWEEN_LINES` is unmeasured everywhere, not just here.** No corpus form
+  declares it on any paragraph, empty or not, so `spacing = max(0, value)` is
+  a reading of 여백만 지정 and not a measurement.
+- **Computed layout still reads the cache for an empty paragraph.** Under
+  `--layout-policy computed` a paragraph WITH a lineseg keeps it, which is
+  the inconsistency #247's branch already had and is why the corpus does not
+  move. Making computed recompute those too would cost at most 2 HWPUNIT on
+  10 of the 101 — the residual above — and it is not done, because the cache
+  is the oracle the rule was fitted to and overriding it with a fit to itself
+  buys nothing measurable.
+- **The ±2 HWPUNIT `PERCENT` residual is still unexplained.** #247 left it
+  open on 883 text lines; it is on 10 of 101 empty ones too, at the same
+  size, which is evidence it is one rounding rule rather than two, and no
+  more than that.
+- **Multiple runs on an empty paragraph is untested against Hancom.** Every
+  corpus empty paragraph has exactly one run, so "the tallest shape the runs
+  declare" is a max over one element there. The max is #247's rule carried
+  over, and the unit tests exercise it, but no cached empty paragraph in this
+  corpus has two runs to confirm it.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened. It is a Rigorloom-written report, so it is exactly the
+  population this change moves, and what it is worth there is the operator's
+  measurement to make.
