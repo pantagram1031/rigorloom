@@ -1680,6 +1680,53 @@ def solve_tracks(count: int, constraints, declared_total=None):
     return sizes
 
 
+def clip_tracks(sizes, declared_total):
+    """Take an overflow off the LAST track, not off every track in proportion.
+
+    ``hp:tbl/hp:sz@height`` is the table's box, and #273 measured that the row
+    rule sums to it on every Hancom save the cache states a total for.  Two
+    corpus tables overflow it anyway — ``kstartup`` tables 5 and 36, by 78 and
+    282 HWPUNIT — and both are ANCHORED, so the cache states no total for
+    either and only Hancom's own export can say what it drew.  It drew the
+    declared box: at the reference PDF's 841.0/841.89 page scale, table 5
+    measures 62416 HWPUNIT against a declared 62482 (predicted 62417) and
+    table 36 measures 66431 against a declared 66505 (predicted 66435), while
+    the uncompressed sums 62560 and 66787 would predict 62494 and 66717.
+
+    Table 5 also draws its three interior rules, and they say HOW the excess
+    is taken.  Its rows declare 3682 / 19626 / 19626 / 19626 and Hancom drew
+    3684 / 19620 / 19631 / 19541 (±8 HWPUNIT, the same slop every reading in
+    that PDF carries).  The first three rows keep the height they asked for
+    and the LAST one is 78 short — exactly the overflow.  Scaling all four in
+    proportion would have drawn 3677 / 19601 / 19601 / 19603 and puts the last
+    row 62 outside the slop band.  The table is laid out top-down at the
+    heights its rows ask for and cut off at the declared box.
+
+    That is also why this is not the compress #273 removed.  The old step
+    rescaled every track, so one cell this renderer measures too tall moved
+    forty innocent rows; this one moves the last row only, and every row
+    boundary above it stays where the row rule put it.
+
+    A last row the excess would drive negative is clamped at zero and the
+    remainder carries into the row above it, so the tracks always sum to the
+    declared total and none of them is negative.  No corpus table needs the
+    carry: a full render on both policies makes 8 clips and every one of them
+    moves exactly one row, the tightest being ``saeopja``'s 1040 HWPUNIT off
+    a 1082 last row.
+    """
+    excess = sum(sizes) - declared_total
+    if excess <= 0 or not sizes:
+        return list(sizes)
+    out = list(sizes)
+    for index in range(len(out) - 1, -1, -1):
+        take = min(out[index], excess)
+        out[index] -= take
+        excess -= take
+        if excess <= 0:
+            break
+    return out
+
+
 # --------------------------------------------------------------------------
 # Paragraph model
 # --------------------------------------------------------------------------
@@ -6216,25 +6263,29 @@ class OwnRenderer:
                 cell["row"], cell["rspan"],
                 max(cell["declared_height"],
                     content_h + cell["margin"]["top"] + cell["margin"]["bottom"])))
-        # ``hp:tbl/hp:sz@height`` is a FLOOR on the rows and not a ceiling.
-        # ``row_height_probe.py --corpus`` measures both halves of that.  On
-        # the height the cache states -- the holder paragraph's own
-        # ``hp:lineseg@vertsize`` less the table's vertical ``hp:outMargin``,
-        # which #261 measured is an inline object's box -- the rule above
-        # already sums to the declared height on 70 of 70 corpus tables the
-        # cache does not paginate, so the compress step has no witness at all
-        # on a Hancom save and never fires there.  Where it DOES fire, the
-        # residual is positive on 4 of those 70 under computed layout and
-        # negative on none, so all it ever did was scale forty innocent rows
-        # down to pay for one cell this renderer measured taller than Hancom
-        # did -- the same "compress to a declared height the content does not
-        # fit in" that ``natural_rows`` above exists to stop.  A shortfall is
-        # still distributed, because nothing measured here says what a table
-        # whose rows fall short of its own declared height should do and the
-        # corpus has no such table.
+        # ``hp:tbl/hp:sz@height`` is the table's box on the row axis, and the
+        # rule above already sums to it on 70 of 70 corpus tables the cache
+        # states a total for (``row_height_probe.py --corpus``), so neither
+        # branch below fires on a Hancom save that fits its own declaration.
+        #
+        # A SHORTFALL is distributed proportionally, which is what this always
+        # did.  No corpus table has one on either policy, so nothing here
+        # measures what one should do and the behaviour is left alone.
+        #
+        # An OVERFLOW comes off the last row (``clip_tracks``), measured on
+        # the two corpus tables that have one -- ``kstartup`` 5 and 36, the
+        # subject of ``row_height_probe.py --overflow``.  What #273 removed
+        # was the proportional rescale, which paid for one cell this renderer
+        # measures too tall by moving forty innocent rows; the cut here leaves
+        # every row boundary above the last exactly where the row rule put it,
+        # so the objection that removed it does not reach it, and Hancom's own
+        # export says the declared box is where the table ends.
         heights = solve_tracks(rows, row_cons)
-        if decl_h and sum(heights) < decl_h:
-            heights = solve_tracks(rows, row_cons, decl_h)
+        if decl_h:
+            if sum(heights) < decl_h:
+                heights = solve_tracks(rows, row_cons, decl_h)
+            elif sum(heights) > decl_h:
+                heights = clip_tracks(heights, decl_h)
         xs = [0]
         for w in widths:
             xs.append(xs[-1] + w)

@@ -6632,3 +6632,213 @@ Worker: Opus; orchestrator: Fable.
   opened, and it is exactly the population the floor changes: a Rigorloom-
   written document has no cache, so every one of its cells takes the computed
   branch and every table that overflows now grows instead of compressing.
+
+## The two tables that overflow, and what a split table caches — measured, 2026-09-05
+
+#273 left two things open on the row axis. Two `kstartup` tables overflow
+their declared `hp:tbl/hp:sz@height` by 78 and 282 HWPUNIT even under the
+`cache` policy, and nothing said whether that overflow is this renderer's or
+the file's; and the 11 tables the total oracle cannot read were excluded
+without anyone asking what the cache says about a table split across a page.
+This run answers both, and the first one moves a rule.
+
+### The overflow is neither table's content — it is the file's own arithmetic
+
+`row_height_probe.py --overflow` prints the reconciliation row by row for
+every table whose rows do not sum to its declared height. On the corpus there
+are exactly two, both `kstartup`, both ANCHORED (`hp:pos@treatAsChar="0"`),
+which is why #273's cache oracle could not read either: an anchored table's
+holder paragraph caches its own text line, not the table.
+
+**Table 5** — 4 rows, declared 62482:
+
+| row | declared `cellSz` | content + inset | asks | Hancom drew |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 3682 | 1500 + 276 | 3682 | 3690 |
+| 1 | 19626 | 6440 + 276 | 19626 | 19619 |
+| 2 | 19626 | 6440 + 276 | 19626 | 19631 |
+| 3 | 19626 | 3920 + 276 | 19626 | 19541 |
+| | Σ 62560 | | Σ 62560 | Σ 62481 |
+
+No cell's content comes near its declared height. The whole of the +78 is
+that **the table's own rows declare 62560 and its own `hp:sz@height` declares
+62482** — the file disagrees with itself, and table 5 is the only corpus
+table where the declared rows sum to MORE than the declared table (on the
+other 80, Σ `cellSz@height` ≤ `hp:sz@height`, usually well under).
+
+**Table 36** — 2 rows, declared 66505: row 0 declares 58747 and holds 28
+paragraphs whose 43 cached lines run to 61680 (`vertpos` 0 to 60480 on the
+1440 advance #263 measured, last line's `spacing` dropped per #273), so with
+its 280 inset it asks for 61960; row 1 asks for its declared 4827. Σ 66787,
++282. Here the overflow IS content — but content the cache itself recorded.
+
+### Hancom's own export says the declared height wins, and how
+
+Neither table has a cache oracle, so the reference PDF is the only witness.
+It is measurable: `kstartup`'s `hp:pagePr` declares 59528 × 84188 HWPUNIT and
+the exported PDF's MediaBox is 595.0 × 841.0 pt, a non-uniform 0.9995297 ×
+0.9989547. Checked against a length that is not in question, table 5's
+declared width 47651 measures 47649 through that scale (Δ 2).
+
+Read through it, with each boundary taken at the centre of its border band
+(a double border draws two strokes; the vertical strokes overshoot the
+horizontal band by 0.24 pt at a mitred corner and are not the boundary):
+
+* **table 5 measures 62481 against a declared 62482** (Δ 1), where the
+  uncompressed 62560 would have measured 62559.
+* **table 36 measures 66501 against a declared 66505** (Δ 4), where the
+  uncompressed 66787 would have measured 66717.
+
+So `hp:sz@height` is a ceiling as well as the floor #273 made it. Table 5
+draws its three interior rules as well, and they say WHERE the excess is
+taken: rows 0, 1 and 2 measure 3690 / 19619 / 19631 against their declared
+3682 / 19626 / 19626 — residuals +8 / −7 / +5, the slop every reading in this
+PDF carries — and **row 3 measures 19541 against a declared 19626**. Taking
+the whole 78 off the last row predicts 19548 (Δ −7, in band); scaling all
+four rows in proportion predicts 19603 (Δ −62, an order of magnitude out).
+The table is laid out top-down at the heights its rows ask for and cut off at
+the declared box.
+
+### The rule, and why it is not the compress #273 removed
+
+**A table ends where `hp:tbl/hp:sz@height` says. When the rows the row rule
+solves overflow it, the excess comes off the LAST row and every boundary
+above it stays where the row rule put it.**
+
+#273 removed the proportional rescale, and the reason it gave still stands:
+8 cells of 1610 whose computed content is taller than the cache's turned into
+50 changed rows of 515, because scaling a table moves every row in it. The
+cut here cannot do that. It moves one row — the last — and it moves it to the
+place Hancom's own export puts it. `own_render.clip_tracks` is the whole of
+it; a last row the excess would drive negative is clamped at zero and the
+remainder carries upward, which no corpus table needs.
+
+Instrumenting every call a full corpus render makes on both policies: 8
+clips, each moving **exactly one row** — `kstartup` 78 (19626 → 19548) and
+282 (4827 → 4545) under `cache`, and those two plus `kstartup` 2339 (3577 →
+1238), `moel-2013` 1100 (8566 → 7466), `saeopja` 1040 (1082 → **42**) and
+1132 (2430 → 1298) under `computed`. `saeopja`'s 1040 off a 1082 last row is
+the tightest, and it is the honest shape of the trade: the six `computed`
+clips are all paying for #265's `text_rebreak:width`, and a last row can end
+up nearly flat doing it. That is one visibly wrong row instead of forty
+slightly wrong ones, and the table's bottom edge — which everything below it
+is measured from — is right in both.
+
+The SHORTFALL arm is untouched: `solve_tracks(rows, row_cons, decl_h)` still
+distributes a shortfall proportionally. No corpus table has one on either
+policy, so there is still nothing to measure it against.
+
+### What the cache says about a table split across a page: nothing
+
+`row_height_probe.py --paginated` asks the second question — is a table the
+cache paged encoded as one `hp:lineseg` per fragment, each with its own
+`vertpos`/`vertsize`, the way #261 reads a whole inline object's height off
+one? Over the corpus's 81 tables:
+
+* **Every table's holder paragraph caches ONE `hp:lineseg` for it.** Two
+  `kstartup` holders cache two, and both are anchored holders whose own TEXT
+  wraps to a second line (`textpos` 0 and 15) — not a table fragment. There
+  is no per-fragment `vertsize` anywhere in the corpus.
+* An inline table's single lineseg carries the WHOLE table (`vertsize` less
+  the table's vertical `hp:outMargin`, #261), however many pages it takes.
+  `lineseg_vs_pdf.py` already states the consequence from the other side:
+  `kstartup` caches 20 page groups against the export's 22.
+* `hp:tbl@pageBreak` is `CELL` on 62 and `NONE` on 19 — a static authoring
+  setting, identical on a table that pages and one that does not, and #244's
+  `_table_may_split` already reads it that way.
+* `hp:tbl@repeatHeader` is `"1"` on all 81. It varies nowhere, so this corpus
+  cannot say whether honouring it (it is in `BLOCK_NOT_HONORED`) would change
+  anything; the one table this render splits has no header row to repeat.
+* 73 tables are inline (`treatAsChar="1"`) and 8 anchored.
+
+So a split table's fragment heights have no oracle in the file at all, and
+`natural_rows`' fragments cannot be graded against one. Of the 11 tables
+#273 excluded, only ONE — `kstartup` table 9 — is actually split by this
+render (page 5 rows 0–3 = 70529, page 6 rows 3–4 = 69505, the second
+fragment being `_expand_segmented_rows`' split of a solo full-width row). The
+other 10 are anchored tables `_anchor_table_geometry` measures with
+`natural_rows=True` before the fit test and then draws whole; the probe
+recorded that first solve, which is why they looked excluded. `--overflow`
+skips a table the render only ever solves with `natural_rows=True`, because
+the row expansion means its rows no longer line up with the file's.
+
+This is the same knot as `kstartup`'s 21-vs-22 pages under `cache` (#258 /
+#265): a whole-table lineseg the cache cannot page. Nothing here unties it —
+the clip does not move a page count on either policy.
+
+### After
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| policy | ssim | ssim inked | line IoU | pair rate | pages |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cache` before | 0.8421 | 0.3283 | 0.6730 | 0.8364 | 52 / 53 |
+| `cache` after | 0.8421 | **0.3284** | 0.6730 | 0.8364 | 52 / 53 |
+| `computed` before | 0.8334 | 0.3253 | 0.6562 | 0.8469 | 53 / 53 |
+| `computed` after | **0.8335** | **0.3256** | **0.6566** | 0.8469 | 53 / 53 |
+
+Nothing falls, on either policy, on any channel, on any form. Under `cache`
+only `kstartup` moves (inked 0.3023 → 0.3027) — the two tables above are the
+whole of it. Under `computed` three forms move and all three move up:
+`kstartup` ssim 0.8808 → 0.8812, inked 0.4427 → 0.4435, line IoU 0.6622 →
+0.6625; `moel-2013` ssim 0.7987 → 0.7993, inked 0.1388 → 0.1391;
+`saeopja` ssim 0.7657 → 0.7662, inked 0.2971 → 0.2993, line IoU 0.7268 →
+0.7304. That last one is the interesting one: `saeopja`'s line IoU is where
+#273 paid −0.027 for removing the rescale, and putting the table's bottom
+back on the declared box without moving the rows above it recovers a third of
+it. No page count moves; `kstartup`'s standing 21-of-22 under `cache` and
+every verdict are unchanged.
+
+`row_height_probe.py --corpus` is byte-identical — `max` 437 of 501 rows,
+70 of 70 tables, total residuals `{0: 70}` — because the probe scores the row
+RULE, which did not change, before any clip. What did change is that no table
+now draws at a height other than the one it declares: instrumenting every
+`_table_tracks` call over the corpus on both policies, the overflows 78, 282
+(cache) and 78, 282, 2339, 1100, 1040, 1132 (computed) are all gone and every
+non-`natural_rows` solve lands exactly on `hp:sz@height`.
+
+`layout_divergence.py --corpus` is unchanged: agreement 1395, class A 118,
+class B 302, class C 243. `class_b_probe.py --corpus` roots are unchanged in
+count — `text_rebreak:width` 167, `table_row_heights` 64, `empty_paragraph`
+29, `forced_break` 28, `cell_valign` 14 — and `table_row_heights`' Σ|dy|
+falls 1386.88 → 1251.04 px. The paragraphs below those tables move toward the
+cache without any of them crossing the tolerance.
+
+`lineseg_vs_pdf.py --corpus` is byte-identical, 411 of 411 paragraphs and
+8566/8566 characters, as it must be: it never reads this renderer's rows.
+`render_check.py` on `render-check-01` is unchanged at 96 dpi (6 match / 37
+close / 6 differ / 2 unsupported) and 144 dpi (14 / 31 / 4 / 2), 9 of 9 pages
+exact both times.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **The last-row rule has ONE witness.** `kstartup` table 5 is the only
+  corpus table that both overflows its declared height and draws the interior
+  rules that show where the excess went. Table 36's row boundary declares
+  `borderFill` `NONE` and is drawn nowhere, so its 282 is confirmed only on
+  the table total. Four rows, ±8 HWPUNIT, against a proportional rescale that
+  misses by 62 — decisive on this table and untested on any other.
+- **Whether Hancom clips the last row or lets its content spill.** Table 36's
+  row 0 asks for 61960 and the table only has 66505 − 4827 = 61678 for it if
+  row 1 keeps its declared height. Which of the two rows actually gives way
+  is not drawn, so `clip_tracks` taking it off the last row is the table-5
+  rule applied, not a table-36 measurement.
+- **The shortfall arm still has no witness**, on either policy, and is still
+  the proportional distribution that was there before #273.
+- **`repeatHeader` is unmeasurable on this corpus** — `"1"` on all 81 tables,
+  and the one table this render splits carries no header row. It stays in
+  `BLOCK_NOT_HONORED`.
+- **A table the CACHE paged has no fragment oracle.** The finding above is
+  that the file states nothing; it is not a measurement of what Hancom's
+  fragments are. Only the PDF can say, and pairing a PDF fragment to a row
+  range was not attempted here.
+- **`kstartup` 21 vs 22 pages under `cache` is untouched.** The clip changes
+  no page count on either policy, so the whole-table-lineseg knot #258 and
+  #265 named is exactly where it was.
+- **The corpus is still the training set**, and the private report-class
+  holdout was not opened. It is again the population this changes most: a
+  Rigorloom-written document has no cache, so an overflow there is this
+  renderer's own content measurement and the last row now pays for it instead
+  of the table growing.
