@@ -443,7 +443,15 @@ implemented, and re-measured by
 | `vertsize == textheight` | 3214 / 3214 |
 | `baseline == round(0.85 × textheight)` | 3212 exact, all 3214 within 1 HWPUNIT |
 | `vertpos[i] == vertpos[i-1] + vertsize[i-1] + spacing[i-1]` | 219 / 219 continuation lines |
-| PERCENT: `vertsize + spacing == round(textheight × value/100)` | every PERCENT paragraph |
+| PERCENT: `vertsize + spacing == round(textheight × value/100)` | ~~every PERCENT paragraph~~ **2146 / 3214 — this row was wrong** |
+
+The fourth row stood for four slices and it does not hold. Re-measured line
+by line it is exact on 2146 of the 3214 cached lines and off by 1 or 2
+HWPUNIT on the other 1068, which is the residual #247 and #261 both left
+open. The relation that does hold on all 3214 is *The PERCENT leading sits on
+a 4 HWPUNIT grid* at the end of this file: it is the **leading**, not the
+total advance, that Hancom rounds, and it rounds it onto a 4 HWPUNIT grid,
+halves away from zero.
 
 The 0.85 is HWP's baseline convention and is a **measured constant of this
 corpus**, not a number the standard publishes. `textheight` is the maximum
@@ -5095,3 +5103,259 @@ reference — is the only place the change shows.
   was not opened. It is a Rigorloom-written report, so it is exactly the
   population this change moves, and what it is worth there is the operator's
   measurement to make.
+
+## The PERCENT leading sits on a 4 HWPUNIT grid — measured, 2026-09-05
+
+#247 left a residual open on 883 of the corpus' 2370 cached text lines and
+#261 found it again on 10 of 101 empty paragraphs, both times calling it "a
+rounding difference in how the pitch is divided into `vertsize + spacing`, not
+a rule". It is a rule, and it closes on every cached line there is.
+
+`_line_metrics` computed a `PERCENT` line's leading as
+`round(height × value / 100) − height`: round the total advance in whole
+HWPUNIT, then take the height back off. Hancom does not round the advance.
+It rounds the **leading** — and not to a whole HWPUNIT, but to a multiple of
+**4**.
+
+### The rule
+
+    spacing = 4 × round(height × (value − 100) / 400)      halves AWAY from zero
+
+`height` is the line's pitch height, which is what `_line_metrics` already
+computed: the largest declared `hh:charPr@height` on the line, an inline
+object contributing its run's point size rather than its own box. The
+function is `own_render.percent_leading` and the quantum is
+`own_render.LEADING_QUANTUM`; 4 HWPUNIT is 0.04 pt, or 1/1800 inch.
+
+Two facts of the cache say the quantum is on the leading rather than on the
+line:
+
+* **every one of the 3214 cached `hp:lineseg@spacing` in the corpus is a
+  multiple of 4** — 3214 / 3214, no exception;
+* the cached `vertsize` is **not** — 3161 of 3214. The 53 that are not carry
+  an inline object whose box is whatever the object is.
+
+So the advance `vertsize + spacing` is a multiple of 4 only when the height
+happens to be, and quantising it directly is refuted below.
+
+### The instrument
+
+`engine/scripts/spacing_residual_probe.py --corpus [--json]`. It reads every
+cached `hp:lineseg` of the ten converted forms — top-level paragraphs and cell
+paragraphs alike — reconstructs the inputs the authoring engine had (the
+declared character heights on the line, the paragraph's `hh:lineSpacing`) and
+scores a family of candidate formulas against the cached `spacing`: exact
+matches and the residual histogram, per form and in total. It renders
+nothing and exercises no policy, so it cannot perturb what
+`render_scoreboard.py` or `layout_divergence.py` report.
+
+**`render-check-01` is not in `--corpus` and carries nothing to read.** It is
+the one Rigorloom-written package with a Hancom reference render, but
+Rigorloom writes no `hp:lineseg` at all; pass it explicitly and the probe
+reports 0 cached lines. This question cannot be asked of it.
+
+The population, all ten forms: **3214 cached lines, every one `PERCENT`** —
+no corpus paragraph declares `FIXED`, `BETWEEN_LINES` or `AT_LEAST` anywhere.
+2376 of them are text lines, 838 belong to a paragraph with no characters, 80
+carry an inline object and 127 are of mixed declared height. They span **172
+distinct (height, value) pairs**, and the residual is a pure function of that
+pair — every line in a cell has the same residual, whatever form, font or
+paragraph it came from.
+
+### What the corpus says
+
+| candidate | exact | residual (cache − candidate) |
+| --- | ---: | --- |
+| **`q4_leading`** (the rule) | **3214 / 3214** | — |
+| `q4_advance` — quantise the ADVANCE, not the leading | 3209 | −4 ×5 |
+| `q4_leading_half_up` — halves toward +infinity | 3209 | −4 ×5 |
+| `q4_leading_half_even` | 2516 | −4 ×3, +4 ×695 |
+| `q2_leading` — a 2 HWPUNIT grid | 2300 | −2 ×80, +2 ×834 |
+| `q4_leading_trunc` | 2228 | −4 ×5, +4 ×981 |
+| `twips` — computed in 1/1440 in, converted back | 2158 | −3 ×14 … +4 ×4 |
+| `shipped_round_advance` — what `_line_metrics` had | 2146 | −2 ×5, −1 ×75, +1 ×161, +2 ×827 |
+| `gap_half_up` / `gap_floor` / `gap_ceil` / `gap_half_even` / `hundredth_pt` / `advance_half_away` | 2146 | identical to the shipped row |
+| `q8_leading` — an 8 HWPUNIT grid | 1800 | −4 ×620, +4 ×794 |
+
+Two things fall out of that table. **The unit is not where the residual
+lives.** HWPUNIT *is* 1/100 pt, so `hundredth_pt` is the shipped reading under
+another name, and every whole-HWPUNIT rounding — up, down, to even, on the gap
+or on the total — scores exactly the same 2146. Changing the rounding mode
+buys nothing; changing the grid buys everything. And **the grid is 4 and not
+2 or 8**: both neighbours are refuted by hundreds of lines in both directions.
+
+Per form, the shipped reading against the rule:
+
+| form | shipped | rule |
+| --- | ---: | ---: |
+| `admrul` | 32 / 34 | 34 / 34 |
+| `gianmun-1ho` | 66 / 69 | 69 / 69 |
+| `gianmun-2ho` | 69 / 69 | 69 / 69 |
+| `jeongbo` | 78 / 85 | 85 / 85 |
+| `jumin` | 152 / 177 | 177 / 177 |
+| `kstartup` | 808 / 840 | 840 / 840 |
+| `moel-2013` | 217 / 345 | 345 / 345 |
+| `moel-2025` | 179 / 377 | 377 / 377 |
+| `nrf` | 99 / 122 | 122 / 122 |
+| `saeopja` | 446 / 1096 | 1096 / 1096 |
+
+Restricted to the text lines alone the shipped reading misses **883**, which
+is #247's number to the line; restricted to empty paragraphs it misses 185 of
+838, of which #261's ten top-level ones are a part. One rule closes both, and
+that is the evidence they were ever one residual.
+
+### The five lines that pin the tie rule
+
+`q4_advance` and `q4_leading_half_up` are each exact on 3209 of 3214. What
+refutes them is five lines, and all five declare `value < 100`, where the
+leading is negative:
+
+| form | height | value | nominal | cache | rule | both rivals |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gianmun-1ho` | 1500 | 90 | −150 | **−152** | −152 | −148 |
+| `saeopja` | 300 | 50 | −150 | **−152** | −152 | −148 |
+| `saeopja` ×3 | 900 | 90 | −90 | **−92** | −92 | −88 |
+
+A negative half-quantum goes further from zero, not toward +infinity, and the
+rule is therefore odd about 100%: `percent_leading(h, 100 + d)` is exactly
+`−percent_leading(h, 100 − d)`. That symmetry, the grid, the pass-through, the
+quarter- and three-quarter-quantum cases and these ties are what the unit
+tests pin. Nothing in them is a corpus tally; the corpus check asserts an
+empty mismatch list with a non-vacuity floor.
+
+### What changed in the code
+
+`percent_leading` and `LEADING_QUANTUM` sit beside `BASELINE_RATIO`, which is
+the other measured constant of this corpus, and `_line_metrics`' `PERCENT`
+branch is one call. Nothing else moved: `vertsize`, `textheight` and
+`baseline` are derived exactly as before and were already exact on the corpus
+(3214, 3214 and 3212-plus-2-within-1). `FIXED` and `BETWEEN_LINES` are **not**
+put through the grid — no corpus paragraph declares either, so there is
+nothing to fit them to and guessing would be worse than leaving them.
+
+The empty-paragraph branch #261 grew calls `_line_metrics(para, 0, 0)`, so it
+inherits the rule for free: its `spacing` is now exact on all 101 top-level
+empty paragraphs where it was exact on 91.
+
+### After
+
+**The cache path did not move at all.** `render_scoreboard.py --corpus --dpi
+144 --layout-policy cache` is byte-identical before and after on all ten
+per-form JSONs — means `text_line_iou` 0.645275, `ssim` 0.831060,
+`ssim_inked` 0.276567, `pair_rate` 0.836393, and page counts `admrul` 1/1,
+`gianmun-1ho` 1/1, `gianmun-2ho` 1/1, `jeongbo` 1/1, `jumin` 3/3, `kstartup`
+21/22, `moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6. That is
+by construction: under `cache` the seats come off the file.
+
+**Under `computed` the raster barely notices, and one channel gets worse.**
+
+| channel | before | after | delta |
+| --- | ---: | ---: | ---: |
+| `text_line_iou_mean` | 0.633897 | 0.633875 | −0.000022 |
+| `ssim_mean` | 0.824293 | 0.824261 | −0.000032 |
+| `ssim_inked_mean` | 0.277430 | 0.277281 | −0.000149 |
+| `text_line_pair_rate_mean` | 0.847831 | 0.847831 | 0 |
+
+Five forms move and five do not. `admrul` +0.000013, `kstartup` +0.000108 and
+`moel-2013` +0.000080 on `text_line_iou`; `moel-2025` −0.000412 and `saeopja`
+−0.000003. `ssim_inked` is carried by `kstartup` alone, 0.431328 → 0.429073,
+against `moel-2025` +0.000878. Page counts are unchanged on every form under
+either policy and every verdict is unchanged, `kstartup`'s standing failure
+included.
+
+This is the honest shape of it: the residual is 0.02–0.08 px a line, so no
+raster channel can price it, and where it does show up at 144 dpi it shows up
+as noise in both directions. **The evidence for the change is in the HWPUNIT
+domain, and there it is not close.**
+
+`layout_divergence.py --corpus`, paragraphs agree / A / B / C:
+
+| form | before | after |
+| --- | --- | --- |
+| `admrul` | 18 / 0 / 1 / 0 | **19 / 0 / 0 / 0** |
+| `gianmun-1ho` | 27 / 1 / 0 / 0 | unchanged |
+| `gianmun-2ho` | 16 / 0 / 0 / 0 | unchanged |
+| `jeongbo` | 50 / 5 / 0 / 0 | unchanged |
+| `jumin` | 110 / 17 / 2 / 0 | 111 / 17 / 1 / 0 |
+| `kstartup` | 43 / 31 / 98 / 233 | **113 / 31 / 28 / 233** |
+| `moel-2013` | 127 / 20 / 112 / 0 | **215 / 20 / 22 / 0** |
+| `moel-2025` | 36 / 43 / 225 / 0 | **91 / 43 / 170 / 0** |
+| `nrf` | 55 / 2 / 29 / 0 | unchanged |
+| `saeopja` | 673 / 16 / 71 / 0 | 674 / 16 / 70 / 0 |
+| **total** | 1155 / 135 / 538 / 233 | **1371 / 135 / 320 / 233** |
+
+**Class B falls 538 → 320** and agreement rises 1155 → 1371. Class A is
+untouched at 135 and class C at 233, which is what a leading change should do
+— it moves seats, not breaks, and `--lineseg-agreement` confirms it: all ten
+per-form JSONs are byte-identical (that channel compares `horzpos` and
+`horzsize`, so it could not see this either way).
+
+`admrul` is the whole finding in miniature. Its only disagreement between the
+two policies WAS this residual — one class-B line at −0.02 px — and computed
+layout now reproduces its cached layout exactly. That cost the divergence
+tests their fixture: `test_layout_divergence.py`'s `SMALL_FORM` moves from
+`admrul` to `gianmun-byeolji-1ho`, which is smaller (one page) and still
+diverges for a reason this renderer has not closed.
+
+The seat pass, `seats` (seated under both) / `differ` / `pages with a
+divergence`, then the first divergence on the first page that has one:
+
+| form | before | after |
+| --- | --- | --- |
+| `kstartup` | 165 / 139 / 20 — p1 ¶1, **−2**, `d_prev_advance_hwp` | 165 / **119** / **18** — p4 ¶160, −69632, `page_move` |
+| `moel-2013` | 154 / 109 / 4 — p1 ¶3, **+2**, `d_prev_advance_hwp` | 154 / **24** / **2** — p4 ¶119, +1832, `d_prev_advance_hwp` |
+| `moel-2025` | 187 / 141 / 6 — p1 ¶2, **−1**, `d_prev_advance_hwp` | 187 / **77** / 6 — p1 ¶7, +1496, `d_prev_advance_hwp` |
+| `nrf` | 53 / 7 / 2 — p1 ¶36, −71630, `page_move` | unchanged |
+| the other six | 15 / 0 / 0, 3 / 0 / 0, 3 / 0 / 0, 1 / 0 / 0, 3 / 0 / 0, 6 / 0 / 0 | unchanged |
+
+**The ±1–3 HWPUNIT first-seat divergences #255 recorded on `kstartup`,
+`moel-2013` and `moel-2025` are gone.** All three documents now agree with
+their cache until something much larger happens: a 1832 and a 1496 HWPUNIT
+advance difference and a page move of 69632. Those are different mechanisms
+and none of them is this one. `nrf` is untouched, which is the right answer —
+its first divergence was already a page move and its +102.40 px block was
+never this residual.
+
+`render_check.py` on `render-check-01` is byte-identical at 96 dpi (match 6,
+close 37, differs 6, unsupported 2) and 144 dpi (match 14, close 31, differs
+4, unsupported 2), 9 of 9 pages exact both times. It has no cached lineseg
+and no `PERCENT` paragraph this changes the drawn height of.
+
+### Not proven
+
+- **No reference render says the grid is 4.** The rule is fitted to the
+  authoring engine's own cache, which is Hancom's arithmetic but not a drawn
+  page. `render-check-01` is the only Rigorloom package with a Hancom
+  reference and it carries no lineseg at all, so its byte-identical verdicts
+  neither confirm nor refute this. Path C is the measurement that would close
+  it and it was not run.
+- **Why 4 HWPUNIT is not explained.** 0.04 pt, 1/1800 inch. It is not a
+  standard typographic unit, no OWPML text mentions it, and nothing here says
+  whether it is a fixed-point representation inside the layout engine, a
+  device grid, or something else. It is a measured constant of this corpus in
+  exactly the sense `BASELINE_RATIO` is, and it is declared as one.
+- **The corpus is the training set.** 3214 lines and 172 distinct
+  (height, value) pairs against one free parameter and a tie rule is not a
+  lookup table, and the tie rule is pinned by five lines with the opposite
+  sign from all the others — but it was scored on the same lines it was
+  fitted to. No holdout was opened.
+- **`FIXED`, `BETWEEN_LINES` and `AT_LEAST` have no witness anywhere.** All
+  3214 corpus lines are `PERCENT`. Whether Hancom puts those types on the
+  same grid is unmeasured, and they are deliberately left off it.
+- **Every corpus pitch height is a whole number of points.** All 3214 are
+  multiples of 100 HWPUNIT, so no cached line exercises a fractional-point
+  height. `percent_leading` is defined for any integer height and the
+  arithmetic is integer throughout, but the corpus could not have said what
+  Hancom does there.
+- **The raster gain is nil and `ssim_inked` under computed went down.**
+  −0.000149 in the mean, carried by `kstartup`'s −0.002255. A 0.02 px per
+  line correction cannot show up in SSIM at 144 dpi except as noise, and it
+  did. Anyone reading this change as a pixel improvement is reading it wrong.
+- **Class B is 320, not 0.** `moel-2025` keeps 170 and `nrf` all 29. #247
+  named `nrf`'s +102.40 px as a block measured short and that is still not
+  attributed; `moel-2025`'s class-A re-break at paragraph 6 is still upstream
+  of most of its remainder.
+- **The holdout is not in these numbers.** The private report-class document
+  was not opened. It is a Rigorloom-written report whose every paragraph
+  takes the computed branch, so it is the population this change actually
+  moves, and what it is worth there is the operator's measurement to make.
