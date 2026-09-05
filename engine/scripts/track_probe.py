@@ -74,6 +74,14 @@ distance between the two boundaries it sits between:
 ``gridlast``
     the same, but a later row overwrites an earlier one.  The control that
     says whether "first" is doing any work.
+``gridmax``
+    the same grid with no ordering rule at all: a boundary sits at the
+    LARGEST x any cell reaching it produces from its own declared width.
+    A cell's ``cellSz@width`` is read as a lower bound on the distance
+    between its two boundaries rather than as a statement of it, so a row
+    whose widths do not add up to the table under-claims and is fitted to
+    the cells that claim more.  Solved to a fixpoint, because a claim
+    depends on the boundary it starts from.
 
 ``gridfirst`` is what the corpus picks, and the datum that picks it is
 ``saeopja``'s 47996-wide table.  Rows 8/9 there total 47868 and the 128
@@ -120,6 +128,8 @@ Usage::
     python engine/scripts/track_probe.py --corpus --heights
     python engine/scripts/track_probe.py --corpus --rows \
         --models stretch,gridfirst
+    python engine/scripts/track_probe.py --corpus --residuals \
+        --models gridfirst,gridmax
     python engine/scripts/track_probe.py FORM.hwpx --rows
 
 This is measurement.  It changes nothing in ``own_render.py``.
@@ -150,12 +160,12 @@ from cli_io import utf8_stdio  # noqa: E402
 MODELS = (
     "global", "literal", "addr", "stretch",
     "prop4", "prop_round", "prop_widest", "quanta", "colspan",
-    "firstrow", "gridfirst", "gridlast",
+    "firstrow", "gridfirst", "gridlast", "gridmax",
 )
 
 #: Models built by walking a shared column grid rather than by handing one
 #: row's shortfall to one of that row's own cells.
-GRID_MODELS = ("firstrow", "gridfirst", "gridlast")
+GRID_MODELS = ("firstrow", "gridfirst", "gridlast", "gridmax")
 
 #: Models that tile a row from its own declared widths and then hand the
 #: shortfall out among that row's own cells, ``{name: allocation mode}``.
@@ -437,7 +447,18 @@ def row_alloc_layout(table, mode):
     return out
 
 
-def grid_layout(table, rows_used=None, last_wins=False):
+def grid_boundaries_first(table, rows_used=None, last_wins=False):
+    """``{column: x}`` -- the boundaries :func:`grid_layout` walks out.
+
+    Reporting only; ``grid_layout`` builds the same dictionary and returns
+    boxes instead of it.
+    """
+    xs = {}
+    grid_layout(table, rows_used=rows_used, last_wins=last_wins, out_xs=xs)
+    return xs
+
+
+def grid_layout(table, rows_used=None, last_wins=False, out_xs=None):
     """``{id(tc): (x, width)}`` -- one column grid for the table, built by
     walking the rows in document order.
 
@@ -486,7 +507,110 @@ def grid_layout(table, rows_used=None, last_wins=False):
             for rr in range(r + 1, r + cell["rspan"]):
                 held[(rr, c)] = (cell["width"], cell["cspan"])
             pos, col = right, right_col
+    if out_xs is not None:
+        out_xs.update(xs)
     return out
+
+
+def grid_boundaries_max(table, clamp=True):
+    """``{column: x}`` -- the envelope of every cell's claim on the grid.
+
+    ``gridfirst`` resolves two cells reaching the same boundary by document
+    order.  This resolves it by size: a boundary sits at the LARGEST x any
+    cell reaching it produces, which reads ``cellSz@width`` as a LOWER BOUND
+    on the distance between a cell's two boundaries rather than as a
+    statement of it.  A row whose widths sum short of ``hp:sz@width``
+    under-claims every boundary it writes, and the rows that claim more are
+    what the grid takes.
+
+    Solved to a fixpoint because a claim depends on the boundary it starts
+    from.  The iteration only ever raises a boundary and ``clamp`` caps every
+    claim at ``hp:sz@width``, so it is monotone and bounded and terminates;
+    the loop bound is belt and braces.  ``clamp=False`` is the control for a
+    row that overflows its table -- on this corpus the two agree, because no
+    row does.
+    """
+    ncol = table["col_cnt"]
+    declared = table["declared_width"]
+    fixed = {0: 0}
+    if declared and ncol:
+        fixed[ncol] = declared
+    xs = dict(fixed)
+    for _ in range(len(table["rows"]) + 4):
+        changed = False
+        for row in table["rows"]:
+            pos = 0
+            for cell in row:
+                col = cell["col"]
+                if col is None:
+                    continue
+                left = xs.get(col, pos)
+                right_col = col + cell["cspan"]
+                claim = left + cell["width"]
+                if clamp and ncol in xs:
+                    claim = min(claim, xs[ncol])
+                if right_col not in fixed and claim > xs.get(right_col, -1):
+                    xs[right_col] = claim
+                    changed = True
+                pos = xs.get(right_col, claim)
+        if not changed:
+            break
+    return xs
+
+
+def place_on_grid(table, xs):
+    """``{id(tc): (x, width)}`` -- read every cell back off a finished grid.
+
+    A boundary no cell ever claimed is not in ``xs``; the walk falls back to
+    the running cursor there, which is the same thing ``grid_layout`` does
+    and keeps a table whose grid has a gap from collapsing.
+    """
+    out, held = {}, {}
+    for r, row in enumerate(table["rows"]):
+        pos, col = 0, 0
+        for cell in row:
+            while (r, col) in held:
+                w, cspan = held[(r, col)]
+                col += cspan
+                pos = xs.get(col, pos + w)
+            c = cell["col"] if cell["col"] is not None else col
+            left = xs.get(c, pos)
+            right_col = c + cell["cspan"]
+            right = xs.get(right_col, left + cell["width"])
+            out[id(cell["tc"])] = (left, right - left)
+            for rr in range(r + 1, r + cell["rspan"]):
+                held[(rr, c)] = (cell["width"], cell["cspan"])
+            pos, col = right, right_col
+    return out
+
+
+def grid_max_layout(table, clamp=True):
+    """``gridmax``: :func:`place_on_grid` on :func:`grid_boundaries_max`."""
+    return place_on_grid(table, grid_boundaries_max(table, clamp=clamp))
+
+
+def grid_sources(table, xs):
+    """``{column: "rRcC+S"}`` -- which cell's claim a boundary sits on.
+
+    Reporting only.  A boundary is attributed to the first cell, in document
+    order, whose left boundary plus its declared width lands on it; the two
+    ends are labelled by where they come from instead.  A boundary no cell
+    accounts for is labelled ``?``, which is what a grid the file does not
+    determine looks like.
+    """
+    ncol = table["col_cnt"]
+    src = {0: "x0", ncol: "sz@width"}
+    for r, row in enumerate(table["rows"]):
+        for cell in row:
+            col = cell["col"]
+            if col is None:
+                continue
+            right_col = col + cell["cspan"]
+            if right_col in src or right_col not in xs or col not in xs:
+                continue
+            if xs[col] + cell["width"] == xs[right_col]:
+                src[right_col] = "r%dc%d+%d" % (r, col, cell["cspan"])
+    return {col: src.get(col, "?") for col in xs}
 
 
 def row_height_shape(tables):
@@ -554,6 +678,53 @@ def row_height_shape(tables):
 # Scoring
 # --------------------------------------------------------------------------
 
+def _on_grid(residual):
+    """Has a model reproduced the column?  ``[0, 4)`` is the cache's own
+    quantiser (#268: 3164 of 3177 cached ``horzsize`` are multiples of 4);
+    ``None`` is a cell whose lines disagree under this model, and is not."""
+    return residual is not None and 0 <= residual < 4
+
+
+def model_residual(renderer, record, model_box):
+    """One cell's residual under a model that gives it ``model_box``.
+
+    #270 and #272 scored a model by SHIFTING the rendered residual by
+    ``model_box - rendered_box``, on the reading that the cell inset and the
+    paragraph's own margins enter our line box and the cache's identically
+    and cancel.  They do -- but #275 put a 1440 HWPUNIT floor under the text
+    column, and a floor is not linear: on a cell whose column is already
+    saturated, a model that gives it a different BOX gives it the same
+    COLUMN, and the shift reports a difference that the renderer would not
+    make.  So the residual is recomputed rather than shifted: the model's box
+    goes through ``cell_text_width`` and the cell's cached lines are measured
+    against ``_line_box`` in that column, which is exactly what the renderer
+    would do if the model shipped.
+
+    On the corpus the two agree on 1598 of 1599 cells; the one they differ on
+    is ``saeopja`` ``r3c6``, the cell #275 recorded as a regression that was
+    the baseline moving rather than a model failing.  It is not a regression
+    under this arithmetic, because it never was one.
+
+    ``None`` when the cell's lines disagree, matching ``delta_line``.
+    """
+    column = own_render.cell_text_width(model_box, record["cell"]["margin"])
+    deltas = []
+    for para in record["cell"]["paras"]:
+        for i, seg in enumerate(para.linesegs):
+            horzsize = seg.get("horzsize")
+            if horzsize is None:
+                continue
+            try:
+                horzsize = int(horzsize)
+            except ValueError:
+                continue
+            deltas.append(renderer._line_box(para, i, column)[1] - horzsize)
+    if not deltas:
+        return None
+    lo, hi = min(deltas), max(deltas)
+    return lo if abs(lo - hi) <= TOL else None
+
+
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
                repo_root=None, pdf_path=None, keep_renderer=False):
     """Score the three column models on one form.
@@ -587,7 +758,18 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         placed["firstrow"] = grid_layout(table, rows_used={0})
         placed["gridfirst"] = grid_layout(table)
         placed["gridlast"] = grid_layout(table, last_wins=True)
+        placed["gridmax"] = grid_max_layout(table)
         table["placed"] = placed
+        # Reporting only: which cell's claim each grid boundary sits on, so
+        # ``--residuals`` can name the boundary that placed an off-grid cell
+        # rather than leaving it to be worked out by hand.
+        table["grid_xs"] = {
+            "gridfirst": grid_boundaries_first(table),
+            "gridmax": grid_boundaries_max(table),
+        }
+        table["grid_src"] = {name: grid_sources(table, xs)
+                             for name, xs in table["grid_xs"].items()}
+        table["index"] = len(tables)
         tables[id(tbl)] = table
 
     cells = []
@@ -603,10 +785,6 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         xs = table["xs"]
         declared = base["cell_width"]
 
-        # The rendered box is the global model's box by construction; every
-        # other model's per-line residual is the rendered one shifted by the
-        # difference in box width, because the cell inset and the
-        # paragraph's own margins enter both sides identically.
         rendered_box = record["box_hwp"]
         gx = xs[min(col, len(xs) - 1)] if xs else 0
         lx = table["literal_x"].get(id(tc), 0)
@@ -617,14 +795,12 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
             x0, width = placed.get(id(tc), (lx, declared))
             model_box[name] = width
             model_x[name] = x0
-        delta = base["delta_line"]
         base.update({
             "model_box": model_box,
             "model_x": model_x,
-            "model_delta": {
-                name: (None if delta is None
-                       else delta + (model_box[name] - rendered_box))
-                for name in MODELS},
+            "model_delta": {name: model_residual(renderer, record,
+                                                 model_box[name])
+                            for name in MODELS},
             "rendered_box": rendered_box,
             "rendered_x0": box.get("x0"),
             "page": box.get("page"),
@@ -634,6 +810,10 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
             "row_total": (table["row_totals"][base["row"]]
                           if base["row"] < len(table["row_totals"]) else None),
             "declared_total": table["declared_width"],
+            "boundaries": {
+                name: [src.get(col, "?"), src.get(col + cspan, "?")]
+                for name, src in table["grid_src"].items()},
+            "table_index": table["index"],
         })
         base.pop("cached_horzsize", None)
         cells.append(base)
@@ -685,30 +865,33 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
                  and len({c["model_box"][n] for n in MODELS}) > 1]
     report["contested"] = {
         "cells": len(contested),
-        "grid": {n: sum(1 for c in contested
-                        if 0 <= c["model_delta"][n] < 4) for n in MODELS},
+        "grid": {n: sum(1 for c in contested if _on_grid(c["model_delta"][n]))
+                 for n in MODELS},
     }
     # Two baselines, because the question this run asks is not "beat the
     # global solve" but "beat ``stretch``, which already does".
     report["regressions"] = {
         n: sum(1 for c in cells
                if c["delta_line"] is not None
-               and 0 <= c["model_delta"]["global"] < 4
-               and not 0 <= c["model_delta"][n] < 4)
+               and _on_grid(c["model_delta"]["global"])
+               and not _on_grid(c["model_delta"][n]))
         for n in MODELS}
     report["regressions_vs_stretch"] = {
         n: sum(1 for c in cells
                if c["delta_line"] is not None
-               and 0 <= c["model_delta"]["stretch"] < 4
-               and not 0 <= c["model_delta"][n] < 4)
+               and _on_grid(c["model_delta"]["stretch"])
+               and not _on_grid(c["model_delta"][n]))
         for n in MODELS}
     report["off_grid"] = {
-        n: [{"row": c["row"], "col": c["col"], "span": c["col_span"],
-             "declared": c["cell_width"], "residual": c["model_delta"][n],
+        n: [{"table": c["table_index"], "row": c["row"], "col": c["col"],
+             "span": c["col_span"], "declared": c["cell_width"],
+             "box": c["model_box"][n], "residual": c["model_delta"][n],
+             "horzsize": c["horzsize_max"], "paragraphs": c["paragraphs"],
+             "boundaries": c["boundaries"].get(n),
              "row_total": c["row_total"], "table_width": c["declared_total"]}
             for c in cells
             if c["delta_line"] is not None
-            and not 0 <= c["model_delta"][n] < 4]
+            and not _on_grid(c["model_delta"][n])]
         for n in MODELS}
     report["rows"] = row_height_shape(tables)
     report["horzpos"] = horzpos_oracle(renderer, cells)
@@ -944,6 +1127,35 @@ def corpus_block(rows, models=MODELS):
     return "\n".join(out)
 
 
+def residuals_block(rows, models=MODELS):
+    """Every cell a model leaves off the grid, with what placed it.
+
+    This is the list a run has to account for one by one before a model can
+    ship: the cell, its declared ``cellSz@width`` and ``colSpan``, the box
+    the model gave it, the two grid boundaries it sits between and which
+    cell's claim each of those sits on, the residual against the cache's
+    quantised ``horzsize``, and the row's own declared total beside the
+    table's ``hp:sz@width`` -- because a row that does not add up is the only
+    place a column model can disagree with itself.
+    """
+    out = []
+    for name in models:
+        cells = [(stem, entry) for stem, report in rows
+                 for entry in report["off_grid"][name]]
+        out.append(f"{name}: {len(cells)} cells off the 4-HWPUNIT grid")
+        for stem, e in cells:
+            bounds = e.get("boundaries")
+            where = (f" [{bounds[0]}..{bounds[1]}]" if bounds else "")
+            out.append(
+                f"  {stem:<12} t{e['table']} r{e['row']}c{e['col']}"
+                f"+{e['span']}{where} declared {e['declared']} "
+                f"box {e['box']} residual {e['residual']:+g} "
+                f"horzsize {e['horzsize']} "
+                f"row total {e['row_total']} of {e['table_width']} "
+                f"paras {e['paragraphs']}")
+    return "\n".join(out)
+
+
 def heights_block(rows):
     """The row-height histogram, summed over the corpus."""
     keys = ("tables", "rows", "unit_rows_agreeing", "rows_without_unit_cell",
@@ -979,8 +1191,8 @@ def build_parser():
         prog="track_probe.py",
         description="Score every column model -- the global track solve, a "
                     "literal per-row tiling, six ways of handing a row's "
-                    "shortfall to its own cells, and three first-writer-wins "
-                    "column grids -- against the cache's horzsize and the "
+                    "shortfall to its own cells, and four shared column "
+                    "grids -- against the cache's horzsize and the "
                     "reference PDF's own table rules. Measures; changes "
                     "nothing.")
     parser.add_argument("input", nargs="?", help="input .hwpx")
@@ -996,6 +1208,10 @@ def build_parser():
                              "cell of every disagreeing row: what it "
                              "declares, what the cache gave it, and each "
                              "model's residual")
+    parser.add_argument("--residuals", action="store_true",
+                        help="list every cell each model leaves off the "
+                             "4-HWPUNIT grid, with the boundaries that "
+                             "placed it and the row's declared total")
     parser.add_argument("--heights", action="store_true",
                         help="also report the shape of the row-height "
                              "question: hp:tr has no height, so a row's "
@@ -1038,6 +1254,9 @@ def main(argv=None):
         if not quiet:
             print()
             print(corpus_block(rows, models))
+            if args.residuals:
+                print()
+                print(residuals_block(rows, models))
             if args.heights:
                 print()
                 print(heights_block(rows))
@@ -1064,6 +1283,8 @@ def main(argv=None):
         if args.rows:
             print(rows_block(report, report["cells"], table_id=True,
                              models=models))
+        if args.residuals:
+            print(residuals_block([(hwpx.stem, report)], models))
         if args.heights:
             print(heights_block([(hwpx.stem, report)]))
         if "rules" in report:
