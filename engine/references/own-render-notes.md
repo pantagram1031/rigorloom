@@ -8582,3 +8582,233 @@ cached breaks 48 / 113 installed and 12 / 47 other.
   regression on that line.
 - **The corpus is the training set, again.** Every number here was read off
   the same ten forms and the same machine's installed fonts.
+
+## The HFT advance table, measured off Hancom's own export — 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#288 identified the anonymous Type 3 fonts as HWP's own HFT faces, showed
+that `hh:font@type="HFT"` predicts 8566 of 8566 which characters Hancom drew
+from one, and stopped: no installed face reproduces their advances, no fixed
+fraction of the em per class does either (93.0% against a 99% gate), and the
+only thing left that fits is a table per (face, code point). This slice
+builds that table, prices it, and ships it.
+
+**It works, and the two carriers close as breaks.** `moel-2013` ¶118 and
+¶141 — the `text_rebreak:width` carriers #267 named, #281 could not close and
+#288 made worse — now break exactly where the cache broke them, the
+`text_rebreak:width` root falls **165 → 100**, the corpus's proven
+over-measurements fall **49 → 30**, and the installed-face control does not
+move: 48 / 113 cached break agreements before and after.
+
+### What was measured, and what it is legally
+
+`engine/references/fonts/hft-widths.measured.json`, built by
+`engine/scripts/hft_width_table.py --build`.
+
+A Type 3 font declares its advances in `/Widths`, in the font's own grid, and
+`Widths[code] × FontMatrix[0]` is that advance in em. Those numbers are the
+**output of Hancom Office's own PDF exporter on public government forms** —
+the same black-box output every other measurement in this repo reads. The
+emitted file declares in its own header that it is MEASURED, how, from what,
+when, and that it carries **advance widths only**: no glyph outline, no
+`CharProcs` stream, no font program, no byte of any Hancom font file. Nothing
+in this repo opens, reads or decompiles an HFT file, and nothing needs to —
+the widths are in the PDF.
+
+| coverage | |
+| --- | ---: |
+| faces | 5 |
+| (face, code point) pairs | 226 |
+| characters observed | 2301 |
+| code points carrying more than one width | **0** |
+| Type 3 code points no paired run used | 494 |
+
+| declared face | code points | observations | forms |
+| --- | ---: | ---: | ---: |
+| 한양중고딕 | 160 | 978 | 3 |
+| HCI Poppy | 22 | 1183 | 4 |
+| 고딕 | 38 | 51 | 1 |
+| 한양신명조 | 5 | 87 | 2 |
+| 명조 | 1 | 2 | 1 |
+
+The 494 unattributed code points are #288's limit, unchanged:
+`lineseg_vs_pdf` pairs top-level paragraphs only, so every Type 3 glyph
+inside a table cell belongs to a font no paired run reached and cannot be
+filed under a face at all.
+
+### The `Widths` are the advances, checked against the pen
+
+`Widths` is what the export SAYS; the anchored comparison is how far Hancom
+moved the pen between two aligned glyph origins. On 206 singleton segments
+of unstretched lines with no `hh:spacing`, the two agree to a median
+**0.0021 em**, 185 of 206 within 0.01 and all 206 within 0.02:
+
+| class | n | median abs |
+| --- | ---: | ---: |
+| digit | 118 | 0.0021 em |
+| hangul | 73 | 0.0003 em |
+| punct | 14 | 0.0014 em |
+| fw_punct | 1 | 0.0034 em |
+
+Those three filters are the finding, not bookkeeping. Read across ALL lines
+the same check says 0.0296 em on Hangul and 0.18 em at worst, because a
+JUSTIFY or DISTRIBUTE line's pen distances are its alignment and not its
+advances. Dividing by our declared cell instead of by the size the PDF sets
+the font in adds another 0.003 em of the same kind of error.
+
+### The face a width belongs to is the METRIC slot's, not the drawn slot's
+
+The one correction this slice had to make to #288. `pdf_face_probe`'s
+attribution files a character's declared face under `script_slot`'s slot;
+a table is looked up by the slot the character is METERED off, and #288
+itself measured that the two disagree on ASCII punctuation.
+
+On the carriers both slots are HFT and they name **different faces**:
+`hh:charPr` 8 names 한양신명조 for `symbol` and **HCI Poppy for `latin`**.
+Built the first way, `(` at 0.3320 was filed under 한양신명조 and the
+renderer, asking the `latin` slot, looked for it under HCI Poppy and found
+nothing — the table was complete and fired on none of ¶141. Rebuilt on
+`hwp_metric_slot`, the same 226 pairs land under the names the renderer
+asks for, ¶141's coverage goes 0 / 17 → 39 / 39, and the count of code
+points carrying two conflicting widths stays 0.
+
+### What ships
+
+`OwnRenderer._advance_hwp` is now the seam #283 and #286 named, and
+`_hft_advance_hwp` is the only rule stated at it. Per character, gated on
+`hh:font@type="HFT"` for `hwp_metric_slot`'s slot; a chunk with no
+HFT-declared character in it, or one the table covers nothing of, returns
+`None` and goes back to the face metric intact, kern table included. Three
+fallbacks for a code point the table does not carry: a full-width cell takes
+`HftWidthTable.full_width_em` (the declared cell, unless that face's own
+measured syllables said otherwise — 고딕 and 한양중고딕 both read exactly
+1.0000 em, over 41 and 801 observations, one distinct value each), a
+half-width cell keeps `SPACE_CELL_FRACTION`, anything else keeps the face
+metric it had. A checkout with no table file renders exactly as it did
+before the file existed, and there is a test that says so.
+
+### Three rules, priced
+
+`hft_width_table.py --score`, which installs each combination by rebinding
+`own_render.OwnRenderer` and `advance_probe.BreakRecordingRenderer` so the
+break test is the REAL breaker on real column widths. `cell` is #283's
+full-width rule for substituted faces, implemented in the probe because
+pricing it is all this slice may do with another slice's proposal.
+
+| variant | exact widths, installed | exact, substituted | installed ¶ breaks | other ¶ breaks | proven over-measurements |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current | 23 / 103 | 2 / 308 | 48 / 113 | 12 / 47 | 49 / 2272 |
+| **table** | **24 / 103** | 0 / 308 | **48 / 113** | **21 / 47** | **30 / 2272** |
+| cell | 23 / 103 | 0 / 308 | 48 / 113 | 2 / 47 | 92 / 2272 |
+| table + cell | 24 / 103 | **7 / 308** | 48 / 113 | 19 / 47 | 33 / 2272 |
+
+| variant | installed median | med abs | substituted median | med abs |
+| --- | ---: | ---: | ---: | ---: |
+| current | +8.72 | 10.56 | −120.33 | 256.69 |
+| table | +5.72 | 8.30 | −381.90 | 381.90 |
+| cell | +8.72 | 10.56 | +303.59 | 303.59 |
+| table + cell | +5.72 | 8.30 | **+24.83** | **25.62** |
+
+And the carriers, ours − Hancom in HWPUNIT:
+
+| line | current | table | cell | table + cell |
+| --- | ---: | ---: | ---: | ---: |
+| ¶118 line 0 | +1254.9 | −1850.2 | +2977.1 | **−128.0** |
+| ¶118 line 1 | +1.6 | −1659.2 | +1683.7 | **+22.9** |
+| ¶141 line 0 | +1147.9 | −1068.4 | +2301.7 | **+85.4** |
+
+**#288's cancellation is confirmed from both sides.** Only `table + cell`
+closes the carriers' WIDTHS, to within 128 HWPUNIT of Hancom on lines that
+were 1148 and 1255 out. But the break test, which is the gate, prefers
+`table` alone — 21 of 47 against 19 — and the widths `table` leaves wrong on
+substituted lines are the 휴먼명조 stand-in's error, uncancelled and now
+visible, which is #283's business and not this slice's to ship. So `table`
+ships alone, and the row above says what the merged tree will be worth when
+#283's rule lands beside it.
+
+### The corpus, before and after
+
+`table` alone, everything else unchanged. The baseline was re-measured on
+this branch by moving the table file aside, which reproduced #288's numbers
+to the digit.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms:
+
+| channel | `cache` before | after | `computed` before | after |
+| --- | ---: | ---: | ---: | ---: |
+| `text_line_iou_mean` | 0.737467 | 0.736589 | 0.665054 | **0.684242** |
+| `ssim_mean` | 0.860650 | **0.861944** | 0.840196 | **0.844732** |
+| `ssim_inked_mean` | 0.388099 | **0.393719** | 0.351454 | **0.358878** |
+| `text_line_pair_rate_mean` | 0.850991 | 0.850991 | 0.847426 | 0.846045 |
+
+Page counts 10 of 10 exact under both policies, before and after: `admrul`
+1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1, `jeongbo` 1/1, `jumin` 3/3,
+`kstartup` 22/22, `moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6.
+The `computed` policy is the channel that grades the breaker and it moves
+most: `text_line_iou_mean` +0.0192. `cache` gains on both SSIM channels and
+loses 0.0009 of line IOU, which is the cached-box render drawing the same
+lines with slightly different intra-line pen positions.
+
+`lineseg_vs_pdf.py --corpus`: **411 / 411** comparable paragraphs equal,
+8566 / 8566 characters in agreeing lines, before and after.
+
+`layout_divergence.py --corpus` classes A / B / C / D: 1635 / 111 / 279 / 28
+→ **1713 / 98 / 214 / 28**. `class_b_probe.py --corpus` roots:
+
+| root | before | after |
+| --- | ---: | ---: |
+| `text_rebreak:width` | 165 | **100** |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `cell_valign` | 15 | 15 |
+| `forced_break` | 7 | 7 |
+
+Per form the rebreak root goes `jumin` 1 → 1, `moel-2013` **22 → 0**,
+`moel-2025` 142 → 99. Every other root is untouched, which is the control:
+this rule can only move a line's width.
+
+`advance_probe.py --corpus --punct`: total over-measure on installed
+punctuation **+15013.0 → +135.8 HWPUNIT** over the same 545 advances.
+Installed lines' per-line delta median +8.72 → +5.72 and median abs
+10.56 → 8.30, 23 → 24 of 103 exact within 2 HWPUNIT; substituted lines
+−120.33 → −381.90 (the uncancelled 휴먼명조 term). Cached lines proven too
+wide 49 → 30 of 2272. Cached breaks reproduced 48 / 113 installed
+(unchanged) and 12 → **21** of 47 other, `moel-2013` 4 → 9 of 11 and
+`moel-2025` 6 → 10 of 30.
+
+`render_check.py` on `render-check-01` is **unchanged**: 6 · 37 · 6 · 2 at
+96 dpi and 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact both times. It declares
+**21 TTF faces and no HFT face at all**, so it is a pure control here and its
+not moving is what a correctly gated rule has to do.
+
+### Not proven
+
+- **226 (face, code point) pairs is an inventory, not a metric.** It says
+  nothing about a code point none of these ten forms uses, and the renderer
+  falls back to the wrong face for those exactly as before. The population it
+  does cover is the one that carried the corpus's remaining rebreaks.
+- **Five of the thirteen HFT faces the corpus declares.** 필기, 산세리프,
+  한양견고딕, HCI Hollyhock, 신명 신명조, 신명 신문명조, 신명 중고딕 and
+  신명 디나루 have no attributed code point at all — every character they
+  draw is inside a table cell, where the pairing does not reach.
+- **The metric-slot attribution is measured on ASCII punctuation only.**
+  #288's 22-character slot measurement is what says `latin` is the slot; this
+  slice extends it from "which slot predicts HFT-ness" to "which face's table
+  the width belongs in", and the extension is consistent, not separately
+  measured. Where both slots name the same face — everywhere in this corpus
+  but the carriers and those 22 — nothing can tell them apart.
+- **The verification is 206 segments.** Every other anchored reading of these
+  code points is on a stretched line and was excluded for cause, so the check
+  that the declared `Widths` are the advances rests on the unstretched
+  minority.
+- **`table + cell` is the better tree and is not the tree.** ¶118 line 1
+  agreed to +1.6 HWPUNIT before this slice by accident and is −1659 after it;
+  it comes back to +22.9 the moment #283's rule lands. Anyone measuring the
+  substituted per-line widths between now and then will see them worse.
+- **`HFT` is still read off `hh:font@type` and trusted**, and a machine WITH
+  the HFT faces installed might export them as TrueType subsets and move
+  every number here. #288's caveat, unchanged.
+- **The corpus is the training set, and now it is also the table.** The
+  widths were read off the same ten forms every score above is computed on.
+  A form outside the corpus gets the coverage it gets.
