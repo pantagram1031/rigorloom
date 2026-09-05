@@ -26,6 +26,7 @@ $SidecarDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = Split-Path -Parent $SidecarDir
 $RepoRoot   = Split-Path -Parent $DesktopDir
 $OutDir     = Join-Path $DesktopDir 'src-tauri\resources\rigorloomd'
+$NoticesDir = Join-Path $DesktopDir 'src-tauri\resources\notices'
 $Venv       = Join-Path $SidecarDir '.venv'
 $Work       = Join-Path $SidecarDir 'build'
 $Dist       = Join-Path $SidecarDir 'dist'
@@ -230,6 +231,55 @@ try {
 
 $size = (Get-ChildItem -Recurse $OutDir | Measure-Object -Property Length -Sum).Sum
 Write-Host ("sidecar published: {0} ({1:N1} MiB)" -f $OutDir, ($size / 1MB))
+
+# License texts are copied from their canonical tracked files into the same
+# generated resource tree Tauri bundles. This avoids a second hand-maintained
+# copy while keeping the recursively working resource glob.
+$noticesParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $NoticesDir))
+$noticesStage = Join-Path $noticesParent ("notices.stage." + [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $noticesStage -ErrorAction Stop | Out-Null
+    $noticePairs = @(
+        [pscustomobject]@{
+            source = Join-Path $RepoRoot 'LICENSE'
+            name = 'RIGORLOOM-MIT.txt'
+        },
+        [pscustomobject]@{
+            source = Join-Path $DesktopDir 'src\assets\fonts\OFL.txt'
+            name = 'Pretendard-OFL-1.1.txt'
+        }
+    )
+    foreach ($pair in $noticePairs) {
+        $target = Join-Path $noticesStage $pair.name
+        Copy-Item -LiteralPath $pair.source -Destination $target -ErrorAction Stop
+        $sourceHash = (Get-FileHash -LiteralPath $pair.source -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        if ($sourceHash -cne $targetHash) {
+            throw "notice copy hash mismatch: $($pair.name)"
+        }
+    }
+    if (Test-Path -LiteralPath $NoticesDir) {
+        Remove-Item -LiteralPath $NoticesDir -Recurse -Force -ErrorAction Stop
+    }
+    Move-Item -LiteralPath $noticesStage -Destination $NoticesDir -ErrorAction Stop
+    $noticeManifest = Get-TreeManifest $NoticesDir
+    if ($noticeManifest.Count -ne 2) {
+        throw "expected 2 notice files, found $($noticeManifest.Count)"
+    }
+    Write-Host 'notice resources: Rigorloom MIT + Pretendard OFL verified'
+} catch {
+    $failure = $_
+    if (Test-Path -LiteralPath $noticesStage) {
+        try {
+            Remove-Item -LiteralPath $noticesStage -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Error "notice staging cleanup failed at $noticesStage`: $($_.Exception.Message)"
+            exit 3
+        }
+    }
+    Write-Error "notice resource publish failed: $($failure.Exception.Message)"
+    exit 3
+}
 
 # --- smoke the frozen binary in both of its roles ----------------------------
 # PyInstaller 6 puts --add-data payloads under _internal/, which is also what
