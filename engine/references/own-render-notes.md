@@ -4443,3 +4443,221 @@ close 31, differs 4, unsupported 2, pages 9/9 exact.
   either. On `saeopja` page 1 the deepest glyph box is +1007 below the body
   bottom and is the form's paper-spec line in the margin; that attribution is
   read off the page, not asserted by the tool.
+
+## Whether the exported PDF reproduces the saved lineseg — measured, 2026-09-05
+
+Worker: Opus; orchestrator: Fable.
+
+The scoreboard treats path A — the cached `hp:lineseg` seats Hancom wrote at
+save time — as if it were the reference in another coordinate system. One
+private measurement put that in doubt: on the development-validation document
+a paragraph carries **7** cached linesegs while Hancom's own PDF, exported one
+minute later by the same Hancom 13.0, draws it in **6** lines. If the cached
+seats and the export are two different layout passes, then every number this
+repo reads off path A is measuring the wrong thing.
+
+They are not. On the public corpus the export reproduces the saved lineseg
+**exactly**: same number of lines, same characters on each line, same page
+grouping, on every paragraph the question can be asked of.
+
+### The instrument
+
+`engine/scripts/lineseg_vs_pdf.py <form.hwpx> <reference.pdf>`, or `--corpus`
+for every converted form with a reference. `--json OUT` writes the per-line
+record, `--no-text` keeps the document's text out of it.
+
+The corpus pair IS the question: `tests/corpus/forms/converted/X.hwpx` is
+Hancom's own hwp→hwpx conversion output, so it carries Hancom's save-time
+seats, and `tests/corpus/forms/render/X.pdf` is Hancom's PDF export of that
+same `.hwpx` — both `com_backend.py convert`, both 13.0.0.2986, per the
+corpus manifest.
+
+The two sides share no identifier, so paragraphs are located in the PDF by
+their text, under a rule stated once and applied to every document. The key
+deletes whitespace and soft hyphens and nothing else, because whitespace is
+exactly what a line break is entitled to eat. The PDF's text lines are
+concatenated in page then draw order, and a paragraph matches the contiguous
+run of WHOLE lines whose concatenation equals its own key, searched forward
+from a cursor that never rewinds. If nothing matches, the search is repeated
+against a second concatenation with a trailing hyphen dropped from each line
+— which never fires on this corpus, and is there so the rule is not silently
+wrong on a document that hyphenates. A match found only before the cursor is
+reported, not dropped.
+
+Two things had to be got right before any number meant anything.
+
+**A PyMuPDF line is not a laid-out line.** Hancom draws 배분/나눔 text, a
+letter-spaced heading, or a run of space-padded fields as several
+text-showing operations with wide gaps, and MuPDF's grouper cuts those into
+separate `line` records at one height. Read raw, that says "the export broke
+one cached line into four" — `admrul` paragraph 9 arrives as 16 records for 2
+lines. So inside a run already known to be one paragraph, consecutive pieces
+on one page whose vertical extents overlap by at least half the shorter are
+regrouped into one line. The regrouping is confined to a matched run, so it
+cannot weld two columns together, and the piece count is kept.
+
+**`textpos` counts cells, and `Paragraph.chars` does not.** See below; it is
+the finding, not a detail.
+
+### What the corpus says
+
+`--corpus`, this branch, nothing in the renderer touched. `cmp` is the
+paragraphs the question can be asked of; `split!` is those whose line count
+agrees but whose character split does not; `char%` is the share of characters
+sitting in lines that hold exactly the same text on both sides; `dy` is
+cached `vertpos` minus the PDF glyph-box top, both relative to `body_top`, in
+HWPUNIT; `dy_res` is the median absolute residual about the form's own median
+`dy`; `spread` is the median within-paragraph range of `dy`.
+
+| form | cmp | equal | more cached | fewer cached | split! | char% | dy_med | dy_res | spread | skipped |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `admrul` | 9 | 9 | 0 | 0 | 0 | 100.0 | 268 | 7 | 6 | 6 |
+| `gianmun-1ho` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `gianmun-2ho` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `jeongbo` | 0 | – | – | – | – | – | – | – | – | 1 |
+| `jumin` | 0 | – | – | – | – | – | – | – | – | 3 |
+| `kstartup` | 67 | 67 | 0 | 0 | 0 | 100.0 | 11 | 7 | 0 | 98 |
+| `moel-2013` | 134 | 134 | 0 | 0 | 0 | 100.0 | 235 | 17 | 2 | 20 |
+| `moel-2025` | 172 | 172 | 0 | 0 | 0 | 100.0 | 233 | 19 | 10 | 15 |
+| `nrf` | 29 | 29 | 0 | 0 | 0 | 100.0 | −89 | 21 | – | 24 |
+| `saeopja` | 0 | – | – | – | – | – | – | – | – | 6 |
+| **all ten** | **411** | **411** | **0** | **0** | **0** | **8566/8566 = 100.0** | | | | 179 |
+
+411 of 411, and not one character on a different line. Skipped, by reason:
+`inkless` 107, `table` 67, `object` 5 — no paragraph failed to match, and no
+paragraph's `textpos` overran the cell stream.
+
+`dy` is a per-form constant of a few hundred HWPUNIT, and that is the leading
+the cached box carries above the glyph box, not drift: the residual about it
+is 7–21 HWPUNIT, 0.07–0.21 pt, and within one paragraph the range is 0–10.
+The sign flips on `nrf` (−89) because its declared line spacing puts the
+glyph box above the box top, which is a property of that form's own character
+and paragraph shapes and not of the comparison.
+
+### Pages: the partition holds, the index does not
+
+| form | cached page groups | PDF pages | lines on a different page index | grouping breaks |
+| --- | ---: | ---: | ---: | ---: |
+| `kstartup` | 20 | 22 | 49/77 | **0/76** |
+| every other form | = PDF | = cached | 0 | 0 |
+
+`kstartup` is the one form where the two sides give a line a different page
+NUMBER, and the difference is a constant +2 that appears across a stretch of
+table-only pages and never varies. It is not a re-pagination: **a whole
+`hp:tbl` is ONE cached lineseg however many pages it takes**, so the cache
+cannot say how many pages that stretch occupies and the reconstruction
+(`page_fit_probe.cached_pages`) is short by two. The channel that does not
+depend on the index is whether two consecutive lines share a page, and that
+partition is identical on every form including `kstartup` — 0 breaks out of
+76. `own_render`'s own `paginate` gives 20 for `kstartup` too, which is where
+the corpus scoreboard's one failing `page_count_exact` comes from.
+
+### The finding: `textpos` counts cells, and `Paragraph.chars` does not
+
+The first run of this tool reported 18 paragraphs re-broken, all 18 at line 0,
+17 of them by exactly one character and all 18 in the same direction. That
+uniformity was the tell, and it was ours.
+
+`hp:lineseg@textpos` indexes the paragraph's character STREAM, and an inline
+control inside `<hp:t>` occupies a cell in that stream even when it draws no
+glyph. `own_render.Paragraph.chars` is built from `itertext()`, which walks
+straight past those elements. So slicing `chars` at a `textpos` runs one cell
+late for every control before the cut. The corpus carries three such controls
+inside `<hp:t>` — `hp:lineBreak` ×30, `hp:tab` ×15, `hp:fwSpace` ×8 — against
+`hp:markpenBegin`/`End`, which take no cell. A `<hp:lineBreak/>` is the
+common case, because a paragraph that carries one has more than one line by
+construction.
+
+`lineseg_vs_pdf.py` builds its own cell stream instead, giving each control
+the whitespace character it stands for so the key deletes it, and with that
+the 18 divergences go to 0.
+
+**This is a live bug in `own_render.py` and it is NOT fixed here.**
+`OwnRenderer._render_cached_lines` slices `para.chars[start:end]` at exactly
+those `textpos` values, so on the cache path every affected paragraph is
+drawn with one character on the wrong side of a line break. Corpus-wide,
+**21 of the 161 paragraphs with more than one lineseg** are mis-sliced:
+`moel-2025` 17, `kstartup` 2, `admrul` 1, `jeongbo` 1. It is the same class
+of defect as the `textpos_past_end` condition `unusable_cache_reason` already
+documents — "an `hp:ctrl` this reader gives no character cell while the
+authoring engine's `textpos` counted one" — and that docstring names
+`hp:fieldBegin`/`fieldEnd` and `hp:colPr` as two more members of the family.
+The brief for this slice was measurement, so the renderer is byte-identical
+to `origin/claude/engine-e2-usable-height`; the fix belongs to whoever takes
+the cache path next, and the number to beat is 21 of 161.
+
+### render-check-01 cannot be asked this question
+
+`tests/corpus/render-check/render-check-01.hwpx` was named as the cleanest
+public instance of the pairing. It is not an instance at all:
+`build_render_check.py` authors it through `hwpx_write.py`, and it **carries
+no `hp:linesegarray` anywhere** — all 107 of its top-level paragraphs skip as
+`no_lineseg`, and so do all 83 of `table-break-probe.hwpx`. Its PDF is a
+Hancom export, but there is no Hancom save-time layout beside it to compare
+with, which the dpi-independence section above already says in passing. The
+Hancom-saved and Hancom-exported pair this repo actually holds is
+`converted/` + `render/`, and that is what `--corpus` reads.
+
+### The interpretation
+
+**The export does not re-flow text.** On ten forms and 8566 characters of
+body text, Hancom's PDF writer put every character on the line the save-time
+pass had already chosen. Nothing here is consistent with the export running a
+second line breaker: a different pass would show breaks in both directions
+and at lines other than the first, and would not hold at 100.0% of
+characters. Font metrics at export, kerning and justification are all ruled
+out as sources of a re-break on this corpus, because none of them produced
+one.
+
+So **path A is a faithful stand-in for the reference in the horizontal
+channel**: line count, break position, and which page a line lands on. What
+it cannot stand in for is anything a lineseg does not record — the vertical
+offset between a line box and the glyphs inside it is a real few hundred
+HWPUNIT and varies per form, and a multi-page table has no per-page seat at
+all.
+
+**And the private 7-versus-6 remains unexplained by this.** Nothing on the
+public corpus reproduces it. The measurement shifts where to look: not at the
+export's line breaker, which reproduces the save, but at whether that
+document's cached seats were written by the same save the PDF was exported
+from — a paragraph whose sixth line sits 566 past the body bottom is a cache
+that `unusable_cache_reason` and `stale_cache_reason` exist to refuse.
+
+### Nothing was changed
+
+`own_render.py` is byte-identical to `origin/claude/engine-e2-usable-height`.
+The scoreboard state these numbers were taken against is the one E2.8
+recorded and did not move: `render_scoreboard.py --corpus --dpi 144`, `cache`
+IoU 0.645754 / pair 0.836210 / 9 of 10 page-count exact, `computed` IoU
+0.633897 / pair 0.847831 / 10 of 10.
+
+### Not proven
+
+- **Five of the ten forms contribute nothing.** `gianmun-1ho`,
+  `gianmun-2ho`, `jeongbo`, `jumin` and `saeopja` are whole-page table forms:
+  every top-level paragraph is a table or inkless, and all their body text
+  lives in cells this tool does not read. The 411 come from five forms, and
+  306 of them from the two `moel` contracts, which share most of their text.
+- **Table cells were never compared.** A cell paragraph carries its own
+  `hp:lineseg`s and its own PDF lines, and the same question could be asked
+  of them. It was not, because a cell's column comes from the table's own
+  geometry and the reading order of cell text in a PDF is not document order.
+  Most of this corpus's text is in cells.
+- **The regrouping rule is a judgement.** Half the shorter box's height is a
+  chosen threshold. It is applied only inside a matched run, so a wrong call
+  can merge two lines of one paragraph but cannot invent a pairing across
+  paragraphs; the piece counts are in the JSON for anyone who wants to
+  re-cut it.
+- **100.0% is a share of characters, not of layout.** Two lines agree when
+  they hold the same characters. Where each glyph sits inside the line —
+  justification stretch, tab stops, the 배분 gaps that made the regrouping
+  necessary — is not measured here at all.
+- **`dy` is read against a mediabox that is not the declared page.** The
+  references are A4 at 595 × 841 pt while the forms declare 595.28 × 841.88,
+  and the conversion used is a flat 100 HWPUNIT per point with no rescale.
+  That is worth up to about 88 HWPUNIT at the foot of a page and is inside
+  the per-form `dy` constant, not the residual.
+- **One machine, one Hancom.** Every pair in the corpus was produced by
+  13.0.0.2986 on this machine with these fonts installed. An export from a
+  build whose metrics differ from the saving build is exactly the case that
+  would re-flow, and this corpus cannot contain it.
